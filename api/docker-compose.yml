@@ -1,0 +1,27 @@
+services:
+  ocr-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./img:/app/img
+      - ./out:/app/out
+    environment:
+      - MODEL_PATH=ds4sd/SmolDocling-256M-preview
+      - IMAGE_DIR=/app/img
+      - OUTPUT_DIR=/app/out
+
+  streamlit:
+    build:
+      context: ./streamlit
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./streamlit:/app
+    environment:
+      - OCR_API_URL=http://ocr-api:8000
+    depends_on:
+      - ocr-api

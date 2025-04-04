@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+pydantic
+python-multipart
+docling_core
+Pillow
+aiofiles
