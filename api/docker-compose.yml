@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - TARGET_STAGE=${TARGET_STAGE:-arm64-cpu}
     ports:
       - "8000:8000"
     volumes:
@@ -12,6 +14,14 @@ services:
       - MODEL_PATH=ds4sd/SmolDocling-256M-preview
       - IMAGE_DIR=/app/img
       - OUTPUT_DIR=/app/out
+    # Add NVIDIA runtime for GPU support
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   streamlit:
     build:
