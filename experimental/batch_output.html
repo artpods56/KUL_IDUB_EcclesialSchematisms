@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <link rel="icon" type="image/png"
+    href="https://raw.githubusercontent.com/docling-project/docling/refs/heads/main/docs/assets/logo.svg"/>
+    <meta charset="UTF-8">
+    <title>
+    Powered by Docling
+    </title>
+    <style>
+    html {
+    background-color: LightGray;
+    }
+    body {
+    margin: 0 auto;
+    width:800px;
+    padding: 30px;
+    background-color: White;
+    font-family: Arial, sans-serif;
+    box-shadow: 10px 10px 10px grey;
+    }
+    figure{
+    display: block;
+    width: 100%;
+    margin: 0px;
+    margin-top: 10px;
+    margin-bottom: 10px;
+    }
+    img {
+    display: block;
+    margin: auto;
+    margin-top: 10px;
+    margin-bottom: 10px;
+    max-width: 640px;
+    max-height: 640px;
+    }
+    table {
+    min-width:500px;
+    background-color: White;
+    border-collapse: collapse;
+    cell-padding: 5px;
+    margin: auto;
+    margin-top: 10px;
+    margin-bottom: 10px;
+    }
+    th, td {
+    border: 1px solid black;
+    padding: 8px;
+    }
+    th {
+    font-weight: bold;
+    }
+    table tr:nth-child(even) td{
+    background-color: LightGray;
+    }
+    math annotation {
+    display: none;
+    }
+    .formula-not-decoded {
+    background: repeating-linear-gradient(
+    45deg, /* Angle of the stripes */
+    LightGray, /* First color */
+    LightGray 10px, /* Length of the first color */
+    White 10px, /* Second color */
+    White 20px /* Length of the second color */
+    );
+    margin: 0;
+    text-align: center;
+    }
+    </style>
+    </head>
+<h2>G A T A L O G U S</h2>
+<p>ECCLESIARUM ET UTRIUSQUE CLERI TAM SECULARIS QUAM REGULARIS</p>
+<h2>BROECESIS</h2>
+<p>Vladislaviensis Seu Calissiensis</p>
+<p>PRO ANNO DOMINI</p>
+<p>1872.</p>
+<h2>APPROBATUR.</h2>
+<p>Vladislaviae die 17 (29) Augusti 1871 anno</p>
+<p>Administrator Diocesis Vladislaviensis</p>
+<p>seu Calissiensis,</p>
+<p>Clemens Skupienski.</p>
+<p>J03BOJEHO 1E3YpO. BapnBa 4 Ora6pa 1871 roa.</p>
+<figure><img src="data:image/png;base64,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"></figure>
+<h2>SACRA ROMANO-CATHOLICAE ECCLESIA JESUS CHRISTI</h2>
+<h2>VICARIUS,</h2>
+<p>PRINCIPIS APOSTOLORUM DIVI PETRI 256 SUCCESSOR, POINTIFERA MAXIMUS PIUS PAPA IX.</p>
+<h2>ANTEA</h2>
+<h2>JOANNES MARIA DE COMITIBUS FERRETTI</h2>
+<p>Natus in Sinaglia di 13 Maji 1790 an. a die 14 Dec. 1840 a. S R.E. Pres- byter Cardinalis, Archiepiscopus Imolensis In Pontificatum die 16 Junii 1846 a. post fata felis memoriae Gregorii XVI Papae electos, die 21 Ju- nii ejusdem anni coronatus, die 11 Aprilis 1869 a. Secunditas celebra- vit, die 23 Aug. 1871 annos Petri superavit. Eodom anno piissimis votis Cleri populique Christiani Magnus appellatus.</p>
+<h2>ECPISCOPUS</h2>
+<h2>DICECESIS VLADISLAVIENSIS seu CALISSIENSIS vacat.</h2>
+<h2>Vicarius Capituli et Administrator Dioecesis CLEMENS</h2>
+<h2>S K U P E R E N S K</h2>
+<h2>PRAELATUS ARCHIDIDACOVUS</h2>
+<p>ECCLESIAE CATHEDRALIS VLADISLAVIENSIS,</p>
+<p>Protonotarius Apostolicus, Praepositus Petricoviensis, ORDINUM S. ANNAE II, ET S. STANISLAII CLAS. CUM CORONA IMPERIALI EQUES.</p>
+<h2>SUFFRAGANEUS</h2>
+<p>vacat.</p>
+<h2>CAPITULUM</h2>
+<h2>Ecclesiae Cathedralis Vladislaviensis.</h2>
+<h2>Praelati:</h2>
+<ul>
+<li>1. Decanus ........</li>
+<li>2. Archidiaconus, Clemens Skupienski Vica-</li>
+<li>rius Capituli, qui supra nat. 13 Nov. 1813 or. 1835</li>
+<li>3. Scholasticus, Joseph. Lisiecki, Mag. S. Th.</li>
+</ul>
+<p>Officialis Gen. Calis. Ord. S. Stanisl.</p>
+<ul>
+<li>III cl. Eques,</li>
+<li>4. Custos, Mich. Schultz, Jud. Surrog. Cons. Gen. Vladisl. Procur. Capit. n. 30 Maji 1823 or. 1846</li>
+</ul>
+<h2>Canonici gremiales numerarii:</h2>
+<ul>
+<li>1. Mich. Lechert, Ord. S. Stanisl. III cl.</li>
+<li>Eq. post Zas prim.</li>
+<li>2. Florianus Kosinski,</li>
+<li>3. ........</li>
+<li>4. ........</li>
+</ul>
+<h2>Canonici gremiales honorarii:</h2>
+<ul>
+<li>1. Jos. Stobiecki Doet. S. Th.</li>
+<li>2. Carol Zielinski</li>
+<li>3. August. Caesar. Lipski Cand. S. Th. In- fulatus Chocen.</li>
+<li>4. ........</li>
+</ul>
+<h2>Vicarii:</h2>
+<ul>
+<li>1. Joseph. Raczkiewicz</li>
+<li>2. Terent Alois. Guddat</li>
+<li>3. Melch. Fidel. Kawczynski</li>
+<li>4. Petrus Gozdziecki</li>
+<li>5. ........</li>
+<li>6. ........</li>
+</ul>
+<h2>CAPITULUM Collegiatae Calissiensis.</h2>
+<h2>Praelati honorarii:</h2>
+<ul>
+<li>1. Praepositus,</li>
+<li>2. Archidiaconus, Laurent. Malinowski, As- ses. Consist. Gen. Calissien. n. 10 Aug.1810 or. 1835</li>
+<li>3. Decanus, Ign. Jarnuszkiewicz n. 15 Jul. 1810 or. 1833 4. Custos, Bonav. Pawlinski Jud. Sur. Cons.</li>
+<li>G. Cal.</li>
+<li>n. 19 Jul. 1813 or. 1837</li>
+</ul>
+<h2>Canonici honorarii:</h2>
+<ul>
+<li>1. Stanisl. Gruszczynki</li>
+<li>2. Petrus Kobylinski</li>
+<li>3. Ceslaus Harwas</li>
+<li>4. Adalbert. Rogoziński</li>
+<li>5. Andreas Wagrowski</li>
+<li>6. Macar. Ośmiałowski</li>
+<li>n. 26 Decem. 1802 or. 1827</li>
+<li>n. 24 Decem. 1811 or. 1834</li>
+</ul>
+<h2>Vicarii:</h2>
+<ul>
+<li>1. Andreas Kobusiewicz</li>
+<li>2. Vladisl. Grabowski Secr. Cons. Gen. Cal.</li>
+<li>3.</li>
+</ul>
+<h2>Consistorium Generale Vladislaviense.</h2>
+<p>Officialis,</p>
+<p>Judices Surrogati:</p>
+<p>1. Mich. Schultz Prael. q. s.</p>
+<p>Assessor,</p>
+<p>Visit. Regular. Jos. Rzewuski.</p>
+<p>Regens Cancel. Admin. Dioec. Joan. Sliwinski Cand. S. Th. Secretar. Consist. Eduardus Schultz.</p>
+<p>Defens. Caus. Matrim.</p>
+<p>n. 19 Decem. 1818 or. 1842</p>
+<p>n. 18 Maji 1845 or. 1868</p>
+<h2>Consistorum Generale Calissiense.</h2>
+<p>Officialis, Jos. Lisiecki, Prael. Cath. q. s. Jud. Surrog. Bonav. Pawlinski, Prael. h. Cal. q. s. Assessores: { 1. Laurent. Malinowski, Prael. h. Cal. q. s. 2. Carolus Pollner S. Th. Cand. Notarius, Petrus Falkiewicz. Secretarius, Vladisl. Grabowski.</p>
+<p>Defen. Caus. Matur. { 1. Thomas Baraszkiewicz. 2. Andreas Kobusiewicz.</p>
+<h2>Consistorium Foraneum Petricoviense.</h2>
+<p>Officialis,</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>.</p>
+<p>Joannes Jakubowski Dec. for. Petric. loc. ten. Asse. Cons. For. Petr. Anton. Zygmuntowicz, Cur. in Przyów.</p>
+<h2>Examinatores Aspirantium ad statum ecclesiasticum.</h2>
+<p>Omnes Praelati et Canonici Eccl. Cath. et Professores Seminarii Dioecesani Vladislaviensis.</p>
+<h2>Examinatores Cleri pro excipiendis Confessionibus.</h2>
+<p>Omnes Praelati et Canonici Eccl. Cath., Decani in suis respective Decanatus, Professores Seminarii Vladislavien. et</p>
+<p>Antonius Zygmuntowicz, Curat. in Przyów.</p>
+<h2>Censores librorum.</h2>
+<p>Joseph. Lisiecki, Praelat. Cath.</p>
+<p>Florianus Kosiński, Can. Cath.</p>
+<p>Stanislaus Chodyński Profes. Semin. Vlad.</p>
+<h2>De ca ni.</h2>
+<h2>1. In Officalu Generali Vladislaviensi.</h2>
+<ul>
+<li>1. Vladislaviensis, Joan Śliwiński Cand. S. Th.</li>
+<li>2. Radziejoviensis, Thomas Bukowski.</li>
+</ul>
+<h2>2. In Officialu Generali Calissiensi.</h2>
+<ul>
+<li>3. Calissiensis, Cesl. Harwas Can. h. Calis.</li>
+<li>4. Colensis, Ignatius Górski.</li>
+<li>5. Coninensis, Petrus Bogucki.</li>
+<li>6. Sieradiensis, Michael Jarmicki.</li>
+<li>7. Słupcensis, Thomas Białkowski.</li>
+<li>8. Turcensis, Stanisl. Gruczyński Can. h. Calis.</li>
+<li>9. Vielunensis, Anton. Michalski Cand. S. Th.</li>
+</ul>
+<h2>3. In Officialu Foraneo Petricoviensi.</h2>
+<ul>
+<li>10. Petricoviensi, Joan. Jakubowski.</li>
+<li>11. Częstochoviensis, Jos. Rzewuski.</li>
+<li>12. Eascensis, Math. Ochendalski.</li>
+<li>13. Neo-Radomscensis, Vinc. Gajewski.</li>
+</ul>
+<h2>Praecoptores Doctrinae Religionis et Morum.</h2>
+<p>In Gimnasio Vladislav.</p>
+<p>Cand. S. Th.</p>
+<p>In Gimnasio Calissien. Paulus Patocki Cand.</p>
+<p>S. Th.</p>
+<p>In Gimnasio Petricovien. Joan. Wojciechowski Cand. S. Th.</p>
+<p>In Gimnasio Czestochov. Petrus Gerber ex Archidioec. Varsavien.</p>
+<h2>Seminarium</h2>
+<h2>Dioecesamum Vladislaviense.</h2>
+<p>Provisore:{ Mich. Schultz Prael. Cath. q. s.</p>
+<p>Florianus Kosiński Can. Cath. q. s.</p>
+<p>Regens, Francis Pszczynski n. 3 Oct. 1800or. 1823</p>
+<p>Zeno Chodyński Cand. S. Th.</p>
+<p>Direct. Semin. n. 4 Nov. 1836 or. 1860 Stanisl. Chodyński Cand. S.</p>
+<p>Theol. n. 4 Nov. 1836 or. 1860 Francis. Stopierzynski Cand.</p>
+<p>S. Th. n. 24 Dec, 1837 or. 1865 Constant. Waberski Mag. S.</p>
+<p>Th. n. 29 Mart. 1845 or. 1868</p>
+<p>Confessarii, PP. Ord. S. Franc. Reform. ex Conv. Vladisl.</p>
+<p>Bibliothecarius, Stanisl. Chodyński q. s.</p>
+<p>Medicus Domestic.Valerianus Bilczyński Doct. Med.</p>
+<h2>Alumni</h2>
+<h2>Auditorese Theologiae.</h2>
+<p>4ti anni: Korycki Gaspa. Groblinski Anton. Deplewski Victor 3ti anni: Bujno Joseph. 2di anni: Jeziorski Joseph. Czyż Thomas Zielinki Ignatius Patocki Antonius</p>
+<p>n. 8 Januar. 1844 n. 17 Maji 1846 n. 12 Octob. 1846 n. 18 Febr. 1842 n. 9 April. 1850 n. 12 Sept. 1849 n. 27 Octob. 1850 n. 9 Jun. 1849</p>
+<p>2di anni: Myśliński Michael Ordon Sigismundus Zagurowski Anton. 1mi anni: Chyczewski Joseph. Krajewski Marianus Kruczkowski Alexius Piścik Matthaeus Bebnowski Steph. Pecherski Casimir. Pannecki Aemil. Zawadzki Casimir. Wojlanis Ludovic.</p>
+<h2>Auditores Philosophiae.</h2>
+<p>2di anni: Perlinski Vladisl. Ratyński Alexan. Walutycz Anton. Nowakowski Anton. Czok Joannes</p>
+<p>1ni anni: Drecki Coelestinus Zalecki Carolus Gogolewski Petrus Puacz Casimir. Ziętkiewicz Valent. Kleniewski Ignat. Jablonski Anton. Szepietowski Joan. Dąbrowski Petrus Balcerski Ignat. Stepowski Vladisl.</p>
+<h2>Alumni</h2>
+<h2>in Academia Ecl. Rom. Catholic. Petropoli.</h2>
+<p>3ti anni: Czyżo Joannes Presb. n. 16 Jun. 1848 or. 1871 Jarczynski Laurent. n. 8 Aug. 1848</p>
+<p>2di anni: Kempł Joseph.</p>
+<p>n. 22 Febr. 1848</p>
+<p>Wojciechowski Marjan. n. 9 Aug. 1849</p>
+<p>n. 29 Sept. 1849 n. 21 Febr. 1846 n. 5 Maji 1838 n. 2 Januar. 1848 n. 15 Aug. 1850 n. 24 Jun. 1850 n. 20 Sept. 1840 n. 16 Aug. 1850 n. 29 Febr. 1848 n. 26 Sept. 1850 n. 26 Janu. 1847 n. 18 Nov. 1834</p>
+<p>n. 31 Maji 1850 n. 9 Octob. 1847 n. 14 Jun. 1849 n. 6 Jun. 1851 n. 3 August. 1849</p>
+<p>n. 6 April. 1855 n. 4 Jan. 1851 n. 27 Jun. 1851 n. 16 Febr. 1854 n. 4 Febr. 1851 n. 1 Febr. 1854 n. 27 Sept. 1853 n. 7 Sept. 1852 n. 10 Oct. 1850 n. 14 Jan. 1855 n. 9 Dec. 1852</p>
+<h2>ECOLESIAE ET CLERUS</h2>
+<h2>curam animarum excerces.</h2>
+<h2>1. In Officiatu Generali Vadislavienis.</h2>
+<h2>1. Decanusus Vladislavienis,</h2>
+<p>in Districtu, Vladislavien. Guber. Varsavien.</p>
+<ul>
+<li>1. Wioclawek, ci. 1 cl. Titul. Ecl. S. Joan. Bapt. mu- rata, numer. animar. 7790.</li>
+</ul>
+<p>Praepos. Joan. Śliwiński, Cand. S. Theol. Decan. Re- gens Cancel. Admiusrtr. Dioc. natus 21 No- vembr. 1832 or. 1856.</p>
+<p>Vic. 1. Leo Michalski n. 15 Oct. 1845 or. 1869.</p>
+<p>loci parocliales: Włocławek, pagi: Kepiny, Syberya, Glinki, Lanieszczyzna, Warząchewka Polska, Warząchewka Nie- miecka, Plaszczyzna, Józefowo, Rybnica, Papieszka, Mo- dzerowo, Leg, Korabniki, Krzywa Góra, Zazamczze, Lisek, Smolarka, Wydoł, Wikaryjskie, Jantekla, Radyszyn, La- sica, Stodowa, Ruda, Przyrude, Łuba, Świech, Kapitulka, Grondy, Ostrowy, Krzywe Bloto, Poraza.</p>
+<p>Solemnitates: S. S. Trinit., S. Joan. Bap., SS. Petr. et Paul., Scapulare BM., S. Annae, S. Rochi, S. Michael, SS. Cri- spi et Crispan., S. Barb., S. Nicol., Ded. Eecl. Dom. pt S. Joan. Bap.</p>
+<p>Confraternitates: SS. Trinit. S. Annae, SS. Angelor, Phila- delph., Scapul. BM. et aliquot Contubernia.</p>
+<p>Scholae: Gimnasium real. puer., Sch. elem. puer. et puell. etc. Gerontoconium et Nosocomium in Włocławek.</p>
+<p>Capella pub. S. Vital. mur. cum Solem, ejusd. Sancti, penes quam Semin. Dioc.</p>
+<p>Eecl. Regular. Ord. S. Francis. Strictior. Observ. Reformat. in Włocławek.</p>
+<h2>2. Boniewo, pug. TE. Visit. BMV. lignea, n. a. 1002.</h2>
+<p>Cur. Laurent. Waszak, n. 8 Aug. 1836 or. 1862. lp. pp. Boniewo, Otmanowo, Kolonia Otmanowo, Chojny, Lakie Zwiastowe, Eakie Wielkie, Wolka Paruszewa, Osiecz Wielki, Arciszewo, Czartoleniec, Krupka, Dziewczoraj, Ce- gielnia.</p>
+<p>Solem. Visit. BMV., et Dom. 19 pt Pentecost.</p>
+<p>Confratern. Providentiae Div. Sch. elem. in Osiecz Wielki.</p>
+<ul>
+<li>3. Brzesc, opp. II. cl. TE. S. Stanisl. EM. mur. n. a. 2914. Praep. Capit. Ecel. Cath. Vladisil.</li>
+</ul>
+<p>Vic. Ignat. Ploszaj n. 30 Jul. 1841 or. 1864.</p>
+<ul>
+<li>lp. Brzesc, pp. Guzlin, Popowicki, Pikutkowo, Stary Brzesc, Falborz, Falborzek, Kuczyna, Jadrowice, Miechowice, Rzadka Wola, Kolonia Miechowice, Jadrowice Kolonia, Bugaj, Piaski, Hulanka, Wynysłowo, Molend. Topielec, Piaski, Staro Brzeski, Falborski Młyn.</li>
+</ul>
+<p>Sol. S. Stanisl., Fer. 2 Pasch. et Pentecost, S. Annae.</p>
+<p>Confr. Misericordiae Dni.</p>
+<p>Sch. el. in Brzesc, Miechowice, Gerontocomium in Brzesc. Capella in Carcere mur.</p>
+<ul>
+<li>Ecl. olim. Regular. Ord. S. Dom inici.</li>
+<li>4. Chocen, p. T.S. Aegid. lig. n. a. 1644.</li>
+<li>Adm. qui in Smilowice.</li>
+<li>lp. pp. Chocen, Zakrzewek, Zabin, Bodzanówek, Eodzanowo, Janowo, Niemojewo, Borzynie, Szczynto, Zapust, Łakie Markowe, Czuple, Sieroszewo, Borzynowice, Siewiersk, światniki, Krukowo, Kolonia Krukowska.</li>
+</ul>
+<p>Sol. Transfig. Dni, S. Aegid. Ab.</p>
+<ul>
+<li>Confr. S. Joseph.</li>
+<li>5. Chodecz, osada. TE. S. Dominicus C. mur. n. a. 4968. Praep. Josepb. Jarnowski n. 15 Sept. 1836 or. 1859.</li>
+<li>Vic. Andreas Czepowicz. lp. Chodecz, pp. Chodeczek, Kromszewice, Florkowizna, Proso, Józefki, Pary, Ignalin, Jaworek, Trzeszczon, Szczecin, Bo- gołomia, Mstowo. Strzygi, Strzyki, Huta Chodecka, Pod- górze, Zieleniewo, Grabina, Mielno, Graboszczyzna, Ru- da Chodecka, Zaneczek, Zbiewo, Karolewo, Zbiewek, Jó- zefowo, Zbiewczyńskie Holendry, Broniszewo, Chrośtowo, Cetty, Lanicta, Witoldowo, Żurawice, Ogorzelewo, Żania,</li>
+</ul>
+<p>Gawił, Kolatki, Pyszkowo, Łączewna, Sadok, Uklejni ca, Goscircze, Mielinek, Lubieniec, Ruda Lubieniecka, Lubie- niec molend, Piotrowo, Kołce, Niwki, Micielno, Wola Adamowa, Nowiny Wóleckie Holendry, Brzyszewo, Przy- borowo, Biele, Djugie, Morzyce, Sobiczewy, Gollewo, Kuko- rek, Obzejda, Goclaw, Golska Huta, Golskie Holendry, Stróże, Sławęcin, Pieleszki, Zalesie, Bílgoraj, Kubłowo, Nartv Królewskie, Narty Budy, Przypka, Brzozowa. Sol. S. Dominici Conf.</p>
+<p>Confr. SS. Trinit. S. Joseph.</p>
+<p>Sch. el. in Chodecz, et Gerontocom.</p>
+<p>Cap. pub. mur. S. Jacob. in Coemet.</p>
+<p>6. Dąbie, p. TE. SS. Trinit. lig. n. a. 902.</p>
+<p>Adm. Victor Kosmalski n. 1 Jun. 1808 or. 1833.</p>
+<p>lp. pp. Dąbie, Wola Kunkowa, Redecz Krukowy, Borucin, Dąbek, Stok praed.</p>
+<p>Sol. SS. Trinit., S. Bennon, S. Nicol., S. Isidor., S. Roch.</p>
+<p>(in Dom. seq. transf. oes).</p>
+<p>Confr. SS. Trinit.</p>
+<p>Gerontocom, in Dąbie.</p>
+<ul>
+<li>7. Grabkowo, p. TE. S. Mar. Magd. mur. n. a. 1500. Adm. Nicod. Skłodowski Ord. PP. Refor. n. 21 Nov.</li>
+</ul>
+<p>1818 or. 1843.</p>
+<p>lp. pp. Grabkowo, Dziardonice, Dąbrówka Folwarczna, Strzały, Dąbrówka połajewska, Ośowek, Gęcielewo, Kępka Szlachec- ka, Szczutkowo, Kęmpka Księza, Wilkowiczki, Wilkowice, Pieńki, Stacya Kowal, Czerniewice, Czerwieczi.</p>
+<p>Sol. Patroc. S. Jos., S. Magdal., S. Roch.</p>
+<p>Confr. Patroc. S. Jos.</p>
+<p>Sch. el. in Grabkowo.</p>
+<p>Cap. pub. mur. BMV. in Coemet.</p>
+<ul>
+<li>8. Klobia, p. TE. S. Adalb. EM. lig. n. a. 775.</li>
+</ul>
+<p>Cur. Thomas Dymowski n. 11 Dec. 1796 or. J821.</p>
+<p>lp. pp. Kłobia, Gołębin, Kaniewo, Jerzmanowo, Mikolajki, Krajanki, Pariuszewice, Świątniki Dwór.</p>
+<p>Sol. VII. Dolor. BMV. S. Casimir. S. Adalb.</p>
+<p>Confr. VII. Dolor. BMV.</p>
+<p>Sch. el. in Kłobia.</p>
+<ul>
+<li>9. Klóbra, p. TE. S. Procop. lig. n. a. 1821.</li>
+</ul>
+<p>Adm. Mich. Ziarniewicz n. 21 Sept. 1836 or. 1859.</p>
+<p>lp. pp. Klóbka, Bilno, Bilińskie Rumunki, Grabina Kaliska, Krzewie, Klóbskie Budy, Krzyżówki, Lutoborz, Modliborz, Modliborek, Myszki, Nowy Mlyn, Podgórze, Rzegocin, Rzerzewo, Szewo, Szewskie Rumunki, Szatkowizna, Uni- slawice, Wiktorowo, Ziemowizna.</p>
+<p>Sol. S. Procop. Confr. BMV.</p>
+<p>Sch. el. in Rzegocin.</p>
+<p>Cap. pub. lig. in Coemet.</p>
+<p>10. Klótno, p. THE. SS. Trinit. lig. n. a. 1901.</p>
+<p>Cur. Nic. Chlebowski n. 3 Dec. 1790 or. 1820.</p>
+<p>lp. pp. Klotno, Buddy Klotnowskie, Kurowo, Kolonia Kurowo Grodno, Trebki, Mlyn Grodzenski, Holendry Baruchow skie, Kretki, Mlyn Baruchowski, Mlyn Kurowski, Baru- chowo, Leonowo, Świątkowice, Tartak.</p>
+<p>Sol. SS. Trinit., S. Theclae, S. Valent.</p>
+<p>Confr. SS. Trinit.</p>
+<p>Sch. el, in Klotno, et Gerontocom.</p>
+<p>11. Kowal, os. TE. S. Ursulae VM. mur. n. s. 4100.</p>
+<p>Praep. Jos. Stobiecki Can. h. Cath. Vlad. D. S. Th.</p>
+<p>1. Steph. Olechnowicz Cand. S. Th. n. 8 Aug. Vie.</p>
+<p>2. . . .</p>
+<p>lp. Kowal, pp. Rakutowo, Wieclawice, Dobrzelewiczki, Zakrzewice, Boguslawice, Wola Nakonowska, Telazna, Gorcen, Krzewent, Goloszewo, Rakutowek, Dębniaki, Luiszewo, Niedźwiedzi Dól, Mursk, Wojtowskie, Dzielno, Kukowy, Laski, Przyborowie.</p>
+<p>Solem. S. Ursul., S. Barbar., S. Jos., SS. Trinit., Immac. Conc., Annunt., Purif., Assumpt., S. Rosar. BMV.</p>
+<p>Confr. S. Rosar. BMV., S. Barb. Temperant., et Contuber. Cap. pub. S. Cruci's, in Coemet.</p>
+<p>12. Kruszyn, p. TE. 5. Cruci's, mur. n. a. 3217.</p>
+<p>Cur. Julian. Busse, nat. 7 Nov. 1817 or. 1844.</p>
+<p>Vic. Franc. Ponikowski Ord. PP. Refor. n. 26 Aug. 1831 or. 1858.</p>
+<p>lp. pp. Kruszyn, Dżbice, Lagiewniki, Nakonowo, Djabelek, Lopatki, Lijewo, Poddebice, Kruszynek, Świętośaw, Grubce, Humlin, Koszonowo, Sokolowo, Cegielka, Wasiela, Markowo, Sykula, Markowek, Smulsk, Potok, Józefowo Nowa Wies, Utrata, Mielęcín, Ludwinowo.</p>
+<p>Sol. Invent. S. Crc. Exalt. S. Cruc.</p>
+<p>Confr. Provident. Div.</p>
+<p>Sch. el. in Kruszyn.</p>
+<p>Cap. pub. lig.</p>
+<ul>
+<li>13. Lubien, os. TE. S. Cathar. VM. lig. n. a. 3851. Cur. August. Essa n. 2 December. 1808 or. 1831. Vic. Eleuter. Rycki, Ord. PP. Refor. natus 8 Maji 1838 or. 1862.</li>
+<li>1p. Lubien, pp. Czaple, Stepka, Długie, Durlaty, Zurawieniec, Gogowy, Brzeziny, Baguo, Lisianki, Kaczawka, Bobrek, Maslanka, Uchodze, Walentowo, Kamienna, Kobyla Ika, Rutkowice, Gliznowo, Jagielszczyzna, Kostulin, Blonie, Kretkow, Wola Pierowa, Kolomyja, Zazdrość, Zieleniec, Katy, Morzyce, Nowa Wies, Olszowa, Rozdzieniec, Dą­ browa, Janovia, Swiernia, Władysławów, Narty, Kozlowi­ zna, Kaliska, Biernatki, Krzyżowki.</li>
+</ul>
+<p>Sol. S. Rochi, Purif., Annunt., Assumpt. Nativ., S. Rosar.,</p>
+<p>Im. Cconc. BMV., S. Cathar.</p>
+<p>Confr. S. Rosar. BMV., S. Rochi.</p>
+<p>Sch. el. et Gerentocom. in I. ubień.</p>
+<p>Eecl. fil. Wola Pierowa, tit. S. Andr. Ap. cum Sol. ejusd.</p>
+<ul>
+<li>14. Lubomin, p. TE. SS. Trinit. lig. n. a. 300.</li>
+</ul>
+<p>Adm. Mich. Kwiatkowski n. 26 Dec. 1819 or. 1843.</p>
+<ul>
+<li>lp. p. Lubomin.</li>
+</ul>
+<p>Sol. SS. Trinit.</p>
+<p>Confr. SS. Trinit.</p>
+<ul>
+<li>15. Lubraniec, os. TE. BMV. de M. Carm. Patr. S.Joan. Bap. mur. n. a. 2450.</li>
+</ul>
+<p>Prąep. Ludov. Bromirski n. 12 Aug. 1828 or. 1853.</p>
+<p>Vic. France. Klimacki n. 4 Oct. 1842 or. 1866.</p>
+<ul>
+<li>lp. Lubraniec, pp. Piaski, Turowo, Siarczyce, Kazanie, Bie­ lawy, Kozuszynek, Dobierzyn, Lubrańczyk, Biernatki, Rec­ decz Wielki, Redecz Kalny, Krowice, Rozkosza, Osowo, molend. Górniak, Dolniak.</li>
+</ul>
+<p>Sol. BMV. de M. Carm., S. Rosar. et oes festiv. BMV., S. Valent., S. Anton., S. Aug., S. Annae, Im. et Exal. S. Cruc. (Dom. sq.), S. Joan. Bap., SS. Trinit. Ded. Eocl. Dom. 1 Oct.</p>
+<p>Confr. S. Annae.</p>
+<p>Sch. el. in Lubraniec.</p>
+<p>Cap. pub. mur. S. Annae in Coemet. 16. Przedecz, os. II. cl. TE. S. Nicol. mur. n. a. 3599. Praep, Mich. Jakubowski n. 14 Sep. 1814 or. 1837. Vicar. . . . .</p>
+<p>lp. Przedecz, pp. Rybna, Chalupki Rybikie, Rogożna, Za- rowo, Zalesie, Katarzyna, Chalupki Katarzyńskie, Koby- lata, Mniszek, Debina, Zbójno, Klokoczyn, Jasieniec, Dzi- wie, Chalupki Dziwieckie, Łączewna, Arkuszewo, Lipiny. Sol. S. Nicolai EC.</p>
+<p>Confr. Passion. Xti, BMV. Consol., S. Annae.</p>
+<p>Sch. el. in Przedecz, Dziwie, Żarowo.</p>
+<p>17. Smiłowice, p. TE. S. Barthol. Ap. mur. n. a. 1364. Adm. Paul. Wyborski n. 30 Jul. 1835 or. 1860.</p>
+<p>lp. pp. Smiłowice, Filipki, Kolonia Filipki, Kuźnice, Szadki, Skibice, Wichrowice, Olganowo.</p>
+<p>Sol. S. Barthol. Ap.</p>
+<p>Confr. S. Joseph.</p>
+<p>Sch. el. in Smiłowice.</p>
+<p>18. Wieniec, p. TE. S. Nicol. EC. lig. n. a. 2056.</p>
+<p>Cur. Carol. Zieliński Can. h. Cath. Vlad. n. 19 Jun.</p>
+<p>1807 or. 1853.</p>
+<p>Vicar. . . .</p>
+<p>lp. pp. Wienic, Brzezie, Jaranówek, Machnacz, Siedlimin, Katy, Witoldowo, Klementynowo, Dubielewo, Dolina, Ru- zinowo, Gustorzyn, Gustorzynek, Stone, Lipiny, Wolica, Alexandrowo, Leopoldowo, Krzyżowki, Mazury, Polewka, Dziadowo, Nowy Młyn, Studniska, Włodarka.</p>
+<p>Sol. S. Nicolai, Transfig. Dni, Ded. Ecol. Dom. 8 pt Pent. Confr. Transfig. Dni.</p>
+<p>Sch. el. in Wie niec.</p>
+<p>19. Wistka, p. TE. S. Barthol. Ap. lig. n. a. 1028.</p>
+<p>Adm. Cajet. Książkowski.</p>
+<p>lp. Wistka Szluchęcka, Wistka Królewska, Michalinów, Ladne, Mursk, Plantoszczyzna, Przerytka, Smulnik, Adaminów, Łączki, Kosinowo, Dobiegniewo, Jazy, Dąb Polski.</p>
+<p>Sol. Purif. Nativ. BVM., S. Barthol. Ap.</p>
+<p>Confr. Nativ. BMV.</p>
+<p>20. Zgłowiączka, p. TE. Natiu. BMV. mur. n. a. 2120.</p>
+<p>Adm. qui in Lubraniec.</p>
+<p>lp. pp. Zgłowiączka, Żydowo, Żydówek, Rabinowo, praed.</p>
+<p>Janiszewek,Janiszewo, Wola Sosnowa, Holendry Wolskie, Józefowo, Milyn, Holendry Milynskie, Zaborowo, Sie- mnówek, Siemnowo, Sokowo, Sølkówek, Grojec, Micha- Iowo, Grójczyk, Smogorzewo, Koniec, Kwilino.</p>
+<p>Sol. Nativ. BMV.</p>
+<p>Confr. Misericord. BMV.</p>
+<p>Cap.pub. lig. in Grojec, cum Sol. Invent. et Exalt. S. Crucis.</p>
+<p>in Districtu Gostniensi, Gübern. Varsavien.</p>
+<p>21. Białotarsk, p. TE. Exalt. S. Cruc. lig. n. a. 2608.</p>
+<p>Cur. Barthol. Prylínsk. n. 25 Aug, 1806 or. 1829.</p>
+<p>lp. pp. Białotarsk, Dabrowka, Górki, Piotrowo, Zawada, Za- krzewo, Dziankowo, Dziankówek, Wola Dziankowska, Beszyn, Siemony, Kowalki, Borek, Gulewo, Czarne Holen- dry, Lubaty, Zaluiskowo, Okna, Skrzynki, Skrzyneczki, Czarne, Trzebowo, Patrowo, Patrówek, Marjanka, Józefo- wo, Kanibród, Zieleniec, Prylin.</p>
+<p>Sol. Invent. et Exalt. S. Crucis.</p>
+<p>Confr. Transfig. Dni.</p>
+<p>22. Dinnowo, p. TE. SS. Trinit. Patr. S. Nicol. lig. n. a. 2205.</p>
+<p>Adm. Joan. Przywieczerski n. 2 Febr.1840 or. 1863.</p>
+<p>lp. pp. Duninowo, Skoki Wielkie, Skoki Male, Karolewo, Nowa Wies, Grodziska, Lipiauki, Goren Maly, Kolonia Duninów, Kobyle Błoto, Środuń, Trzcianne, Czołownica, Wólka, Romunki Środuńskie, Leonów, Kamion, Huta, Śro- duż praed., Duninów Stary.</p>
+<p>Sol. SS. Trinit. S. Nicol. EC.</p>
+<p>Confr. S. Nicolai.</p>
+<p>Cap. pub. mur. JXti in Coemet.</p>
+<h2>2. Decałatis Radjefoviensis,</h2>
+<p>in Districtu Nieszaviensi, Guber. Varsavien.</p>
+<ul>
+<li>1. Radziejów, os. II, cl. TE. Asumptio BM. mur. n.a.2500. Praep. Thom. Bukowski Decanus n. 12 Dec. 1839 or. 1862.</li>
+</ul>
+<p>Vic. Bolesł. Chyczewski n. 11 Jan. 1845 or. 1871.</p>
+<p>lp. Radziejów, pp. Czołowo, Czołowe, Klonia Czołowska,</p>
+<p>Pruchnowo, Plebanka, Opatowice, Kolonia Opatowska, Stary Radziejów, Skibin, praed. Przenystka, Leonowo. Solem. Circumcis. DN., SS. Trinit., Assump. Rosar. BM., Exalt.</p>
+<p>S. Cracis, S. Annae.</p>
+<p>Confrat. SS. Trinit. S. Crucis, Rosarii BM.</p>
+<p>Scholae elem. in Radziejew et Stary Radziejów. Gerontocom. in Radziejów.</p>
+<p>Ecclesia olim Peoular. PP. Ordinis S. Franc. Convent. 2. Badkowo, p. TE.</p>
+<p>mur. n. a. 2087.</p>
+<p>Adm. Felix Besler, Cand.S.Th. n.15 Jul. 1815 or.1840. lp. pp. Badkowo, Bachorka, Jaranowo, Kalinowiec, Kaweczyn, Kolonia Kujawska, Kolonia Shupy, Gawrony, Toporzyszcze- wo, Wysocin, Wysocinek, Kolonia Stasin, Zabieniec, Ko- lonia Toporzyszczewo.</p>
+<p>Solemn. S. Annae (seq. Domin.), S. Matthaei Ap.</p>
+<p>Confrat, S. Annae.</p>
+<p>Schola elem. in Badkowo.</p>
+<ul>
+<li>3. Broniewo, p. TE. S. Adalbertus E.M. mur. n. a. 807.</li>
+</ul>
+<p>Adm. Adalb. Kochowicz, Ord. S. Stan. III cl. Eq.</p>
+<ul>
+<li>18. Apr. 1813 or. 1835.</li>
+<li>lp. pp. Broniewo, Płowki, Broniewek, Dębowiec, Szosuka, Bie- daszkowo.</li>
+</ul>
+<p>Sol. S. Adalberti, et S. Barbar. (Demin. seq.) Dedic. Eccles. Confrat. BMVirg-</p>
+<ul>
+<li>4. Bronislaw, p. Eccl. an. 1870 igue combus. n. a. 660. Cur. qui in Broniewo, Adalb. Kochowicz.</li>
+</ul>
+<p>lp. Bronislaw, Koszczaly, Cielaki, Majdany.</p>
+<ul>
+<li>Schola elem. in Bronislaw.</li>
+<li>5. Broniszewo, TE. S. Benno EC. lig. n. a. 1633.</li>
+</ul>
+<p>Adm. qui in Połajewo.</p>
+<p>lp. pp. Broniszewo, col. Wywoznia, Kalina, praed. Noć, Młyna- rzewo, col. Obory, col. Ruda, Nockie Holendry; Stolarskie Holendry, Smolniki, Potazniki, Nykiel, Rutki, Ruszkowo, praed. Ruszkowek, col. Morzyczyn, Raciecka Kolonia, Raciecin, Mostki Racieckie, col. Talarkowo, Mostki Wa- wrzynowskie, Trzcniec, Wojcinek, Wileza-Kloda.</p>
+<p>Solemn. S. Benonis EC.</p>
+<p>Confrat. Immac. Concep. BM.</p>
+<ul>
+<li>6. Byczyna, p. TE. S. Hedvigis lig. n. a. 1895.</li>
+</ul>
+<p>Cur. Vladisl. Bujakowski n. 15 Jun. 1814 or. 1837.</p>
+<p>CALIS.</p>
+<p>2</p>
+</html>
