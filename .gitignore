@@ -194,4 +194,8 @@ pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/visualstudiocode,python
 
+**/.DS_Store
+
 /label-studio/postgres-data
+label-studio/backends/layoutlmv3_backend/data/models/
+
