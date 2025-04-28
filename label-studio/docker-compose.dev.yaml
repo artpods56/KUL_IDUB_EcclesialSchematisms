@@ -12,8 +12,8 @@ services:
     container_name: label-studio
     ports:
       - "8080:8080"
-    volumes:
-      - ./data:/label-studio/data:rw
+#    volumes:
+#      - ./data:/label-studio/data:rw
     env_file:
       - .env
     command: label-studio
@@ -37,11 +37,21 @@ services:
     command: >
       label-studio-ml start . 
         --host 0.0.0.0 --port 9090
-    develop:
-        watch:
-          - path: ./backends/${LABEL_STUDIO_ML_BACKEND}
-            target: /app
-            action: sync
+    deploy: 
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    # develop:
+    #     watch:
+    #       - path: ./backends/${LABEL_STUDIO_ML_BACKEND}
+    #         target: /app
+    #         action: sync
   db:
     image: pgautoupgrade/pgautoupgrade:13-alpine
     hostname: db
@@ -52,7 +62,7 @@ services:
     env_file:
       - .env
     ports:
-      - "5432:5432"
+      - "5433:5432"
 
   minio:
     image: quay.io/minio/minio:RELEASE.2024-02-13T15-35-11Z
