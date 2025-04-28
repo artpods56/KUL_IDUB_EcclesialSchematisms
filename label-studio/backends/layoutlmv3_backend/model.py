@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
-
+from io import BytesIO
+import boto3
+import requests
 import torch
 from label_studio_ml.model import LabelStudioMLBase
 from label_studio_ml.response import (
@@ -68,6 +70,19 @@ class LayoutLMv3Backend(LabelStudioMLBase):
 
         self._lazy_init()
 
+        endpoint_url = os.getenv("S3_ENDPOINT_URL")
+        aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
+        aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+        region_name = os.getenv("AWS_REGION", "us-east-1")
+
+        self.s3 = boto3.client(
+            's3',
+            endpoint_url=endpoint_url,
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            region_name=region_name,
+        )
+
         params = get_single_tag_keys(
             self.parsed_label_config, "RectangleLabels", "Image"
         )
@@ -113,7 +128,24 @@ class LayoutLMv3Backend(LabelStudioMLBase):
             except (OSError, ValueError, RuntimeError) as e:
                 logger.error(f"Could not load checkpoint from {checkpoint_path} as {e}")
                 raise CheckpointLoadError(str(e), str(checkpoint_path))
+            
+    def _load_image(self, uri: str) -> Image.Image:
+        """
+        Wczytuje obraz z S3/HTTP bez zapisu na dysk.
+        """
+        if uri.startswith('s3://'):
+            # s3://bucket/key
+            _, bucket_key = uri.split('s3://', 1)
+            bucket, key = bucket_key.split('/', 1)
+            obj = self.s3.get_object(Bucket=bucket, Key=key)
+            buf = BytesIO(obj['Body'].read())
+            return Image.open(buf).convert('RGB')
 
+        # fallback na HTTP/HTTPS
+        resp = requests.get(uri, stream=True)
+        resp.raise_for_status()
+        return Image.open(BytesIO(resp.content)).convert('RGB')
+    
     def setup(self):
         self.set("model_version", f"{self.__class__.__name__}-v0.0.1")
 
@@ -124,9 +156,8 @@ class LayoutLMv3Backend(LabelStudioMLBase):
         all_task_predictions = []
 
         for task_idx, task in enumerate(tasks):
-            image_path_or_url = task["data"]["image"]
-            local_path = self.get_local_path(image_path_or_url, task_id=task.get("id"))
-            image = Image.open(local_path).convert("RGB")
+            image_uri = task["data"]["image"]
+            image = self._load_image(image_uri)
             image_width, image_height = image.size
 
             encoding = self._processor(

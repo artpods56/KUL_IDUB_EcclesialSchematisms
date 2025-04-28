@@ -4,3 +4,5 @@ torchvision
 pillow
 opencv-python
 pytesseract
+boto3
+requests
