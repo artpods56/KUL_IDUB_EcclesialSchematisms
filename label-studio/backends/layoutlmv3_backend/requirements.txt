@@ -1,0 +1,6 @@
+transformers
+torch
+torchvision
+pillow
+opencv-python
+pytesseract
