@@ -1,0 +1,27 @@
+services:
+  label-studio:
+    image: heartexlabs/label-studio:latest
+    container_name: label-studio
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data/schematyzmy/:/label-studio/data
+      - ./data/schematyzmy:/label-studio/files
+    env_file:
+      - .env
+    command: label-studio
+
+  ml-backend:
+    container_name: label-studio-ml-backend
+    image: humansignal/ml-backend:v0
+    build:
+      context: ./backends/${LABEL_STUDIO_ML_BACKEND} 
+      args:
+        TEST_ENV: ${TEST_ENV}
+    ports:
+      - "9090:9090"
+    volumes:
+      - ".backends/data/server:/data"
+    env_file:
+      - .env
+
