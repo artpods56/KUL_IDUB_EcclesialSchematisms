@@ -15,7 +15,7 @@ services:
 #    volumes:
 #      - ./data:/label-studio/data:rw
     env_file:
-      - .env
+      - .env.dev
     command: label-studio
     depends_on:
       - db
@@ -33,7 +33,7 @@ services:
     volumes:
       - ./backends/${LABEL_STUDIO_ML_BACKEND}:/app:rw
     env_file:
-      - .env
+      - .env.dev
     command: >
       label-studio-ml start . 
         --host 0.0.0.0 --port 9090
@@ -60,7 +60,7 @@ services:
       - ./postgres-data:/var/lib/postgresql/data
       - ./initdb:/docker-entrypoint-initdb.d:ro
     env_file:
-      - .env
+      - .env.dev
     ports:
       - "5433:5432"
 
@@ -75,7 +75,7 @@ services:
     volumes:
       - minio-data:/data
     env_file:
-      - .env
+      - .env.dev
 
   prometheus:
     image: quay.io/prometheus/prometheus:v2.37.1
@@ -87,7 +87,7 @@ services:
       - "./prometheus/minio/prometheus.yaml:/etc/prometheus/prometheus.yaml"
       - "prometheus-data:/prometheus"
     env_file:
-      - .env
+      - .env.dev
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
 
@@ -101,7 +101,7 @@ services:
         TEST_ENV: ${TEST_ENV}
 
     env_file:
-      - .env
+      - .env.dev
     volumes:
       - ./backends/${LABEL_STUDIO_ML_BACKEND}:/app:rw
     profiles: ["test"]
