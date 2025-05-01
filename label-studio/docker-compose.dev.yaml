@@ -23,7 +23,6 @@ services:
 
   ml-backend:
     container_name: label-studio-ml-backend-dev
-    image: humansignal/ml-backend:v0
     build:
       context: ./backends/${LABEL_STUDIO_ML_BACKEND} 
       args:

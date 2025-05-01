@@ -20,7 +20,8 @@ RUN --mount=type=cache,target="/var/cache/apt",sharing=locked \
     apt-get update; \
     apt-get upgrade -y; \
     apt install --no-install-recommends -y  \
-        git; \
+        git \
+        tesseract-ocr; \
     apt-get autoremove -y
 
 # install base requirements
