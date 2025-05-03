@@ -9,16 +9,24 @@ set -euo pipefail
 
 echo "[sync-minio] Loaded environment variables."
 
-SOURCE_DIR="${MINIO_SOURCE_DIR}"
-
-# Set up MinIO client alias (ignore error if already exists)
+echo "[sync-minio] Setting up MinIO client."
 mc alias set local "${AWS_S3_ENDPOINT_URL}" \
   "${AWS_ACCESS_KEY_ID}" "${AWS_SECRET_ACCESS_KEY}" >/dev/null 2>&1 || true
+
+echo "Testing connection to $AWS_S3_ENDPOINT_URL"
+mc ready local
+if [ $? -ne 0 ]; then
+  echo "[sync-minio] Connection to MinIO failed. Exiting."
+  exit 1
+fi
+echo "[sync-minio] Connection to MinIO successful."
+echo "[sync-minio] Starting synchronization..."
+
+SOURCE_DIR="${MINIO_SOURCE_DIR}"
 
 # Mirror all subdirectories in SOURCE_DIR to MinIO buckets
 for dir in "${SOURCE_DIR}"/*; do
   [ -d "${dir}" ] || continue
-  echo "syncing: ${dir}"
 
   # Bucket name: remove underscores for compatibility
   bucket="$(basename "${dir}" | tr -d '_')"

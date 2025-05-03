@@ -92,8 +92,8 @@ services:
       - ./sync-minio.sh:/scripts/sync-minio.sh
       - ../data/schematyzmy/:/data:rw
     entrypoint: /bin/sh -c "/scripts/sync-minio.sh"
-    # restart: "no"
-    # profiles: ["sync"]
+    restart: "no"
+    profiles: ["sync"]
 
   prometheus:
     image: quay.io/prometheus/prometheus:v2.37.1
