@@ -225,9 +225,8 @@ class LayoutLMv3Backend(LabelStudioMLBase):
             logger.info(f"Label map: {self.label_map}")
 
             current_task_results = []
-            for bbox, prediction_id in zip(merged_bboxes, merged_classes):
-
-                if prediction_id in self.label_map:
+            for bbox, class_name in zip(merged_bboxes, merged_classes):
+                if class_name in self.label_map.values():
                     x_percent, y_percent, width_percent, height_percent = (
                         pixel_bbox_to_percent(
                             bbox=bbox,
@@ -235,7 +234,6 @@ class LayoutLMv3Backend(LabelStudioMLBase):
                             image_height=image_height,
                         )
                     )
-                    label = self.label_map[prediction_id]
                     result_item = {
                         "type": "rectanglelabels",
                         "from_name": self.from_name,
@@ -244,7 +242,7 @@ class LayoutLMv3Backend(LabelStudioMLBase):
                         "original_height": image_height,
                         "image_rotation": 0,
                         "value": {
-                            "rectanglelabels": [label],
+                            "rectanglelabels": [class_name],
                             "x": x_percent,
                             "y": y_percent,
                             "width": width_percent,
