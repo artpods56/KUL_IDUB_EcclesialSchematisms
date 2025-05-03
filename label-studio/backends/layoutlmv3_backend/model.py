@@ -1,10 +1,11 @@
 import logging
 import os
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
-from io import BytesIO
+
 import boto3
 import requests
 import torch
@@ -18,7 +19,7 @@ from PIL import Image
 from torch._prims_common import DeviceLikeType, check
 from transformers import AutoProcessor, LayoutLMv3ForTokenClassification
 
-from utils import pixel_bbox_to_percent, sliding_window
+from utils import merge_bio_entities, pixel_bbox_to_percent, sliding_window
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -76,7 +77,7 @@ class LayoutLMv3Backend(LabelStudioMLBase):
         region_name = os.getenv("AWS_REGION", "us-east-1")
 
         self.s3 = boto3.client(
-            's3',
+            "s3",
             endpoint_url=endpoint_url,
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
@@ -128,24 +129,24 @@ class LayoutLMv3Backend(LabelStudioMLBase):
             except (OSError, ValueError, RuntimeError) as e:
                 logger.error(f"Could not load checkpoint from {checkpoint_path} as {e}")
                 raise CheckpointLoadError(str(e), str(checkpoint_path))
-            
+
     def _load_image(self, uri: str) -> Image.Image:
         """
         Wczytuje obraz z S3/HTTP bez zapisu na dysk.
         """
-        if uri.startswith('s3://'):
+        if uri.startswith("s3://"):
             # s3://bucket/key
-            _, bucket_key = uri.split('s3://', 1)
-            bucket, key = bucket_key.split('/', 1)
+            _, bucket_key = uri.split("s3://", 1)
+            bucket, key = bucket_key.split("/", 1)
             obj = self.s3.get_object(Bucket=bucket, Key=key)
-            buf = BytesIO(obj['Body'].read())
-            return Image.open(buf).convert('RGB')
+            buf = BytesIO(obj["Body"].read())
+            return Image.open(buf).convert("RGB")
 
         # fallback na HTTP/HTTPS
         resp = requests.get(uri, stream=True)
         resp.raise_for_status()
-        return Image.open(BytesIO(resp.content)).convert('RGB')
-    
+        return Image.open(BytesIO(resp.content)).convert("RGB")
+
     def setup(self):
         self.set("model_version", f"{self.__class__.__name__}-v0.0.1")
 
@@ -190,25 +191,43 @@ class LayoutLMv3Backend(LabelStudioMLBase):
 
             logits = outputs.logits
 
-            predictions = logits.argmax(-1).squeeze().tolist()
+            predicted_tokens = logits.argmax(-1).squeeze().tolist()
             token_bboxes = encoding.bbox.squeeze().tolist()
 
             if len(token_bboxes) == 512:
-                predictions = [predictions]
+                predicted_tokens = [predicted_tokens]
                 token_bboxes = [token_bboxes]
 
-            bboxes, predictions, flattened_words = sliding_window(
+            bboxes, predictions, words = sliding_window(
                 self._processor,
                 token_bboxes,
-                predictions,
+                predicted_tokens,
                 encoding,
                 image_width,
                 image_height,
             )
 
+            # merge BIO entities
+
+            merged_bboxes, merged_sentences, merged_classes = merge_bio_entities(
+                bboxes,
+                predictions,
+                words,
+                self._model.config.id2label,
+                o_label_id=14,
+                verbose=True,
+            )
+            logger.info(f"Task {task_idx} - Merged sentences: {merged_sentences}")
+            logger.info(f"Merged classes: {merged_classes}")
+            logger.info(f"Task {task_idx} - Merged bboxes: {merged_bboxes}")
+
+            logger.info(f"Merged classes: {merged_classes}")
+            logger.info(f"Label map: {self.label_map}")
+
             current_task_results = []
-            for bbox, prediction in zip(bboxes, predictions):
-                if prediction in self.label_map:
+            for bbox, prediction_id in zip(merged_bboxes, merged_classes):
+
+                if prediction_id in self.label_map:
                     x_percent, y_percent, width_percent, height_percent = (
                         pixel_bbox_to_percent(
                             bbox=bbox,
@@ -216,7 +235,7 @@ class LayoutLMv3Backend(LabelStudioMLBase):
                             image_height=image_height,
                         )
                     )
-                    label = self.label_map[prediction]
+                    label = self.label_map[prediction_id]
                     result_item = {
                         "type": "rectanglelabels",
                         "from_name": self.from_name,
