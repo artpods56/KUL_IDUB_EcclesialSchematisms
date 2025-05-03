@@ -36,16 +36,16 @@ services:
     command: >
       label-studio-ml start . 
         --host 0.0.0.0 --port 9090
-    deploy: 
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    runtime: nvidia
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
+    # deploy: 
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    # runtime: nvidia
+    # environment:
+    #   - NVIDIA_VISIBLE_DEVICES=all
     # develop:
     #     watch:
     #       - path: ./backends/${LABEL_STUDIO_ML_BACKEND}
@@ -64,10 +64,15 @@ services:
       - "5433:5432"
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2024-02-13T15-35-11Z
+    image: quay.io/minio/minio:latest
     command: server /data --address ":9000" --console-address ":9009"
     restart: unless-stopped
     logging: *default-logging
+    healthcheck:
+      test: mc ready local 
+      interval: 5s
+      timeout: 5s
+      retries: 3
     ports:
       - "9000:9000"
       - "9009:9009"
@@ -75,6 +80,20 @@ services:
       - minio-data:/data
     env_file:
       - .env.dev
+    
+  minio-sync:
+    image: minio/mc:latest
+    env_file: 
+      - .env.dev 
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./sync-minio.sh:/scripts/sync-minio.sh
+      - ../data/schematyzmy/:/data:rw
+    entrypoint: /bin/sh -c "/scripts/sync-minio.sh"
+    # restart: "no"
+    # profiles: ["sync"]
 
   prometheus:
     image: quay.io/prometheus/prometheus:v2.37.1
