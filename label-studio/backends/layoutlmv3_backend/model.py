@@ -19,7 +19,7 @@ from PIL import Image
 from torch._prims_common import DeviceLikeType, check
 from transformers import AutoProcessor, LayoutLMv3ForTokenClassification
 
-from utils import merge_bio_entities, pixel_bbox_to_percent, sliding_window
+from utils import merge_bio_entities, pixel_bbox_to_percent, sliding_window, preprocess_for_ocr
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -40,6 +40,8 @@ MODEL_DIR = "/app/data/models"
 checkpoint_path = os.path.join(
     MODEL_DIR, os.getenv("MODEL_CHECKPOINT", "checkpoint-400")
 )
+
+
 
 logger.info(f"Loading model from {checkpoint_path}")
 _GLOBAL_MODEL = LayoutLMv3ForTokenClassification.from_pretrained(checkpoint_path)
@@ -70,6 +72,11 @@ class LayoutLMv3Backend(LabelStudioMLBase):
         super(LayoutLMv3Backend, self).__init__(**kwargs)
 
         self._lazy_init()
+        self.api_key = os.getenv("LABEL_STUDIO_API_KEY")
+        self.request_headers = {
+            "Authorization": f"Token {self.api_key}",
+            "Content-Type": "application/json",
+        }
 
         endpoint_url = os.getenv("AWS_S3_ENDPOINT_URL")
         aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
@@ -142,8 +149,9 @@ class LayoutLMv3Backend(LabelStudioMLBase):
             buf = BytesIO(obj["Body"].read())
             return Image.open(buf).convert("RGB")
 
+        
         # fallback na HTTP/HTTPS
-        resp = requests.get(uri, stream=True)
+        resp = requests.get(uri, stream=True, headers=self.request_headers)
         resp.raise_for_status()
         return Image.open(BytesIO(resp.content)).convert("RGB")
 
@@ -159,6 +167,7 @@ class LayoutLMv3Backend(LabelStudioMLBase):
         for task_idx, task in enumerate(tasks):
             image_uri = task["data"]["image"]
             image = self._load_image(image_uri)
+            image = preprocess_for_ocr(image)
             image_width, image_height = image.size
 
             encoding = self._processor(

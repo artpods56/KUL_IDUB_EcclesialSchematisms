@@ -21,7 +21,8 @@ RUN --mount=type=cache,target="/var/cache/apt",sharing=locked \
     apt-get upgrade -y; \
     apt install --no-install-recommends -y  \
         git \
-        tesseract-ocr; \
+        tesseract-ocr \
+        libgl1-mesa-glx; \
     apt-get autoremove -y
 
 # install base requirements

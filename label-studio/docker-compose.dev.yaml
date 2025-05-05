@@ -90,7 +90,7 @@ services:
         condition: service_healthy
     volumes:
       - ./sync-minio.sh:/scripts/sync-minio.sh
-      - ../data/schematyzmy/:/data:rw
+      - ../data:/data:rw
     entrypoint: /bin/sh -c "/scripts/sync-minio.sh"
     restart: "no"
     profiles: ["sync"]

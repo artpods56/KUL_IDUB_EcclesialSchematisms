@@ -1,5 +1,7 @@
 import logging
 from typing import List, Tuple
+import cv2 as cv
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -290,3 +292,18 @@ def merge_bio_entities(bboxes, predictions, tokens, id2label, o_label_id=14, ver
 
 
     return merged_boxes, merged_tokens, merged_classes
+
+def preprocess_for_ocr(img: Image.Image) -> Image.Image:
+    """Simplified preprocessing: Convert to grayscale and apply Otsu's thresholding."""
+    img_np = np.array(img)
+
+    if len(img_np.shape) == 3:
+         img_np = cv.cvtColor(img_np, cv.COLOR_RGB2GRAY)
+    elif img.mode != 'L': # Handle PIL modes other than L
+         img_np = np.array(img.convert('L'))
+
+    ret, thresh_img = cv.threshold(img_np, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU)
+
+    thresh_img = cv.bitwise_not(thresh_img) 
+
+    return Image.fromarray(thresh_img).convert('RGB')
