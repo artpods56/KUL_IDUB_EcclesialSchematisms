@@ -45,6 +45,7 @@ checkpoint_path = os.path.join(
 
 logger.info(f"Loading model from {checkpoint_path}")
 _GLOBAL_MODEL = LayoutLMv3ForTokenClassification.from_pretrained(checkpoint_path)
+_GLOBAL_MODEL.to(device)
 logger.info("Loading processor")
 _GLOBAL_PROCESSOR = AutoProcessor.from_pretrained(
     "microsoft/layoutlmv3-large", apply_ocr=True
@@ -186,14 +187,14 @@ class LayoutLMv3Backend(LabelStudioMLBase):
             x = []
             for i in range(0, len(encoding["pixel_values"])):
                 ndarray_pixel_values = encoding["pixel_values"][i]
-                tensor_pixel_values = torch.tensor(ndarray_pixel_values)
+                tensor_pixel_values = ndarray_pixel_values.clone().detach()
                 x.append(tensor_pixel_values)
 
             x = torch.stack(x)
             encoding["pixel_values"] = x
 
             for k, v in encoding.items():
-                encoding[k] = torch.tensor(v)
+                encoding[k] = v.clone().detach().to(device)
 
             with torch.no_grad():
                 outputs = self._model(**encoding)
