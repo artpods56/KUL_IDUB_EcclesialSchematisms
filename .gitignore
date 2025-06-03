@@ -198,4 +198,19 @@ pyrightconfig.json
 
 /label-studio/postgres-data
 label-studio/backends/layoutlmv3_backend/data/models/
+data/schematyzmy/
 
+ocr_cache/
+data/
+outputs/
+wandb/
+
+label-studio/data/hf_dataset
+label-studio/data/images
+label-studio/data/ocr_cache
+minio_data
+data_old
+
+models/
+logs_focal/
+test_focal/
