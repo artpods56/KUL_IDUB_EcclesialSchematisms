@@ -1,0 +1,6 @@
+wandb:
+  enable: true
+  project: IDUB_Ecclesiae
+  entity: artpods56-ar-prod
+  name: layoutlmv3-large-focal
+  tags: ["layoutlmv3", "ocr", "churches"]
