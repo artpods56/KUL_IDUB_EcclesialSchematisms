@@ -66,16 +66,16 @@ def strip_noncritical(state:dict, key_to_strip: str) -> dict:
 
 
 def get_modified_count(old_state, new_state) -> int:
-    
     new_state = strip_noncritical(new_state, "file")
     old_state = strip_noncritical(old_state, "file")
-    
+
     modified_count = 0
-    for state_key, state_value in new_state.items():
-        if state_key not in old_state or old_state[state_key] != state_value:
+    for key in old_state.keys() & new_state.keys():  # tylko wspólne
+        if old_state[key] != new_state[key]:
             modified_count += 1
-    
+
     return modified_count
+
 
 
 def compute_state_hash(state: dict) -> str:
@@ -186,10 +186,15 @@ def parse_args():
 
 
 def main():
+    
     cli_args = parse_args()
+    print(f"Using environment file: {cli_args.env_file}")
+    
     config = load_config_from_env(env_file=cli_args.env_file)
-    config['ENV_FILE'] = cli_args.env_file
+    
     setup_logging(config['LOG_LEVEL'])
+    config['ENV_FILE'] = cli_args.env_file
+    
     
     client = Minio(
         config['MINIO_ENDPOINT'],

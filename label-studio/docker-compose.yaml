@@ -77,10 +77,27 @@ services:
         condition: service_healthy
     volumes:
       - ./sync-minio.sh:/scripts/sync-minio.sh
-      - ../data:/data:rw
+      - app-data:/data:rw
     entrypoint: /bin/sh -c "/scripts/sync-minio.sh"
     restart: "no"
     profiles: ["sync"]
+
+  dataset-sync:
+    build:
+      context: ./dataset_sync
+      dockerfile: Dockerfile
+    container_name: dataset-sync-dev
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      - minio
+    volumes:
+      - app-data:/data:rw
+      - ./dataset_sync:/app:rw
+      - ./.env.prod:/app/config/.env.prod:ro
+    env_file:
+      - .env.prod
+    command: ["/bin/bash", "-c", "/app/setup_data.sh && python dataset_sync.py --loop --env_file /app/config/.env.dev"]
 
   prometheus:
     image: quay.io/prometheus/prometheus:v2.37.1
@@ -101,3 +118,4 @@ services:
 volumes:
   minio-data:
   prometheus-data:
+  app-data:  # Added named volume for application data

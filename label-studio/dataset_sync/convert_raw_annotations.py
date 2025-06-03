@@ -52,12 +52,12 @@ def push_to_hf_repo(config, commit_message_metadata = ""):
         
         repo.git_pull()
     
-        repo.git_add('train.jsonl')
+        repo.git_add(out_jsonl)
     
         repo.git_commit(commit_message)
         repo.git_push()
         
-        logging.info(f"Successfully pushed train.jsonl to HF repository: {config['HF_REPO_URL']}")
+        logging.info(f"Successfully pushed {out_jsonl.name} to HF repository: {config['HF_REPO_URL']}")
         
     except Exception as e:
         logging.error(f"Failed to push to HF repository: {e}")
@@ -88,7 +88,6 @@ def check_if_ocr_exists(image_path: Path, ocr_dir: Path) -> bool:
     Returns True if OCR file exists, False otherwise.
     """
     ocr_file = ocr_dir / (image_path.stem + ".json")
-    print(f"OCR file path: {ocr_file}")
     return ocr_file.exists()
 
 def run_ocr(image_pil: Image.Image, image_path: Path,  ocr_dir: Path) -> Tuple[List[str], List[List[int]], List[float]]:

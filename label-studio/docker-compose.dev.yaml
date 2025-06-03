@@ -51,32 +51,43 @@ services:
     command: server --address ":9007" --console-address ":9006" /data
     restart: unless-stopped
     logging: *default-logging
-    healthcheck:
-      test: mc ready local 
-      interval: 5s
-      timeout: 5s
-      retries: 3
     ports:
       - "9007:9007"
       - "9006:9006"
     volumes:
       - minio-data:/data
     env_file:
-      - .env.prod
+      - .env.dev
 
-    
   minio-sync:
     image: minio/mc:latest
     env_file: 
-      - .env.dev 
+      - .env.dev
     volumes:
       - ./sync-minio.sh:/scripts/sync-minio.sh
-      - ../minio_data:/data:rw
+      - app-data:/data:rw
     entrypoint: /bin/sh -c "/scripts/sync-minio.sh"
     restart: "no"
     profiles: ["sync"]
     depends_on:
       - minio
+
+  dataset-sync:
+    build:
+      context: ./dataset_sync
+      dockerfile: Dockerfile
+    container_name: dataset-sync-dev
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      - minio
+    volumes:
+      - app-data:/data:rw
+      - ./dataset_sync:/app:rw
+      - ./.env.dev:/app/config/.env.dev:ro
+    env_file:
+      - .env.dev
+    command: ["/bin/bash", "-c", "/app/setup_data.sh && python dataset_sync.py --loop --env_file /app/config/.env.dev"]
 
   prometheus:
     image: quay.io/prometheus/prometheus:v2.37.1
@@ -119,3 +130,4 @@ volumes:
   minio-data:
   prometheus-data:
   postgres-data:
+  app-data:
