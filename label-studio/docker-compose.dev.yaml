@@ -39,7 +39,7 @@ services:
     hostname: db
     restart: unless-stopped
     volumes:
-      - ./postgres-data:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql/data
       - ./initdb:/docker-entrypoint-initdb.d:ro
     env_file:
       - .env.dev
@@ -48,7 +48,7 @@ services:
 
   minio:
     image: quay.io/minio/minio:latest
-    command: server /data --address ":9000" --console-address ":9009"
+    command: server --address ":9007" --console-address ":9006" /data
     restart: unless-stopped
     logging: *default-logging
     healthcheck:
@@ -57,26 +57,26 @@ services:
       timeout: 5s
       retries: 3
     ports:
-      - "9000:9000"
-      - "9009:9009"
+      - "9007:9007"
+      - "9006:9006"
     volumes:
       - minio-data:/data
     env_file:
-      - .env.dev
+      - .env.prod
+
     
   minio-sync:
     image: minio/mc:latest
     env_file: 
       - .env.dev 
-    depends_on:
-      minio:
-        condition: service_healthy
     volumes:
       - ./sync-minio.sh:/scripts/sync-minio.sh
-      - ../data:/data:rw
+      - ../minio_data:/data:rw
     entrypoint: /bin/sh -c "/scripts/sync-minio.sh"
     restart: "no"
     profiles: ["sync"]
+    depends_on:
+      - minio
 
   prometheus:
     image: quay.io/prometheus/prometheus:v2.37.1
@@ -118,3 +118,4 @@ services:
 volumes:
   minio-data:
   prometheus-data:
+  postgres-data:
