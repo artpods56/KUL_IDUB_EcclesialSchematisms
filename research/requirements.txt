@@ -1,5 +1,0 @@
-docling-core
-mlx-vlm
-pillow
-anthropic
-pillow
