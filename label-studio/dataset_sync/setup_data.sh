@@ -3,6 +3,15 @@ set -e
 
 echo "Starting data setup process..."
 
+GIT_USER_EMAIL="${GIT_USER_EMAIL:-container-user@example.com}"
+GIT_USER_NAME="${GIT_USER_NAME:-Container User}"
+
+echo "Configuring Git user email: ${GIT_USER_EMAIL}"
+git config --global user.email "${GIT_USER_EMAIL}"
+echo "Configuring Git user name: ${GIT_USER_NAME}"
+git config --global user.name "${GIT_USER_NAME}"
+echo "Git config set."
+
 # Check if HF repo is already cloned and has images
 if [ ! -d "/data/hf_dataset/.git" ] || [ ! -f "/data/images/setup_complete" ]; then
     echo "Setting up HuggingFace dataset and extracting images..."

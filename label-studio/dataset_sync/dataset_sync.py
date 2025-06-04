@@ -13,36 +13,71 @@ from minio import Minio
 from config import setup_logging, load_config_from_env
 
 def run_conversion(config, commit_message_metadata: str):
-    """Run the conversion script with the configured parameters."""
+    """
+    Runs the convert_raw_annotations.py script and streams its logs in real-time.
+    'config' is the configuration object loaded by dataset_sync.py.
+    It must contain 'CONVERT_SCRIPT' (name of the script) and 
+    'ENV_FILE_PATH_USED_BY_DATASET_SYNC' (path to the .env file dataset_sync.py is using).
+    """
+    python_executable = sys.executable  # e.g., /usr/local/bin/python
+    convert_script_name = config['CONVERT_SCRIPT'] # From config, e.g., "convert_raw_annotations.py"
     
-    #python convert_raw_annotations.py --env_file .env.dev
-    logging.info("Running conversion script...")
+    # Ensure the script path is correct. Assuming it's in /app (the WORKDIR)
+    # If CONVERT_SCRIPT is just a name, this should work if /app is in PATH or is current dir.
+    # For robustness, you might construct an absolute path if needed: script_full_path = Path("/app") / convert_script_name
+
+    env_file_for_conversion = config.get('ENV_FILE')
+    if not env_file_for_conversion:
+        logging.error("ENV_FILE not found in config. Cannot run conversion script.")
+        raise ValueError("Missing ENV_FILE in configuration for conversion script.")
+
+    command = [
+        python_executable,
+        convert_script_name,
+        '--env_file', str(env_file_for_conversion),
+        '--commit_message_metadata', str(commit_message_metadata) # Ensure it's a string
+    ]
+
+    logging.info(f"Running conversion script with real-time logging: {' '.join(command)}")
+
     try:
-        cmd = [
-            sys.executable, config['CONVERT_SCRIPT'],
-            '--env_file', config['ENV_FILE'],
-            '--commit_message_metadata', commit_message_metadata
-        ]
-        
-        logging.info(f"Running conversion: {' '.join(cmd)}")
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        
-        if result.stdout:
-            logging.info(f"Conversion output: {result.stdout}")
-        if result.stderr:
-            logging.warning(f"Conversion stderr: {result.stderr}")
-            
-        logging.info("Conversion completed successfully.")
-        
-    except subprocess.CalledProcessError as e:
-        logging.error(f"Conversion failed with exit code {e.returncode}")
-        if e.stdout:
-            logging.error(f"Stdout: {e.stdout}")
-        if e.stderr:
-            logging.error(f"Stderr: {e.stderr}")
+        # Use Popen to get control over stdout/stderr streams
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, # Merge stderr into stdout
+            text=True,                # Decode output as text
+            bufsize=1,                # Line-buffered
+            universal_newlines=True   # Ensure cross-platform newline handling (often implied by text=True)
+        )
+
+        # Read and print output line by line
+        if process.stdout:
+            for line in iter(process.stdout.readline, ''):
+                # Print the line from the subprocess.
+                # The convert_raw_annotations.py script already uses logging,
+                # so its output will be formatted log lines.
+                # Adding a prefix can help distinguish these logs.
+                sys.stdout.write(f"[convert_script] {line.strip()}\n")
+                sys.stdout.flush() # Ensure immediate output
+            process.stdout.close()
+
+        return_code = process.wait() # Wait for the process to complete
+
+        if return_code == 0:
+            logging.info("Conversion script completed successfully.")
+        else:
+            # Specific error messages from the script should have already been printed.
+            error_message = f"Conversion script failed with exit code {return_code}."
+            logging.error(error_message)
+            # Re-raise an error to indicate failure to the calling sync logic
+            raise subprocess.CalledProcessError(return_code, command, output=None, stderr=None)
+
+    except FileNotFoundError:
+        logging.error(f"Conversion script '{convert_script_name}' not found. Ensure it is in the correct path.")
         raise
     except Exception as e:
-        logging.error(f"Failed to run conversion: {e}")
+        logging.error(f"An unexpected error occurred while running the conversion script: {e}")
         raise
     
 def load_state(state_file: str):

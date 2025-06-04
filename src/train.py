@@ -30,6 +30,8 @@ import os
 
 load_dotenv() 
 
+
+
 @hydra.main(config_path="./conf", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
     primitive = OmegaConf.to_container(cfg, resolve=True)
@@ -53,34 +55,23 @@ def main(cfg: DictConfig) -> None:
         num_proc=8,
     )
 
-
-    
-
-        #     {0: 'B-building_material',
-        # 1: 'B-deanery',
-        # 2: 'B-dedication',
-        # 3: 'B-material',
-        # 4: 'B-page_number',
-        # 5: 'B-parish',
-        # 6: 'B-parish_dedication',
-        # 7: 'B-settlement_classification',
-        # 8: 'I-building_material',
-        # 9: 'I-deanery',
-        # 10: 'I-dedication',
-        # 11: 'I-parish',
-        # 12: 'I-parish_dedication',
-        # 13: 'O'}
-
-    meaningful_labels = {"B-parish", "I-parish", "B-deanery", "I-deanery", "B-dedication", "I-dedication", "B-building_material", "I-building_material"}
-
     def is_truly_positive(example):
         return all(label == "O" for label in example["labels"])
 
-    dataset = dataset.filter(is_truly_positive)
+    #dataset = dataset.filter(is_truly_positive)
     
     id2label, label2id, sorted_classes = load_labels(dataset)
     num_labels = len(sorted_classes)
     
+
+    print(id2label)
+
+    print(label2id)
+    print(num_labels)
+    print(len(label2id.keys()))
+
+    label_list = [id2label[i] for i in range(len(id2label))]
+
     processor = AutoProcessor.from_pretrained(cfg.processor.checkpoint, apply_ocr=False)
 
     model = LayoutLMv3ForTokenClassification.from_pretrained(
@@ -130,7 +121,7 @@ def main(cfg: DictConfig) -> None:
         eval_dataset=eval_dataset,
         data_collator=default_data_collator,
         compute_metrics=build_compute_metrics(
-            id2label, return_entity_level_metrics=cfg.metrics.return_entity_level_metrics
+            label_list, return_entity_level_metrics=cfg.metrics.return_entity_level_metrics
         ),
         focal_loss_alpha=cfg.focal_loss.alpha,
         focal_loss_gamma=cfg.focal_loss.gamma,
