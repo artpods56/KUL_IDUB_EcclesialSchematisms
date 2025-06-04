@@ -10,7 +10,7 @@ from omegaconf import OmegaConf
 
 import gc
 
-from datasets import load_dataset
+from datasets import load_dataset, DownloadMode
 from omegaconf import DictConfig
 from sklearn.model_selection import train_test_split
 from transformers import (
@@ -26,18 +26,18 @@ from transformers.data.data_collator import default_data_collator
 from metrics import build_compute_metrics
 from trainers import FocalLossTrainer
 from utils import load_labels, prepare_dataset
-
+from stats import compute_dataset_stats
+from filters import merge_filters, filter_schematisms
+from maps import merge_maps, map_labels, convert_to_grayscale
 from dotenv import load_dotenv
 import os
 
 load_dotenv() 
 
 
-
 @hydra.main(config_path="./conf", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
     primitive = OmegaConf.to_container(cfg, resolve=True)
-
 
     gc.collect()
     import torch
@@ -53,6 +53,7 @@ def main(cfg: DictConfig) -> None:
         )
 
 
+
     dataset = load_dataset(
         cfg.dataset.name,
         "default",
@@ -60,15 +61,38 @@ def main(cfg: DictConfig) -> None:
         token="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",
         trust_remote_code=True,
         num_proc=8,
+        download_mode=DownloadMode.FORCE_REDOWNLOAD if cfg.dataset.force_download else DownloadMode.REUSE_CACHE_IF_EXISTS,
     )
 
-    def is_truly_positive(example):
-        return all(label == "O" for label in example["labels"])
+    raw_stats = compute_dataset_stats(dataset)
+    print("Raw dataset stats:")
+    print(json.dumps(raw_stats, indent=4, ensure_ascii=False))
 
-    #dataset = dataset.filter(is_truly_positive)
+    filters = [
+        filter_schematisms(cfg.dataset.schematisms_to_train),
+    ]
+
+    dataset = dataset.filter(merge_filters(filters), num_proc=8)
+
+    maps = [
+        map_labels(cfg.dataset.classes_to_remove),
+        convert_to_grayscale
+    ]
+
+    dataset = dataset.map(merge_maps(maps), num_proc=8)
+
+    training_stats = compute_dataset_stats(dataset)
+    print("Train / Eval  datasets stats:")
+    print(json.dumps(training_stats, indent=4, ensure_ascii=False))
+
+
+   
+
+
     
     id2label, label2id, sorted_classes = load_labels(dataset)
     num_labels = len(sorted_classes)
+    
 
     label_list = [id2label[i] for i in range(len(id2label))]
 
@@ -89,14 +113,13 @@ def main(cfg: DictConfig) -> None:
         "label_column_name": cfg.dataset.label_column_name,
     }
     
-    train_valtest = dataset.train_test_split(test_size=0.2, seed=cfg.dataset.seed)
-    val_test = train_valtest["test"]#.train_test_split(test_size=0.5, seed=cfg.dataset.seed)
+    train_val = dataset.train_test_split(test_size=0.25, seed=cfg.dataset.seed)
 
     final_dataset = {
-        "train": train_valtest["train"], 
-        "validation": val_test["train"], 
-        # "test": val_test["test"]              
+        "train": train_val["train"],
+        "validation": train_val["test"]
     }
+
     
     train_dataset = prepare_dataset(
         final_dataset["train"], processor, id2label, label2id, dataset_config
@@ -104,13 +127,13 @@ def main(cfg: DictConfig) -> None:
     eval_dataset = prepare_dataset(
         final_dataset["validation"], processor, id2label, label2id, dataset_config
     )
-    test_dataset = prepare_dataset(
-        final_dataset["test"], processor, id2label, label2id, dataset_config
-    )
+    # test_dataset = prepare_dataset(
+    #     final_dataset["test"], processor, id2label, label2id, dataset_config
+    # )
  
     print(f"Train dataset size: {len(final_dataset['train'])}")
     print(f"Validation dataset size: {len(final_dataset['validation'])}")
-    print(f"Test dataset size: {len(final_dataset['test'])}")
+    # print(f"Test dataset size: {len(final_dataset['test'])}")
 
     training_args = TrainingArguments(**cfg.training)
 
@@ -142,6 +165,14 @@ def main(cfg: DictConfig) -> None:
     trainer.train()
 
     if cfg.wandb.enable:
+        wandb.log({"raw_stats": raw_stats})
+        wandb.log({"training_stats": training_stats})
+        wandb.log({"id2label": id2label})
+        wandb.log({"label2id": label2id})
+        wandb.log({"sorted_classes": sorted_classes})
+        wandb.log({"num_labels": num_labels})
+        wandb.log({"label_list": label_list})
+        wandb.log({"model_config": model.config.to_dict()})
         run.finish()
 
 if __name__ == "__main__":
