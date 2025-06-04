@@ -90,12 +90,12 @@ def main(cfg: DictConfig) -> None:
     }
     
     train_valtest = dataset.train_test_split(test_size=0.2, seed=cfg.dataset.seed)
-    val_test = train_valtest["test"].train_test_split(test_size=0.5, seed=cfg.dataset.seed)
+    val_test = train_valtest["test"]#.train_test_split(test_size=0.5, seed=cfg.dataset.seed)
 
     final_dataset = {
         "train": train_valtest["train"], 
         "validation": val_test["train"], 
-        "test": val_test["test"]              
+        # "test": val_test["test"]              
     }
     
     train_dataset = prepare_dataset(
