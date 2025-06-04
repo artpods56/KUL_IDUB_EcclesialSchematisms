@@ -8,6 +8,8 @@ import hydra
 import wandb
 from omegaconf import OmegaConf
 
+import gc
+
 from datasets import load_dataset
 from omegaconf import DictConfig
 from sklearn.model_selection import train_test_split
@@ -36,6 +38,11 @@ load_dotenv()
 def main(cfg: DictConfig) -> None:
     primitive = OmegaConf.to_container(cfg, resolve=True)
 
+
+    gc.collect()
+    import torch
+    torch.cuda.empty_cache()
+
     if cfg.wandb.enable:
         run = wandb.init(
             project=cfg.wandb.project,
@@ -62,13 +69,6 @@ def main(cfg: DictConfig) -> None:
     
     id2label, label2id, sorted_classes = load_labels(dataset)
     num_labels = len(sorted_classes)
-    
-
-    print(id2label)
-
-    print(label2id)
-    print(num_labels)
-    print(len(label2id.keys()))
 
     label_list = [id2label[i] for i in range(len(id2label))]
 
@@ -114,6 +114,12 @@ def main(cfg: DictConfig) -> None:
 
     training_args = TrainingArguments(**cfg.training)
 
+    num_labels = len(id2label)
+    
+    import torch                      # already computed
+    alpha = torch.ones(num_labels, dtype=torch.float32)
+    alpha[label2id["O"]] = 0.05
+
     trainer = FocalLossTrainer(
         model=model,
         args=training_args,
@@ -123,9 +129,15 @@ def main(cfg: DictConfig) -> None:
         compute_metrics=build_compute_metrics(
             label_list, return_entity_level_metrics=cfg.metrics.return_entity_level_metrics
         ),
-        focal_loss_alpha=cfg.focal_loss.alpha,
+        focal_loss_alpha=alpha,
         focal_loss_gamma=cfg.focal_loss.gamma,
+        task_type= "multi-class",
+        num_classes=len(id2label)
     )
+
+
+
+
 
     trainer.train()
 
