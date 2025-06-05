@@ -40,8 +40,8 @@ focal_loss:
   gamma: 1.0  # Changed from 1.0 to 2.0
 
 training:
-  output_dir: "test_focal"
-  max_steps: 8000
+  output_dir: "models/checkpoints/layoutlmv3-large-focal"
+  max_steps: 100
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 1
   learning_rate: 2e-5
@@ -55,9 +55,12 @@ training:
   logging_steps: 100
   logging_dir: "logs_focal"
   save_strategy: "steps"
-  save_steps: 500
-  save_total_limit: 2
+  save_steps: 100
+  save_total_limit: 4
   fp16: true
+
+inference:
+  checkpoint: "models/checkpoints/layoutlmv3-large-focal/checkpoint-8000"
 
 metrics:
   return_entity_level_metrics: true

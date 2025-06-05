@@ -1,5 +1,5 @@
-# src/wikichurches/train.py
-
+import torch
+from utils import sliding_window
 import numpy as np
 import argparse
 import json
@@ -31,18 +31,64 @@ from utils import load_labels, prepare_dataset, log_predictions_to_wandb, get_de
 from stats import compute_dataset_stats
 from filters import merge_filters, filter_schematisms
 from maps import merge_maps, map_labels, convert_to_grayscale
-from inference import retrieve_predictions
 
 from dotenv import load_dotenv
 import os
 
-load_dotenv() 
+@torch.no_grad()
+def retrieve_predictions(image, processor, model):
+    """
+    Retrieve predictions for a single example.
+    """
+
+    encoding = processor(
+                image,
+                truncation=True,
+                stride=128,
+                padding="max_length",
+                max_length=512,
+                return_overflowing_tokens=True,
+                return_offsets_mapping=True,
+                return_tensors="pt",
+            )
+
+    offset_mapping = encoding.pop("offset_mapping")
+    overflow_to_sample_mapping = encoding.pop("overflow_to_sample_mapping")
+    
+    x = []
+    
+    for i in range(0, len(encoding["pixel_values"])):
+        ndarray_pixel_values = encoding["pixel_values"][i]
+        tensor_pixel_values = torch.tensor(ndarray_pixel_values)
+        x.append(tensor_pixel_values)
+
+    x = torch.stack(x)
+
+    encoding["pixel_values"] = x
+
+    for k, v in encoding.items():
+        encoding[k] = torch.tensor(v)
+
+    with torch.no_grad():
+        outputs = model(**encoding)
+
+    logits = outputs.logits
+    predictions = logits.argmax(-1).squeeze().tolist()
+    token_boxes = encoding.bbox.squeeze().tolist()
+
+    if len(token_boxes) == 512:
+        predictions = [predictions]
+        token_boxes = [token_boxes]
+
+    boxes, preds, flattened_words = sliding_window(
+        processor, token_boxes, predictions, encoding
+        )
+    
+    return boxes, preds, flattened_words
 
 
 @hydra.main(config_path="./conf", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
-    primitive = OmegaConf.to_container(cfg, resolve=True)
-
     device = get_device(cfg)
     print(f"Using device: {device}")
 
@@ -50,12 +96,10 @@ def main(cfg: DictConfig) -> None:
         run = wandb.init(
             project=cfg.wandb.project,
             entity=cfg.wandb.entity,
-            name=f"{cfg.wandb.name}-{datetime.now().isoformat()}",
+            name=f"inference-{cfg.wandb.name}-{datetime.now().isoformat()}",
             tags=cfg.wandb.tags,
             config=OmegaConf.to_container(cfg, resolve=True),
         )
-
-
 
     dataset = load_dataset(
         cfg.dataset.name,
@@ -83,15 +127,11 @@ def main(cfg: DictConfig) -> None:
     ]
 
 
-    # dataset = dataset.map(merge_maps(maps), num_proc=8)
+    dataset = dataset.map(merge_maps(maps), num_proc=8)
 
     training_stats = compute_dataset_stats(dataset)
     print("Train / Eval  datasets stats:")
     print(json.dumps(training_stats, indent=4, ensure_ascii=False))
-
-
-   
-
 
     
     id2label, label2id, sorted_classes = load_labels(dataset)
@@ -100,13 +140,10 @@ def main(cfg: DictConfig) -> None:
 
     label_list = [id2label[i] for i in range(len(id2label))]
 
-    processor = AutoProcessor.from_pretrained(cfg.processor.checkpoint, apply_ocr=False)
+    processor = AutoProcessor.from_pretrained(cfg.processor.checkpoint, apply_ocr=True)
 
     model = LayoutLMv3ForTokenClassification.from_pretrained(
-        cfg.model.checkpoint,
-        num_labels=num_labels,
-        id2label=id2label,
-        label2id=label2id,
+        cfg.inference.checkpoint,
     )
 
     dataset = dataset.shuffle(seed=42)
@@ -142,61 +179,19 @@ def main(cfg: DictConfig) -> None:
     print(f"Validation dataset size: {len(final_dataset['validation'])}")
     print(f"Test dataset size: {len(final_dataset['test'])}")
 
-    training_args = TrainingArguments(**cfg.training)
-
-    num_labels = len(id2label)
-    
-    import torch                      # already computed
-    alpha = torch.ones(num_labels, dtype=torch.float32)
-    alpha[label2id["O"]] = 0.05
-
-    trainer = FocalLossTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        data_collator=default_data_collator,
-        compute_metrics=build_compute_metrics(
-            label_list, return_entity_level_metrics=cfg.metrics.return_entity_level_metrics
-        ),
-        focal_loss_alpha=alpha,
-        focal_loss_gamma=cfg.focal_loss.gamma,
-        task_type= "multi-class",
-        num_classes=len(id2label)
-    )
-
-
-
-
-
-    trainer.train()
-
-
-    # validation_results = trainer.evaluate(eval_dataset=eval_dataset)
-    # test_results = trainer.evaluate(eval_dataset=test_dataset)
-
-    # if cfg.wandb.enable and cfg.wandb.log_predictions:
-    #     log_predictions_to_wandb(
-    #         model=model,
-    #         processor=processor,
-    #         dataset=test_dataset,
-    #         id2label=id2label,
-    #         label2id=label2id,
-    #         num_samples=cfg.wandb.num_prediction_samples,
-    #     )
-        
-    #     log_predictions_to_wandb(
-    #         model=model,
-    #         processor=processor,
-    #         dataset=final_dataset["test"],
-    #         id2label=id2label,
-    #         label2id=label2id,
-    #         num_samples=cfg.wandb.num_prediction_samples,
-    #     )
-
-    
 
     if cfg.wandb.enable:
+        log_predictions_to_wandb(
+            model=model,
+            processor=processor,
+            datasets_splits=[
+                test_dataset,
+                eval_dataset,
+            ],
+            id2label=id2label,
+            label2id=label2id,
+            num_samples=cfg.wandb.num_prediction_samples,
+        )
 
         run.finish()
 

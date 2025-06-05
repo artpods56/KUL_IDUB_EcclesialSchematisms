@@ -1,6 +1,8 @@
 import torch
-from utils import sliding_window
 
+
+
+import os
 
 @torch.no_grad()
 def retrieve_predictions(image, processor, model):
