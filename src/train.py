@@ -1,4 +1,6 @@
 # src/wikichurches/train.py
+
+import numpy as np
 import argparse
 import json
 import os
@@ -25,10 +27,12 @@ from transformers.data.data_collator import default_data_collator
 
 from metrics import build_compute_metrics
 from trainers import FocalLossTrainer
-from utils import load_labels, prepare_dataset
+from utils import load_labels, prepare_dataset, log_predictions_to_wandb, get_device
 from stats import compute_dataset_stats
 from filters import merge_filters, filter_schematisms
 from maps import merge_maps, map_labels, convert_to_grayscale
+from inference import retrieve_predictions
+
 from dotenv import load_dotenv
 import os
 
@@ -39,9 +43,8 @@ load_dotenv()
 def main(cfg: DictConfig) -> None:
     primitive = OmegaConf.to_container(cfg, resolve=True)
 
-    gc.collect()
-    import torch
-    torch.cuda.empty_cache()
+    device = get_device(cfg)
+    print(f"Using device: {device}")
 
     if cfg.wandb.enable:
         run = wandb.init(
@@ -79,7 +82,8 @@ def main(cfg: DictConfig) -> None:
         convert_to_grayscale
     ]
 
-    dataset = dataset.map(merge_maps(maps), num_proc=8)
+
+    # dataset = dataset.map(merge_maps(maps), num_proc=8)
 
     training_stats = compute_dataset_stats(dataset)
     print("Train / Eval  datasets stats:")
@@ -113,11 +117,14 @@ def main(cfg: DictConfig) -> None:
         "label_column_name": cfg.dataset.label_column_name,
     }
     
-    train_val = dataset.train_test_split(test_size=0.25, seed=cfg.dataset.seed)
+    train_val = dataset.train_test_split(test_size=cfg.dataset.test_size, seed=cfg.dataset.seed)
+    test_val  = train_val["test"].train_test_split(test_size=0.5, seed=cfg.dataset.seed)
+
 
     final_dataset = {
         "train": train_val["train"],
-        "validation": train_val["test"]
+        "validation": test_val["train"],
+        "test": test_val["test"],
     }
 
     
@@ -127,13 +134,13 @@ def main(cfg: DictConfig) -> None:
     eval_dataset = prepare_dataset(
         final_dataset["validation"], processor, id2label, label2id, dataset_config
     )
-    # test_dataset = prepare_dataset(
-    #     final_dataset["test"], processor, id2label, label2id, dataset_config
-    # )
+    test_dataset = prepare_dataset(
+        final_dataset["test"], processor, id2label, label2id, dataset_config
+    )
  
     print(f"Train dataset size: {len(final_dataset['train'])}")
     print(f"Validation dataset size: {len(final_dataset['validation'])}")
-    # print(f"Test dataset size: {len(final_dataset['test'])}")
+    print(f"Test dataset size: {len(final_dataset['test'])}")
 
     training_args = TrainingArguments(**cfg.training)
 
@@ -164,15 +171,37 @@ def main(cfg: DictConfig) -> None:
 
     trainer.train()
 
+
+    validation_results = trainer.evaluate(eval_dataset=eval_dataset)
+    test_results = trainer.evaluate(eval_dataset=test_dataset)
+
+    if cfg.wandb.enable and cfg.wandb.log_predictions:
+        log_predictions_to_wandb(
+            model=model,
+            processor=processor,
+            dataset=test_dataset,
+            id2label=id2label,
+            label2id=label2id,
+            num_samples=cfg.wandb.num_prediction_samples,
+        )
+        
+    #     log_predictions_to_wandb(
+    #         model=model,
+    #         processor=processor,
+    #         dataset=final_dataset["test"],
+    #         id2label=id2label,
+    #         label2id=label2id,
+    #         num_samples=cfg.wandb.num_prediction_samples,
+    #     )
+
+    
+
     if cfg.wandb.enable:
+        wandb.log({"validation_results": validation_results})
+        wandb.log({"test_results": test_results})
         wandb.log({"raw_stats": raw_stats})
         wandb.log({"training_stats": training_stats})
-        wandb.log({"id2label": id2label})
-        wandb.log({"label2id": label2id})
-        wandb.log({"sorted_classes": sorted_classes})
-        wandb.log({"num_labels": num_labels})
-        wandb.log({"label_list": label_list})
-        wandb.log({"model_config": model.config.to_dict()})
+
         run.finish()
 
 if __name__ == "__main__":

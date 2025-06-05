@@ -4,3 +4,5 @@ wandb:
   entity: artpods56-ar-prod
   name: layoutlmv3-large-focal
   tags: ["layoutlmv3", "ocr", "churches"]
+  log_predictions: True
+  num_prediction_samples: 5 
