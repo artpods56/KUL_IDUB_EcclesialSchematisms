@@ -14,7 +14,7 @@ def load_labels(dataset: Dataset):
                 classes.extend(example["labels"])
             else:
                 classes.append(example["labels"])
-                
+
     unique_classes = set(classes)
     sorted_classes = sorted(list(unique_classes))
 
@@ -24,7 +24,7 @@ def load_labels(dataset: Dataset):
 
 
 def prepare_dataset(dataset: Dataset, processor, id2label, label2id, dataset_config):
-    
+
     def prepare_examples(examples):
         images = examples[dataset_config["image_column_name"]]
         words = examples[dataset_config["text_column_name"]]
@@ -32,27 +32,33 @@ def prepare_dataset(dataset: Dataset, processor, id2label, label2id, dataset_con
         word_labels = examples[dataset_config["label_column_name"]]
 
         # Since your dataset has string labels, always convert them to IDs
-        label_ids = [
-            [label2id[label] for label in seq]
-            for seq in word_labels
-        ]
+        label_ids = [[label2id[label] for label in seq] for seq in word_labels]
 
-        encoding = processor(images, words, boxes=boxes, word_labels=label_ids, truncation=True, stride =128, 
-                padding="max_length", max_length=512, return_overflowing_tokens=True, return_offsets_mapping=True)  
-        offset_mapping = encoding.pop('offset_mapping')
-        overflow_to_sample_mapping = encoding.pop('overflow_to_sample_mapping')
+        encoding = processor(
+            images,
+            words,
+            boxes=boxes,
+            word_labels=label_ids,
+            truncation=True,
+            stride=128,
+            padding="max_length",
+            max_length=512,
+            return_overflowing_tokens=True,
+            return_offsets_mapping=True,
+        )
+        offset_mapping = encoding.pop("offset_mapping")
+        overflow_to_sample_mapping = encoding.pop("overflow_to_sample_mapping")
         return encoding
-    
-    
 
-
-    features = Features({
-        'input_ids': Sequence(Value("int64")),
-        'bbox': Array2D(dtype="int64", shape=(512, 4)),
-        'attention_mask': Sequence(Value("int64")),
-        'labels': Sequence(Value("int64")),
-        'pixel_values': Array3D(dtype="float32", shape=(3, 224, 224)),
-    })
+    features = Features(
+        {
+            "input_ids": Sequence(Value("int64")),
+            "bbox": Array2D(dtype="int64", shape=(512, 4)),
+            "attention_mask": Sequence(Value("int64")),
+            "labels": Sequence(Value("int64")),
+            "pixel_values": Array3D(dtype="float32", shape=(3, 224, 224)),
+        }
+    )
 
     prepared_dataset = dataset.map(
         prepare_examples,
@@ -60,12 +66,10 @@ def prepare_dataset(dataset: Dataset, processor, id2label, label2id, dataset_con
         remove_columns=dataset.column_names,
         features=features,
     )
-    
+
     prepared_dataset.set_format("torch")
-    
+
     return prepared_dataset
-
-
 
 
 def _to_fractional(box: List[int]) -> Dict[str, float]:
@@ -75,6 +79,7 @@ def _to_fractional(box: List[int]) -> Dict[str, float]:
     """
     min_x, min_y, max_x, max_y = [v / 1000.0 for v in box]
     return {"minX": min_x, "maxX": max_x, "minY": min_y, "maxY": max_y}
+
 
 @torch.no_grad()
 def log_predictions_to_wandb(
@@ -90,33 +95,35 @@ def log_predictions_to_wandb(
 
     # W&B needs integer keys ➜ string labels
     class_labels = {int(k): v for k, v in id2label.items()}
-    sample_indices = random.sample(range(len(dataset)), k=min(num_samples, len(dataset)))
+    sample_indices = random.sample(
+        range(len(dataset)), k=min(num_samples, len(dataset))
+    )
     wandb_images = []
 
     for idx in sample_indices:
         example = dataset[idx]
-        image = example["image_pil"]            # PIL image from original dataset
-        words = example["words"]                # Words from original dataset
-        boxes = example["bboxes"]               # Bounding boxes from original dataset
-        labels = example["labels"]              # String labels from original dataset
-        
+        image = example["image_pil"]  # PIL image from original dataset
+        words = example["words"]  # Words from original dataset
+        boxes = example["bboxes"]  # Bounding boxes from original dataset
+        labels = example["labels"]  # String labels from original dataset
+
         # Convert string labels to IDs for truth
         truth = [label2id[label] for label in labels]
 
         # Process the example for model inference with proper truncation
         enc = processor(
-            image, 
-            words, 
-            boxes=boxes, 
+            image,
+            words,
+            boxes=boxes,
             return_tensors="pt",
             truncation=True,
             max_length=512,
-            padding="max_length"
+            padding="max_length",
         ).to(device)
-        
+
         # Get the actual sequence length after truncation
         actual_length = enc.input_ids.shape[1]
-        
+
         # Truncate truth labels to match the processed sequence length
         # The processor may have truncated the input, so we need to match that
         if len(truth) > actual_length:
@@ -124,23 +131,23 @@ def log_predictions_to_wandb(
         elif len(truth) < actual_length:
             # Pad with "O" labels if needed
             truth = truth + [label2id["O"]] * (actual_length - len(truth))
-        
+
         # Truncate boxes and words to match as well
         if len(boxes) > actual_length:
             boxes = boxes[:actual_length]
             words = words[:actual_length]
-        
-        logits = model(**enc).logits[0]     # sequence_len × num_labels
+
+        logits = model(**enc).logits[0]  # sequence_len × num_labels
         preds = logits.argmax(-1).tolist()
 
         # Build two box lists: predictions & ground-truth
         pred_boxes, gt_boxes = [], []
         # Only iterate over the minimum length to avoid index errors
         min_length = min(len(boxes), len(preds), len(truth))
-        
+
         for i in range(min_length):
             b, p_id, t_id = boxes[i], preds[i], truth[i]
-            
+
             # 1️⃣ predictions
             if p_id != label2id["O"]:
                 pred_boxes.append(
@@ -148,7 +155,9 @@ def log_predictions_to_wandb(
                         "position": _to_fractional(b),
                         "class_id": int(p_id),
                         "box_caption": id2label[p_id],
-                        "scores": {"conf": float(torch.softmax(logits[i], -1).max().item())},
+                        "scores": {
+                            "conf": float(torch.softmax(logits[i], -1).max().item())
+                        },
                     }
                 )
             # 2️⃣ ground truth
@@ -178,57 +187,10 @@ def log_predictions_to_wandb(
         )
 
     wandb.log({"📄 sample_pages": wandb_images})
+
+
 # ----------------------------------------------------------------------
 
-def sliding_window(processor, token_boxes, predictions, encoding):
-    """
-    Process overlapping windows from LayoutLM model to merge tokens and predictions
-    based on their spatial positions (bounding boxes).
-    
-    Args:
-        processor: The LayoutLM processor
-        token_boxes: List of token bounding boxes in normalized coordinates (0-1000)
-        predictions: List of prediction label IDs for each token
-        encoding: The model encoding (used for decoding tokens)
-    
-    Returns:
-        boxes: List of unique bounding box coordinates (normalized)
-        preds: List of merged predictions (majority vote for each spatial position)
-        words: List of merged word strings for each spatial position
-    """
-    box_token_dict = {}
-    for i in range(len(token_boxes)):
-        initial_j = 0 if i == 0 else 128  # Skip first 128 tokens for overlapping windows
-        for j in range(initial_j, len(token_boxes[i])):
-            tb = token_boxes[i][j]
-            # skip bad boxes
-            if not hasattr(tb, "__len__") or len(tb) != 4 or tb == [0, 0, 0, 0]:
-                continue
-            # Use normalized coordinates directly as key (more consistent than pixel coords)
-            key = tuple(tb)  # Use normalized bbox coordinates as key
-            tok = processor.tokenizer.decode(encoding["input_ids"][i][j]).strip()
-            box_token_dict.setdefault(key, []).append(tok)
-
-    # build predictions dict with the *same* keys
-    box_prediction_dict = {}
-    for i in range(len(token_boxes)):
-        for j in range(len(token_boxes[i])):
-            tb = token_boxes[i][j]
-            if not hasattr(tb, "__len__") or len(tb) != 4 or tb == [0, 0, 0, 0]:
-                continue
-            key = tuple(tb)  # Same key as above
-            box_prediction_dict.setdefault(key, []).append(predictions[i][j])
-
-    # Majority vote on predictions for each spatial position
-    boxes = list(box_token_dict.keys())
-    words = ["".join(ws) for ws in box_token_dict.values()]
-    preds = []
-    for key, preds_list in box_prediction_dict.items():
-        # Simple majority voting - get the most common prediction
-        final = max(set(preds_list), key=preds_list.count)
-        preds.append(final)
-
-    return boxes, preds, words
 
 def get_device(config=None):
     """
@@ -238,7 +200,9 @@ def get_device(config=None):
     if config is not None:
         if config.run.device == "cuda":
             if not torch.cuda.is_available():
-                raise RuntimeError("CUDA is not available, but 'cuda' was specified in the config.")
+                raise RuntimeError(
+                    "CUDA is not available, but 'cuda' was specified in the config."
+                )
             return "cuda"
         if config.run.device == "cpu":
             return "cpu"
@@ -248,3 +212,4 @@ def get_device(config=None):
             )
     else:
         return "cuda" if torch.cuda.is_available() else "cpu"
+

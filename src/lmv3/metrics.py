@@ -1,15 +1,11 @@
+import evaluate
 import numpy as np
 
-return_entity_level_metrics = False
-import numpy as np
-import evaluate
-# from datasets import load_metric
 metric = evaluate.load("seqeval")
 
 
 def build_compute_metrics(label_list, return_entity_level_metrics=True):
     def compute_metrics(p):
-        import numpy as np
         predictions, labels = p
         predictions = np.argmax(predictions, axis=2)
 
@@ -29,7 +25,9 @@ def build_compute_metrics(label_list, return_entity_level_metrics=True):
             for key, value in results.items():
                 if isinstance(value, dict):
                     for sub_key, sub_val in value.items():
-                        final_results[f"eval_{sub_key.lower()}_{key.capitalize()}"] = sub_val
+                        final_results[f"eval_{sub_key.lower()}_{key.capitalize()}"] = (
+                            sub_val
+                        )
                 else:
                     final_results[f"eval_{key}"] = value
             return final_results
@@ -38,6 +36,7 @@ def build_compute_metrics(label_list, return_entity_level_metrics=True):
                 "eval_precision": results["overall_precision"],
                 "eval_recall": results["overall_recall"],
                 "eval_f1": results["overall_f1"],
-                "eval_accuracy": results["overall_accuracy"]
+                "eval_accuracy": results["overall_accuracy"],
             }
+
     return compute_metrics

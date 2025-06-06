@@ -2,14 +2,18 @@ model:
   checkpoint: microsoft/layoutlmv3-base
 
 run:
-  device: cuda
+  device: cpu 
 
 dataset:
-  name: "artpods56/EcclesialSchematisms"
+  path: "artpods56/EcclesialSchematisms"
+  name: "EcclesialSchematisms"
   force_download: false
+  trust_remote_code: true
+  num_proc: 8
   seed: 42
   eval_size: 0.2
   test_size: 0.1
+  split: "train"
 
   image_column_name: "image_pil"
   text_column_name: "words"
@@ -37,7 +41,7 @@ processor:
 
 focal_loss:
   alpha: 1.0
-  gamma: 1.0  # Changed from 1.0 to 2.0
+  gamma: 1.0
 
 training:
   output_dir: "models/checkpoints/layoutlmv3-large-focal"

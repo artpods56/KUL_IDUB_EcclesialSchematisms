@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=67", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-osrodek"
+version = "0.1.0"
+description = "LayoutLMv3 with FocalLoss"
+requires-python = ">=3.10"
+dependencies = ["transformers>=4.38"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+lmv3-train = "lmv3.train:main"
+
