@@ -1,90 +1,23 @@
-import torch
-from utils import sliding_window
-import numpy as np
-import argparse
 import json
-import os
 from datetime import datetime
+from typing import cast
 
 import hydra
-import wandb
-from omegaconf import OmegaConf
-
-import gc
-
-from datasets import load_dataset, DownloadMode
-from omegaconf import DictConfig
-from sklearn.model_selection import train_test_split
-from transformers import (
-    AutoConfig,
-    AutoProcessor,
-    AutoTokenizer,
-    LayoutLMv3ForTokenClassification,
-    Trainer,
-    TrainingArguments,
-)
-from transformers.data.data_collator import default_data_collator
-
-from metrics import build_compute_metrics
-from trainers import FocalLossTrainer
-from utils import load_labels, prepare_dataset, log_predictions_to_wandb, get_device
-from stats import compute_dataset_stats
-from filters import merge_filters, filter_schematisms
-from maps import merge_maps, map_labels, convert_to_grayscale
-
+import torch
+from datasets import Dataset, DownloadMode, load_dataset
 from dotenv import load_dotenv
-import os
+from omegaconf import DictConfig
+from stats import compute_dataset_stats
+from transformers import AutoProcessor, LayoutLMv3ForTokenClassification
 
-@torch.no_grad()
-def retrieve_predictions(image, processor, model):
-    """
-    Retrieve predictions for a single example.
-    """
+import wandb
+from lmv3.filters import filter_schematisms, merge_filters
+from lmv3.maps import convert_to_grayscale, map_labels, merge_maps
+from lmv3.utils.config import config_to_dict
+from lmv3.utils.utils import get_device, load_labels, prepare_dataset
+from lmv3.utils.wandb_utils import log_predictions_to_wandb
 
-    encoding = processor(
-                image,
-                truncation=True,
-                stride=128,
-                padding="max_length",
-                max_length=512,
-                return_overflowing_tokens=True,
-                return_offsets_mapping=True,
-                return_tensors="pt",
-            )
-
-    offset_mapping = encoding.pop("offset_mapping")
-    overflow_to_sample_mapping = encoding.pop("overflow_to_sample_mapping")
-    
-    x = []
-    
-    for i in range(0, len(encoding["pixel_values"])):
-        ndarray_pixel_values = encoding["pixel_values"][i]
-        tensor_pixel_values = torch.tensor(ndarray_pixel_values)
-        x.append(tensor_pixel_values)
-
-    x = torch.stack(x)
-
-    encoding["pixel_values"] = x
-
-    for k, v in encoding.items():
-        encoding[k] = torch.tensor(v)
-
-    with torch.no_grad():
-        outputs = model(**encoding)
-
-    logits = outputs.logits
-    predictions = logits.argmax(-1).squeeze().tolist()
-    token_boxes = encoding.bbox.squeeze().tolist()
-
-    if len(token_boxes) == 512:
-        predictions = [predictions]
-        token_boxes = [token_boxes]
-
-    boxes, preds, flattened_words = sliding_window(
-        processor, token_boxes, predictions, encoding
-        )
-    
-    return boxes, preds, flattened_words
+load_dotenv()
 
 
 @hydra.main(config_path="./conf", config_name="config", version_base=None)
@@ -108,7 +41,11 @@ def main(cfg: DictConfig) -> None:
         token="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",
         trust_remote_code=True,
         num_proc=8,
-        download_mode=DownloadMode.FORCE_REDOWNLOAD if cfg.dataset.force_download else DownloadMode.REUSE_CACHE_IF_EXISTS,
+        download_mode=(
+            DownloadMode.FORCE_REDOWNLOAD
+            if cfg.dataset.force_download
+            else DownloadMode.REUSE_CACHE_IF_EXISTS
+        ),
     )
 
     raw_stats = compute_dataset_stats(dataset)
@@ -121,11 +58,7 @@ def main(cfg: DictConfig) -> None:
 
     dataset = dataset.filter(merge_filters(filters), num_proc=8)
 
-    maps = [
-        map_labels(cfg.dataset.classes_to_remove),
-        convert_to_grayscale
-    ]
-
+    maps = [map_labels(cfg.dataset.classes_to_remove), convert_to_grayscale]
 
     dataset = dataset.map(merge_maps(maps), num_proc=8)
 
@@ -133,10 +66,8 @@ def main(cfg: DictConfig) -> None:
     print("Train / Eval  datasets stats:")
     print(json.dumps(training_stats, indent=4, ensure_ascii=False))
 
-    
     id2label, label2id, sorted_classes = load_labels(dataset)
     num_labels = len(sorted_classes)
-    
 
     label_list = [id2label[i] for i in range(len(id2label))]
 
@@ -153,10 +84,11 @@ def main(cfg: DictConfig) -> None:
         "boxes_column_name": cfg.dataset.boxes_column_name,
         "label_column_name": cfg.dataset.label_column_name,
     }
-    
-    train_val = dataset.train_test_split(test_size=cfg.dataset.test_size, seed=cfg.dataset.seed)
-    test_val  = train_val["test"].train_test_split(test_size=0.5, seed=cfg.dataset.seed)
 
+    train_val = dataset.train_test_split(
+        test_size=cfg.dataset.test_size, seed=cfg.dataset.seed
+    )
+    test_val = train_val["test"].train_test_split(test_size=0.5, seed=cfg.dataset.seed)
 
     final_dataset = {
         "train": train_val["train"],
@@ -164,7 +96,6 @@ def main(cfg: DictConfig) -> None:
         "test": test_val["test"],
     }
 
-    
     train_dataset = prepare_dataset(
         final_dataset["train"], processor, id2label, label2id, dataset_config
     )
@@ -174,26 +105,26 @@ def main(cfg: DictConfig) -> None:
     test_dataset = prepare_dataset(
         final_dataset["test"], processor, id2label, label2id, dataset_config
     )
- 
+
     print(f"Train dataset size: {len(final_dataset['train'])}")
     print(f"Validation dataset size: {len(final_dataset['validation'])}")
     print(f"Test dataset size: {len(final_dataset['test'])}")
 
-
     if cfg.wandb.enable:
-        log_predictions_to_wandb(
+        samples_to_log = log_predictions_to_wandb(
             model=model,
             processor=processor,
             datasets_splits=[
                 test_dataset,
                 eval_dataset,
             ],
-            id2label=id2label,
-            label2id=label2id,
-            num_samples=cfg.wandb.num_prediction_samples,
+            config=cfg,
         )
 
+        run.log({"eval_samples": samples_to_log})
+
         run.finish()
+
 
 if __name__ == "__main__":
     main()
