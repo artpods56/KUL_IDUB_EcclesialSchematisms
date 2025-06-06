@@ -2,13 +2,14 @@ model:
   checkpoint: microsoft/layoutlmv3-base
 
 run:
-  device: cpu 
+  device: cuda
 
 dataset:
   path: "artpods56/EcclesialSchematisms"
   name: "EcclesialSchematisms"
   force_download: false
   trust_remote_code: true
+  keep_in_memory: true
   num_proc: 8
   seed: 42
   eval_size: 0.2
@@ -21,9 +22,9 @@ dataset:
   label_column_name: "labels"
 
   schematisms_to_train:
-    - "wloclawek_1872"
-    - "wloclawek_1873"
-    - "tarnow_1870"
+    # - "wloclawek_1872"
+    # - "wloclawek_1873"
+    # - "tarnow_1870"
     - "chelmno_1871"
 
   classes_to_remove:
@@ -64,7 +65,7 @@ training:
   fp16: true
 
 inference:
-  checkpoint: "models/checkpoints/layoutlmv3-large-focal/checkpoint-8000"
+  checkpoint: "models/checkpoints/layoutlmv3-large-focal/checkpoint-4000"
 
 metrics:
   return_entity_level_metrics: true

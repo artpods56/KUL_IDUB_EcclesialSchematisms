@@ -59,6 +59,7 @@ def main(cfg: DictConfig) -> None:
             trust_remote_code=cfg.dataset.trust_remote_code,
             num_proc=cfg.dataset.num_proc,
             download_mode=download_mode,
+            keep_in_memory=cfg.dataset.keep_in_memory,
         ),
     )
 

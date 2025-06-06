@@ -6,7 +6,7 @@ from datasets import Dataset
 from transformers import AutoProcessor, LayoutLMv3ForTokenClassification
 
 import wandb
-from lmv3.utils.inference_utils import retrieve_predictions, to_fractional
+from lmv3.utils.inference_utils import retrieve_predictions
 
 
 def bbox_to_fractional(box: List[int]) -> Dict[str, float]:
@@ -62,7 +62,7 @@ def log_predictions_to_wandb(
                         }
                     )
                 # 2️⃣ ground truth
-                if ground_truth != ["O"]:
+                if ground_truth != "O":
                     gtruth_boxes.append(
                         {
                             "position": bbox_to_fractional(bbox),
@@ -87,4 +87,4 @@ def log_predictions_to_wandb(
                 )
             )
 
-        return wandb_images
+    return wandb_images

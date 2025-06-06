@@ -31,7 +31,7 @@ def main(cfg: DictConfig) -> None:
             entity=cfg.wandb.entity,
             name=f"inference-{cfg.wandb.name}-{datetime.now().isoformat()}",
             tags=cfg.wandb.tags,
-            config=OmegaConf.to_container(cfg, resolve=True),
+            config=config_to_dict(cfg),
         )
 
     dataset = load_dataset(
@@ -66,10 +66,6 @@ def main(cfg: DictConfig) -> None:
     print("Train / Eval  datasets stats:")
     print(json.dumps(training_stats, indent=4, ensure_ascii=False))
 
-    id2label, label2id, sorted_classes = load_labels(dataset)
-    num_labels = len(sorted_classes)
-
-    label_list = [id2label[i] for i in range(len(id2label))]
 
     processor = AutoProcessor.from_pretrained(cfg.processor.checkpoint, apply_ocr=True)
 
@@ -96,16 +92,6 @@ def main(cfg: DictConfig) -> None:
         "test": test_val["test"],
     }
 
-    train_dataset = prepare_dataset(
-        final_dataset["train"], processor, id2label, label2id, dataset_config
-    )
-    eval_dataset = prepare_dataset(
-        final_dataset["validation"], processor, id2label, label2id, dataset_config
-    )
-    test_dataset = prepare_dataset(
-        final_dataset["test"], processor, id2label, label2id, dataset_config
-    )
-
     print(f"Train dataset size: {len(final_dataset['train'])}")
     print(f"Validation dataset size: {len(final_dataset['validation'])}")
     print(f"Test dataset size: {len(final_dataset['test'])}")
@@ -115,8 +101,8 @@ def main(cfg: DictConfig) -> None:
             model=model,
             processor=processor,
             datasets_splits=[
-                test_dataset,
-                eval_dataset,
+                final_dataset["validation"],
+                final_dataset["test"],
             ],
             config=cfg,
         )
