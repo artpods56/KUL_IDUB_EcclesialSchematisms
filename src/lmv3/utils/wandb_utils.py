@@ -12,7 +12,7 @@ from lmv3.utils.inference_utils import retrieve_predictions
 def bbox_to_fractional(box: List[int]) -> Dict[str, float]:
     """
     LayoutLM* boxes are in the 0-1000 coordinate system.
-    WandB defaults to ‘fractional’ domain = values in [0,1].
+    WandB defaults to 'fractional' domain = values in [0,1].
     """
     min_x, min_y, max_x, max_y = [v / 1000.0 for v in box]
     return {"minX": min_x, "maxX": max_x, "minY": min_y, "maxY": max_y}
@@ -39,13 +39,16 @@ def log_predictions_to_wandb(
         for sample_idx in sample_indices:
             example = dataset_split[sample_idx]
 
-            ground_truths = example["labels"]
+            ground_truths = example[config.dataset.label_column_name]
             image_pil = example[config.dataset.image_column_name]
+            ground_words = example[config.dataset.text_column_name]
+            ground_boxes = example[config.dataset.boxes_column_name]
 
             pred_boxes = []
             gtruth_boxes = []
+
             bboxes, predictions, words = retrieve_predictions(
-                image=image_pil, processor=processor, model=model
+                image=image_pil, processor=processor, model=model, words=ground_words, bboxes=ground_boxes
             )
 
             for ground_truth, bbox, pred, word in zip(
@@ -61,7 +64,7 @@ def log_predictions_to_wandb(
                             "box_caption": id2label[pred],
                         }
                     )
-                # 2️⃣ ground truth
+                # Ground truth
                 if ground_truth != "O":
                     gtruth_boxes.append(
                         {
@@ -77,11 +80,11 @@ def log_predictions_to_wandb(
                     boxes={
                         "predictions": {
                             "box_data": pred_boxes,
-                            "class_labels": predictions,
+                            "class_labels": id2label,  # Pass the full id2label dict
                         },
                         "ground_truth": {
                             "box_data": gtruth_boxes,
-                            "class_labels": ground_truths,
+                            "class_labels": id2label,  # Pass the full id2label dict
                         },
                     },
                 )

@@ -22,9 +22,9 @@ dataset:
   label_column_name: "labels"
 
   schematisms_to_train:
-    # - "wloclawek_1872"
-    # - "wloclawek_1873"
-    # - "tarnow_1870"
+    - "wloclawek_1872"
+    - "wloclawek_1873"
+    - "tarnow_1870"
     - "chelmno_1871"
 
   classes_to_remove:
@@ -66,6 +66,7 @@ training:
 
 inference:
   checkpoint: "models/checkpoints/layoutlmv3-large-focal/checkpoint-4000"
+  apply_ocr: false
 
 metrics:
   return_entity_level_metrics: true

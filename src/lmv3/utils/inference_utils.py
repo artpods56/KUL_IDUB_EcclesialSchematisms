@@ -14,9 +14,8 @@ def retrieve_predictions(image, processor, model, words=None, bboxes=None):
     if words is not None and bboxes is not None:
         encoding = processor(
             image,
-            words=words,
+            words,
             boxes=bboxes,
-            apply_ocr=False,
             truncation=True,
             stride=128,
             padding="max_length",
