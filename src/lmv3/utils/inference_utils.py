@@ -2,7 +2,7 @@ import torch
 
 
 @torch.no_grad()
-def retrieve_predictions(image, processor, model):
+def retrieve_predictions(image, processor, model, words=None, bboxes=None):
     """
     Retrieve predictions for a single example.
 
@@ -11,17 +11,32 @@ def retrieve_predictions(image, processor, model):
         preds
         flattened_words
     """
+    if words is not None and bboxes is not None:
+        encoding = processor(
+            image,
+            words=words,
+            boxes=bboxes,
+            apply_ocr=False,
+            truncation=True,
+            stride=128,
+            padding="max_length",
+            max_length=512,
+            return_overflowing_tokens=True,
+            return_offsets_mapping=True,
+            return_tensors="pt",
+        )
 
-    encoding = processor(
-        image,
-        truncation=True,
-        stride=128,
-        padding="max_length",
-        max_length=512,
-        return_overflowing_tokens=True,
-        return_offsets_mapping=True,
-        return_tensors="pt",
-    )
+    else:
+        encoding = processor(
+            image,
+            truncation=True,
+            stride=128,
+            padding="max_length",
+            max_length=512,
+            return_overflowing_tokens=True,
+            return_offsets_mapping=True,
+            return_tensors="pt",
+        )
 
     offset_mapping = encoding.pop("offset_mapping")
     overflow_to_sample_mapping = encoding.pop("overflow_to_sample_mapping")

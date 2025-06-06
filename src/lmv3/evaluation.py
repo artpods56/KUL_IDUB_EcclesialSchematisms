@@ -1,9 +1,9 @@
 import json
+import os
 from datetime import datetime
 from typing import cast
 
 import hydra
-import torch
 from datasets import Dataset, DownloadMode, load_dataset
 from dotenv import load_dotenv
 from omegaconf import DictConfig
@@ -34,17 +34,27 @@ def main(cfg: DictConfig) -> None:
             config=config_to_dict(cfg),
         )
 
-    dataset = load_dataset(
-        cfg.dataset.name,
-        "default",
-        split="train",
-        token="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",
-        trust_remote_code=True,
-        num_proc=8,
-        download_mode=(
-            DownloadMode.FORCE_REDOWNLOAD
-            if cfg.dataset.force_download
-            else DownloadMode.REUSE_CACHE_IF_EXISTS
+    download_mode = (
+        DownloadMode.FORCE_REDOWNLOAD
+        if cfg.dataset.force_download
+        else DownloadMode.REUSE_CACHE_IF_EXISTS
+    )
+
+    HF_TOKEN = os.getenv("HF_TOKEN")
+    if not HF_TOKEN:
+        raise RuntimeError("Huggingface token is missing.")
+
+    dataset = cast(
+        Dataset,
+        load_dataset(
+            path=cfg.dataset.path,
+            name=cfg.dataset.name,
+            split=cfg.dataset.split,
+            token=os.getenv("HF_TOKEN"),
+            trust_remote_code=cfg.dataset.trust_remote_code,
+            num_proc=cfg.dataset.num_proc,
+            download_mode=download_mode,
+            keep_in_memory=cfg.dataset.keep_in_memory,
         ),
     )
 
@@ -66,20 +76,15 @@ def main(cfg: DictConfig) -> None:
     print("Train / Eval  datasets stats:")
     print(json.dumps(training_stats, indent=4, ensure_ascii=False))
 
-
-    processor = AutoProcessor.from_pretrained(cfg.processor.checkpoint, apply_ocr=True)
+    processor = AutoProcessor.from_pretrained(
+        cfg.processor.checkpoint, apply_ocr=cfg.inference.apply_ocr
+    )
 
     model = LayoutLMv3ForTokenClassification.from_pretrained(
         cfg.inference.checkpoint,
     )
 
     dataset = dataset.shuffle(seed=42)
-    dataset_config = {
-        "image_column_name": cfg.dataset.image_column_name,
-        "text_column_name": cfg.dataset.text_column_name,
-        "boxes_column_name": cfg.dataset.boxes_column_name,
-        "label_column_name": cfg.dataset.label_column_name,
-    }
 
     train_val = dataset.train_test_split(
         test_size=cfg.dataset.test_size, seed=cfg.dataset.seed
