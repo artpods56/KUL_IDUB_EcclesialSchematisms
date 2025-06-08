@@ -1,84 +1,15 @@
-from datasets import Dataset, Features, Sequence, Value, Array2D, Array3D
 import random
-from typing import List, Dict
+from typing import List, Dict # Retaining List, Dict as they might be used by remaining functions or can be cleaned up later if not.
+# Removed: from datasets import Dataset, Features, Sequence, Value, Array2D, Array3D (as these are specific to moved functions)
+# However, if log_predictions_to_wandb uses any specific classes from `datasets`, this might need adjustment.
+# For now, assuming it doesn't or uses them via `dataset` object's attributes.
 
 import torch
 import wandb
+from dataset.utils import _to_fractional # Import the moved function
 
-
-def load_labels(dataset: Dataset):
-    classes = []
-    for example in dataset:
-        if "labels" in example.keys():
-            if isinstance(example["labels"], list):
-                classes.extend(example["labels"])
-            else:
-                classes.append(example["labels"])
-
-    unique_classes = set(classes)
-    sorted_classes = sorted(list(unique_classes))
-
-    id2label = {i: label for i, label in enumerate(sorted_classes)}
-    label2id = {label: i for i, label in enumerate(sorted_classes)}
-    return id2label, label2id, sorted_classes
-
-
-def prepare_dataset(dataset: Dataset, processor, id2label, label2id, dataset_config):
-
-    def prepare_examples(examples):
-        images = examples[dataset_config["image_column_name"]]
-        words = examples[dataset_config["text_column_name"]]
-        boxes = examples[dataset_config["boxes_column_name"]]
-        word_labels = examples[dataset_config["label_column_name"]]
-
-        # Since your dataset has string labels, always convert them to IDs
-        label_ids = [[label2id[label] for label in seq] for seq in word_labels]
-
-        encoding = processor(
-            images,
-            words,
-            boxes=boxes,
-            word_labels=label_ids,
-            truncation=True,
-            stride=128,
-            padding="max_length",
-            max_length=512,
-            return_overflowing_tokens=True,
-            return_offsets_mapping=True,
-        )
-        offset_mapping = encoding.pop("offset_mapping")
-        overflow_to_sample_mapping = encoding.pop("overflow_to_sample_mapping")
-        return encoding
-
-    features = Features(
-        {
-            "input_ids": Sequence(Value("int64")),
-            "bbox": Array2D(dtype="int64", shape=(512, 4)),
-            "attention_mask": Sequence(Value("int64")),
-            "labels": Sequence(Value("int64")),
-            "pixel_values": Array3D(dtype="float32", shape=(3, 224, 224)),
-        }
-    )
-
-    prepared_dataset = dataset.map(
-        prepare_examples,
-        batched=True,
-        remove_columns=dataset.column_names,
-        features=features,
-    )
-
-    prepared_dataset.set_format("torch")
-
-    return prepared_dataset
-
-
-def _to_fractional(box: List[int]) -> Dict[str, float]:
-    """
-    LayoutLM* boxes are in the 0-1000 coordinate system.
-    WandB defaults to ‘fractional’ domain = values in [0,1].
-    """
-    min_x, min_y, max_x, max_y = [v / 1000.0 for v in box]
-    return {"minX": min_x, "maxX": max_x, "minY": min_y, "maxY": max_y}
+# Moved load_labels, prepare_dataset to src/dataset/utils.py
+# _to_fractional is now imported from dataset.utils
 
 
 @torch.no_grad()
@@ -96,7 +27,7 @@ def log_predictions_to_wandb(
     # W&B needs integer keys ➜ string labels
     class_labels = {int(k): v for k, v in id2label.items()}
     sample_indices = random.sample(
-        range(len(dataset)), k=min(num_samples, len(dataset))
+        range(len(dataset)), k=min(num_samples, len(dataset)) # `dataset` is passed in, so `Dataset` type hint not needed here
     )
     wandb_images = []
 
@@ -152,7 +83,7 @@ def log_predictions_to_wandb(
             if p_id != label2id["O"]:
                 pred_boxes.append(
                     {
-                        "position": _to_fractional(b),
+                        "position": _to_fractional(b), # Use imported _to_fractional
                         "class_id": int(p_id),
                         "box_caption": id2label[p_id],
                         "scores": {
@@ -164,7 +95,7 @@ def log_predictions_to_wandb(
             if t_id != label2id["O"]:
                 gt_boxes.append(
                     {
-                        "position": _to_fractional(b),
+                        "position": _to_fractional(b), # Use imported _to_fractional
                         "class_id": int(t_id),
                         "box_caption": id2label[t_id],
                     }
@@ -187,6 +118,8 @@ def log_predictions_to_wandb(
         )
 
     wandb.log({"📄 sample_pages": wandb_images})
+
+# Removed local _to_fractional_wandb as we are now importing _to_fractional from dataset.utils
 
 
 # ----------------------------------------------------------------------
