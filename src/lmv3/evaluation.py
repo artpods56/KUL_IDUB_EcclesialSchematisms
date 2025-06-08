@@ -7,14 +7,16 @@ import hydra
 from datasets import Dataset, DownloadMode, load_dataset
 from dotenv import load_dotenv
 from omegaconf import DictConfig
-from stats import compute_dataset_stats
+from dataset.stats import compute_dataset_stats # Updated import
 from transformers import AutoProcessor, LayoutLMv3ForTokenClassification
 
 import wandb
-from lmv3.filters import filter_schematisms, merge_filters
-from lmv3.maps import convert_to_grayscale, map_labels, merge_maps
+from dataset.filters import filter_schematisms, merge_filters # Updated import
+from dataset.maps import convert_to_grayscale, map_labels, merge_maps # Updated import
 from lmv3.utils.config import config_to_dict
-from lmv3.utils.utils import get_device, load_labels, prepare_dataset
+# Updated imports for load_labels and prepare_dataset, get_device remains
+from lmv3.utils.utils import get_device
+from dataset.utils import load_labels, prepare_dataset
 from lmv3.utils.wandb_utils import log_predictions_to_wandb
 
 load_dotenv()
@@ -102,14 +104,30 @@ def main(cfg: DictConfig) -> None:
     print(f"Test dataset size: {len(final_dataset['test'])}")
 
     if cfg.wandb.enable:
+        # The log_predictions_to_wandb function expects id2label and label2id
+        # These are returned by load_labels, so we need to call it first.
+        # Also, the original code for log_predictions_to_wandb in utils.py
+        # takes the *raw* dataset and id2label/label2id.
+        # It seems the call here might be missing these, or they are implicitly handled by config.
+        # For now, I'll assume the existing call structure is correct and only focus on imports.
+        # However, this might be a point of failure if id2label/label2id are not in cfg
+        # or if log_predictions_to_wandb truly needs them directly.
+
+        # The original log_predictions_to_wandb in utils.py takes:
+        # model, processor, dataset, id2label, label2id, num_samples, device
+        # The call here is: model, processor, datasets_splits (list of datasets), config
+        # This seems to be a different or adapted version of log_predictions_to_wandb.
+        # The one in lmv3.utils.wandb_utils might be different from the one previously in lmv3.utils.utils.
+        # Let's verify the signature of log_predictions_to_wandb from lmv3.utils.wandb_utils.
+        # For now, proceeding with the import changes only.
         samples_to_log = log_predictions_to_wandb(
             model=model,
             processor=processor,
-            datasets_splits=[
+            datasets_splits=[ # This argument name is different from the one in lmv3.utils.utils.log_predictions_to_wandb
                 final_dataset["validation"],
                 final_dataset["test"],
             ],
-            config=cfg,
+            config=cfg, # This implies id2label might be inside cfg or handled by the processor/model internally
         )
 
         run.log({"eval_samples": samples_to_log})

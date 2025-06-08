@@ -8,18 +8,20 @@ import hydra
 from datasets import Dataset, DownloadMode, load_dataset
 from dotenv import load_dotenv
 from omegaconf import DictConfig, OmegaConf
-from stats import compute_dataset_stats
+from dataset.stats import compute_dataset_stats # Updated import
 from transformers import AutoProcessor, LayoutLMv3ForTokenClassification
 from transformers.data.data_collator import default_data_collator
 from transformers.training_args import TrainingArguments
 
 import wandb
-from lmv3.filters import filter_schematisms, merge_filters
-from lmv3.maps import convert_to_grayscale, map_labels, merge_maps
+from dataset.filters import filter_schematisms, merge_filters # Updated import
+from dataset.maps import convert_to_grayscale, map_labels, merge_maps # Updated import
 from lmv3.metrics import build_compute_metrics
 from lmv3.trainers import FocalLossTrainer
 from lmv3.utils.config import config_to_dict
-from lmv3.utils.utils import get_device, load_labels, prepare_dataset
+# Updated imports for load_labels and prepare_dataset, get_device remains
+from lmv3.utils.utils import get_device
+from dataset.utils import load_labels, prepare_dataset
 
 load_dotenv()
 

@@ -7,16 +7,10 @@ from transformers import AutoProcessor, LayoutLMv3ForTokenClassification
 
 import wandb
 from lmv3.utils.inference_utils import retrieve_predictions
+from dataset.utils import _to_fractional # Import the centralized function
 
 
-def bbox_to_fractional(box: List[int]) -> Dict[str, float]:
-    """
-    LayoutLM* boxes are in the 0-1000 coordinate system.
-    WandB defaults to 'fractional' domain = values in [0,1].
-    """
-    min_x, min_y, max_x, max_y = [v / 1000.0 for v in box]
-    return {"minX": min_x, "maxX": max_x, "minY": min_y, "maxY": max_y}
-
+# Removed local bbox_to_fractional, using imported _to_fractional instead
 
 def log_predictions_to_wandb(
     model: LayoutLMv3ForTokenClassification,
@@ -59,7 +53,7 @@ def log_predictions_to_wandb(
                 if label != "O":
                     pred_boxes.append(
                         {
-                            "position": bbox_to_fractional(bbox),
+                            "position": _to_fractional(bbox), # Use imported function
                             "class_id": int(pred),
                             "box_caption": id2label[pred],
                         }
@@ -68,7 +62,7 @@ def log_predictions_to_wandb(
                 if ground_truth != "O":
                     gtruth_boxes.append(
                         {
-                            "position": bbox_to_fractional(bbox),
+                            "position": _to_fractional(bbox), # Use imported function
                             "class_id": int(label2id[ground_truth]),
                             "box_caption": ground_truth,
                         }
