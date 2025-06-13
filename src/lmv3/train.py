@@ -8,30 +8,34 @@ import hydra
 from datasets import Dataset, DownloadMode, load_dataset
 from dotenv import load_dotenv
 from omegaconf import DictConfig, OmegaConf
-from dataset.stats import compute_dataset_stats # Updated import
 from transformers import AutoProcessor, LayoutLMv3ForTokenClassification
 from transformers.data.data_collator import default_data_collator
 from transformers.training_args import TrainingArguments
 
 import wandb
-from dataset.filters import filter_schematisms, merge_filters # Updated import
-from dataset.maps import convert_to_grayscale, map_labels, merge_maps # Updated import
+from dataset.filters import filter_schematisms, merge_filters  # Updated import
+from dataset.maps import convert_to_grayscale, map_labels, merge_maps  # Updated import
+from dataset.stats import compute_dataset_stats  # Updated import
+from dataset.utils import get_dataset, load_labels, prepare_dataset
 from lmv3.metrics import build_compute_metrics
 from lmv3.trainers import FocalLossTrainer
 from lmv3.utils.config import config_to_dict
+
+from shared import CONFIGS_DIR
 # Updated imports for load_labels and prepare_dataset, get_device remains
 from lmv3.utils.utils import get_device
-from dataset.utils import load_labels, prepare_dataset
 
 load_dotenv()
 
 
-@hydra.main(config_path="./conf", config_name="config", version_base=None)
+
+@hydra.main(config_path=str(CONFIGS_DIR / "lmv3"), config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
 
     device = get_device(cfg)
     print(f"Using device: {device}")
 
+    run = None
     if cfg.wandb.enable:
         run = wandb.init(
             project=cfg.wandb.project,
@@ -41,29 +45,7 @@ def main(cfg: DictConfig) -> None:
             config=config_to_dict(cfg),
         )
 
-    download_mode = (
-        DownloadMode.FORCE_REDOWNLOAD
-        if cfg.dataset.force_download
-        else DownloadMode.REUSE_CACHE_IF_EXISTS
-    )
-
-    HF_TOKEN = os.getenv("HF_TOKEN")
-    if not HF_TOKEN:
-        raise RuntimeError("Huggingface token is missing.")
-
-    dataset = cast(
-        Dataset,
-        load_dataset(
-            path=cfg.dataset.path,
-            name=cfg.dataset.name,
-            split=cfg.dataset.split,
-            token=os.getenv("HF_TOKEN"),
-            trust_remote_code=cfg.dataset.trust_remote_code,
-            num_proc=cfg.dataset.num_proc,
-            download_mode=download_mode,
-            keep_in_memory=cfg.dataset.keep_in_memory,
-        ),
-    )
+    dataset = get_dataset(cfg)
 
     raw_stats = compute_dataset_stats(dataset)
     print("Raw dataset stats:")
@@ -178,10 +160,9 @@ def main(cfg: DictConfig) -> None:
     #         label2id=label2id,
     #         num_samples=cfg.wandb.num_prediction_samples,
     #     )
-
-    if cfg.wandb.enable:
-
+    if run is not None:
         run.finish()
+
 
 
 if __name__ == "__main__":
