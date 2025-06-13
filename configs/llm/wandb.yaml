@@ -1,0 +1,8 @@
+wandb:
+  enable: true
+  project: IDUB_Ecclesiae
+  entity: artpods56-ar-prod
+  name: vision_llm_evaluation 
+  tags: ["llm", "vision", "ocr", "churches"]
+  log_predictions: True
+  num_prediction_samples: 15

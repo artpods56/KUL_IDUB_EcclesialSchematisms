@@ -2,7 +2,7 @@ model:
   checkpoint: microsoft/layoutlmv3-base
 
 run:
-  device: cuda
+  device: cpu
 
 dataset:
   path: "artpods56/EcclesialSchematisms"
