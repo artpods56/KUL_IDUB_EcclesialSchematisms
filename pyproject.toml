@@ -1,17 +1,28 @@
 [build-system]
-requires = ["setuptools>=67", "wheel"]
+requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ai-osrodek"
+name = "core"
 version = "0.1.0"
-description = "LayoutLMv3 with FocalLoss"
-requires-python = ">=3.10"
-dependencies = ["transformers>=4.38"]
+description = "Prototyp ekstrakcji i transformacji"
+authors = [
+    {name = "Artur Podsiadły", email = "artpods56@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy",
+    "pandas",
+    "torch",
+    "transformers",
+    "hydra-core",
+    "wandb",
+    "structlog",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[project.scripts]
-lmv3-train = "lmv3.train:main"
-
