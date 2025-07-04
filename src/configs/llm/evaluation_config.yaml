@@ -1,5 +1,22 @@
+predictor:
+  api_type: "openai"
+  model: "gemma-3-27b-it-qat"
+  structured_output: true
+  base_url: "http://localhost:1234/v1"  
+  template_dir: "prompts"
+  api_kwargs:
+    max_tokens: 4096
+    temperature: 0.1
+    top_p: 0.9
+
 model:
-  name: "mistral-large"
+  # checkpoint: artpods56/LayoutLMv3FocalEcclesialSchematisms
+  checkpoint: "models/checkpoints/layoutlmv3-large-focal/checkpoint-4000"
+
+
+processor:
+  checkpoint: microsoft/layoutlmv3-large
+  max_length: 512
 
 run:
   device: cpu
@@ -10,12 +27,14 @@ dataset:
   force_download: false
   trust_remote_code: true
   keep_in_memory: true
+  streaming: false
   num_proc: 8
   seed: 42
   eval_size: 0.2
   test_size: 0.1
   split: "train"
 
+  file_name_column_name: "image"
   image_column_name: "image_pil"
   text_column_name: "words"
   boxes_column_name: "bboxes"
@@ -23,9 +42,9 @@ dataset:
 
   schematisms_to_train:
     - "wloclawek_1872"
-    - "wloclawek_1873"
-    - "tarnow_1870"
-    - "chelmno_1871"
+    # - "wloclawek_1873"
+    # - "tarnow_1870"
+    # - "chelmno_1871"
 
   classes_to_remove:
     - "B-settlement_classification" 

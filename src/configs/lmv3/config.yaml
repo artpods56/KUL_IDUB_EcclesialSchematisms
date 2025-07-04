@@ -65,7 +65,7 @@ training:
   fp16: true
 
 inference:
-  checkpoint: "models/checkpoints/layoutlmv3-large-focal/checkpoint-4000"
+  checkpoint: "artpods56/layoutlmv3_focalloss_4000"
   apply_ocr: false
 
 metrics:

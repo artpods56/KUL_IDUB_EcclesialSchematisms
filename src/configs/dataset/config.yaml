@@ -1,0 +1,32 @@
+dataset:
+  path: "artpods56/EcclesialSchematisms"
+  name: "EcclesialSchematisms"
+  force_download: true
+  trust_remote_code: true
+  keep_in_memory: true
+  num_proc: 8
+  seed: 42
+  eval_size: 0.2
+  test_size: 0.1
+  split: "train"
+  streaming: false
+
+  image_column_name: "image_pil"
+  text_column_name: "words"
+  boxes_column_name: "bboxes"
+  label_column_name: "labels"
+
+  schematisms_to_train:
+    - "wloclawek_1872"
+    - "wloclawek_1873"
+    - "tarnow_1870"
+    - "chelmno_1871"
+
+  classes_to_remove:
+    - "B-settlement_classification" 
+    - "I-settlement_classification"
+    - "B-material" 
+    - "I-material"
+    - "B-deanery"
+    - "I-deanery"
+
