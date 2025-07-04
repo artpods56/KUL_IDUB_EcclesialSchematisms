@@ -1,0 +1,13 @@
+python-dotenv
+minio
+transformers
+torch
+Pillow
+pytesseract
+numpy
+pandas
+geopandas
+shapely
+tqdm
+huggingface-hub
+

@@ -1,0 +1,133 @@
+x-logging:
+  logging: &default-logging
+    driver: "local"
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  label-studio:
+    image: heartexlabs/services:latest
+    restart: unless-stopped
+    container_name: services
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env.dev
+    command: services
+    depends_on:
+      - db
+      - minio
+
+  ml-backend:
+    container_name: services-ml-backend-dev
+    build:
+      context: ./backends/${LABEL_STUDIO_ML_BACKEND} 
+      args:
+        TEST_ENV: ${TEST_ENV}
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./backends/${LABEL_STUDIO_ML_BACKEND}:/app:rw
+    env_file:
+      - .env.dev
+    command: >
+      label-studio-ml start . 
+        --host 0.0.0.0 --port 9090
+  db:
+    image: pgautoupgrade/pgautoupgrade:13-alpine
+    hostname: db
+    restart: unless-stopped
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    env_file:
+      - .env.dev
+    ports:
+      - "5433:5432"
+
+  minio:
+    image: quay.io/minio/minio:latest
+    command: server --address ":9007" --console-address ":9006" /data
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "9007:9007"
+      - "9006:9006"
+    volumes:
+      - minio-data:/data
+    env_file:
+      - .env.dev
+
+  minio-sync:
+    image: minio/mc:latest
+    env_file: 
+      - .env.dev
+    volumes:
+      - ./sync-minio.sh:/scripts/sync-minio.sh
+      - app-data:/data:rw
+    entrypoint: /bin/sh -c "/scripts/sync-minio.sh"
+    restart: "no"
+    profiles: ["sync"]
+    depends_on:
+      - minio
+
+  dataset-sync:
+    build:
+      context: ./dataset_sync
+      dockerfile: Dockerfile
+    container_name: dataset-sync-dev
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      - minio
+    volumes:
+      - app-data:/data:rw
+      - ./dataset_sync:/app:rw
+      - ./.env.dev:/app/config/.env.dev:ro
+    env_file:
+      - .env.dev
+    command: ["/bin/bash", "-c", "/app/setup_data.sh && python dataset_sync.py --loop --env_file /app/config/.env.dev"]
+
+  prometheus:
+    image: quay.io/prometheus/prometheus:v2.37.1
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "9099:9099"
+    volumes:
+      - "./prometheus/minio/prometheus.yaml:/etc/prometheus/prometheus.yaml"
+      - "prometheus-data:/prometheus"
+    env_file:
+      - .env.dev
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+
+  tests:
+    container_name: ml-backend-tests
+    build:
+      context: ./backends/${LABEL_STUDIO_ML_BACKEND}
+      dockerfile: Dockerfile.dev
+      args:
+        TEST_ENV: ${TEST_ENV}
+
+    env_file:
+      - .env.dev
+    volumes:
+      - ./backends/${LABEL_STUDIO_ML_BACKEND}:/app:rw
+    profiles: ["test"]
+    restart: unless-stopped
+    command: ptw --runner "pytest -q --disable-warnings"
+    tty: true
+    develop:
+      watch:
+        - path: ./backends/${LABEL_STUDIO_ML_BACKEND}
+          target: /app
+          action: sync+restart
+
+
+volumes:
+  minio-data:
+  prometheus-data:
+  postgres-data:
+  app-data:
