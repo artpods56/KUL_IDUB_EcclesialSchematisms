@@ -13,6 +13,24 @@ from core.utils.logging import setup_logging
 setup_logging()
 logger = getLogger(__name__)
 
+
+def merge_configs(*configs: DictConfig) -> DictConfig:
+    """Merge multiple configurations."""
+    if not configs:
+        return OmegaConf.create({})
+
+    merged = configs[0]
+    for config in configs[1:]:
+        merged = OmegaConf.merge(merged, config)
+
+    return merged
+
+
+def config_to_dict(config: DictConfig) -> Dict[str, Any]:
+    """Convert OmegaConf config to regular dict."""
+    return OmegaConf.to_container(config, resolve=True)
+
+
 class ConfigManager:
     """Centralized configuration management."""
     
@@ -41,30 +59,4 @@ class ConfigManager:
     def get_config(self, config_name: str) -> Optional[DictConfig]:
         """Get cached configuration."""
         return self._configs.get(config_name)
-    
-    def merge_configs(self, *configs: DictConfig) -> DictConfig:
-        """Merge multiple configurations."""
-        if not configs:
-            return OmegaConf.create({})
-        
-        merged = configs[0]
-        for config in configs[1:]:
-            merged = OmegaConf.merge(merged, config)
-        
-        return merged
-    
-    def save_config(self, config: DictConfig, config_name: str, config_path: Optional[str] = None) -> None:
-        """Save configuration to file."""
-        if config_path is None:
-            config_path = self.config_dir / f"{config_name}.yaml"
-        
-        # Ensure directory exists
-        Path(config_path).parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(config_path, 'w') as f:
-            yaml.dump(OmegaConf.to_yaml(config), f, default_flow_style=False)
-    
-    def config_to_dict(self, config: DictConfig) -> Dict[str, Any]:
-        """Convert OmegaConf config to regular dict."""
-        return OmegaConf.to_container(config, resolve=True)
 
