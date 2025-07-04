@@ -1,0 +1,23 @@
+Please evaluate the following model prediction against the ground truth annotation:
+
+**Sample Information:**
+- Image Path: {{ sample_info.image_path }}
+- Context Words: {{ sample_info.words | join(', ') }}
+
+**Model Prediction:**
+```json
+{{ prediction }}
+```
+
+**Ground Truth:**
+```json
+{{ ground_truth }}
+```
+
+Compare these carefully and provide your evaluation focusing on:
+1. How well the prediction structure matches the expected format
+2. How accurately the extracted content matches the ground truth
+3. Whether all relevant information was captured
+4. The precision and correctness of the extracted spans
+
+Return your evaluation as a JSON object following the specified format.

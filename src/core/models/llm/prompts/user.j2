@@ -1,0 +1,16 @@
+Analyze this ecclesiastical schematism page image and extract the structured information according to the system instructions.
+
+{% if hints %}
+### MODEL HINTS (layoutlmv3)
+{{ hints }}
+### END MODEL HINTS
+{% else %}
+### MODEL HINTS WEREN'T PROVIDED, YOU MUST USE YOUR OWN KNOWLEDGE TO EXTRACT THE INFORMATION
+{% endif %}
+
+Focus on identifying:
+- Page numbers
+- Deanery information  
+- Parish entries with their dedications and building materials
+
+Return only the JSON structure as specified.
