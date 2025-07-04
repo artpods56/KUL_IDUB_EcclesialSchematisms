@@ -1,0 +1,58 @@
+version: 1
+disable_existing_loggers: false
+
+formatters:
+  standard:
+    format: "[%(asctime)s] [%(levelname)8s] %(name)s: %(message)s"
+
+  coloured:
+    "()": rich.logging.RichHandler
+    rich_tracebacks: true
+    markup: true
+    show_level: true
+    show_path: false
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    level: INFO
+    formatter: coloured
+    stream: ext://sys.stdout
+
+  file_info:
+    class: logging.handlers.TimedRotatingFileHandler
+    level: INFO
+    formatter: standard
+    filename: logs/info.log
+    when: midnight
+    backupCount: 7
+    encoding: utf8
+
+  file_debug:
+    class: logging.handlers.TimedRotatingFileHandler
+    level: DEBUG
+    formatter: standard
+    filename: logs/debug.log
+    when: midnight
+    backupCount: 3
+    encoding: utf8
+
+loggers:
+  llm:
+    level: INFO
+    handlers: [console, file_info]
+    propagate: false
+
+  dataset:
+    level: INFO
+    handlers: [console, file_info]
+    propagate: false
+
+  core:
+    level: DEBUG
+    handlers: [console, file_debug]
+    propagate: false
+
+root:
+  level: INFO
+  handlers: [console, file_info]
