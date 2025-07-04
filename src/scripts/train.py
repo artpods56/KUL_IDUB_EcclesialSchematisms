@@ -24,6 +24,8 @@ from lmv3.utils.config import config_to_dict
 from shared import CONFIGS_DIR
 # Updated imports for load_labels and prepare_dataset, get_device remains
 from lmv3.utils.utils import get_device
+from lmv3.setup import get_model_and_processor
+
 
 load_dotenv()
 

@@ -17,6 +17,19 @@ from shared import PROJECT_ROOT, CONFIGS_DIR
 TESTS_DIR = Path(__file__).resolve().parent / "tests"
 SAMPLE_DATA_DIR = TESTS_DIR / "sample_data"
 
+
+
+# project_root/tests/conftest.py
+from pathlib import Path
+from dotenv import load_dotenv
+import pytest
+
+@pytest.fixture(scope="session", autouse=True)
+def _load_dotenv_once_for_everybody():
+    env_file = PROJECT_ROOT / ".env"
+    load_dotenv(dotenv_path=env_file, override=False)   # or True if you want tests to win
+
+
 @pytest.fixture(scope="session")
 def cfg():
     tests_config_dir = CONFIGS_DIR / "tests"
