@@ -1,79 +1,33 @@
-# tests/conftest.py
-from typing import cast, List
-
 import pytest
-from datasets import IterableDataset
-from hydra import compose, initialize_config_dir
-from dataset.utils import get_dataset
-from pathlib import Path
-import os
-import random
-import json
-
-import time
-
-from shared import PROJECT_ROOT, CONFIGS_DIR
-
-TESTS_DIR = Path(__file__).resolve().parent / "tests"
-SAMPLE_DATA_DIR = TESTS_DIR / "sample_data"
-
-
-
-# project_root/tests/conftest.py
-from pathlib import Path
 from dotenv import load_dotenv
-import pytest
+from omegaconf import DictConfig
+
+from core.config.config import ConfigManager
+from core.utils.shared import CONFIGS_DIR
+
 
 @pytest.fixture(scope="session", autouse=True)
-def _load_dotenv_once_for_everybody():
-    env_file = PROJECT_ROOT / ".env"
-    load_dotenv(dotenv_path=env_file, override=False)   # or True if you want tests to win
-
-
-@pytest.fixture(scope="session")
-def cfg():
-    tests_config_dir = CONFIGS_DIR / "tests"
-    with initialize_config_dir(config_dir=str(tests_config_dir), job_name="test", version_base="1.1"):
-        return compose(config_name="config")
+def _load_dotenv_once_for_everybody() -> None:
+    """Load .env file once per test session."""
+    load_dotenv()
 
 @pytest.fixture(scope="session")
-def dataset_sample(cfg):
-    """
-    Fixture to load the dataset based on the provided configuration.
-    """
-    dataset = get_dataset(cfg)
-    dataset.shuffle(seed=cfg.dataset.seed)
-
-    if dataset is None:
-        raise ValueError("Dataset could not be loaded. Please check the configuration.")
-    
-    return next(iter(dataset))
+def config_manager() -> ConfigManager:
+    """One ConfigManager shared by the whole test session."""
+    return ConfigManager(str(CONFIGS_DIR))
 
 @pytest.fixture(scope="session")
-def local_dataset_samples() -> List[dict]:
-    """Returns a sample from the local dataset."""
-    local_dataset_path = SAMPLE_DATA_DIR / Path("dataset_sample.jsonl")
-    samples = []
-    with open(local_dataset_path) as f:
-        for line in f:
-            samples.append(json.loads(line.strip()))
-    
-    if not samples:
-        raise ValueError("Local dataset samples are empty. Please check the file content.")
-    
-    return samples
+def dataset_config(config_manager) -> DictConfig:
+    """Loads the configuration for a dataset loader."""
+    return config_manager.load_config(config_name="dataset_config", config_dir="tests")
 
 @pytest.fixture(scope="session")
-def random_dataset_sample(cfg):
-    """
-    Fixture to load the dataset based on the provided configuration.
-    """
-    dataset = cast(IterableDataset, get_dataset(cfg))
+def llm_model_config(config_manager) -> DictConfig:
+    """Loads the configuration for LLM model."""
+    return config_manager.load_config(config_name="llm_config", config_dir="tests")
 
-    if dataset is None:
-        raise ValueError("Dataset could not be loaded. Please check the configuration.")
-    
-    buffer = 50          # larger buffer → better randomness, more RAM
-    seed   = int(time.time())  # change seed each call if you want a new sample
 
-    return next(iter(dataset.shuffle(seed=seed, buffer_size=buffer).take(1)))
+@pytest.fixture
+def lmv3_model_config(config_manager) -> DictConfig:
+    """Loads the configuration for LayoutLMv3 model."""
+    return config_manager.load_config(config_name="lmv3_config", config_dir="tests")

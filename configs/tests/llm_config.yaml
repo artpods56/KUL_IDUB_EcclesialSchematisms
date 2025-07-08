@@ -1,0 +1,35 @@
+predictor:
+  api_type: "openai"
+  template_dir: "prompts"
+
+interfaces:
+  openai:
+    model: "gpt-4-vision-preview"
+    api_key_env_var: "OPENAI_API_KEY"
+    structured_output: true
+    template_dir: "prompts"
+    api_kwargs:
+      max_tokens: 1024
+      temperature: 0.1
+      top_p: 0.9
+
+  mistral:
+    model: "mistral-large-latest"
+    api_key_env_var: "MISTRAL_API_KEY"
+    structured_output: true
+    template_dir: "prompts"
+    api_kwargs:
+      max_tokens: 1024
+      temperature: 0.1
+      top_p: 0.9
+
+  lm_studio:
+    model: "gemma-3-27b-it-qat"
+    structured_output: true
+    base_url: "http://localhost:1234/v1"
+    api_key_env_var: "OPENAI_API_KEY"
+    template_dir: "prompts"
+    api_kwargs:
+      max_tokens: 1024
+      temperature: 0.1
+      top_p: 0.9 
