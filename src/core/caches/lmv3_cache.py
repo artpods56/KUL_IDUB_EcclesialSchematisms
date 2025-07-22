@@ -1,20 +1,21 @@
 from core.caches.base_cache import BaseCache
 from pydantic import BaseModel
-from typing import Dict, Optional, Tuple, List
+from typing import Any, Dict, Optional, Tuple, List
 from pathlib import Path
 
-from logging import getLogger
-logger = getLogger(__name__)
+from structlog import get_logger
 
 class LMv3CacheItem(BaseModel):
     raw_preds: Optional[Tuple[List, List, List]]
     structured_preds: Optional[Dict]
 
 class LMv3Cache(BaseCache):
-    def __init__(self, cache_dir: Optional[Path] = None):
-        super(LMv3Cache, self).__init__(cache_dir)
+    def __init__(self, checkpoint: str, cache_dir: Optional[Path] = None):
 
-    def normalize_kwargs(self, **kwargs):
+        self.logger = get_logger(__name__).bind(checkpoint=checkpoint)
+        super().__init__(cache_dir)
+
+    def normalize_kwargs(self, **kwargs) -> Dict[str, Any]:
         return {
             "image_hash": kwargs.get("image_hash"),
             "structured_preds": kwargs.get("structured_preds")

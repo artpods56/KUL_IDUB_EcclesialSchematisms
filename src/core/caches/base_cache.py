@@ -6,15 +6,19 @@ import hashlib
 from pathlib import Path
 import os
 from PIL import Image
-from logging import getLogger
-logger = getLogger(__name__)
 
-
+from structlog.typing import FilteringBoundLogger
 
 class BaseCache:
+    """Base class for all cache implementations.
+    """
+
+    logger: FilteringBoundLogger
+
     def __init__(self, cache_dir: Optional[Path] = None):
         self.cache: Dict[str, Any] = {}
         self.cache_version = "v1"
+        self._cache_loaded = False
 
         self.cache_dir = os.getenv("CACHE_DIR", None) if cache_dir is None else cache_dir
 
@@ -23,10 +27,11 @@ class BaseCache:
         else:
             self.model_cache_dir = self.cache_dir / Path(self.__class__.__name__)
             self._setup_cache()
-            logger.info(f"Cache initialized with {len(self.cache)} entries")
+            if not self._cache_loaded:
+                self.logger.info(f"Cache initialized with {len(self.cache)} entries")
 
     @abstractmethod
-    def normalize_kwargs(self, **kwargs):
+    def normalize_kwargs(self, **kwargs) -> Dict[str, Any]:
         pass
 
     def _setup_cache(self):
@@ -35,7 +40,9 @@ class BaseCache:
 
         self.cache_file = self.model_cache_dir / f"{self.__class__.__name__.lower()}.json"
         self.cache = self.load_cache()
-        self.save_cache()
+        # Only save on initial setup if cache is empty (new cache) and cache file doesn't exist
+        if not self.cache and not self.cache_file.exists():
+            self.save_cache()
 
     def load_cache(self):
         """Load existing cache from disk."""
@@ -43,14 +50,19 @@ class BaseCache:
             try:
                 with open(self.cache_file, 'r') as f:
                     cache = json.load(f)
+                    if not self._cache_loaded:
+                        self.logger.info(f"Loaded cache from {self.cache_file}")
+                        self._cache_loaded = True
                     return cache
-                logger.info(f"Loaded cache from {self.cache_file}")
             except Exception as e:
                 raise e
         else:
+            if not self._cache_loaded:
+                self.logger.debug(f"No existing cache found, creating new cache at {self.cache_file}")
+                self._cache_loaded = True
             return {}
 
-    def save_cache(self):
+    def save_cache(self, silent: bool = False):
         """Save cache to disk."""
         try:
             with open(self.cache_file, 'w') as f:
@@ -62,9 +74,10 @@ class BaseCache:
                     else:
                         cache_dict[k] = v
                 json.dump(cache_dict, f, indent=4, ensure_ascii=False)
-            logger.debug(f"Cache saved to {self.cache_file}")
+            if not silent:
+                self.logger.debug(f"Cache saved to {self.cache_file}")
         except Exception as e:
-            logger.error(f"Failed to save cache: {e}")
+            self.logger.error(f"Failed to save cache: {e}")
 
 
     def get_image_hash(self, pil_image: Image.Image) -> str:
@@ -73,6 +86,18 @@ class BaseCache:
         img_bytes = pil_image.tobytes()
         return hashlib.md5(img_bytes).hexdigest()
 
+    # ---------------------------------------------------------------------
+    # New helper for text-only or mixed requests
+    # ---------------------------------------------------------------------
+    def get_text_hash(self, text: str | None) -> str | None:
+        """Return a deterministic SHA-256 hash for *text*.
+
+        Returns None if *text* is ``None`` so callers can pass the value
+        directly into ``generate_hash`` without extra conditionals.
+        """
+        if text is None:
+            return None
+        return hashlib.sha256(text.encode()).hexdigest()
 
     def generate_hash(self, **kwargs):
         relevant = self.normalize_kwargs(**kwargs)
