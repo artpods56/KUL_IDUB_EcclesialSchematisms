@@ -32,4 +32,15 @@ interfaces:
     api_kwargs:
       max_tokens: 1024
       temperature: 0.1
-      top_p: 0.9 
+      top_p: 0.9
+
+  openrouter:
+    model: "mistralai/pixtral-large-2411"
+    base_url: "https://openrouter.ai/api/v1"
+    api_key_env_var: "OPENROUTER_API_KEY"
+    structured_output: true
+    template_dir: "prompts"
+    api_kwargs:
+      max_tokens: 1024
+      temperature: 0.1
+      top_p: 0.9

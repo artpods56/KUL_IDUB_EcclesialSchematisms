@@ -1,0 +1,15 @@
+path: ''
+name: default_dataset
+force_download: false
+trust_remote_code: true
+keep_in_memory: false
+num_proc: 8
+split: train
+streaming: false
+image_column_name: image
+ground_truth_column_name: results
+full_schematisms: []
+partial_schematisms: []
+positive_samples_num: 10
+negative_samples_num: 5
+classes_to_remove: []

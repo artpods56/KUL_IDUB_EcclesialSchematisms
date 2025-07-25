@@ -1,0 +1,40 @@
+run:
+  device: cpu
+
+model:
+  checkpoint: microsoft/layoutlmv3-base
+
+processor:
+  checkpoint: microsoft/layoutlmv3-large
+  max_length: 512
+
+focal_loss:
+  alpha: 1.0
+  gamma: 1.0
+
+training:
+  output_dir: "models/checkpoints/layoutlmv3-large-focal"
+  max_steps: 100
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  learning_rate: 2e-5
+  eval_strategy: "steps"
+  eval_steps: 100
+  load_best_model_at_end: true
+  metric_for_best_model: "eval_overall_f1"
+  report_to: "wandb"
+  run_name: "layoutlmv3-large-focal"
+  logging_strategy: "steps"
+  logging_steps: 100
+  logging_dir: "logs_focal"
+  save_strategy: "steps"
+  save_steps: 100
+  save_total_limit: 4
+  fp16: true
+
+inference:
+  checkpoint: "artpods56/layoutlmv3_focalloss_4000"
+  apply_ocr: false
+
+metrics:
+  return_entity_level_metrics: true

@@ -1,0 +1,4 @@
+predictor:
+  api_type: openai
+  template_dir: prompts
+interfaces: {}
