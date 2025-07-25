@@ -1,4 +1,4 @@
-from typing import List, Callable
+from typing import Iterable, List, Callable, Union
 
 def merge_filters(filters: List[Callable]) -> Callable:
     """
@@ -10,13 +10,13 @@ def merge_filters(filters: List[Callable]) -> Callable:
     
     return merged_filter
 
-def filter_schematisms(schematisms_to_train: set) -> Callable:
-    def _filter_fn(example):
-        full_filename = example["image"]
-        splits = full_filename.split("_")
-        filename = splits.pop()
-        schematism = "_".join(splits)
-        return schematism in schematisms_to_train
+def filter_schematisms(to_filter: Union[str, Iterable]):
+    """Filter schematisms by schematism name or list of schematisms."""
+    def _filter_fn(schematism_name):
+        if isinstance(to_filter, str):
+            return schematism_name == to_filter
+        else:
+            return schematism_name in to_filter
     return _filter_fn
 
 

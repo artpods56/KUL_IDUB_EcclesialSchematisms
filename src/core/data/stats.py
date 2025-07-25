@@ -1,14 +1,8 @@
 from typing import Dict
 from thefuzz import fuzz, process
 
-
-from core.utils.logging import setup_logging
-from logging import getLogger
-
-setup_logging()
-
-
-logger = getLogger(__name__)
+from structlog import get_logger
+logger = get_logger(__name__)
 
 
 
@@ -173,6 +167,8 @@ def _update(metrics: dict, field: str, tp=0, fp=0, fn=0):
 
 def _precision_recall(m):
     tp, fp, fn = m["TP"], m["FP"], m["FN"]
+    if tp + fp + fn == 0:      # no ground-truth and no predictions
+        return 1.0, 1.0        # treat as perfect
     prec = tp / (tp + fp) if tp + fp else 0.0
     rec  = tp / (tp + fn) if tp + fn else 0.0
     return prec, rec
@@ -183,23 +179,24 @@ def _f1(prec: float, rec: float) -> float:
 
 def _accuracy(m):
     total = m["TP"] + m["FP"] + m["FN"]
-    return m["TP"] / total if total else 0.0
+    return 1.0 if total == 0 else m["TP"] / total
 
 # -------------------------  główna funkcja  -----------------------
 def evaluate_json_response(pred_json: dict,
                            gt_json: dict,
                            fuzzy_threshold: int = 80,
                            scorer = fuzz.token_set_ratio,
-                           entry_fields = ("parish", "dedication",
+                           entry_fields = ("parish", "deanery", "dedication",
                                            "building_material")) -> dict:
     """
     Zwraca słownik: {pole: {"TP":..., "FP":..., "FN":..., "precision":..., "recall":...}}
     """
-    metrics = {field: _init_metrics() for field in
-               ["page_number", "deanery", *entry_fields]}
+    # initialise metrics; "deanery" is evaluated per-entry (not globally)
+    metrics = {field: _init_metrics() for field in ["page_number", *entry_fields]}
 
-    # --- pola globalne ---
-    for field in ("page_number", "deanery"):
+    # --- global fields ---
+    # Only page_number is global in the new JSON schema
+    for field in ("page_number",):
         gt_val  = normalize_text(gt_json.get(field))
         pred_val = normalize_text(pred_json.get(field))
         if not gt_val:                         # ground truth puste

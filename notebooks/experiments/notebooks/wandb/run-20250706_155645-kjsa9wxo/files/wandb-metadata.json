@@ -1,0 +1,42 @@
+{
+  "os": "macOS-16.0-arm64-arm-64bit",
+  "python": "CPython 3.12.9",
+  "startedAt": "2025-07-06T13:56:45.458341Z",
+  "program": "notebooks/experiments/notebooks/main.ipynb",
+  "git": {
+    "remote": "https://github.com/pgil2207/AI_Osrodek",
+    "commit": "49b04aedeead611431196bc7340c462617eb2061"
+  },
+  "email": "artpods56@gmail.com",
+  "root": "/Volumes/T7/AI_Osrodek/notebooks/experiments/notebooks",
+  "host": "macbookpro.home",
+  "executable": "/opt/anaconda3/envs/ocr/bin/python",
+  "cpu_count": 10,
+  "cpu_count_logical": 10,
+  "disk": {
+    "/": {
+      "total": "494353338368",
+      "used": "481983856640"
+    },
+    "/System/Volumes/Data": {
+      "total": "494353338368",
+      "used": "481983856640"
+    }
+  },
+  "memory": {
+    "total": "34359738368"
+  },
+  "cpu": {
+    "count": 10,
+    "countLogical": 10
+  },
+  "apple": {
+    "name": "Apple M1 Pro",
+    "ecpuCores": 2,
+    "pcpuCores": 8,
+    "gpuCores": 16,
+    "memoryGb": 32,
+    "swapTotalBytes": "6710886400",
+    "ramTotalBytes": "34359738368"
+  }
+}

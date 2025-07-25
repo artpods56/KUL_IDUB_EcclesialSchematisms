@@ -19,6 +19,8 @@ dependencies = [
     "hydra-core",
     "wandb",
     "structlog",
+    "rich",
+    "diskcache==5.6.3",
 ]
 
 [tool.setuptools]
@@ -26,3 +28,7 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.dagster]
+module_name = "src.orchestration.assets.data"
+attribute = "definitions"

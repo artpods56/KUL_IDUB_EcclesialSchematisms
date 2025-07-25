@@ -194,23 +194,27 @@ pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/visualstudiocode,python
 
+
+.idea/
 **/.DS_Store
 
-/label-studio/postgres-data
-label-studio/backends/layoutlmv3_backend/data/models/
+/src/services/postgres-data
+src/services/backends/layoutlmv3_backend/data/models/
 data/schematyzmy/
 
 ocr_cache/
-data/
-outputs/
-wandb/
+/data/
+tmp/outputs/
+tmp/wandb/
 
-label-studio/data/hf_dataset
-label-studio/data/images
-label-studio/data/ocr_cache
+src/services/data/hf_dataset
+src/services/data/images
+src/services/data/ocr_cache
 minio_data
 data_old
 
-models/
-logs_focal/
-test_focal/
+/tmp/models/
+/logs_focal/
+/test_focal/
+
+tmp/

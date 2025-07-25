@@ -2,12 +2,8 @@ import os
 import json
 from thefuzz import fuzz, process
 
-from core.utils.logging import setup_logging
-setup_logging()
-
-import logging
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+from structlog import get_logger
+logger = get_logger(__name__)
 
 class Parser:
     def __init__(self, building_material_mapping = None, dedication_mapping = None, fuzzy_threshold=80):
@@ -82,7 +78,6 @@ class Parser:
 
 
     def parse_page(self, page_json: dict):
-        print("copied json")
         page_json_copy = page_json.copy()
         for entry in page_json_copy["entries"]:
             entry["building_material"] = self.parse(entry["building_material"], "building_material") if entry["building_material"] else None

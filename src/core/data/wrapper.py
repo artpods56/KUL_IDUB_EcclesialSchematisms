@@ -1,7 +1,7 @@
 
 
 from datasets import Dataset
-from data.parsing import build_page_json, repair_bio_labels
+from core.data.parsing import build_page_json, repair_bio_labels
 
 
 class DatasetWrapper:

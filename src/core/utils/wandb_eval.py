@@ -55,7 +55,6 @@ def create_eval_table(fields: Sequence[str] = _DEFAULT_FIELDS) -> wandb.Table:
 
 def add_eval_row(
     table: wandb.Table,
-    *,
     sample_id: str,
     pil_image: Image.Image,
     page_info_json: Dict[str, Any],

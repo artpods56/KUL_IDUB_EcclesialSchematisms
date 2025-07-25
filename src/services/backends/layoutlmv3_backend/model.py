@@ -70,7 +70,7 @@ class LayoutLMv3Backend(LabelStudioMLBase):
     _model: LayoutLMv3ForTokenClassification = None  # type: ignore
 
     def __init__(self, **kwargs):
-        super(LayoutLMv3Backend, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
         self._lazy_init()
         self.api_key = os.getenv("LABEL_STUDIO_API_KEY")

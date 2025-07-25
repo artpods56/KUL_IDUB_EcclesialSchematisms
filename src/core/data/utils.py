@@ -13,7 +13,7 @@ from datasets import (
 )
 from omegaconf import DictConfig
 
-from data.wrapper import DatasetWrapper
+from core.data.wrapper import DatasetWrapper
 
 def load_labels(dataset: Dataset):
     classes = []
@@ -91,11 +91,11 @@ def _to_fractional(box: List[int]) -> Dict[str, float]:
     return {"minX": min_x, "maxX": max_x, "minY": min_y, "maxY": max_y}
 
 
-def get_dataset(cfg: DictConfig, wrapper: bool = False) -> Union[Dataset, DatasetWrapper]:
+def get_dataset(config: DictConfig, wrapper: bool = False) -> Union[Dataset, DatasetWrapper]:
 
     download_mode = (
         DownloadMode.FORCE_REDOWNLOAD
-        if cfg.dataset.force_download
+        if config.force_download
         else DownloadMode.REUSE_CACHE_IF_EXISTS
     )
 
@@ -106,15 +106,15 @@ def get_dataset(cfg: DictConfig, wrapper: bool = False) -> Union[Dataset, Datase
     dataset = cast(
         Dataset,
         load_dataset(
-            path=cfg.dataset.path,
-            name=cfg.dataset.name,
-            split=cfg.dataset.split,
+            path=config.path,
+            name=config.name,
+            split=config.split,
             token=HF_TOKEN,
-            trust_remote_code=cfg.dataset.trust_remote_code,
-            num_proc=cfg.dataset.num_proc if cfg.dataset.num_proc > 0 else None,
+            trust_remote_code=config.trust_remote_code,
+            num_proc=config.num_proc if config.num_proc > 0 else None,
             download_mode=download_mode,
-            keep_in_memory=cfg.dataset.keep_in_memory,
-            streaming=cfg.dataset.streaming,
+            keep_in_memory=config.keep_in_memory,
+            streaming=config.streaming,
         ),
     )
 

@@ -113,27 +113,30 @@ def build_page_json(words, bboxes, labels):
 
     # Initialize result structure
     page_number = None
-    deanery = None
     entries = []
+    deanery = None
 
     # Running buffer for each parish block
-    current = {"parish": None, "dedication": None, "building_material": None}
+    current = {"deanery": None, "parish": None, "dedication": None, "building_material": None}
 
     for ent_type, text in spans:
         if ent_type == "page_number":
             page_number = text
-        elif ent_type == "deanery":
-            deanery = text
         elif ent_type == "parish":
             # Start a new entry - flush previous if it exists
             if current["parish"]:
                 entries.append(current)
-                current = {"parish": None, "dedication": None, "building_material": None}
+                current = {"deanery": deanery ,"parish": None, "dedication": None, "building_material": None}
             current["parish"] = text
+        elif ent_type == "deanery":
+            deanery = text
+            current["deanery"] = deanery
         elif ent_type == "dedication":
             current["dedication"] = text
         elif ent_type == "building_material":
             current["building_material"] = text
+
+
 
     # Flush last entry if it exists
     if current["parish"]:
@@ -141,6 +144,5 @@ def build_page_json(words, bboxes, labels):
 
     return {
         "page_number": page_number,
-        "deanery": deanery,
         "entries": entries,
     }

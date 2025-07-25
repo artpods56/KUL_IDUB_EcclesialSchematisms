@@ -1,11 +1,9 @@
 import pandas as pd
 import geopandas as gpd
 from shapely import wkt
-from shapely.geometry import box
 from shapely.geometry.base import BaseGeometry
 from typing import Dict, List, Optional, Any
 import os
-from dotenv import load_dotenv
 from pathlib import Path
 from PIL import Image
 from typing import cast
@@ -15,13 +13,12 @@ from typing import cast
 from pydantic import BaseModel
 
 class SchematismEntry(BaseModel):
-
+    deanery: Optional[str] = None
     parish: Optional[str] = None
     dedication: Optional[str] = None
     building_material: Optional[str] = None
     
 class SchematismPage(BaseModel):
-    deanery: Optional[str] = None
     page_number: Optional[str] = None
     entries: List[SchematismEntry]
 
@@ -39,7 +36,6 @@ class SchematismParser:
             shapefile_path: Optional path to shapefile. If not provided, will be inferred.
         """
 
-        load_dotenv()
         self.schematism_name = schematism_name
         schematisms_path = os.getenv("SCHEMATISMS_PATH", None)
         if schematisms_path is None:
@@ -203,21 +199,20 @@ class SchematismParser:
 
         if len(structured_results) == 0:
             return SchematismPage(
-                deanery=None,
                 page_number=None,
                 entries=[]
             ).model_dump()
 
         for result in structured_results:
             entries.append(SchematismEntry(
+                deanery=result["dekanat"],
                 parish=result["parafia"],
                 dedication=result["wezwanie"],
                 building_material=result["material_typ"]
             ))
 
         return SchematismPage(
-            deanery=structured_results[0]["dekanat"],
-            page_number=str(structured_results[0]["strona_p"]), 
+            page_number=str(structured_results[0]["strona_p"]),
             entries=entries).model_dump()
     
     def get_page_info(self, filename: str) -> Dict[str, Any]:

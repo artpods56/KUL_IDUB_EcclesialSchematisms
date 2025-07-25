@@ -1,12 +1,8 @@
 import torch
 from transformers import AutoProcessor, LayoutLMv3ForTokenClassification
 
-from core.utils.logging import setup_logging
-
-
-setup_logging()
-from logging import getLogger
-logger = getLogger(__name__)
+from structlog import get_logger
+logger = get_logger(__name__)
 
 def unnormalize_bbox(bbox, width, height):
     return [
@@ -18,12 +14,11 @@ def unnormalize_bbox(bbox, width, height):
 
 def get_model_and_processor(cfg):
     processor = AutoProcessor.from_pretrained(
-        cfg.processor.checkpoint, apply_ocr=False
+        cfg.processor.checkpoint, local_files_only=True if cfg.processor.local_files_only else False, apply_ocr=False
     )
 
     model = LayoutLMv3ForTokenClassification.from_pretrained(
-        cfg.inference.checkpoint,
-
+        cfg.inference.checkpoint, local_files_only=True if cfg.inference.local_files_only else False,
     )
     
     return model, processor
@@ -79,11 +74,6 @@ def retrieve_predictions(image, processor, model, words=None, bboxes=None):
         preds
         flattened_words
     """
-
-    if words is not None:
-        logger.info(f"DEBUG: words length: {len(words)}")
-    if bboxes is not None:
-        logger.info(f"DEBUG: bboxes length: {len(bboxes)}")
 
     width, height = image.size
     
