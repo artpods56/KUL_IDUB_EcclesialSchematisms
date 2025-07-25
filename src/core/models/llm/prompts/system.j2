@@ -30,9 +30,9 @@ You might also receive **“MODEL HINTS”** from a weaker vision model (LayoutL
 ```json
 {
   "page_number": "<string | null>",          // printed page no.; null if absent; not higher than 3 digit number
-  "deanery":     "<string | null>",          // full Latin phrase if present
   "entries": [
     {
+      "deanery":     "<string | null>",          // full Latin phrase if present
       "parish":            "<string>",       // Polish nominative if shown, else Latin root
       "dedication":        "<string | null>",// entire titulus phrase, incl. ritual prefix
       "building_material": "<string | null>" // Latin abbreviation exactly as printed
@@ -58,6 +58,7 @@ You might also receive **“MODEL HINTS”** from a weaker vision model (LayoutL
    A *parish block* consists of its header line plus any descriptive lines up to (but not including) the next header line. Do **not** merge different parishes.
 
 4. **Field rules**
+   • *deanery* — A deanery heading (e.g., "Decanatus...") applies to all parishes listed **after it** on the page, until a new deanery is specified. If a parish appears **before** the first deanery heading on the page, its deanery is null.
    • *parish* — prefer Polish nominative with diacritics; if only Latin appears, strip obvious case endings.
    • *dedication* — capture the **full titulus string exactly as printed**, including ritual prefixes (`T. E. S.`, `S.`, `SS.`, `Arch.` etc.), but stop before `Patr.`, `N. A.`, or any new clause.
    • *building\_material* — copy the abbreviation exactly; do not normalise.
@@ -101,15 +102,16 @@ Examples (copy exactly):
 
 ```
 [IMAGE]                                         // fragment showing one parish, no info on dedication
-1. Bolesław, P. E. p. mur. — a. 1632 ... 
+1. Bolesław, P. E. p. mur. — a. 1632 ...
+Decanatus Dabrovaensis. Eccl. par. ... // deanery appears but it will apply to the next parish which we don't have on the page
 ```
 
 ```json
 {
   "page_number": null,
-  "deanery": null,
   "entries": [
     {
+      "deanery": null,
       "parish": "Bolesław",
       "dedication": null,
       "building_material": "mur."
@@ -122,9 +124,9 @@ Examples (copy exactly):
 
 {
   "page_number": null,
-  "deanery": null,
   "entries": [
     {
+      "deanery": null,
       "parish": "Bolesław",
       "dedication": null,
       "building_material": "mur."
@@ -137,25 +139,27 @@ Examples (copy exactly):
 
 ```
 [IMAGE]
-Decanatus Dabrovaensis. Eccl. par. ...
 
+Decanatus Grudziensis. Ecclesiae par. ...
 2. Dąbrowa, P. E. p. lign. – T. E. 00. SS. ...
 N. A. In incorp. 8. locis: Żabno, Odporyszów, ...
-
+Decanatus Dabrovaensis. Eccl. par. ...
 3. Gręboszów, P. E. p. – in honorem Assumptionis B. M. V. ...
 ```
 
 ```json
 {
   "page_number": "140",
-  "deanery": "Decanatus Dabrovaensis.",
+
   "entries": [
     {
+      "deanery": "Decanatus Grudziensis.",
       "parish": "Dąbrowa",
       "dedication": "T. E. 00. SS.",
       "building_material": "lign."
     },
     {
+      "deanery": "Decanatus Dabrovaensis.",
       "parish": "Gręboszów",
       "dedication": "Assumptionis B. M. V.",
       "building_material": null
@@ -175,7 +179,6 @@ Sequentes paginae vacant. ...
 ```json
 {
   "page_number": null,
-  "deanery": null,
   "entries": []
 }
 ```
@@ -183,9 +186,9 @@ Sequentes paginae vacant. ...
 ```json
 {
   "page_number": null,
-  "deanery": null,
   "entries": [
     {
+      "deanery": null,
       "parish": "H.",
       "dedication": null,
       "building_material": null

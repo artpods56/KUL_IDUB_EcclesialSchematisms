@@ -28,7 +28,7 @@ class FocalLoss(nn.Module):
         :param task_type: Specifies the type of task: 'binary', 'multi-class', or 'multi-label'
         :param num_classes: Number of classes (only required for multi-class classification)
         """
-        super(FocalLoss, self).__init__()
+        super().__init__()
         self.gamma = gamma
         self.alpha = alpha
         self.reduction = reduction

@@ -1,23 +1,24 @@
 import json
-
-from pydantic import BaseModel
 from typing import Dict, Optional, Union
 from pathlib import Path
 
 from structlog import get_logger
 from core.caches.base_cache import BaseCache
 
-class LLMCacheItem(BaseModel):
-    response: Union[str, Dict]
-    hints: Optional[Dict]
 
 class LLMCache(BaseCache):
-    def __init__(self, model_name: str, cache_dir: Optional[Path] = None):
-        self.model_name = model_name
-
+    def __init__(self, model_name: str, caches_dir: Optional[Path] = None):
         self.logger = get_logger(__name__).bind(model_name=model_name)
 
-        super().__init__(cache_dir)
+        self.model_name = model_name
+
+        super().__init__(caches_dir)
+
+        self._setup_cache(
+            caches_dir = self._caches_dir,
+            cache_type = self.__class__.__name__,
+            cache_name = model_name
+        )
 
     def normalize_kwargs(self, **kwargs):
         return {
@@ -26,13 +27,3 @@ class LLMCache(BaseCache):
             "messages": json.dumps(kwargs.get("messages"), ensure_ascii=False),
             "hints": json.dumps(kwargs.get("hints"), ensure_ascii=False)
         }
-
-    def _setup_cache(self):
-        if not self.model_cache_dir.exists():
-            self.model_cache_dir.mkdir(parents=True, exist_ok=True)
-
-        self.cache_file = self.model_cache_dir / f"{self.model_name}.json"
-        self.cache = self.load_cache()
-        # Only save on initial setup if cache is empty (new cache) and cache file doesn't exist
-        if not self.cache and not self.cache_file.exists():
-            self.save_cache()

@@ -1,4 +1,4 @@
-# src/my_project/utils/config.py
+# src/my_project/utils/manager.py
 from collections.abc import Mapping as ABCMapping
 from typing import Any, Dict
 

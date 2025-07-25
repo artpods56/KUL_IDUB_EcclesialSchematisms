@@ -1,18 +1,60 @@
-from logging import getLogger
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple, Union, Optional, cast
 
 import numpy as np
 from PIL import Image
 import pytesseract
+from pydantic_core import ValidationError
+from structlog import get_logger
 
-
-from core.caches.lmv3_cache import LMv3Cache, LMv3CacheItem
-from data.parsing import build_page_json
+from core.data.parsing import build_page_json, repair_bio_labels
 from core.utils.inference_utils import get_model_and_processor, retrieve_predictions
-from core.utils.logging import setup_logging
+from core.schemas.caches.entries import LMv3CacheItem
+from core.caches.lmv3_cache import LMv3Cache
+from core.caches.utils import get_image_hash
 
-setup_logging()
-logger = getLogger(__name__)
+logger = get_logger(__name__)
+
+
+def ocr_page(pil_image: Image.Image, text_only: bool = False) -> Union[Tuple[List, List], str]:
+    """Extract OCR text and bounding boxes from PIL image."""
+    width, height = pil_image.size
+
+    if not text_only:
+        ocr = pytesseract.image_to_data(
+            np.array(pil_image.convert("L")),
+            output_type=pytesseract.Output.DICT,
+            lang="lat+pol+rus",
+            config="--psm 6 --oem 3",
+        )
+    else:
+        ocr = pytesseract.image_to_string(
+            np.array(pil_image.convert("L")),
+            lang="lat+pol+rus",
+            config="--psm 6 --oem 3",
+        )
+        return ocr
+
+    words, bboxes = [], []
+    for i, word in enumerate(ocr["text"]):
+        if ocr["level"][i] != 5:
+            continue
+        if not (w := word.strip()) or int(ocr["conf"][i]) < 0:
+            continue
+        xmin, ymin = ocr["left"][i], ocr["top"][i]
+        xmax, ymax = xmin + ocr["width"][i], ymin + ocr["height"][i]
+
+        box = [
+            int(1000 * xmin / width),
+            int(1000 * ymin / height),
+            int(1000 * xmax / width),
+            int(1000 * ymax / height),
+        ]
+
+        bboxes.append(box)
+        words.append(w)
+
+    return words, bboxes
+
 
 class LMv3Model:
     """LayoutLMv3 model wrapper with unified predict interface and caching."""
@@ -25,53 +67,25 @@ class LMv3Model:
         
         self.enable_cache = enable_cache
         if self.enable_cache:
-            self.cache = LMv3Cache()
+            self.cache = LMv3Cache(
+                checkpoint=config.inference.checkpoint,
+            )
 
-    def ocr_page(self, pil_image: Image.Image):
-        """Extract OCR text and bounding boxes from PIL image."""
-        width, height = pil_image.size
-        
-        ocr = pytesseract.image_to_data(
-            np.array(pil_image.convert("L")),
-            output_type=pytesseract.Output.DICT,
-            lang="lat+pol+rus",
-            config="--psm 6 --oem 3",
-        )
-        
-        words, bboxes = [], []
-        for i, word in enumerate(ocr["text"]):
-            if ocr["level"][i] != 5:
-                continue
-            if not (w := word.strip()) or int(ocr["conf"][i]) < 0:
-                continue
-            xmin, ymin = ocr["left"][i], ocr["top"][i]
-            xmax, ymax = xmin + ocr["width"][i], ymin + ocr["height"][i]
-            
-            box = [
-                int(1000 * xmin / width),
-                int(1000 * ymin / height),
-                int(1000 * xmax / width),
-                int(1000 * ymax / height),
-            ]
-            
-            bboxes.append(box)
-            words.append(w)
-            
-        return words, bboxes
-
-    def _predict(self, pil_image: Image.Image, raw_preds: bool = False) -> Union[Dict, Tuple[List, List, List]]:
+    def _predict(self, pil_image: Image.Image,) -> Tuple[List, List, List]:
         """Predict on PIL image and return JSON results with caching.
         
         Args:
             pil_image: PIL Image object
-            raw_preds: If True, return raw predictions (words, bboxes, preds)
             """
 
-        words, bboxes = self.ocr_page(pil_image)
+        words, bboxes = cast(
+            Tuple[list,list],
+            ocr_page(pil_image)
+        )
 
         grayscale_image = pil_image.convert("L").convert("RGB")
         
-        pred_bboxes, pred_ids, _ = retrieve_predictions(
+        prediction_bboxes, prediction_ids, _ = retrieve_predictions(
             image=grayscale_image,
             processor=self.processor,
             model=self.model,
@@ -79,61 +93,70 @@ class LMv3Model:
             bboxes=bboxes,
         )
 
-        preds = [self.id2label[p] for p in pred_ids]
+        predictions = [self.id2label[p] for p in prediction_ids]
 
-        return words, pred_bboxes, preds
+        return words, prediction_bboxes, predictions
 
 
-    def predict(self, pil_image: Image.Image, raw_preds: bool = False) -> Union[Dict, Tuple[List, List, List]]:
+    def predict(self, pil_image: Image.Image, raw_predictions: bool = False, **kwargs) -> Union[Dict, Tuple[List, List, List]]:
         """Predict on PIL image and return JSON results with caching.
         
         Args:
             pil_image: PIL Image object
-            raw_preds: If True, return raw predictions (words, bboxes, preds)
-            
+            raw_predictions: If True, return raw predictions (words, bboxes, preds)
         Returns:
             Dictionary with structured prediction results or tuple of raw predictions
         """
         if self.enable_cache:
-            logger.debug(f"Cache enabled")
             hash_key = self.cache.generate_hash(
-                image_hash=self.cache.get_image_hash(pil_image),
-                raw_preds=raw_preds
+                image_hash=get_image_hash(pil_image),
+                raw_predictions=raw_predictions
             )
             
             try:
-                cached_result = self.cache[hash_key]
-            except KeyError:
-                cached_result = None
+                cache_item_data = cast(
+                    Optional[dict], self.cache.get(key=hash_key)
+                )
+                if cache_item_data is not None:
+                    cache_item = LMv3CacheItem(**cache_item_data)
 
-            if cached_result:
-                if raw_preds:
-                    if cached_result["raw_preds"] is not None:
-                        return cached_result["raw_preds"]
-                else:
-                    if cached_result["structured_preds"] is not None:
-                        return cached_result["structured_preds"]
-            
-            
-            words, bboxes, preds = self._predict(pil_image, raw_preds)
-            structured_preds = build_page_json(words=words, bboxes=bboxes, labels=preds)
+                    if raw_predictions:
+                        return cache_item.raw_predictions
+                    else:
+                        return cache_item.structured_predictions.model_dump()
 
-            self.cache[hash_key] = LMv3CacheItem(
-                raw_preds=(words, bboxes, preds), 
-                structured_preds=structured_preds
-                ).model_dump()
+            except ValidationError as e:
+                self.cache.delete(key=hash_key)
 
-            self.cache.save_cache()
+            words, bboxes, predictions = self._predict(pil_image)
+            repaired_predictions = repair_bio_labels(predictions)
 
-            if raw_preds:
-                return words, bboxes, preds
+            structured_predictions = build_page_json(words=words, bboxes=bboxes, labels=repaired_predictions)
+
+            cache_item_data = {
+                "raw_predictions": (words, bboxes, predictions),
+                "structured_predictions": structured_predictions
+            }
+
+            schematism = kwargs.get("schematism", None)
+            filename = kwargs.get("filename", None)
+
+            self.cache.set(
+                key=hash_key,
+                value=LMv3CacheItem(**cache_item_data).model_dump(),
+                schematism=schematism,
+                filename=filename,
+            )
+
+            if raw_predictions:
+                return words, bboxes, predictions
             else:
-                return structured_preds
+                return structured_predictions
         else:
-            words, bboxes, preds = self._predict(pil_image, raw_preds)
-            
-            if raw_preds:
-                return words, bboxes, preds
+            words, bboxes, predictions = self._predict(pil_image)
+            repaired_predictions = repair_bio_labels(predictions)
+            if raw_predictions:
+                return words, bboxes, repaired_predictions
             else:
-                return build_page_json(words=words, bboxes=bboxes, labels=preds)
+                return build_page_json(words=words, bboxes=bboxes, labels=repaired_predictions)
     
