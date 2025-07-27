@@ -21,6 +21,22 @@ dependencies = [
     "structlog",
     "rich",
     "diskcache==5.6.3",
+    "datasets",
+    "geopandas",
+    "jinja2",
+    "mistralai",
+    "omegaconf",
+    "openai",
+    "pillow",
+    "pydantic",
+    "pytesseract",
+    "python-dotenv",
+    "pyyaml",
+    "rapidfuzz",
+    "shapely",
+    "thefuzz",
+    "tqdm",
+    "typing_extensions"
 ]
 
 [tool.setuptools]

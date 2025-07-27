@@ -37,8 +37,11 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 from dotenv import load_dotenv
-load_dotenv()
-logger.info("Loaded environment variables.")
+envs = load_dotenv()
+if envs:
+    logger.info("Loaded environment variables.")
+else:
+    logger.warning("No environment variables loaded.")
 
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning, module="transformers.modeling_utils")
