@@ -6,7 +6,7 @@ model:
 
 processor:
   checkpoint: microsoft/layoutlmv3-large
-  local_files_only: true
+  local_files_only: false
   max_length: 512
 
 focal_loss:
@@ -36,7 +36,7 @@ training:
 inference:
   checkpoint: "artpods56/layoutlmv3_focalloss_4000"
   apply_ocr: false
-  local_files_only: true
+  local_files_only: false
 
 metrics:
   return_entity_level_metrics: true

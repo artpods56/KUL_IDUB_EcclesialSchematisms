@@ -1,9 +1,9 @@
 path: "artpods56/AIOsrodekSchematisms"
 name: "default"
 force_download: false
-trust_remote_code: true
+trust_remote_code: false
 keep_in_memory: false
-num_proc: 8
+num_proc: 6
 seed: 42
 split: "train"
 streaming: false
@@ -14,15 +14,15 @@ ground_truth_column_name: "results"
 #Lublin 1870,
 #Płock 1880 i 1882, Warszawa 1870 i 1872 (brak podanego materiału budowalnego), Sejny 1874
 
-positive_samples: 100000
-negative_samples: 100000
+positive_samples: 5
+negative_samples: 5
 full_schematisms:
 #  - "lublin_1870"
-  - "plock_1880"
-  - "plock_1882"
+#  - "plock_1880"
+#  - "plock_1882"
 #  - "warszawa_1870"
 #  - "warszawa_1872"
-#  - "sejny_1874"
+  - "sejny_1874"
 #  - "wloclawek_1872"
 #  - "wloclawek_1873"
 #  - "tarnow_1870"

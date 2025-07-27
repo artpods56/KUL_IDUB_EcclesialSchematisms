@@ -1,6 +1,7 @@
 from abc import abstractmethod
 from ast import Constant
 from datetime import datetime
+from core.utils.shared import REPOSITORY_ROOT
 from typing_extensions import reveal_type
 from pydantic import BaseModel, Field
 from typing import ByteString, Dict, Optional, Sized, Tuple, List, Any, Union, cast
@@ -30,7 +31,7 @@ class BaseCache:
         if env_caches_dir is None:
             raise ValueError("CACHE_DIR environment variable is not set.")
 
-        self._caches_dir = caches_dir if caches_dir is not None else Path(env_caches_dir)
+        self._caches_dir = caches_dir if caches_dir is not None else REPOSITORY_ROOT / Path(env_caches_dir)
 
     @abstractmethod
     def normalize_kwargs(self, **kwargs) -> Dict[str, Any]:
@@ -51,6 +52,8 @@ class BaseCache:
         self.get = self.cache.get
         self.delete = self.cache.delete
 
+        if len(self.cache) == 0:
+            raise ValueError(f"Cache {cache_name} is empty.")
         self.logger.info(f"{cache_type} cache initialised at {self.model_cache_dir} with {len(self.cache)} entries")
 
         self._cache_loaded = True
@@ -59,13 +62,6 @@ class BaseCache:
         key_data = self.normalize_kwargs(**kwargs)
         key_str = json.dumps(key_data, sort_keys=True)
         return hashlib.sha256(key_str.encode()).hexdigest()
-
-    def __getitem__(self, key: str):
-        return self.cache.get(key)
-
-    def __setitem__(self, key: str, value: Dict[str, Any]):
-        """Insert *value* under *key* and attach an optional tag for schematism."""
-        self.cache.set(key, value)
 
     def set(self, key: str, value: Dict[str, Any], schematism: Optional[str] = None, filename: Optional[str] = None):
 

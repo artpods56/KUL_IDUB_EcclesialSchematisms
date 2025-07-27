@@ -54,69 +54,65 @@ class EvaluationRunner:
 
         eval_table = create_eval_table()
 
-        with Progress() as progress:
-            task = progress.add_task("Evaluating", total=len(dataset_subset))
-            progress.start_task(task)
-            while self.positive_samples > 0 or self.negative_samples > 0 or self.positive_samples is None or self.negative_samples is None:
-                for sample in dataset_subset:
-                    filename = sample["filename"]  # type: ignore[index]
-                    schematism_name = sample["schematism_name"]  # type: ignore
+        for sample in dataset_subset:
+            filename = sample["filename"]  # type: ignore[index]
+            schematism_name = sample["schematism_name"]  # type: ignore
 
-                    metadata = {
-                        "schematism": schematism_name,
-                        "filename": filename,
-                    }
+            metadata = {
+                "schematism": schematism_name,
+                "filename": filename,
+            }
 
-                    image = sample[self.dataset_config.image_column_name]  # type: ignore[index]
-                    results = sample[self.dataset_config.ground_truth_column_name]  # type: ignore[index]
-                    results = results.replace('"[brak_informacji]"', "null")
-                    results_json = json.loads(results)
+            image = sample[self.dataset_config.image_column_name]  # type: ignore[index]
+            results = sample[self.dataset_config.ground_truth_column_name]  # type: ignore[index]
+            results = results.replace('"[brak_informacji]"', "null")
+            results_json = json.loads(results)
 
-                    if len(results_json["entries"]) == 0:
-                        if self.negative_samples == 0:
-                            continue
-                        self.negative_samples -= 1
-                    else:
-                        if self.positive_samples == 0:
-                            continue
-                        self.positive_samples -= 1
+            if len(results_json["entries"]) == 0:
+                continue
+            #     if self.negative_samples == 0:
+            #         continue
+            #     self.negative_samples -= 1
+            # else:
+            #     if self.positive_samples == 0:
+            #         continue
+            #     self.positive_samples -= 1
 
-                    lmv3_prediction = self.lmv3_model.predict(image, **metadata)
+            lmv3_prediction = self.lmv3_model.predict(image, **metadata)
 
-                    ocr_text = self.ocr_model.predict(image, text_only=True, **metadata)
-                    llm_prediction = self.llm_model.predict(image=image, hints=lmv3_prediction, text=ocr_text, **metadata)
-                    parsed_llm_prediction = self.parser.parse_page(llm_prediction)
+            ocr_text = self.ocr_model.predict(image, text_only=True, **metadata)
+            llm_prediction = self.llm_model.predict(image=image, hints=lmv3_prediction, text=ocr_text, **metadata)
+            parsed_llm_prediction = self.parser.parse_page(llm_prediction)
 
-                    metrics = evaluate_json_response(results_json, parsed_llm_prediction)
+            metrics = evaluate_json_response(results_json, parsed_llm_prediction)
 
-                    # scalars for wandb
-                    scalar_log = {}
-                    for fld in _DEFAULT_FIELDS:
-                        fld_metrics = metrics.get(fld, {})
-                        for m in ("precision", "recall", "f1", "accuracy"):
-                            scalar_log[f"{fld}/{m}"] = float(fld_metrics.get(m, 0.0))
+            # scalars for wandb
+            scalar_log = {}
+            for fld in _DEFAULT_FIELDS:
+                fld_metrics = metrics.get(fld, {})
+                for m in ("precision", "recall", "f1", "accuracy"):
+                    scalar_log[f"{fld}/{m}"] = float(fld_metrics.get(m, 0.0))
 
-                    wandb_run.log(scalar_log, step=self._global_step)
+            wandb_run.log(scalar_log, step=self._global_step)
 
 
 
-                    add_eval_row(
-                        table = eval_table,
-                        sample_id = filename,
-                        pil_image = image,
-                        page_info_json = results_json,
-                        lmv3_response = cast(Dict, lmv3_prediction),
-                        raw_llm_response = llm_prediction,
-                        parsed_llm_response = parsed_llm_prediction,
-                        metrics = metrics
-                    )
+            add_eval_row(
+                table = eval_table,
+                sample_id = filename,
+                pil_image = image,
+                page_info_json = results_json,
+                lmv3_response = cast(Dict, lmv3_prediction),
+                raw_llm_response = llm_prediction,
+                parsed_llm_response = parsed_llm_prediction,
+                metrics = metrics
+            )
 
-                    logger.info("LLM Predictions:", filename=filename, llm_prediction=llm_prediction)
-                    logger.info("Ground truth:", filename=filename, results_json=results_json)
-                    logger.info(f"Evaluation metrics:", filename=filename, metrics=metrics)
+            # logger.info("LLM Predictions:", filename=filename, llm_prediction=llm_prediction)
+            # logger.info("Ground truth:", filename=filename, results_json=results_json)
+            # logger.info(f"Evaluation metrics:", filename=filename, metrics=metrics)
 
-                    self._global_step += 1
-                    progress.update(task, advance=1)
+            self._global_step += 1
 
         summary_table = create_summary_table(eval_table)
 

@@ -1,9 +1,14 @@
 import os
 import json
+from pathlib import Path
+
 from thefuzz import fuzz, process
 
 from structlog import get_logger
 logger = get_logger(__name__)
+
+
+from core.utils.shared import REPOSITORY_ROOT
 
 class Parser:
     def __init__(self, building_material_mapping = None, dedication_mapping = None, fuzzy_threshold=80):
@@ -15,15 +20,15 @@ class Parser:
             raise ValueError("Set BUILDING_MATERIAL_MAPPINGS and SAINTS_MAPPINGS in .env file to point at mappings")
 
         if building_material_mapping is None:
-            with open(building_material_mapping_path, "r") as f:
+            with open(REPOSITORY_ROOT / Path(building_material_mapping_path), "r") as f:
                 building_material_mapping = json.load(f)
 
         if dedication_mapping is None:
-            with open(dedication_mapping_path, "r") as f:
+            with open(REPOSITORY_ROOT / Path(dedication_mapping_path), "r") as f:
                 dedication_mapping = json.load(f)
 
         if building_material_mapping_path:
-            with open(building_material_mapping_path, "r") as f:
+            with open(REPOSITORY_ROOT / Path(building_material_mapping_path), "r") as f:
                 building_material_mapping = json.load(f)
         else:
             building_material_mapping = building_material_mapping
