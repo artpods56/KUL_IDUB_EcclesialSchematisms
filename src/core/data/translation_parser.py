@@ -83,10 +83,33 @@ class Parser:
 
 
     def parse_page(self, page_json: dict):
-        page_json_copy = page_json.copy()
-        for entry in page_json_copy["entries"]:
-            entry["building_material"] = self.parse(entry["building_material"], "building_material") if entry["building_material"] else None
-            entry["dedication"] = self.parse(entry["dedication"], "dedication") if entry["dedication"] else None
+        """Return a *new* parsed page dictionary, leaving the original untouched.
+
+        A shallow ``dict.copy()`` is not enough because the ``entries`` list (and the
+        dictionaries inside it) would still reference the same objects, causing
+        in-place mutation of the original *raw* prediction. This resulted in the
+        “raw_llm_response” column in the W&B table containing already-parsed
+        results. We therefore perform a deep copy so every nested structure is
+        duplicated before modification.
+        """
+
+        # Import locally to avoid unnecessary dependency at module import time
+        from copy import deepcopy
+
+        page_json_copy = deepcopy(page_json)
+
+        for entry in page_json_copy.get("entries", []):
+            entry["building_material"] = (
+                self.parse(entry.get("building_material", ""), "building_material")
+                if entry.get("building_material")
+                else None
+            )
+            entry["dedication"] = (
+                self.parse(entry.get("dedication", ""), "dedication")
+                if entry.get("dedication")
+                else None
+            )
+
         return page_json_copy
 
 

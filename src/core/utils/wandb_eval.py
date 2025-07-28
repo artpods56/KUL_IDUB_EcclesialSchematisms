@@ -74,7 +74,7 @@ def add_eval_row(
     The ``metrics`` argument must follow the structure returned by
     ``src.data.stats.evaluate_json_response``.
     """
-    comparison_md = format_comparison_md(page_info_json, parsed_llm_response)
+    comparison_md = format_comparison_md(page_info_json, lmv3_response, raw_llm_response,  parsed_llm_response)
 
     row_data: list[Any] = [
         sample_id,
@@ -173,6 +173,6 @@ def _section(title: str, data: Dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def format_comparison_md(gt_json: Dict[str, Any], pred_json: Dict[str, Any]) -> str:
+def format_comparison_md(gt_json: Dict[str, Any], lmv3_json: Dict[str, Any], raw_llm_json: Dict[str, Any], parsed_llm_json: Dict[str, Any]) -> str:
     """Return a markdown string comparing ground-truth vs prediction."""
-    return _section("Ground Truth", gt_json) + "\n\n" + _section("Prediction", pred_json) 
+    return _section("Ground Truth", gt_json) + "\n\n" + _section("LMV3", lmv3_json) + "\n\n" + _section("Raw LLM", raw_llm_json) + "\n\n" + _section("Parsed LLM", parsed_llm_json) 
