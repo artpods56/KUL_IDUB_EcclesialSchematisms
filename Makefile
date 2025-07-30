@@ -15,19 +15,21 @@ docker-build:
 
 # Run the evaluation workflow (default command defined in the Dockerfile)
 # Mount local data & configs read-only so the container can access them.
+# Note: If bind mount doesn't work properly, try restarting Docker Desktop
+# Note: For Colima with external drives, ensure /Volumes/T7 is mounted in colima.yaml
 
 # If $(ENV_FILE) exists, pass it; otherwise docker will ignore the flag.
 docker-run-eval: docker-build
 	docker run  \
       --memory=16G \
-	  --volume ./tmp3:/home/appuser/app/tmp \
+	  --volume $(shell pwd)/tmp:/home/appuser/app/tmp:rw \
 	  --env-file $(ENV_FILE) \
 	  $(IMAGE_NAME)
 
 docker-shell: docker-build
 	docker run --rm -it \
 	  --memory=16G \
-	  --volume ./tmp3:/home/appuser/app/tmp \
+	  --volume $(shell pwd)/tmp:/home/appuser/app/tmp:rw \
 	  --env-file $(ENV_FILE) \
 	  $(IMAGE_NAME) /bin/bash
 

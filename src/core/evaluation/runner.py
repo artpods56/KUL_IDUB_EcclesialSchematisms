@@ -1,22 +1,14 @@
 import json
 from typing import cast, Tuple, Dict
-from rich.progress import Progress
-
-
 
 from datasets import Dataset
 from omegaconf import DictConfig
 
+from core.data.stats import evaluate_json_response
+from core.data.translation_parser import Parser
 from core.models.llm.model import LLMModel
 from core.models.lmv3.model import LMv3Model
-
-from core.data.schematism_parser import SchematismParser
-from core.data.translation_parser import Parser
-from core.models.lmv3.model import ocr_page
-from core.data.stats import evaluate_json_response
-
 # wandb integration
-import wandb
 from core.utils.wandb_eval import create_eval_table, add_eval_row, create_summary_table
 
 _DEFAULT_FIELDS: Tuple[str, ...] = (
@@ -27,7 +19,6 @@ _DEFAULT_FIELDS: Tuple[str, ...] = (
     "building_material",
 )
 
-from tqdm.contrib.logging import logging_redirect_tqdm
 from structlog import get_logger
 logger = get_logger(__name__)
 
@@ -100,7 +91,7 @@ class EvaluationRunner:
             add_eval_row(
                 table = eval_table,
                 sample_id = filename,
-                pil_image = image,
+                pil_image=image.resize((600, 400)),
                 page_info_json = results_json,
                 lmv3_response = cast(Dict, lmv3_prediction),
                 raw_llm_response = llm_prediction,

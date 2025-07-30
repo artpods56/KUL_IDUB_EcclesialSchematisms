@@ -31,4 +31,6 @@ data
 # Build artifacts
 build/
 dist/
-*.egg-info/ 
+*.egg-info/
+
+tmp/
