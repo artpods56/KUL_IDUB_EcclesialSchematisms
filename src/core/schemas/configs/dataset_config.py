@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, Field
 
 from core.config.registry import register_config
@@ -31,8 +31,8 @@ class LayoutLMv3TrainingDatasetConfig(BaseTrainingDatasetConfig):
 class SchematismsEvaluationDatasetConfig(BaseDatasetConfig):
     image_column_name: str = Field(default="image", description="Column name with encoded image file")
     ground_truth_column_name: str = Field(default="results", description="Column with structured ground truth in JSON format")
-    full_schematisms: List[str] = Field(default_factory=list, description="List of schematisms to evaluate")
-    partial_schematisms: List[str] = Field(default_factory=list, description="List of schematisms selected partial schematisms")
+    full_schematisms: Optional[List[str]] = Field(default_factory=list, description="List of schematisms to evaluate")
+    partial_schematisms: Optional[List[str]] = Field(default_factory=list, description="List of schematisms selected partial schematisms")
     positive_samples: int = Field(default=10, description="List of n first positive samples to fetch from given partial schematism")
     negative_samples: int = Field(default=5, description="List of n first negative samples to fetch from given partial schematism")
     classes_to_remove: List[str] = Field(default_factory=list, description="List of classes to remove from training")

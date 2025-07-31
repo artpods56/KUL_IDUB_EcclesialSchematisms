@@ -76,13 +76,25 @@ def main(dataset_config: DictConfig, llm_model_config: DictConfig, lmv3_model_co
 
     dataset_subsets = {}
     logger.info("Preparing dataset subsets for schematisms...")
-    for schematism in schematisms_to_filter:
-        dataset_subset = dataset.filter(
-            filter_schematisms(
-                to_filter=schematism
-            ),
-            input_columns=["schematism_name"]) # type:ignore
-        dataset_subsets[schematism] = dataset_subset
+    if len(schematisms_to_filter) != 0:
+        logger.info(f"Evaluating on: {schematisms_to_filter} schematisms.")
+        for schematism in schematisms_to_filter:
+            dataset_subset = dataset.filter(
+                filter_schematisms(
+                    to_filter=schematism
+                ),
+                input_columns=["schematism_name"]) # type:ignore
+            dataset_subsets[schematism] = dataset_subset
+    else:
+        logger.info("Evaluating all schematisms.")
+        unique_dataset_schematisms = dataset.unique("schematism_name")
+        for schematism in unique_dataset_schematisms:
+            dataset_subset = dataset.filter(
+                filter_schematisms(
+                    to_filter=schematism
+                ),
+                input_columns=["schematism_name"]) # type:ignore
+            dataset_subsets[schematism] = dataset_subset
 
     logger.info("Starting evaluation...")
 
