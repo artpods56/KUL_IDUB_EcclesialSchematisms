@@ -91,7 +91,7 @@ class EvaluationRunner:
             add_eval_row(
                 table = eval_table,
                 sample_id = filename,
-                pil_image=image.resize((600, 400)),
+                pil_image=image.resize((400, 600)),
                 page_info_json = results_json,
                 lmv3_response = cast(Dict, lmv3_prediction),
                 raw_llm_response = llm_prediction,
