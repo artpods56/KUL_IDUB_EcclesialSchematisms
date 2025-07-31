@@ -33,4 +33,9 @@ build/
 dist/
 *.egg-info/
 
-tmp/
+tmp
+vendor
+notebooks
+schedules
+history
+docs

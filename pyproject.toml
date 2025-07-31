@@ -16,6 +16,7 @@ dependencies = [
     "pandas",
     "torch",
     "transformers",
+    "accelerate",
     "hydra-core",
     "wandb",
     "structlog",
