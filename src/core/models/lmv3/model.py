@@ -1,16 +1,17 @@
 from typing import Dict, List, Tuple, Union, Optional, cast
 
 import numpy as np
-from PIL import Image
 import pytesseract
+import torch
+from PIL import Image
 from pydantic_core import ValidationError
 from structlog import get_logger
 
-from core.data.parsing import build_page_json, repair_bio_labels
-from core.utils.inference_utils import get_model_and_processor, retrieve_predictions
-from core.schemas.caches.entries import LMv3CacheItem
 from core.caches.lmv3_cache import LMv3Cache
 from core.caches.utils import get_image_hash
+from core.data.parsing import build_page_json, repair_bio_labels
+from core.schemas.caches.entries import LMv3CacheItem
+from core.utils.inference_utils import get_model_and_processor, retrieve_predictions
 
 logger = get_logger(__name__)
 
@@ -64,6 +65,11 @@ class LMv3Model:
         self.model, self.processor = get_model_and_processor(config)
         self.id2label = self.model.config.id2label
         self.label2id = self.model.config.label2id
+
+        # Explicitly move model to GPU if available for inference acceleration
+        if torch.cuda.is_available():
+            self.model = self.model.to('cuda')
+            logger.info("Model will use CUDA GPU for inference acceleration.")
         
         self.enable_cache = enable_cache
         if self.enable_cache:

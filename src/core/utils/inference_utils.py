@@ -1,7 +1,7 @@
 import torch
+from structlog import get_logger
 from transformers import AutoProcessor, LayoutLMv3ForTokenClassification
 
-from structlog import get_logger
 logger = get_logger(__name__)
 
 def unnormalize_bbox(bbox, width, height):
@@ -115,8 +115,13 @@ def retrieve_predictions(image, processor, model, words=None, bboxes=None):
     x = torch.stack(x)
     encoding["pixel_values"] = x
 
+    # Move all input tensors to the same device as the model
+    device = next(model.parameters()).device
     for k, v in encoding.items():
-        encoding[k] = v.clone().detach()
+        if isinstance(v, torch.Tensor):
+            encoding[k] = v.clone().detach().to(device)
+        else:
+            encoding[k] = v.clone().detach()
 
     with torch.no_grad():
         outputs = model(**encoding)
