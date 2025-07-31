@@ -18,7 +18,7 @@ def get_model_and_processor(cfg):
     )
 
     model = LayoutLMv3ForTokenClassification.from_pretrained(
-        cfg.inference.checkpoint, local_files_only=True if cfg.inference.local_files_only else False,
+        cfg.inference.checkpoint, local_files_only=True if cfg.inference.local_files_only else False, device_map="auto"
     )
     
     return model, processor
