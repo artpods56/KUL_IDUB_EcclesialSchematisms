@@ -13,6 +13,7 @@ VLLM_MODELS_DIR ?= tmp/models/ggufs
 VLLM_SILICON_IMAGE_NAME ?= vllm-silicon:latest
 LLAMA_ARM64_IMAGE_NAME ?= llama-arm64:latest
 MODEL_PATH = $(VLLM_MODELS_DIR)/$(VLLM_MODEL_FILE)
+VISION_BACKBONE_PATH = $(VLLM_MODELS_DIR)/$(VISION_BACKBONE_FILE)
 
 VLLM_IMAGE_NAME ?= vllm/vllm-openai:latest
 PORT ?= 8000
@@ -40,15 +41,19 @@ docker-build:
 
 # If $(ENV_FILE) exists, pass it; otherwise docker will ignore the flag.
 docker-run-eval: docker-build
-	docker run  \
-      --memory=16G \
-	  --volume $(shell pwd)/tmp:/home/appuser/app/tmp:rw \
+	docker run --rm \
+	  --memory=16G \
+	  --gpus all \
+	  --network host \
+	  --volume ./tmp:/home/appuser/app/tmp:rw \
 	  --env-file $(ENV_FILE) \
 	  $(CORE_IMAGE_NAME)
 
 docker-shell: docker-build
 	docker run --rm -it \
 	  --memory=16G \
+	  --gpus all \
+	  --network host \
 	  --volume $(shell pwd)/tmp:/home/appuser/app/tmp:rw \
 	  --env-file $(ENV_FILE) \
 	  $(CORE_IMAGE_NAME) /bin/bash
@@ -79,6 +84,12 @@ hf_model_download:
 		wget -O "$(MODEL_PATH)" "$(VLLM_MODEL_URL)"; \
 	else \
 		echo "Model already exists at $(MODEL_PATH), skipping download."; \
+	fi
+	@if [ ! -f "$(VISION_BACKBONE_PATH)" ]; then \
+		echo "Downloading vision backbone..."; \
+		wget -O "$(VISION_BACKBONE_PATH)" "$(VISION_BACKBONE_URL)"; \
+	else \
+		echo "Vision backbone already exists at $(VISION_BACKBONE_PATH), skipping download."; \
 	fi
 
 docker-vllm-silicon: build-vllm-silicon
@@ -112,6 +123,7 @@ docker-vllm-gguf: hf_model_download build-vllm-silicon
 		--max-model-len $(VLLM_MAX_MODEL_LEN) \
 		--dtype bfloat16 \
 		--trust-remote-code
+		--port $(PORT)
 
 define DOCKER_RUN
 	docker run \
@@ -143,7 +155,7 @@ build-llama-arm64: clone-llama
 		--platform linux/arm64 .  # Explicit platform for safety
 
 # Run llama.cpp server with GGUF model (depends on download and build; removed --pull always)
-docker-llama: hf_model_download build-llama-arm64
+docker-llama-arm64: hf_model_download build-llama-arm64
 	docker run --rm \
 		--platform linux/arm64 \
 		-v ./$(MODEL_PATH):/models/$(VLLM_MODEL_FILE):ro \
@@ -152,6 +164,24 @@ docker-llama: hf_model_download build-llama-arm64
 		-m /models/$(VLLM_MODEL_FILE) \
 		--port 8000 \
 		-n 8064 \
+
+docker-llama-amd64: hf_model_download
+	docker run --rm \
+	  --gpus all \
+	  --env OLLAMA_FLASH_ATTENTION=0,OLLAMA_USE_NEW_GGUF=1 \
+	  -v ./$(MODEL_PATH):/models/$(VLLM_MODEL_FILE):ro \
+	  -v ./$(VISION_BACKBONE_PATH):/models/$(VISION_BACKBONE_FILE):ro \
+	  -v ./src/core/schemas/parish_data.gbnf:/models/parish_data.gbnf:ro \
+	  -p 8080:8080 \
+	  ghcr.io/ggml-org/llama.cpp:server-cuda \
+	  -m /models/$(VLLM_MODEL_FILE) \
+	  --port 8080 \
+	  -n 8064 \
+	  --gpu-layers 60 \
+	  --mmproj /models/$(VISION_BACKBONE_FILE) \
+	  --grammar-file /models/parish_data.gbnf
+
+
 
 docker-vllm:
 	$(DOCKER_RUN)

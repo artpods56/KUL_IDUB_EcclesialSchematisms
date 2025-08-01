@@ -47,7 +47,7 @@ class BaseLLMModelConfig(BaseModel):
     )
 
 
-API_TYPES = Literal["lm_studio", "openai", "mistral", "openrouter"]
+API_TYPES = Literal["llama", "lm_studio", "openai", "mistral", "openrouter"]
 
 class PredictorConfig(BaseModel):
     api_type: API_TYPES = Field(default="openai", description="Type of API to use (e.g., 'lm_studio', 'openai')")

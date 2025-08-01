@@ -52,8 +52,6 @@ class BaseCache:
         self.get = self.cache.get
         self.delete = self.cache.delete
 
-        if len(self.cache) == 0:
-            raise ValueError(f"Cache {cache_name} is empty.")
         self.logger.info(f"{cache_type} cache initialised at {self.model_cache_dir} with {len(self.cache)} entries")
 
         self._cache_loaded = True

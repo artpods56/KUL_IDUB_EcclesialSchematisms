@@ -10,9 +10,18 @@ interfaces:
     api_key_env_var: "OPENAI_API_KEY"
     template_dir: "prompts"
     api_kwargs:
-      max_tokens: 4096
+      max_tokens: 8096
       temperature: 0.1
       top_p: 0.9
+
+  llama:
+    model: "/models/gemma-3-27b-it-Q4_K_M.gguf"
+    structured_output: true
+    base_url: "http://localhost:8080/v1"
+    api_key_env_var: "OPENAI_API_KEY"
+    template_dir: "prompts"
+    api_kwargs:
+      max_tokens: 8096
 
   openrouter:
 #    model: "google/gemma-3-27b-it"
