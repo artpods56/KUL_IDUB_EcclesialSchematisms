@@ -138,9 +138,6 @@ def main(dataset_config: DictConfig, llm_model_config: DictConfig, lmv3_model_co
 
             llm_prediction = llm_model.predict(image=image, hints=lmv3_prediction, text=ocr_text, **kwargs)
             
-            messages_string = llm_model.prompt_manager.messages_to_string(llm_model.messages)
-            run.log({"messages": messages_string})
-
 
 
             mapping_saver.update(llm_prediction, results_json)
@@ -149,6 +146,7 @@ def main(dataset_config: DictConfig, llm_model_config: DictConfig, lmv3_model_co
 
     mapping_saver.save(force=True)
     logger.info("Evaluation finished successfully.")
+
 
     run.finish()
 

@@ -16,16 +16,16 @@ class LLMModel:
     """LLM model wrapper with unified predict interface."""
     
     def __init__(self, config: DictConfig, enable_cache: bool = True, test_connection: bool = True):
-        self.config = config
+        self.config = config.deepcopy()  # Store a copy of the config to avoid modifying the original
 
 
         # Get the interface configuration based on api_type
-        api_type = config.predictor.get("api_type", "openai")
-        interface_config = config.interfaces.get(api_type)
-        
+        self.api_type = config.predictor.get("api_type", "openai")
+        interface_config = config.interfaces.get(self.api_type)
+
         if interface_config is None:
-            raise ValueError(f"No interface configuration found for api_type: {api_type}")
-        
+            raise ValueError(f"No interface configuration found for api_type: {self.api_type}")
+
 
         self.enable_cache = enable_cache
         if self.enable_cache:
@@ -33,11 +33,11 @@ class LLMModel:
                 model_name=interface_config.get("model", "llm_cache")
             )
         # Create prompt manager with template directory from config
-        template_dir = interface_config.get("template_dir", "prompts")
+        template_dir = interface_config.get("template_dir", "prompts")  
         prompt_manager = PromptManager(template_dir)
         
         # Initialize the interface with the specific interface config and prompt manager
-        self.interface = LLMInterface(interface_config, prompt_manager, api_type, test_connection=test_connection)
+        self.interface = LLMInterface(interface_config, prompt_manager, self.api_type, test_connection=test_connection)
         
         self.messages = []
 
@@ -58,38 +58,36 @@ class LLMModel:
         system_prompt = kwargs.get("system_prompt", "system.j2")
         user_prompt = kwargs.get("user_prompt", "user.j2")
 
-        if image is not None:
-            response, messages = self.interface.generate_vision_response(
-                pil_image=image,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                context=context_full,
-            )
-        else:
-            response, messages = self.interface.generate_text_response(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                context=context_full,
-            )
+        for i in range(self.config.predictor.max_retries):
+            if image is not None:
+                response, messages = self.interface.generate_vision_response(
+                    pil_image=image,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    context=context_full,
+                )
+            else:
+                response, messages = self.interface.generate_text_response(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    context=context_full,
+                )
 
-        self.messages = messages
+
+            if self.config.interfaces.get(self.api_type).get("structured_output", False):
+                # If structured output is enabled, response should already be JSON
+                try:
+                    if isinstance(response, str):
+                        response = json.loads(response)
+                        return response
+                except json.JSONDecodeError:
+                    pass # retry on JSON decode error
+            elif response is not None:
+                return {"raw_response": response}
+            
+        raise ValueError("Failed to generate valid response after retries")
         
-        # If structured output is enabled, response should already be JSON
-        if self.config.interfaces.get(self.config.predictor.api_type, {}).get("structured_output", False):
-            try:
-                if response is None:
-                    return {"raw_response": None, "error": "No response received"}
-                parsed_response = json.loads(response) if isinstance(response, str) else response
-                if isinstance(parsed_response, dict):
-                    return parsed_response
-                else:
-                    return {"raw_response": parsed_response, "error": "Response is not a dictionary"}
-            except json.JSONDecodeError:
-                # Fallback if parsing fails
-                return {"raw_response": response, "error": "Failed to parse structured output"}
-        else:
-            # For unstructured output, wrap in a standard format
-            return {"raw_response": response}
+        
 
     def predict(
             self,
