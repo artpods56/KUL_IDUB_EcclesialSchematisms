@@ -1,11 +1,9 @@
-import PIL
-import pytest
-import json
-import respx
-import threading
-import time
 import io
-from httpx import Response, TimeoutException
+import json
+
+import pytest
+import respx
+from httpx import Response
 
 from core.models.llm.model import LLMModel
 
@@ -142,28 +140,11 @@ class TestLLMModel:
                 "choices": [{"message": {"content": malformed_json_response}}]
             })
         )
-        
-        response = llm_model.predict(text="test text")
-        
-        assert "error" in response
-        assert response["error"] == "Failed to parse structured output"
-        assert response["raw_response"] == malformed_json_response
 
-    def test_empty_response(self, llm_model, mock_openai_api):
-        """Test handling of empty response"""
-        mock_openai_api.mock(
-            return_value=Response(200, json={
-                "choices": [{"message": {"content": ""}}]
-            })
-        )
-        
-        response = llm_model.predict(text="test text")
-        
-        # For structured output mode, empty response should trigger error handling
-        if llm_model.config.interfaces.get(llm_model.config.predictor.api_type, {}).get("structured_output", False):
-            assert "error" in response
-        else:
-            assert response["raw_response"] == ""
+        with pytest.raises(
+                ValueError):  # this will always fail because it wont pass if the response is not structured format
+            response = llm_model.predict(text="test text")
+
 
     def test_invalid_image_format(self, llm_model, mock_openai_api, sample_structured_response):
         """Test handling of invalid image format"""

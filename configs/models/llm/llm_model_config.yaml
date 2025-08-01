@@ -1,6 +1,7 @@
 predictor:
   api_type: "openrouter"
   template_dir: "prompts"
+  max_retries: 5
 
 interfaces:
   lm_studio:

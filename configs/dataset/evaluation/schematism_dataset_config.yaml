@@ -22,9 +22,9 @@ full_schematisms:
 #  - "plock_1882"
 #  - "warszawa_1870"
 #  - "warszawa_1872"
-  - "sejny_1874"
+  #  - "sejny_1874"
 #  - "wloclawek_1872"
-#  - "wloclawek_1873"
+  - "wloclawek_1873"
 #  - "tarnow_1870"
 #  - "chelmno_1871"
 

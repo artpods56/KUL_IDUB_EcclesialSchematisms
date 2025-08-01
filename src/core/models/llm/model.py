@@ -1,22 +1,22 @@
 import json
-
 from typing import Dict, Any, Optional, cast
+
 from PIL import Image
+from omegaconf import DictConfig
 from pydantic_core import ValidationError
 
-from core.models.llm.structured import PageData
-from omegaconf import DictConfig
-
+from core.caches.llm_cache import LLMCache
+from core.caches.utils import get_image_hash, get_text_hash
 from core.models.llm.interface import LLMInterface
 from core.models.llm.prompt_manager import PromptManager
-from core.caches.llm_cache import LLMCache
 from core.schemas.caches.entries import LLMCacheItem
-from core.caches.utils import get_image_hash, get_text_hash
+
+
 class LLMModel:
     """LLM model wrapper with unified predict interface."""
     
     def __init__(self, config: DictConfig, enable_cache: bool = True, test_connection: bool = True):
-        self.config = config.deepcopy()  # Store a copy of the config to avoid modifying the original
+        self.config = config  # Store a copy of the config to avoid modifying the original
 
 
         # Get the interface configuration based on api_type

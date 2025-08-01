@@ -1,8 +1,10 @@
-from typing import Dict, Optional, Literal
+from typing import Dict, Literal
+
 from pydantic import BaseModel, Field, ConfigDict
 
-from core.config.registry import register_config
 from core.config.constants import ConfigType, ModelsConfigSubtype
+from core.config.registry import register_config
+
 
 class ModelApiKwargs(BaseModel):
     max_tokens: int = Field(
@@ -54,6 +56,10 @@ class PredictorConfig(BaseModel):
     template_dir: str = Field(
         default="prompts",
         description="Path to template directory that is passed to the PromptManager"
+    )
+    max_retries: int = Field(
+        default=5,
+        description="The maximum number of retry attempts to make before giving up"
     )
 
 
