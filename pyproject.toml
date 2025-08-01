@@ -35,6 +35,8 @@ dependencies = [
     "pyyaml",
     "rapidfuzz",
     "shapely",
+    "streamlit",
+    "openpyxl",
     "thefuzz",
     "tqdm",
     "typing_extensions"

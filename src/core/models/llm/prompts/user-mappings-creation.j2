@@ -1,0 +1,23 @@
+Analyze the document image and its OCR text.
+You are provided with a `GROUND_TRUTH` JSON in Polish.
+Your task is to find the corresponding original Latin text for each field in the document.
+
+Return a single JSON object with the identical structure as the `GROUND_TRUTH`, but populated with the Latin source text you discovered.
+
+### GROUND_TRUTH (Polish)
+{{ ground_truth }}
+### END GROUND_TRUTH
+
+{% if hints %}
+### MODEL HINTS (layoutlmv3)
+{{ hints }}
+### END MODEL HINTS
+{% endif %}
+
+{% if ocr_text %}
+### OCR TEXT
+{{ ocr_text }}
+### END OCR TEXT
+{% endif %}
+
+Return only the JSON structure as specified.

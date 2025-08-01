@@ -39,7 +39,7 @@ class LLMModel:
         # Initialize the interface with the specific interface config and prompt manager
         self.interface = LLMInterface(interface_config, prompt_manager, api_type, test_connection=test_connection)
         
-
+        self.messages = []
 
 
     def _predict(self, image: Optional[Image.Image], text: Optional[str], **kwargs) -> Dict[str, Any]:
@@ -55,19 +55,24 @@ class LLMModel:
         """
         context_full = {"ocr_text": text, **kwargs}
 
+        system_prompt = kwargs.get("system_prompt", "system.j2")
+        user_prompt = kwargs.get("user_prompt", "user.j2")
+
         if image is not None:
             response, messages = self.interface.generate_vision_response(
                 pil_image=image,
-                system_prompt="system.j2",
-                user_prompt="user.j2",
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
                 context=context_full,
             )
         else:
             response, messages = self.interface.generate_text_response(
-                system_prompt="system.j2",
-                user_prompt="user.j2",
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
                 context=context_full,
             )
+
+        self.messages = messages
         
         # If structured output is enabled, response should already be JSON
         if self.config.interfaces.get(self.config.predictor.api_type, {}).get("structured_output", False):

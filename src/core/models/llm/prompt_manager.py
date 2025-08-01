@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, List, Dict
 
 from jinja2 import (
     Environment,
@@ -63,3 +63,7 @@ class PromptManager:
         )
 
         return rendered
+
+    def messages_to_string(self, messages: List[Dict[str, Any]]) -> str:
+        """Convert a list of messages to a string."""
+        return "\n".join([f"{message['role']}: {message['content']}" for message in messages])
