@@ -8,7 +8,7 @@ from structlog import get_logger
 logger = get_logger(__name__)
 
 
-from core.utils.shared import REPOSITORY_ROOT
+from core.utils.shared import REPOSITORY_ROOT, MAPPINGS_DIR
 
 class Parser:
     def __init__(self, building_material_mapping = None, dedication_mapping = None, fuzzy_threshold=80):
@@ -20,15 +20,15 @@ class Parser:
             raise ValueError("Set BUILDING_MATERIAL_MAPPINGS and SAINTS_MAPPINGS in .env file to point at mappings")
 
         if building_material_mapping is None:
-            with open(REPOSITORY_ROOT / Path(building_material_mapping_path), "r") as f:
+            with open(MAPPINGS_DIR / Path(building_material_mapping_path), "r") as f:
                 building_material_mapping = json.load(f)
 
         if dedication_mapping is None:
-            with open(REPOSITORY_ROOT / Path(dedication_mapping_path), "r") as f:
+            with open(MAPPINGS_DIR / Path(dedication_mapping_path), "r") as f:
                 dedication_mapping = json.load(f)
 
         if building_material_mapping_path:
-            with open(REPOSITORY_ROOT / Path(building_material_mapping_path), "r") as f:
+            with open(MAPPINGS_DIR / Path(building_material_mapping_path), "r") as f:
                 building_material_mapping = json.load(f)
         else:
             building_material_mapping = building_material_mapping

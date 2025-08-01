@@ -60,3 +60,5 @@ REPOSITORY_ROOT: Path = find_repository_root()
 TMP_DIR = REPOSITORY_ROOT / "tmp"
 
 CONFIGS_DIR = REPOSITORY_ROOT / "configs"
+
+MAPPINGS_DIR = TMP_DIR / "mappings"

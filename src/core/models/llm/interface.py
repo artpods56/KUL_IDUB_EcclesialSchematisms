@@ -52,7 +52,7 @@ class LLMInterface:
                         raise ValueError("MISTRAL_API_KEY must be set in the environment or passed as an argument.")
                 return Mistral(api_key=api_key)
 
-            case "openai" | "lm_studio" | "openrouter":
+            case "openai" | "lm_studio" | "openrouter" | "llama":
                 if api_key is None:
                     api_key_env_var = self.interface_config.get("api_key_env_var", None)
                     if api_key_env_var is None:

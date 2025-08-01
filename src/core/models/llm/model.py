@@ -30,7 +30,7 @@ class LLMModel:
         self.enable_cache = enable_cache
         if self.enable_cache:
             self.cache = LLMCache(
-                model_name=interface_config.get("model", "llm_cache").replace("/", "_")
+                model_name=interface_config.get("model", "llm_cache")
             )
         # Create prompt manager with template directory from config
         template_dir = interface_config.get("template_dir", "prompts")
