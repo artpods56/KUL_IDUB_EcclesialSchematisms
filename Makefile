@@ -45,7 +45,7 @@ docker-run-eval: docker-build
 	  --memory=16G \
 	  --gpus all \
 	  --network host \
-	  --volume ./tmp:/home/appuser/app/tmp:rw \
+	  --volume ./tmp:/app/tmp:rw \
 	  --env-file $(ENV_FILE) \
 	  $(CORE_IMAGE_NAME)
 
@@ -54,9 +54,18 @@ docker-shell: docker-build
 	  --memory=16G \
 	  --gpus all \
 	  --network host \
-	  --volume $(shell pwd)/tmp:/home/appuser/app/tmp:rw \
+	  --volume $(shell pwd)/tmp:/app/tmp:rw \
 	  --env-file $(ENV_FILE) \
 	  $(CORE_IMAGE_NAME) /bin/bash
+
+docker-run-mapping-generation: docker-build
+	docker run --rm -it \
+	  --memory=16G \
+	  --gpus all \
+	  --network host \
+	  --volume $(shell pwd)/tmp:/app/tmp:rw \
+	  --env-file $(ENV_FILE) \
+	  $(CORE_IMAGE_NAME) python src/scripts/generate_mappings.py \
 
 
 # Clone vLLM repo if it doesn't exist
@@ -168,18 +177,29 @@ docker-llama-arm64: hf_model_download build-llama-arm64
 docker-llama-amd64: hf_model_download
 	docker run --rm \
 	  --gpus all \
-	  --env OLLAMA_FLASH_ATTENTION=0,OLLAMA_USE_NEW_GGUF=1 \
+	  --env OLLAMA_USE_NEW_GGUF=1 \
+	  -v $(HF_CACHE):/root/.cache/huggingface \
+	  --env  HF_HUB_CACHE=$(HF_CACHE) \
 	  -v ./$(MODEL_PATH):/models/$(VLLM_MODEL_FILE):ro \
 	  -v ./$(VISION_BACKBONE_PATH):/models/$(VISION_BACKBONE_FILE):ro \
 	  -v ./src/core/schemas/parish_data.gbnf:/models/parish_data.gbnf:ro \
 	  -p 8080:8080 \
 	  ghcr.io/ggml-org/llama.cpp:server-cuda \
 	  -m /models/$(VLLM_MODEL_FILE) \
+	  --flash-attn \
 	  --port 8080 \
-	  -n 8064 \
-	  --gpu-layers 60 \
+	  --ctx-size 16384 \
+	  --predict 16384 \
+	  --gpu-layers 99 \
 	  --mmproj /models/$(VISION_BACKBONE_FILE) \
-	  --grammar-file /models/parish_data.gbnf
+# 	  --grammar-file /models/parish_data.gbnf \
+	  --seed 3407 \
+      --prio 2 \
+      --temp 0.5 \
+      --repeat-penalty 1.1 \
+      --min-p 0.01 \
+      --top-k 64 \
+      --top-p 0.95 
 
 
 
