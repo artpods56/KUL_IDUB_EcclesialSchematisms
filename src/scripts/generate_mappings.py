@@ -58,16 +58,9 @@ def main(dataset_config: DictConfig, llm_model_config: DictConfig, lmv3_model_co
     llm_model = LLMModel(llm_model_config)
     lmv3_model = LMv3Model(lmv3_model_config)
     ocr_model = OcrModel()
-    evaluation_runner = EvaluationRunner(
-        llm_model,
-        lmv3_model,
-        ocr_model,
-        dataset_config,
-        parser=Parser()
-    )
 
     run = wandb.init(project="ai-osrodek", name="lmv3_llm_eval", mode="online", dir=TMP_DIR)
-    mapping_saver = MappingSaver(batch_size=5, wandb_run=run)
+    mapping_saver = MappingSaver(batch_size=5)
 
     for fld in _DEFAULT_FIELDS:
         for m in ("precision", "recall", "f1", "accuracy"):
@@ -89,8 +82,8 @@ def main(dataset_config: DictConfig, llm_model_config: DictConfig, lmv3_model_co
                 input_columns=["schematism_name"]) # type:ignore
             dataset_subsets[schematism] = dataset_subset
     else:
-        logger.info("Evaluating all schematisms.")
         unique_dataset_schematisms = dataset.unique("schematism_name")
+        logger.info(f"Evaluating on: {len(unique_dataset_schematisms)} schematisms.")
         for schematism in unique_dataset_schematisms:
             dataset_subset = dataset.filter(
                 filter_schematisms(
@@ -101,10 +94,11 @@ def main(dataset_config: DictConfig, llm_model_config: DictConfig, lmv3_model_co
 
     logger.info("Starting evaluation...")
 
-    for schematism, dataset_subset in tqdm(dataset_subsets.items(), desc="Evaluating schematisms"):
-        for sample in dataset_subset:
+    for schematism, dataset_subset in dataset_subsets.items():
+        logger.info(f"Processing schematism: {schematism} with {len(dataset_subset)} samples.")
+        for sample in tqdm(dataset_subset, desc=f"Processing schematism: {schematism}"):
             filename = sample["filename"]
-            schematism_name = sample["schematism_name"]  
+            schematism = sample["schematism_name"]  
 
 
 
@@ -115,7 +109,7 @@ def main(dataset_config: DictConfig, llm_model_config: DictConfig, lmv3_model_co
 
             kwargs = {
                 "metadata": {
-                    "schematism": schematism_name,
+                    "schematism": schematism,
                     "filename": filename,
                     "task": "mappings_creation",
                 },
@@ -140,7 +134,7 @@ def main(dataset_config: DictConfig, llm_model_config: DictConfig, lmv3_model_co
             
 
 
-            mapping_saver.update(llm_prediction, results_json)
+            mapping_saver.update(schematism, filename, llm_prediction, results_json)
 
 
 

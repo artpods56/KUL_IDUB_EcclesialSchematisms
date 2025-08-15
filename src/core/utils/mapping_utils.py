@@ -1,12 +1,14 @@
 """Utilities for handling and saving generated mappings."""
 
 import json
+import csv
 from pathlib import Path
 import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Tuple
 
 import structlog
-import wandb
+from thefuzz import fuzz
+from thefuzz import process
 
 from core.utils.shared import TMP_DIR
 from core.models.llm.structured import PageData
@@ -28,16 +30,14 @@ class MappingSaver:
         "building_material": "building_material.json",
     }
 
-    def __init__(self, batch_size: int = 5, wandb_run: Optional[wandb.sdk.wandb_run.Run] = None):
+    def __init__(self, batch_size: int = 5):
         """
         Initializes the MappingSaver.
 
         Args:
             batch_size (int): Number of pages to process before saving.
-            wandb_run (wandb.Run, optional): Active W&B run for logging.
         """
         self.batch_size = batch_size
-        self.wandb_run = wandb_run
         
         run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         self.save_dir = TMP_DIR / "mappings" / "generated" / f"run_{run_timestamp}"
@@ -53,6 +53,8 @@ class MappingSaver:
             "building_material": {},
         }
         self._load_existing_mappings()
+        self.idx = 0
+
 
     def _load_existing_mappings(self):
         """Loads existing mappings from the save directory if they exist."""
@@ -66,7 +68,46 @@ class MappingSaver:
                 except (json.JSONDecodeError, IOError) as e:
                     logger.warning(f"Could not load mappings for '{field}': {e}")
 
-    def update(self, latin_data: Dict[str, Any], polish_data: Dict[str, Any]):
+    def _match_entries(self, latin_entries: List[Any], polish_entries: List[Any]) -> List[Tuple[Any, Any]]:
+        """
+        Match Latin and Polish entries using fuzzy string matching on parish names.
+        
+        Args:
+            latin_entries: List of Latin entries
+            polish_entries: List of Polish entries
+            
+        Returns:
+            List of matched (latin_entry, polish_entry) pairs
+        """
+        matched_pairs = []
+        used_polish_indices = set()
+        
+        # For each Latin entry, find the best matching Polish entry based on parish name
+        for latin_entry in latin_entries:
+            if not latin_entry.parish:
+                continue
+                
+            best_match = None
+            best_score = 0
+            best_idx = -1
+            
+            for i, polish_entry in enumerate(polish_entries):
+                if i in used_polish_indices or not polish_entry.parish:
+                    continue
+                    
+                score = fuzz.ratio(latin_entry.parish.lower(), polish_entry.parish.lower())
+                if score > best_score and score > 80:  # 80% similarity threshold
+                    best_score = score
+                    best_match = polish_entry
+                    best_idx = i
+            
+            if best_match:
+                matched_pairs.append((latin_entry, best_match))
+                used_polish_indices.add(best_idx)
+        
+        return matched_pairs
+
+    def update(self, schematism: str, filename: str, latin_data: Dict[str, Any], polish_data: Dict[str, Any]):
         """
         Updates the internal mappings with new data from a page.
 
@@ -81,13 +122,43 @@ class MappingSaver:
             logger.error("Failed to parse page data.", error=str(e), latin=latin_data, polish=polish_data)
             return
 
-        for latin_entry, polish_entry in zip(latin_page.entries, polish_page.entries):
+        if len(latin_page.entries) != len(polish_page.entries):
+            logger.warning("Latin and Polish entries count mismatch.",
+                           latin_count=len(latin_page.entries),
+                           polish_count=len(polish_page.entries))
+            
+        # Match entries using fuzzy string matching
+        matched_pairs = self._match_entries(latin_page.entries, polish_page.entries)
+        
+        # Process matched pairs
+        for latin_entry, polish_entry in matched_pairs:
+            entry_data = {
+                'id': self.idx,
+                'schematism': schematism,
+                'filename': filename,
+            }
+            self.idx += 1
+            
             for field in self._MAPPING_FILES.keys():
                 latin_value = getattr(latin_entry, field)
                 polish_value = getattr(polish_entry, field)
 
                 if latin_value and polish_value:
                     self._mappings[field][latin_value] = polish_value
+                    
+                    # Save to CSV
+                    csv_path = self.save_dir / f"{field}_mappings.csv"
+                    csv_exists = csv_path.exists()
+                    
+                    with open(csv_path, 'a', newline='', encoding='utf-8') as f:
+                        writer = csv.DictWriter(f, fieldnames=['id', 'schematism', 'filename', 'latin', 'polish'])
+                        if not csv_exists:
+                            writer.writeheader()
+                        writer.writerow({
+                            **entry_data,
+                            'latin': latin_value,
+                            'polish': polish_value
+                        })
         
         self.pages_processed += 1
         if self.pages_processed >= self.batch_size:
@@ -109,32 +180,15 @@ class MappingSaver:
 
         logger.info(f"Saving mappings to {self.save_dir}...")
         
-        wandb_logs = {}
         for field, mappings in self._mappings.items():
             filepath = self.save_dir / self._MAPPING_FILES[field]
             
             try:
-                # To calculate new mappings, we load the file again and compare sizes
-                # This is safer in case of concurrent writes or multiple instances
-                current_count = 0
-                if filepath.exists():
-                    with open(filepath, "r", encoding="utf-8") as f:
-                        current_count = len(json.load(f))
-                
-                new_count = len(mappings) - current_count
-                if new_count > 0:
-                     wandb_logs[f"mappings/new_{field}"] = new_count
-                
-                wandb_logs[f"mappings/total_{field}"] = len(mappings)
-
                 with open(filepath, "w", encoding="utf-8") as f:
                     json.dump(mappings, f, ensure_ascii=False, indent=2)
+                logger.info(f"Saved {len(mappings)} mappings for '{field}'")
 
             except (IOError, TypeError) as e:
                 logger.error(f"Failed to save mappings for '{field}'.", error=str(e))
-
-        if self.wandb_run and wandb_logs:
-            self.wandb_run.log(wandb_logs)
-            logger.info("Logged mapping counts to W&B.", **wandb_logs)
             
         self.pages_processed = 0 # Reset counter after saving
