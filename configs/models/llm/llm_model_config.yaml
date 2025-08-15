@@ -1,11 +1,11 @@
 predictor:
-  api_type: "openrouter"
+  api_type: "llama"
   template_dir: "prompts"
   max_retries: 5
 
 interfaces:
   lm_studio:
-    model: "gemma-3-27b-it-qat"
+    model: "gemma-3-27b-it"
     structured_output: true
     base_url: "http://localhost:1234/v1"
     api_key_env_var: "OPENAI_API_KEY"
@@ -17,12 +17,12 @@ interfaces:
 
   llama:
     model: "/models/gemma-3-27b-it-Q4_K_M.gguf"
-    structured_output: true
+    return_structured_output: true
+    request_structured_output: true
     base_url: "http://localhost:8080/v1"
     api_key_env_var: "OPENAI_API_KEY"
     template_dir: "prompts"
-    api_kwargs:
-      max_tokens: 8096
+    # api_kwargs: []
 
   openrouter:
 #    model: "google/gemma-3-27b-it"

@@ -1,4 +1,4 @@
-from typing import Dict, Literal
+from typing import Dict, Literal, Optional
 
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -35,15 +35,19 @@ class BaseLLMModelConfig(BaseModel):
         default="OPENAI_API_KEY",
         description="Environment variable that specifies the API key to use"
     )
-    structured_output: bool = Field(
+    return_structured_output: bool = Field(
         default=False,
-        description="Whether to use structured output"
+        description="Whether to return response as structured output"
+    )
+    request_structured_output: bool = Field(
+        default=False,
+        description="Whether to request structured output from the LLM server"
     )
     template_dir: str = Field(
         default="prompts",
         description="Path to template directory that is passed to the PromptManager"
     )
-    api_kwargs: ModelApiKwargs = Field(
+    api_kwargs: Optional[ModelApiKwargs] = Field(
         default_factory=ModelApiKwargs,
         description="Model API kwargs"
     )
