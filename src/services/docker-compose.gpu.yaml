@@ -11,21 +11,3 @@ services:
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
-
-  ollama:
-    volumes:
-      - ./ollama/ollama:/root/.ollama
-    container_name: ollama
-    pull_policy: always
-    tty: true
-    restart: unless-stopped
-    image: ollama-gemma-3-27b-it-qat
-    build:
-      context: ./ollama
-      dockerfile: Dockerfile
-    ports:
-      - 7869:11434
-    environment:
-      - OLLAMA_KEEP_ALIVE=24h
-
-    
