@@ -1,8 +1,17 @@
 from typing import List, Optional
+
 from pydantic import BaseModel, Field
 
-from core.config.registry import register_config
 from core.config.constants import ConfigType, DatasetConfigSubtype
+from core.config.registry import register_config
+
+
+class ColumnMap(BaseModel):
+    image_column: str = "image"
+    ground_truth_column: str = "ground_truth"
+    boxes_column: str = "bboxes"
+    labels_column: str = "labels"
+    tokens_column: str = "tokens"
 
 @register_config(ConfigType.DATASET, DatasetConfigSubtype.DEFAULT)
 class BaseDatasetConfig(BaseModel):
@@ -22,17 +31,19 @@ class BaseTrainingDatasetConfig(BaseDatasetConfig):
 
 @register_config(ConfigType.DATASET, DatasetConfigSubtype.TRAINING)
 class LayoutLMv3TrainingDatasetConfig(BaseTrainingDatasetConfig):
-    image_column_name: str = Field(default="image_pil", description="Column name for images")
-    text_column_name: str = Field(default="words", description="Column name for text")
-    boxes_column_name: str = Field(default="bboxes", description="Column name for bounding boxes")
-    label_column_name: str = Field(default="labels", description="Column name for labels")
-
+    column_map: ColumnMap = Field(
+        default_factory=ColumnMap,
+        description="Map of columns to use for training",
+    )
 @register_config(ConfigType.DATASET, DatasetConfigSubtype.EVALUATION)
 class SchematismsEvaluationDatasetConfig(BaseDatasetConfig):
-    image_column_name: str = Field(default="image", description="Column name with encoded image file")
-    ground_truth_column_name: str = Field(default="results", description="Column with structured ground truth in JSON format")
+    column_map: ColumnMap = Field(
+        default_factory=ColumnMap,
+        description="Mapping of column names to column values",
+    )
     full_schematisms: Optional[List[str]] = Field(default_factory=list, description="List of schematisms to evaluate")
     partial_schematisms: Optional[List[str]] = Field(default_factory=list, description="List of schematisms selected partial schematisms")
     positive_samples: int = Field(default=10, description="List of n first positive samples to fetch from given partial schematism")
     negative_samples: int = Field(default=5, description="List of n first negative samples to fetch from given partial schematism")
     classes_to_remove: List[str] = Field(default_factory=list, description="List of classes to remove from training")
+    languages: List[str] = Field(default_factory=list, description="List of languages to use")
