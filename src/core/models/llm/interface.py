@@ -1,7 +1,6 @@
 import os
 from typing import Optional, Union, Dict, Any
 
-import logging
 
 from mistralai import Mistral
 from openai import OpenAI
@@ -17,7 +16,9 @@ from openai.types.shared.chat_model import ChatModel
 
 CLIENT_TYPE = Union[Mistral, OpenAI]
 LLM_MODELS = Union[ChatModel, str]
-logger = logging.getLogger(__name__)
+
+from structlog import get_logger
+logger = get_logger(__name__)
 
 
 class LLMInterface:
@@ -137,7 +138,7 @@ class LLMInterface:
     def generate_response(self, messages):
         """Generate response from LLM given messages."""
 
-        if self.interface_config.get("structured_output", False):
+        if self.interface_config.get("request_structured_output", False):
             import copy
             # Get the base schema
             base_schema = copy.deepcopy(PageData.model_json_schema())

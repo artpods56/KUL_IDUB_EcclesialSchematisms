@@ -11,6 +11,11 @@ from core.models.llm.interface import LLMInterface
 from core.models.llm.prompt_manager import PromptManager
 from core.schemas.caches.entries import LLMCacheItem
 
+from core.utils.logging import setup_logging
+setup_logging()
+
+from structlog import get_logger
+logger = get_logger(__name__)
 
 class LLMModel:
     """LLM model wrapper with unified predict interface."""
@@ -39,7 +44,6 @@ class LLMModel:
         # Initialize the interface with the specific interface config and prompt manager
         self.interface = LLMInterface(interface_config, prompt_manager, self.api_type, test_connection=test_connection)
         
-        self.messages = []
 
 
     def _predict(self, image: Optional[Image.Image], text: Optional[str], **kwargs) -> Dict[str, Any]:
@@ -58,6 +62,8 @@ class LLMModel:
         system_prompt = kwargs.get("system_prompt", "system.j2")
         user_prompt = kwargs.get("user_prompt", "user.j2")
 
+        logger.info("Generating response from LLM", system_prompt=system_prompt, user_prompt=user_prompt)
+
         for i in range(self.config.predictor.max_retries):
             if image is not None:
                 response, messages = self.interface.generate_vision_response(
@@ -73,18 +79,22 @@ class LLMModel:
                     context=context_full,
                 )
 
+            
 
-            if self.config.interfaces.get(self.api_type).get("structured_output", False):
+            if self.config.interfaces.get(self.api_type).get("return_structured_output", False):
                 # If structured output is enabled, response should already be JSON
                 try:
                     if isinstance(response, str):
                         response = json.loads(response)
+                        logger.info(f"LLM response: {response}")
                         return response
                 except json.JSONDecodeError:
+                    logger.warning("Failed to decode JSON response from LLM", response=response)
                     pass # retry on JSON decode error
             elif response is not None:
                 return {"raw_response": response}
             
+        logger.error("Failed to generate valid response after retries", response=response)
         raise ValueError("Failed to generate valid response after retries")
         
         
@@ -134,6 +144,7 @@ class LLMModel:
                 )
                 if cache_item_data is not None:
                     cache_item = LLMCacheItem(**cache_item_data)
+                    logger.info("Cache hit", hash_key=hash_key, schematism=schematism, filename=filename)
                     return cache_item.response.model_dump()
             except ValidationError as e:
                 self.cache.delete(key=hash_key)
