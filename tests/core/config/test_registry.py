@@ -10,9 +10,9 @@ from core.config.registry import (
     list_registered_configs,
     validate_config_with_schema,
     get_default_config,
-    discover_config_files,
     CONFIG_REGISTRY,
 )
+from core.config.helpers import discover_config_files
 from core.config.constants import ConfigType, TestsConfigSubtype
 from core.schemas.configs.tests_config import BaseTestsConfig
 

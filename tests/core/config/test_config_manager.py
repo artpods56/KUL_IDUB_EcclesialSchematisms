@@ -12,7 +12,7 @@ class TestConfigManager:
 
     def test_config_manager_load_config(self, config_manager):
         """Test that the ConfigManager class can load a config."""
-        assert config_manager.load_config(ConfigType.MODELS, ModelsConfigSubtype.LLM, "default") is not None
+        assert config_manager.load_config("default", ConfigType.MODELS, ModelsConfigSubtype.LLM) is not None
 
     def test_config_manager_attributes(self, config_manager):
         """Test that the ConfigManager class has the correct attributes."""

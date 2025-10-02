@@ -1,16 +1,15 @@
 from PIL import Image
+from core.pipeline.pipeline import Pipeline
+from core.schemas.data.schematism import SchematismPage
+from core.schemas.data.pipeline import PipelineData
 import pytest
 import json
-
 from dotenv import load_dotenv
 from omegaconf import DictConfig
 
 from core.config.manager import ConfigManager, ConfigType
 from core.config.constants import DatasetConfigSubtype, ModelsConfigSubtype
 from core.utils.shared import CONFIGS_DIR
-from core.config.helpers import with_configs
-
-import core.schemas.configs
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -26,42 +25,40 @@ def config_manager() -> ConfigManager:
 
 @pytest.fixture(scope="session")
 def dataset_config(config_manager) -> DictConfig:
-    return config_manager.load_config(
-        config_type=ConfigType.DATASET,
-        config_subtype=DatasetConfigSubtype.EVALUATION,
-        config_name="schematism_dataset_config",
-    )
+    return config_manager.load_config(config_name="schematism_dataset_config", config_type=ConfigType.DATASET,
+                                      config_subtype=DatasetConfigSubtype.EVALUATION)
 @pytest.fixture(scope="session")
 def llm_model_config(config_manager) -> DictConfig:
     """Loads the configuration for LLM model."""
-    return config_manager.load_config(
-        config_type=ConfigType.MODELS,
-        config_subtype=ModelsConfigSubtype.LLM,
-        config_name="tests_llm_config",
-    )
+    return config_manager.load_config(config_name="tests_llm_config", config_type=ConfigType.MODELS,
+                                      config_subtype=ModelsConfigSubtype.LLM)
 
 @pytest.fixture(scope="session")
 def lmv3_model_config(config_manager) -> DictConfig:
     """Loads the configuration for LayoutLMv3 model."""
-    return config_manager.load_config(
-        config_type=ConfigType.MODELS,
-        config_subtype=ModelsConfigSubtype.LMV3,
-        config_name="lmv3_model_config",
-    )
+    return config_manager.load_config(config_name="lmv3_model_config", config_type=ConfigType.MODELS,
+                                      config_subtype=ModelsConfigSubtype.LMV3)
+
+
+@pytest.fixture(scope="session")
+def pipeline(llm_model_config, lmv3_model_config) -> Pipeline:
+    pass
 
 @pytest.fixture
-def sample_structured_response():
+def sample_structured_response() -> str:
     return json.dumps({
         "page_number": "56",
-        "deanery": None,
         "entries": [
             {
                 "parish": "sample",
+                "deanery": None,
                 "dedication": "sample",
                 "building_material": "sample"
             }
         ]
     })
+
+
 
 @pytest.fixture
 def sample_pil_image():
@@ -70,9 +67,29 @@ def sample_pil_image():
 
 
 @pytest.fixture
+def sample_page_data(sample_structured_response) -> SchematismPage:
+    return SchematismPage(**json.loads(sample_structured_response))
+
+@pytest.fixture
+def sample_pipeline_data(sample_structured_response, sample_pil_image, sample_page_data):
+
+    pipeline_items = {
+        "image": sample_pil_image,
+        "ground_truth": sample_page_data,
+        "text": "sample text",
+        "language": "unknown",
+        "language_confidence": 0.0,
+        "lmv3_prediction": page_data,
+        "llm_prediction": page_data,
+        "metadata": {}
+    }
+
+    return PipelineData(**pipeline_items)
+
+@pytest.fixture
 def large_sample_image():
     """Large sample image for performance testing"""
-    return PIL.Image.new(mode="RGB", size=(2000, 2000))
+    return Image.new(mode="RGB", size=(2000, 2000))
 
 
 @pytest.fixture
