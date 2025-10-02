@@ -10,7 +10,7 @@ authors = [
     {name = "Artur Podsiadły", email = "artpods56@gmail.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = "==3.12.9"
 dependencies = [
     "numpy",
     "pandas",
@@ -22,7 +22,6 @@ dependencies = [
     "structlog",
     "rich",
     "diskcache==5.6.3",
-    "datasets",
     "geopandas",
     "jinja2",
     "mistralai",
@@ -39,7 +38,22 @@ dependencies = [
     "openpyxl",
     "thefuzz",
     "tqdm",
-    "typing_extensions"
+    "typing_extensions",
+    "lingua-language-detector>=2.0.0",
+    "pymupdf",
+    "psycopg2-binary>=2.9.10",
+    "beartype>=0.21.0",
+    "sqlalchemy>=2.0.43",
+    "pytest>=8.4.2",
+    "respx>=0.22.0",
+    "llama-cpp-python>=0.3.16",
+    "black>=25.9.0",
+]
+
+[project.optional-dependencies]
+# Used for language detection in the pipeline
+lingua = [
+    "lingua-language-detector>=2.0.0"
 ]
 
 [tool.setuptools]
@@ -51,3 +65,9 @@ where = ["src"]
 [tool.dagster]
 module_name = "src.orchestration.assets.data"
 attribute = "definitions"
+
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.31.4",
+]

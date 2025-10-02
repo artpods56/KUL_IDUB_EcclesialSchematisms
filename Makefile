@@ -34,7 +34,7 @@ ENV_FILE ?= .env
 docker-build:
 	docker build -t $(CORE_IMAGE_NAME) -f $(DOCKERFILE) .
 
-# Run the evaluation workflow (default command defined in the Dockerfile)
+# Run the pipeline workflow (default command defined in the Dockerfile)
 # Mount local data & configs read-only so the container can access them.
 # Note: If bind mount doesn't work properly, try restarting Docker Desktop
 # Note: For Colima with external drives, ensure /Volumes/T7 is mounted in colima.yaml
@@ -52,7 +52,6 @@ docker-run-eval: docker-build
 docker-shell: docker-build
 	docker run --rm -it \
 	  --memory=16G \
-	  --gpus all \
 	  --network host \
 	  --volume $(shell pwd)/tmp:/home/appuser/app/tmp:rw \
 	  --env-file $(ENV_FILE) \
@@ -85,12 +84,12 @@ hf_model_download:
 	else \
 		echo "Model already exists at $(MODEL_PATH), skipping download."; \
 	fi
-	@if [ ! -f "$(VISION_BACKBONE_PATH)" ]; then \
-		echo "Downloading vision backbone..."; \
-		wget -O "$(VISION_BACKBONE_PATH)" "$(VISION_BACKBONE_URL)"; \
-	else \
-		echo "Vision backbone already exists at $(VISION_BACKBONE_PATH), skipping download."; \
-	fi
+#	@if [ ! -f "$(VISION_BACKBONE_PATH)" ]; then \
+#		echo "Downloading vision backbone..."; \
+#		wget -O "$(VISION_BACKBONE_PATH)" "$(VISION_BACKBONE_URL)"; \
+#	else \
+#		echo "Vision backbone already exists at $(VISION_BACKBONE_PATH), skipping download."; \
+#	fi
 
 docker-vllm-silicon: build-vllm-silicon
 	docker run --rm \
@@ -150,7 +149,7 @@ clone-llama:
 # Build the ARM64 image for Apple Silicon (depends on clone)
 build-llama-arm64: clone-llama
 	@cd $(LLAMA_REPO_DIR) && \
-	docker build -f .devops/cpu.Dockerfile \
+	docker buildx build -f .devops/cpu.Dockerfile \
 		--tag $(LLAMA_ARM64_IMAGE_NAME) \
 		--platform linux/arm64 .  # Explicit platform for safety
 
@@ -165,6 +164,14 @@ docker-llama-arm64: hf_model_download build-llama-arm64
 		--port 8000 \
 		-n 8064 \
 
+docker-llama-shell:
+	docker run --rm \
+		--platform linux/arm64 \
+		-v ./$(MODEL_PATH):/models/$(VLLM_MODEL_FILE):ro \
+		-v /tmp:/tmp \
+		-p 8000:8000 \
+		--entrypoint 'ls' \
+		$(LLAMA_ARM64_IMAGE_NAME)
 docker-llama-amd64: hf_model_download
 	docker run --rm \
 	  --gpus all \
@@ -178,7 +185,6 @@ docker-llama-amd64: hf_model_download
 	  --port 8080 \
 	  -n 8064 \
 	  --gpu-layers 60 \
-	  --mmproj /models/$(VISION_BACKBONE_FILE) \
 	  --grammar-file /models/parish_data.gbnf
 
 

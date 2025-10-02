@@ -206,6 +206,7 @@ ocr_cache/
 /data/
 tmp/outputs/
 tmp/wandb/
+tmp/
 
 src/services/data/hf_dataset
 src/services/data/images
@@ -213,7 +214,7 @@ src/services/data/ocr_cache
 minio_data
 data_old
 
-/tmp/models/
+
 /logs_focal/
 /test_focal/
-
+vendor
