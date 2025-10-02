@@ -13,7 +13,7 @@ logging.config.dictConfig(
         "disable_existing_loggers": False,  # Prevent overriding existing loggers
         "formatters": {
             "standard": {
-                "format": "[%(asctime)s] [%(levelname)s] [%(name)s::%(funcName)s::%(lineno)d] %(message)s"
+                "file_format": "[%(asctime)s] [%(levelname)s] [%(description)s::%(funcName)s::%(lineno)d] %(message)s"
             }
         },
         "handlers": {

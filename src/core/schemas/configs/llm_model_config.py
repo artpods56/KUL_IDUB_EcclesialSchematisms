@@ -26,7 +26,7 @@ class ModelApiKwargs(BaseModel):
 
 
 class BaseLLMModelConfig(BaseModel):
-    model: str = Field(default="gpt-3.5-turbo", description="Model name")
+    model: str = Field(default="gpt-3.5-turbo", description="Model description")
     base_url: str = Field(
         default="https://api.openai.com/v1",
         description="Base URL for the client"
@@ -68,4 +68,4 @@ class LLMModelConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     predictor: PredictorConfig = Field(default_factory=PredictorConfig, description="Predictor configuration")
-    interfaces: Dict[API_TYPES, BaseLLMModelConfig] = Field(default_factory=dict, description="Interface configurations by name")
+    interfaces: Dict[API_TYPES, BaseLLMModelConfig] = Field(default_factory=dict, description="Interface configurations by description")

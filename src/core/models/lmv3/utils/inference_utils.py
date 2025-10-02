@@ -15,7 +15,7 @@ def get_model_and_processor(cfg):
 @torch.no_grad()
 def retrieve_predictions(image, processor, model, words=None, bboxes=None):
     """
-    Retrieve predictions for a single example.
+    Retrieve predictions_data for a single example.
 
     Return:
         boxes

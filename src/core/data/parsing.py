@@ -2,7 +2,7 @@
 BIO Parsing Utilities for Ecclesiastical Schematisms
 
 This module provides utilities to convert BIO-tagged annotations into structured JSON
-format for ecclesiastical schematism documents.
+file_format for ecclesiastical schematism documents.
 """
 
 import json
@@ -35,7 +35,7 @@ def bio_to_spans(words: List[str], labels: List[str]) -> List[tuple]:
 
         if "-" not in tag:  # Handle cases where tag doesn't have BIO prefix
             continue
-            
+
         prefix, t = tag.split("-", 1)
         if prefix == "B" or (ent_type and t != ent_type):
             if buff:
@@ -57,11 +57,13 @@ def sort_by_layout(words, bboxes, labels):
     """Sort words in reading order (top-to-bottom, left-to-right)"""
     if not bboxes or len(bboxes) != len(words):
         return words, labels
-        
+
     # Sort by y-coordinate first (top), then x-coordinate (left)
-    order = sorted(range(len(words)),
-                   key=lambda i: (bboxes[i][1], bboxes[i][0]))  # y, then x
+    order = sorted(
+        range(len(words)), key=lambda i: (bboxes[i][1], bboxes[i][0])
+    )  # y, then x
     return [words[i] for i in order], [labels[i] for i in order]
+
 
 def repair_bio_labels(labels):
     repaired = []
@@ -88,18 +90,19 @@ def repair_bio_labels(labels):
             prev_type = None
     return repaired
 
+
 def build_page_json(words, bboxes, labels):
     """
     Build the target JSON structure from BIO-tagged annotations.
-    
-    Expected output format:
+
+    Expected output file_format:
     {
       "page_number": "<string | null>",
-      "deanery": "<string | null>", 
+      "deanery": "<string | null>",
       "entries": [
         {
           "parish": "<string>",
-          "dedication": "<string>", 
+          "dedication": "<string>",
           "building_material": "<string>"
         },
         ...
@@ -108,7 +111,7 @@ def build_page_json(words, bboxes, labels):
     """
     # Sort words in reading order for better parsing
     # if bboxes:
-        # words, labels = sort_by_layout(words, bboxes, labels)
+    # words, labels = sort_by_layout(words, bboxes, labels)
     spans = bio_to_spans(words, labels)
 
     # Initialize result structure
@@ -117,7 +120,12 @@ def build_page_json(words, bboxes, labels):
     deanery = None
 
     # Running buffer for each parish block
-    current = {"deanery": None, "parish": None, "dedication": None, "building_material": None}
+    current = {
+        "deanery": None,
+        "parish": None,
+        "dedication": None,
+        "building_material": None,
+    }
 
     for ent_type, text in spans:
         if ent_type == "page_number":
@@ -126,7 +134,12 @@ def build_page_json(words, bboxes, labels):
             # Start a new entry - flush previous if it exists
             if current["parish"]:
                 entries.append(current)
-                current = {"deanery": deanery ,"parish": None, "dedication": None, "building_material": None}
+                current = {
+                    "deanery": deanery,
+                    "parish": None,
+                    "dedication": None,
+                    "building_material": None,
+                }
             current["parish"] = text
         elif ent_type == "deanery":
             deanery = text
@@ -135,8 +148,6 @@ def build_page_json(words, bboxes, labels):
             current["dedication"] = text
         elif ent_type == "building_material":
             current["building_material"] = text
-
-
 
     # Flush last entry if it exists
     if current["parish"]:

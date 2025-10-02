@@ -1,0 +1,109 @@
+<EXAMPLE>
+<INPUTS>
+    <IMAGE>
+        Base64 Image
+    </IMAGE>
+    <TEXT>
+        41
+
+        **7153 Pułtusk**, 1 cl. opp. Eccl. Collegiata simulq. Paro- chialis ex muro fundavit Paul. Giżycki Epus Ploc. 1449 an. cons. Indulg. 14. In h. paroec. inveniuntur. 1-o In Coem. Eccl. S. cruc. mur. fund. Nicol. Brill Suffr. Ploc. Ep. 1539 an. 2-o Filia Maria Magdal. mur. fund. Petrus Gamrat Epus Ploc. 1538 an. 3-o Filia mur. in villa Kacice. 4-o Capel. in villa Grabowice 1830 an. aedif. 5-o Capel. in villa Przemia- rowo 1868 a. aedificata.
+        Cur. Bonavent. Grabowski S. T. C. Prael. Colleg. Pult. etc. q. s. 1823, 1848, 1867.
+        Vicarii: { 1. Jos. Dołęgowski 1857, 1881, 1881. 2. Vict. Mieczkowski 1856, 1880, 1880. 3. vacat.
+        Ibidem etiam: Eccl. Postconv. pp. Benedict. mur. fund. Coll. Societ Jesu 1717 an. restaurata 1879 an. Indulg. 1.
+        Vic. Victor Gogolewski qui inf.
+        Eccl. Postcon. pp. Reform. mur. fund. Adalbert. Wessel 1648 an. Indulg. 4.
+        Vicar. Narciss Wilewski 1813, 1836, 1880.
+        Ibidem Progym. pueror. praec. relig. et moral. Victor Gogolewski Cruce aur. pec. dec. 1845, 1866, 1870.
+
+        **2103 Serock**, 3 cl. Tit. Annunt. BVM. Eccl. ex mur. fund. Janusz et Stanisl. Principes Mazov. 1527 an. Indulg. 4.
+        Adm. Henricus Powichrowski 1846, 1869, 1881.
+
+        **1222 Smogorzewo**, 3 cl. Tit. et Patr. Visitat. BVM. cujus imago miraculos. Eccl. mur. sumpt. Paroch. aedif. 1879. Indulg. 2.
+        Adm. Ant. Dąbrowski 1845, 1869, 1876.
+
+        **2144 Szyszki**, 3 cl. Patr. S. Barthol. Tit. Transfig. Eccl. lign. fundav. Ludov. Załuski Epus Ploc. 1714 an. q. etiam consecr. Indulg. 3 ad praesens Eccl. destructa, Officia Sacra peraguntur in Eccl. Postconv. pp. Bernard. in villa Strzego- cin ex mur. constr. Patr. et Tit. BVM. de
+    </TEXT>
+    <LMV3_HINTS>
+        ```json
+        {
+          "page_number": "41",
+          "entries": [
+            {
+              "deanery": null,
+              "parish": "Pułtusk",
+              "dedication": "Collegiata",
+              "building_material": "ex muro"
+            },
+            {
+              "deanery": null,
+              "parish": "Smogorzewo",
+              "dedication": "Visitat. BVM",
+              "building_material": "mur."
+            },
+            {
+              "deanery": null,
+              "parish": "Szyszki",
+              "dedication": "Transfig.",
+              "building_material": "mur."
+            },
+            {
+              "deanery": null,
+              "parish": "Serock",
+              "dedication": "Annunt. BVM",
+              "building_material": "ex mur."
+            }
+          ]
+        }
+        ```
+    </LMV3_HINTS>
+</INPUTS>
+<OUTPUTS>
+    ```json
+    {
+      "page_number": "41",
+      "entries": [
+        {
+          "building_material": "ex muro",
+          "deanery": null,
+          "dedication": null,
+          "parish": "Pułtusk"
+        },
+        {
+          "building_material": "ex mur.",
+          "deanery": null,
+          "dedication": null,
+          "parish": "Serock"
+        },
+        {
+          "building_material": "mur.",
+          "deanery": null,
+          "dedication": null,
+          "parish": "Smogorzewo"
+        },
+        {
+          "building_material": "lign.",
+          "deanery": null,
+          "dedication": "S. Barthol.",
+          "parish": "Szyszki"
+        }
+      ]
+    }
+    ```
+</OUTPUTS>
+    <NOTES>
+        Instruction: The primary rule demonstrated by this example is for the `dedication` field. This field must ONLY contain the name of a saint, typically identified by the keyword `Patr.` (Patron) or the abbreviation `S.` (Sanctus/Sancta). If no saint is explicitly named, this field MUST be `null`.
+
+        Reasoning:
+        1.  **Strict Rule for `dedication`:**
+            *   **Correct Extraction (`Szyszki`):** The text reads `Patr. S. Barthol.`. This explicitly names Saint Bartholomew as the patron. Therefore, the dedication is correctly extracted as `"S. Barthol."`.
+            *   **Correct Rejection (`Pułtusk`, `Serock`, `Smogorzewo`):** These entries mention titles or events, not saint names directly.
+                *   `Pułtusk`: `Eccl. Collegiata` describes the church's status, not a saint. Dedication is `null`.
+                *   `Serock`: `Tit. Annunt. BVM` refers to the *Annunciation*, an event. It is not the name of a saint. Dedication is `null`.
+                *   `Smogorzewo`: `Tit. ... Visitat. BVM` refers to the *Visitation*, an event. Dedication is `null`.
+            The model must learn to ignore church titles, feast days, and events, even if they reference a holy figure like the BVM, and only extract direct saint names.
+
+        2.  **Data and Order Correction:** As in the previous version, this example shows that the model must correct errors from the `LMV3_HINTS`.
+            *   **Order:** The output list must follow the document's top-to-bottom order (`Pułtusk` -> `Serock` -> `Smogorzewo` -> `Szyszki`).
+            *   **Data:** The building material for `Szyszki` is corrected from `mur.` to `lign.` based on the source `TEXT`.
+    </NOTES>
+</EXAMPLE>

@@ -76,7 +76,7 @@ services:
     build:
       context: ./dataset_sync
       dockerfile: Dockerfile
-    container_name: dataset-sync-dev
+    container_name: data-sync-dev
     restart: unless-stopped
     logging: *default-logging
     depends_on:

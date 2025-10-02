@@ -12,7 +12,7 @@ from transformers.training_args import TrainingArguments
 import wandb
 from ...data.filters import filter_schematisms, merge_filters
 from ...data.maps import convert_to_grayscale, map_labels, merge_maps
-from core.data.stats import compute_dataset_stats
+from core.data.metrics import compute_dataset_stats
 from ...data.utils import get_dataset, load_labels, prepare_dataset
 from core.training.metrics import build_compute_metrics
 from core.training.trainers import FocalLossTrainer
@@ -36,7 +36,7 @@ def main(cfg: DictConfig) -> None:
         run = wandb.init(
             project=cfg.wandb.project,
             entity=cfg.wandb.entity,
-            name=f"{cfg.wandb.name}-{datetime.now().isoformat()}",
+            name=f"{cfg.wandb.description}-{datetime.now().isoformat()}",
             tags=cfg.wandb.tags,
             config=config_to_dict(cfg),
         )
@@ -44,7 +44,7 @@ def main(cfg: DictConfig) -> None:
     dataset = get_dataset(cfg)
 
     raw_stats = compute_dataset_stats(dataset)
-    print("Raw dataset stats:")
+    print("Raw data stats:")
     print(json.dumps(raw_stats, indent=4, ensure_ascii=False))
 
     filters = [
@@ -104,9 +104,9 @@ def main(cfg: DictConfig) -> None:
         final_dataset["test"], processor, id2label, label2id, dataset_config
     )
 
-    print(f"Train dataset size: {len(final_dataset['train'])}")
-    print(f"Validation dataset size: {len(final_dataset['validation'])}")
-    print(f"Test dataset size: {len(final_dataset['test'])}")
+    print(f"Train data size: {len(final_dataset['train'])}")
+    print(f"Validation data size: {len(final_dataset['validation'])}")
+    print(f"Test data size: {len(final_dataset['test'])}")
 
     training_args = TrainingArguments(**cfg.training)
 
@@ -142,7 +142,7 @@ def main(cfg: DictConfig) -> None:
     #     log_predictions_to_wandb(
     #         model=model,
     #         processor=processor,
-    #         dataset=test_dataset,
+    #         data=test_dataset,
     #         id2label=id2label,
     #         label2id=label2id,
     #         num_samples=cfg.wandb.num_prediction_samples,
@@ -151,7 +151,7 @@ def main(cfg: DictConfig) -> None:
     #     log_predictions_to_wandb(
     #         model=model,
     #         processor=processor,
-    #         dataset=final_dataset["test"],
+    #         data=final_dataset["test"],
     #         id2label=id2label,
     #         label2id=label2id,
     #         num_samples=cfg.wandb.num_prediction_samples,

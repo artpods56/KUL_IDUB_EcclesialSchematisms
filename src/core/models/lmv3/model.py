@@ -1,5 +1,8 @@
 from typing import Dict, List, Tuple, Union, Optional, cast
 
+from omegaconf import DictConfig
+
+from core.models.base import ConfigurableModel
 import numpy as np
 import pytesseract
 from PIL import Image
@@ -9,7 +12,7 @@ from structlog import get_logger
 from core.caches.lmv3_cache import LMv3Cache
 from core.caches.utils import get_image_hash
 from core.data.parsing import build_page_json, repair_bio_labels
-from core.schemas.caches.entries import LMv3CacheItem
+from core.schemas.data.cache import LMv3CacheItem
 from core.utils.inference_utils import get_model_and_processor, retrieve_predictions
 
 logger = get_logger(__name__)
@@ -56,7 +59,7 @@ def ocr_page(pil_image: Image.Image, text_only: bool = False) -> Union[Tuple[Lis
     return words, bboxes
 
 
-class LMv3Model:
+class LMv3Model(ConfigurableModel):
     """LayoutLMv3 model wrapper with unified predict interface and caching."""
     
     def __init__(self, config, enable_cache: bool = True):
@@ -73,6 +76,10 @@ class LMv3Model:
             self.cache = LMv3Cache(
                 checkpoint=config.inference.checkpoint,
             )
+
+    @classmethod
+    def from_config(cls, config: DictConfig) -> "LMv3Model":
+        return cls(config=config)
 
     def _predict(self, pil_image: Image.Image,) -> Tuple[List, List, List]:
         """Predict on PIL image and return JSON results with caching.
@@ -106,9 +113,9 @@ class LMv3Model:
         
         Args:
             pil_image: PIL Image object
-            raw_predictions: If True, return raw predictions (words, bboxes, preds)
+            raw_predictions: If True, return raw predictions_data (words, bboxes, preds)
         Returns:
-            Dictionary with structured prediction results or tuple of raw predictions
+            Dictionary with structured prediction results or tuple of raw predictions_data
         """
         if self.enable_cache:
             hash_key = self.cache.generate_hash(

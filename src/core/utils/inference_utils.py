@@ -4,6 +4,7 @@ from transformers import AutoProcessor, LayoutLMv3ForTokenClassification
 
 logger = get_logger(__name__)
 
+
 def unnormalize_bbox(bbox, width, height):
     return [
         width * (bbox[0] / 1000),
@@ -12,21 +13,27 @@ def unnormalize_bbox(bbox, width, height):
         height * (bbox[3] / 1000),
     ]
 
+
 def get_model_and_processor(cfg):
     processor = AutoProcessor.from_pretrained(
-        cfg.processor.checkpoint, local_files_only=True if cfg.processor.local_files_only else False, apply_ocr=False
+        cfg.processor.checkpoint,
+        local_files_only=True if cfg.processor.local_files_only else False,
+        apply_ocr=False,
     )
 
     model = LayoutLMv3ForTokenClassification.from_pretrained(
-        cfg.inference.checkpoint, local_files_only=True if cfg.inference.local_files_only else False, device_map="auto"
+        cfg.inference.checkpoint,
+        local_files_only=True if cfg.inference.local_files_only else False,
+        device_map="auto",
     )
-    
+
     return model, processor
+
 
 def sliding(processor, token_boxes, predictions, encoding, width, height):
     # for i in range(0, len(token_boxes)):
     #     for j in range(0, len(token_boxes[i])):
-    #         print("label is: {}, bbox is: {} and the text is: {}".format(predictions[i][j], token_boxes[i][j],  processor.tokenizer.decode(encoding["input_ids"][i][j]) ))
+    #         print("label is: {}, bbox is: {} and the text is: {}".file_format(predictions_data[i][j], token_boxes[i][j],  processor.tokenizer.decode(encoding["input_ids"][i][j]) ))
 
     box_token_dict = {}
     for i in range(len(token_boxes)):
@@ -42,7 +49,7 @@ def sliding(processor, token_boxes, predictions, encoding, width, height):
             tok = processor.tokenizer.decode(encoding["input_ids"][i][j]).strip()
             box_token_dict.setdefault(key, []).append(tok)
 
-    # build predictions dict with the *same* keys
+    # build predictions_data dict with the *same* keys
     box_prediction_dict = {}
     for i in range(len(token_boxes)):
         for j in range(len(token_boxes[i])):
@@ -64,10 +71,11 @@ def sliding(processor, token_boxes, predictions, encoding, width, height):
 
     return boxes, preds, words
 
+
 @torch.no_grad()
 def retrieve_predictions(image, processor, model, words=None, bboxes=None):
     """
-    Retrieve predictions for a single example.
+    Retrieve predictions_data for a single example.
 
     Return:
         boxes
@@ -76,7 +84,7 @@ def retrieve_predictions(image, processor, model, words=None, bboxes=None):
     """
 
     width, height = image.size
-    
+
     if words is not None and bboxes is not None:
         encoding = processor(
             image,
@@ -130,18 +138,12 @@ def retrieve_predictions(image, processor, model, words=None, bboxes=None):
     predictions = logits.argmax(-1).squeeze().tolist()
     token_boxes = encoding.bbox.squeeze().tolist()
 
-
     if len(token_boxes) == 512:
         predictions = [predictions]
         token_boxes = [token_boxes]
-
 
     boxes, preds, flattened_words = sliding(
         processor, token_boxes, predictions, encoding, width, height
     )
 
     return boxes, preds, flattened_words
-
-
-
-

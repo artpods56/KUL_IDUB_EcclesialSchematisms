@@ -1,0 +1,64 @@
+<EXAMPLE>
+<INPUTS>
+    <IMAGE>
+        Base64 Image
+    </IMAGE>
+    <OCR_TEXT>
+        105
+
+        teri.—Albin. Struś.—Cajet. Wnuczyński Clerici.— Victor Bolek.—Bern. Gajderski. — Salva. Dyksiń- ski. Fratres laici.
+
+        *Tit. Eccl.* Visitatio BMV. mur.
+        *Sol.* S. Annae Fer. 2 Pasch. et Pentec., S. Steph. Immac. Conc. BMV., S. Anton., S. Theclae (Dom. sq), S. Joan. Nep. (Dom. sq), S. Francis. Seraph., S. Jos.: Portiunculae, SS. Nom. Jesu, Transf. Dni, 40 hor. ante Ciner.
+        *Confr.* Imm. Conc. BMV.
+
+        7.  **Lutomiersk**, *Conventus PP. Reformatorum.*
+            *Regul.* Procop. Lipiński Praep.—Pasch. Koskow- ski Vic. — Hiac. Strzelecki. — Marcel. Szymań- ski. — Lucian. Ostrowski. — Sebast. Sałaciński.— Cornel. Ważyński.—Steph. Krantz.—Aegid. Kry- kowski.—Julian. Żydaczewski.—Robert. Lesicki.— Ludov. Gierczewski. — Leo Czaplis. — Narc. Am- brulewicz, Presbyteri.—Felix Pawełkiewicz.—Ber- nard. Gontarek. — Jos. Gorkiewicz. — Marcian. Gruszczyński Fratres laici.
+            *Tit. Eccl.* Immac. Conc. BMV. mur.
+            *Sol.* S. Nom. Jesu, S. Joan. Nep. (Dom. sq), S. Anton., Por- tiunculae, Stigm. S. Franc. (Dom. sq), S. Franc. Seraph., S. Petri Alcant. (Dom. sq) Imm. Conc. BV. Ded Eccl. Dom. pt Oct. SS. Petri et Pauli, 40 horar. ante Ciner.
+
+        8.  **Warta**, *Conventus PP. Bernardinorum.*
+            *Regul.* Edmund. Gumkowski Praep. — B: nard. Jastrzębski Vic. — Maurit. Majorowicz Pr: ur. — Pasch. Błażejewski. — Athan. Paluch.— Alex. Ra- dzimiński.—Cesl. Gołębiewski.—Jos. Borowiecki.— Euseb. Witecki.—Fortun. Nartowski. — Roch. Mi- chalski. — Odoric. Piotrowski.—Leon. Jabłoński.— Paulus Długosielski. — Paulin. Jagłowski. — Valer. Wojciechowski.—Bonav. Pierzak.—Pacif. Ostrow- ski Presbyteri. — Hieron. Domagalski. — Libor. Wałczyński Clerici. — Gratian. Frankowski.— Se- ver. Kołodziejski. Fratres laici.—Joseph. Gajewski, Scholar. Piar. Presb.
+            *Tit. Eccl.* Assump. BMV. mur.
+            *Sol.* S. Anton., Visit., Portiunc., Assump., Imm. Conc. BMV.
+    </OCR_TEXT>
+    <LMV3_HINTS>
+        ```json
+        {
+          "page_number": "105",
+          "entries": [
+            {
+              "deanery": null,
+              "parish": "Lutomiersk",
+              "dedication": "Visitatio BMV.",
+              "building_material": "mur."
+            },
+            {
+              "deanery": null,
+              "parish": "Warta",
+              "dedication": "Assump. BMV.",
+              "building_material": "mur."
+            }
+          ]
+        }
+        ```
+    </LMV3_HINTS>
+</INPUTS>
+<OUTPUTS>
+    ```json
+    {
+      "page_number": "105",
+      "entries": []
+    }
+    ```
+</OUTPUTS>
+    <NOTES>
+        Instruction: Do not extract any parish entries from this page. The final output for this example should be an empty list of entries.
+        Reasoning: This page does not list diocesan parishes. Instead, it details **"Conventus"** (convents or monasteries), which are communities of religious orders.
+        1.  **Explicit Identification:** The entries for **"Lutomiersk"** and **"Warta"** are explicitly labeled as `Conventus PP. Reformatorum` (Convent of the Reformed Fathers) and `Conventus PP. Bernardinorum` (Convent of the Bernardine Fathers), respectively.
+        2.  **Structural Difference:** Unlike parish entries that describe a geographical territory and its clergy under a deanery, these entries list the members of a specific religious house (e.g., `Regul.`, `Praep.`, `Vic.`, `Fratres laici`). This is an internal monastic structure, not a parish one.
+        Handling LayoutLMv3 False Predictions:
+        An automated model might incorrectly predict "Lutomiersk" and "Warta" as parishes because their **visual layout** (an index number followed by a bolded place name) is similar to valid parish entries on other pages.
+        These predictions **must be ignored**. The textual context, specifically the keyword **"Conventus"**, overrides the visual pattern and confirms that these are not the target entities (parishes) for extraction. This example serves to train the system to differentiate between a parish and a convent based on explicit textual cues.
+    </NOTES>
+</EXAMPLE>

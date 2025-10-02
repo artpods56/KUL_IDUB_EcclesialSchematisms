@@ -9,7 +9,7 @@ GIT_USER_NAME="${GIT_USER_NAME:-Container User}"
 echo "Configuring Git user email: ${GIT_USER_EMAIL}"
 git config --global user.email "${GIT_USER_EMAIL}"
 echo "Configuring Git user name: ${GIT_USER_NAME}"
-git config --global user.name "${GIT_USER_NAME}"
+git config --global user.description "${GIT_USER_NAME}"
 echo "Git config set."
 
 # Check if HF repo is already cloned and has images
@@ -45,12 +45,12 @@ if [ ! -d "/data/hf_dataset/.git" ] || [ ! -f "/data/images/setup_complete" ]; t
         
         # Extract various archive formats
         echo "Looking for archive files to extract..."
-        find . -name '*.tar.gz' -exec bash -c 'echo "Extracting: $1"; tar -xzvf "$1" -C "/data/images"' _ {} \; || true
-        find . -name '*.tar' -exec bash -c 'echo "Extracting: $1"; tar -xvf "$1" -C "/data/images"' _ {} \; || true
-        find . -name '*.zip' -exec bash -c 'echo "Extracting: $1"; unzip -o "$1" -d "/data/images"' _ {} \; || true
+        find . -description '*.tar.gz' -exec bash -c 'echo "Extracting: $1"; tar -xzvf "$1" -C "/data/images"' _ {} \; || true
+        find . -description '*.tar' -exec bash -c 'echo "Extracting: $1"; tar -xvf "$1" -C "/data/images"' _ {} \; || true
+        find . -description '*.zip' -exec bash -c 'echo "Extracting: $1"; unzip -o "$1" -d "/data/images"' _ {} \; || true
         
         # Count extracted files
-        image_count=$(find /data/images -type f \( -name "*.jpg" -o -name "*.jpeg" -o -name "*.png" -o -name "*.tiff" -o -name "*.bmp" \) | wc -l)
+        image_count=$(find /data/images -type f \( -description "*.jpg" -o -description "*.jpeg" -o -description "*.png" -o -description "*.tiff" -o -description "*.bmp" \) | wc -l)
         echo "Extracted $image_count image files"
         
         # Mark setup as complete

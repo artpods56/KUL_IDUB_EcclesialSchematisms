@@ -1,4 +1,4 @@
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from ast import Constant
 from datetime import datetime
 from core.utils.shared import REPOSITORY_ROOT
@@ -16,9 +16,9 @@ from structlog.typing import FilteringBoundLogger
 from diskcache import Cache as DCache
 from diskcache import JSONDisk
 
-class BaseCache:
-    """Base class for all cache implementations.
-    """
+
+class BaseCache(ABC):
+    """Base class for all cache implementations."""
 
     logger: FilteringBoundLogger
 
@@ -31,7 +31,11 @@ class BaseCache:
         if env_caches_dir is None:
             raise ValueError("CACHE_DIR environment variable is not set.")
 
-        self._caches_dir = caches_dir if caches_dir is not None else REPOSITORY_ROOT / Path(env_caches_dir)
+        self._caches_dir = (
+            caches_dir
+            if caches_dir is not None
+            else REPOSITORY_ROOT / Path(env_caches_dir)
+        )
 
     @abstractmethod
     def normalize_kwargs(self, **kwargs) -> Dict[str, Any]:
@@ -52,7 +56,9 @@ class BaseCache:
         self.get = self.cache.get
         self.delete = self.cache.delete
 
-        self.logger.info(f"{cache_type} cache initialised at {self.model_cache_dir} with {len(self.cache)} entries")
+        self.logger.debug(
+            f"{cache_type} cache initialised at {self.model_cache_dir} with {len(self.cache)} entries"
+        )
 
         self._cache_loaded = True
 
@@ -61,7 +67,13 @@ class BaseCache:
         key_str = json.dumps(key_data, sort_keys=True)
         return hashlib.sha256(key_str.encode()).hexdigest()
 
-    def set(self, key: str, value: Dict[str, Any], schematism: Optional[str] = None, filename: Optional[str] = None):
+    def set(
+        self,
+        key: str,
+        value: Dict[str, Any],
+        schematism: Optional[str] = None,
+        filename: Optional[str] = None,
+    ):
 
         if schematism is None:
             schematism = "null"
@@ -72,6 +84,4 @@ class BaseCache:
         self.cache.set(key, value, tag=tag)
 
     def __len__(self) -> int:
-        return len(
-            cast(Sized,self.cache)
-        )
+        return len(cast(Sized, self.cache))

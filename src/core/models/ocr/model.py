@@ -1,19 +1,24 @@
 import numpy as np
-from typing import List, Tuple, Union, Optional, cast
+from typing import List, Literal, Tuple, Union, Optional, cast, overload
 
 from PIL import Image
+from omegaconf import DictConfig
 import pytesseract
 from structlog import get_logger
 
 from core.caches.ocr_cache import PyTesseractCache
-from core.schemas.caches.entries import PyTesseractCacheItem
+from core.schemas.data.cache import PyTesseractCacheItem
 
 from core.caches.utils import get_image_hash
+
+from core.models.base import ConfigurableModel
 
 def ocr_page(
     pil_image: Image.Image,
     language: str = "lat+pol+rus",
     text_only: bool = False,
+    psm_mode: int = 6,
+    oem_mode: int = 3,
 ) -> Union[str, Tuple[List[str], List[List[int]]]]:
     """Run PyTesseract OCR on a page.
 
@@ -21,18 +26,21 @@ def ocr_page(
         pil_image: The image to be processed.
         language: Languages passed to Tesseract (e.g. "eng+deu").
         text_only: If ``True`` only return the full text string (no word bboxes).
+        psm_mode: Page segmentation mode for Tesseract.
+        oem_mode: OCR Engine Mode for Tesseract.
 
     Returns:
         Either a string (``text_only=True``) or a tuple ``(words, bboxes)``.
         Bounding boxes follow LayoutLMv3 convention of 0-1000 normalized coordinates:
         ``[xmin, ymin, xmax, ymax]``.
     """
+    config = f"--psm {psm_mode} --oem {oem_mode}"
 
     if text_only:
         return pytesseract.image_to_string(
             np.array(pil_image.convert("L")),
             lang=language,
-            config="--psm 6 --oem 3",
+            config=config,
         )
 
     width, height = pil_image.size
@@ -41,7 +49,7 @@ def ocr_page(
         np.array(pil_image.convert("L")),
         output_type=pytesseract.Output.DICT,
         lang=language,
-        config="--psm 6 --oem 3",
+        config=config,
     )
 
     words: List[str] = []
@@ -73,7 +81,7 @@ def ocr_page(
     return words, bboxes
 
 
-class OcrModel:
+class OcrModel(ConfigurableModel):
     """PyTesseract OCR model wrapper with caching.
 
     The model exposes a unified ``predict`` method returning either the full OCR text or
@@ -82,22 +90,41 @@ class OcrModel:
 
     def __init__(
         self,
-        config = None,
-        enable_cache: bool = True,
-        language: str = "lat+pol+rus",
+        config: DictConfig,
+        enable_cache: Optional[bool] = None,
+        language: Optional[str] = None,
     ) -> None:
-        self.config = config
-        self.language = language
+        self.language = language or config.get("language", "lat+pol+rus")
+        self.enable_cache = enable_cache if enable_cache is not None else config.get("enable_cache", True)
+        self.psm_mode = config.get("psm_mode", 6)
+        self.oem_mode = config.get("oem_mode", 3)
 
-        self.logger = get_logger(__name__).bind(language=language)
+        self.logger = get_logger(__name__).bind(language=self.language)
 
-        self.enable_cache = enable_cache
         if self.enable_cache:
-            self.cache = PyTesseractCache(language=language)
+            self.cache = PyTesseractCache(language=self.language)
+
+    @classmethod
+    def from_config(cls, config: DictConfig) -> "OcrModel":
+        return cls(config=config)
 
     def _predict(self, pil_image: Image.Image, text_only: bool = False):
-        return ocr_page(pil_image, language=self.language, text_only=text_only)
+        return ocr_page(
+            pil_image, 
+            language=self.language, 
+            text_only=text_only,
+            psm_mode=self.psm_mode,
+            oem_mode=self.oem_mode
+        )
 
+
+    @overload
+    def predict(self, image: Image.Image, text_only: Literal[True], **kwargs) -> str:
+        """Perform OCR on *image* and return text only."""
+
+    @overload
+    def predict(self, image: Image.Image, text_only: Literal[False], **kwargs) -> Tuple[list, list]:
+        """Perform OCR on *image* and return words and bounding boxes."""
 
     def predict(
         self,

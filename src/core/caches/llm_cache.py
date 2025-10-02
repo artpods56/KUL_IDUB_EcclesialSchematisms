@@ -1,8 +1,9 @@
 import json
-from typing import Dict, Optional, Union
 from pathlib import Path
+from typing import Optional
 
 from structlog import get_logger
+
 from core.caches.base_cache import BaseCache
 
 
@@ -15,22 +16,25 @@ class LLMCache(BaseCache):
         super().__init__(caches_dir)
 
         self._setup_cache(
-            caches_dir = self._caches_dir,
-            cache_type = self.__class__.__name__,
-            cache_name = self.model_name,
+            caches_dir=self._caches_dir,
+            cache_type=self.__class__.__name__,
+            cache_name=self.model_name,
         )
 
     def _parse_model_name(self, model_name: str) -> str:
         """
-        Parses the model name to ensure it is in a valid format.
+        Parses the model description to ensure it is in a valid file_format.
         e.g., /models/gemma-3-27b-it-Q4_K_M.gguf -> gemma-3-27b-it-Q4_K_M
         """
-        return model_name.split("/")[-1].split(".")[0]
+        if Path(model_name).is_absolute():
+            model_name = model_name.split("/")[-1].split(".")[0]
+
+        return model_name.replace("/", "_")
 
     def normalize_kwargs(self, **kwargs):
         return {
             "image_hash": kwargs.get("image_hash"),
             "text_hash": kwargs.get("text_hash"),
-            "messages": json.dumps(kwargs.get("messages"), ensure_ascii=False),
-            "hints": json.dumps(kwargs.get("hints"), ensure_ascii=False)
+            "messages_hash": kwargs.get("messages_hash"),
+            "hints": json.dumps(kwargs.get("hints"), ensure_ascii=False),
         }

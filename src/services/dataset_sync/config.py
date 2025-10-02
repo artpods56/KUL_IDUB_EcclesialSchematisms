@@ -1,5 +1,5 @@
 """
-Configuration management for dataset sync and conversion scripts.
+Configuration management for data sync and conversion scripts.
 Loads configuration from .env file and merges with CLI arguments.
 """
 
@@ -18,7 +18,7 @@ def setup_logging(log_level: str):
     
     logging.basicConfig(
         level=numeric_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        format="%(asctime)s - %(description)s - %(levelname)s - %(message)s",
         stream=sys.stdout
     )
 
@@ -57,7 +57,7 @@ def load_config_from_env(env_file: str) -> dict:
         'MIN_NEW': int(os.getenv('MIN_NEW', '10')),
         
         # Conversion settings
-        'CONVERT_SCRIPT': os.getenv('CONVERT_SCRIPT', 'convert_raw_annotations.py'), # This is a script name, not a path to manage here
+        'CONVERT_SCRIPT': os.getenv('CONVERT_SCRIPT', 'convert_raw_annotations.py'), # This is a script description, not a path to manage here
         'IMAGE_DIR': get_path_env('IMAGE_DIR', './images'),
         'LS_ANNOTATIONS_DIR': get_path_env('LS_ANNOTATIONS_DIR', './label_studio_annotations'),
         'OUT_JSONL': get_path_env('OUT_JSONL', './train.jsonl'), # This will be a Path object

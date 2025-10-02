@@ -1,7 +1,6 @@
 """Utilities for handling and saving generated mappings."""
 
 import json
-from pathlib import Path
 import datetime
 from typing import Dict, Any, Optional
 
@@ -9,7 +8,7 @@ import structlog
 import wandb
 
 from core.utils.shared import TMP_DIR
-from core.models.llm.structured import PageData
+from core.schemas.data.schematism import SchematismPage
 
 logger = structlog.get_logger(__name__)
 
@@ -75,8 +74,8 @@ class MappingSaver:
             polish_data (dict): The dictionary with Polish ground truth values.
         """
         try:
-            latin_page = PageData.parse_obj(latin_data)
-            polish_page = PageData.parse_obj(polish_data)
+            latin_page = SchematismPage.parse_obj(latin_data)
+            polish_page = SchematismPage.parse_obj(polish_data)
         except Exception as e:
             logger.error("Failed to parse page data.", error=str(e), latin=latin_data, polish=polish_data)
             return

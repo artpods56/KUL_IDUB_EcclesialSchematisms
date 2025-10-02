@@ -2,14 +2,14 @@ import random
 from typing import List, Dict # Retaining List, Dict as they might be used by remaining functions or can be cleaned up later if not.
 # Removed: from datasets import Dataset, Features, Sequence, Value, Array2D, Array3D (as these are specific to moved functions)
 # However, if log_predictions_to_wandb uses any specific classes from `datasets`, this might need adjustment.
-# For now, assuming it doesn't or uses them via `dataset` object's attributes.
+# For now, assuming it doesn't or uses them via `data` object's attributes.
 
 import torch
 import wandb
 from dataset.utils import _to_fractional # Import the moved function
 
-# Moved load_labels, prepare_dataset to src/dataset/utils.py
-# _to_fractional is now imported from dataset.utils
+# Moved load_labels, prepare_dataset to src/data/utils.py
+# _to_fractional is now imported from data.utils
 
 
 @torch.no_grad()
@@ -27,16 +27,16 @@ def log_predictions_to_wandb(
     # W&B needs integer keys ➜ string labels
     class_labels = {int(k): v for k, v in id2label.items()}
     sample_indices = random.sample(
-        range(len(dataset)), k=min(num_samples, len(dataset)) # `dataset` is passed in, so `Dataset` type hint not needed here
+        range(len(dataset)), k=min(num_samples, len(dataset)) # `data` is passed in, so `Dataset` type hint not needed here
     )
     wandb_images = []
 
     for idx in sample_indices:
         example = dataset[idx]
-        image = example["image_pil"]  # PIL image from original dataset
-        words = example["words"]  # Words from original dataset
-        boxes = example["bboxes"]  # Bounding boxes from original dataset
-        labels = example["labels"]  # String labels from original dataset
+        image = example["image_pil"]  # PIL image from original data
+        words = example["words"]  # Words from original data
+        boxes = example["bboxes"]  # Bounding boxes from original data
+        labels = example["labels"]  # String labels from original data
 
         # Convert string labels to IDs for truth
         truth = [label2id[label] for label in labels]
@@ -71,7 +71,7 @@ def log_predictions_to_wandb(
         logits = model(**enc).logits[0]  # sequence_len × num_labels
         preds = logits.argmax(-1).tolist()
 
-        # Build two box lists: predictions & ground-truth
+        # Build two box lists: predictions_data & ground-truth
         pred_boxes, gt_boxes = [], []
         # Only iterate over the minimum length to avoid index errors
         min_length = min(len(boxes), len(preds), len(truth))
@@ -79,7 +79,7 @@ def log_predictions_to_wandb(
         for i in range(min_length):
             b, p_id, t_id = boxes[i], preds[i], truth[i]
 
-            # 1️⃣ predictions
+            # 1️⃣ predictions_data
             if p_id != label2id["O"]:
                 pred_boxes.append(
                     {
@@ -105,7 +105,7 @@ def log_predictions_to_wandb(
             wandb.Image(
                 image,
                 boxes={
-                    "predictions": {
+                    "predictions_data": {
                         "box_data": pred_boxes,
                         "class_labels": class_labels,
                     },
@@ -119,7 +119,7 @@ def log_predictions_to_wandb(
 
     wandb.log({"📄 sample_pages": wandb_images})
 
-# Removed local _to_fractional_wandb as we are now importing _to_fractional from dataset.utils
+# Removed local _to_fractional_wandb as we are now importing _to_fractional from data.utils
 
 
 # ----------------------------------------------------------------------

@@ -1,19 +1,25 @@
 import os
-from typing import Dict, List, cast, Union
+from typing import Callable, Dict, List, cast, Union, Any
 
 from datasets import (
     Array2D,
     Array3D,
     Dataset,
+    DatasetDict,
     DownloadMode,
     Features,
+    IterableDataset,
+    IterableDatasetDict,
     Sequence,
     Value,
     load_dataset,
 )
 from omegaconf import DictConfig
+from structlog import get_logger
 
 from core.data.wrapper import DatasetWrapper
+
+logger = get_logger()
 
 def load_labels(dataset: Dataset):
     classes = []
@@ -40,7 +46,7 @@ def prepare_dataset(dataset: Dataset, processor, id2label, label2id, dataset_con
         boxes = examples[dataset_config["boxes_column_name"]]
         word_labels = examples[dataset_config["label_column_name"]]
 
-        # Since your dataset has string labels, always convert them to IDs
+        # Since your data has string labels, always convert them to IDs
         label_ids = [[label2id[label] for label in seq] for seq in word_labels]
 
         encoding = processor(
@@ -91,11 +97,13 @@ def _to_fractional(box: List[int]) -> Dict[str, float]:
     return {"minX": min_x, "maxX": max_x, "minY": min_y, "maxY": max_y}
 
 
-def get_dataset(config: DictConfig, wrapper: bool = False) -> Union[Dataset, DatasetWrapper]:
+def get_dataset(dataset_config: DictConfig, input_columns: List[str] | None = None,
+                filters: tuple[Callable[[Any],Any], list[str]] | None = None, maps: List[Callable] | None = None,
+                wrapper: bool = False) -> Dataset | DatasetDict | IterableDataset | DatasetWrapper | IterableDatasetDict:
 
     download_mode = (
         DownloadMode.FORCE_REDOWNLOAD
-        if config.force_download
+        if dataset_config.force_download
         else DownloadMode.REUSE_CACHE_IF_EXISTS
     )
 
@@ -103,20 +111,31 @@ def get_dataset(config: DictConfig, wrapper: bool = False) -> Union[Dataset, Dat
     if not HF_TOKEN:
         raise RuntimeError("Huggingface token is missing.")
 
-    dataset = cast(
-        Dataset,
-        load_dataset(
-            path=config.path,
-            name=config.name,
-            split=config.split,
+    dataset = load_dataset(
+            path=dataset_config.path,
+            name=dataset_config.name,
+            split=dataset_config.split,
             token=HF_TOKEN,
             # trust_remote_code=config.trust_remote_code,
-            num_proc=config.num_proc if config.num_proc > 0 else None,
+            num_proc=dataset_config.num_proc if dataset_config.num_proc > 0 else None,
             download_mode=download_mode,
-            keep_in_memory=config.keep_in_memory,
-            streaming=config.streaming,
-        ),
-    )
+            keep_in_memory=dataset_config.keep_in_memory,
+            streaming=dataset_config.streaming,
+        )
+
+    for _filter in filters if filters else []:
+        dataset = dataset.filter(_filter, input_columns=input_columns)
+
+    for _map in maps if maps else []:
+        dataset = dataset.map(_map, input_columns=input_columns)
+
+    if dataset_config.streaming and (maps or filters):
+        logger.warning(
+            "Streaming data with filters/maps: The process may appear to hang initially as it needs to "
+            "iterate through the entire data to find samples that meet the filter criteria. "
+            "Output will start appearing once matching samples are found. This is normal behavior for "
+            "streaming datasets with filters - please be patient as it processes the data sequentially."
+        )
 
     if wrapper:
         return DatasetWrapper(dataset)

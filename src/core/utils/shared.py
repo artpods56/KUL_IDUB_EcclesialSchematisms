@@ -57,6 +57,8 @@ def find_repository_root(start: str | Path | None = None) -> Path:
 
 REPOSITORY_ROOT: Path = find_repository_root()
 
+DATA_DIR = REPOSITORY_ROOT / "data"
+
 TMP_DIR = REPOSITORY_ROOT / "tmp"
 
 CONFIGS_DIR = REPOSITORY_ROOT / "configs"

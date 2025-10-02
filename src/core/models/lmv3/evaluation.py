@@ -32,7 +32,7 @@ def main(cfg: DictConfig) -> None:
         run = wandb.init(
             project=cfg.wandb.project,
             entity=cfg.wandb.entity,
-            name=f"inference-{cfg.wandb.name}-{datetime.now().isoformat()}",
+            name=f"inference-{cfg.wandb.description}-{datetime.now().isoformat()}",
             tags=cfg.wandb.tags,
             config=config_to_dict(cfg),
         )
@@ -51,7 +51,7 @@ def main(cfg: DictConfig) -> None:
         Dataset,
         load_dataset(
             path=cfg.dataset.path,
-            name=cfg.dataset.name,
+            name=cfg.dataset.description,
             split=cfg.dataset.split,
             token=os.getenv("HF_TOKEN"),
             trust_remote_code=cfg.dataset.trust_remote_code,
@@ -62,7 +62,7 @@ def main(cfg: DictConfig) -> None:
     )
 
     raw_stats = compute_dataset_stats(dataset)
-    print("Raw dataset stats:")
+    print("Raw data stats:")
     print(json.dumps(raw_stats, indent=4, ensure_ascii=False))
 
     filters = [
@@ -94,16 +94,16 @@ def main(cfg: DictConfig) -> None:
         "test": test_val["test"],
     }
 
-    print(f"Train dataset size: {len(final_dataset['train'])}")
-    print(f"Validation dataset size: {len(final_dataset['validation'])}")
-    print(f"Test dataset size: {len(final_dataset['test'])}")
+    print(f"Train data size: {len(final_dataset['train'])}")
+    print(f"Validation data size: {len(final_dataset['validation'])}")
+    print(f"Test data size: {len(final_dataset['test'])}")
 
     if cfg.wandb.enable:
 
         samples_to_log = log_predictions_to_wandb(
             model=model,
             processor=processor,
-            datasets_splits=[ # This argument name is different from the one in lmv3.utils.utils.log_predictions_to_wandb
+            datasets_splits=[ # This argument description is different from the one in lmv3.utils.utils.log_predictions_to_wandb
                 final_dataset["validation"],
                 final_dataset["test"],
             ],

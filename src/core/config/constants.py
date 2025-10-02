@@ -4,35 +4,49 @@ from enum import Enum
 
 from core.exceptions import InvalidConfigType, InvalidConfigSubtype
 
+
 class ConfigType(Enum):
     """Config types."""
+
     MODELS = "models"
     DATASET = "dataset"
     WANDB = "wandb"
     TESTS = "tests"
 
+
 class DatasetConfigSubtype(Enum):
     """Dataset config subtype."""
+
     DEFAULT = "default"
     EVALUATION = "evaluation"
     TRAINING = "training"
+    GENERATION = "generation"
+
 
 class ModelsConfigSubtype(Enum):
     """Models config subtype."""
+
     DEFAULT = "default"
     LLM = "llm"
     LMV3 = "lmv3"
+    OCR = "ocr"
+
 
 class WandbConfigSubtype(Enum):
     """Wandb config subtype."""
+
     DEFAULT = "default"
+
 
 class TestsConfigSubtype(Enum):
     __test__ = False
     """Tests config subtype."""
     DEFAULT = "default"
 
-ConfigSubTypes = Union[DatasetConfigSubtype, ModelsConfigSubtype, WandbConfigSubtype, TestsConfigSubtype]
+
+ConfigSubTypes = Union[
+    DatasetConfigSubtype, ModelsConfigSubtype, WandbConfigSubtype, TestsConfigSubtype
+]
 
 
 class ConfigTypeMapping:
@@ -42,7 +56,7 @@ class ConfigTypeMapping:
         ConfigType.MODELS: ModelsConfigSubtype,
         ConfigType.DATASET: DatasetConfigSubtype,
         ConfigType.WANDB: WandbConfigSubtype,
-        ConfigType.TESTS: TestsConfigSubtype
+        ConfigType.TESTS: TestsConfigSubtype,
     }
 
     @classmethod
@@ -69,14 +83,13 @@ class ConfigTypeMapping:
         """
         subtype_enum = cls._mappings.get(config_type)
         if not subtype_enum:
-            raise InvalidConfigType(
-                config_type,
-                cls._mappings.keys()
-            )
+            raise InvalidConfigType(config_type, cls._mappings.keys())
         return subtype_enum
 
     @classmethod
-    def is_valid_subtype(cls, config_type: ConfigType, config_subtype: ConfigSubTypes) -> bool:
+    def is_valid_subtype(
+        cls, config_type: ConfigType, config_subtype: ConfigSubTypes
+    ) -> bool:
         """Check if a subtype is valid for a given config type.
 
         Args:
@@ -91,13 +104,11 @@ class ConfigTypeMapping:
             return config_subtype in enum_class
         except InvalidConfigSubtype:
             raise InvalidConfigSubtype(
-                config_type,
-                config_subtype,
-                enum_class.__members__.keys()
+                config_type, config_subtype, enum_class.__members__.keys()
             )
 
     # @classmethod
-    # def get_config_schema(cls, config_type: ConfigType, config_subtype: Type[ConfigSubTypes]) -> Type[BaseModel]:
+    # def get_config_schema(cls, config_type: ConfigType, config_subtype: Type[ConfigSubTypes]) -> Type[ConfigurableModel]:
     #     """Get the registered config schema for a given type and subtype.
     #
     #     Args:

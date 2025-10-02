@@ -1,6 +1,5 @@
 """Config registry for automatic model discovery and validation."""
-from typing import Dict, List, Optional, Tuple, Type, Any, Union, TypeVar
-from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Type, Any, TypeVar
 from core.exceptions import ConfigNotRegisteredError
 from pydantic import BaseModel, ValidationError
 
@@ -90,44 +89,3 @@ def get_default_config(config_type: ConfigType, config_subtype: ConfigSubTypes) 
     return default_instance.model_dump()
 
 
-def discover_config_files(base_path: Path) -> Dict[str, Dict[str, List[str]]]:
-    """Discover available config files in the directory structure.
-    
-    Handles mixed structures:
-    - base_path/config_type/*.yaml (flat structure -> 'default' subtype)
-    - base_path/config_type/subtype/*.yaml (nested structure)
-    - base_path/config_type with both *.yaml files AND subdirectories
-    
-    Returns:
-        Dict mapping config_type -> subtype -> list of config files
-    """
-    discovered = {}
-    if not base_path.exists():
-        logger.warning(f"Config directory does not exist: {base_path}")
-        return discovered
-    
-    for type_dir in base_path.iterdir():
-        if not type_dir.is_dir():
-            continue
-        config_type = type_dir.name
-        discovered[config_type] = {}
-        
-        # Check for direct YAML files in the type directory
-        yaml_files = list(type_dir.glob("*.yaml"))
-        if yaml_files:
-            # Add direct YAML files as 'default' subtype
-            discovered[config_type]['default'] = [f.stem for f in yaml_files]
-        
-        # Check for subdirectories (subtypes)
-        for item in type_dir.iterdir():
-            if item.is_dir():
-                subtype = item.name
-                subtype_yaml_files = [f.stem for f in item.glob("*.yaml")]
-                if subtype_yaml_files:
-                    discovered[config_type][subtype] = subtype_yaml_files
-        
-        # Remove config_type if no configs were found
-        if not discovered[config_type]:
-            del discovered[config_type]
-    
-    return discovered

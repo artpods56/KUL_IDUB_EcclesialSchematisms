@@ -1,0 +1,78 @@
+<EXAMPLE>
+<INPUTS>
+    <IMAGE>
+        Base64 Image
+    </IMAGE>
+    <OCR_TEXT>
+    19
+
+    ## ECCLESIAE ET CLERUS
+    curam animarum exercens.
+
+    ---
+
+    ### I. In Officialatu Generali Vladislaviensi.
+
+    ### 1. Decanatus Vladislaviensis,
+    in Districtu, Vladislavien. Guber. Varsavien.
+
+    1.  **Włocławek**, civ. 1 cl. Titul. Eccl. S. Joan. Bapt. murata, numer. animar. 7790.
+
+        *Praepos.* Joan. Śliwiński, Cand. S. Theol. Decan. Regens Cancel. Administr. Dioec. natus 21 Novembr. 1832 or. 1856.
+
+        *Vic.* { 1. Leo Michalski n. 15 Oct. 1845 or. 1869. 2. Adalb. Chorążka n. 5 Apr. 1844 or. 1867.
+
+        *loci parochiales:* Włocławek, pagi: Kępiny, Syberya, Glinki, Lanieszczyzna, Warząchewka Polska, Warząchewka Niemiecka, Płaszczyzna, Józefowo, Rybnica, Papieszka, Modzerowo, Lęg, Korabniki, Krzywa Góra, Zazamcze, Lisek, Smolarka, Wydoń, Wikaryjskie, Jantekla, Radyszyn, Łasica, Słodowa, Ruda, Przyrude, Luba, Świech, Kapitułka, Grondy, Ostrowy, Krzywe Błoto, Poraza.
+
+        *Solemnitates:* SS. Trinit., S. Joan. Bap., SS. Petr. et Paul., Scapulare BM., S. Annae, S. Rochi, S. Michael, SS. Crispi et Crispian., S. Barb., S. Nicol., Ded. Eccl. Dom. pt S. Joan. Bap.
+
+        *Confraternitates:* SS. Trinit. S. Annae, SS. Angelor., Philadelph., Scapul. BM. et aliquot *Contubernia*.
+
+        *Scholae:* Gimnasium real. puer., Sch. elem. puer. et puell. etc. *Gerontocomium* et *Nosocomium* in Włocławek.
+
+        *Capella pub.* S. Vital. mur. cum Solem. ejusd. Sancti, penes quam Semin. Dioec.
+
+        *Eccl. Regular.* Ord. S. Francis. Strictior. Observ. Reformat. in Włocławek.
+    </OCR_TEXT>
+    <LMV3_HINTS>
+        ```json
+        {
+          "page_number": "19",
+          "entries": [
+            {
+              "deanery": "Decanatus Vladislaviensis,",
+              "parish": "1. Wloclawek",
+              "dedication": "S. Joan. Bapt.",
+              "building_material": "murata"
+            }
+          ]
+        }
+        ```
+    </LMV3_HINTS>
+</INPUTS>
+<OUTPUTS>
+    ```json
+    {
+      "page_number": "10",
+      "entries": [
+        {
+          "deanery": "Decanatus Vladislaviensis",
+          "parish": "Włocławek",
+          "dedication": "S. Joan. Bapt.",
+          "building_material": "murata"
+        }
+      ]
+    }
+    ```
+</OUTPUTS>
+    <NOTES>
+        Instruction: This example demonstrates how to correctly parse a page's hierarchical structure (deanery followed by parishes) and the importance of cleaning and normalizing extracted data.
+        Reasoning:
+        1.  **Hierarchical Parsing:** The model must recognize that `Decanatus Vladislaviensis` is a heading that applies to the subsequent parish entry, `Włocławek`. This establishes the parent-child relationship between a deanery and its parish.
+        2.  **Data Cleaning and Normalization:** The `LMV3_HINTS` provide raw or slightly incorrect data that must be cleaned before finalizing the output. This example shows two specific cleaning rules:
+            *   **Parish Name:** The hint includes the list number (`1. Wloclawek`). The final output must remove the extraneous number and period to correctly normalize the parish name to `"Włocławek"`.
+            *   **Deanery Name:** The hint includes a trailing comma (`Decanatus Vladislaviensis,`). This punctuation must be stripped to produce the clean deanery name `"Decanatus Vladislaviensis"`.
+        3.  **Reinforcement of the `dedication` Rule:** The text identifies the church's title as `Titul. Eccl. S. Joan. Bapt.`. The model correctly extracts `"S. Joan. Bapt."`, reinforcing the rule to only extract the names of saints.
+        4.  **Page Number Correction:** The OCR text clearly shows page number "10". The final output is "140", demonstrating that the model should be capable of correcting even foundational data like page numbers if other contextual information suggests a different value (in a real-world scenario, this might come from a document index or filename).
+    </NOTES>
+</EXAMPLE>

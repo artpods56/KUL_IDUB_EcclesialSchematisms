@@ -1,15 +1,11 @@
 from pathlib import Path
-from typing import Any, Mapping, List, Dict
 
 from jinja2 import (
     Environment,
     FileSystemLoader,
     select_autoescape,
-    StrictUndefined,
 )
-
 from structlog import get_logger
-
 
 logger = get_logger(__name__)
 
@@ -38,14 +34,16 @@ class PromptManager:
         self.env = Environment(
             loader=FileSystemLoader(str(base_dir)),
             # Disable auto-escaping for .j2 (plain-text) templates
-            autoescape=select_autoescape(disabled_extensions=("j2",), default=False, default_for_string=False),
+            autoescape=select_autoescape(
+                disabled_extensions=("j2",), default=False, default_for_string=False
+            ),
             trim_blocks=True,
             lstrip_blocks=True,
         )
 
         logger.debug("Prompt environment initialised", template_dir=str(base_dir))
 
-    def render_prompt(self, template_name: str, **context: Mapping[str, Any]) -> str:
+    def render_prompt(self, template_name: str, context: dict[str, str]) -> str:
         """Render *template_name* with *context*.
 
         The method will raise ``jinja2.exceptions.UndefinedError`` if the
@@ -55,15 +53,11 @@ class PromptManager:
         rendered = template.render(**context)
 
         # Log at DEBUG level to avoid flooding standard INFO logs
-        logger.debug(
-            "Rendered prompt",
-            template=template_name,
-            context_keys=list(context.keys()),
-            rendered_preview=rendered[:120] + ("…" if len(rendered) > 120 else ""),
-        )
+        # logger.warning(
+        #     "Rendered prompt",
+        #     template=template_name,
+        #     context_keys=list(context.keys()),
+        #     rendered_preview=rendered[:120] + ("…" if len(rendered) > 120 else ""),
+        # )
 
         return rendered
-
-    def messages_to_string(self, messages: List[Dict[str, Any]]) -> str:
-        """Convert a list of messages to a string."""
-        return "\n".join([f"{message['role']}: {message['content']}" for message in messages])

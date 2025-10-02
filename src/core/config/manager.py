@@ -9,14 +9,14 @@ from omegaconf import DictConfig, OmegaConf
 from core.config.registry import (
     ConfigSubTypes,
     ConfigType,
-    discover_config_files,
     get_config_schema,
     get_default_config,
     list_registered_configs,
     validate_config_with_schema
 )
-from core.config.helpers import validate_config_arguments
+from core.config.helpers import validate_config_arguments, discover_config_files
 from core.config.constants import ConfigTypeMapping
+from core.utils.shared import CONFIGS_DIR
 
 from structlog import get_logger
 logger = get_logger(__name__)
@@ -66,7 +66,7 @@ class ConfigManager:
 
 
     @validate_config_arguments
-    def load_config(self, config_type: ConfigType, config_subtype: ConfigSubTypes, config_name: str) -> DictConfig:
+    def load_config(self, config_name: str, config_type: ConfigType, config_subtype: ConfigSubTypes) -> DictConfig:
         """Load configuration from file and validate if applicable."""
 
         subtype_enum = ConfigTypeMapping.get_subtype_enum(config_type)
@@ -117,6 +117,7 @@ class ConfigManager:
         """Generate default configurations for all registered schemas."""
         from core.config.registry import CONFIG_REGISTRY
         for (config_type, config_subtype), model_class in CONFIG_REGISTRY.items():
+            logger.info("Generating default config.", config_type=config_type.value, config_subtype=config_subtype)
             default_config = self._generate_default_config(config_type, config_subtype)
 
             if save:
@@ -156,5 +157,7 @@ class ConfigManager:
         self._available_configs = None
 
 
-# Singleton instance of ConfigManager
-
+def get_config_manager() -> ConfigManager:
+    """Get or create a singleton instance of ConfigManager."""
+    config_manager_instance = ConfigManager(CONFIGS_DIR)
+    return config_manager_instance

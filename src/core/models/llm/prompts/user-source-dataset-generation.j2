@@ -1,0 +1,44 @@
+<USER_PROMPT>
+<TASK>
+    Analyze the document image (source of truth) together with the provided OCR text.
+    The `GROUND_TRUTH` JSON in Polish lists the parishes you must recover from the Latin page.
+    Treat every Polish value as a hint only—replace it with the Latin wording you confirm on the image, including
+    headings such as the deanery name.
+    For every ground truth entry, locate the exact Latin text on the page, copy it verbatim, and set missing fields to
+    `null` instead of guessing.
+    Return a single JSON with the same structure as `GROUND_TRUTH`, populated with the confirmed Latin text and ordered
+    following the parishes' appearance on the page (top-to-bottom, left-to-right).
+</TASK>
+<INPUTS>
+    <IMAGE>
+        Base64 Image
+    </IMAGE>
+
+    {% if ocr_text %}
+        <OCR_TEXT>
+            {{ ocr_text }}
+        </OCR_TEXT>
+    {% endif %}
+
+    {% if hints %}
+        <LMV3_MODEL_HINTS>
+            ```json
+            {{ hints }}
+            ```
+        </LMV3_MODEL_HINTS>
+    {% endif %}
+
+    <POLISH_GROUND_TRUTH>
+        ```json
+        {{ ground_truth }}
+        ```
+    </POLISH_GROUND_TRUTH>
+</INPUTS>
+</USER_PROMPT>
+
+
+
+
+
+
+

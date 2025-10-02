@@ -1,11 +1,12 @@
 
 
-from datasets import Dataset
+from typing import Iterable
+from datasets import Dataset, DatasetDict, IterableDataset, IterableDatasetDict
 from core.data.parsing import build_page_json, repair_bio_labels
 
 
-class DatasetWrapper:
-    def __init__(self, dataset: Dataset):
+class DatasetWrapper(Iterable):
+    def __init__(self, dataset: Dataset | DatasetDict | IterableDataset | IterableDatasetDict):
         self.dataset = dataset
 
     def __len__(self):

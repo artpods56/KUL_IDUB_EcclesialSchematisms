@@ -72,7 +72,7 @@ def log_predictions_to_wandb(
                 wandb.Image(
                     image_pil,
                     boxes={
-                        "predictions": {
+                        "predictions_data": {
                             "box_data": pred_boxes,
                             "class_labels": id2label,  # Pass the full id2label dict
                         },

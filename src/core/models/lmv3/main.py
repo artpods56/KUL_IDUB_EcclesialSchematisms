@@ -6,7 +6,7 @@ from datasets import load_dataset
 
 def sliding_window(processor, token_boxes, predictions, encoding):
     """
-    Process overlapping windows from LayoutLM model to merge tokens and predictions
+    Process overlapping windows from LayoutLM model to merge tokens and predictions_data
     based on their spatial positions (bounding boxes).
     
     Args:
@@ -17,7 +17,7 @@ def sliding_window(processor, token_boxes, predictions, encoding):
     
     Returns:
         boxes: List of unique bounding box coordinates (normalized)
-        preds: List of merged predictions (majority vote for each spatial position)
+        preds: List of merged predictions_data (majority vote for each spatial position)
         words: List of merged word strings for each spatial position
     """
     box_token_dict = {}
@@ -33,7 +33,7 @@ def sliding_window(processor, token_boxes, predictions, encoding):
             tok = processor.tokenizer.decode(encoding["input_ids"][i][j]).strip()
             box_token_dict.setdefault(key, []).append(tok)
 
-    # build predictions dict with the *same* keys
+    # build predictions_data dict with the *same* keys
     box_prediction_dict = {}
     for i in range(len(token_boxes)):
         for j in range(len(token_boxes[i])):
@@ -43,7 +43,7 @@ def sliding_window(processor, token_boxes, predictions, encoding):
             key = tuple(tb)  # Same key as above
             box_prediction_dict.setdefault(key, []).append(predictions[i][j])
 
-    # Majority vote on predictions for each spatial position
+    # Majority vote on predictions_data for each spatial position
     boxes = list(box_token_dict.keys())
     words = ["".join(ws) for ws in box_token_dict.values()]
     preds = []
@@ -58,7 +58,7 @@ def sliding_window(processor, token_boxes, predictions, encoding):
 
 def retrieve_predictions(image, processor, model):
     """
-    Retrieve predictions for a single example.
+    Retrieve predictions_data for a single example.
     """
 
     encoding = processor(
@@ -117,7 +117,7 @@ def main():
     processor = AutoProcessor.from_pretrained("microsoft/layoutlmv3-base")
     model = LayoutLMv3ForTokenClassification.from_pretrained("/Users/user/Projects/AI_Osrodek/test_focal/checkpoint-2000")
 
-    # Retrieve predictions
+    # Retrieve predictions_data
     boxes, preds, words = retrieve_predictions(image, processor, model)
 
     print("Boxes:", boxes)

@@ -28,7 +28,7 @@ SOURCE_DIR="${MINIO_SOURCE_DIR}"
 for dir in "${SOURCE_DIR}"/*; do
   [ -d "${dir}" ] || continue
 
-  # Bucket name: remove underscores for compatibility
+  # Bucket description: remove underscores for compatibility
   bucket="$(basename "${dir}" | tr -d '_')"
 
   echo "[sync-minio] Ensuring bucket '${bucket}' exists..."

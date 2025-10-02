@@ -16,7 +16,7 @@ class DonutDataset(Dataset):
     and it will be converted into pixel_values (vectorized image) and labels (input_ids of the tokenized string).
     
     Args:
-        dataset_name_or_path: name of dataset (available at huggingface.co/datasets) or the path containing image files and metadata.jsonl
+        dataset_name_or_path: description of data (available at huggingface.co/datasets) or the path containing image files and metadata.jsonl
         max_length: the max number of tokens for the target sequences
         split: whether to load "train", "validation" or "test" split
         ignore_id: ignore_index for torch.nn.CrossEntropyLoss

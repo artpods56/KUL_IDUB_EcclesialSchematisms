@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from functools import wraps
-from typing import Callable, TYPE_CHECKING
+from pathlib import Path
+from typing import Callable, Dict, List
 import inspect
 
 from core.config.constants import ConfigType, ConfigTypeMapping
+
 from core.exceptions import InvalidConfigType, InvalidConfigSubtype
-if TYPE_CHECKING:
-    from core.config.manager import ConfigManager
 
 from core.utils.shared import CONFIGS_DIR
 
@@ -52,22 +52,15 @@ def validate_config_arguments(func):
 
     return wrapper
 
-_config_manager_instance: ConfigManager | None = None
 
-def get_config_manager() -> ConfigManager:
-    """Get or create a singleton instance of ConfigManager."""
-    from core.config.manager import ConfigManager
-    global _config_manager_instance
-    if _config_manager_instance is None:
-        _config_manager_instance = ConfigManager(CONFIGS_DIR)
-    return _config_manager_instance
+
 
 
 def with_configs(**config_args):
     """Decorator to inject configurations into function arguments.
 
     Args:
-        **config_args: Mapping of parameter name to (config_name, config_type, config_subtype) tuple
+        **config_args: Mapping of parameter description to (config_name, config_type, config_subtype) tuple
 
     Example:
         @with_configs(
@@ -81,11 +74,12 @@ def with_configs(**config_args):
     def decorator(func: Callable):
         @wraps(func)
         def wrapper(*args, **kwargs):
+            from core.config.manager import get_config_manager
             config_manager = get_config_manager()
             injected_kwargs = {}
 
             for param_name, (config_name, config_type, config_subtype) in config_args.items():
-                config = config_manager.load_config(config_type, config_subtype, config_name)
+                config = config_manager.load_config(config_name, config_type, config_subtype)
                 injected_kwargs[param_name] = config
 
             # Respect original kwargs and let user override if needed
@@ -100,3 +94,45 @@ def with_configs(**config_args):
             return func(*args, **full_kwargs)
         return wrapper
     return decorator
+
+
+def discover_config_files(base_path: Path) -> Dict[str, Dict[str, List[str]]]:
+    """Discover available config files in the directory structure.
+
+    Handles mixed structures:
+    - base_path/config_type/*.yaml (flat structure -> 'default' subtype)
+    - base_path/config_type/subtype/*.yaml (nested structure)
+    - base_path/config_type with both *.yaml files AND subdirectories
+
+    Returns:
+        Dict mapping config_type -> subtype -> list of config files
+    """
+    discovered = {}
+    if not base_path.exists():
+        return discovered
+
+    for type_dir in base_path.iterdir():
+        if not type_dir.is_dir():
+            continue
+        config_type = type_dir.name
+        discovered[config_type] = {}
+
+        # Check for direct YAML files in the type directory
+        yaml_files = list(type_dir.glob("*.yaml"))
+        if yaml_files:
+            # Add direct YAML files as 'default' subtype
+            discovered[config_type]['default'] = [f.stem for f in yaml_files]
+
+        # Check for subdirectories (subtypes)
+        for item in type_dir.iterdir():
+            if item.is_dir():
+                subtype = item.name
+                subtype_yaml_files = [f.stem for f in item.glob("*.yaml")]
+                if subtype_yaml_files:
+                    discovered[config_type][subtype] = subtype_yaml_files
+
+        # Remove config_type if no configs were found
+        if not discovered[config_type]:
+            del discovered[config_type]
+
+    return discovered

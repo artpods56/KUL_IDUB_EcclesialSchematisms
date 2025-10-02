@@ -16,14 +16,14 @@ def run_conversion(config, commit_message_metadata: str):
     """
     Runs the convert_raw_annotations.py script and streams its logs in real-time.
     'config' is the configuration object loaded by dataset_sync.py.
-    It must contain 'CONVERT_SCRIPT' (name of the script) and 
+    It must contain 'CONVERT_SCRIPT' (description of the script) and
     'ENV_FILE_PATH_USED_BY_DATASET_SYNC' (path to the .env file dataset_sync.py is using).
     """
     python_executable = sys.executable  # e.g., /usr/local/bin/python
     convert_script_name = config['CONVERT_SCRIPT'] # From config, e.g., "convert_raw_annotations.py"
     
     # Ensure the script path is correct. Assuming it's in /app (the WORKDIR)
-    # If CONVERT_SCRIPT is just a name, this should work if /app is in PATH or is current dir.
+    # If CONVERT_SCRIPT is just a description, this should work if /app is in PATH or is current dir.
     # For robustness, you might construct an absolute path if needed: script_full_path = Path("/app") / convert_script_name
 
     env_file_for_conversion = config.get('ENV_FILE')

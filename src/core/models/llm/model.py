@@ -1,101 +1,73 @@
 import json
-from typing import Dict, Any, Optional, cast
+from typing import Dict, Any, Optional
 
 from PIL import Image
 from omegaconf import DictConfig
+from openai.types.chat import ChatCompletionMessageParam
 from pydantic_core import ValidationError
+from structlog import get_logger
 
-from core.caches.llm_cache import LLMCache
 from core.caches.utils import get_image_hash, get_text_hash
-from core.models.llm.interface import LLMInterface
+from core.models.base import ConfigurableModel
+from core.models.llm.factory import llm_provider_factory
 from core.models.llm.prompt_manager import PromptManager
-from core.schemas.caches.entries import LLMCacheItem
+from core.models.llm.utils import messages_to_string
+from core.schemas.data.cache import LLMCacheItem
+
+logger = get_logger(__name__)
 
 
-class LLMModel:
+class LLMModel(ConfigurableModel):
     """LLM model wrapper with unified predict interface."""
-    
-    def __init__(self, config: DictConfig, enable_cache: bool = True, test_connection: bool = True):
-        self.config = config  # Store a copy of the config to avoid modifying the original
 
-
-        # Get the interface configuration based on api_type
-        self.api_type = config.predictor.get("api_type", "openai")
-        interface_config = config.interfaces.get(self.api_type)
-
-        if interface_config is None:
-            raise ValueError(f"No interface configuration found for api_type: {self.api_type}")
-
-
+    def __init__(
+        self,
+        config: DictConfig,
+        enable_cache: bool = True,
+        test_connection: bool = True,
+        retries: int = 5,
+    ):
+        self.provider, self.cache = llm_provider_factory(config)
+        self.prompt_manager = PromptManager(config.predictor.get("template_dir"))
         self.enable_cache = enable_cache
-        if self.enable_cache:
-            self.cache = LLMCache(
-                model_name=interface_config.get("model", "llm_cache")
-            )
-        # Create prompt manager with template directory from config
-        template_dir = interface_config.get("template_dir", "prompts")  
-        prompt_manager = PromptManager(template_dir)
-        
-        # Initialize the interface with the specific interface config and prompt manager
-        self.interface = LLMInterface(interface_config, prompt_manager, self.api_type, test_connection=test_connection)
-        
-        self.messages = []
+        self.test_connection = test_connection
+        self.retries = retries
 
+        self.last_messages: list[ChatCompletionMessageParam] = []
 
-    def _predict(self, image: Optional[Image.Image], text: Optional[str], **kwargs) -> Dict[str, Any]:
-        """Generate prediction using the LLM interface.
+    @classmethod
+    def from_config(cls, config: DictConfig) -> "LLMModel":
+        return cls(config=config)
 
-        Args:
-            image: PIL Image object for vision requests, or None for text-only
-            text: OCR text string for text requests, or None for image-only
-            **kwargs: Additional context passed to prompt templates
+    def get_parsed_messages(self) -> str:
+        parsed = messages_to_string(self.last_messages)
+        return parsed
 
-        Returns:
-            Dictionary with structured prediction results
-        """
-        context_full = {"ocr_text": text, **kwargs}
+    def _predict(self, messages) -> dict[str, Any]:
 
-        system_prompt = kwargs.get("system_prompt", "system.j2")
-        user_prompt = kwargs.get("user_prompt", "user.j2")
+        self.messages = messages
 
-        for i in range(self.config.predictor.max_retries):
-            if image is not None:
-                response, messages = self.interface.generate_vision_response(
-                    pil_image=image,
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    context=context_full,
-                )
-            else:
-                response, messages = self.interface.generate_text_response(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    context=context_full,
-                )
+        for _ in range(self.retries):
 
-
-            if self.config.interfaces.get(self.api_type).get("structured_output", False):
-                # If structured output is enabled, response should already be JSON
-                try:
-                    if isinstance(response, str):
-                        response = json.loads(response)
-                        return response
-                except json.JSONDecodeError:
-                    pass # retry on JSON decode error
-            elif response is not None:
-                return {"raw_response": response}
-            
-        raise ValueError("Failed to generate valid response after retries")
-        
-        
+            try:
+                response = self.provider.generate_response(messages)
+                logger.info("Generated response", response=response)
+                json_response = json.loads(response)
+                return json_response
+            except ValidationError as e:
+                logger.warning(f"Failed to generate response: {e}")
+                raise
 
     def predict(
-            self,
-            image: Optional[Image.Image] = None,
-            text: Optional[str] = None,
-            **kwargs,
-    ) -> Dict[str, Any]:
-        """Generate predictions using the LLM model.
+        self,
+        context: dict[str, Any],
+        image: Optional[Image.Image] = None,
+        text: Optional[str] = None,
+        system_prompt: str = "system.j2",
+        user_prompt: str = "user.j2",
+        invalidate_cache: bool = False,
+    ) -> tuple[Dict[str, Any], str]:
+        """Generate predictions_data using the LLM model.
 
         Supports three modes:
         - Image-only: Provide only `image` parameter
@@ -105,7 +77,10 @@ class LLMModel:
         Args:
             image: PIL Image object for vision processing
             text: OCR text string for text processing
-            **kwargs: Additional context (e.g., hints from other models)
+            context: Additional context dictionary
+            system_prompt: System prompt template name
+            user_prompt: User prompt template name
+            invalidate_cache: Invalidate cache
 
         Returns:
             Dictionary with structured prediction results
@@ -113,33 +88,48 @@ class LLMModel:
         Raises:
             ValueError: If neither image nor text is provided
         """
+        system_prompt = self.prompt_manager.render_prompt(system_prompt, context)
+        user_prompt = self.prompt_manager.render_prompt(user_prompt, context)
+
+        messages: list[ChatCompletionMessageParam] = [
+            self.provider.construct_system_message(system_prompt)
+        ]
+        if image is not None:
+            messages.append(
+                self.provider.construct_user_image_message(image, user_prompt)
+            )
+        else:
+            messages.append(self.provider.construct_user_text_message(user_prompt))
+
         if image is None and text is None:
             raise ValueError("At least one of 'image' or 'text' must be provided")
 
-        hints = kwargs.get("hints", None)
-        schematism = kwargs.get("schematism", None)
-        filename = kwargs.get("filename", None)
+        hints = context.get("hints", None)
+        schematism = context.get("schematism", None)
+        filename = context.get("filename", None)
 
-        # Check cache first if enabled
+        parsed_messages = messages_to_string(messages)
+
         if self.enable_cache:
             hash_key = self.cache.generate_hash(
                 image_hash=get_image_hash(image) if image is not None else None,
                 text_hash=get_text_hash(text),
+                messages_hash=get_text_hash(parsed_messages),
                 hints=hints,
             )
 
+            if invalidate_cache:
+                self.cache.delete(hash_key)
+
             try:
-                cache_item_data = cast(
-                    Optional[dict], self.cache.get(key=hash_key)
-                )
+                cache_item_data = self.cache.get(key=hash_key)
                 if cache_item_data is not None:
                     cache_item = LLMCacheItem(**cache_item_data)
-                    return cache_item.response.model_dump()
-            except ValidationError as e:
+                    return cache_item.response, parsed_messages
+            except ValidationError:
                 self.cache.delete(key=hash_key)
 
-            # If cache miss or validation error, compute fresh
-            response = self._predict(image, text, **kwargs)
+            response = self._predict(messages)
 
             cache_item_data = {
                 "response": response,
@@ -154,8 +144,7 @@ class LLMModel:
                 filename=filename,
             )
 
-            return response
+            return response, parsed_messages
 
         else:
-            return self._predict(image, text, **kwargs)
-
+            return self._predict(messages), parsed_messages

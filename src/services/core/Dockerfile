@@ -1,4 +1,4 @@
-# Replace the existing Dockerfile with an updated version that uses uv for dependency installation and runs the evaluation workflow by default.
+# Replace the existing Dockerfile with an updated version that uses uv for dependency installation and runs the pipeline workflow by default.
 FROM python:3.12-slim-bookworm
 
 # Install uv (fast Python package installer)
@@ -43,7 +43,7 @@ COPY . .
 ENV PYTHONPATH="/home/appuser/app/src"
 
 # ---------------------------------------------------------------------------
-# 4. Default command – run the evaluation workflow
+# 4. Default command – run the pipeline workflow
 #    Can be overridden with `docker run ... <other command>` if desired.
 # ---------------------------------------------------------------------------
 CMD ["python", "src/scripts/evaluate.py"]
