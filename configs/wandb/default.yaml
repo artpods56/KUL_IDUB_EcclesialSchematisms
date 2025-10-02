@@ -1,0 +1,7 @@
+enable: true
+project: ai-osrodek
+entity: ''
+name: experiment
+tags: []
+log_predictions: true
+num_prediction_samples: 15

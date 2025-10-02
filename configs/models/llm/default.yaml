@@ -1,4 +1,5 @@
 predictor:
   api_type: openai
   template_dir: prompts
+  max_retries: 5
 interfaces: {}

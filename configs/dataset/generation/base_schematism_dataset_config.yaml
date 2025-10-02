@@ -10,7 +10,7 @@ streaming: false
 
 column_map:
   image_column: "image"
-  ground_truth_column: "parsed"
+  ground_truth_column: "results"
   boxes_column: "bboxes"
   labels_column: "labels"
   tokens_column: "words"
@@ -28,16 +28,16 @@ languages:
 positive_samples: 5
 negative_samples: 5
 full_schematisms:
-  #  - "lublin_1870"
-  #  - "plock_1880"
-  #  - "plock_1882"
-  #  - "warszawa_1870"
-  #  - "warszawa_1872"
-  #  - "sejny_1874"
+  - "lublin_1870"
+  - "plock_1880"
+  - "plock_1882"
+  - "warszawa_1870"
+  - "warszawa_1872"
+  - "sejny_1874"
   - "wloclawek_1872"
-#  - "wloclawek_1873"
-#  - "tarnow_1870"
-#  - "chelmno_1871"
+  - "wloclawek_1873"
+  - "tarnow_1870"
+  - "chelmno_1871"
 
 partial_schematisms: [ ]
 #  - "plock_1939"

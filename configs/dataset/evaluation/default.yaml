@@ -6,10 +6,15 @@ keep_in_memory: false
 num_proc: 8
 split: train
 streaming: false
-image_column_name: image
-ground_truth_column_name: results
+column_map:
+  image_column: image
+  ground_truth_column: ground_truth
+  boxes_column: bboxes
+  labels_column: labels
+  tokens_column: tokens
 full_schematisms: []
 partial_schematisms: []
-positive_samples_num: 10
-negative_samples_num: 5
+positive_samples: 10
+negative_samples: 5
 classes_to_remove: []
+languages: []

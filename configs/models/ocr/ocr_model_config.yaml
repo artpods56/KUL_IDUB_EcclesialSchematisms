@@ -1,0 +1,4 @@
+language: lat+pol+rus
+enable_cache: true
+psm_mode: 6
+oem_mode: 3

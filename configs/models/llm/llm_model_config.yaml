@@ -1,5 +1,5 @@
 predictor:
-  api_type: "openrouter"
+  api_type: "llama"
   template_dir: "prompts"
   max_retries: 5
 
@@ -16,24 +16,29 @@ interfaces:
       top_p: 0.9
 
   llama:
-    model: "/models/gemma-3-27b-it-Q4_K_M.gguf"
+    model: "gemma-3-27b-it-Q4_K_M"
     structured_output: true
-    base_url: "http://localhost:8080/v1"
-    api_key_env_var: "OPENAI_API_KEY"
+    base_url: "https://ls.kpi.kul.pl/v1"
+    api_key_env_var: "LLAMA_API_KEY"
     template_dir: "prompts"
     api_kwargs:
-      max_tokens: 8096
+      max_tokens: 16192
 
   openrouter:
-#    model: "google/gemma-3-27b-it"
-    model: "openai/gpt-4o"
+    #    model: "google/gemma-3-27b-it"
+    #    model: "openai/gpt-5"
+    #    model: "qwen/qwen3-vl-235b-a22b-instruct"
+    #    model: "opengvlab/internvl3-78b"
+    #model: "deepcogito/cogito-v2-preview-llama-109b-moe" #mocny zawodnik
+    #    model: "google/gemini-2.5-flash-lite-preview-09-2025" # chyba nawet lepszy, jednak cos jest nie tak i wpada w loopa
+    #    model: "x-ai/grok-4-fast:free" # slabe, raczej do kodowania
+    model: "google/gemini-2.5-flash-preview-09-2025"
+    #    model: "google/gemini-2.5-flash"
     base_url: "https://openrouter.ai/api/v1"
     api_key_env_var: "OPENROUTER_API_KEY"
     structured_output: true
     api_kwargs:
-      max_tokens: 4096
-      temperature: 0.1
-      top_p: 0.9
+      max_tokens: 16192
 
   openai:
     model: "gemma-3-27b-it-qat"
