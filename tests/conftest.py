@@ -18,6 +18,7 @@ def _load_dotenv_once_for_everybody() -> None:
     """Load .env file once per test session."""
     load_dotenv()
 
+
 @pytest.fixture(scope="session")
 def config_manager() -> ConfigManager:
     """One ConfigManager shared by the whole test session."""
@@ -26,39 +27,53 @@ def config_manager() -> ConfigManager:
 
 @pytest.fixture(scope="session")
 def dataset_config(config_manager) -> DictConfig:
-    return config_manager.load_config(config_name="schematism_dataset_config", config_type=ConfigType.DATASET,
-                                      config_subtype=DatasetConfigSubtype.EVALUATION)
+    return config_manager.load_config(
+        config_name="schematism_dataset_config",
+        config_type=ConfigType.DATASET,
+        config_subtype=DatasetConfigSubtype.EVALUATION,
+    )
+
+
 @pytest.fixture(scope="session")
 def llm_model_config(config_manager) -> DictConfig:
     """Loads the configuration for LLM model."""
-    return config_manager.load_config(config_name="tests_llm_config", config_type=ConfigType.MODELS,
-                                      config_subtype=ModelsConfigSubtype.LLM)
+    return config_manager.load_config(
+        config_name="tests_llm_config",
+        config_type=ConfigType.MODELS,
+        config_subtype=ModelsConfigSubtype.LLM,
+    )
+
 
 @pytest.fixture(scope="session")
 def lmv3_model_config(config_manager) -> DictConfig:
     """Loads the configuration for LayoutLMv3 model."""
-    return config_manager.load_config(config_name="lmv3_model_config", config_type=ConfigType.MODELS,
-                                      config_subtype=ModelsConfigSubtype.LMV3)
+    return config_manager.load_config(
+        config_name="lmv3_model_config",
+        config_type=ConfigType.MODELS,
+        config_subtype=ModelsConfigSubtype.LMV3,
+    )
 
 
 @pytest.fixture(scope="session")
 def pipeline(llm_model_config, lmv3_model_config) -> Pipeline:
     pass
 
+
 @pytest.fixture
 def sample_structured_response() -> str:
-    return json.dumps({
-        "page_number": "56",
-        "entries": [
-            {
-                "parish": "sample",
-                "deanery": None,
-                "dedication": "sample",
-                "building_material": "sample"
-            }
-        ]
-    })
-
+    return json.dumps(
+        {
+            "page_number": "56",
+            "entries": [
+                {
+                    "parish": "sample",
+                    "deanery": None,
+                    "dedication": "sample",
+                    "building_material": "sample",
+                }
+            ],
+        }
+    )
 
 
 @pytest.fixture
@@ -71,8 +86,11 @@ def sample_pil_image():
 def sample_page_data(sample_structured_response) -> SchematismPage:
     return SchematismPage(**json.loads(sample_structured_response))
 
+
 @pytest.fixture
-def sample_pipeline_data(sample_structured_response, sample_pil_image, sample_page_data):
+def sample_pipeline_data(
+    sample_structured_response, sample_pil_image, sample_page_data
+):
 
     pipeline_items = {
         "image": sample_pil_image,
@@ -82,10 +100,11 @@ def sample_pipeline_data(sample_structured_response, sample_pil_image, sample_pa
         "language_confidence": 0.0,
         "lmv3_prediction": sample_page_data,
         "llm_prediction": sample_page_data,
-        "metadata": {}
+        "metadata": {},
     }
 
     return PipelineData(**pipeline_items)
+
 
 @pytest.fixture
 def large_sample_image():
