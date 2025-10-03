@@ -198,23 +198,26 @@ pyrightconfig.json
 .idea/
 **/.DS_Store
 
-/src/services/postgres-data
-src/services/backends/layoutlmv3_backend/data/models/
-data/schematyzmy/
 
-ocr_cache/
-/data/
-tmp/outputs/
-tmp/wandb/
+
+# --- temp files ---
 tmp/
 
+# --- services ---
 src/services/data/hf_dataset
 src/services/data/images
 src/services/data/ocr_cache
-minio_data
-data_old
+src/services/postgres-data
+src/services/backends/layoutlmv3_backend/data/models/
 
-
-/logs_focal/
-/test_focal/
+# --- vendor ---
 vendor
+
+# --- data folder ---
+data/schematisms/*
+data/inputs/*
+data/outputs/*
+data/models/*
+
+# --- models folder ---
+models/
