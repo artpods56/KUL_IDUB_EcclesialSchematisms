@@ -3,8 +3,6 @@ from io import BytesIO
 
 from openai.types.chat import ChatCompletionMessageParam
 
-import os
-from abc import ABC, abstractmethod
 
 # ... (all your other imports)
 
@@ -62,5 +60,7 @@ def messages_to_string(messages: list[ChatCompletionMessageParam]) -> str:
                 if isinstance(part, dict) and part.get("type") == "text":
                     text_parts.append(part.get("text", ""))
                 # Skip image parts (type == 'image_url')
+            if text_parts:
+                result.append(f"{role}: {' '.join(text_parts)}")
 
     return "\n\n".join(result)

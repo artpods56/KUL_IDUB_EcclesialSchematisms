@@ -1,14 +1,15 @@
-from PIL import Image
-from core.pipeline.pipeline import Pipeline
-from core.schemas.data.schematism import SchematismPage
-from core.schemas.data.pipeline import PipelineData
-import pytest
 import json
+
+import pytest
+from PIL import Image
 from dotenv import load_dotenv
 from omegaconf import DictConfig
 
-from core.config.manager import ConfigManager, ConfigType
 from core.config.constants import DatasetConfigSubtype, ModelsConfigSubtype
+from core.config.manager import ConfigManager, ConfigType
+from core.pipeline.pipeline import Pipeline
+from core.schemas.data.pipeline import PipelineData
+from core.schemas.data.schematism import SchematismPage
 from core.utils.shared import CONFIGS_DIR
 
 
@@ -62,7 +63,7 @@ def sample_structured_response() -> str:
 
 @pytest.fixture
 def sample_pil_image():
-    pil_image = Image.open("/Volumes/T7/AI_Osrodek/tests/sample_data/0056.jpg")
+    pil_image = Image.open("tests/sample_data/0056.jpg")
     return pil_image
 
 
@@ -79,8 +80,8 @@ def sample_pipeline_data(sample_structured_response, sample_pil_image, sample_pa
         "text": "sample text",
         "language": "unknown",
         "language_confidence": 0.0,
-        "lmv3_prediction": page_data,
-        "llm_prediction": page_data,
+        "lmv3_prediction": sample_page_data,
+        "llm_prediction": sample_page_data,
         "metadata": {}
     }
 

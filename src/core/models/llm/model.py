@@ -60,7 +60,7 @@ class LLMModel(ConfigurableModel):
 
     def predict(
         self,
-        context: dict[str, Any],
+        context: dict[str, Any] | None = None,
         image: Optional[Image.Image] = None,
         text: Optional[str] = None,
         system_prompt: str = "system.j2",
@@ -88,6 +88,9 @@ class LLMModel(ConfigurableModel):
         Raises:
             ValueError: If neither image nor text is provided
         """
+        if not context:
+            context = {}
+
         system_prompt = self.prompt_manager.render_prompt(system_prompt, context)
         user_prompt = self.prompt_manager.render_prompt(user_prompt, context)
 
