@@ -23,7 +23,7 @@ from sqlalchemy import Engine
 from core.pipeline.steps.base import DatasetProcessingStep
 from core.schemas.data.pipeline import PipelineData
 from core.schemas.data.schematism import SchematismPage
-from core.utils.shared import TMP_DIR, DATA_DIR
+from core.utils.shared import TMP_DIR, OUTPUTS_DIR
 
 PreferredSource = Literal["auto", "parsed", "llm", "lmv3", "ground_truth"]
 SaveFormat = Literal["csv", "excel"]
@@ -113,13 +113,13 @@ class SaveDataFrameStep(DatasetProcessingStep[pd.DataFrame, pd.DataFrame]):
         self.logger.info(f"Number of samples in dataset {len(dataset)}")
 
         if out_format == "csv":
-            file_path = (DATA_DIR / self.file_name).with_suffix(".xlsx")
+            file_path = (OUTPUTS_DIR / self.file_name).with_suffix(".xlsx")
             for key, group in dataset.groupby(self.group_by_metadata_key):
                 dataset.to_excel(f"{file_path}_{key}", index=self.include_index)
 
         elif out_format == "excel":
 
-            file_path = (DATA_DIR / self.file_name).with_suffix(".xlsx")
+            file_path = (OUTPUTS_DIR / self.file_name).with_suffix(".xlsx")
 
             if file_path.exists():
                 if self.overwrite:

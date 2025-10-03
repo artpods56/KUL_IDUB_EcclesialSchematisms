@@ -72,4 +72,6 @@ CACHES_DIR = REPOSITORY_ROOT / "caches"
 
 INPUTS_DIR = DATA_DIR / "inputs"
 
+OUTPUTS_DIR = DATA_DIR / "outputs"
+
 MAPPINGS_DIR = DATA_DIR / "mappings"
