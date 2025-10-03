@@ -43,7 +43,7 @@ class LLMModel(ConfigurableModel):
         parsed = messages_to_string(self.last_messages)
         return parsed
 
-    def _predict(self, messages) -> dict[str, Any]:
+    def _predict(self, messages) -> dict[str, Any] | None:
 
         self.messages = messages
 
