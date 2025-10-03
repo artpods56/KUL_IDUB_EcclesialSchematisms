@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from ast import Constant
 from datetime import datetime
-from core.utils.shared import REPOSITORY_ROOT
+from core.utils.shared import REPOSITORY_ROOT, CACHES_DIR
 from typing_extensions import reveal_type
 from pydantic import BaseModel, Field
 from typing import ByteString, Dict, Optional, Sized, Tuple, List, Any, Union, cast
@@ -27,15 +27,10 @@ class BaseCache(ABC):
         self.cache: DCache
         self._cache_loaded = False
 
-        env_caches_dir = os.getenv("CACHE_DIR", None)
-        if env_caches_dir is None:
-            raise ValueError("CACHE_DIR environment variable is not set.")
-
-        self._caches_dir = (
-            caches_dir
-            if caches_dir is not None
-            else REPOSITORY_ROOT / Path(env_caches_dir)
-        )
+        if caches_dir and not Path(caches_dir).is_absolute():
+            raise ValueError("Cache directory path must be absolute")
+        else:
+            self._caches_dir = caches_dir or CACHES_DIR
 
     @abstractmethod
     def normalize_kwargs(self, **kwargs) -> Dict[str, Any]:

@@ -53,14 +53,23 @@ def find_repository_root(start: str | Path | None = None) -> Path:
     if marker_root := _find_by_marker(path):
         return marker_root
 
-    raise RuntimeError("Could not find project root. Ensure project includes project.toml file or set PROJECT_ROOT environmental variable.")
+    raise RuntimeError(
+        "Could not find project root. Ensure project includes project.toml file or set PROJECT_ROOT environmental variable."
+    )
+
 
 REPOSITORY_ROOT: Path = find_repository_root()
-
-DATA_DIR = REPOSITORY_ROOT / "data"
 
 TMP_DIR = REPOSITORY_ROOT / "tmp"
 
 CONFIGS_DIR = REPOSITORY_ROOT / "configs"
 
-MAPPINGS_DIR = TMP_DIR / "mappings"
+DATA_DIR = REPOSITORY_ROOT / "data"
+
+MODELS_DIR = REPOSITORY_ROOT / "models"
+
+CACHES_DIR = REPOSITORY_ROOT / "caches"
+
+INPUTS_DIR = DATA_DIR / "inputs"
+
+MAPPINGS_DIR = DATA_DIR / "mappings"

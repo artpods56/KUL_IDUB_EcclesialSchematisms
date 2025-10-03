@@ -47,7 +47,7 @@ from core.pipeline.steps.wrappers import (
     PipelineDataToPandasDataFrameStep,
 )
 from core.utils.logging import setup_logging
-from core.utils.shared import TMP_DIR, DATA_DIR
+from core.utils.shared import TMP_DIR, INPUTS_DIR
 
 setup_logging()
 
@@ -117,7 +117,7 @@ def main(
 
     pdf_ingestion_steps: list[IngestionProcessingStep] = []
 
-    for pdf_path in (DATA_DIR / "pdfs").iterdir():
+    for pdf_path in (INPUTS_DIR / "pdfs").iterdir():
         pdf_ingestion_steps.append(
             PdfFileIngestionStep(file_path=pdf_path, modes={"image", "text"})
         )

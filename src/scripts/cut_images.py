@@ -5,7 +5,10 @@ from tqdm import tqdm
 import logging
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
 
 def cut_images_in_half(input_dir: str, output_dir: str, cut_vertically: bool = True):
     """
@@ -21,7 +24,9 @@ def cut_images_in_half(input_dir: str, output_dir: str, cut_vertically: bool = T
         logging.info(f"Created output directory: {output_dir}")
 
     try:
-        files = [f for f in os.listdir(input_dir) if f.lower().endswith(('.jpg', '.jpeg'))]
+        files = [
+            f for f in os.listdir(input_dir) if f.lower().endswith((".jpg", ".jpeg"))
+        ]
         if not files:
             logging.warning(f"No JPG or JPEG images found in {input_dir}")
             return
@@ -36,7 +41,7 @@ def cut_images_in_half(input_dir: str, output_dir: str, cut_vertically: bool = T
             filepath = os.path.join(input_dir, filename)
             img = Image.open(filepath)
             width, height = img.size
-            
+
             base, ext = os.path.splitext(filename)
 
             if cut_vertically:
@@ -65,9 +70,5 @@ def cut_images_in_half(input_dir: str, output_dir: str, cut_vertically: bool = T
         except Exception as e:
             logging.error(f"Error processing {filename}: {e}")
 
-cut_images_in_half(
-    input_dir="/Users/user/Projects/AI_Osrodek/tmp/input",
-    output_dir="/Users/user/Projects/AI_Osrodek/tmp/input_cut"
-)
 
-
+cut_images_in_half(input_dir="/tmp_bak/input", output_dir="/tmp_bak/input_cut")
