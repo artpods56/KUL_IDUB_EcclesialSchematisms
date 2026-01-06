@@ -11,6 +11,10 @@
         Return entries in the visual order they appear on the page (NOT the order given in parsed input).
         Extract values exactly as printed - do not normalize or translate to Polish.
         Produce one JSON object with a `page_number`, an `entries` array, and a `context` object.
+
+        IMPORTANT: Only extract entries that BEGIN on the current page. If a parish record started on a previous
+        page and continues onto this one, ignore the continued portion and do not include it in the `entries` array.
+        We only care about the page that started the mention of the parish.
     </OBJECTIVE>
 
     <TASK_DESCRIPTION>
@@ -21,6 +25,12 @@
 
         Think of it as: "I know there's a parish called 'Ołyka' with dedication 'Św. Trójca' -
         now find how that's written in Latin on this page."
+
+        FOCUS ON THE STARTING PAGE:
+        - Only extract entries that BEGIN on the current page.
+        - If the current page contains a continuation of an entry from the previous page, SKIP IT entirely.
+        - If an entry that begins on this page is cut off (e.g., dedication or building material is on the next page), use the provided `NEXT_PAGE_TEXT` (OCR) to fill in the missing Latin values.
+        - The goal is to have the complete record for any parish that starts on this page, even if some of its text is physically on the next page.
     </TASK_DESCRIPTION>
 
     <MULTI_PAGE_CONTEXT>

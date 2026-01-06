@@ -5,16 +5,13 @@
         Extract values exactly as printed in Latin - do not translate or normalize.
     </INSTRUCTION>
 
-    {% if previous_context %}
+    {% if PREVIOUS_PAGE__CONTEXT %}
     <PREVIOUS_PAGE_CONTEXT>
         This page continues from a previous page. Use the following context:
-        {% if previous_context.active_deanery %}
-        <ACTIVE_DEANERY>{{ previous_context.active_deanery }}</ACTIVE_DEANERY>
+        {% if PREVIOUS_PAGE__CONTEXT.active_deanery %}
+        <ACTIVE_DEANERY>{{ PREVIOUS_PAGE__CONTEXT.active_deanery }}</ACTIVE_DEANERY>
         {% else %}
         <ACTIVE_DEANERY>null (no deanery was active at end of previous page)</ACTIVE_DEANERY>
-        {% endif %}
-        {% if previous_context.last_page_number %}
-        <LAST_PAGE_NUMBER>{{ previous_context.last_page_number }}</LAST_PAGE_NUMBER>
         {% endif %}
 
         Use the inherited Latin deanery for entries appearing BEFORE any new deanery heading on this page.
@@ -26,11 +23,11 @@
     </PREVIOUS_PAGE_CONTEXT>
     {% endif %}
 
-    {% if parsed_entries %}
+    {% if CURRENT_PAGE__GROUND_TRUTH %}
     <PARSED_GROUND_TRUTH>
         These are the normalized Polish entries for this page. Find the corresponding Latin text on the image:
         ```json
-{{ parsed_entries | tojson(indent=2) }}
+{{ CURRENT_PAGE__GROUND_TRUTH | tojson(indent=2) }}
         ```
 
         IMPORTANT:
@@ -41,20 +38,17 @@
     </PARSED_GROUND_TRUTH>
     {% endif %}
 
-    {% if hints %}
-    <MODEL_HINTS source="layoutlmv3">
-        {{ hints }}
-    </MODEL_HINTS>
-    {% else %}
-    <MODEL_HINTS>
-        No model hints provided. Use your own analysis of the page scan.
-    </MODEL_HINTS>
+    {% if CURRENT_PAGE__TEXT %}
+    <CURRENT_PAGE_TEXT>
+        {{ CURRENT_PAGE__TEXT }}
+    </CURRENT_PAGE_TEXT>
     {% endif %}
 
-    {% if ocr_text %}
-    <OCR_TEXT>
-        {{ ocr_text }}
-    </OCR_TEXT>
+    {% if NEXT_PAGE__TEXT %}
+    <NEXT_PAGE_TEXT>
+        OCR text from the next page (use this to complete entries that start on the current page but are cut off):
+        {{ NEXT_PAGE__TEXT }}
+    </NEXT_PAGE_TEXT>
     {% endif %}
 
     <EXTRACTION_FOCUS>
@@ -63,6 +57,10 @@
         - Latin dedication (with abbreviations like S., SS., B.M.V.)
         - Latin building material (mur., lig., murata, lignea)
         - Latin deanery (Decanatus X) from heading or inherited context
+
+        REMINDER:
+        - Only extract entries that START on this page. Ignore continuations from the previous page.
+        - If an entry starts here but is cut off at the bottom, use NEXT_PAGE_TEXT to complete the Latin fields.
     </EXTRACTION_FOCUS>
 
     <RESPONSE_FORMAT>

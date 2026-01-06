@@ -133,9 +133,10 @@
         This example teaches the model how to handle a complex, stateful extraction where the ground truth must be used
         as a guide, but the image is the only source for the final values.
 
-        1. **Entry Order:** The output `entries` array must follow the visual order on the page: Białotarsk (21), then
-        Duninowo (22), then Radziejów (1). The Polish ground truth has a different order, which must be fixed to align
-        with the image.
+        1. **Entry Order & Filtering:** The output `entries` array must follow the visual order on the page: Białotarsk (21), then
+        Duninowo (22), then Radziejów (1).
+        *   **Continuation Handling:** Note that the top of the page (lines 9-12 in OCR) contains a continuation of a parish record from the previous page (a list of villages ending in "Kwilino"). This entry is SKIPPED in the output because it did not START on this page. We only extract entries that begin on the current page.
+        *   The Polish ground truth has a different order, which must be fixed to align with the image.
 
         2. **Deanery Logic (Stateful Extraction):**
         * Entries `Białotarsk` and `Duninowo` have a `deanery` of `null` because there is no "Decanatus..." heading

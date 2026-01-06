@@ -26,3 +26,18 @@ class BaseUseCase[TRequest: BaseRequest, TResponse: BaseResponse](ABC):
     def execute(self, request: TRequest) -> TResponse:
         """Execute the use case with the given request."""
         pass
+
+
+class AsyncBaseUseCase[TRequest: BaseRequest, TResponse: BaseResponse](ABC):
+    """
+    Async base class for use cases that require asynchronous execution.
+
+    Use this for use cases that involve I/O-bound operations like
+    API calls, database queries, or file operations that benefit
+    from concurrent execution.
+    """
+
+    @abstractmethod
+    async def execute(self, request: TRequest) -> TResponse:
+        """Execute the use case asynchronously with the given request."""
+        pass

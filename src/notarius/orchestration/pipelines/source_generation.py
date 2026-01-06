@@ -3,7 +3,6 @@
 import dagster as dg
 
 from notarius.orchestration.assets.extract.ingest import raw__hf__dataset
-from notarius.orchestration.assets.transform.preprocess import filtered__hf__dataset
 from notarius.orchestration.assets.transform.transform import (
     gt__parsed_dataset__pydantic,
     base__dataset__pydantic,
@@ -16,7 +15,6 @@ from notarius.orchestration.assets.transform.source_generation import (
     source__exported_json,
 )
 from notarius.orchestration.configs.ingestion_config import RAW_HF_DATASET_OP_CONFIG
-from notarius.orchestration.assets.transform.preprocess import OpConfig
 from notarius.orchestration.configs.prediction_config import (
     PRED__LLM_OCR_ENRICHED_DATASET__PYDANTIC__OP_CONFIG,
 )
@@ -33,7 +31,6 @@ source_generation_assets = [
 _all_source_generation_assets = [
     # Ingestion
     raw__hf__dataset,
-    filtered__hf__dataset,
     gt__parsed_dataset__pydantic,
     base__dataset__pydantic,
     # OCR prediction

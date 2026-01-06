@@ -7,7 +7,7 @@ import pdfplumber
 from PIL import Image
 
 from notarius.application import ports
-from notarius.application.use_cases.base import BaseRequest, BaseResponse, BaseUseCase
+from notarius.application.use_cases.use_case import BaseRequest, BaseResponse, BaseUseCase
 from notarius.schemas.data.pipeline import (
     BaseDataItem,
     BaseItemDataset,
@@ -56,7 +56,14 @@ class IngestPDFUseCase(BaseUseCase[IngestPDFRequest, IngestPDFResponse]):
                     text = page.extract_text()
                     image = page.to_image().original
 
-                    image_path = self.image_repository.add(image, pdf_path.name)
+                    pdf_image_filename = f"{pdf_path.stem}_{i}"
+
+                    if self.image_repository.exists(pdf_image_filename):
+                        image_path = self.image_repository.get_path(pdf_image_filename)
+                    else:
+                        image_path = self.image_repository.add(
+                            image, pdf_image_filename
+                        )
 
                     items.append(
                         BaseDataItem(
@@ -64,7 +71,7 @@ class IngestPDFUseCase(BaseUseCase[IngestPDFRequest, IngestPDFResponse]):
                             text=text,
                             metadata=BaseMetaData(
                                 sample_id=i,
-                                filename=f"{pdf_path.name}_{i}",
+                                filename=image_path.name,
                                 schematism_name=pdf_path.name,
                             ),
                         )
