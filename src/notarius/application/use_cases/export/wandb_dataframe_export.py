@@ -8,7 +8,11 @@ import wandb
 from PIL import Image
 from structlog import get_logger
 
-from notarius.application.use_cases.base import BaseRequest, BaseResponse, BaseUseCase
+from notarius.application.use_cases.use_case import (
+    BaseRequest,
+    BaseResponse,
+    BaseUseCase,
+)
 
 logger = get_logger(__name__)
 

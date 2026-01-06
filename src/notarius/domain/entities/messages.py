@@ -7,6 +7,7 @@ translate between these domain types and their native formats.
 Supports both simple text messages and multimodal messages (text + images).
 """
 
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -81,3 +82,54 @@ def strip_images_from_message(message: ChatMessage) -> ChatMessage:
         part for part in message.content if isinstance(part, TextContent)
     ]
     return ChatMessage(role=message.role, content=text_only_content)
+
+
+def strip_next_page_ocr_from_message(message: ChatMessage) -> ChatMessage:
+    """Create a new message with NEXT_PAGE_TEXT sections removed from text content.
+
+    When processing pages sequentially, each user message includes:
+    - CURRENT_PAGE_TEXT: OCR of the current page (useful context to keep)
+    - NEXT_PAGE_TEXT: OCR lookahead for the next page (becomes redundant)
+
+    When page N+1 is processed, its CURRENT_PAGE_TEXT contains what was
+    NEXT_PAGE_TEXT in page N's message. To avoid duplication and reduce
+    context size, we strip NEXT_PAGE_TEXT from historical messages while
+    preserving CURRENT_PAGE_TEXT as efficient "memory" of previous pages.
+
+    This allows the LLM to reference content from all previously processed
+    pages via their OCR text, without keeping expensive images or duplicate text.
+
+    Context management strategy:
+    - Keep CURRENT_PAGE_TEXT: Provides compressed view of what was on each page
+    - Strip NEXT_PAGE_TEXT: Prevents duplication (becomes next CURRENT_PAGE_TEXT)
+    - Keep assistant responses: Structured outputs with extracted context
+    - Strip images: Reduces payload size
+
+    Args:
+        message: Original message potentially containing NEXT_PAGE_TEXT sections
+
+    Returns:
+        New ChatMessage with NEXT_PAGE_TEXT sections removed from text content
+    """
+    if message.role != "user":
+        return message
+
+    cleaned_content = []
+    for part in message.content:
+        if isinstance(part, TextContent):
+            # Remove NEXT_PAGE_TEXT section using regex on rendered template
+            # Note: [\s\S] matches any character (whitespace or non-whitespace)
+            # more explicitly than . with DOTALL flag
+            cleaned_text = re.sub(
+                r"\s*<NEXT_PAGE_TEXT>[\s\S]*?</NEXT_PAGE_TEXT>",
+                "",
+                part.text,
+            )
+            # Clean up excessive whitespace left behind
+            cleaned_text = re.sub(r"\n{3,}", "\n\n", cleaned_text)
+            cleaned_content.append(TextContent(text=cleaned_text))
+        else:
+            # Keep non-text content as-is (though images should be stripped separately)
+            cleaned_content.append(part)
+
+    return ChatMessage(role=message.role, content=cleaned_content)

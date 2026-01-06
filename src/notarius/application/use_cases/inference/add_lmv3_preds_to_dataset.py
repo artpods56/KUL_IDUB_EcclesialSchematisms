@@ -7,14 +7,17 @@ from typing import final, override
 from structlog import get_logger
 
 from notarius.application.ports.outbound.cached_engine import CachedEngine
-from notarius.application.use_cases.base import BaseRequest, BaseResponse, BaseUseCase
+from notarius.application.use_cases.use_case import (
+    BaseRequest,
+    BaseResponse,
+    BaseUseCase,
+)
 from notarius.infrastructure.cache.backends.lmv3 import create_lmv3_cache_backend
 from notarius.infrastructure.ml_models.lmv3.engine_adapter import (
     LMv3Engine,
     LMv3Request,
 )
 from notarius.infrastructure.persistence.storage import ImageRepository
-from notarius.orchestration.resources.base import ImageStorageResource
 from notarius.schemas.data.pipeline import BaseDataItem, BaseDataset, PredictionDataItem
 from notarius.shared.logger import Logger
 

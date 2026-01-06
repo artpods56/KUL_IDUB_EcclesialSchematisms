@@ -21,8 +21,8 @@ HF_CACHE ?= ~/.cache/huggingface
 VLLM_CPU_KVCACHE_SPACE ?= 4  # GiB for KV cache
 VLLM_CPU_OMP_THREADS_BIND ?= auto
 
-# Defaults for scheduler config (adjust to avoid validation errors)
-VLLM_MAX_BATCHED_TOKENS ?= 16384  # Increase to at least match max-model-len; e.g., 40960 for large models
+# Defaults for scheduler config_manager (adjust to avoid validation errors)
+VLLM_MAX_BATCHED_TOKENS ?= 16384  # Increase to at least match max-model-len; e.g., 40960 for large ml_models
 VLLM_MAX_MODEL_LEN ?= 8192        # Decrease if full model len causes OOM; set to model's max if needed
 
 ENV_FILE ?= .env

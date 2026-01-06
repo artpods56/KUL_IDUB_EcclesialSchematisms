@@ -7,7 +7,11 @@ from typing import final, override, cast, TypedDict
 
 from datasets import Dataset  # pyright: ignore[reportMissingTypeStubs]
 
-from notarius.application.use_cases.base import BaseRequest, BaseResponse, BaseUseCase
+from notarius.application.use_cases.use_case import (
+    BaseRequest,
+    BaseResponse,
+    BaseUseCase,
+)
 from notarius.schemas.data.dataset import (
     SourceDatasetGenerationResult,
     SchematismPage,
@@ -163,8 +167,10 @@ class UpdateHFDatasetWithSource(
             return sample
 
         logger.info("Updating dataset with source data")
-        updated_dataset = request.hf_dataset.map(  # pyright: ignore[reportUnknownMemberType]
-            attach_source, load_from_cache_file=False
+        updated_dataset = (
+            request.hf_dataset.map(  # pyright: ignore[reportUnknownMemberType]
+                attach_source, load_from_cache_file=False
+            )
         )
 
         dataset_updates_stats["samples_not_found"] = (

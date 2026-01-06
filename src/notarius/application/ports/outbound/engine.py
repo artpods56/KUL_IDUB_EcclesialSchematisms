@@ -1,6 +1,11 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
 from abc import ABC, abstractmethod
+
+if TYPE_CHECKING:
+    from types import CoroutineType
 from typing import Any, Concatenate
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine, Awaitable
 from functools import wraps
 from typing import Self, TypedDict
 
@@ -62,6 +67,12 @@ class ConfigurableEngine[
     def process(self, request: RequestT) -> ResponseT:
         raise NotImplementedError
 
+    async def process_async(self, request: RequestT) -> ResponseT:
+        """Async version of process. Override in subclasses that support async."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support async processing"
+        )
+
     @property
     def stats(self) -> EngineStats:
         """Get a copy of current engine statistics."""
@@ -82,17 +93,32 @@ def _create_cached_stats() -> CachedEngineStats:
     return CachedEngineStats(calls=0, errors=0, hits=0, misses=0)
 
 
-Engine = ConfigurableEngine[Any, Any, Any]
+AnyEngine = ConfigurableEngine[Any, Any, Any]
 
 
-def track_stats[**P, R](
-    func: Callable[Concatenate[Engine, P], R],
-) -> Callable[Concatenate[Engine, P], R]:
+def track_stats[EngineT: AnyEngine, **P, R](
+    func: Callable[Concatenate[EngineT, P], R],
+) -> Callable[Concatenate[EngineT, P], R]:
     @wraps(func)
-    def wrapper(self: Engine, *args: P.args, **kwargs: P.kwargs) -> R:
+    def wrapper(self: EngineT, *args: P.args, **kwargs: P.kwargs) -> R:
         self._stats["calls"] += 1
         try:
             return func(self, *args, **kwargs)
+        except Exception:
+            self._stats["errors"] += 1
+            raise
+
+    return wrapper
+
+
+def track_stats_async[EngineT: AnyEngine, **P, R](
+    func: Callable[Concatenate[EngineT, P], CoroutineType[Any, Any, R]],
+) -> Callable[Concatenate[EngineT, P], CoroutineType[Any, Any, R]]:
+    @wraps(func)
+    async def wrapper(self: EngineT, *args: P.args, **kwargs: P.kwargs) -> R:
+        self._stats["calls"] += 1
+        try:
+            return await func(self, *args, **kwargs)
         except Exception:
             self._stats["errors"] += 1
             raise

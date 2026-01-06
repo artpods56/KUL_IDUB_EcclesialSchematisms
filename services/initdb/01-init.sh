@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -e
+
+psql \
+  --username "$POSTGRES_USER" \
+  --dbname "postgres" <<-SQL
+  CREATE USER $POSTGRE_USER WITH LOGIN PASSWORD '$POSTGRE_PASSWORD';
+  CREATE DATABASE $POSTGRE_NAME OWNER $POSTGRE_USER;
+SQL

@@ -33,6 +33,9 @@ pre-commit install
 
 # Run tests
 uv run pytest
+
+# Run dagster
+dagster dev
 ```
 
 ## Documentation

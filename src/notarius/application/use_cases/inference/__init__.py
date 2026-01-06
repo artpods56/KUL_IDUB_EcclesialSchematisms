@@ -10,12 +10,7 @@ from notarius.application.use_cases.inference.add_lmv3_preds_to_dataset import (
     EnrichWithLMv3Request,
     EnrichWithLMv3Response,
 )
-from notarius.application.use_cases.inference.add_llm_preds_to_dataset import (
-    PredictDatasetWithLLM,
-    PredictWithLLMRequest,
-    PredictWithLLMResponse,
-)
-from notarius.application.use_cases.inference.add_llm_ocr_to_dataset import (
+from notarius.application.use_cases.inference.enrich_dataset_with_ocr_using_llm import (
     EnrichDatasetWithLLMOCR,
     EnrichWithLLMOCRRequest,
     EnrichWithLLMOCRResponse,
@@ -24,6 +19,7 @@ from notarius.application.use_cases.inference.generate_source_dataset import (
     GenerateSourceDataset,
     GenerateSourceDatasetRequest,
     GenerateSourceDatasetResponse,
+    SOURCE_GENERATION_CONTEXT_PROVIDERS,
 )
 
 __all__ = [
@@ -33,13 +29,11 @@ __all__ = [
     "EnrichDatasetWithLMv3",
     "EnrichWithLMv3Request",
     "EnrichWithLMv3Response",
-    "PredictDatasetWithLLM",
-    "PredictWithLLMRequest",
-    "PredictWithLLMResponse",
     "EnrichDatasetWithLLMOCR",
     "EnrichWithLLMOCRRequest",
     "EnrichWithLLMOCRResponse",
     "GenerateSourceDataset",
     "GenerateSourceDatasetRequest",
     "GenerateSourceDatasetResponse",
+    "SOURCE_GENERATION_CONTEXT_PROVIDERS",
 ]

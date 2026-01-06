@@ -8,11 +8,14 @@ from notarius.infrastructure.persistence.storage import ImageRepository
 from structlog import get_logger
 
 from notarius.application.ports.outbound.cached_engine import CachedEngine
-from notarius.application.use_cases.base import BaseRequest, BaseResponse, BaseUseCase
+from notarius.application.use_cases.use_case import (
+    BaseRequest,
+    BaseResponse,
+    BaseUseCase,
+)
 from notarius.infrastructure.cache.backends.ocr import create_ocr_cache_backend
 from notarius.infrastructure.ocr import OCREngine, OCRRequest, OCRMode
 from notarius.infrastructure.ocr.types import SimpleOCRResult
-from notarius.orchestration.resources.base import ImageStorageResource
 from notarius.schemas.data.pipeline import BaseDataset, BaseDataItem, BaseItemDataset
 from notarius.shared.logger import Logger
 

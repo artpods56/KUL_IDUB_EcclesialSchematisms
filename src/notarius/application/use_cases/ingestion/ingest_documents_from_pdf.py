@@ -7,7 +7,11 @@ import pdfplumber
 from PIL import Image
 
 from notarius.application import ports
-from notarius.application.use_cases.use_case import BaseRequest, BaseResponse, BaseUseCase
+from notarius.application.use_cases.use_case import (
+    BaseRequest,
+    BaseResponse,
+    BaseUseCase,
+)
 from notarius.schemas.data.pipeline import (
     BaseDataItem,
     BaseItemDataset,

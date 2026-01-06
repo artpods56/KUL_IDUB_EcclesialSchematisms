@@ -5,6 +5,8 @@ ConfigurableEngine, moving caching logic out of use cases and into the
 infrastructure layer where it belongs.
 """
 
+import asyncio
+
 from typing import (
     Never,
     Protocol,
@@ -49,7 +51,6 @@ class CacheBackend[ResponseT: BaseResponse[Any]](Protocol):
         ...
 
 
-@final
 class CachedEngine[
     ConfigT: BaseModel,
     RequestT: BaseRequest[object],
@@ -152,6 +153,12 @@ class CachedEngine[
                     key=cache_key[:16],
                     engine_type=type(self._engine).__name__,
                 )
+            else:
+                logger.warning(
+                    "Cache set failed",
+                    key=cache_key[:16],
+                    engine_type=type(self._engine).__name__,
+                )
 
             return response
 
@@ -163,6 +170,72 @@ class CachedEngine[
                 engine_type=type(self._engine).__name__,
             )
             return self._engine.process(request)
+
+    @override
+    async def process_async(self, request: RequestT) -> ResponseT:
+        """
+        Process request with caching (async version).
+
+        Checks cache first, delegates to wrapped engine on miss,
+        and stores result in cache.
+
+        Note: Cache operations (get/set) and key generation are offloaded to
+        a thread pool via asyncio.to_thread() to avoid blocking the event loop,
+        since diskcache performs synchronous disk I/O.
+        """
+        if not self._enabled:
+            return await self._engine.process_async(request)
+
+        try:
+            cache_key = await asyncio.to_thread(
+                self._key_generator.generate_key, request
+            )
+
+            cached_response = await asyncio.to_thread(self._cache.get, cache_key)
+            if cached_response is not None:
+                self._stats["hits"] += 1
+                logger.debug(
+                    "Cache hit",
+                    key=cache_key[:16],
+                    engine_type=type(self._engine).__name__,
+                )
+                return cached_response
+
+            # Cache miss - process with underlying engine
+            self._stats["misses"] += 1
+            logger.debug(
+                "Cache miss",
+                key=cache_key[:16],
+                engine_type=type(self._engine).__name__,
+            )
+
+            response = await self._engine.process_async(request)
+
+            # Store in cache (offloaded to thread pool)
+            success = await asyncio.to_thread(self._cache.set, cache_key, response)
+            if success:
+                logger.debug(
+                    "Cached response",
+                    key=cache_key[:16],
+                    engine_type=type(self._engine).__name__,
+                )
+            else:
+                logger.warning(
+                    "Cache set failed",
+                    key=cache_key[:16],
+                    engine_type=type(self._engine).__name__,
+                )
+
+            return response
+
+        except Exception as e:
+            self._stats["errors"] += 1
+            logger.warning(
+                "Cache error, falling back to direct processing",
+                error=str(e),
+                engine_type=type(self._engine).__name__,
+            )
+            return await self._engine.process_async(request)
 
     @property
     @override
@@ -179,7 +252,4 @@ class CachedEngine[
     @override
     def clear_stats(self) -> None:
         """Reset cache statistics."""
-        # CachedEngineStats is a superset of EngineStats (has all its fields plus hits/misses)
-        self._stats = (
-            _create_cached_stats()
-        )  # pyright: ignore[reportIncompatibleVariableOverride]
+        self._stats = _create_cached_stats()  # pyright: ignore[reportIncompatibleVariableOverride]

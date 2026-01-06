@@ -9,7 +9,11 @@ from typing import final, override, cast
 
 from structlog import get_logger
 
-from notarius.application.use_cases.base import BaseRequest, BaseResponse, BaseUseCase
+from notarius.application.use_cases.use_case import (
+    BaseRequest,
+    BaseResponse,
+    BaseUseCase,
+)
 from notarius.infrastructure.ocr import OCREngine, OCRRequest, OCRMode
 from notarius.infrastructure.ocr.types import SimpleOCRResult
 from notarius.orchestration.resources.base import ImageStorageResource

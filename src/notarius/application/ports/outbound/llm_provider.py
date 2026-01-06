@@ -40,3 +40,21 @@ class LLMProvider[TClient](ABC):
             Provider-specific output wrapped in BaseProviderResponse
         """
         raise NotImplementedError()
+
+    async def generate_response_async[ResponseT: BaseModel](
+        self,
+        messages: ChatMessageList,
+        text_format: type[ResponseT] | None = None,
+    ) -> BaseProviderResponse[ResponseT]:
+        """Async version of generate_response. Override in subclasses that support async.
+
+        Args:
+            messages: Domain message list (provider-agnostic)
+            text_format: Optional Pydantic model for structured output
+
+        Returns:
+            Provider-specific output wrapped in BaseProviderResponse
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support async generation"
+        )

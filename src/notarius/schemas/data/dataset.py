@@ -67,3 +67,13 @@ SourceDatasetGenerationResult = TypedDict(
         "records": list[SourceDatasetGenerationItem],
     },
 )
+
+
+class FlatPredictionDatasetItem(TypedDict):
+    sample_id: str
+    filename: str
+    schematism_name: str
+    deanery: str
+    parish: str
+    dedication: str
+    building_material: str

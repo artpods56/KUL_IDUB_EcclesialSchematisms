@@ -20,10 +20,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from notarius.application.use_cases.data import (
-    UpdateHFDatasetWithSource,
-    UpdateHFWithSourceRequest,
-)
+from notarius.application.use_cases.export.update_hf_with_source import UpdateHFWithSourceRequest
 from notarius.shared.logger import setup_logging, get_logger
 
 setup_logging()

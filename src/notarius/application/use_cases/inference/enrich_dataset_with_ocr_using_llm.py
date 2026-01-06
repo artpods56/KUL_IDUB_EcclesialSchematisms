@@ -6,6 +6,8 @@ from typing import Any, final, override
 
 from notarius.application.services import (
     DatasetProcessor,
+    ComposedContextProvider,
+    PageContentContextProvider,
 )
 from notarius.application.use_cases.use_case import (
     AsyncBaseUseCase,
@@ -74,7 +76,6 @@ class EnrichDatasetWithLLMOCR(
                 items=request.dataset.items,
                 max_concurrent=request.max_concurrent_requests,
             )
-
 
         return EnrichWithLLMOCRResponse(
             dataset=request.dataset,

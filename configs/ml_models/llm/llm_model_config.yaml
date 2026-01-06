@@ -42,7 +42,8 @@ clients:
 #    model: "google/gemini-3-pro-preview" # najlepszy ale generuje wiecej niz jest
 #    model: "qwen/qwen3-vl-235b-a22b-instruct"
 #    model: "openai/gpt-5.2" # tez mocny ale tak wolno generuje ze nie da sie korzystac
-    model: "google/gemini-2.5-flash"
+#    model: "google/gemini-2.5-flash"
+    model: "google/gemini-3-flash-preview"
     base_url: https://openrouter.ai/api/v1
     api_key_env_var: OPENROUTER_API_KEY
     structured_output: false

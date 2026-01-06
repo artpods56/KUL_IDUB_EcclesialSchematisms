@@ -6,7 +6,7 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from notarius.schemas.data.metrics import PageDataMetrics
-from notarius.domain.entities.schematism import SchematismPage
+from notarius.domain.entities.schematism import SchematismPage, SchematismEntry
 
 # Module-level TypeVar for pickle/dill compatibility
 # PEP 695 syntax (class Foo[T]) creates scoped type params that can't be pickled
@@ -61,7 +61,7 @@ class PredictionDataItem(BaseDataItem, HasPredictionsMixin):
     pass
 
 
-class GtAlignedPredictionDataItem(BaseDataItem, HasAlignedPagesMixin):
+class AlignedSchematismsDataItem(BaseDataItem, HasAlignedPagesMixin):
     pass
 
 
@@ -101,25 +101,42 @@ class BaseItemDataset(BaseDataset[BaseDataItem]):
     pass
 
 
-class GroundTruthDataset(BaseDataset[GroundTruthDataItem]):
+class GroundTruthItemDataset(BaseDataset[GroundTruthDataItem]):
     """Dataset containing ground truth items."""
 
     pass
 
 
-class PredictionDataset(BaseDataset[PredictionDataItem]):
+class PredictionItemDataset(BaseDataset[PredictionDataItem]):
     """Dataset containing prediction items."""
 
     pass
 
 
-class AlignedDataset(BaseDataset[GtAlignedPredictionDataItem]):
+class AlignedItemDataset(BaseDataset[AlignedSchematismsDataItem]):
     """Dataset containing aligned prediction/ground truth items."""
 
     pass
 
 
-class EvaluationDataset(BaseDataset[EvaluationDataItem]):
+class EvaluationItemDataset(BaseDataset[EvaluationDataItem]):
     """Dataset containing evaluation items."""
 
     pass
+
+
+class FlatSchematismEntryWithMetadata(BaseMetaData, SchematismEntry):
+    """Flat schematism entry with metadata."""
+
+
+class FlatSchematismAlignedEntryWithMetadata(BaseMetaData):
+    """Flat schematism entry with metadata and aligned ground truth."""
+
+    deanery_a: str | None = None
+    deanery_b: str | None = None
+    parish_a: str | None = None
+    parish_b: str | None = None
+    dedication_a: str | None = None
+    dedication_b: str | None = None
+    building_material_a: str | None = None
+    building_material_b: str | None = None

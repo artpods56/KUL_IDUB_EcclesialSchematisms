@@ -64,6 +64,7 @@ class BaseCache[ItemT](abc.ABC):
         self,
         cache_name: str,
         caches_dir: Path | None,
+        size_limit: int = 1024 * 1024 * 1024,  # Default 1GB
     ):
         if caches_dir and not caches_dir.is_absolute():
             raise ValueError("Cache directory path must be absolute")
@@ -76,10 +77,11 @@ class BaseCache[ItemT](abc.ABC):
         self.cache: CacheProtocol = DCache(
             directory=str(self.cache_path),
             disk=Disk,  # Use pickle for automatic serialization
+            size_limit=size_limit,
         )
 
         logger.debug(
-            f"{self.cache_type} cache initialised at {self.cache_path} with {len(self)} entries"
+            f"{self.cache_type} cache initialised at {self.cache_path} with {len(self)} entries and {size_limit / (1024**3):.1f}GB limit"
         )
 
     @property
