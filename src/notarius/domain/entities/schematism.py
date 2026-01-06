@@ -30,6 +30,11 @@ class PageContext(BaseModel):
 
     summary: str | None = Field(default=None, description="Short summary of the page")
 
+    note: str | None = Field(
+        default=None,
+        description="Very specific note about the page. Used only to explain difficult predictions or those that require additional context to be explained.",
+    )
+
     active_deanery: str | None = Field(
         default=None,
         description="The deanery that is active at the end of this page",
