@@ -4,7 +4,7 @@ import pathlib
 import shutil
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import BinaryIO, Self, final, override, Literal, cast
+from typing import BinaryIO, Self, final, override, Literal, cast, Any
 
 from PIL import Image
 
@@ -91,7 +91,7 @@ class ImageRepository(ports.AbstractFileRepository[Image.Image]):
         storage: ports.FileStorage,
         format: str = "JPEG",
         suffix: str = ".jpeg",
-        save_kwargs: dict[str, str] | None = None,
+        save_kwargs: dict[str, Any] | None = None,
     ):
         self.storage = storage
         self.format = format

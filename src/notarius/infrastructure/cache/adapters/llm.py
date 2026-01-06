@@ -34,7 +34,12 @@ class LLMCache[T: BaseModel](BaseCache[CompletionResult[T]]):
     _item_type: type = CompletionResult
 
     def __init__(self, model_name: str, caches_dir: Path | None = None):
-        super().__init__(cache_name=parse_model_name(model_name), caches_dir=caches_dir)
+        # Increased size limit to 10GB for multimodal LLM cache
+        super().__init__(
+            cache_name=parse_model_name(model_name),
+            caches_dir=caches_dir,
+            size_limit=10 * 1024 * 1024 * 1024,
+        )
 
     @property
     @override

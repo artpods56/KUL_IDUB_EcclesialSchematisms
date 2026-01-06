@@ -1,7 +1,7 @@
 """Clean LLM Engine adapter using refactored components."""
 
 from dataclasses import dataclass
-from typing import Self, final, override
+from typing import Self, final, override, Protocol, runtime_checkable, cast, Any
 
 from tenacity import (
     retry,
@@ -10,7 +10,12 @@ from tenacity import (
 )
 from pydantic import BaseModel
 
-from notarius.application.ports.outbound.engine import ConfigurableEngine, track_stats
+from notarius.application.ports.outbound.cached_engine import CachedEngine
+from notarius.application.ports.outbound.engine import (
+    ConfigurableEngine,
+    track_stats,
+    track_stats_async,
+)
 from notarius.domain.entities.completions import BaseProviderResponse
 from notarius.domain.protocols import BaseRequest, BaseResponse
 
@@ -51,6 +56,24 @@ class CompletionResult[T: BaseModel](BaseResponse[BaseProviderResponse[T]]):
         return self.conversation.add(self.output.to_message())
 
 
+@runtime_checkable
+class LLMCompletionEngine(Protocol):
+    """Protocol for engines that support generic LLM completions."""
+
+    def process[T: BaseModel](
+        self,
+        request: CompletionRequest[T],
+    ) -> CompletionResult[T]: ...
+
+    async def process_async[T: BaseModel](
+        self,
+        request: CompletionRequest[T],
+    ) -> CompletionResult[T]: ...
+
+    @property
+    def stats(self) -> Any: ...
+
+
 @final
 class LLMEngine(
     ConfigurableEngine[
@@ -71,14 +94,13 @@ class LLMEngine(
         self.provider = llm_provider_factory(self.config)
 
     @property
-    def used_backend(self) -> str:
+    def used_backend(self) -> BackendType:
         return self.config.backend.type
 
     @property
     def used_model(self) -> str:
-        return self.config.clients.get(
-            self.used_backend,
-        ).model  # pyright: ignore[reportOptionalMemberAccess]
+        client_config = self.get_client_config(self.used_backend)
+        return client_config.model
 
     def get_client_config(
         self, backend_type: BackendType | None = None
@@ -100,7 +122,7 @@ class LLMEngine(
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,
     )
-    def process[T: BaseModel](  # pyright: ignore[reportIncompatibleMethodOverride]
+    def process[T: BaseModel](
         self,
         request: CompletionRequest[T],
     ) -> CompletionResult[T]:
@@ -108,9 +130,55 @@ class LLMEngine(
             request.input.messages, text_format=request.structured_output
         )
 
-        # conversation = request.input.add(response.to_message())
+        return CompletionResult[T](
+            output=response,
+            conversation=request.input,
+        )
+
+    @override
+    @retry(
+        stop=stop_after_attempt(MAX_LLM_RETRIES),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True,
+    )
+    @track_stats_async
+    async def process_async[T: BaseModel](
+        self,
+        request: CompletionRequest[T],
+    ) -> CompletionResult[T]:
+        response = await self.provider.generate_response_async(
+            request.input.messages, text_format=request.structured_output
+        )
 
         return CompletionResult[T](
             output=response,
             conversation=request.input,
         )
+
+
+# CachedLLMEngine = CachedEngine[
+#     LLMEngineConfig, CompletionRequest[Any], CompletionResult[Any]
+# ]
+
+
+@final
+class CachedLLMEngine(
+    CachedEngine[
+        LLMEngineConfig, CompletionRequest[BaseModel], CompletionResult[BaseModel]
+    ]
+):
+    """Cached version of LLMEngine that preserves generic completion types."""
+
+    @override
+    def process[T: BaseModel](
+        self,
+        request: CompletionRequest[T],
+    ) -> CompletionResult[T]:
+        return cast(CompletionResult[T], super().process(request))
+
+    @override
+    async def process_async[T: BaseModel](
+        self,
+        request: CompletionRequest[T],
+    ) -> CompletionResult[T]:
+        return cast(CompletionResult[T], await super().process_async(request))

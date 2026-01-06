@@ -43,7 +43,11 @@ class LMv3Cache(BaseCache[LMv3Response]):
             caches_dir: Optional custom cache directory path.
         """
         self.checkpoint = checkpoint
-        super().__init__(cache_name=checkpoint, caches_dir=caches_dir)
+        super().__init__(
+            cache_name=checkpoint,
+            caches_dir=caches_dir,
+            size_limit=2 * 1024 * 1024 * 1024,
+        )
 
     @property
     @override

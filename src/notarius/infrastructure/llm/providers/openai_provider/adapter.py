@@ -1,7 +1,7 @@
 import os
 from typing import final, override
 
-from openai import OpenAI, APIConnectionError
+from openai import OpenAI, AsyncOpenAI, APIConnectionError
 from pydantic import BaseModel
 from structlog import get_logger
 
@@ -30,10 +30,10 @@ class OpenAICompatibleProvider(LLMProvider[OpenAI]):
 
     def __init__(self, config: ClientConfig):
         super().__init__(config)
+        self._async_client: AsyncOpenAI | None = None
 
-    @override
-    def _initialize_client(self) -> OpenAI:
-        """Initialize the OpenAI client."""
+    def _get_api_key(self) -> str:
+        """Get API key from environment."""
         api_key_env_var = self.config.api_key_env_var
         if not api_key_env_var:
             raise ValueError(
@@ -42,8 +42,22 @@ class OpenAICompatibleProvider(LLMProvider[OpenAI]):
         api_key = os.environ.get(api_key_env_var)
         if not api_key:
             raise ValueError(f"Environment variable {api_key_env_var} is not set.")
+        return api_key
 
-        return OpenAI(api_key=api_key, base_url=self.config.base_url)
+    @override
+    def _initialize_client(self) -> OpenAI:
+        """Initialize the sync OpenAI client."""
+        return OpenAI(api_key=self._get_api_key(), base_url=self.config.base_url)
+
+    @property
+    def async_client(self) -> AsyncOpenAI:
+        """Lazy-initialize async client."""
+        if self._async_client is None:
+            self._async_client = AsyncOpenAI(
+                api_key=self._get_api_key(),
+                base_url=self.config.base_url,
+            )
+        return self._async_client
 
     @override
     def generate_response[ResponseT: BaseModel](
@@ -90,4 +104,50 @@ class OpenAICompatibleProvider(LLMProvider[OpenAI]):
 
         except APIConnectionError as e:
             logger.error(f"Connection error while generating output from OpenAI: {e}")
+            raise
+
+    async def generate_response_async[ResponseT: BaseModel](
+        self,
+        messages: ChatMessageList,
+        text_format: type[ResponseT] | None = None,
+    ) -> OpenAIResponse[ResponseT]:
+        """Generate a response using OpenAI's async API.
+
+        Args:
+            messages: Domain message list
+            text_format: Optional Pydantic model for structured output
+
+        Returns:
+            OpenAIResponse wrapping the provider's output
+
+        Raises:
+            APIConnectionError: If connection to OpenAI fails
+        """
+        try:
+            openai_messages = messages_to_openai(messages)
+
+            if text_format:
+                response = await self.async_client.responses.parse(
+                    model=self.config.model,
+                    input=openai_messages,
+                    text_format=text_format,
+                    temperature=self.config.params.temperature,
+                    top_p=self.config.params.top_p,
+                )
+                return OpenAIResponse[ResponseT](
+                    structured_response=response.output_parsed,
+                    text_response=None,
+                )
+            else:
+                response = await self.async_client.responses.create(
+                    model=self.config.model,
+                    input=openai_messages,
+                )
+                return OpenAIResponse[ResponseT](
+                    structured_response=None,
+                    text_response=response.output_text,
+                )
+
+        except APIConnectionError as e:
+            logger.error(f"Async connection error while generating output: {e}")
             raise

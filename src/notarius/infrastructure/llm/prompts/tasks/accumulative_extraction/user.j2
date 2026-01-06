@@ -4,16 +4,16 @@
         Analyze this ecclesiastical schematism page image and extract the structured information according to the system instructions.
     </INSTRUCTION>
 
-    {% if previous_context %}
+    {% if PREVIOUS_PAGE__CONTEXT %}
     <PREVIOUS_PAGE_CONTEXT>
         This page continues from a previous page. Use the following context:
-        {% if previous_context.active_deanery %}
-        <ACTIVE_DEANERY>{{ previous_context.active_deanery }}</ACTIVE_DEANERY>
+        {% if PREVIOUS_PAGE__CONTEXT.active_deanery %}
+        <ACTIVE_DEANERY>{{ PREVIOUS_PAGE__CONTEXT.active_deanery }}</ACTIVE_DEANERY>
         {% else %}
         <ACTIVE_DEANERY>null (no deanery was active at end of previous page)</ACTIVE_DEANERY>
         {% endif %}
-        {% if previous_context.last_page_number %}
-        <LAST_PAGE_NUMBER>{{ previous_context.last_page_number }}</LAST_PAGE_NUMBER>
+        {% if PREVIOUS_PAGE__CONTEXT.last_page_number %}
+        <LAST_PAGE_NUMBER>{{ PREVIOUS_PAGE__CONTEXT.last_page_number }}</LAST_PAGE_NUMBER>
         {% endif %}
 
         Apply the active deanery to any parishes appearing BEFORE a new deanery heading on this page.
@@ -25,9 +25,9 @@
     </PREVIOUS_PAGE_CONTEXT>
     {% endif %}
 
-    {% if hints %}
+    {% if CURRENT_PAGE__PREDICTIONS %}
     <MODEL_HINTS source="layoutlmv3">
-        {{ hints }}
+        {{ CURRENT_PAGE__PREDICTIONS }}
     </MODEL_HINTS>
     {% else %}
     <MODEL_HINTS>
@@ -35,9 +35,9 @@
     </MODEL_HINTS>
     {% endif %}
 
-    {% if ocr_text %}
+    {% if CURRENT_PAGE__TEXT %}
     <OCR_TEXT>
-        {{ ocr_text }}
+        {{ CURRENT_PAGE__TEXT }}
     </OCR_TEXT>
     {% endif %}
 

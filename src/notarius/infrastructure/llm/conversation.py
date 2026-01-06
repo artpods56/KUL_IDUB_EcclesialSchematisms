@@ -32,21 +32,6 @@ class Conversation:
         return dataclasses.asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Conversation":
-        """Reconstruct Conversation from dictionary.
-
-        Args:
-            data: Dictionary with 'messages' key containing message dicts
-
-        Returns:
-            Conversation instance
-        """
-        messages = tuple(
-            ChatMessage(**msg_dict) for msg_dict in data.get("messages", [])
-        )
-        return cls(messages=messages)
-
-    @classmethod
     def from_messages(cls, messages: list[ChatMessage]) -> "Conversation":
         """Create Conversation from a list of messages.
 
@@ -57,3 +42,14 @@ class Conversation:
             Conversation instance
         """
         return cls(messages=tuple(messages))
+
+    def last_user_message(self) -> ChatMessage | None:
+        """Get the last user message from the conversation.
+
+        Returns:
+            The last ChatMessage with role "user", or None if not found
+        """
+        for message in reversed(self.messages):
+            if message.role == "user":
+                return message
+        return None

@@ -1,39 +1,13 @@
 import base64
+import hashlib
+import io
 from io import BytesIO
 from pathlib import Path
 from typing import Literal
 import uuid
 from PIL import Image
 
-
 from notarius.domain.entities.messages import ChatMessage, TextContent, ImageContent
-
-
-def make_all_properties_required(schema: dict) -> dict:
-    """
-    Recursively modifies a JSON schema to make all properties required,
-    to comply with strict API validation rules (like some Azure OpenAI endpoints).
-    """
-    if "properties" in schema and isinstance(schema["properties"], dict):
-        # Make all properties in the current level required
-        schema["required"] = list(schema["properties"].keys())
-
-        # Recurse into nested properties (for nested objects)
-        for prop_name, prop_schema in schema["properties"].items():
-            if isinstance(prop_schema, dict):
-                make_all_properties_required(prop_schema)
-
-    # Recurse into array items (for lists of objects)
-    if "items" in schema and isinstance(schema["items"], dict):
-        make_all_properties_required(schema["items"])
-
-    # Recurse into $defs (for referenced schemas)
-    if "$defs" in schema and isinstance(schema["$defs"], dict):
-        for def_name, def_schema in schema["$defs"].items():
-            if isinstance(def_schema, dict):
-                make_all_properties_required(def_schema)
-
-    return schema
 
 
 def parse_model_name(model_name: str) -> str:
@@ -52,7 +26,6 @@ def parse_model_name(model_name: str) -> str:
 def encode_image_to_base64(pil_image: Image.Image) -> str:
     """Convert PIL image to base64 string."""
     buffer = BytesIO()
-    # Avoid creating intermediate image if already RGB
     if pil_image.mode == "RGB":
         pil_image.save(buffer, format="JPEG")
     else:
@@ -62,6 +35,25 @@ def encode_image_to_base64(pil_image: Image.Image) -> str:
     result = base64.b64encode(buffer.getvalue()).decode("utf-8")
     buffer.close()
     return result
+
+
+def decode_base64_to_image(base64_url: str) -> Image.Image:
+    """Decode data URI base64 string to PIL Image."""
+    base64_data = base64_url.split(",", 1)[1]
+    image_bytes = base64.b64decode(base64_data)
+    return Image.open(io.BytesIO(image_bytes))
+
+
+def compute_image_hash(image: Image.Image, format: str = "JPEG") -> str:
+    """Compute SHA-256 hash of image content."""
+    buffer = io.BytesIO()
+    img_to_hash = image if image.mode == "RGB" else image.convert("RGB")
+    img_to_hash.save(
+        buffer,
+        format=format,
+    )
+    image_bytes = buffer.getvalue()
+    return hashlib.sha256(image_bytes).hexdigest()
 
 
 def generate_id() -> str:

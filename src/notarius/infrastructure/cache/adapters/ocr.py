@@ -47,7 +47,11 @@ class PyTesseractCache(BaseCache[OCRResponse]):
             caches_dir: Optional path overriding the default cache directory.
         """
         self.language = language
-        super().__init__(cache_name=language, caches_dir=caches_dir)
+        super().__init__(
+            cache_name=language,
+            caches_dir=caches_dir,
+            size_limit=2 * 1024 * 1024 * 1024,
+        )
 
     @property
     @override
