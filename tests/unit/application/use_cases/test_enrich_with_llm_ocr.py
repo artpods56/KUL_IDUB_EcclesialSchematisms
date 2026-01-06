@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
 from PIL import Image
 
-from notarius.application.use_cases.inference.add_llm_ocr_to_dataset import (
+from notarius.application.use_cases.inference.enrich_dataset_with_ocr_using_llm import (
     EnrichDatasetWithLLMOCR,
     EnrichWithLLMOCRRequest,
     EnrichWithLLMOCRResponse,
