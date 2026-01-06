@@ -10,6 +10,11 @@ from notarius.application.use_cases.export.excel_export import (
     ExcelExportResponse,
     ExcelExportUseCase,
 )
+from notarius.application.use_cases.export.json_export import (
+    JsonExportRequest,
+    JsonExportResponse,
+    JsonExportUseCase,
+)
 
 __all__ = [
     "ExportDataFrameToWandB",
@@ -18,4 +23,7 @@ __all__ = [
     "ExcelExportRequest",
     "ExcelExportResponse",
     "ExcelExportUseCase",
+    "JsonExportRequest",
+    "JsonExportResponse",
+    "JsonExportUseCase",
 ]
