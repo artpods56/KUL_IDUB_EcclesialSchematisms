@@ -69,7 +69,7 @@ class DatasetProcessor[ItemT: BaseDataItem, OutputT: BaseModel]:
 
             image = self.image_repository.get(Path(item.image_path)).convert("RGB")
 
-            context = self.context_provider.get_context(items, sequence_state)
+            context = self.context_provider.get_context(items, current_state)
 
             prepared_state = self.context_strategy.prepare_state(
                 image=image, context=context, state=current_state
