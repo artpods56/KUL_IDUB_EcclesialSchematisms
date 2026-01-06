@@ -28,6 +28,8 @@ class DataSource:
     HUGGINGFACE = Kinds.HUGGINGFACE
     FILE = "file"
     DATABASE = "database"
+    MIXED = "mixed"
+    PREDICTION = "prediction"
 
 
 @final

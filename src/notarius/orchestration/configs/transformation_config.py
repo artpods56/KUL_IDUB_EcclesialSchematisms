@@ -5,15 +5,18 @@ from notarius.orchestration.constants import DataSource, AssetLayer
 from notarius.orchestration.utils import AssetKeyHelper
 
 """
-Asset: [[preprocess.py#filtered__hf__dataset]]
+Asset: [[preprocess.py#preprocessed__hf__dataset]]
 Defined in: [[src/orchestration/assets/transform/preprocess.py]]
-Resolves to: int__huggingface__filtered__hf__dataset
+Resolves to: int__huggingface__preprocessed__hf__dataset
 """
-FILTERED__HF__DATASET_OP_CONFIG = {
+PREPROCESSED__HF__DATASET_OP_CONFIG = {
     AssetKeyHelper.build_prefixed_key(
-        AssetLayer.INT, DataSource.HUGGINGFACE, "filtered", "hf", "dataset"
+        AssetLayer.INT, DataSource.HUGGINGFACE, "preprocessed", "hf", "dataset"
     ): {"config": {}}
 }
+
+# Backwards compatibility alias
+FILTERED__HF__DATASET_OP_CONFIG = PREPROCESSED__HF__DATASET_OP_CONFIG
 
 #
 # """

@@ -22,9 +22,9 @@ from notarius.schemas.data.pipeline import (
     BaseDataset,
     PredictionDataItem,
     GroundTruthDataItem,
-    GtAlignedPredictionDataItem,
+    AlignedSchematismsDataItem,
     # Concrete subclass for pickle compatibility
-    AlignedDataset,
+    AlignedItemDataset,
 )
 from notarius.domain.entities.schematism import SchematismEntry, SchematismPage
 
@@ -148,7 +148,7 @@ def asset_factory__gt_aligned_dataset__pydantic(
         gt_dataset: BaseDataset[GroundTruthDataItem],
         pred_dataset: BaseDataset[PredictionDataItem],
         config: JSONAlignmentConfig,
-    ) -> BaseDataset[GtAlignedPredictionDataItem]:
+    ) -> BaseDataset[AlignedSchematismsDataItem]:
         """Align ground truth entries with parsed predictions using fuzzy matching.
 
         This asset matches ground truth and prediction datasets by sample_id,
@@ -193,7 +193,9 @@ def asset_factory__gt_aligned_dataset__pydantic(
 
             # Align the entries using the configured aligner
             gt_entries = [entry.model_dump() for entry in gt_item.ground_truth.entries]
-            pred_entries = [entry.model_dump() for entry in parsed_item.predictions.entries]
+            pred_entries = [
+                entry.model_dump() for entry in parsed_item.predictions.entries
+            ]
 
             if config.aligner_type == "hungarian":
                 aligner = FlatHungarianAligner(
@@ -222,7 +224,7 @@ def asset_factory__gt_aligned_dataset__pydantic(
             )
 
             # Create the aligned item
-            aligned_item = GtAlignedPredictionDataItem(
+            aligned_item = AlignedSchematismsDataItem(
                 image_path=gt_item.image_path,  # Use ground truth image_path as primary
                 text=parsed_item.text,  # Use parsed text (likely has OCR)
                 metadata=gt_item.metadata,  # Use ground truth metadata
@@ -244,7 +246,11 @@ def asset_factory__gt_aligned_dataset__pydantic(
         if aligned_count == 0:
             context.log.warning("No items were successfully aligned")
 
-        random_sample = aligned_items[random.randint(0, len(aligned_items) - 1)]
+        random_sample = (
+            aligned_items[random.randint(0, len(aligned_items) - 1)]
+            if aligned_items
+            else None
+        )
 
         context.add_output_metadata(
             {
@@ -261,14 +267,14 @@ def asset_factory__gt_aligned_dataset__pydantic(
                         for k, v in random_sample.model_dump().items()
                         if k != "image"
                     }
-                    if aligned_count > 0
+                    if random_sample
                     else {}
                 ),
             }
         )
 
         # Use concrete subclass for pickle compatibility
-        return AlignedDataset(items=aligned_items)
+        return AlignedItemDataset(items=aligned_items)
 
     return _asset__gt_aligned__dataset
 

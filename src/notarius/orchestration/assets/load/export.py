@@ -15,6 +15,7 @@ from notarius.application.use_cases.export import (
 from notarius.application.use_cases.export.wandb_dataframe_export import (
     DataFrameExportConfig,
 )
+from notarius.infrastructure.persistence.storage import ImageRepository
 from notarius.orchestration.constants import (
     AssetLayer,
     DataSource,
@@ -147,6 +148,99 @@ eval__excel_export_source_dataframe__pandas = (
 )
 
 
+class PredictionDataFrameExport(dg.Config):
+    """Configuration for prediction-only DataFrame export (no ground truth comparison)."""
+
+    file_name: str = "predictions.xlsx"
+    group_by_key: str = "schematism_name"
+    include_index: bool = False
+    include_header: bool = True
+
+
+def asset_factory__pred__excel_export_dataframe__pandas(
+    asset_name: str, ins: Mapping[str, AssetIn]
+):
+    """Factory for prediction-only Excel export (no fuzzy comparison styling)."""
+
+    @dg.asset(
+        name=asset_name,
+        key_prefix=[AssetLayer.MRT, DataSource.HUGGINGFACE],
+        group_name=ResourceGroup.DATA,
+        kinds={Kinds.PYTHON, Kinds.EXCEL},
+        ins=ins,
+    )
+    def _asset__pred__excel_export_dataframe__pandas(
+        context: AssetExecutionContext,
+        dataframe: pd.DataFrame,
+        config: PredictionDataFrameExport,
+        excel_writer: ExcelWriterResource,
+    ):
+        """Export prediction DataFrame to Excel without ground truth comparison.
+
+        This asset exports predictions to Excel, grouped by schematism_name,
+        without the fuzzy matching styling used in evaluation exports.
+
+        Args:
+            context: Dagster execution context for logging and metadata
+            dataframe: DataFrame containing flattened predictions
+            config: Export configuration
+            excel_writer: Resource for writing Excel files
+
+        Returns:
+            Path to the exported file
+        """
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        full_file_name = f"{timestamp}_{config.file_name}"
+
+        sheets_written = []
+
+        with excel_writer.get_writer(Path(full_file_name)) as writer:
+            for key, group in dataframe.groupby(config.group_by_key):
+                sheet_name = str(key)
+                group.to_excel(
+                    writer,
+                    sheet_name=sheet_name,
+                    index=config.include_index,
+                    header=config.include_header,
+                )
+                sheets_written.append(sheet_name)
+                context.log.info(f"Wrote sheet '{sheet_name}' with {len(group)} rows")
+
+        context.add_output_metadata(
+            {
+                "file_name": MetadataValue.text(str(full_file_name)),
+                "sheets_written": MetadataValue.json(sheets_written),
+                "total_rows": MetadataValue.int(len(dataframe)),
+            }
+        )
+
+        return str(full_file_name)
+
+    return _asset__pred__excel_export_dataframe__pandas
+
+
+pred__excel_export_parsed_dataframe__pandas = (
+    asset_factory__pred__excel_export_dataframe__pandas(
+        asset_name="pred__excel_export_parsed_dataframe__pandas",
+        ins={"dataframe": AssetIn(key="pred__parsed_dataframe__pandas")},
+    )
+)
+
+pred__excel_export_source_dataframe__pandas = (
+    asset_factory__pred__excel_export_dataframe__pandas(
+        asset_name="pred__excel_export_source_dataframe__pandas",
+        ins={"dataframe": AssetIn(key="pred__source_dataframe__pandas")},
+    )
+)
+
+pred__excel_export_dataframe__pandas = (
+    asset_factory__pred__excel_export_dataframe__pandas(
+        asset_name="pred__excel_export_dataframe__pandas",
+        ins={"dataframe": AssetIn(key="pred__dataset__pandas")},
+    )
+)
+
+
 class WandBDataFrameExport(dg.Config):
     parsed_table_name: str = "eval_parsed_dataframe"
     source_table_name: str = "eval_source_dataframe"
@@ -172,7 +266,7 @@ async def eval__wandb_export_dataframe__pandas(
     pydantic_dataset: BaseDataset[BaseDataItem],
     config: WandBDataFrameExport,
     wandb_run: WandBRunResource,
-    images_repository: ImageRepositoryResource,
+    images_repository: dg.ResourceParam[ImageRepository],
 ):
     """Export parsed and source dataframes to Weights & Biases as tables."""
 
@@ -182,8 +276,8 @@ async def eval__wandb_export_dataframe__pandas(
         mapping = {}
         for item in dataset.items:
             if item.image_path:
-                mapping[item.metadata.sample_id] = images_repository.load_image(
-                    item.image_path
+                mapping[item.metadata.sample_id] = images_repository.get(
+                    Path(item.image_path)
                 )
         return mapping
 

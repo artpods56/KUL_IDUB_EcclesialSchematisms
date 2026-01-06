@@ -17,9 +17,7 @@ class LocalStorageResource(dg.ConfigurableResource[ports.FileStorage]):
         return LocalFileStorage(storage_root=Path(self.storage_root))
 
 
-class ImageRepositoryResource(
-    dg.ConfigurableResource[ports.AbstractFileRepository[Image.Image]]
-):
+class ImageRepositoryResource(dg.ConfigurableResource[storage.ImageRepository]):
     storage_resource: dg.ResourceDependency[ports.FileStorage]
 
     @override

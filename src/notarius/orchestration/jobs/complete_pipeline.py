@@ -2,7 +2,6 @@ import dagster as dg
 
 from notarius.orchestration.jobs.exporting import exporting_assets
 from notarius.orchestration.jobs.ingestion import (
-    dataset_config_assets,
     ingestion_assets,
 )
 from notarius.orchestration.jobs.postprocessing import postprocessing_assets
@@ -33,12 +32,15 @@ from notarius.orchestration.configs.transformation_config import (
     EVAL__ALIGNED_SOURCE_DATAFRAME__PANDAS__OP_CONFIG,
 )
 
-from notarius.orchestration.configs.ingestion_config import RAW_HF_DATASET_OP_CONFIG
+from notarius.orchestration.configs.ingestion_config import (
+    RAW_HF_DATASET_OP_CONFIG,
+    GT_SOURCE_DATASET_PYDANTIC_OP_CONFIG,
+    GT_PARSED_DATASET_PYDANTIC_OP_CONFIG,
+)
 
 # Combine all assets - Dagster will automatically resolve dependencies and execute in order
 all_pipeline_assets = [
     # Step 1: Configs
-    *dataset_config_assets,
     *models_config_assets,
     # Step 2: Ingestion
     *ingestion_assets,
@@ -62,8 +64,9 @@ complete_pipeline_job = dg.define_asset_job(
             **RAW_HF_DATASET_OP_CONFIG,
             # Ingestion configs
             **FILTERED__HF__DATASET_OP_CONFIG,
+            **GT_SOURCE_DATASET_PYDANTIC_OP_CONFIG,
+            **GT_PARSED_DATASET_PYDANTIC_OP_CONFIG,
             # Prediction configs
-            **PRED__OCR_ENRICHED_DATASET__PYDANTIC__OP_CONFIG,
             **PRED__LMV3_ENRICHED_DATASET__PYDANTIC__OP_CONFIG,
             **PRED__LLM_ENRICHED_DATASET__PYDANTIC__OP_CONFIG,
             **PRED__LLM_OCR_ENRICHED_DATASET__PYDANTIC__OP_CONFIG,

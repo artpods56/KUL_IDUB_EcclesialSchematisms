@@ -2,10 +2,12 @@
 Configs for assets defined in this file lives in [[transformation_config.py]]
 """
 
-import random
-from typing import Any, Mapping, cast, Iterable, Literal, Sequence
+from notarius.application.services.data.flattening import FlatteningService
+from notarius.application.services.data.merging import MergingService
 
-from numpy.random import f
+import random
+from typing import Mapping, cast, Iterable
+
 import pandas as pd
 import dagster as dg
 from dagster import (
@@ -17,6 +19,7 @@ from dagster import (
 from datasets import Dataset
 from pydantic import Field
 
+from notarius.infrastructure.cache import get_image_hash
 from notarius.infrastructure.persistence.storage import ImageRepository
 from notarius.orchestration.constants import (
     DataSource,
@@ -27,7 +30,6 @@ from notarius.orchestration.constants import (
 
 import structlog
 
-from notarius.orchestration.resources.base import ImageStorageResource
 from notarius.schemas.data.dataset import (
     SchematismsDatasetItem,
 )
@@ -36,12 +38,15 @@ from notarius.schemas.data.pipeline import (
     BaseDataset,
     BaseMetaData,
     BaseDataItem,
-    GtAlignedPredictionDataItem,
+    AlignedSchematismsDataItem,
     # Concrete subclasses for pickle compatibility
     BaseItemDataset,
-    GroundTruthDataset,
+    GroundTruthItemDataset,
+    PredictionItemDataset,
+    FlatSchematismEntryWithMetadata,
+    FlatSchematismAlignedEntryWithMetadata,
 )
-from notarius.domain.entities.schematism import SchematismEntry, SchematismPage
+from notarius.domain.entities.schematism import SchematismPage
 
 logger = structlog.get_logger(__name__)
 
@@ -62,50 +67,19 @@ def asset_factory__eval__aligned_dataframe_pandas(
     )
     def _asset__eval__aligned_dataframe__pandas(
         context: AssetExecutionContext,
-        dataset: BaseDataset[GtAlignedPredictionDataItem],
+        dataset: BaseDataset[AlignedSchematismsDataItem],
         config: PandasDataFrameConfig,
     ):
         rows = []
 
-        def flatten_aligned_pages(
-            aligned_pages: tuple[SchematismPage, SchematismPage],
-        ) -> list[dict[str, Any]]:
-            flat_entries = []
-
-            page_a, page_b = aligned_pages
-
-            # Handle empty pages - emit a single row with all None values
-            if not page_a.entries and not page_b.entries:
-                empty_row = {}
-                for key in SchematismEntry.model_fields.keys():
-                    empty_row[f"{key}_a"] = None
-                    empty_row[f"{key}_b"] = None
-                return [empty_row]
-
-            for entry_a, entry_b in zip(page_a.entries, page_b.entries):
-                flattened_pages_dict = {}
-                for key in SchematismEntry.model_fields.keys():
-                    val_a = getattr(entry_a, key)
-                    val_b = getattr(entry_b, key)
-
-                    flattened_pages_dict.update({f"{key}_a": val_a, f"{key}_b": val_b})
-                flat_entries.append(flattened_pages_dict)
-
-            return flat_entries
+        rows: list[FlatSchematismAlignedEntryWithMetadata] = []
 
         for item in dataset.items:
-            for flat_record in flatten_aligned_pages(item.aligned_schematism_pages):
-                constructed_row = {
-                    "sample_id": item.metadata.sample_id,
-                    "filename": item.metadata.filename,
-                    "schematism_name": item.metadata.schematism_name,
-                    **flat_record,
-                }
-
-                rows.append(constructed_row)
+            rows.extend(FlatteningService.flatten_aligned_pages(item))
 
         df = pd.DataFrame(rows)
 
+        markdown_head = df.head(30).to_markdown()
         column_schema = TableSchema.from_name_type_dict(df.dtypes.astype(str).to_dict())
 
         return dg.MaterializeResult(
@@ -114,7 +88,7 @@ def asset_factory__eval__aligned_dataframe_pandas(
                 "dagster/table_name": "table",
                 "dagster/column_schema": column_schema,
                 "dagster/row_count": len(df),
-                "preview": MetadataValue.md(df.head(30).to_markdown()),
+                "preview": MetadataValue.md(markdown_head or "unknown"),
             },
         )
 
@@ -128,6 +102,59 @@ eval__aligned_source_dataframe__pandas = asset_factory__eval__aligned_dataframe_
 eval__aligned_parsed_dataframe__pandas = asset_factory__eval__aligned_dataframe_pandas(
     asset_name="eval__aligned_parsed_dataframe__pandas",
     ins={"dataset": AssetIn("gt__aligned_parsed_dataset__pydantic")},
+)
+
+
+def asset_factory__pred__dataframe_pandas(asset_name: str, ins: Mapping[str, AssetIn]):
+    """Factory for creating prediction-only DataFrame assets (no ground truth alignment)."""
+
+    from notarius.schemas.data.pipeline import PredictionDataItem
+
+    @dg.asset(
+        name=asset_name,
+        key_prefix=[AssetLayer.MRT, DataSource.HUGGINGFACE],
+        kinds={Kinds.PYTHON, Kinds.PANDAS},
+        group_name=ResourceGroup.DATA,
+        ins=ins,
+    )
+    def _asset__pred__dataframe__pandas(
+        context: AssetExecutionContext,
+        dataset: BaseDataset[PredictionDataItem],
+        config: PandasDataFrameConfig,
+    ):
+
+        rows: list[FlatSchematismEntryWithMetadata] = []
+
+        for item in dataset.items:
+            rows.extend(FlatteningService.flatten_prediction_data_item(item))
+
+        df = pd.DataFrame([flat_entry.model_dump() for flat_entry in rows])
+
+        column_schema = TableSchema.from_name_type_dict(df.dtypes.astype(str).to_dict())
+
+        preview = df.head(30).to_markdown()
+
+        return dg.MaterializeResult(
+            value=df,
+            metadata={
+                "dagster/table_name": "predictions",
+                "dagster/column_schema": column_schema,
+                "dagster/row_count": len(df),
+                "preview": MetadataValue.md(preview if preview else ""),
+            },
+        )
+
+    return _asset__pred__dataframe__pandas
+
+
+pred__parsed_dataframe__pandas = asset_factory__pred__dataframe_pandas(
+    asset_name="pred__parsed_dataframe__pandas",
+    ins={"dataset": AssetIn("pred__parsed_dataset__pydantic")},
+)
+
+pred__source_dataframe__pandas = asset_factory__pred__dataframe_pandas(
+    asset_name="pred__source_dataframe__pandas",
+    ins={"dataset": AssetIn("pred__llm_enriched_dataset__pydantic")},
 )
 
 
@@ -173,13 +200,17 @@ def asset_factory__base_dataset(
         items: list[BaseDataItem] = []
 
         for i, sample in enumerate(cast(Iterable[SchematismsDatasetItem], hf_dataset)):
-            image_name = f"{sample['schematism_name']}_{sample['filename']}"
+            # image_name = f"{sample['schematism_name']}_{sample['filename']}"
 
-            # Skip writing if image already exists on disk
-            if images_repository.exists(image_name):
-                image_path = images_repository.get_path(image_name)
+
+            image = sample["image"]
+
+            image_hash = get_image_hash(image)
+
+            if images_repository.exists(image_hash):
+                image_path = images_repository.get_path(image_hash)
             else:
-                image_path = images_repository.add(sample["image"], image_name)
+                image_path = images_repository.add(image, image_hash)
 
             metadata = BaseMetaData(
                 sample_id=sample.get("sample_id", i),
@@ -252,12 +283,14 @@ def asset_factory__ground_truth_dataset(
         items: list[GroundTruthDataItem] = []
 
         for i, sample in enumerate(cast(Iterable[SchematismsDatasetItem], hf_dataset)):
-            image_name = f"{sample['schematism_name']}_{sample['filename']}"
+            image = sample["image"]
 
-            if images_repository.exists(image_name):
-                image_path = images_repository.get_path(image_name)
+            image_hash = get_image_hash(image)
+
+            if images_repository.exists(image_hash):
+                image_path = images_repository.get_path(image_hash)
             else:
-                image_path = images_repository.add(sample["image"], image_name)
+                image_path = images_repository.add(image, image_hash)
 
             metadata = BaseMetaData(
                 sample_id=sample.get("sample_id", i),
@@ -282,7 +315,7 @@ def asset_factory__ground_truth_dataset(
                 )
             )
 
-        dataset = GroundTruthDataset(items=items)
+        dataset = GroundTruthItemDataset(items=items)
 
         context.add_output_metadata(
             {
@@ -317,4 +350,102 @@ gt__source_dataset__pydantic = asset_factory__ground_truth_dataset(
 gt__parsed_dataset__pydantic = asset_factory__ground_truth_dataset(
     asset_name="gt__parsed_dataset__pydantic",
     ins={"hf_dataset": AssetIn(key="preprocessed__hf__dataset")},
+)
+
+
+@dg.asset(
+    name="pred__merged_ocr_lmv3_dataset__pydantic",
+    key_prefix=[AssetLayer.INT, DataSource.PREDICTION],
+    group_name=ResourceGroup.DATA,
+    kinds={Kinds.PYTHON, Kinds.PYDANTIC},
+    ins={
+        "predictions": AssetIn(key="pred__lmv3_enriched_dataset__pydantic"),
+        "ocr": AssetIn(key="pred__llm_ocr_enriched_dataset__pydantic"),
+    },
+)
+def pred__merged_ocr_lmv3_dataset__pydantic(
+    predictions: PredictionItemDataset,
+    ocr: BaseItemDataset,
+) -> PredictionItemDataset:
+    """Merge LMv3 predictions with OCR text."""
+    return MergingService().merge_predictions_with_ocr(predictions, ocr)
+
+
+@dg.asset(
+    name="pred__merged_ocr_source_dataset__pydantic",
+    key_prefix=[AssetLayer.INT, DataSource.PREDICTION],
+    group_name=ResourceGroup.DATA,
+    kinds={Kinds.PYTHON, Kinds.PYDANTIC},
+    ins={
+        "ground_truth": AssetIn(key="gt__parsed_dataset__pydantic"),
+        "ocr": AssetIn(key="pred__llm_ocr_enriched_dataset__pydantic"),
+    },
+)
+def pred__merged_ocr_source_dataset__pydantic(
+    ground_truth: GroundTruthItemDataset,
+    ocr: BaseItemDataset,
+) -> PredictionItemDataset:
+    """Merge ground truth (parsed Polish) with OCR text for source generation.
+
+    Converts ground truth entries to prediction format to enable uniform
+    downstream processing in source generation pipeline.
+    """
+    return MergingService().merge_ground_truth_with_ocr(ground_truth, ocr)
+
+
+def asset_factory__pred__dataset__pandas(
+    asset_name: str,
+    ins: Mapping[str, AssetIn],
+):
+    """Factory for creating DataFrame assets from Pydantic prediction datasets."""
+
+    @dg.asset(
+        name=asset_name,
+        key_prefix=[AssetLayer.MRT, DataSource.HUGGINGFACE],
+        group_name=ResourceGroup.DATA,
+        kinds={Kinds.PYTHON, Kinds.PANDAS},
+        ins=ins,
+    )
+    def _asset__pred__dataset__pandas(
+        context: AssetExecutionContext,
+        dataset: PredictionItemDataset,
+    ) -> pd.DataFrame:
+        """Convert Pydantic prediction dataset to pandas DataFrame using use case.
+
+        Args:
+            context: Dagster execution context for logging and metadata
+            dataset: Prediction dataset to convert
+
+        Returns:
+            MaterializeResult with flattened DataFrame
+        """
+
+        rows: list[FlatSchematismEntryWithMetadata] = []
+
+        for item in dataset.items:
+            rows.extend(FlatteningService.flatten_prediction_data_item(item))
+
+        df = pd.DataFrame(rows)
+
+        column_schema = TableSchema.from_name_type_dict(df.dtypes.astype(str).to_dict())
+        preview = df.head(30).to_markdown()
+
+        context.add_output_metadata(
+            metadata={
+                "dagster/table_name": "predictions",
+                "dagster/column_schema": column_schema,
+                "dagster/row_count": len(rows),
+                "total_items": MetadataValue.int(len(dataset.items)),
+                "preview": MetadataValue.md(preview if preview else ""),
+            },
+        )
+
+        return df
+
+    return _asset__pred__dataset__pandas
+
+
+pred__dataset__pandas = asset_factory__pred__dataset__pandas(
+    asset_name="pred__dataset__pandas",
+    ins={"dataset": AssetIn("pred__llm_enriched_dataset__pydantic")},
 )

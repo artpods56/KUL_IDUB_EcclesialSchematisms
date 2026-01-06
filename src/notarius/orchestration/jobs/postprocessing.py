@@ -8,6 +8,8 @@ from notarius.orchestration.assets.transform.postprocess import (
 from notarius.orchestration.assets.transform.transform import (
     eval__aligned_source_dataframe__pandas,
     eval__aligned_parsed_dataframe__pandas,
+    pred__merged_ocr_lmv3_dataset__pydantic,
+    pred__merged_ocr_source_dataset__pydantic,
 )
 from notarius.orchestration.configs.postprocessing_config import (
     PRED__PARSED_DATASET__PYDANTIC__OP_CONFIG,
@@ -19,6 +21,8 @@ from notarius.orchestration.configs.transformation_config import (
 )
 
 postprocessing_assets = [
+    pred__merged_ocr_lmv3_dataset__pydantic,
+    pred__merged_ocr_source_dataset__pydantic,
     pred__parsed_dataset__pydantic,
     gt__aligned_parsed_dataset__pydantic,
     gt__aligned_source_dataset__pydantic,

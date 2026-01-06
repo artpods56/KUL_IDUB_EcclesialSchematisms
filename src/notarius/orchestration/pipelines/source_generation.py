@@ -1,106 +1,131 @@
-"""Source generation job for creating Latin source dataset from Polish ground truth."""
-
 import dagster as dg
 
+from notarius.infrastructure.config.constants import ConfigType, DatasetConfigSubtype
+from notarius.infrastructure.config.manager import config_manager
 from notarius.orchestration.assets.extract.ingest import raw__hf__dataset
+from notarius.orchestration.assets.transform.preprocess import preprocessed__hf__dataset
 from notarius.orchestration.assets.transform.transform import (
-    gt__parsed_dataset__pydantic,
     base__dataset__pydantic,
+    gt__parsed_dataset__pydantic,
+    pred__merged_ocr_source_dataset__pydantic,
+    GroundTruthDatasetConfig,
 )
+
 from notarius.orchestration.assets.transform.predict import (
     pred__llm_ocr_enriched_dataset__pydantic,
+    LLMOcrConfig,
 )
 from notarius.orchestration.assets.transform.source_generation import (
+    ocr__exported_json,
+    OcrExportConfig,
     source__generated_dataset__pydantic,
     source__exported_json,
+    SourceExportConfig,
+    SourceGenerationConfig,
 )
-from notarius.orchestration.configs.ingestion_config import RAW_HF_DATASET_OP_CONFIG
-from notarius.orchestration.configs.prediction_config import (
-    PRED__LLM_OCR_ENRICHED_DATASET__PYDANTIC__OP_CONFIG,
+
+_all_assets_with_configs: dict = {}
+
+# --- data ingestion ---
+_all_assets_with_configs.update(
+    {
+        raw__hf__dataset: {
+            "config": config_manager.load_config_as_model(
+                config_name="base_huggingface_config",
+                config_type=ConfigType.DATASET,
+                config_subtype=DatasetConfigSubtype.DEFAULT,
+            ).model_dump()
+        },
+    }
 )
-from notarius.orchestration.constants import DataSource, AssetLayer
-from notarius.orchestration.utils import AssetKeyHelper
 
-# Assets for source generation pipeline (includes full dependency chain)
-source_generation_assets = [
-    source__generated_dataset__pydantic,
-    source__exported_json,
-]
+# --- preprocessing ---
+_all_assets_with_configs.update(
+    {
+        preprocessed__hf__dataset: None,
+    }
+)
 
-# All assets needed for the complete source generation pipeline
-_all_source_generation_assets = [
-    # Ingestion
-    raw__hf__dataset,
-    gt__parsed_dataset__pydantic,
-    base__dataset__pydantic,
-    # OCR prediction
-    pred__llm_ocr_enriched_dataset__pydantic,
-    # pred__ocr_enriched_dataset__pydantic,
-    # Source generation
-    source__generated_dataset__pydantic,
-    source__exported_json,
-]
+# --- dataset split ---
+_all_assets_with_configs.update(
+    {
+        base__dataset__pydantic: None,
+        gt__parsed_dataset__pydantic: {
+            "config": GroundTruthDatasetConfig(
+                ground_truth_source="parsed"
+            ).model_dump(),
+        },
+    }
+)
 
-# Job definition with full pipeline
+# --- enhance with ocr using llm ---
+_all_assets_with_configs.update(
+    {
+        pred__llm_ocr_enriched_dataset__pydantic: {
+            "config": LLMOcrConfig(
+                system_prompt="tasks/ocr/system.j2",
+                user_prompt="tasks/ocr/user.j2",
+                enable_cache=True,
+            ).model_dump()
+        },
+    }
+)
+
+# --- export ocr results (backup) ---
+_all_assets_with_configs.update(
+    {
+        ocr__exported_json: {
+            "config": OcrExportConfig(
+                group_by_schematism=True,
+                pretty_print=True,
+            ).model_dump()
+        },
+    }
+)
+
+# --- merge ocr with ground truth ---
+_all_assets_with_configs.update(
+    {
+        pred__merged_ocr_source_dataset__pydantic: None,
+    }
+)
+
+# --- generate source ground truth ---
+_all_assets_with_configs.update(
+    {
+        source__generated_dataset__pydantic: {
+            "config": SourceGenerationConfig(
+                system_prompt="tasks/source_generation/system.j2",
+                user_prompt="tasks/source_generation/user.j2",
+                accumulate_context=True,
+                enable_cache=True,
+                include_next_page_ocr=True,
+            ).model_dump()
+        },
+        source__exported_json: {
+            "config": SourceExportConfig(
+                group_by_schematism=True, pretty_print=True
+            ).model_dump()
+        },
+    }
+)
+
+source_generation_assets = _all_assets_with_configs.keys()
+
+
 source_generation_job = dg.define_asset_job(
     name="source_generation_pipeline",
-    selection=dg.AssetSelection.assets(*_all_source_generation_assets),
     description=(
         "Generate Latin source dataset from Polish ground truth. "
-        "Includes ingestion (with configurable filtering), OCR, and source generation. "
-        "Exports sample to JSON files for manual review before updating HuggingFace dataset."
+        "Pipeline: HF ingestion → preprocessing → LLM OCR → source generation → JSON export. "
+        "Exports results to JSON files for manual review before updating HuggingFace dataset."
     ),
-    # Default config - can be overridden in launchpad
-    config={
-        "ops": {
-            # Ingestion config
-            **RAW_HF_DATASET_OP_CONFIG,
-            # Filtering config - customize which schematisms to process
-            AssetKeyHelper.build_prefixed_key(
-                AssetLayer.INT, DataSource.HUGGINGFACE, "filtered", "hf", "dataset"
-            ): {
-                "config": OpConfig(
-                    op_type="filter",
-                    op_name="filter_schematisms",
-                    input_columns=["schematism_name"],
-                    kwargs={
-                        "to_filter": [
-                            # Default: process these schematisms for source generation
-                            "wloclawek_1872",
-                        ]
-                    },
-                ).model_dump()
-            },
-            # OCR config
-            # AssetKeyHelper.build_prefixed_key(
-            #     AssetLayer.STG,
-            #     DataSource.HUGGINGFACE,
-            #     "pred",
-            #     "ocr_enriched_dataset",
-            #     "pydantic",
-            # ): {
-            #     "config": OcrConfig(
-            #         text_only=True,
-            #         overwrite=False,
-            #     ).model_dump()
-            # },
-            # Source generation config
-            "fct__huggingface__source__generated_dataset__pydantic": {
-                "config": {
-                    "system_prompt": "tasks/source_generation/system.j2",
-                    "user_prompt": "tasks/source_generation/user.j2",
-                    "accumulate_context": True,
-                    "enable_cache": True,
-                }
-            },
-            # Export config
-            "mrt__huggingface__source__exported_json": {
-                "config": {
-                    "group_by_schematism": True,
-                    "pretty_print": True,
-                }
-            },
-            **PRED__LLM_OCR_ENRICHED_DATASET__PYDANTIC__OP_CONFIG,
-        }
-    },
+    selection=dg.AssetSelection.assets(*_all_assets_with_configs.keys()),
+    config=dg.RunConfig(
+        ops={
+            asset.key.to_python_identifier(): config
+            for asset, config in _all_assets_with_configs.items()
+            if config is not None
+        },
+    )
 )

@@ -3,7 +3,7 @@ from datasets import IterableDataset, Dataset
 from datasets.fingerprint import generate_fingerprint
 
 from notarius.application import ports
-from notarius.application.use_cases.ingestion.from_pdf import (
+from notarius.application.use_cases.ingestion.ingest_documents_from_pdf import (
     IngestPDFUseCase,
     IngestPDFRequest,
 )
@@ -53,11 +53,7 @@ def raw__pdf__dataset(
     response = use_case.execute(request)
 
     context.add_asset_metadata(
-        {
-            "found_pdf_paths": [
-                MetadataValue.path(path) for path in request.get_pdf_paths()
-            ]
-        }
+        {path.name: MetadataValue.path(str(path)) for path in request.get_pdf_paths()}
     )
 
     context.add_output_metadata(
@@ -67,9 +63,7 @@ def raw__pdf__dataset(
     return response.dataset
 
 
-class RawHuggingFaceDatasetConfig(  # pyright: ignore[reportUnsafeMultipleInheritance]
-    dg.Config, BaseDatasetConfig
-): ...
+class RawHuggingFaceDatasetConfig(dg.Config, BaseDatasetConfig): ...
 
 
 @dg.asset(

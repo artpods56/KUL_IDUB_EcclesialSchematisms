@@ -17,23 +17,19 @@ from notarius.orchestration.configs.prediction_config import (
 models_config_assets = []
 models_assets = []
 prediction_assets = [
-    pred__ocr_enriched_dataset__pydantic,
     pred__lmv3_enriched_dataset__pydantic,
     pred__llm_enriched_dataset__pydantic,
     pred__llm_ocr_enriched_dataset__pydantic,
 ]
+
+prediction_assets_configs = {
+    **PRED__LMV3_ENRICHED_DATASET__PYDANTIC__OP_CONFIG,
+    **PRED__LLM_ENRICHED_DATASET__PYDANTIC__OP_CONFIG,
+    **PRED__LLM_OCR_ENRICHED_DATASET__PYDANTIC__OP_CONFIG,
+}
+
 prediction_job = dg.define_asset_job(
-    name="prediction_pipeline",
+    name="prediction_job",
     selection=dg.AssetSelection.assets(*models_config_assets, *prediction_assets),
-    config={
-        "ops": {
-            # configs refs
-            # ml_models refs
-            # asset refs
-            **PRED__OCR_ENRICHED_DATASET__PYDANTIC__OP_CONFIG,
-            **PRED__LMV3_ENRICHED_DATASET__PYDANTIC__OP_CONFIG,
-            **PRED__LLM_ENRICHED_DATASET__PYDANTIC__OP_CONFIG,
-            **PRED__LLM_OCR_ENRICHED_DATASET__PYDANTIC__OP_CONFIG,
-        }
-    },
+    config={"ops": prediction_assets_configs},
 )
