@@ -93,7 +93,8 @@
             - Usually similar to Polish (place names often unchanged or slightly varied)
             - May have Latin suffix (-ia, -ensis) or historical spelling variation
             - Example: Parsed "Włocławek" -> Source might be "Włocławek" or "Vladislavia"
-            - Extract exactly as printed, including any numbering or punctuation
+            - IMPORTANT: Strip any list numbering prefix (e.g., "2. Boniewo" -> "Boniewo", "3. Brześć" -> "Brześć")
+            - Extract only the parish name itself, not the list number
         </PARISH>
 
         <DEANERY>
