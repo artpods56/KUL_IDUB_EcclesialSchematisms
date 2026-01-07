@@ -2,7 +2,7 @@ from notarius.orchestration.assets.transform.predict import (
     OcrConfig,
     LMv3Config,
     LLMConfig,
-    LLMOcrConfig,
+    EnrichWithOCRUsingLLMConfig,
 )
 from notarius.orchestration.constants import DataSource, AssetLayer
 from notarius.orchestration.utils import AssetKeyHelper
@@ -56,8 +56,8 @@ PRED__LLM_ENRICHED_DATASET__PYDANTIC__OP_CONFIG = {
         "pydantic",
     ): {
         "config": LLMConfig(
-            system_prompt="tasks/accumulative_extraction/system.j2",
-            user_prompt="tasks/accumulative_extraction/user.j2",
+            system_prompt="tasks/structured_extraction/system.j2",
+            user_prompt="tasks/structured_extraction/user.j2",
             use_lmv3_hints=True,
             accumulate_context=True,
         ).model_dump()
@@ -77,7 +77,7 @@ PRED__LLM_OCR_ENRICHED_DATASET__PYDANTIC__OP_CONFIG = {
         "llm_ocr_enriched_dataset",
         "pydantic",
     ): {
-        "config": LLMOcrConfig(
+        "config": EnrichWithOCRUsingLLMConfig(
             system_prompt="tasks/ocr/system.j2",
             user_prompt="tasks/ocr/user.j2",
             enable_cache=True,

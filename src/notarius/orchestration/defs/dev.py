@@ -13,6 +13,10 @@ from notarius.orchestration.jobs.postprocessing import (
 import weave
 from dagster import in_process_executor
 
+from notarius.orchestration.pipelines.evaluation import (
+    ALL_EVALUATION_ASSETS_WITH_CONFIGS,
+    evaluation_job,
+)
 from notarius.orchestration.resources.storage import (
     LocalStorageResource,
     ImageRepositoryResource,
@@ -39,7 +43,7 @@ from notarius.orchestration.jobs.prediction_export import (
 from notarius.orchestration.pipelines.prediction import prediction_pipeline_job
 from notarius.orchestration.pipelines.source_generation import (
     source_generation_job,
-    source_generation_assets,
+    ALL_SOURCE_GENERATION_ASSETS_WITH_CONFIGS,
 )
 from notarius.config import app_config
 
@@ -48,28 +52,27 @@ from notarius.schemas import configs
 
 _ = load_dotenv()
 
-weave.init("KUL_IDUB_EcclesiaSchematisms")
-
 
 storage_resource = LocalStorageResource(storage_root=str(app_config.storage_root))
 image_repository = ImageRepositoryResource(storage_resource=storage_resource)
 
 ocr_engine_resource = OCREngineResource()
-lmv3_engine_resource = LMv3EngineResource(ocr_engine=ocr_engine_resource)
+lmv3_engine_resource = LMv3EngineResource()
 llm_engine_resource = LLMEngineResource()
 
 defs = dg.Definitions(
     assets=[
-        *ingestion_assets,
-        *prediction_assets,
-        *postprocessing_assets,
-        *exporting_assets,
-        *prediction_export_assets,
+        # *ingestion_assets,
+        # *prediction_assets,
+        # *postprocessing_assets,
+        # *exporting_assets,
+        # *prediction_export_assets,
         # source generation
         # new assets
-        pred__dataset__pandas,
-        pred__excel_export_dataframe__pandas,
-        *source_generation_assets,
+        # pred__dataset__pandas,
+        # pred__excel_export_dataframe__pandas,
+        *ALL_SOURCE_GENERATION_ASSETS_WITH_CONFIGS.keys(),
+        *ALL_EVALUATION_ASSETS_WITH_CONFIGS.keys(),
     ],
     jobs=[
         # ingestion_job,
@@ -79,6 +82,7 @@ defs = dg.Definitions(
         # full_pipeline_job,
         # prediction_export_job,
         # prediction_pipeline_job,
+        evaluation_job,
         source_generation_job,
     ],
     resources={

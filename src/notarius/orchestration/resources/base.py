@@ -1,7 +1,7 @@
 from __future__ import annotations
 import dagster as dg
 from dagster import ConfigurableResource
-from typing import ClassVar, cast, override
+from typing import ClassVar, cast, override, Any
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -104,13 +104,12 @@ class OCREngineResource(dg.ConfigurableResource[OCREngine]):
 class LMv3EngineResource(ConfigurableResource[LMv3Engine]):
     """LayoutLMv3 _engine resource for document understanding."""
 
-    ocr_engine: OCREngineResource
-    _engine: LMv3Engine | None = PrivateAttr(default=None)
+    _engine_config: BaseLMv3ModelConfig | None = PrivateAttr(default=None)
 
     @override
     def setup_for_execution(self, context):
-        """Initialize the LMv3 _engine."""
-        lmv3_config = cast(
+        """Initialize the LLM _engine."""
+        self._engine_config = cast(
             BaseLMv3ModelConfig,
             config_manager.load_config_as_model(
                 config_name="lmv3_model_config",
@@ -118,17 +117,18 @@ class LMv3EngineResource(ConfigurableResource[LMv3Engine]):
                 config_subtype=ModelsConfigSubtype.LMV3,
             ),
         )
-        self._engine = LMv3Engine.from_config(
-            config=lmv3_config, ocr_engine=self.ocr_engine.create_resource(context)
-        )
 
-    def get_engine(self) -> LMv3Engine:
+    def get_engine_config(self) -> BaseLMv3ModelConfig:
+        """Get the LLM _engine config."""
+        if self._engine_config is None:
+            raise RuntimeError("LLMEngineConfig not initialized.")
+        return self._engine_config
+
+    def get_engine(self, ocr_engine: OCREngine) -> LMv3Engine:
         """Get the LMv3 _engine instance."""
-        if self._engine is None:
-            raise RuntimeError(
-                "LMv3Engine not initialized. Call setup_for_execution first."
-            )
-        return self._engine
+        return LMv3Engine.from_config(
+            config=self.get_engine_config(), ocr_engine=ocr_engine
+        )
 
 
 class LLMEngineResource(dg.ConfigurableResource[LLMEngine]):

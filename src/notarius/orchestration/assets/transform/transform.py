@@ -51,10 +51,6 @@ from notarius.domain.entities.schematism import SchematismPage
 logger = structlog.get_logger(__name__)
 
 
-class PandasDataFrameConfig(dg.Config):
-    pass
-
-
 def asset_factory__eval__aligned_dataframe_pandas(
     asset_name: str, ins: Mapping[str, AssetIn]
 ):
@@ -68,7 +64,6 @@ def asset_factory__eval__aligned_dataframe_pandas(
     def _asset__eval__aligned_dataframe__pandas(
         context: AssetExecutionContext,
         dataset: BaseDataset[AlignedSchematismsDataItem],
-        config: PandasDataFrameConfig,
     ):
         rows = []
 
@@ -120,7 +115,6 @@ def asset_factory__pred__dataframe_pandas(asset_name: str, ins: Mapping[str, Ass
     def _asset__pred__dataframe__pandas(
         context: AssetExecutionContext,
         dataset: BaseDataset[PredictionDataItem],
-        config: PandasDataFrameConfig,
     ):
 
         rows: list[FlatSchematismEntryWithMetadata] = []
@@ -201,7 +195,6 @@ def asset_factory__base_dataset(
 
         for i, sample in enumerate(cast(Iterable[SchematismsDatasetItem], hf_dataset)):
             # image_name = f"{sample['schematism_name']}_{sample['filename']}"
-
 
             image = sample["image"]
 
@@ -372,7 +365,6 @@ def pred__merged_ocr_lmv3_dataset__pydantic(
 
 
 @dg.asset(
-    name="pred__merged_ocr_source_dataset__pydantic",
     key_prefix=[AssetLayer.INT, DataSource.PREDICTION],
     group_name=ResourceGroup.DATA,
     kinds={Kinds.PYTHON, Kinds.PYDANTIC},
@@ -381,7 +373,7 @@ def pred__merged_ocr_lmv3_dataset__pydantic(
         "ocr": AssetIn(key="pred__llm_ocr_enriched_dataset__pydantic"),
     },
 )
-def pred__merged_ocr_source_dataset__pydantic(
+def pred__merged_ocr_parsed_dataset__pydantic(
     ground_truth: GroundTruthItemDataset,
     ocr: BaseItemDataset,
 ) -> PredictionItemDataset:

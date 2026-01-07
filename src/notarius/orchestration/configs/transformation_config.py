@@ -1,6 +1,3 @@
-from notarius.orchestration.assets.transform.transform import (
-    PandasDataFrameConfig,
-)
 from notarius.orchestration.constants import DataSource, AssetLayer
 from notarius.orchestration.utils import AssetKeyHelper
 
@@ -66,7 +63,7 @@ EVAL__ALIGNED_SOURCE_DATAFRAME__PANDAS__OP_CONFIG = {
         "eval",
         "aligned_source_dataframe",
         "pandas",
-    ): {"config": PandasDataFrameConfig().model_dump()}
+    ): {"config": {}}
 }
 
 
@@ -82,5 +79,5 @@ EVAL__ALIGNED_PARSED_DATAFRAME__PANDAS__OP_CONFIG = {
         "eval",
         "aligned_parsed_dataframe",
         "pandas",
-    ): {"config": PandasDataFrameConfig().model_dump()}
+    ): {"config": {}}
 }

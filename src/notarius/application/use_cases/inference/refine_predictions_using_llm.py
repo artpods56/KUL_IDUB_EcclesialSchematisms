@@ -41,7 +41,6 @@ class RefinePredictionsResponse(BaseResponse):
 
 PREDICTIONS_REFINEMENT_CONTEXT_PROVIDERS = ComposedContextProvider(
     providers=[
-        PageContentContextProvider[PredictionDataItem](offset=-1),
         PageContentContextProvider[PredictionDataItem](offset=0),
         PageContentContextProvider[PredictionDataItem](offset=1),
         PreviousPageDomainContextProvider(),
