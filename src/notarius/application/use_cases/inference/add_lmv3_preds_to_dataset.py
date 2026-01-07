@@ -18,7 +18,12 @@ from notarius.infrastructure.ml_models.lmv3.engine_adapter import (
     LMv3Request,
 )
 from notarius.infrastructure.persistence.storage import ImageRepository
-from notarius.schemas.data.pipeline import BaseDataItem, BaseDataset, PredictionDataItem
+from notarius.schemas.data.pipeline import (
+    BaseDataItem,
+    BaseDataset,
+    PredictionDataItem,
+    PredictionItemDataset,
+)
 from notarius.shared.logger import Logger
 
 logger: Logger = get_logger(__name__)
@@ -133,7 +138,7 @@ class EnrichDatasetWithLMv3(BaseUseCase[EnrichWithLMv3Request, EnrichWithLMv3Res
         )
 
         return EnrichWithLMv3Response(
-            dataset=BaseDataset(items=new_dataset_items),
+            dataset=PredictionItemDataset(items=new_dataset_items),
             lmv3_executions=lmv3_executions,
             cache_hits=cache_hits,
         )

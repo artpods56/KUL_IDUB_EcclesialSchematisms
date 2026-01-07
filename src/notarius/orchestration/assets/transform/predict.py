@@ -30,7 +30,7 @@ from notarius.application.use_cases.inference.refine_predictions_using_llm impor
     PREDICTIONS_REFINEMENT_CONTEXT_PROVIDERS,
 )
 from notarius.infrastructure.llm.prompt_manager import Jinja2PromptRenderer
-from notarius.infrastructure.ocr.engine_adapter import OCRMode
+from notarius.infrastructure.ocr.engine_adapter import OCRMode, OCREngine
 from notarius.infrastructure.persistence.storage import ImageRepository
 from notarius.orchestration.constants import (
     AssetLayer,
@@ -86,14 +86,13 @@ async def pred__ocr_enriched_dataset__pydantic(
     context: AssetExecutionContext,
     dataset: BaseDataset[BaseDataItem],
     images_repository: dg.ResourceParam[ImageRepository],
-    ocr_engine: OCREngineResource,
+    ocr_engine: dg.ResourceParam[OCREngine],
 ):
-    ocr_model = ocr_engine.get_engine()
 
-    config = ocr_model.config
+    config = ocr_engine.config
 
     use_case = EnrichDatasetWithOCR(
-        ocr_engine=ocr_model,
+        ocr_engine=ocr_engine,
         image_storage=images_repository,
         language=config.language,
         enable_cache=config.enable_cache,
@@ -144,16 +143,17 @@ async def pred__lmv3_enriched_dataset__pydantic(
     context: AssetExecutionContext,
     dataset: BaseDataset[BaseDataItem],
     config: LMv3Config,
-    images_repository: ImageRepositoryResource,
+    images_repository: dg.ResourceParam[ImageRepository],
     lmv3_engine: LMv3EngineResource,
-):
+    ocr_engine: dg.ResourceParam[OCREngine],
+) -> PredictionItemDataset:
     # Get the actual engine instance from the resource
-    lmv3_model = lmv3_engine.get_engine()
+    lmv3_model = lmv3_engine.get_engine(ocr_engine)
 
     # Use new CachedEngine pattern
     use_case = EnrichDatasetWithLMv3(
         lmv3_engine=lmv3_model,
-        image_storage=images_repository.get_repository(),
+        image_storage=images_repository,
         checkpoint=config.checkpoint,
         enable_cache=config.enable_cache,
     )
@@ -185,8 +185,8 @@ async def pred__lmv3_enriched_dataset__pydantic(
 
 
 class LLMConfig(dg.Config):
-    context_strategy: str = "accumulating"
-    task_name: str = "accumulative_extraction"
+    context_strategy: str = "sliding_window"
+    task_name: str = "structured_extraction"
     enable_cache: bool = True
     group_by_schematism_name: bool = True
 
@@ -211,7 +211,6 @@ def pred__llm_enriched_dataset__pydantic(
     This asset takes the LMv3-enriched lmv3_dataset and uses an LLM to generate
     improved predictions, optionally using the LMv3 predictions as hints.
     """
-    # Get the actual engine instance from the resource
     llm_engine = llm_engine_resource.get_engine(
         cached=config.enable_cache, images_repository=images_repository
     )
@@ -272,7 +271,7 @@ def pred__llm_enriched_dataset__pydantic(
     return response.dataset
 
 
-class LLMOcrConfig(dg.Config):
+class EnrichWithOCRUsingLLMConfig(dg.Config):
     """Configuration for LLM-based OCR asset."""
 
     task_name: str = "ocr"
@@ -295,7 +294,7 @@ class LLMOcrConfig(dg.Config):
 async def pred__llm_ocr_enriched_dataset__pydantic(
     context: AssetExecutionContext,
     dataset: BaseDataset[BaseDataItem],
-    config: LLMOcrConfig,
+    config: EnrichWithOCRUsingLLMConfig,
     images_repository: dg.ResourceParam[ImageRepository],
     llm_engine_resource: LLMEngineResource,
 ):
