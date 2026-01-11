@@ -3,8 +3,6 @@ from typing import cast
 
 import dagster as dg
 from dagster import AssetIn, AssetExecutionContext, MetadataValue
-from optype.inspect import get_args
-from pydantic import field_validator
 
 from notarius.application.services import (
     DatasetProcessor,
@@ -159,8 +157,10 @@ async def pred__lmv3_enriched_dataset__pydantic(
     )
 
     # Execute use case
-    request = EnrichWithLMv3Request(dataset=dataset)
-    response = await use_case.execute(request)
+    request = EnrichWithLMv3Request(
+        dataset=dataset  # pyright: ignore[reportArgumentType]
+    )  # this is about the generics missmatch [TODO] resolve this issue somehow
+    response = use_case.execute(request)
     random_sample = dataset.items[random.randint(0, len(dataset.items) - 1)]
 
     context.add_asset_metadata(
@@ -185,6 +185,7 @@ async def pred__lmv3_enriched_dataset__pydantic(
 
 
 class LLMConfig(dg.Config):
+    model_name: str = "google/gemini-3-flash-preview"
     context_strategy: str = "sliding_window"
     task_name: str = "structured_extraction"
     enable_cache: bool = True
@@ -199,7 +200,7 @@ class LLMConfig(dg.Config):
         "merged_dataset": AssetIn(key="pred__merged_ocr_lmv3_dataset__pydantic"),
     },
 )
-def pred__llm_enriched_dataset__pydantic(
+async def pred__llm_enriched_dataset__pydantic(
     context: AssetExecutionContext,
     merged_dataset: PredictionItemDataset,
     config: LLMConfig,
@@ -212,7 +213,9 @@ def pred__llm_enriched_dataset__pydantic(
     improved predictions, optionally using the LMv3 predictions as hints.
     """
     llm_engine = llm_engine_resource.get_engine(
-        cached=config.enable_cache, images_repository=images_repository
+        cached=config.enable_cache,
+        images_repository=images_repository,
+        model_name=config.model_name,
     )
 
     item_processor = ItemProcessor(
@@ -246,7 +249,7 @@ def pred__llm_enriched_dataset__pydantic(
         group_by_schematism_name=config.group_by_schematism_name,
     )
 
-    response = use_case.execute(request)
+    response = await use_case.execute(request)
 
     context.add_asset_metadata(
         {
@@ -274,6 +277,7 @@ def pred__llm_enriched_dataset__pydantic(
 class EnrichWithOCRUsingLLMConfig(dg.Config):
     """Configuration for LLM-based OCR asset."""
 
+    model_name: str = "google/gemini-3-flash-preview"
     task_name: str = "ocr"
     enable_cache: bool = True
     group_by_schematism_name: bool = True
@@ -307,7 +311,9 @@ async def pred__llm_ocr_enriched_dataset__pydantic(
     Uses DatasetProcessor with StatelessStrategy for parallel async processing.
     """
     llm_engine = llm_engine_resource.get_engine(
-        cached=config.enable_cache, images_repository=images_repository
+        cached=config.enable_cache,
+        images_repository=images_repository,
+        model_name=config.model_name,
     )
 
     item_processor = ItemProcessor(

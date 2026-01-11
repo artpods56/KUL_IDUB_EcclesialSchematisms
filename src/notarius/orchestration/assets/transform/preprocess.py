@@ -44,6 +44,7 @@ class PreprocessingConfig(dg.Config):
     group_name=ResourceGroup.DATA,
     kinds={Kinds.PYTHON, Kinds.HUGGINGFACE},
     ins={"dataset": dg.AssetIn(key="raw__hf__dataset")},
+    io_manager_key="hf_dataset_io_manager",
 )
 def preprocessed__hf__dataset(
     context: dg.AssetExecutionContext,

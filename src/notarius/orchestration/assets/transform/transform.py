@@ -45,6 +45,7 @@ from notarius.schemas.data.pipeline import (
     PredictionItemDataset,
     FlatSchematismEntryWithMetadata,
     FlatSchematismAlignedEntryWithMetadata,
+    PredictionDataItem,
 )
 from notarius.domain.entities.schematism import SchematismPage
 
@@ -72,7 +73,7 @@ def asset_factory__eval__aligned_dataframe_pandas(
         for item in dataset.items:
             rows.extend(FlatteningService.flatten_aligned_pages(item))
 
-        df = pd.DataFrame(rows)
+        df = pd.DataFrame([row.model_dump() for row in rows])
 
         markdown_head = df.head(30).to_markdown()
         column_schema = TableSchema.from_name_type_dict(df.dtypes.astype(str).to_dict())
@@ -102,8 +103,6 @@ eval__aligned_parsed_dataframe__pandas = asset_factory__eval__aligned_dataframe_
 
 def asset_factory__pred__dataframe_pandas(asset_name: str, ins: Mapping[str, AssetIn]):
     """Factory for creating prediction-only DataFrame assets (no ground truth alignment)."""
-
-    from notarius.schemas.data.pipeline import PredictionDataItem
 
     @dg.asset(
         name=asset_name,
@@ -417,7 +416,7 @@ def asset_factory__pred__dataset__pandas(
         for item in dataset.items:
             rows.extend(FlatteningService.flatten_prediction_data_item(item))
 
-        df = pd.DataFrame(rows)
+        df = pd.DataFrame([row.model_dump() for row in rows])
 
         column_schema = TableSchema.from_name_type_dict(df.dtypes.astype(str).to_dict())
         preview = df.head(30).to_markdown()

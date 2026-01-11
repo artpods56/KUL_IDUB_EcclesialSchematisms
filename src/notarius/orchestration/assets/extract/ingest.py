@@ -45,8 +45,13 @@ def raw__pdf__dataset(
         glob_pattern=config.glob_pattern,
     )
 
+    # Import the concrete PDFPlumberIngestor implementation
+    from notarius.infrastructure.pdf import PDFPlumberIngestor
+
+    pdf_ingestor = PDFPlumberIngestor(storage=file_storage)
+
     use_case = IngestPDFUseCase(
-        storage=file_storage,
+        pdf_ingestor=pdf_ingestor,
         image_repository=images_repository,
     )
 
@@ -70,6 +75,7 @@ class RawHuggingFaceDatasetConfig(dg.Config, BaseDatasetConfig): ...
     key_prefix=[AssetLayer.STG, DataSource.HUGGINGFACE],
     group_name=ResourceGroup.DATA,
     kinds={Kinds.PYTHON, Kinds.HUGGINGFACE},
+    io_manager_key="hf_dataset_io_manager",
 )
 def raw__hf__dataset(
     context: AssetExecutionContext, config: RawHuggingFaceDatasetConfig

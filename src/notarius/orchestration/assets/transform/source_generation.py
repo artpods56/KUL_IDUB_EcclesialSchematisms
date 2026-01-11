@@ -105,6 +105,7 @@ def ocr__exported_json(
 class GenerateSourceGroundTruthDatasetConfig(dg.Config):
     """Configuration for source generation."""
 
+    model_name: str = "google/gemini-3-flash-preview"
     task_name: str = "source_generation"
     window_size: int = 5
     enable_cache: bool = True
@@ -119,7 +120,7 @@ class GenerateSourceGroundTruthDatasetConfig(dg.Config):
         "dataset": AssetIn(key="pred__merged_ocr_parsed_dataset__pydantic"),
     },
 )
-def source__generated_dataset__pydantic(
+async def source__generated_dataset__pydantic(
     context: AssetExecutionContext,
     dataset: PredictionItemDataset,
     config: GenerateSourceGroundTruthDatasetConfig,
@@ -134,7 +135,9 @@ def source__generated_dataset__pydantic(
     Uses DatasetProcessor with the configured ContextStrategy (default: accumulating).
     """
     llm_engine = llm_engine_resource.get_engine(
-        cached=config.enable_cache, images_repository=images_repository
+        cached=config.enable_cache,
+        images_repository=images_repository,
+        model_name=config.model_name,
     )
 
     item_processor = ItemProcessor(
@@ -170,7 +173,7 @@ def source__generated_dataset__pydantic(
         group_by_schematism_name=config.group_by_schematism_name,
     )
 
-    response = use_case.execute(request)
+    response = await use_case.execute(request)
 
     # Log a random sample for inspection
     if response.dataset.items:
@@ -200,7 +203,7 @@ class SourceExportConfig(dg.Config):
 
 
 @dg.asset(
-    key_prefix=[AssetLayer.MRT, DataSource.HUGGINGFACE],
+    key_prefix=[AssetLayer.MRT, DataSource.MIXED],
     group_name=ResourceGroup.DATA,
     kinds={Kinds.PYTHON, Kinds.JSON},
     ins={

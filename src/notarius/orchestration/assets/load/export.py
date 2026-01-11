@@ -1,3 +1,5 @@
+import dataclasses
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Mapping
@@ -6,11 +8,40 @@ import dagster as dg
 import pandas as pd
 from PIL import Image
 from dagster import AssetExecutionContext, AssetIn, MetadataValue
-from rapidfuzz import fuzz
 
+
+# Regex pattern for illegal Excel characters (control characters except tab, newline, carriage return)
+ILLEGAL_EXCEL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def sanitize_for_excel(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove illegal characters from string columns for Excel export."""
+    df = df.copy()
+    for col in df.columns:
+        if df[col].dtype == object:
+            df[col] = df[col].apply(
+                lambda x: ILLEGAL_EXCEL_CHARS_RE.sub("", x) if isinstance(x, str) else x
+            )
+    return df
+
+
+from notarius.application import ports
+from notarius.application.services.scoring import (
+    SimilarityEvaluationService,
+    ClassificationEvaluationService,
+    NormalizedLevenshteinDistanceScorer,
+    ExactMatchScorer,
+    SimilarityMetrics,
+    ClassificationMetrics,
+    ExactMatchStyling,
+    GradientStyling,
+    CellComparisonStyler,
+)
 from notarius.application.use_cases.export import (
     ExportDataFrameToWandB,
     WandBExportRequest,
+    JsonExportUseCase,
+    JsonExportRequest,
 )
 from notarius.application.use_cases.export.wandb_dataframe_export import (
     DataFrameExportConfig,
@@ -24,128 +55,176 @@ from notarius.orchestration.constants import (
 )
 from notarius.orchestration.resources.base import (
     ExcelWriterResource,
-    WandBRunResource,
 )
-from notarius.orchestration.resources.storage import ImageRepositoryResource
-from notarius.schemas.data.pipeline import BaseDataset, BaseDataItem
+from notarius.schemas.data.pipeline import BaseDataset, BaseDataItem, PredictionDataItem
+from notarius.shared.constants import OUTPUTS_DIR
 
 
-class PandasDataFrameExport(dg.Config):
-    file_name: str
+DEFAULT_EVAL_COLUMNS: list[tuple[str, str]] = [
+    ("deanery_a", "deanery_b"),
+    ("parish_a", "parish_b"),
+    ("dedication_a", "dedication_b"),
+    ("building_material_a", "building_material_b"),
+]
+
+
+class ParsedDataFrameExportConfig(dg.Config):
+    """Configuration for parsed dataset export with classification metrics."""
+
+    file_name: str = "parsed_evaluation.xlsx"
     group_by_key: str = "schematism_name"
     include_index: bool = True
     include_header: bool = True
-    apply_styling: bool = True
-    fuzzy_threshold: int = 80
+    scorer_type: str = "levenshtein"  # "levenshtein" or "exact_match"
+    match_threshold: float = 1.0
 
 
-def asset_factory__eval__excel_export_dataframe__pandas(
-    asset_name: str, ins: Mapping[str, AssetIn]
+class SourceDataFrameExportConfig(dg.Config):
+    """Configuration for source dataset export with similarity metrics."""
+
+    file_name: str = "source_evaluation.xlsx"
+    group_by_key: str = "schematism_name"
+    include_index: bool = True
+    include_header: bool = True
+    scorer_type: str = "levenshtein"
+
+
+@dg.asset(
+    name="eval__excel_export_parsed_dataframe__pandas",
+    key_prefix=[AssetLayer.MRT, DataSource.HUGGINGFACE],
+    group_name=ResourceGroup.DATA,
+    kinds={Kinds.PYTHON, Kinds.EXCEL},
+    ins={"dataframe": AssetIn(key="eval__aligned_parsed_dataframe__pandas")},
+)
+def eval__excel_export_parsed_dataframe__pandas(
+    context: AssetExecutionContext,
+    dataframe: pd.DataFrame,
+    config: ParsedDataFrameExportConfig,
+    excel_writer: ExcelWriterResource,
 ):
-    @dg.asset(
-        name=asset_name,
-        key_prefix=[AssetLayer.MRT, DataSource.HUGGINGFACE],
-        group_name=ResourceGroup.DATA,
-        kinds={Kinds.PYTHON, Kinds.EXCEL},
-        ins=ins,
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    full_file_name = f"{timestamp}_{config.file_name}"
+
+    scorer = (
+        ExactMatchScorer()
+        if config.scorer_type == "exact_match"
+        else NormalizedLevenshteinDistanceScorer()
     )
-    def _asset__eval__excel_export_dataframe__pandas(
-        context: AssetExecutionContext,
-        dataframe: pd.DataFrame,
-        config: PandasDataFrameExport,
-        excel_writer: ExcelWriterResource,
-    ):
-        def get_fuzzy_score(val_a, val_b) -> float:
-            """Calculate fuzzy match score between two values."""
-            # Handle NaN/None values
-            if pd.isna(val_a) and pd.isna(val_b):
-                return 100.0  # Both empty is a match
-            if pd.isna(val_a) or pd.isna(val_b):
-                return 0.0  # One empty, one not is no match
 
-            # Convert to strings
-            str_a = str(val_a).strip()
-            str_b = str(val_b).strip()
+    service = ClassificationEvaluationService(scorer, threshold=config.match_threshold)
+    styler = CellComparisonStyler(scorer=scorer, styling=ExactMatchStyling())
 
-            if str_a == str_b:
-                return 100.0
+    with excel_writer.get_writer(full_file_name) as writer:
+        for key, group in dataframe.groupby(config.group_by_key):
+            # Sanitize data to remove illegal Excel characters
+            group = sanitize_for_excel(group)
 
-            return fuzz.ratio(str_a, str_b)
+            aggregated_group_metrics = service.evaluate(group, DEFAULT_EVAL_COLUMNS)
 
-        def style_cell(row, col_name):
-            """Style a cell based on fuzzy matching with its pair."""
-            # Only style _a and _b columns
-            if not (col_name.endswith("_a") or col_name.endswith("_b")):
-                return ""
-
-            # Find the pair column
-            if col_name.endswith("_a"):
-                pair_col = col_name[:-2] + "_b"
-                val_a = row[col_name]
-                val_b = row[pair_col] if pair_col in row.index else None
-            else:  # ends with _b
-                pair_col = col_name[:-2] + "_a"
-                val_a = row[pair_col] if pair_col in row.index else None
-                val_b = row[col_name]
-
-            # If pair column doesn't exist, don't style
-            if val_a is None or val_b is None:
-                return ""
-
-            # Calculate score
-            score = get_fuzzy_score(val_a, val_b)
-
-            # Return CSS style based on score
-            if score == 100.0:
-                return "background-color: #90EE90"  # Green
-            elif score >= config.fuzzy_threshold:
-                return "background-color: #FFFFE0"  # Yellow
-            else:
-                return "background-color: #FFB6C1"  # Red
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        full_file_name = Path(f"{timestamp}_{config.file_name}")
-
-        with excel_writer.get_writer(full_file_name) as writer:
-            for key, group in dataframe.groupby(config.group_by_key):
-                if config.apply_styling:
-                    # Apply styling using pandas Styler
-                    styled = group.style.apply(
-                        lambda row: [style_cell(row, col) for col in group.columns],
-                        axis=1,
+            context.add_output_metadata(
+                {
+                    f"{str(key)}": dg.MetadataValue.json(
+                        {
+                            m.field: {
+                                "f1": m.f1,
+                                "accuracy": m.accuracy,
+                                "precision": m.precision,
+                                "recall": m.recall,
+                            }
+                            for m in aggregated_group_metrics.metrics
+                        }
                     )
-                    styled.to_excel(
-                        writer,
-                        sheet_name=key,
-                        index=config.include_index,
-                        engine="xlsxwriter",
-                    )
-                    context.log.info(f"Applied styling to sheet '{key}'")
-                else:
-                    # Write without styling
-                    group.to_excel(
-                        writer,
-                        sheet_name=key,
-                        index=config.include_index,
-                        header=config.include_header,
-                    )
+                }
+            )
 
-    return _asset__eval__excel_export_dataframe__pandas
+            metrics_sheet_name = f"{key}_Metrics"[:31]
+            aggregated_group_metrics.to_dataframe().to_excel(
+                writer, sheet_name=metrics_sheet_name, index=False
+            )
+
+            evaluation_sheet_name = f"{key}_Evaluation"[:31]
+            styled_group = styler.style(group, columns_to_compare=DEFAULT_EVAL_COLUMNS)
+            styled_group.to_excel(
+                writer,
+                sheet_name=evaluation_sheet_name,
+                index=config.include_index,
+                header=config.include_header,
+            )
+
+            context.log.info(
+                f"Wrote sheet '{evaluation_sheet_name}' with {len(group)} rows"
+            )
+
+    return str(full_file_name)
 
 
-eval__excel_export_parsed_dataframe__pandas = (
-    asset_factory__eval__excel_export_dataframe__pandas(
-        asset_name="eval__excel_export_parsed_dataframe__pandas",
-        ins={"dataframe": AssetIn(key="eval__aligned_parsed_dataframe__pandas")},
-    )
+@dg.asset(
+    name="eval__excel_export_source_dataframe__pandas",
+    key_prefix=[AssetLayer.MRT, DataSource.HUGGINGFACE],
+    group_name=ResourceGroup.DATA,
+    kinds={Kinds.PYTHON, Kinds.EXCEL},
+    ins={"dataframe": AssetIn(key="eval__aligned_source_dataframe__pandas")},
 )
+def eval__excel_export_source_dataframe__pandas(
+    context: AssetExecutionContext,
+    dataframe: pd.DataFrame,
+    config: SourceDataFrameExportConfig,
+    excel_writer: ExcelWriterResource,
+):
+    """Export source dataset with similarity metrics (avg/min/max similarity)."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    full_file_name = f"{timestamp}_{config.file_name}"
 
-eval__excel_export_source_dataframe__pandas = (
-    asset_factory__eval__excel_export_dataframe__pandas(
-        asset_name="eval__excel_export_source_dataframe__pandas",
-        ins={"dataframe": AssetIn(key="eval__aligned_source_dataframe__pandas")},
+    scorer = (
+        ExactMatchScorer()
+        if config.scorer_type == "exact_match"
+        else NormalizedLevenshteinDistanceScorer()
     )
-)
+
+    service = SimilarityEvaluationService(scorer)
+    styler = CellComparisonStyler(scorer=scorer, styling=GradientStyling())
+
+    with excel_writer.get_writer(full_file_name) as writer:
+        for key, group in dataframe.groupby(config.group_by_key):
+            # Sanitize data to remove illegal Excel characters
+            group = sanitize_for_excel(group)
+
+            aggregated_group_metrics = service.evaluate(group, DEFAULT_EVAL_COLUMNS)
+
+            context.add_output_metadata(
+                {
+                    f"{str(key)}": dg.MetadataValue.json(
+                        {
+                            m.field: {
+                                "average_similarity": m.average_similarity,
+                                "min_similarity": m.min_similarity,
+                                "max_similarity": m.max_similarity,
+                            }
+                            for m in aggregated_group_metrics.metrics
+                        }
+                    )
+                }
+            )
+
+            metrics_sheet_name = f"{key}_Metrics"[:31]
+            aggregated_group_metrics.to_dataframe().to_excel(
+                writer, sheet_name=metrics_sheet_name, index=False
+            )
+
+            evaluation_sheet_name = f"{key}_Evaluation"[:31]
+            styled_group = styler.style(group, columns_to_compare=DEFAULT_EVAL_COLUMNS)
+            styled_group.to_excel(
+                writer,
+                sheet_name=evaluation_sheet_name,
+                index=config.include_index,
+                header=config.include_header,
+            )
+
+            context.log.info(
+                f"Wrote sheet '{evaluation_sheet_name}' with {len(group)} rows"
+            )
+
+    return str(full_file_name)
 
 
 class PredictionDataFrameExport(dg.Config):
@@ -175,28 +254,17 @@ def asset_factory__pred__excel_export_dataframe__pandas(
         config: PredictionDataFrameExport,
         excel_writer: ExcelWriterResource,
     ):
-        """Export prediction DataFrame to Excel without ground truth comparison.
-
-        This asset exports predictions to Excel, grouped by schematism_name,
-        without the fuzzy matching styling used in evaluation exports.
-
-        Args:
-            context: Dagster execution context for logging and metadata
-            dataframe: DataFrame containing flattened predictions
-            config: Export configuration
-            excel_writer: Resource for writing Excel files
-
-        Returns:
-            Path to the exported file
-        """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         full_file_name = f"{timestamp}_{config.file_name}"
 
         sheets_written = []
 
-        with excel_writer.get_writer(Path(full_file_name)) as writer:
+        with excel_writer.get_writer(full_file_name) as writer:
             for key, group in dataframe.groupby(config.group_by_key):
-                sheet_name = str(key)
+                # Sanitize data to remove illegal Excel characters
+                group = sanitize_for_excel(group)
+
+                sheet_name = str(key)[:31]
                 group.to_excel(
                     writer,
                     sheet_name=sheet_name,
@@ -241,6 +309,23 @@ pred__excel_export_dataframe__pandas = (
 )
 
 
+class WandBRunResource(
+    dg.ConfigurableResource  # pyright: ignore[reportMissingTypeArgument]
+):
+    run_name: str
+    project_name: str
+    mode: str = "online"
+
+    def get_wandb_run(self):
+        import wandb
+
+        return wandb.init(
+            project=self.project_name,
+            name=self.run_name,
+            mode=self.mode,  # pyright: ignore[reportArgumentType]
+        )
+
+
 class WandBDataFrameExport(dg.Config):
     parsed_table_name: str = "eval_parsed_dataframe"
     source_table_name: str = "eval_source_dataframe"
@@ -275,8 +360,8 @@ async def eval__wandb_export_dataframe__pandas(
     ) -> dict[str, Image.Image]:
         mapping = {}
         for item in dataset.items:
-            if item.image_path:
-                mapping[item.metadata.sample_id] = images_repository.get(
+            if item.image_path and item.metadata:
+                mapping[str(item.metadata.sample_id)] = images_repository.get(
                     Path(item.image_path)
                 )
         return mapping
@@ -324,3 +409,51 @@ async def eval__wandb_export_dataframe__pandas(
     context.log.info(
         f"Logged {len(response.tables_logged)} tables to W&B with {response.total_rows} total rows"
     )
+
+
+class PredsSourceExportConfig(dg.Config):
+    """Configuration for source dataset JSON export."""
+
+    filename_prefix: str = "source_predictions"
+    output_dir: str = str(OUTPUTS_DIR / "json_predictions")
+    group_by_schematism: bool = True
+    pretty_print: bool = True
+
+
+@dg.asset(
+    key_prefix=[AssetLayer.MRT, DataSource.MIXED],
+    group_name=ResourceGroup.DATA,
+    kinds={Kinds.PYTHON, Kinds.JSON},
+    ins={
+        "source_dataset": AssetIn(key="pred__llm_enriched_dataset__pydantic"),
+    },
+)
+def pred__export_llm_enriched_dataset__json(
+    context: AssetExecutionContext,
+    source_dataset: BaseDataset[PredictionDataItem],
+    config: PredsSourceExportConfig,
+    file_storage: dg.ResourceParam[ports.FileStorage],
+) -> dict[str, Path]:
+    """Export generated source dataset to JSON files for manual review."""
+    use_case = JsonExportUseCase(storage=file_storage)
+    request = JsonExportRequest(
+        dataset=source_dataset,
+        output_dir=Path(config.output_dir),
+        group_by_schematism=config.group_by_schematism,
+        pretty_print=config.pretty_print,
+        filename_prefix=config.filename_prefix,
+    )
+    response = use_case.execute(request)
+
+    context.add_output_metadata(
+        {
+            "output_dir": MetadataValue.path(str(config.output_dir)),
+            "files_created": MetadataValue.int(len(response.output_files)),
+            "file_paths": MetadataValue.json(
+                {k: str(v) for k, v in response.output_files.items()}
+            ),
+            "total_records": MetadataValue.int(len(source_dataset.items)),
+        }
+    )
+
+    return response.output_files
