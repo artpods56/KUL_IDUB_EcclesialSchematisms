@@ -73,8 +73,11 @@ class PredictionsRefinementResponseHandler[ItemT: PredictionDataItem](
         response: CompletionResult[SchematismPage],
     ) -> ItemProcessingResult[ItemT, SchematismPage]:
         output = response.output.structured_response
+
         if output is None:
-            raise ValueError("LLM returned no structured response")
+            raise ValueError(
+                f"LLM returned no structured response, received response: {response.output.text_response}"
+            )
 
         item.predictions = output
 

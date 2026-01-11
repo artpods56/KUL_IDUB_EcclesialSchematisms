@@ -24,7 +24,6 @@ from notarius.shared.logger import get_logger
 logger = get_logger(__name__)
 
 
-@final
 class DatasetProcessor[ItemT: BaseDataItem, OutputT: BaseModel]:
     def __init__(
         self,

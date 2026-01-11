@@ -19,18 +19,15 @@ def prepare_metadata(metadata: BaseMetaData | None) -> BaseMetaData:
 
 
 class FlatteningService:
-
     @staticmethod
     def flatten_prediction_data_item(
         item: PredictionDataItem,
     ) -> list[FlatSchematismEntryWithMetadata]:
-
         metadata = prepare_metadata(item.metadata)
 
         flat_items: list[FlatSchematismEntryWithMetadata] = []
 
         for entry in item.predictions.entries:
-
             flat_items.append(
                 FlatSchematismEntryWithMetadata(
                     sample_id=metadata.sample_id,
@@ -49,7 +46,6 @@ class FlatteningService:
     def flatten_aligned_pages(
         item: AlignedSchematismsDataItem,
     ) -> list[FlatSchematismAlignedEntryWithMetadata]:
-
         metadata = prepare_metadata(item.metadata)
 
         flat_entries: list[FlatSchematismAlignedEntryWithMetadata] = []
@@ -68,6 +64,8 @@ class FlatteningService:
                     deanery_b=entry_b.deanery,
                     dedication_a=entry_a.dedication,
                     dedication_b=entry_b.dedication,
+                    building_material_a=entry_a.building_material,
+                    building_material_b=entry_b.building_material,
                 )
             )
 
