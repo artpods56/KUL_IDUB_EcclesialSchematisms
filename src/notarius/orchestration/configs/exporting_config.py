@@ -1,5 +1,4 @@
 from notarius.orchestration.assets.load.export import (
-    PandasDataFrameExport,
     WandBDataFrameExport,
     PredictionDataFrameExport,
 )
@@ -18,11 +17,7 @@ EVAL__EXCEL_EXPORT_PARSED_DATAFRAME__PANDAS = {
         "eval",
         "excel_export_parsed_dataframe",
         "pandas",
-    ): {
-        "config": PandasDataFrameExport(
-            file_name="parsed_schematism_comp.xlsx"
-        ).model_dump()
-    }
+    ): {"config": {}}
 }
 
 """
@@ -37,11 +32,7 @@ EVAL__EXCEL_EXPORT_SOURCE_DATAFRAME__PANDAS = {
         "eval",
         "excel_export_source_dataframe",
         "pandas",
-    ): {
-        "config": PandasDataFrameExport(
-            file_name="source_schematism_comp.xlsx"
-        ).model_dump()
-    }
+    ): {"config": {}}
 }
 
 

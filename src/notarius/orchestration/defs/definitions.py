@@ -46,6 +46,7 @@ from notarius.orchestration.resources.base import (
     PdfFilesResource,
 )
 from notarius.orchestration.resources.storage import ImageRepositoryResource
+from notarius.orchestration.hf_io_manager import hf_dataset_io_manager
 from notarius.orchestration.dill_io_manager import dill_io_manager
 
 from notarius.config import app_config
@@ -93,6 +94,7 @@ defs = dg.Definitions(
         "config_manager": get_config_manager(),
         "parser": Parser(),
         "io_manager": dill_io_manager(base_dir=str(TMP_DIR / "dagster_dill_storage")),
+        "hf_dataset_io_manager": hf_dataset_io_manager(base_dir=str(TMP_DIR / "dagster_hf_storage")),
         "excel_writer": ExcelWriterResource(writing_path=str(OUTPUTS_DIR)),
         "wandb_run": WandBRunResource(
             project_name="KUL_IDUB_EcclesiaSchematisms",

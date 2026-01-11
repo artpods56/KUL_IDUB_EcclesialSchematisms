@@ -14,15 +14,18 @@ from notarius.orchestration.assets.load.export import (
     eval__excel_export_parsed_dataframe__pandas,
     eval__excel_export_source_dataframe__pandas,
     eval__wandb_export_dataframe__pandas,
-    PandasDataFrameExport,
     WandBDataFrameExport,
+    ParsedDataFrameExportConfig,
+    pred__export_llm_enriched_dataset__json,
+    PredsSourceExportConfig,
+    SourceDataFrameExportConfig,
 )
 from notarius.orchestration.assets.transform.postprocess import (
     pred__parsed_dataset__pydantic,
     ParsingConfig,
     gt__aligned_parsed_dataset__pydantic,
-    JSONAlignmentConfig,
     gt__aligned_source_dataset__pydantic,
+    AlignmentConfig,
 )
 from notarius.orchestration.assets.transform.preprocess import (
     preprocessed__hf__dataset,
@@ -157,10 +160,10 @@ aligns ground truth with predictions
 _all_assets_with_configs.update(
     {
         gt__aligned_parsed_dataset__pydantic: {
-            "config": JSONAlignmentConfig().model_dump()
+            "config": AlignmentConfig(aligner_type="hungarian").model_dump()
         },
         gt__aligned_source_dataset__pydantic: {
-            "config": JSONAlignmentConfig().model_dump()
+            "config": AlignmentConfig(aligner_type="hungarian").model_dump()
         },
     }
 )
@@ -185,17 +188,20 @@ exports results to excel and wandb
 _all_assets_with_configs.update(
     {
         eval__excel_export_parsed_dataframe__pandas: {
-            "config": PandasDataFrameExport(
+            "config": ParsedDataFrameExportConfig(
                 file_name="parsed_schematism_comp.xlsx"
             ).model_dump()
         },
         eval__excel_export_source_dataframe__pandas: {
-            "config": PandasDataFrameExport(
+            "config": SourceDataFrameExportConfig(
                 file_name="source_schematism_comp.xlsx"
             ).model_dump()
         },
         eval__wandb_export_dataframe__pandas: {
             "config": WandBDataFrameExport().model_dump()
+        },
+        pred__export_llm_enriched_dataset__json: {
+            "config": PredsSourceExportConfig().model_dump()
         },
     }
 )

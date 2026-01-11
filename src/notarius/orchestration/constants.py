@@ -38,3 +38,15 @@ class ResourceGroup:
     CONFIG = "config_manager"
     DATA = "data"
     EVALUATION = "evaluation"
+
+
+@final
+class JobType:
+    EVALUATION = "evaluation"
+    SOURCE_GENERATION = "source_generation"
+
+
+@final
+class Environment:
+    DEV = "dev"
+    PROD = "prod"

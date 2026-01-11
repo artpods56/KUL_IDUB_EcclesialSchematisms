@@ -6,6 +6,7 @@ from notarius.orchestration.assets.load.export import (
     pred__excel_export_dataframe__pandas,
 )
 from notarius.orchestration.assets.transform.transform import pred__dataset__pandas
+from notarius.orchestration.hf_io_manager import HuggingFaceDatasetIOManager
 from notarius.orchestration.jobs.postprocessing import (
     postprocessing_assets,
     postprocessing_job,
@@ -86,6 +87,7 @@ defs = dg.Definitions(
         source_generation_job,
     ],
     resources={
+        "hf_dataset_io_manager": HuggingFaceDatasetIOManager(),
         "file_storage": storage_resource,
         # Explicitly bind the dependency for ImageRepositoryResource
         "images_repository": image_repository,

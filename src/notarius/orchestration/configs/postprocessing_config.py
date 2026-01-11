@@ -1,9 +1,7 @@
 from typing import Any
 
 from notarius.orchestration.assets.transform.postprocess import (
-    DeaneryFillingConfig,
     ParsingConfig,
-    JSONAlignmentConfig,
 )
 from notarius.orchestration.constants import DataSource, AssetLayer
 from notarius.orchestration.utils import AssetKeyHelper
@@ -20,7 +18,7 @@ PRED__DEANERY_FILLED_DATASET__PYDANTIC__OP_CONFIG = {
         "pred",
         "deanery_filled_dataset",
         "pydantic",
-    ): {"config": DeaneryFillingConfig().model_dump()}
+    ): {"config": {}}
 }
 
 """
@@ -48,7 +46,7 @@ GT__ALIGNED_SOURCE_DATASET__PYDANTIC__OP_CONFIG: dict[
         "gt",
         "aligned_source_dataset",
         "pydantic",
-    ): {"config": JSONAlignmentConfig().model_dump()}
+    ): {"config": {}}
 }
 
 """
@@ -63,5 +61,5 @@ GT__ALIGNED_PARSED_DATASET__PYDANTIC__OP_CONFIG = {
         "gt",
         "aligned_parsed_dataset",
         "pydantic",
-    ): {"config": JSONAlignmentConfig().model_dump()}
+    ): {"config": {}}
 }

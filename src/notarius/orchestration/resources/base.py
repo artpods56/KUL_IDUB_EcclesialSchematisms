@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
+from notarius.application.ports.outbound.cached_engine import ResponseValidator
 import pandas as pd
 import wandb
 import weave
@@ -13,6 +14,7 @@ from PIL import Image
 from pydantic import PrivateAttr
 
 from notarius.application import ports
+from notarius.domain.protocols import BaseResponse
 from notarius.infrastructure.cache.storage import get_image_hash
 from notarius.infrastructure.config.manager import config_manager
 from notarius.infrastructure.persistence.storage import ImageRepository
@@ -24,7 +26,11 @@ from notarius.infrastructure.config.constants import (
     ModelsConfigSubtype,
 )
 from notarius.infrastructure.cache.backends.llm import create_llm_cache_backend
-from notarius.infrastructure.llm.engine_adapter import LLMEngine, CachedLLMEngine
+from notarius.infrastructure.llm.engine_adapter import (
+    LLMEngine,
+    CachedLLMEngine,
+    StructuredResponseValidator,
+)
 from notarius.infrastructure.ml_models.lmv3.engine_adapter import LMv3Engine
 from notarius.infrastructure.ocr.engine_adapter import OCREngine
 from notarius.schemas.configs import (
@@ -155,17 +161,31 @@ class LLMEngineResource(dg.ConfigurableResource[LLMEngine]):
         return self._engine_config
 
     def get_engine(
-        self, cached: bool = False, images_repository: ImageRepository | None = None
+        self,
+        cached: bool = False,
+        images_repository: ImageRepository | None = None,
+        model_name: str | None = None,
+        response_validator: ResponseValidator[BaseResponse[Any]] | None = None,
     ) -> LLMEngine | CachedLLMEngine:
         """Get the LLM engine instance.
 
         Args:
             cached: If True, returns a CachedEngine wrapper for automatic caching.
+            images_repository: Required when cached=True for image deduplication.
+            model_name: Override the model name from config. If None, uses config default.
+            response_validator: for llm engine
+
 
         Returns:
             LLMEngine if cached=False, CachedEngine wrapper if cached=True.
         """
-        engine = LLMEngine.from_config(config=self.get_engine_config().model_copy())
+        config = self.get_engine_config().model_copy()
+
+        if model_name:
+            backend_type = config.backend.type
+            config.clients[backend_type].model = model_name
+
+        engine = LLMEngine.from_config(config=config)
 
         if cached:
             if images_repository is None:
@@ -181,6 +201,7 @@ class LLMEngineResource(dg.ConfigurableResource[LLMEngine]):
                 cache_backend=backend,
                 key_generator=keygen,
                 enabled=True,
+                response_validator=response_validator,
             )
         else:
             return engine
