@@ -3,10 +3,9 @@ from pathlib import Path
 from typing import final, cast, override
 from dataclasses import dataclass, field
 
-import pdfplumber
 from PIL import Image
-
-from notarius.application import ports
+from notarius.application.ports.outbound.pdf_ingestor import PDFIngestor
+from notarius.application.ports.outbound.storage import AbstractFileRepository
 from notarius.application.use_cases.use_case import (
     BaseRequest,
     BaseResponse,
@@ -45,47 +44,51 @@ class IngestPDFResponse(BaseResponse):
 class IngestPDFUseCase(BaseUseCase[IngestPDFRequest, IngestPDFResponse]):
     def __init__(
         self,
-        storage: ports.FileStorage,
-        image_repository: ports.AbstractFileRepository[Image.Image],
+        pdf_ingestor: PDFIngestor,
+        image_repository: AbstractFileRepository[Image.Image],
     ):
-        self.storage = storage
+        self.pdf_ingestor = pdf_ingestor
         self.image_repository = image_repository
 
     def _ingest_pdf(self, pdf_path: Path) -> list[BaseDataItem]:
+        """Ingest a single PDF and create BaseDataItems for each page.
+
+        Args:
+            pdf_path: Path to the PDF file
+
+        Returns:
+            List of BaseDataItem objects, one per page
+        """
         items: list[BaseDataItem] = []
 
-        with self.storage.load(pdf_path) as pdf_stream:
-            with pdfplumber.open(cast(io.BytesIO, pdf_stream)) as pdf:
-                for i, page in enumerate(pdf.pages):
-                    text = page.extract_text()
-                    image = page.to_image().original
+        # Use injected pdf_ingestor to extract pages
+        pages = self.pdf_ingestor.ingest(pdf_path)
 
-                    pdf_image_filename = f"{pdf_path.stem}_{i}"
+        for i, (text, image) in enumerate(pages):
+            pdf_image_filename = f"{pdf_path.stem}_{i}"
 
-                    if self.image_repository.exists(pdf_image_filename):
-                        image_path = self.image_repository.get_path(pdf_image_filename)
-                    else:
-                        image_path = self.image_repository.add(
-                            image, pdf_image_filename
-                        )
+            # Check if image already exists to avoid duplicates
+            if self.image_repository.exists(pdf_image_filename):
+                image_path = self.image_repository.get_path(pdf_image_filename)
+            else:
+                image_path = self.image_repository.add(image, pdf_image_filename)
 
-                    items.append(
-                        BaseDataItem(
-                            image_path=str(image_path),
-                            text=text,
-                            metadata=BaseMetaData(
-                                sample_id=i,
-                                filename=image_path.name,
-                                schematism_name=pdf_path.name,
-                            ),
-                        )
-                    )
+            items.append(
+                BaseDataItem(
+                    image_path=str(image_path),
+                    text=text,
+                    metadata=BaseMetaData(
+                        sample_id=i,
+                        filename=image_path.name,
+                        schematism_name=pdf_path.name,
+                    ),
+                )
+            )
 
         return items
 
     @override
     def execute(self, request: IngestPDFRequest) -> IngestPDFResponse:
-
         all_items: list[BaseDataItem] = []
         for pdf_path in request.get_pdf_paths():
             items = self._ingest_pdf(pdf_path)
