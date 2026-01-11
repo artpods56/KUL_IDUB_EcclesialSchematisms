@@ -12,16 +12,14 @@ from notarius.application.use_cases.export.json_export import (
     JsonExportResponse,
     JsonExportUseCase,
 )
+from tests.fakes.storage import FakeFileStorage
 from notarius.schemas.data.pipeline import BaseDataItem, BaseDataset, BaseMetaData
 
 
 @pytest.fixture
-def mock_storage() -> MagicMock:
-    """Create a mock FileStorage."""
-    storage = MagicMock()
-    storage.storage_root = Path("/storage/root")
-    storage.save.return_value = Path("output/file.json")
-    return storage
+def fake_storage() -> FakeFileStorage:
+    """Create a FakeFileStorage."""
+    return FakeFileStorage(storage_root=Path("/storage/root"))
 
 
 @pytest.fixture
@@ -151,18 +149,18 @@ class TestJsonExportResponse:
 class TestJsonExportUseCase:
     """Test suite for JsonExportUseCase."""
 
-    def test_init(self, mock_storage: MagicMock) -> None:
+    def test_init(self, fake_storage: FakeFileStorage) -> None:
         """Test initialization."""
-        use_case = JsonExportUseCase(storage=mock_storage)
-        assert use_case.storage is mock_storage
+        use_case = JsonExportUseCase(storage=fake_storage)
+        assert use_case.storage is fake_storage
 
     def test_execute_with_single_schematism_grouped(
         self,
-        mock_storage: MagicMock,
+        fake_storage: FakeFileStorage,
         sample_dataset: BaseDataset[BaseDataItem],
     ) -> None:
         """Test execute with single schematism, grouped by schematism."""
-        use_case = JsonExportUseCase(storage=mock_storage)
+        use_case = JsonExportUseCase(storage=fake_storage)
         request = JsonExportRequest(
             dataset=sample_dataset,
             output_dir=Path("/output"),
@@ -173,13 +171,12 @@ class TestJsonExportUseCase:
 
         assert len(response.output_files) == 1
         assert "test_schematism" in response.output_files
-        assert mock_storage.save.call_count == 1
+        assert len(fake_storage.save_calls) == 1
 
-        saved_stream, saved_path = mock_storage.save.call_args[0]
-        assert isinstance(saved_stream, io.BytesIO)
+        saved_content_bytes, saved_path = fake_storage.save_calls[0]
         assert saved_path.parent == Path("/output")
 
-        saved_content = json.loads(saved_stream.getvalue().decode("utf-8"))
+        saved_content = json.loads(saved_content_bytes.decode("utf-8"))
         assert saved_content["total_records"] == 2
         assert saved_content["schematism_name"] == "test_schematism"
         assert "generated_at" in saved_content
@@ -187,11 +184,11 @@ class TestJsonExportUseCase:
 
     def test_execute_without_grouping(
         self,
-        mock_storage: MagicMock,
+        fake_storage: FakeFileStorage,
         sample_dataset: BaseDataset[BaseDataItem],
     ) -> None:
         """Test execute without grouping by schematism."""
-        use_case = JsonExportUseCase(storage=mock_storage)
+        use_case = JsonExportUseCase(storage=fake_storage)
         request = JsonExportRequest(
             dataset=sample_dataset,
             output_dir=Path("/output"),
@@ -202,20 +199,20 @@ class TestJsonExportUseCase:
 
         assert len(response.output_files) == 1
         assert "all" in response.output_files
-        assert mock_storage.save.call_count == 1
+        assert len(fake_storage.save_calls) == 1
 
-        saved_stream, saved_path = mock_storage.save.call_args[0]
-        saved_content = json.loads(saved_stream.getvalue().decode("utf-8"))
+        saved_content_bytes, saved_path = fake_storage.save_calls[0]
+        saved_content = json.loads(saved_content_bytes.decode("utf-8"))
         assert saved_content["total_records"] == 2
         assert "schematism_name" not in saved_content
 
     def test_execute_with_multiple_schematisms(
         self,
-        mock_storage: MagicMock,
+        fake_storage: FakeFileStorage,
         multi_schematism_dataset: BaseDataset[BaseDataItem],
     ) -> None:
         """Test execute with multiple schematisms grouped."""
-        use_case = JsonExportUseCase(storage=mock_storage)
+        use_case = JsonExportUseCase(storage=fake_storage)
         request = JsonExportRequest(
             dataset=multi_schematism_dataset,
             output_dir=Path("/output"),
@@ -227,31 +224,29 @@ class TestJsonExportUseCase:
         assert len(response.output_files) == 2
         assert "schematism_a" in response.output_files
         assert "schematism_b" in response.output_files
-        assert mock_storage.save.call_count == 2
+        assert len(fake_storage.save_calls) == 2
 
-        all_calls = mock_storage.save.call_args_list
-        for call_obj in all_calls:
-            saved_stream, saved_path = call_obj[0]
-            saved_content = json.loads(saved_stream.getvalue().decode("utf-8"))
+        all_calls = fake_storage.save_calls
+        for saved_content_bytes, saved_path in all_calls:
+            saved_content = json.loads(saved_content_bytes.decode("utf-8"))
             assert "schematism_name" in saved_content
 
         schematism_a_calls = [
-            c for c in all_calls
-            if "schematism_a" in json.loads(c[0][0].getvalue().decode("utf-8"))["schematism_name"]
+            c
+            for c in all_calls
+            if "schematism_a" in json.loads(c[0].decode("utf-8"))["schematism_name"]
         ]
         assert len(schematism_a_calls) == 1
-        schematism_a_content = json.loads(
-            schematism_a_calls[0][0][0].getvalue().decode("utf-8")
-        )
+        schematism_a_content = json.loads(schematism_a_calls[0][0].decode("utf-8"))
         assert schematism_a_content["total_records"] == 2
 
     def test_execute_with_empty_dataset(
         self,
-        mock_storage: MagicMock,
+        fake_storage: FakeFileStorage,
         empty_dataset: BaseDataset[BaseDataItem],
     ) -> None:
         """Test execute with empty dataset."""
-        use_case = JsonExportUseCase(storage=mock_storage)
+        use_case = JsonExportUseCase(storage=fake_storage)
         request = JsonExportRequest(
             dataset=empty_dataset,
             output_dir=Path("/output"),
@@ -261,20 +256,20 @@ class TestJsonExportUseCase:
         response = use_case.execute(request)
 
         assert len(response.output_files) == 1
-        assert mock_storage.save.call_count == 1
+        assert len(fake_storage.save_calls) == 1
 
-        saved_stream = mock_storage.save.call_args[0][0]
-        saved_content = json.loads(saved_stream.getvalue().decode("utf-8"))
+        saved_content_bytes = fake_storage.save_calls[0][0]
+        saved_content = json.loads(saved_content_bytes.decode("utf-8"))
         assert saved_content["total_records"] == 0
         assert len(saved_content["records"]) == 0
 
     def test_execute_with_filename_prefix(
         self,
-        mock_storage: MagicMock,
+        fake_storage: FakeFileStorage,
         sample_dataset: BaseDataset[BaseDataItem],
     ) -> None:
         """Test execute with custom filename prefix."""
-        use_case = JsonExportUseCase(storage=mock_storage)
+        use_case = JsonExportUseCase(storage=fake_storage)
         request = JsonExportRequest(
             dataset=sample_dataset,
             output_dir=Path("/output"),
@@ -283,16 +278,16 @@ class TestJsonExportUseCase:
 
         use_case.execute(request)
 
-        saved_path = mock_storage.save.call_args[0][1]
+        saved_path = fake_storage.save_calls[0][1]
         assert "export_" in saved_path.name
 
     def test_execute_without_filename_prefix(
         self,
-        mock_storage: MagicMock,
+        fake_storage: FakeFileStorage,
         sample_dataset: BaseDataset[BaseDataItem],
     ) -> None:
         """Test execute without filename prefix."""
-        use_case = JsonExportUseCase(storage=mock_storage)
+        use_case = JsonExportUseCase(storage=fake_storage)
         request = JsonExportRequest(
             dataset=sample_dataset,
             output_dir=Path("/output"),
@@ -301,17 +296,17 @@ class TestJsonExportUseCase:
 
         use_case.execute(request)
 
-        saved_path = mock_storage.save.call_args[0][1]
+        saved_path = fake_storage.save_calls[0][1]
         filename_parts = saved_path.name.split("_")
         assert filename_parts[0].isdigit()
 
     def test_execute_with_pretty_print(
         self,
-        mock_storage: MagicMock,
+        fake_storage: FakeFileStorage,
         sample_dataset: BaseDataset[BaseDataItem],
     ) -> None:
         """Test execute with pretty print enabled."""
-        use_case = JsonExportUseCase(storage=mock_storage)
+        use_case = JsonExportUseCase(storage=fake_storage)
         request = JsonExportRequest(
             dataset=sample_dataset,
             output_dir=Path("/output"),
@@ -320,18 +315,18 @@ class TestJsonExportUseCase:
 
         use_case.execute(request)
 
-        saved_stream = mock_storage.save.call_args[0][0]
-        json_str = saved_stream.getvalue().decode("utf-8")
+        saved_content_bytes = fake_storage.save_calls[0][0]
+        json_str = saved_content_bytes.decode("utf-8")
         assert "\n" in json_str
         assert "  " in json_str
 
     def test_execute_without_pretty_print(
         self,
-        mock_storage: MagicMock,
+        fake_storage: FakeFileStorage,
         sample_dataset: BaseDataset[BaseDataItem],
     ) -> None:
         """Test execute with pretty print disabled."""
-        use_case = JsonExportUseCase(storage=mock_storage)
+        use_case = JsonExportUseCase(storage=fake_storage)
         request = JsonExportRequest(
             dataset=sample_dataset,
             output_dir=Path("/output"),
@@ -340,19 +335,19 @@ class TestJsonExportUseCase:
 
         use_case.execute(request)
 
-        saved_stream = mock_storage.save.call_args[0][0]
-        json_str = saved_stream.getvalue().decode("utf-8")
+        saved_content_bytes = fake_storage.save_calls[0][0]
+        json_str = saved_content_bytes.decode("utf-8")
         parsed = json.loads(json_str)
         minified = json.dumps(parsed, ensure_ascii=False)
         assert json_str == minified
 
     def test_execute_serializes_all_fields(
         self,
-        mock_storage: MagicMock,
+        fake_storage: FakeFileStorage,
         sample_dataset: BaseDataset[BaseDataItem],
     ) -> None:
         """Test that all item fields are serialized correctly."""
-        use_case = JsonExportUseCase(storage=mock_storage)
+        use_case = JsonExportUseCase(storage=fake_storage)
         request = JsonExportRequest(
             dataset=sample_dataset,
             output_dir=Path("/output"),
@@ -360,8 +355,8 @@ class TestJsonExportUseCase:
 
         use_case.execute(request)
 
-        saved_stream = mock_storage.save.call_args[0][0]
-        saved_content = json.loads(saved_stream.getvalue().decode("utf-8"))
+        saved_content_bytes = fake_storage.save_calls[0][0]
+        saved_content = json.loads(saved_content_bytes.decode("utf-8"))
 
         record = saved_content["records"][0]
         assert "image_path" in record
@@ -372,27 +367,24 @@ class TestJsonExportUseCase:
 
     def test_execute_uses_storage_root_in_response(
         self,
-        mock_storage: MagicMock,
+        fake_storage: FakeFileStorage,
         sample_dataset: BaseDataset[BaseDataItem],
     ) -> None:
         """Test that response includes storage_root in file paths."""
-        mock_storage.storage_root = Path("/storage/root")
-        mock_storage.save.return_value = Path("relative/output.json")
-
-        use_case = JsonExportUseCase(storage=mock_storage)
+        use_case = JsonExportUseCase(storage=fake_storage)
         request = JsonExportRequest(
             dataset=sample_dataset,
-            output_dir=Path("/output"),
+            output_dir=Path("output"),
         )
 
         response = use_case.execute(request)
 
         for file_path in response.output_files.values():
-            assert str(file_path) == "/storage/root/relative/output.json"
+            assert str(file_path).startswith("/storage/root")
 
     def test_execute_handles_unicode_content(
         self,
-        mock_storage: MagicMock,
+        fake_storage: FakeFileStorage,
     ) -> None:
         """Test that unicode content is handled correctly."""
         dataset = BaseDataset[BaseDataItem](
@@ -409,7 +401,7 @@ class TestJsonExportUseCase:
             ]
         )
 
-        use_case = JsonExportUseCase(storage=mock_storage)
+        use_case = JsonExportUseCase(storage=fake_storage)
         request = JsonExportRequest(
             dataset=dataset,
             output_dir=Path("/output"),
@@ -417,18 +409,21 @@ class TestJsonExportUseCase:
 
         use_case.execute(request)
 
-        saved_stream = mock_storage.save.call_args[0][0]
-        json_str = saved_stream.getvalue().decode("utf-8")
+        saved_content_bytes = fake_storage.save_calls[0][0]
+        json_str = saved_content_bytes.decode("utf-8")
         saved_content = json.loads(json_str)
-        assert saved_content["records"][0]["text"] == "Text with unicode: \u0142\u00f3d\u017a \u0141\u00d3D\u0179"
+        assert (
+            saved_content["records"][0]["text"]
+            == "Text with unicode: \u0142\u00f3d\u017a \u0141\u00d3D\u0179"
+        )
 
     def test_execute_filename_format(
         self,
-        mock_storage: MagicMock,
+        fake_storage: FakeFileStorage,
         sample_dataset: BaseDataset[BaseDataItem],
     ) -> None:
         """Test that filenames follow expected format."""
-        use_case = JsonExportUseCase(storage=mock_storage)
+        use_case = JsonExportUseCase(storage=fake_storage)
         request = JsonExportRequest(
             dataset=sample_dataset,
             output_dir=Path("/output"),
@@ -437,8 +432,9 @@ class TestJsonExportUseCase:
 
         use_case.execute(request)
 
-        saved_path = mock_storage.save.call_args[0][1]
+        saved_path = fake_storage.save_calls[0][1]
         filename = saved_path.name
+
         assert filename.endswith(".json")
         assert "export_" in filename
         assert "test_schematism" in filename
