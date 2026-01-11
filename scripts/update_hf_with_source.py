@@ -3,14 +3,20 @@
 Script to update HuggingFace dataset with generated source (Latin) data.
 
 Usage:
-    python scripts/update_hf_with_source.py <path_to_json>
-    python scripts/update_hf_with_source.py data/outputs/source_generation/20251211_165730_wloclawek_1872_source.json
+    # Single file:
+    python scripts/update_hf_with_source.py data/outputs/source_generation/20251211_wloclawek_1872_source.json
+
+    # Directory (processes all *.json files):
+    python scripts/update_hf_with_source.py data/outputs/source_generation/complete/
+
+    # With options:
     python scripts/update_hf_with_source.py <path> --dry-run  # Preview without pushing
+    python scripts/update_hf_with_source.py <path> --pattern "*.json"  # Custom glob pattern
 """
 
 import asyncio
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from datasets import load_dataset, Dataset
@@ -20,7 +26,10 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from notarius.application.use_cases.export.update_hf_with_source import UpdateHFWithSourceRequest
+from notarius.application.use_cases.export.update_hf_with_source import (
+    UpdateHFWithSourceRequest,
+    UpdateHFDatasetWithSource,
+)
 from notarius.shared.logger import setup_logging, get_logger
 
 setup_logging()
@@ -44,19 +53,23 @@ app = typer.Typer(
 
 
 async def _run_update(
-    source_json: Path,
+    source_json_paths: list[Path],
     hf_repo: str,
     split: str,
     dry_run: bool,
     show_updated: bool,
     show_unchanged: bool,
-    commit_message: Optional[str],
+    commit_message: str | None,
 ) -> None:
     """Execute the update workflow."""
 
-    if not source_json.exists():
-        logger.error("Source JSON file not found", path=str(source_json))
-        raise typer.BadParameter(f"Source JSON file not found: {source_json}")
+    if not source_json_paths:
+        raise typer.BadParameter("No source JSON files found")
+
+    for path in source_json_paths:
+        if not path.exists():
+            logger.error("Source JSON file not found", path=str(path))
+            raise typer.BadParameter(f"Source JSON file not found: {path}")
 
     logger.info(
         "Loading HuggingFace dataset",
@@ -82,7 +95,7 @@ async def _run_update(
     use_case = UpdateHFDatasetWithSource()
 
     request = UpdateHFWithSourceRequest(
-        source_json_path=source_json,
+        source_json_paths=source_json_paths,
         hf_dataset=dataset,
         hf_repo_path=hf_repo,
         push_to_hub=not dry_run,
@@ -91,7 +104,7 @@ async def _run_update(
 
     logger.info(
         "Executing update",
-        source_json=str(source_json),
+        source_files=len(source_json_paths),
         dry_run=dry_run,
     )
 
@@ -139,7 +152,10 @@ async def _run_update(
     info_table.add_column("Key", style="dim")
     info_table.add_column("Value")
 
-    info_table.add_row("Source JSON", str(source_json.name))
+    if len(source_json_paths) == 1:
+        info_table.add_row("Source JSON", str(source_json_paths[0].name))
+    else:
+        info_table.add_row("Source Files", f"{len(source_json_paths)} JSON files")
     info_table.add_row("HuggingFace Repo", hf_repo)
     info_table.add_row("Split", split)
 
@@ -195,13 +211,13 @@ async def _run_update(
 
 @app.command()
 def main(
-    source_json: Annotated[
+    source_path: Annotated[
         Path,
         typer.Argument(
-            help="Path to the generated source JSON file",
+            help="Path to a source JSON file or directory containing JSON files",
             exists=True,
             file_okay=True,
-            dir_okay=False,
+            dir_okay=True,
             readable=True,
             resolve_path=True,
         ),
@@ -222,6 +238,14 @@ def main(
             help="Dataset split to update",
         ),
     ] = "train",
+    pattern: Annotated[
+        str,
+        typer.Option(
+            "--pattern",
+            "-p",
+            help="Glob pattern for finding JSON files in directory",
+        ),
+    ] = "*.json",
     dry_run: Annotated[
         bool,
         typer.Option(
@@ -246,7 +270,7 @@ def main(
         ),
     ] = False,
     commit_message: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--commit-message",
             "-m",
@@ -257,8 +281,12 @@ def main(
     """
     Update HuggingFace dataset with generated source (Latin) data.
 
-    Loads source records from a JSON file and updates the HuggingFace dataset
+    Loads source records from JSON file(s) and updates the HuggingFace dataset
     by matching samples using schematism_name + filename as lookup key.
+
+    Accepts either a single JSON file or a directory containing JSON files.
+    When a directory is provided, all files matching the pattern (default: *.json)
+    will be processed.
 
     Statistics are tracked for:
     - Samples matched (key found in source data)
@@ -266,9 +294,23 @@ def main(
     - Samples unchanged (key matched but content identical)
     - Samples not found (key not in source data)
     """
+    # Resolve source paths
+    if source_path.is_file():
+        source_json_paths = [source_path]
+    else:
+        source_json_paths = sorted(source_path.glob(pattern))
+        if not source_json_paths:
+            console.print(
+                f"[red]No files matching pattern '{pattern}' found in {source_path}[/red]"
+            )
+            raise typer.Exit(1)
+        console.print(
+            f"Found [bold]{len(source_json_paths)}[/bold] JSON files in {source_path}"
+        )
+
     asyncio.run(
         _run_update(
-            source_json=source_json,
+            source_json_paths=source_json_paths,
             hf_repo=hf_repo,
             split=split,
             dry_run=dry_run,
