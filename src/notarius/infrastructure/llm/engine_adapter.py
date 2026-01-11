@@ -1,16 +1,27 @@
 """Clean LLM Engine adapter using refactored components."""
 
 from dataclasses import dataclass
-from typing import Self, final, override, Protocol, runtime_checkable, cast, Any
+from typing import (
+    Self,
+    final,
+    override,
+    Protocol,
+    runtime_checkable,
+    cast,
+    Any,
+)
 
 from tenacity import (
     retry,
+    retry_if_result,
     stop_after_attempt,
     wait_exponential,
 )
 from pydantic import BaseModel
-
-from notarius.application.ports.outbound.cached_engine import CachedEngine
+from notarius.application.ports.outbound.cached_engine import (
+    CachedEngine,
+    ResponseValidator,
+)
 from notarius.application.ports.outbound.engine import (
     ConfigurableEngine,
     track_stats,
@@ -26,6 +37,10 @@ from notarius.infrastructure.llm.providers.factory import llm_provider_factory
 from notarius.schemas.configs import LLMEngineConfig
 from notarius.schemas.configs.llm_model_config import ClientConfig, BackendType
 from notarius.shared.constants import MAX_LLM_RETRIES
+
+from notarius.shared.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -45,6 +60,7 @@ class CompletionResult[T: BaseModel](BaseResponse[BaseProviderResponse[T]]):
 
     output: BaseProviderResponse[T]
     conversation: Conversation
+    structured_output_expected: bool = False
 
     @property
     def updated_conversation(self) -> Conversation:
@@ -72,6 +88,39 @@ class LLMCompletionEngine(Protocol):
 
     @property
     def stats(self) -> Any: ...
+
+
+@final
+class StructuredResponseValidator(ResponseValidator[CompletionResult[BaseModel]]):
+    """Validator that ensures LLM responses have structured output.
+
+    Use this with CachedLLMEngine to automatically retry cached responses
+    that have None structured_response (e.g., from previous failed extractions).
+    """
+
+    @override
+    def is_valid(self, response: CompletionResult[BaseModel]) -> bool:
+        """Check if the response has a valid structured output."""
+        return response.output.structured_response is not None
+
+
+def _should_retry_none_structured(result: CompletionResult[BaseModel]) -> bool:
+    """Return True to trigger retry when structured output was expected but is None.
+
+    This handles cases where the LLM returns malformed JSON that can't be parsed
+    into the requested Pydantic schema.
+    """
+    if result.structured_output_expected and result.output.structured_response is None:
+        logger.warning(
+            "Structured output parsing failed, will retry",
+            text_response_preview=(
+                result.output.text_response[:200]
+                if result.output.text_response
+                else None
+            ),
+        )
+        return True
+    return False
 
 
 @final
@@ -120,6 +169,7 @@ class LLMEngine(
     @retry(
         stop=stop_after_attempt(MAX_LLM_RETRIES),
         wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_result(_should_retry_none_structured),
         reraise=True,
     )
     def process[T: BaseModel](
@@ -133,12 +183,14 @@ class LLMEngine(
         return CompletionResult[T](
             output=response,
             conversation=request.input,
+            structured_output_expected=request.structured_output is not None,
         )
 
     @override
     @retry(
         stop=stop_after_attempt(MAX_LLM_RETRIES),
         wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_result(_should_retry_none_structured),
         reraise=True,
     )
     @track_stats_async
@@ -153,6 +205,7 @@ class LLMEngine(
         return CompletionResult[T](
             output=response,
             conversation=request.input,
+            structured_output_expected=request.structured_output is not None,
         )
 
 

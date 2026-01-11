@@ -28,6 +28,7 @@ class CachedEngineStats(TypedDict):
     errors: int
     hits: int
     misses: int
+    invalidations: int
 
 
 class ConfigurableEngine[
@@ -90,7 +91,7 @@ def _create_base_stats() -> EngineStats:
 
 def _create_cached_stats() -> CachedEngineStats:
     """Create a fresh CachedEngineStats instance."""
-    return CachedEngineStats(calls=0, errors=0, hits=0, misses=0)
+    return CachedEngineStats(calls=0, errors=0, hits=0, misses=0, invalidations=0)
 
 
 AnyEngine = ConfigurableEngine[Any, Any, Any]

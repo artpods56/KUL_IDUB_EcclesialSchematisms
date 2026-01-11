@@ -3,7 +3,7 @@ from typing import final, override
 
 from openai import OpenAI, AsyncOpenAI, APIConnectionError
 from pydantic import BaseModel
-from structlog import get_logger
+from pydantic_core import ValidationError
 
 from notarius.application.ports.outbound.llm_provider import LLMProvider
 from notarius.domain.entities.messages import ChatMessageList
@@ -14,10 +14,10 @@ from notarius.infrastructure.llm.providers.openai_provider.translator import (
     messages_to_openai,
 )
 from notarius.schemas.configs.llm_model_config import ClientConfig
-from notarius.shared.logger import Logger
+from notarius.shared.logger import get_logger
 
 
-logger: Logger = get_logger(__name__)
+logger = get_logger(__name__)
 
 
 @final
@@ -81,13 +81,23 @@ class OpenAICompatibleProvider(LLMProvider[OpenAI]):
             openai_messages = messages_to_openai(messages)
 
             if text_format:
-                response = self.client.responses.parse(
-                    model=self.config.model,
-                    input=openai_messages,
-                    text_format=text_format,
-                    temperature=self.config.params.temperature,
-                    top_p=self.config.params.top_p,
-                )
+                try:
+                    response = self.client.responses.parse(  # [TODO] could probably switch to responses.create in the future because parse can throw on validation error inside the openai library
+                        model=self.config.model,
+                        input=openai_messages,
+                        text_format=text_format,
+                        temperature=self.config.params.temperature,
+                        top_p=self.config.params.top_p,
+                    )
+                except ValidationError as e:
+                    logger.warning(
+                        "Structured output validation failed inside OpenAI SDK",
+                        error=str(e),
+                    )
+                    return OpenAIResponse(
+                        structured_response=None,
+                        text_response=None,  # or stash raw text if available
+                    )
 
                 return OpenAIResponse[ResponseT](
                     structured_response=response.output_parsed, text_response=None
@@ -106,6 +116,7 @@ class OpenAICompatibleProvider(LLMProvider[OpenAI]):
             logger.error(f"Connection error while generating output from OpenAI: {e}")
             raise
 
+    @override
     async def generate_response_async[ResponseT: BaseModel](
         self,
         messages: ChatMessageList,

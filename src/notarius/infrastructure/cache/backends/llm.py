@@ -165,6 +165,18 @@ class LLMCacheBackend[T: BaseModel](CacheBackend[CompletionResult[T]]):
 
         return self.cache.set(key, modified_value)
 
+    @override
+    def delete(self, key: str) -> bool:
+        """Delete a cached entry by key.
+
+        Args:
+            key: The cache key to delete
+
+        Returns:
+            True if the key was found and deleted, False otherwise
+        """
+        return self.cache.delete(key)
+
 
 def create_llm_cache_backend[T: BaseModel](
     model_name: str,

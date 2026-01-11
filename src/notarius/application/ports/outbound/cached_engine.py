@@ -39,6 +39,26 @@ class CacheKeyGenerator[RequestT: BaseRequest[Any]](Protocol):
 
 
 @runtime_checkable
+class ResponseValidator[ResponseT: BaseResponse[Any]](Protocol):
+    """Protocol for validating cached responses before use.
+
+    Implementations can check if a cached response is valid/usable.
+    Invalid responses will be treated as cache misses and retried.
+    """
+
+    def is_valid(self, response: ResponseT) -> bool:
+        """Check if the cached response is valid.
+
+        Args:
+            response: The cached response to validate
+
+        Returns:
+            True if valid and can be used, False to trigger retry
+        """
+        ...
+
+
+@runtime_checkable
 class CacheBackend[ResponseT: BaseResponse[Any]](Protocol):
     """Protocol for cache storage backends."""
 
@@ -48,6 +68,17 @@ class CacheBackend[ResponseT: BaseResponse[Any]](Protocol):
 
     def set(self, key: str, value: ResponseT) -> bool:
         """Store structured_response in cache."""
+        ...
+
+    def delete(self, key: str) -> bool:
+        """Delete a cached entry by key.
+
+        Args:
+            key: The cache key to delete
+
+        Returns:
+            True if the key was found and deleted, False otherwise
+        """
         ...
 
 
@@ -86,6 +117,7 @@ class CachedEngine[
         cache_backend: CacheBackend[ResponseT],
         key_generator: CacheKeyGenerator[RequestT],
         enabled: bool = True,
+        response_validator: ResponseValidator[ResponseT] | None = None,
     ):
         """
         Initialize the cached engine wrapper.
@@ -95,11 +127,14 @@ class CachedEngine[
             cache_backend: Cache storage implementation
             key_generator: Strategy for generating cache keys
             enabled: Whether caching is enabled
+            response_validator: Optional validator to check cached responses.
+                If validation fails, the cached entry is deleted and retried.
         """
         self._engine = engine
         self._cache = cache_backend
         self._key_generator = key_generator
         self._enabled = enabled
+        self._validator = response_validator
         self._stats: CachedEngineStats = _create_cached_stats()
 
     @classmethod
@@ -127,13 +162,25 @@ class CachedEngine[
 
             cached_response = self._cache.get(cache_key)
             if cached_response is not None:
-                self._stats["hits"] += 1
-                logger.debug(
-                    "Cache hit",
-                    key=cache_key[:16],
-                    engine_type=type(self._engine).__name__,
-                )
-                return cached_response
+                # Validate cached response if validator is provided
+                if self._validator is not None and not self._validator.is_valid(
+                    cached_response
+                ):
+                    logger.warning(
+                        "Invalid cached response, deleting and retrying",
+                        key=cache_key[:16],
+                        engine_type=type(self._engine).__name__,
+                    )
+                    self._cache.delete(cache_key)
+                    self._stats["invalidations"] += 1
+                else:
+                    self._stats["hits"] += 1
+                    logger.debug(
+                        "Cache hit",
+                        key=cache_key[:16],
+                        engine_type=type(self._engine).__name__,
+                    )
+                    return cached_response
 
             # Cache miss - process with underlying engine
             self._stats["misses"] += 1
@@ -193,13 +240,29 @@ class CachedEngine[
 
             cached_response = await asyncio.to_thread(self._cache.get, cache_key)
             if cached_response is not None:
-                self._stats["hits"] += 1
-                logger.debug(
-                    "Cache hit",
-                    key=cache_key[:16],
-                    engine_type=type(self._engine).__name__,
+                # Validate cached response if validator is provided
+                is_valid = (
+                    self._validator is None
+                    or await asyncio.to_thread(
+                        self._validator.is_valid, cached_response
+                    )
                 )
-                return cached_response
+                if not is_valid:
+                    logger.warning(
+                        "Invalid cached response, deleting and retrying",
+                        key=cache_key[:16],
+                        engine_type=type(self._engine).__name__,
+                    )
+                    await asyncio.to_thread(self._cache.delete, cache_key)
+                    self._stats["invalidations"] += 1
+                else:
+                    self._stats["hits"] += 1
+                    logger.debug(
+                        "Cache hit",
+                        key=cache_key[:16],
+                        engine_type=type(self._engine).__name__,
+                    )
+                    return cached_response
 
             # Cache miss - process with underlying engine
             self._stats["misses"] += 1
