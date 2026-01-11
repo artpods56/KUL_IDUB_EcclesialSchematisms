@@ -3,7 +3,7 @@ name: "default"
 force_download: false
 trust_remote_code: false
 keep_in_memory: false
-num_proc: 0
+num_proc: 8
 seed: 42
 split: "train"
 streaming: false
