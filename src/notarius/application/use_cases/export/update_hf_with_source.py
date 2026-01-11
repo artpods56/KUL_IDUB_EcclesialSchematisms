@@ -39,8 +39,8 @@ DatasetUpdatesStats = TypedDict(
 class UpdateHFWithSourceRequest(BaseRequest):
     """Request to update HuggingFace dataset with generated source data."""
 
-    # Path to the generated source JSON file (exported from a source generation pipeline)
-    source_json_path: Path
+    # Paths to the generated source JSON files (exported from source generation pipeline)
+    source_json_paths: list[Path]
     # HuggingFace dataset to update (loaded dataset object)
     hf_dataset: Dataset
     # HuggingFace repo path for pushing (e.g., "username/dataset-name")
@@ -73,10 +73,12 @@ class UpdateHFDatasetWithSource(
     Use case for updating a HuggingFace dataset with generated source (Latin) data.
 
     This use case:
-    1. Loads generated source data from a JSON file (exported from source generation)
+    1. Loads generated source data from JSON files (exported from source generation)
     2. Matches source records to HuggingFace dataset samples by schematism_name + filename
     3. Updates the 'source' column in the dataset
     4. Optionally pushes the updated dataset to HuggingFace Hub
+
+    Accepts multiple source JSON files to allow batch updates from multiple schematisms.
     """
 
     @staticmethod
@@ -106,27 +108,32 @@ class UpdateHFDatasetWithSource(
         Returns:
             Response with updated statistics and status
         """
-        logger.info("Loading source data from JSON", path=str(request.source_json_path))
-        source_data = self._load_source_json_data(request.source_json_path)
-
         source_by_key: dict[str, SchematismPage] = {}
-        records = source_data.get("records", [])
+        total_records_loaded = 0
 
-        for record in records:
-            schematism_name = record.get("schematism_name")
-            filename = record.get("filename")
+        for source_json_path in request.source_json_paths:
+            logger.info("Loading source data from JSON", path=str(source_json_path))
+            source_data = self._load_source_json_data(source_json_path)
+            records = source_data.get("records", [])
+            total_records_loaded += len(records)
 
-            if schematism_name and filename:
-                lookup_key = self._make_lookup_key(schematism_name, filename)
-                source_record = record.get("source", {})
-                source_by_key[lookup_key] = {
-                    "page_number": source_record.get("page_number"),
-                    "entries": source_record.get("entries", []),
-                }
+            for record in records:
+                metadata = record.get("metadata", {})
+                schematism_name = metadata.get("schematism_name")
+                filename = metadata.get("filename")
+
+                if schematism_name and filename:
+                    lookup_key = self._make_lookup_key(schematism_name, filename)
+                    predictions = record.get("predictions", {})
+                    source_by_key[lookup_key] = {
+                        "page_number": predictions.get("page_number"),
+                        "entries": predictions.get("entries", []),
+                    }
 
         logger.info(
             "Loaded source records",
-            total_records=len(records),
+            total_files=len(request.source_json_paths),
+            total_records=total_records_loaded,
             indexed_records=len(source_by_key),
         )
 
@@ -177,7 +184,12 @@ class UpdateHFDatasetWithSource(
             len(request.hf_dataset) - dataset_updates_stats["samples_matched"]
         )
 
-        default_commit_message = f"update(source): new: {dataset_updates_stats['samples_updated']}, source: {request.source_json_path.name}"
+        source_files_desc = (
+            request.source_json_paths[0].name
+            if len(request.source_json_paths) == 1
+            else f"{len(request.source_json_paths)} files"
+        )
+        default_commit_message = f"update(source): new: {dataset_updates_stats['samples_updated']}, source: {source_files_desc}"
 
         pushed_to_hub = False
         if request.push_to_hub:

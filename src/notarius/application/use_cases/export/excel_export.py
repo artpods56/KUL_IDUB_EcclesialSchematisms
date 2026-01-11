@@ -56,7 +56,7 @@ class ExcelExportUseCase(BaseUseCase[ExcelExportRequest, ExcelExportResponse]):
         file_path = request.output_dir / file_name
         sheets_written: list[str] = []
 
-        with pd.ExcelWriter(file_path, engine="xlsxwriter") as writer:
+        with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
             for key, group in request.dataframe.groupby(request.group_by_key):
                 sheet_name = str(key)
                 group.to_excel(

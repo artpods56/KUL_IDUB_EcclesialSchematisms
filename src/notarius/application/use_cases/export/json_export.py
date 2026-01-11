@@ -70,8 +70,9 @@ class JsonExportUseCase(BaseUseCase[JsonExportRequest, JsonExportResponse]):
                 indent=2 if request.pretty_print else None,
                 default=str,
             )
-            saved_path = self.storage.save(io.BytesIO(json_str.encode("utf-8")), file_path)
-
-            output_files[name] = self.storage.storage_root / saved_path
+            saved_path = self.storage.save(
+                io.BytesIO(json_str.encode("utf-8")), file_path
+            )
+            output_files[name] = saved_path
 
         return JsonExportResponse(output_files=output_files)
