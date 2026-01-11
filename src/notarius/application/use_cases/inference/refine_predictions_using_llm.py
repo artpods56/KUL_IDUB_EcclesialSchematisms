@@ -1,9 +1,9 @@
 """Use case for refining schematism predictions using LLM."""
 
+import asyncio
 from dataclasses import dataclass
+from itertools import chain
 from typing import final, override, Any
-
-from pydantic import BaseModel
 
 from notarius.application.services import (
     PageContentContextProvider,
@@ -15,12 +15,15 @@ from notarius.application.services.processors.dataset_processor import DatasetPr
 from notarius.application.use_cases.use_case import (
     BaseRequest,
     BaseResponse,
-    BaseUseCase,
+    AsyncBaseUseCase,
 )
 from notarius.schemas.data.pipeline import (
     PredictionDataItem,
     PredictionItemDataset,
 )
+from notarius.shared.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -51,7 +54,7 @@ PREDICTIONS_REFINEMENT_CONTEXT_PROVIDERS = ComposedContextProvider(
 
 @final
 class RefinePredictionsWithLLM(
-    BaseUseCase[RefinePredictionsRequest, RefinePredictionsResponse]
+    AsyncBaseUseCase[RefinePredictionsRequest, RefinePredictionsResponse]
 ):
 
     def __init__(
@@ -66,8 +69,13 @@ class RefinePredictionsWithLLM(
         self.dataset_processor = dataset_processor
 
     @override
-    def execute(self, request: RefinePredictionsRequest) -> RefinePredictionsResponse:
+    async def execute(
+        self, request: RefinePredictionsRequest
+    ) -> RefinePredictionsResponse:
         """Execute LLM prediction refinement workflow.
+
+        Processes schematism groups in parallel while keeping item processing
+        sequential within each group (required for context strategy).
 
         Args:
             request: Request containing datasets and prediction parameters
@@ -75,33 +83,58 @@ class RefinePredictionsWithLLM(
         Returns:
             Response with predicted dataset and execution statistics
         """
-        all_items: list[PredictionDataItem] = []
-
         if request.group_by_schematism_name:
-            for _, dataset in request.dataset.group_by_schematism():
-                results = self.dataset_processor.process_sequence(items=dataset.items)
-                for input_item, output in zip(dataset.items, results):
-                    all_items.append(
-                        PredictionDataItem(
-                            image_path=input_item.image_path,
-                            text=output.text,
-                            metadata=input_item.metadata,
-                            predictions=output.predictions,
-                        )
-                    )
-        else:
-            results = self.dataset_processor.process_sequence(
-                items=request.dataset.items
+            groups = list(request.dataset.group_by_schematism())
+            total_groups = len(groups)
+
+            logger.info(
+                "Starting parallel refinement",
+                total_schematisms=total_groups,
+                schematism_names=[name for name, _ in groups],
             )
-            for input_item, output in zip(request.dataset.items, results):
-                all_items.append(
+
+            async def process_group(
+                index: int, name: str, dataset: PredictionItemDataset
+            ) -> list[PredictionDataItem]:
+                logger.info(
+                    "Processing schematism",
+                    schematism_name=name,
+                    index=f"{index + 1}/{total_groups}",
+                    items_count=len(dataset.items),
+                )
+                results = await asyncio.to_thread(
+                    self.dataset_processor.process_sequence, dataset.items
+                )
+                return [
                     PredictionDataItem(
                         image_path=input_item.image_path,
                         text=output.text,
                         metadata=input_item.metadata,
                         predictions=output.predictions,
                     )
+                    for input_item, output in zip(dataset.items, results)
+                ]
+
+            group_results = await asyncio.gather(
+                *[
+                    process_group(i, name, dataset)
+                    for i, (name, dataset) in enumerate(groups)
+                ]
+            )
+            all_items = list(chain.from_iterable(group_results))
+        else:
+            results = await asyncio.to_thread(
+                self.dataset_processor.process_sequence, request.dataset.items
+            )
+            all_items = [
+                PredictionDataItem(
+                    image_path=input_item.image_path,
+                    text=output.text,
+                    metadata=input_item.metadata,
+                    predictions=output.predictions,
                 )
+                for input_item, output in zip(request.dataset.items, results)
+            ]
 
         return RefinePredictionsResponse(
             dataset=PredictionItemDataset(items=all_items),

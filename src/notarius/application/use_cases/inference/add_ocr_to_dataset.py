@@ -7,14 +7,23 @@ from typing import final, override, cast
 from notarius.infrastructure.persistence.storage import ImageRepository
 from structlog import get_logger
 
+from PIL import Image
+from notarius.application.ports.outbound.storage import AbstractFileRepository
 from notarius.application.ports.outbound.cached_engine import CachedEngine
+from notarius.application.ports.outbound.engine import (
+    ConfigurableEngine,
+    CachedEngineStats,
+)
 from notarius.application.use_cases.use_case import (
     BaseRequest,
     BaseResponse,
     BaseUseCase,
+    AsyncBaseUseCase,
 )
 from notarius.infrastructure.cache.backends.ocr import create_ocr_cache_backend
-from notarius.infrastructure.ocr import OCREngine, OCRRequest, OCRMode
+from notarius.infrastructure.ocr.engine_adapter import OCRRequest, OCRResponse
+from notarius.infrastructure.ocr import OCRMode
+from notarius.schemas.configs import PytesseractOCRConfig
 from notarius.infrastructure.ocr.types import SimpleOCRResult
 from notarius.schemas.data.pipeline import BaseDataset, BaseDataItem, BaseItemDataset
 from notarius.shared.logger import Logger
@@ -40,7 +49,9 @@ class EnrichWithOCRResponse(BaseResponse):
 
 
 @final
-class EnrichDatasetWithOCR(BaseUseCase[EnrichWithOCRRequest, EnrichWithOCRResponse]):
+class EnrichDatasetWithOCR(
+    AsyncBaseUseCase[EnrichWithOCRRequest, EnrichWithOCRResponse]
+):
     """
     Use case for enriching a dataset with OCR text predictions.
 
@@ -50,8 +61,8 @@ class EnrichDatasetWithOCR(BaseUseCase[EnrichWithOCRRequest, EnrichWithOCRRespon
 
     def __init__(
         self,
-        ocr_engine: OCREngine,
-        image_storage: ImageRepository,
+        ocr_engine: ConfigurableEngine[PytesseractOCRConfig, OCRRequest, OCRResponse],
+        image_storage: AbstractFileRepository[Image.Image],
         language: str = "lat+pol+rus",
         enable_cache: bool = True,
     ):
@@ -114,7 +125,7 @@ class EnrichDatasetWithOCR(BaseUseCase[EnrichWithOCRRequest, EnrichWithOCRRespon
 
         # Get stats from cached engine
         if isinstance(self.ocr_engine, CachedEngine):
-            stats = self.ocr_engine.stats
+            stats = cast(CachedEngineStats, self.ocr_engine.stats)
             ocr_executions = stats["misses"]
             cache_hits = stats["hits"]
         else:

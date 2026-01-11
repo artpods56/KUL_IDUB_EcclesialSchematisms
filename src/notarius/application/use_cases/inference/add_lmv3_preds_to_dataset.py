@@ -2,11 +2,17 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import final, override
-
+from typing import final, override, cast
 from structlog import get_logger
-
+from PIL import Image
 from notarius.application.ports.outbound.cached_engine import CachedEngine
+from notarius.application.ports.outbound.storage import AbstractFileRepository
+from notarius.application.ports.outbound.engine import (
+    ConfigurableEngine,
+    CachedEngineStats,
+)
+
+
 from notarius.application.use_cases.use_case import (
     BaseRequest,
     BaseResponse,
@@ -14,15 +20,17 @@ from notarius.application.use_cases.use_case import (
 )
 from notarius.infrastructure.cache.backends.lmv3 import create_lmv3_cache_backend
 from notarius.infrastructure.ml_models.lmv3.engine_adapter import (
-    LMv3Engine,
     LMv3Request,
+    LMv3Response,
 )
 from notarius.infrastructure.persistence.storage import ImageRepository
+from notarius.schemas.configs import BaseLMv3ModelConfig
 from notarius.schemas.data.pipeline import (
     BaseDataItem,
     BaseDataset,
     PredictionDataItem,
     PredictionItemDataset,
+    BaseItemDataset,
 )
 from notarius.shared.logger import Logger
 
@@ -33,14 +41,14 @@ logger: Logger = get_logger(__name__)
 class EnrichWithLMv3Request(BaseRequest):
     """Request to enrich dataset with LayoutLMv3 predictions."""
 
-    dataset: BaseDataset[BaseDataItem]
+    dataset: BaseItemDataset
 
 
 @dataclass
 class EnrichWithLMv3Response(BaseResponse):
     """Response containing LayoutLMv3-enriched dataset."""
 
-    dataset: BaseDataset[PredictionDataItem]
+    dataset: PredictionItemDataset
     lmv3_executions: int
     cache_hits: int
 
@@ -57,8 +65,8 @@ class EnrichDatasetWithLMv3(BaseUseCase[EnrichWithLMv3Request, EnrichWithLMv3Res
 
     def __init__(
         self,
-        lmv3_engine: LMv3Engine,
-        image_storage: ImageRepository,
+        lmv3_engine: ConfigurableEngine[BaseLMv3ModelConfig, LMv3Request, LMv3Response],
+        image_storage: AbstractFileRepository[Image.Image],
         checkpoint: str,
         enable_cache: bool = True,
     ):
@@ -86,7 +94,7 @@ class EnrichDatasetWithLMv3(BaseUseCase[EnrichWithLMv3Request, EnrichWithLMv3Res
             self.lmv3_engine = lmv3_engine
 
     @override
-    async def execute(self, request: EnrichWithLMv3Request) -> EnrichWithLMv3Response:
+    def execute(self, request: EnrichWithLMv3Request) -> EnrichWithLMv3Response:
         """
         Execute the LayoutLMv3 enrichment workflow with automatic caching.
 
@@ -122,7 +130,7 @@ class EnrichDatasetWithLMv3(BaseUseCase[EnrichWithLMv3Request, EnrichWithLMv3Res
 
         # Get stats from cached engine
         if isinstance(self.lmv3_engine, CachedEngine):
-            stats = self.lmv3_engine.stats
+            stats = cast(CachedEngineStats, self.lmv3_engine.stats)
             lmv3_executions = stats["misses"]
             cache_hits = stats["hits"]
         else:
