@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import Any, override
@@ -31,6 +32,34 @@ class HuggingFaceDatasetIOManager(ConfigurableIOManager):
 
         filepath = self._get_path(context)
         context.log.info(f"Saving Hugging Face Dataset to: {filepath}")
+
+        # Handle empty datasets separately due to HuggingFace bug with save_to_disk on empty datasets
+        if len(obj) == 0:
+            context.log.warning(
+                f"Dataset is empty (0 rows). Saving empty dataset marker."
+            )
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+
+            # Remove existing directory if it exists
+            if filepath.exists():
+                shutil.rmtree(filepath)
+
+            filepath.mkdir(parents=True, exist_ok=True)
+
+            # Save metadata about the empty dataset (schema, features, etc.)
+            empty_marker = filepath / ".empty_dataset"
+            metadata = {
+                "num_rows": 0,
+                "features": (
+                    {name: str(feature) for name, feature in obj.features.items()}
+                    if obj.features
+                    else {}
+                ),
+                "empty": True,
+            }
+            empty_marker.write_text(json.dumps(metadata, indent=2))
+            context.log.info(f"Saved empty dataset marker to: {empty_marker}")
+            return
 
         # Save to a temporary directory first to ensure atomicity
         # Use a unique temporary name to avoid collisions between runs/assets
@@ -70,6 +99,17 @@ class HuggingFaceDatasetIOManager(ConfigurableIOManager):
 
         if not filepath.exists():
             raise FileNotFoundError(f"Hugging Face Dataset not found at {filepath}")
+
+        # Check if this is an empty dataset marker
+        empty_marker = filepath / ".empty_dataset"
+        if empty_marker.exists():
+            context.log.warning(f"Loading empty dataset from marker file")
+            metadata = json.loads(empty_marker.read_text())
+            context.log.info(f"Empty dataset metadata: {metadata}")
+
+            # Create an empty dataset with the preserved schema if available
+            # For now, return a minimal empty dataset
+            return Dataset.from_dict({})
 
         return load_from_disk(str(filepath))
 

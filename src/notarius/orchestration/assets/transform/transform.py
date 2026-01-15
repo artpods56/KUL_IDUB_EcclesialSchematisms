@@ -73,7 +73,7 @@ def asset_factory__eval__aligned_dataframe_pandas(
         for item in dataset.items:
             rows.extend(FlatteningService.flatten_aligned_pages(item))
 
-        df = pd.DataFrame([row.model_dump() for row in rows])
+        df = pd.DataFrame(FlatteningService.to_ordered_dicts_aligned(rows))
 
         markdown_head = df.head(30).to_markdown()
         column_schema = TableSchema.from_name_type_dict(df.dtypes.astype(str).to_dict())
@@ -121,7 +121,7 @@ def asset_factory__pred__dataframe_pandas(asset_name: str, ins: Mapping[str, Ass
         for item in dataset.items:
             rows.extend(FlatteningService.flatten_prediction_data_item(item))
 
-        df = pd.DataFrame([flat_entry.model_dump() for flat_entry in rows])
+        df = pd.DataFrame(FlatteningService.to_ordered_dicts(rows))
 
         column_schema = TableSchema.from_name_type_dict(df.dtypes.astype(str).to_dict())
 
@@ -225,7 +225,9 @@ def asset_factory__base_dataset(
                         for schematism_name, dataset in combined_dataset.group_by_schematism()
                     }
                 ),
-                "random_sample": MetadataValue.json(random.choice(items).model_dump()),
+                "random_sample": MetadataValue.json(
+                    random.choice(items).model_dump() if items else {}
+                ),
             }
         )
         return combined_dataset
@@ -318,7 +320,9 @@ def asset_factory__ground_truth_dataset(
                         for schematism_name, ds in dataset.group_by_schematism()
                     }
                 ),
-                "random_sample": MetadataValue.json(random.choice(items).model_dump()),
+                "random_sample": MetadataValue.json(
+                    random.choice(items).model_dump() if items else {}
+                ),
             }
         )
         return dataset
@@ -416,7 +420,7 @@ def asset_factory__pred__dataset__pandas(
         for item in dataset.items:
             rows.extend(FlatteningService.flatten_prediction_data_item(item))
 
-        df = pd.DataFrame([row.model_dump() for row in rows])
+        df = pd.DataFrame(FlatteningService.to_ordered_dicts(rows))
 
         column_schema = TableSchema.from_name_type_dict(df.dtypes.astype(str).to_dict())
         preview = df.head(30).to_markdown()

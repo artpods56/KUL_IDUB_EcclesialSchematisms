@@ -21,6 +21,8 @@ from notarius.orchestration.constants import (
     Kinds,
 )
 
+from notarius.infrastructure.pdf import PDFPlumberIngestor
+
 
 class PdfToDatasetConfig(dg.Config):
     file_paths: list[str] | None = None
@@ -46,7 +48,6 @@ def raw__pdf__dataset(
     )
 
     # Import the concrete PDFPlumberIngestor implementation
-    from notarius.infrastructure.pdf import PDFPlumberIngestor
 
     pdf_ingestor = PDFPlumberIngestor(storage=file_storage)
 

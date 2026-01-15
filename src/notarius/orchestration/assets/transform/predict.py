@@ -125,6 +125,7 @@ async def pred__ocr_enriched_dataset__pydantic(
 
 
 class LMv3Config(dg.Config):
+    skip: bool = False
     checkpoint: str = "layoutlmv3_focalloss_4000"
     enable_cache: bool = True
 
@@ -146,6 +147,10 @@ async def pred__lmv3_enriched_dataset__pydantic(
     ocr_engine: dg.ResourceParam[OCREngine],
 ) -> PredictionItemDataset:
     # Get the actual engine instance from the resource
+
+    if config.skip:
+        return PredictionItemDataset.from_base_dataset(dataset)
+
     lmv3_model = lmv3_engine.get_engine(ocr_engine)
 
     # Use new CachedEngine pattern

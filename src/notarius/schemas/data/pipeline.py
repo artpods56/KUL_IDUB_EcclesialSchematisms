@@ -44,7 +44,7 @@ class HasGroundTruthMixin(BaseModel):
 
 
 class HasPredictionsMixin(BaseModel):
-    predictions: SchematismPage = Field(description="Prediction page")
+    predictions: SchematismPage | None = Field(description="Prediction page")
 
 
 class HasAlignedPagesMixin(BaseModel):
@@ -62,10 +62,6 @@ class PredictionDataItem(BaseDataItem, HasPredictionsMixin):
 
 
 class AlignedSchematismsDataItem(BaseDataItem, HasAlignedPagesMixin):
-    pass
-
-
-class EvaluationDataItem(BaseDataItem, HasGroundTruthMixin):
     pass
 
 
@@ -110,17 +106,23 @@ class GroundTruthItemDataset(BaseDataset[GroundTruthDataItem]):
 class PredictionItemDataset(BaseDataset[PredictionDataItem]):
     """Dataset containing prediction items."""
 
-    pass
+    @classmethod
+    def from_base_dataset(cls, base_dataset: BaseDataset[BaseDataItem]) -> Self:
+        return cls(
+            items=[
+                PredictionDataItem(
+                    predictions=None,
+                    image_path=item.image_path,
+                    text=item.text,
+                    metadata=item.metadata,
+                )
+                for item in base_dataset.items
+            ]
+        )
 
 
 class AlignedItemDataset(BaseDataset[AlignedSchematismsDataItem]):
     """Dataset containing aligned prediction/ground truth items."""
-
-    pass
-
-
-class EvaluationItemDataset(BaseDataset[EvaluationDataItem]):
-    """Dataset containing evaluation items."""
 
     pass
 

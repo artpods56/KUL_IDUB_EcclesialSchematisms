@@ -41,7 +41,10 @@ from notarius.orchestration.jobs.prediction_export import (
 )
 
 
-from notarius.orchestration.pipelines.prediction import prediction_pipeline_job
+from notarius.orchestration.pipelines.prediction import (
+    prediction_pipeline_job,
+    ALL_PREDICTION_ASSETS_WITH_CONFIGS,
+)
 from notarius.orchestration.pipelines.source_generation import (
     source_generation_job,
     ALL_SOURCE_GENERATION_ASSETS_WITH_CONFIGS,
@@ -63,26 +66,12 @@ llm_engine_resource = LLMEngineResource()
 
 defs = dg.Definitions(
     assets=[
-        # *ingestion_assets,
-        # *prediction_assets,
-        # *postprocessing_assets,
-        # *exporting_assets,
-        # *prediction_export_assets,
-        # source generation
-        # new assets
-        # pred__dataset__pandas,
-        # pred__excel_export_dataframe__pandas,
         *ALL_SOURCE_GENERATION_ASSETS_WITH_CONFIGS.keys(),
         *ALL_EVALUATION_ASSETS_WITH_CONFIGS.keys(),
+        *ALL_PREDICTION_ASSETS_WITH_CONFIGS.keys(),
     ],
     jobs=[
-        # ingestion_job,
-        # prediction_job,
-        # postprocessing_job,
-        # exporting_job,
-        # full_pipeline_job,
-        # prediction_export_job,
-        # prediction_pipeline_job,
+        prediction_pipeline_job,
         evaluation_job,
         source_generation_job,
     ],

@@ -42,6 +42,7 @@ class ResourceGroup:
 
 @final
 class JobType:
+    PREDICTION = "prediction"
     EVALUATION = "evaluation"
     SOURCE_GENERATION = "source_generation"
 
