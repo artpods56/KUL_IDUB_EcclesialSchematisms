@@ -2,16 +2,7 @@ import argparse
 import json
 from pathlib import Path
 
-from fastapi import FastAPI
-
-from notarius_api.v1.routes.prototype import router as prototype_router
-
-
-prototype_openapi_app = FastAPI(
-    title="Notarius Prototype API",
-    version="0.1.0",
-)
-prototype_openapi_app.include_router(prototype_router, prefix="/v1")
+from notarius_api.main import app
 
 
 def main() -> None:
@@ -25,7 +16,7 @@ def main() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(
         json.dumps(
-            prototype_openapi_app.openapi(),
+            app.openapi(),
             indent=2,
             sort_keys=True,
         )

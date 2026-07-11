@@ -8,9 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit --incremental false",
-    "generate:prototype-api:schema": "uv run --directory ../.. --package notarius-api python -m notarius_api.prototype_openapi apps/web/openapi/prototype.json",
-    "generate:prototype-api": "npm run generate:prototype-api:schema && openapi-typescript openapi/prototype.json --immutable --alphabetize --empty-objects-unknown -o src/lib/api/generated/prototype.ts",
-    "check:prototype-api": "npm run generate:prototype-api:schema && openapi-typescript openapi/prototype.json --immutable --alphabetize --empty-objects-unknown -o src/lib/api/generated/prototype.ts --check"
+    "generate:api:schema": "uv run --directory ../.. --package notarius-api python -m notarius_api.openapi apps/web/openapi/notarius.json",
+    "generate:api": "npm run generate:api:schema && openapi-typescript openapi/notarius.json --immutable --alphabetize --empty-objects-unknown -o src/lib/api/generated/notarius.ts",
+    "check:api": "npm run generate:api:schema && openapi-typescript openapi/notarius.json --immutable --alphabetize --empty-objects-unknown -o src/lib/api/generated/notarius.ts --check"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

@@ -1,3 +1,7 @@
+:root {
+  color-scheme: light dark;
+}
+
 @layer resets {
   *,
   *::before,
@@ -15,7 +19,7 @@
   body {
     line-height: 1.5;
     overflow: hidden;
-    background: #111214;
+    background: light-dark(#f7f8fa, #111214);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
@@ -49,14 +53,14 @@
  * uses for specificity. Kept minimal — only the states StyleX can't target.
  */
 .ns-tabs-trigger[data-active] {
-  background-color: #172036;
-  color: #e6e9f2;
-  box-shadow: inset 0 -2px 0 0 #8b93ff;
+  background-color: light-dark(#e8eaed, #172036);
+  color: light-dark(#1a1c20, #e6e9f2);
+  border-bottom: 2px solid light-dark(#6b52d4, #8b93ff);
 }
 
 .ns-select-item[data-highlighted] {
-  background-color: #1a2238;
-  color: #e6e9f2;
+  background-color: light-dark(#e8eaed, #1a2238);
+  color: light-dark(#1a1c20, #e6e9f2);
 }
 
 @keyframes ns-spin {
@@ -65,54 +69,7 @@
   }
 }
 
-@keyframes ns-panel-enter {
-  from {
-    opacity: 0;
-    transform: translateY(-6px) scale(0.985);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes ns-node-enter {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
-.react-flow__node {
-  animation: ns-node-enter 260ms ease-out both;
-}
-
-.react-flow__node:nth-of-type(2) {
-  animation-delay: 35ms;
-}
-
-.react-flow__node:nth-of-type(3) {
-  animation-delay: 70ms;
-}
-
-.react-flow__node:nth-of-type(4) {
-  animation-delay: 105ms;
-}
-
-.react-flow__handle {
-  transition: filter 120ms ease, transform 120ms ease;
-}
-
-.react-flow__handle:hover {
-  filter: brightness(1.3) drop-shadow(0 0 5px currentColor);
-}
-
 .react-flow__edge-path {
-  filter: drop-shadow(0 0 2px rgba(67, 197, 158, 0.42));
   transition: opacity 140ms ease, stroke-width 140ms ease;
 }
 
@@ -124,14 +81,14 @@
 .ns-flow-controls button {
   width: 30px;
   height: 30px;
-  border-bottom-color: rgba(255, 255, 255, 0.08);
+  border-bottom-color: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.08));
   background: transparent;
-  color: #9da1a8;
+  color: light-dark(#8b9099, #9da1a8);
 }
 
 .ns-flow-controls button:hover {
-  background: rgba(255, 255, 255, 0.07);
-  color: #f0f1f3;
+  background: light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.07));
+  color: light-dark(#1a1c20, #f0f1f3);
 }
 
 .ns-flow-controls svg {

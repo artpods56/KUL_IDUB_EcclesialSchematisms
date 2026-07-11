@@ -1,7 +1,7 @@
-# Notarius Studio — Prototype Workbench
+# Notarius Workbench
 
 A ComfyUI-like workbench for assembling typed artifact transformations over the
-Notarius prototype runtime. It is built with Next.js 16, StyleX, Base UI
+Notarius runtime. It is built with Next.js 16, StyleX, Base UI
 primitives, React Flow, and SWR.
 
 The default slice is a buildable arithmetic field-projection workflow. It opens
@@ -21,40 +21,38 @@ a separate inspector sidebar.
 
 ## Source of truth
 
-The authoritative backend contract for this app is the prototype implementation:
+The authoritative backend contract for this app is the workbench implementation:
 
-- `libs/core/src/notarius_core/prototype/` owns node, port, artifact, resolver,
+- `libs/core/src/notarius_core/` owns node, port, artifact, resolver,
   persistence, and runtime behavior.
-- `apps/api/src/notarius_api/schemas/prototype.py` owns the HTTP models.
-- `apps/api/src/notarius_api/v1/routes/prototype.py` exposes the prototype node
+- `apps/api/src/notarius_api/schemas/workbench.py` owns the HTTP models.
+- `apps/api/src/notarius_api/v1/routes/workbench.py` exposes the node
   catalog and execution routes.
 
-The older workflow, project, and artifact routes are not part of the web
-workbench contract.
+The web workbench depends on no routes outside this contract.
 
 ## Generated transport types
 
-The web transport contract is generated from an isolated FastAPI app containing
-only `/v1/prototype/*` routes:
+The web transport contract is generated from the canonical FastAPI app:
 
 ```bash
 cd apps/web
-npm run generate:prototype-api
+npm run generate:api
 ```
 
 This updates:
 
-- `openapi/prototype.json`
-- `src/lib/api/generated/prototype.ts`
+- `openapi/notarius.json`
+- `src/lib/api/generated/notarius.ts`
 
 Refresh the OpenAPI JSON and check that the committed TypeScript types are
 current:
 
 ```bash
-npm run check:prototype-api
+npm run check:api
 ```
 
-Do not hand-edit the generated TypeScript file. `prototype-contract.ts` supplies
+Do not hand-edit the generated TypeScript file. `contract.ts` supplies
 short application-facing aliases derived from generated operations and schemas.
 
 The node, port, request, and response envelopes are generated from the API.
@@ -75,8 +73,7 @@ Requirements:
 
 ```bash
 cd apps/web
-cp .env.local.example .env.local  # optional
-npm install
+npm ci
 npm run dev
 ```
 
@@ -87,7 +84,7 @@ sent to the browser.
 
 ## Current flow
 
-1. `GET /v1/prototype/nodes` returns the catalog, typed ports, JSON schemas, and
+1. `GET /v1/nodes` returns the catalog, typed ports, JSON schemas, and
    artifact type definitions.
 2. The canvas opens with Number 9, Number 4, Add & subtract, and Multiply but no
    connections. The user may wire the ports manually or choose **Wire example**.
@@ -99,10 +96,10 @@ sent to the browser.
    populated from the artifact type's declared field projections.
 6. Editing a node's schema-derived controls invalidates stale run results before
    the next execution.
-7. `POST /v1/prototype/run` validates the graph and projection paths before
-   executing it through the prototype runtime.
+7. `POST /v1/runs` validates the graph and projection paths before
+   executing it through the runtime.
 8. Node results expose values and content URLs served by
-   `GET /v1/prototype/artifacts/{artifact_id}/content`.
+   `GET /v1/artifacts/{artifact_id}/content`.
 
 ## Project layout
 
@@ -111,21 +108,22 @@ src/
   app/                         # workbench route and global styles
   components/
     canvas/                    # React Flow adapter and node rendering
-    ui/                        # shared StyleX UI primitives
-    providers.tsx              # SWR, tooltip, and toast providers
-  hooks/                       # data hooks
+    ui/dialog.tsx              # field-projection picker primitive
+    providers.tsx              # registry SWR and theme providers
+    theme.tsx                  # persisted light/dark/system preference
+  hooks/use-api.ts             # node registry hook
   lib/
     api/
-      generated/prototype.ts   # generated OpenAPI transport types
-      prototype-contract.ts    # application-facing generated aliases
-      prototype.ts             # prototype HTTP calls
+      generated/notarius.ts    # generated OpenAPI transport types
+      contract.ts              # application-facing generated aliases
+      workbench.ts             # workbench HTTP calls
     stylex/                    # design tokens
 ```
 
 ## Verification
 
 ```bash
-npm run check:prototype-api
+npm run check:api
 npm run lint
 npm run typecheck
 npm run build

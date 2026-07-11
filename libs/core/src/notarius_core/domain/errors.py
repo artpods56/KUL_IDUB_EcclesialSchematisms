@@ -11,22 +11,5 @@ class NotFoundError(NotariusCoreError):
         super().__init__(f"{resource} not found: {resource_id}")
 
 
-class ConflictError(NotariusCoreError):
-    """A conflicting resource already exists."""
-
-
-class ForbiddenError(NotariusCoreError):
-    """Access to a resource is denied."""
-
-
-class ValidationError(NotariusCoreError):
-    """Request data failed validation."""
-
-
-# --- storage exceptions ---
-
-class StorageException(NotariusCoreError):
-    """Base for storage related exceptions"""
-
-class ObjectAlreadyExistsError(StorageException):
+class ObjectAlreadyExistsError(NotariusCoreError):
     """Raised when an object already exists in the storage backend."""

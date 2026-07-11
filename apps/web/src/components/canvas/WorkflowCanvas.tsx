@@ -21,15 +21,16 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
+import { useTheme } from "@/components/theme";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import { connectionIsValid } from "./handles";
-import PrototypeNode from "./nodes/PrototypeNode";
-import { PROTOTYPE_NODE_TYPE, type PrototypeNodeData } from "./types";
+import WorkflowNodeCard from "./nodes/WorkflowNode";
+import { WORKFLOW_NODE_TYPE, type WorkflowNodeData } from "./types";
 
-type PrototypeFlowNode = Node<PrototypeNodeData, typeof PROTOTYPE_NODE_TYPE>;
+type WorkflowNode = Node<WorkflowNodeData, typeof WORKFLOW_NODE_TYPE>;
 
 export const nodeTypes: NodeTypes = {
-  [PROTOTYPE_NODE_TYPE]: PrototypeNode,
+  [WORKFLOW_NODE_TYPE]: WorkflowNodeCard,
 };
 
 const s = stylex.create({
@@ -42,14 +43,14 @@ const s = stylex.create({
 });
 
 export interface WorkflowCanvasProps<FlowEdge extends Edge = Edge> {
-  nodes: PrototypeFlowNode[];
+  nodes: WorkflowNode[];
   edges: FlowEdge[];
-  onNodesChange: OnNodesChange<PrototypeFlowNode>;
+  onNodesChange: OnNodesChange<WorkflowNode>;
   onEdgesChange: OnEdgesChange<FlowEdge>;
   onConnect: OnConnect;
   isValidConnection?: IsValidConnection<FlowEdge>;
   onPaneReady?: (
-    instance: ReactFlowInstance<PrototypeFlowNode, FlowEdge>,
+    instance: ReactFlowInstance<WorkflowNode, FlowEdge>,
   ) => void;
   onPaneClick?: () => void;
   animateEdges?: boolean;
@@ -66,6 +67,7 @@ export function WorkflowCanvas<FlowEdge extends Edge = Edge>({
   onPaneClick,
   animateEdges = false,
 }: WorkflowCanvasProps<FlowEdge>) {
+  const { resolved } = useTheme();
   const renderedEdges = React.useMemo(
     () => edges.map((edge) => ({ ...edge, animated: animateEdges })),
     [animateEdges, edges],
@@ -73,7 +75,7 @@ export function WorkflowCanvas<FlowEdge extends Edge = Edge>({
 
   return (
     <div {...stylex.props(s.wrapper)}>
-      <ReactFlow<PrototypeFlowNode, FlowEdge>
+      <ReactFlow<WorkflowNode, FlowEdge>
         nodes={nodes}
         edges={renderedEdges}
         nodeTypes={nodeTypes}
@@ -87,7 +89,7 @@ export function WorkflowCanvas<FlowEdge extends Edge = Edge>({
         fitViewOptions={{ padding: 0.18, maxZoom: 0.98 }}
         minZoom={0.35}
         maxZoom={1.7}
-        colorMode="dark"
+        colorMode={resolved}
         panOnScroll
         selectionOnDrag
         zoomOnDoubleClick={false}
@@ -97,31 +99,30 @@ export function WorkflowCanvas<FlowEdge extends Edge = Edge>({
           type: "default",
           style: {
             stroke: tokens.colorAccent,
-            strokeWidth: 4,
+            strokeWidth: 2,
             opacity: 1,
           },
         }}
         connectionLineStyle={{
           stroke: tokens.colorAccent,
-          strokeWidth: 4,
+          strokeWidth: 2,
         }}
       >
         <Background
           variant={BackgroundVariant.Lines}
-          gap={18}
+          gap={54}
           size={0.65}
-          color="rgba(255,255,255,0.035)"
+          color={tokens.colorGrid}
         />
         <Controls
           className="ns-flow-controls"
           showInteractive={false}
           showFitView={false}
           style={{
-            backgroundColor: "rgba(29, 31, 35, 0.92)",
+            backgroundColor: tokens.colorFlowControls,
             borderColor: tokens.colorBorderStrong,
             borderRadius: "7px",
             overflow: "hidden",
-            boxShadow: "0 8px 22px rgba(0,0,0,0.28)",
           }}
         />
       </ReactFlow>

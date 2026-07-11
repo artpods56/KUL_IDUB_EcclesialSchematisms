@@ -1,26 +1,25 @@
 import os
-import pathlib
 import shutil
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import final, override
 
 from notarius_core.domain.errors import ObjectAlreadyExistsError
-from notarius_core.ports import FileStreamProtocol
 from notarius_core.ports.storage import (
-    FileMetadata,
     FileStoragePort,
+    FileStreamProtocol,
     SaveFileCommand,
     StoredFile,
 )
 
+
 @final
 class LocalFileObjectStore(FileStoragePort):
-    def __init__(self, root: pathlib.Path):
+    def __init__(self, root: Path):
         self._root = root
 
     @override
-    async def save(self, command: SaveFileCommand[FileMetadata]) -> StoredFile:
+    async def save(self, command: SaveFileCommand) -> StoredFile:
         path = self._path_for(command.bucket, command.path)
         if path.exists() and not command.allow_overwrite:
             raise ObjectAlreadyExistsError(f"File already exists: {command.bucket}/{command.path}")
@@ -89,50 +88,4 @@ def _validate_key(key: str) -> None:
     path = PurePosixPath(key)
     if path.is_absolute() or any(part in {"..", ""} for part in path.parts):
         raise ValueError(f"Unsafe object key: {key}")
-
-# @final
-# class ImageRepository(AbstractFileRepository[Image.Image]):
-#     def __init__(
-#         self,
-#         storage: LocalFileStorage,
-#         format: str = "JPEG",
-#         suffix: str = ".jpeg",
-#         save_kwargs: dict[str, Any] | None = None,
-#     ):
-#         self.storage = storage
-#         self.format = format
-#         self.suffix = suffix
-#         self.save_kwargs = save_kwargs or {}
-#
-#     @override
-#     def add(self, file: Image.Image, name: str) -> pathlib.Path:
-#         buffer = io.BytesIO()
-#         image_to_save = file if file.mode == "RGB" else file.convert("RGB")
-#         try:
-#             image_to_save.save(buffer, format=self.format, **self.save_kwargs)
-#             buffer.seek(0)
-#             return self.storage.save(buffer, pathlib.Path(name).with_suffix(self.suffix))
-#         finally:
-#             if image_to_save is not file:
-#                 image_to_save.close()
-#             buffer.close()
-#
-#     @override
-#     def get(self, path: pathlib.Path) -> Image.Image:
-#         with self.storage.load(path) as stream:
-#             image = Image.open(cast(BinaryIO, stream))
-#             image.load()
-#             if image.mode == "RGB":
-#                 return image
-#             converted = image.convert("RGB")
-#             image.close()
-#             return converted
-#
-#     @override
-#     def exists(self, name: str) -> bool:
-#         return self.storage.exists(pathlib.Path(name).with_suffix(self.suffix))
-#
-#     @override
-#     def get_path(self, name: str) -> pathlib.Path:
-#         return self.storage.storage_root / pathlib.Path(name).with_suffix(self.suffix)
 #

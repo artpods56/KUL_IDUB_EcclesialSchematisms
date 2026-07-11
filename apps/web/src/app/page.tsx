@@ -15,9 +15,12 @@ import {
   Cable,
   LoaderCircle,
   Maximize2,
+  Monitor,
+  Moon,
   Play,
   Plus,
   Search,
+  Sun,
   Workflow,
   X,
 } from "lucide-react";
@@ -43,32 +46,39 @@ import {
   projectionAwareConnectionIsValid,
   projectionCandidatesForConnection,
 } from "@/components/canvas/handles";
-import { ARTIFACT_TYPE_COLOR } from "@/components/canvas/nodes.css";
+import {
+  ARTIFACT_TYPE_COLOR,
+  projectionEdgePresentation,
+} from "@/components/canvas/nodes.css";
+import { useTheme } from "@/components/theme";
+import { pathsEqual } from "@/lib/output-port-projection";
+import type { OutputPortTreatment } from "@/components/canvas/output-port-treatment";
+import { defaultTreatments } from "@/components/canvas/output-port-treatment";
 import {
   LOCAL_UPLOAD_OPERATOR_ID,
-  PROTOTYPE_NODE_TYPE,
-  createPrototypeNodeData,
-  portMetaForPrototypePort,
-  removePrototypeSelectionItem,
-  replacePrototypeSelection,
-  selectedPrototypeItems,
-  serializePrototypeConfig,
-  type PrototypeFlowEdge,
-  type PrototypeNodeData,
+  WORKFLOW_NODE_TYPE,
+  createWorkflowNodeData,
+  portMetaForPort,
+  removeSelectionItem,
+  replaceSelection,
+  selectedSourceItems,
+  serializeNodeConfig,
+  type WorkflowEdge,
+  type WorkflowNodeData,
 } from "@/components/canvas/types";
-import { usePrototypeRegistry } from "@/hooks/use-api";
+import { useNodeRegistry } from "@/hooks/use-api";
 import {
   fileToBase64,
-  runPrototypeGraph,
-  uploadPrototypeFile,
-  type PrototypeArtifactTypeSpec,
-  type PrototypeFieldProjection,
-  type PrototypeNodeSpec,
-  type PrototypeRunEdgeInput,
+  runGraph,
+  uploadFile,
+  type ArtifactTypeSpec,
+  type FieldProjection,
+  type NodeSpec,
+  type RunEdgeInput,
 } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 
-type PrototypeFlowNode = Node<PrototypeNodeData, typeof PROTOTYPE_NODE_TYPE>;
+type WorkflowNode = Node<WorkflowNodeData, typeof WORKFLOW_NODE_TYPE>;
 
 const ARITHMETIC_OPERATORS = [
   "arithmetic.number",
@@ -132,26 +142,6 @@ const ARITHMETIC_LINKS = [
   },
 ] as const;
 
-const PROJECTION_EDGE_PRESENTATION: Pick<
-  PrototypeFlowEdge,
-  | "labelStyle"
-  | "labelShowBg"
-  | "labelBgStyle"
-  | "labelBgPadding"
-  | "labelBgBorderRadius"
-> = {
-  labelStyle: { fill: "#f0ecff", fontSize: 10, fontWeight: 700 },
-  labelShowBg: true,
-  labelBgStyle: {
-    fill: "#292532",
-    fillOpacity: 1,
-    stroke: "rgba(190,168,255,0.72)",
-    strokeWidth: 1,
-  },
-  labelBgPadding: [5, 3],
-  labelBgBorderRadius: 4,
-};
-
 interface ProjectionEndpoint {
   nodeTitle: string;
   portName: string;
@@ -160,16 +150,16 @@ interface ProjectionEndpoint {
 
 interface PendingProjection {
   connection: Connection;
-  candidates: PrototypeFieldProjection[];
+  candidates: FieldProjection[];
   source: ProjectionEndpoint;
   target: ProjectionEndpoint;
 }
 
 function exampleWorkflowEdges(
-  nodes: readonly PrototypeFlowNode[],
-  artifactTypes: readonly PrototypeArtifactTypeSpec[],
-): PrototypeFlowEdge[] {
-  const edges: PrototypeFlowEdge[] = [];
+  nodes: readonly WorkflowNode[],
+  artifactTypes: readonly ArtifactTypeSpec[],
+): WorkflowEdge[] {
+  const edges: WorkflowEdge[] = [];
 
   for (const link of ARITHMETIC_LINKS) {
     const source = nodes.find((node) => node.id === link.sourceId);
@@ -184,15 +174,15 @@ function exampleWorkflowEdges(
 
     const connection: Connection = {
       source: source.id,
-      sourceHandle: encodeHandleId(portMetaForPrototypePort(output)),
+      sourceHandle: encodeHandleId(portMetaForPort(output)),
       target: target.id,
-      targetHandle: encodeHandleId(portMetaForPrototypePort(input)),
+      targetHandle: encodeHandleId(portMetaForPort(input)),
     };
     const color =
       ARTIFACT_TYPE_COLOR[output.artifact_type.id] ?? tokens.colorAccent;
     const edgeStyle = {
       stroke: color,
-      strokeWidth: 4,
+      strokeWidth: 2,
     };
 
     if (!("projectionPath" in link)) {
@@ -215,7 +205,7 @@ function exampleWorkflowEdges(
     if (!projection) continue;
     edges.push({
       ...connection,
-      ...PROJECTION_EDGE_PRESENTATION,
+      ...projectionEdgePresentation(),
       id: `edge-${source.id}-${output.name}-${target.id}-${input.name}`,
       data: { projection: { path: [...projection.path] } },
       label: `${output.name}.${projection.path.join(".")}`,
@@ -226,31 +216,24 @@ function exampleWorkflowEdges(
 }
 
 function workflowNodes(
-  specs: readonly PrototypeNodeSpec[],
-): PrototypeFlowNode[] {
+  specs: readonly NodeSpec[],
+): WorkflowNode[] {
   const byOperator = new Map(specs.map((spec) => [spec.operator_id, spec]));
   return ARITHMETIC_NODE_LAYOUT.flatMap((definition, index) => {
     const spec = byOperator.get(definition.operatorId);
     if (!spec) return [];
-    const data = createPrototypeNodeData(spec);
+    const data = createWorkflowNodeData(spec);
     data.config = { ...data.config, ...definition.config };
     return [
       {
         id: definition.id,
-        type: PROTOTYPE_NODE_TYPE,
+        type: WORKFLOW_NODE_TYPE,
         position: definition.position,
         selected: index === 0,
         data,
       },
     ];
   });
-}
-
-function groupColor(operatorId: string): string {
-  if (operatorId.startsWith("source.")) return "#43c59e";
-  if (operatorId.startsWith("ocr.")) return "#9a7cf2";
-  if (operatorId.includes("export")) return "#f0a65a";
-  return "#57a5ef";
 }
 
 const s = stylex.create({
@@ -280,11 +263,9 @@ const s = stylex.create({
     alignItems: "center",
     borderWidth: 1,
     borderStyle: "solid",
-    borderColor: "rgba(255,255,255,0.11)",
+    borderColor: tokens.colorBorder,
     borderRadius: "8px",
-    backgroundColor: "rgba(27,29,33,0.9)",
-    boxShadow: "0 10px 28px rgba(0,0,0,0.28)",
-    backdropFilter: "blur(16px)",
+    backgroundColor: tokens.colorChrome,
     pointerEvents: "auto",
   },
   identity: { minHeight: "43px", gap: "10px", padding: "6px 9px 6px 7px" },
@@ -295,12 +276,12 @@ const s = stylex.create({
     placeItems: "center",
     borderRadius: "6px",
     backgroundColor: tokens.colorAccent,
-    color: "#fff",
+    color: tokens.colorOnAccent,
   },
   identityCopy: { display: "grid", gap: "1px" },
   brand: {
     color: tokens.colorMuted,
-    fontSize: "8px",
+    fontSize: tokens.fontSizeXs,
     fontWeight: 800,
     letterSpacing: "0.16em",
     lineHeight: 1.1,
@@ -309,8 +290,8 @@ const s = stylex.create({
     display: "flex",
     alignItems: "center",
     gap: "5px",
-    color: "#f0f1f3",
-    fontSize: "11.5px",
+    color: tokens.colorTextEmphasis,
+    fontSize: tokens.fontSizeMd,
     fontWeight: 700,
   },
   actions: { height: "43px", gap: "4px", padding: "5px" },
@@ -323,16 +304,19 @@ const s = stylex.create({
     paddingInline: "9px",
     borderWidth: 0,
     borderRadius: "5px",
-    backgroundColor: { default: "transparent", ":hover": "rgba(255,255,255,0.07)", ":disabled": "transparent" },
-    color: { default: tokens.colorMuted, ":disabled": "#5f636a" },
+    backgroundColor: { default: "transparent", ":hover": tokens.colorHover, ":disabled": "transparent" },
+    color: { default: tokens.colorMuted, ":disabled": tokens.colorTextDisabled },
     cursor: { default: "pointer", ":disabled": "not-allowed" },
-    fontSize: "10.5px",
+    fontSize: tokens.fontSizeSm,
   },
   primaryButton: {
-    backgroundColor: { default: tokens.colorAccent, ":hover": "#9077f0", ":disabled": "#3b3847" },
-    color: { default: "#fff", ":disabled": "#77727f" },
+    backgroundColor: {
+      default: tokens.colorAccent,
+      ":hover": tokens.colorAccentHover,
+      ":disabled": tokens.colorAccentDisabled,
+    },
+    color: { default: tokens.colorOnAccent, ":disabled": tokens.colorTextDisabled },
     fontWeight: 700,
-    boxShadow: "0 4px 14px rgba(125,93,239,0.28)",
   },
   spinner: {
     animationName: "ns-spin",
@@ -350,12 +334,9 @@ const s = stylex.create({
     overflow: "hidden",
     borderWidth: 1,
     borderStyle: "solid",
-    borderColor: "rgba(255,255,255,0.12)",
+    borderColor: tokens.colorBorder,
     borderRadius: "9px",
-    backgroundColor: "rgba(25,27,30,0.97)",
-    boxShadow: "0 18px 46px rgba(0,0,0,0.42)",
-    animationName: "ns-panel-enter",
-    animationDuration: "150ms",
+    backgroundColor: tokens.colorSurface,
   },
   libraryHeader: {
     height: "40px",
@@ -367,7 +348,7 @@ const s = stylex.create({
     borderBottomStyle: "solid",
     borderBottomColor: tokens.colorBorder,
   },
-  libraryTitle: { flex: 1, fontSize: "11px", fontWeight: 700 },
+  libraryTitle: { flex: 1, fontSize: tokens.fontSizeSm, fontWeight: 700 },
   closeButton: {
     width: "24px",
     height: "24px",
@@ -375,7 +356,7 @@ const s = stylex.create({
     placeItems: "center",
     borderWidth: 0,
     borderRadius: "4px",
-    backgroundColor: { default: "transparent", ":hover": "rgba(255,255,255,0.07)" },
+    backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
     color: tokens.colorSubtle,
     cursor: "pointer",
   },
@@ -390,15 +371,15 @@ const s = stylex.create({
     borderColor: { default: tokens.colorBorderStrong, ":focus": tokens.colorAccent },
     borderRadius: "5px",
     outline: "none",
-    backgroundColor: "#1c1e21",
+    backgroundColor: tokens.colorSurfaceSunken,
     color: tokens.colorText,
-    fontSize: "10px",
+    fontSize: tokens.fontSizeSm,
   },
   libraryGroup: { maxHeight: "500px", overflowY: "auto", padding: "0 9px 9px" },
   groupLabel: {
     padding: "5px 2px 6px",
     color: tokens.colorSubtle,
-    fontSize: "8px",
+    fontSize: "10px",
     fontWeight: 800,
     letterSpacing: "0.12em",
     textTransform: "uppercase",
@@ -408,34 +389,33 @@ const s = stylex.create({
     width: "100%",
     minHeight: "52px",
     display: "grid",
-    gridTemplateColumns: "4px minmax(0,1fr) auto",
+    gridTemplateColumns: "minmax(0,1fr) auto",
     alignItems: "center",
     gap: "9px",
     marginTop: "4px",
-    padding: "7px 8px 7px 5px",
+    padding: "7px 8px",
     overflow: "hidden",
     borderWidth: 1,
     borderStyle: "solid",
-    borderColor: { default: "rgba(255,255,255,0.07)", ":hover": tokens.colorBorderStrong },
+    borderColor: { default: tokens.colorBorder, ":hover": tokens.colorBorderStrong },
     borderRadius: "5px",
-    backgroundColor: { default: "rgba(255,255,255,0.025)", ":hover": "rgba(255,255,255,0.05)" },
+    backgroundColor: { default: tokens.colorSurfaceMuted, ":hover": tokens.colorHover },
     color: tokens.colorText,
     cursor: "pointer",
     textAlign: "left",
   },
-  libraryAccent: { width: "3px", height: "29px", borderRadius: "2px" },
   libraryCopy: { minWidth: 0, display: "grid", gap: "2px" },
-  libraryTitleText: { fontSize: "10px", fontWeight: 700 },
+  libraryTitleText: { fontSize: tokens.fontSizeSm, fontWeight: 700 },
   libraryMeta: {
     overflow: "hidden",
     color: tokens.colorSubtle,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    fontSize: "7.5px",
+    fontSize: tokens.fontSizeXs,
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
-  libraryPorts: { color: tokens.colorSubtle, fontSize: "8px", whiteSpace: "nowrap" },
-  empty: { padding: "18px", color: tokens.colorSubtle, fontSize: "10px", textAlign: "center" },
+  libraryPorts: { color: tokens.colorSubtle, fontSize: tokens.fontSizeXs, whiteSpace: "nowrap" },
+  empty: { padding: "18px", color: tokens.colorSubtle, fontSize: tokens.fontSizeSm, textAlign: "center" },
   statusBar: {
     position: "absolute",
     zIndex: 15,
@@ -445,13 +425,13 @@ const s = stylex.create({
     gap: "7px",
     padding: "5px 8px",
     color: tokens.colorSubtle,
-    fontSize: "8.5px",
+    fontSize: tokens.fontSizeXs,
   },
   statusDot: { width: "5px", height: "5px", borderRadius: "99px", backgroundColor: tokens.colorSuccess },
   statusDotIncomplete: { backgroundColor: tokens.colorWarning },
   statusDotError: { backgroundColor: tokens.colorDanger },
-  statusValue: { color: "#d1d4d8", fontWeight: 700 },
-  statusDivider: { width: "1px", height: "12px", backgroundColor: "rgba(255,255,255,0.1)" },
+  statusValue: { color: tokens.colorTextEmphasis, fontWeight: 700 },
+  statusDivider: { width: "1px", height: "12px", backgroundColor: tokens.colorDivider },
   projectionFlow: {
     display: "grid",
     gridTemplateColumns: "minmax(0,1fr) 24px minmax(0,1fr)",
@@ -466,21 +446,21 @@ const s = stylex.create({
     padding: "9px 10px",
     borderWidth: 1,
     borderStyle: "solid",
-    borderColor: "rgba(255,255,255,0.08)",
+    borderColor: tokens.colorBorder,
     borderRadius: "6px",
-    backgroundColor: "rgba(255,255,255,0.025)",
+    backgroundColor: tokens.colorSurfaceMuted,
   },
   projectionDirection: {
     color: tokens.colorSubtle,
-    fontSize: "8px",
+    fontSize: "10px",
     fontWeight: 800,
     letterSpacing: "0.1em",
     textTransform: "uppercase",
   },
   projectionEndpointName: {
     overflow: "hidden",
-    color: "#e2e4e7",
-    fontSize: "10px",
+    color: tokens.colorTextEmphasis,
+    fontSize: tokens.fontSizeSm,
     fontWeight: 700,
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
@@ -489,7 +469,7 @@ const s = stylex.create({
     overflow: "hidden",
     color: tokens.colorSubtle,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    fontSize: "8px",
+    fontSize: tokens.fontSizeXs,
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
@@ -501,7 +481,7 @@ const s = stylex.create({
   projectionPrompt: {
     marginBottom: "7px",
     color: tokens.colorMuted,
-    fontSize: "9px",
+    fontSize: tokens.fontSizeSm,
   },
   projectionChoices: { display: "grid", gap: "6px" },
   projectionChoice: {
@@ -515,25 +495,25 @@ const s = stylex.create({
     borderWidth: 1,
     borderStyle: "solid",
     borderColor: {
-      default: "rgba(255,255,255,0.1)",
-      ":hover": "rgba(167,139,250,0.55)",
+      default: tokens.colorBorder,
+      ":hover": tokens.colorAccentBorder,
       ":focus-visible": tokens.colorAccent,
     },
     borderRadius: "6px",
     outline: "none",
     backgroundColor: {
-      default: "rgba(255,255,255,0.025)",
-      ":hover": "rgba(128,103,232,0.1)",
+      default: tokens.colorSurfaceMuted,
+      ":hover": tokens.colorAccentSoft,
     },
     color: tokens.colorText,
     cursor: "pointer",
     textAlign: "left",
   },
-  projectionChoiceTitle: { fontSize: "10.5px", fontWeight: 720 },
+  projectionChoiceTitle: { fontSize: tokens.fontSizeSm, fontWeight: 720 },
   projectionChoicePath: {
-    color: "#bdb4e7",
+    color: tokens.colorProjectionPath,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    fontSize: "8.5px",
+    fontSize: tokens.fontSizeXs,
   },
   projectionActions: {
     display: "flex",
@@ -547,19 +527,20 @@ const s = stylex.create({
     borderStyle: "solid",
     borderColor: tokens.colorBorderStrong,
     borderRadius: "5px",
-    backgroundColor: { default: "transparent", ":hover": "rgba(255,255,255,0.05)" },
+    backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
     color: tokens.colorMuted,
     cursor: "pointer",
-    fontSize: "9px",
+    fontSize: tokens.fontSizeSm,
   },
 });
 
 export default function Home() {
-  const { data: registry, error: registryError } = usePrototypeRegistry();
-  const [nodes, setNodes] = React.useState<PrototypeFlowNode[]>([]);
-  const [edges, setEdges] = React.useState<PrototypeFlowEdge[]>([]);
+  const { data: registry, error: registryError } = useNodeRegistry();
+  const { preference, cycleTheme } = useTheme();
+  const [nodes, setNodes] = React.useState<WorkflowNode[]>([]);
+  const [edges, setEdges] = React.useState<WorkflowEdge[]>([]);
   const [flow, setFlow] = React.useState<
-    ReactFlowInstance<PrototypeFlowNode, PrototypeFlowEdge>
+    ReactFlowInstance<WorkflowNode, WorkflowEdge>
   >();
   const [libraryOpen, setLibraryOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
@@ -592,6 +573,28 @@ export default function Home() {
     [],
   );
 
+  const updateOutputTreatment = React.useCallback(
+    (nodeId: string, portName: string, treatment: OutputPortTreatment) => {
+      setNodes((current) =>
+        current.map((node) =>
+          node.id === nodeId
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  outputTreatments: {
+                    ...node.data.outputTreatments,
+                    [portName]: treatment,
+                  },
+                },
+              }
+            : node,
+        ),
+      );
+    },
+    [],
+  );
+
   const removeSelection = React.useCallback(
     (nodeId: string, index: number) => {
       setNodes((current) =>
@@ -599,7 +602,7 @@ export default function Home() {
           ...node,
           data: {
             ...(node.id === nodeId
-              ? removePrototypeSelectionItem(node.data, index)
+              ? removeSelectionItem(node.data, index)
               : node.data),
             run: null,
             execution: { status: "idle" },
@@ -625,13 +628,13 @@ export default function Home() {
     setRunError(null);
     try {
       const selections = await Promise.all(files.map(async (file) =>
-        uploadPrototypeFile(file.name, await fileToBase64(file)),
+        uploadFile(file.name, await fileToBase64(file)),
       ));
       setNodes((current) => current.map((node) => ({
         ...node,
         data: {
           ...(node.id === nodeId
-            ? replacePrototypeSelection(node.data, selections)
+            ? replaceSelection(node.data, selections)
             : node.data),
           execution: { status: "idle" },
           run: null,
@@ -646,20 +649,28 @@ export default function Home() {
     }
   }, []);
 
+  const attachNodeCallbacks = React.useCallback(
+    (data: WorkflowNodeData): WorkflowNodeData => ({
+      ...data,
+      outputTreatments:
+        data.outputTreatments ?? defaultTreatments(data.spec.outputs),
+      onConfigChange: updateConfig,
+      onFilesSelected:
+        data.spec.operator_id === LOCAL_UPLOAD_OPERATOR_ID
+          ? handleFilesSelected
+          : undefined,
+      onRemoveSelection: removeSelection,
+      onOutputTreatmentChange: updateOutputTreatment,
+    }),
+    [handleFilesSelected, removeSelection, updateConfig, updateOutputTreatment],
+  );
+
   React.useEffect(() => {
     if (!registry) return;
     if (!initializedRef.current) {
       const initialNodes = workflowNodes(registry.nodes).map((node) => ({
         ...node,
-        data: {
-          ...node.data,
-          onConfigChange: updateConfig,
-          onFilesSelected:
-            node.data.spec.operator_id === LOCAL_UPLOAD_OPERATOR_ID
-              ? handleFilesSelected
-              : undefined,
-          onRemoveSelection: removeSelection,
-        },
+        data: attachNodeCallbacks(node.data),
       }));
       setNodes(initialNodes);
       setEdges([]);
@@ -669,19 +680,13 @@ export default function Home() {
     const byOperator = new Map(registry.nodes.map((spec) => [spec.operator_id, spec]));
     setNodes((current) => current.map((node) => {
       const spec = byOperator.get(node.data.spec.operator_id);
-      if (!spec) return node;
+      if (!spec) return { ...node, data: attachNodeCallbacks(node.data) };
       return {
         ...node,
-        data: {
-          ...node.data,
-          spec,
-          onConfigChange: updateConfig,
-          onFilesSelected: spec.operator_id === LOCAL_UPLOAD_OPERATOR_ID ? handleFilesSelected : undefined,
-          onRemoveSelection: removeSelection,
-        },
+        data: attachNodeCallbacks({ ...node.data, spec }),
       };
     }));
-  }, [handleFilesSelected, registry, removeSelection, updateConfig]);
+  }, [attachNodeCallbacks, registry]);
 
   React.useEffect(() => {
     if (!flow || !nodes.length) return;
@@ -695,7 +700,7 @@ export default function Home() {
     return !query || spec.title.toLowerCase().includes(query) || spec.operator_id.toLowerCase().includes(query);
   });
   const sourceWithoutFiles = nodes.some(
-    (node) => node.data.spec.operator_id === LOCAL_UPLOAD_OPERATOR_ID && !selectedPrototypeItems(node.data).length,
+    (node) => node.data.spec.operator_id === LOCAL_UPLOAD_OPERATOR_ID && !selectedSourceItems(node.data).length,
   );
   const missingOperators = registry
     ? ARITHMETIC_OPERATORS.filter((operatorId) => !registry.nodes.some((spec) => spec.operator_id === operatorId))
@@ -737,7 +742,7 @@ export default function Home() {
           ? "choose source files before running"
           : connectionInstruction ?? "all required inputs connected · ready to run";
 
-  const onNodesChange: OnNodesChange<PrototypeFlowNode> = React.useCallback(
+  const onNodesChange: OnNodesChange<WorkflowNode> = React.useCallback(
     (changes) => setNodes((current) => applyNodeChanges(changes, current)),
     [],
   );
@@ -754,7 +759,7 @@ export default function Home() {
     setRunError(null);
   }, []);
 
-  const onEdgesChange: OnEdgesChange<PrototypeFlowEdge> = React.useCallback(
+  const onEdgesChange: OnEdgesChange<WorkflowEdge> = React.useCallback(
     (changes) => {
       setEdges((current) => applyEdgeChanges(changes, current));
       if (changes.some((change) => change.type !== "select")) {
@@ -766,7 +771,7 @@ export default function Home() {
 
   const addWorkflowEdge = React.useCallback((
     connection: Connection,
-    projection?: PrototypeFieldProjection,
+    projection?: FieldProjection,
   ) => {
     const source = decodeHandleId(connection.sourceHandle);
     const color = source
@@ -774,12 +779,12 @@ export default function Home() {
       : tokens.colorAccent;
     const edgeStyle = {
       stroke: color,
-      strokeWidth: 4,
+      strokeWidth: 2,
     };
-    const edge: PrototypeFlowEdge = projection && source
+    const edge: WorkflowEdge = projection && source
       ? {
           ...connection,
-          ...PROJECTION_EDGE_PRESENTATION,
+          ...projectionEdgePresentation(),
           id: `edge-${edgeCounterRef.current++}`,
           animated: false,
           data: { projection: { path: [...projection.path] } },
@@ -797,7 +802,7 @@ export default function Home() {
   }, [clearWorkflowResults]);
 
   const isValidConnection = React.useCallback<
-    IsValidConnection<PrototypeFlowEdge>
+    IsValidConnection<WorkflowEdge>
   >((connection) => {
     if (!projectionAwareConnectionIsValid(
       connection,
@@ -844,13 +849,28 @@ export default function Home() {
       return;
     }
 
+    const artifactTypes = registry?.artifact_types ?? [];
     const candidates = projectionCandidatesForConnection(
       connection,
-      registry?.artifact_types ?? [],
+      artifactTypes,
     );
     const source = decodeHandleId(connection.sourceHandle);
-    const target = decodeHandleId(connection.targetHandle);
     const sourceNode = nodes.find((node) => node.id === connection.source);
+
+    if (source && sourceNode && candidates.length) {
+      const treatment = sourceNode.data.outputTreatments[source.portName];
+      if (treatment?.projectionPath.length) {
+        const match = candidates.find((candidate) =>
+          pathsEqual(candidate.path, treatment.projectionPath),
+        );
+        if (match) {
+          addWorkflowEdge(connection, match);
+          return;
+        }
+      }
+    }
+
+    const target = decodeHandleId(connection.targetHandle);
     const targetNode = nodes.find((node) => node.id === connection.target);
     if (!source || !target || !sourceNode || !targetNode || !candidates.length) {
       return;
@@ -872,23 +892,18 @@ export default function Home() {
     });
   }, [addWorkflowEdge, isValidConnection, nodes, registry?.artifact_types]);
 
-  const addCatalogNode = React.useCallback((spec: PrototypeNodeSpec) => {
+  const addCatalogNode = React.useCallback((spec: NodeSpec) => {
     const number = nodeCounterRef.current++;
     const id = `node-${number}`;
     const center = flow?.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 }) ?? { x: 600, y: 280 };
-    const data = createPrototypeNodeData(spec);
-    data.onConfigChange = updateConfig;
-    data.onFilesSelected = spec.operator_id === LOCAL_UPLOAD_OPERATOR_ID
-      ? handleFilesSelected
-      : undefined;
-    data.onRemoveSelection = removeSelection;
+    const data = attachNodeCallbacks(createWorkflowNodeData(spec));
     setNodes((current) => [
       ...current.map((node) => ({ ...node, selected: false })),
-      { id, type: PROTOTYPE_NODE_TYPE, position: { x: center.x - 140, y: center.y - 110 }, selected: true, data },
+      { id, type: WORKFLOW_NODE_TYPE, position: { x: center.x - 140, y: center.y - 110 }, selected: true, data },
     ]);
     setLibraryOpen(false);
     setSearch("");
-  }, [flow, handleFilesSelected, removeSelection, updateConfig]);
+  }, [attachNodeCallbacks, flow]);
 
   const wireExample = React.useCallback(() => {
     if (!registry || !canWireExample || running) return;
@@ -906,7 +921,7 @@ export default function Home() {
       data: { ...node.data, run: null, execution: { status: "running" } },
     })));
     try {
-      const runEdges = edges.flatMap<PrototypeRunEdgeInput>(
+      const runEdges = edges.flatMap<RunEdgeInput>(
         (edge) => {
           const source = decodeHandleId(edge.sourceHandle);
           const target = decodeHandleId(edge.targetHandle);
@@ -924,11 +939,11 @@ export default function Home() {
           }];
         },
       );
-      const response = await runPrototypeGraph({
+      const response = await runGraph({
         nodes: nodes.map((node) => ({
           id: node.id,
           operator_id: node.data.spec.operator_id,
-          config: serializePrototypeConfig(node.data),
+          config: serializeNodeConfig(node.data),
         })),
         edges: runEdges,
       });
@@ -1006,6 +1021,33 @@ export default function Home() {
           </button>
           <button
             type="button"
+            aria-label={
+              preference === "light"
+                ? "Switch to dark theme"
+                : preference === "dark"
+                  ? "Switch to system theme"
+                  : "Switch to light theme"
+            }
+            title={
+              preference === "light"
+                ? "Light theme"
+                : preference === "dark"
+                  ? "Dark theme"
+                  : "System theme"
+            }
+            {...stylex.props(s.toolButton)}
+            onClick={cycleTheme}
+          >
+            {preference === "light" ? (
+              <Sun size={13} />
+            ) : preference === "dark" ? (
+              <Moon size={13} />
+            ) : (
+              <Monitor size={13} />
+            )}
+          </button>
+          <button
+            type="button"
             disabled={runDisabled}
             title={!registry
               ? "Waiting for the live node registry"
@@ -1045,7 +1087,6 @@ export default function Home() {
             <div {...stylex.props(s.groupLabel)}>Live operators</div>
             {filteredCatalog.length ? filteredCatalog.map((spec) => (
               <button key={`${spec.operator_id}@${spec.operator_version}`} type="button" {...stylex.props(s.libraryItem)} onClick={() => addCatalogNode(spec)}>
-                <span {...stylex.props(s.libraryAccent)} style={{ backgroundColor: groupColor(spec.operator_id) }} />
                 <span {...stylex.props(s.libraryCopy)}>
                   <span {...stylex.props(s.libraryTitleText)}>{spec.title}</span>
                   <span {...stylex.props(s.libraryMeta)}>{spec.operator_id}@{spec.operator_version}</span>

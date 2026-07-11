@@ -1,39 +1,27 @@
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Protocol, TypedDict, runtime_checkable
-
-from PIL import Image
-
-from notarius_core.ports import FileStreamProtocol
+from typing import BinaryIO, Protocol, TypedDict, runtime_checkable
 
 
-class ImageRepositoryProtocol(Protocol):
-    def get(self, path: Path) -> Image.Image: ...
+FileStreamProtocol = BinaryIO
 
 
 class FileMetadata(TypedDict, total=False):
-    organization_id: str
-    accounting_client_id: str
     original_filename: str | None
     source: str
-    encrypted: str
-    encryption_algorithm: str | None
     artifact_id: str
-    job_id: str
     artifact_kind: str
-    xml_artifact_id: str
+    job_id: str
     sha256: str
 
 
 @dataclass(frozen=True, slots=True)
-class SaveFileCommand[MetadataT: FileMetadata]:
+class SaveFileCommand:
     bucket: str
     path: str
     stream: FileStreamProtocol
     content_type: str
-    metadata: MetadataT
+    metadata: FileMetadata
     allow_overwrite: bool = False
-    encryption_aad: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +36,7 @@ class StoredFile:
 
 @runtime_checkable
 class FileStoragePort(Protocol):
-    async def save(self, command: SaveFileCommand[FileMetadata]) -> StoredFile: ...
+    async def save(self, command: SaveFileCommand) -> StoredFile: ...
 
     async def move(self, bucket: str, source_path: str, destination_path: str) -> None: ...
 

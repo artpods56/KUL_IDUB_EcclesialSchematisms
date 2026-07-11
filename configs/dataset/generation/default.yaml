@@ -1,8 +1,0 @@
-path: ''
-name: default_dataset
-force_download: false
-trust_remote_code: true
-keep_in_memory: false
-num_proc: 8
-split: train
-streaming: false

@@ -1,49 +1,17 @@
-# Git and user-specific
 .git
 .idea
 .vscode
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.venv/
-venv/
-env/
-
-# Docker
-.dockerignore
-Dockerfile
-
-# Local data and artifacts
-data/
-data
-*.db
-*.sqlite3
-*.log
-
-# OS-specific
-.DS_Store
-*.swo
-*.swp
-
-# Build artifacts
-build/
-dist/
-*.egg-info/
-node_modules/
-.next/
-out/
-*.tsbuildinfo
-**/node_modules/
-**/.next/
-**/out/
+.env
+.venv
+.pytest_cache
+.ruff_cache
+.notarius-artifacts
+.playwright-cli
+**/__pycache__
+**/*.pyc
+**/*.egg-info
+**/node_modules
+**/.next
+**/out
+**/output
 **/*.tsbuildinfo
-
-tmp
-vendor
-schedules
-history
-docs
-notebooks

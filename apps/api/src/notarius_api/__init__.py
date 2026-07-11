@@ -1,2 +1,1 @@
-"""Notarius Studio API."""
-
+"""HTTP interface for the Notarius workbench prototype."""

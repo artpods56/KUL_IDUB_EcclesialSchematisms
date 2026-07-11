@@ -11,8 +11,7 @@ const s = stylex.create({
   overlay: {
     position: "fixed",
     inset: 0,
-    backgroundColor: "rgba(2,6,20,0.62)",
-    backdropFilter: "blur(2px)",
+    backgroundColor: "light-dark(rgba(15, 18, 25, 0.35), rgba(2, 6, 20, 0.62))",
   },
   content: {
     position: "fixed",
@@ -25,7 +24,6 @@ const s = stylex.create({
     borderRadius: tokens.radiusLg,
     backgroundColor: tokens.colorSurface,
     border: `1px solid ${tokens.colorBorder}`,
-    boxShadow: "0 24px 60px rgba(0,0,0,0.5)",
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
@@ -68,9 +66,6 @@ const s = stylex.create({
 });
 
 export const Dialog = DialogPrimitive.Root;
-export const DialogTrigger = DialogPrimitive.Trigger;
-export const DialogClose = DialogPrimitive.Close;
-export const DialogPortal = DialogPrimitive.Portal;
 
 export const DialogContent = React.forwardRef<
   HTMLDivElement,

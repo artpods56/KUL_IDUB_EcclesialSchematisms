@@ -1,2 +1,1 @@
-"""Generic Notarius extraction engine primitives."""
-
+"""Typed artifact-graph runtime used by the Notarius workbench."""

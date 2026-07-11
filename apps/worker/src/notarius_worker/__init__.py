@@ -1,2 +1,0 @@
-"""Notarius Studio background worker."""
-

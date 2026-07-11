@@ -1,53 +1,29 @@
 services:
-  nats:
-    image: nats:2.10-alpine
-    command: ["-js"]
-    ports:
-      - "4222:4222"
-      - "8222:8222"
-
   api:
     build:
       context: ../..
       dockerfile: infra/docker/api.Dockerfile
     environment:
-      NATS_URL: nats://nats:4222
-      NOTARIUS_DATABASE_URL: sqlite:////data/notarius_studio.db
-      NOTARIUS_OBJECT_STORAGE_DIR: /data/objects
-      NOTARIUS_OBJECT_BUCKET: notarius-studio
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      NOTARIUS_CORS_ORIGINS: ${NOTARIUS_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      NOTARIUS_PROTOTYPE_WORKSPACE: /data/prototype-workbench
     volumes:
-      - studio-data:/data
+      - prototype-data:/data
     ports:
       - "8000:8000"
-    depends_on:
-      - nats
 
   web:
     build:
       context: ../..
       dockerfile: infra/docker/web.Dockerfile
       args:
-        NEXT_PUBLIC_NOTARIUS_API_BASE_URL: http://localhost:8000
+        NEXT_PUBLIC_NOTARIUS_API_URL: ${NEXT_PUBLIC_NOTARIUS_API_URL:-http://localhost:8000}
     environment:
-      NEXT_PUBLIC_NOTARIUS_API_BASE_URL: http://localhost:8000
+      NEXT_PUBLIC_NOTARIUS_API_URL: ${NEXT_PUBLIC_NOTARIUS_API_URL:-http://localhost:8000}
     ports:
       - "3000:3000"
     depends_on:
       - api
 
-  worker:
-    build:
-      context: ../..
-      dockerfile: infra/docker/worker.Dockerfile
-    environment:
-      NATS_URL: nats://nats:4222
-      NOTARIUS_DATABASE_URL: sqlite:////data/notarius_studio.db
-      NOTARIUS_OBJECT_STORAGE_DIR: /data/objects
-      NOTARIUS_OBJECT_BUCKET: notarius-studio
-    volumes:
-      - studio-data:/data
-    depends_on:
-      - nats
-
 volumes:
-  studio-data:
+  prototype-data:

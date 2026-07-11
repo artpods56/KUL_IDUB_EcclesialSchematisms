@@ -1,37 +1,39 @@
 import type { Edge } from "@xyflow/react";
 
 import type {
-  PrototypeNodeSpec,
-  PrototypeNodeConfigInput,
-  PrototypePort,
-  PrototypeRunEdgeProjectionInput,
-  PrototypeRunNodeResult,
-  PrototypeSelectionItem,
+  NodeSpec,
+  NodeConfigInput,
+  Port,
+  RunEdgeProjectionInput,
+  RunNodeResult,
+  SelectionItem,
 } from "@/lib/api";
+import type { OutputPortTreatment } from "./output-port-treatment";
+import { defaultTreatments } from "./output-port-treatment";
 
-export type PrototypeEdgeProjection = PrototypeRunEdgeProjectionInput;
+export type WorkflowEdgeProjection = RunEdgeProjectionInput;
 
-export interface PrototypeEdgeData extends Record<string, unknown> {
-  projection?: PrototypeEdgeProjection;
+export interface WorkflowEdgeData extends Record<string, unknown> {
+  projection?: WorkflowEdgeProjection;
 }
 
-export type PrototypeFlowEdge = Edge<PrototypeEdgeData>;
+export type WorkflowEdge = Edge<WorkflowEdgeData>;
 
 /** Metadata encoded into React Flow handle ids for typed connections. */
 export interface PortMeta {
   portName: string;
   artifactTypeId: string;
   schemaVersion: number;
-  shape: PrototypePort["shape"];
+  shape: Port["shape"];
   direction: "input" | "output";
 }
 
-export type PrototypeNodeConfig = Record<string, unknown> & {
+export type WorkflowNodeConfig = Record<string, unknown> & {
   connector_id?: string;
-  selection?: PrototypeSelectionItem[];
+  selection?: SelectionItem[];
 };
 
-export type PrototypeExecutionStatus =
+export type NodeExecutionStatus =
   | "idle"
   | "uploading"
   | "running"
@@ -39,22 +41,28 @@ export type PrototypeExecutionStatus =
   | "failed"
   | "skipped";
 
-export interface PrototypeNodeExecution {
-  status: PrototypeExecutionStatus;
+export interface NodeExecution {
+  status: NodeExecutionStatus;
   error?: string;
 }
 
-export interface PrototypeNodeData extends Record<string, unknown> {
-  spec: PrototypeNodeSpec;
-  config: PrototypeNodeConfig;
-  run: PrototypeRunNodeResult | null;
-  execution: PrototypeNodeExecution;
+export interface WorkflowNodeData extends Record<string, unknown> {
+  spec: NodeSpec;
+  config: WorkflowNodeConfig;
+  run: RunNodeResult | null;
+  execution: NodeExecution;
+  outputTreatments: Record<string, OutputPortTreatment>;
   onFilesSelected?: (nodeId: string, files: File[]) => void;
   onConfigChange?: (nodeId: string, name: string, value: unknown) => void;
   onRemoveSelection?: (nodeId: string, index: number) => void;
+  onOutputTreatmentChange?: (
+    nodeId: string,
+    portName: string,
+    treatment: OutputPortTreatment,
+  ) => void;
 }
 
-export const PROTOTYPE_NODE_TYPE = "notariusPrototypeNode";
+export const WORKFLOW_NODE_TYPE = "notariusWorkflowNode";
 export const LOCAL_UPLOAD_OPERATOR_ID = "source.local_upload.images";
 
 function schemaRecord(value: unknown): Record<string, unknown> | null {
@@ -64,12 +72,12 @@ function schemaRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-export function defaultPrototypeConfig(
-  spec: PrototypeNodeSpec,
-): PrototypeNodeConfig {
+export function defaultNodeConfig(
+  spec: NodeSpec,
+): WorkflowNodeConfig {
   const schema = schemaRecord(spec.config_schema);
   const properties = schemaRecord(schema?.properties);
-  const config: PrototypeNodeConfig = {};
+  const config: WorkflowNodeConfig = {};
 
   if (properties) {
     for (const [name, propertyValue] of Object.entries(properties)) {
@@ -87,60 +95,61 @@ export function defaultPrototypeConfig(
   return config;
 }
 
-export function createPrototypeNodeData(
-  spec: PrototypeNodeSpec,
-): PrototypeNodeData {
+export function createWorkflowNodeData(
+  spec: NodeSpec,
+): WorkflowNodeData {
   return {
     spec,
-    config: defaultPrototypeConfig(spec),
+    config: defaultNodeConfig(spec),
     run: null,
     execution: { status: "idle" },
+    outputTreatments: defaultTreatments(spec.outputs),
   };
 }
 
-export function selectedPrototypeItems(
-  data: PrototypeNodeData,
-): PrototypeSelectionItem[] {
+export function selectedSourceItems(
+  data: WorkflowNodeData,
+): SelectionItem[] {
   return Array.isArray(data.config.selection) ? data.config.selection : [];
 }
 
-export function isLocalUploadSource(data: PrototypeNodeData): boolean {
+export function isLocalUploadSource(data: WorkflowNodeData): boolean {
   return data.spec.operator_id === LOCAL_UPLOAD_OPERATOR_ID;
 }
 
-export function serializePrototypeConfig(
-  data: PrototypeNodeData,
-): PrototypeNodeConfigInput {
+export function serializeNodeConfig(
+  data: WorkflowNodeData,
+): NodeConfigInput {
   if (!isLocalUploadSource(data)) return data.config;
 
   return {
     ...data.config,
     connector_id: "local_upload",
-    selection: selectedPrototypeItems(data).map((item, index) => ({
+    selection: selectedSourceItems(data).map((item, index) => ({
       ...item,
       order_index: index,
     })),
   };
 }
 
-export function appendPrototypeSelection(
-  data: PrototypeNodeData,
-  items: readonly PrototypeSelectionItem[],
-): PrototypeNodeData {
+export function appendSelection(
+  data: WorkflowNodeData,
+  items: readonly SelectionItem[],
+): WorkflowNodeData {
   return {
     ...data,
     config: {
       ...data.config,
       connector_id: "local_upload",
-      selection: [...selectedPrototypeItems(data), ...items],
+      selection: [...selectedSourceItems(data), ...items],
     },
   };
 }
 
-export function replacePrototypeSelection(
-  data: PrototypeNodeData,
-  items: readonly PrototypeSelectionItem[],
-): PrototypeNodeData {
+export function replaceSelection(
+  data: WorkflowNodeData,
+  items: readonly SelectionItem[],
+): WorkflowNodeData {
   return {
     ...data,
     config: {
@@ -151,25 +160,25 @@ export function replacePrototypeSelection(
   };
 }
 
-export function removePrototypeSelectionItem(
-  data: PrototypeNodeData,
+export function removeSelectionItem(
+  data: WorkflowNodeData,
   index: number,
-): PrototypeNodeData {
+): WorkflowNodeData {
   return {
     ...data,
     config: {
       ...data.config,
-      selection: selectedPrototypeItems(data).filter(
+      selection: selectedSourceItems(data).filter(
         (_, itemIndex) => itemIndex !== index,
       ),
     },
   };
 }
 
-export function updatePrototypeRun(
-  data: PrototypeNodeData,
-  run: PrototypeRunNodeResult | null,
-): PrototypeNodeData {
+export function updateNodeRun(
+  data: WorkflowNodeData,
+  run: RunNodeResult | null,
+): WorkflowNodeData {
   return {
     ...data,
     run,
@@ -179,7 +188,7 @@ export function updatePrototypeRun(
   };
 }
 
-export function portMetaForPrototypePort(port: PrototypePort): PortMeta {
+export function portMetaForPort(port: Port): PortMeta {
   return {
     portName: port.name,
     artifactTypeId: port.artifact_type.id,
@@ -189,29 +198,29 @@ export function portMetaForPrototypePort(port: PrototypePort): PortMeta {
   };
 }
 
-export function prototypePortTypeLabel(port: PrototypePort): string {
+export function portTypeLabel(port: Port): string {
   return `${port.artifact_type.id}@${port.artifact_type.schema_version}`;
 }
 
-export function prototypePortSummary(port: PrototypePort): string {
+export function portSummary(port: Port): string {
   const extras = [port.shape, port.variadic ? "variadic" : null].filter(
     Boolean,
   );
 
-  return `${prototypePortTypeLabel(port)}${
+  return `${portTypeLabel(port)}${
     extras.length ? ` · ${extras.join(" · ")}` : ""
   }`;
 }
 
-export function prototypePortCountLabel(spec: PrototypeNodeSpec): string {
+export function portCountLabel(spec: NodeSpec): string {
   return `${spec.inputs.length} in · ${spec.outputs.length} out`;
 }
 
-export function prototypeGroupLabel(group: string): string {
+export function groupLabel(group: string): string {
   return group.charAt(0).toUpperCase() + group.slice(1);
 }
 
-export function prototypeSelectionSizeLabel(bytes: number): string {
+export function selectionSizeLabel(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} kB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;

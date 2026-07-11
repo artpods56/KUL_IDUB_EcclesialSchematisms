@@ -1,12 +1,13 @@
 import type {
-  PrototypeArtifactTypeSpec,
-  PrototypeFieldProjection,
+  ArtifactTypeSpec,
+  FieldProjection,
 } from "@/lib/api";
+import { tokens } from "@/lib/stylex/tokens.stylex";
 import type { PortMeta } from "./types";
 
 /**
  * Encode port type information into the React Flow handle id so that
- * `isValidConnection` can enforce prototype artifact flow without extra
+ * `isValidConnection` can enforce typed artifact flow without extra
  * lookups.
  */
 export function encodeHandleId(port: PortMeta): string {
@@ -71,8 +72,8 @@ export function projectionCandidatesForConnection(
     sourceHandle?: string | null;
     targetHandle?: string | null;
   },
-  artifactTypes: readonly PrototypeArtifactTypeSpec[],
-): PrototypeFieldProjection[] {
+  artifactTypes: readonly ArtifactTypeSpec[],
+): FieldProjection[] {
   const source = decodeHandleId(connection.sourceHandle);
   const target = decodeHandleId(connection.targetHandle);
   if (
@@ -106,7 +107,7 @@ export function projectionAwareConnectionIsValid(
     sourceHandle?: string | null;
     targetHandle?: string | null;
   },
-  artifactTypes: readonly PrototypeArtifactTypeSpec[],
+  artifactTypes: readonly ArtifactTypeSpec[],
 ): boolean {
   return (
     connectionIsValid(connection) ||
@@ -127,8 +128,8 @@ export function handleStyle(
     height: "30px",
     borderRadius: "9999px",
     background: variadic
-      ? `radial-gradient(circle, #202226 0 3px, ${color} 4px 6px, #202226 7px 8px, transparent 9px)`
-      : `radial-gradient(circle, ${color} 0 5px, #202226 6px 7px, transparent 8px)`,
+      ? `radial-gradient(circle, ${tokens.colorSurface} 0 3px, ${color} 4px 6px, ${tokens.colorSurface} 7px 8px, transparent 9px)`
+      : `radial-gradient(circle, ${color} 0 5px, ${tokens.colorSurface} 6px 7px, transparent 8px)`,
     border: "none",
     boxShadow: "none",
     cursor: "crosshair",

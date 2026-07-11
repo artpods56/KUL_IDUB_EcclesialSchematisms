@@ -1,4 +1,4 @@
-from typing import Annotated, Any, ClassVar, Protocol, final, override
+from typing import Annotated, ClassVar, Protocol, final, override
 from uuid import UUID
 
 from PIL.Image import Image
@@ -89,13 +89,3 @@ class TesseractOcrNode(Node[NoConfig, TesseractOcrInput, TesseractOcrOutput]):
             results.append(result)
 
         return TesseractOcrOutput(results=results)
-
-
-type NodeDefinition = tuple[NodeInput, Node[Any, Any, Any], NodeOutput]
-
-
-TESSERACT_OCR_NODE: NodeDefinition = (
-    TesseractOcrInput,
-    TesseractOcrNode,
-    TesseractOcrOutput,
-)

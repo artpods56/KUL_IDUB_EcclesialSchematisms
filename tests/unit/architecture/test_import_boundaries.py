@@ -5,17 +5,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 FORBIDDEN_CORE_IMPORTS = (
     "fastapi",
-    "faststream",
-    "nats",
-    "sqlalchemy",
+    "mistralai",
     "notarius_api",
-    "notarius_dagster",
-    "notarius_llm",
-    "notarius_messaging",
-    "notarius_persistence",
-    "notarius_schematisms",
     "notarius_storage",
-    "notarius_worker",
 )
 
 
