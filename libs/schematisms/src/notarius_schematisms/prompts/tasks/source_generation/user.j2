@@ -1,0 +1,73 @@
+<PROMPT_VERSION>0.0.3</PROMPT_VERSION>
+<USER_REQUEST>
+    <INSTRUCTION>
+        Find the Latin source text on this schematism page that corresponds to the parsed Polish entries provided below.
+        Extract values exactly as printed in Latin - do not translate or normalize.
+    </INSTRUCTION>
+
+    {% if PREVIOUS_PAGE__CONTEXT %}
+    <PREVIOUS_PAGE_CONTEXT>
+        This page continues from a previous page. Use the following context:
+        {% if PREVIOUS_PAGE__CONTEXT.active_deanery %}
+        <ACTIVE_DEANERY>{{ PREVIOUS_PAGE__CONTEXT.active_deanery }}</ACTIVE_DEANERY>
+        {% else %}
+        <ACTIVE_DEANERY>null (no deanery was active at end of previous page)</ACTIVE_DEANERY>
+        {% endif %}
+
+        Use the inherited Latin deanery for entries appearing BEFORE any new deanery heading on this page.
+    </PREVIOUS_PAGE_CONTEXT>
+    {% else %}
+    <PREVIOUS_PAGE_CONTEXT>
+        This is the first page or no context is available. Set `deanery` to null for any entries
+        appearing before a visible Latin deanery heading on this page.
+    </PREVIOUS_PAGE_CONTEXT>
+    {% endif %}
+
+    {% if CURRENT_PAGE__GROUND_TRUTH %}
+    <PARSED_GROUND_TRUTH>
+        These are the normalized Polish entries for this page. Find the corresponding Latin text on the image:
+        ```json
+{{ CURRENT_PAGE__GROUND_TRUTH | tojson(indent=2) }}
+        ```
+
+        IMPORTANT:
+        - Entries above may be in DIFFERENT ORDER than they appear on the page
+        - Your output must follow PAGE VISUAL ORDER, not this order
+        - Use these as guidance to LOCATE text, but extract LATIN values from the image
+        - The Polish deanery names help identify which deanery, but output the LATIN form
+    </PARSED_GROUND_TRUTH>
+    {% endif %}
+
+    {% if CURRENT_PAGE__TEXT %}
+    <CURRENT_PAGE_TEXT>
+        {{ CURRENT_PAGE__TEXT }}
+    </CURRENT_PAGE_TEXT>
+    {% endif %}
+
+    {% if NEXT_PAGE__TEXT %}
+    <NEXT_PAGE_TEXT>
+        OCR text from the next page (use this to complete entries that start on the current page but are cut off):
+        {{ NEXT_PAGE__TEXT }}
+    </NEXT_PAGE_TEXT>
+    {% endif %}
+
+    <EXTRACTION_FOCUS>
+        For each parsed entry, find on the page:
+        - Latin parish name (often similar to Polish, may have Latin spelling)
+        - Latin dedication (with abbreviations like S., SS., B.M.V.)
+        - Latin building material (mur., lig., murata, lignea)
+        - Latin deanery (Decanatus X) from heading or inherited context
+
+        REMINDER:
+        - Only extract entries that START on this page. Ignore continuations from the previous page.
+        - If an entry starts here but is cut off at the bottom, use NEXT_PAGE_TEXT to complete the Latin fields.
+        - Strip list numbering from parish names (e.g., "2. Boniewo" → "Boniewo").
+    </EXTRACTION_FOCUS>
+
+    <RESPONSE_FORMAT>
+        Return only the JSON object as specified in OUTPUT_SCHEMA.
+        All values must be LATIN as printed on the page.
+        Entries must be in PAGE VISUAL ORDER (not parsed input order).
+        No additional text or markdown.
+    </RESPONSE_FORMAT>
+</USER_REQUEST>

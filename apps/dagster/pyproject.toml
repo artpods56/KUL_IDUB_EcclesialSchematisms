@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "notarius-dagster"
+version = "0.1.0"
+requires-python = "==3.12.9"
+dependencies = [
+    "dagster==1.12.8",
+]
+
+[tool.dagster]
+module_name = "notarius_dagster.defs.dev"
+code_location_name = "notarius_dagster"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

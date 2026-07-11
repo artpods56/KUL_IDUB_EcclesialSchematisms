@@ -1,0 +1,19 @@
+{
+  "sequence_index": 2,
+  "page_number": 2,
+  "engine": "local.tesseract",
+  "image_artifact_id": "60b0f6e1-d799-4a5f-a382-4d30a38ea786",
+  "ocr_result_artifact_id": "cb2f87f9-bb5f-4df5-b9c3-1e87e3008295",
+  "text_length": 883,
+  "block_count": 0,
+  "token_count": 172,
+  "confidence": 47.54651162790697,
+  "runtime": {
+    "byte_size": 6917714,
+    "language": "eng",
+    "psm": 6,
+    "oem": 3,
+    "image_width": 3456,
+    "image_height": 2234
+  }
+}

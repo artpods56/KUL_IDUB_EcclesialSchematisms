@@ -1,11 +1,9 @@
 from collections import defaultdict
 from collections.abc import Iterator, Sequence
-from typing import Any, Dict, Generic, Literal, TypeVar, Self
+from typing import Generic, Literal, TypeVar, Self
 
-from PIL import Image
 from pydantic import BaseModel, Field
 
-from notarius.schemas.data.metrics import PageDataMetrics
 from notarius.domain.entities.schematism import SchematismPage, SchematismEntry
 
 # Module-level TypeVar for pickle/dill compatibility
@@ -57,6 +55,10 @@ class GroundTruthDataItem(BaseDataItem, HasGroundTruthMixin):
     pass
 
 
+class EvaluationDataItem(GroundTruthDataItem):
+    pass
+
+
 class PredictionDataItem(BaseDataItem, HasPredictionsMixin):
     pass
 
@@ -99,6 +101,12 @@ class BaseItemDataset(BaseDataset[BaseDataItem]):
 
 class GroundTruthItemDataset(BaseDataset[GroundTruthDataItem]):
     """Dataset containing ground truth items."""
+
+    pass
+
+
+class EvaluationItemDataset(BaseDataset[EvaluationDataItem]):
+    """Dataset containing evaluation items."""
 
     pass
 

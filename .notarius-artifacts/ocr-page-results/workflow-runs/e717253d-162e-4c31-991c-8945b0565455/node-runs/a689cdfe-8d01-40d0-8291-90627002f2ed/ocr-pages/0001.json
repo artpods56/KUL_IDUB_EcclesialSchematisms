@@ -1,0 +1,2754 @@
+{
+  "page_number": 1,
+  "engine": "local.tesseract",
+  "text": "@ Terminal Shell Edit View Window Help Soe © ® * © ) O a, =. tee . i ge * dings By ue O<« 3G © teams.cloud.microsoft @ ~ ae a a ! @ e , fs B Teams ++ &8 Join or create team 7? «= “a {% Fe sae ye, “7 ce ee ; CY 7/ a ee j Nite P 3 $ a a Teams ‘ J, a i Przetwarzanie_informacji a Przetwarzanie_informacji . : : ee 8 Pe _Z_wykorzystaniem_gfe... P2 _z_wykorzystaniem_gfe... ii @ i. a Assignments em 8& 86a a 6g | ae 4 Calendar d eas Podstawy uczenia . ae Historia filozofii. Dzieje . D ru maszynowego 1D filozoficznej refleksji na... . OneDrive 74 \\ ' aay aay ie yo Apps Programowanie_aplikacji Ae Wprowadzenie do r ‘ P2 _Data_Science_w_érod... Wd fee poznawczej id . HB 6 @ O86 @ 4 os Gtebokie_sieci_neuronow : Sztuczna inteligencja - we ‘a d Uc @_w_rozpoznawaniu_ob... ~ Przetwarzanie jezyka... % Gm Wiedza_niedoskonala_w. TO. na Tutoring grupa 2 oe d sztucznej_inteligencji_... grup",
+  "blocks": [],
+  "tokens": [
+    {
+      "text": "@",
+      "confidence": 88.0,
+      "bbox": [
+        42,
+        16,
+        67,
+        46
+      ],
+      "normalized_bbox": [
+        12,
+        7,
+        19,
+        20
+      ]
+    },
+    {
+      "text": "Terminal",
+      "confidence": 68.0,
+      "bbox": [
+        109,
+        21,
+        218,
+        42
+      ],
+      "normalized_bbox": [
+        31,
+        9,
+        63,
+        18
+      ]
+    },
+    {
+      "text": "Shell",
+      "confidence": 82.0,
+      "bbox": [
+        261,
+        22,
+        317,
+        42
+      ],
+      "normalized_bbox": [
+        75,
+        9,
+        91,
+        18
+      ]
+    },
+    {
+      "text": "Edit",
+      "confidence": 82.0,
+      "bbox": [
+        362,
+        22,
+        405,
+        42
+      ],
+      "normalized_bbox": [
+        104,
+        9,
+        117,
+        18
+      ]
+    },
+    {
+      "text": "View",
+      "confidence": 84.0,
+      "bbox": [
+        449,
+        22,
+        505,
+        42
+      ],
+      "normalized_bbox": [
+        129,
+        9,
+        146,
+        18
+      ]
+    },
+    {
+      "text": "Window",
+      "confidence": 66.0,
+      "bbox": [
+        549,
+        22,
+        644,
+        42
+      ],
+      "normalized_bbox": [
+        158,
+        9,
+        186,
+        18
+      ]
+    },
+    {
+      "text": "Help",
+      "confidence": 61.0,
+      "bbox": [
+        688,
+        22,
+        740,
+        46
+      ],
+      "normalized_bbox": [
+        199,
+        9,
+        214,
+        20
+      ]
+    },
+    {
+      "text": "Soe",
+      "confidence": 38.0,
+      "bbox": [
+        2244,
+        18,
+        2344,
+        48
+      ],
+      "normalized_bbox": [
+        649,
+        8,
+        678,
+        21
+      ]
+    },
+    {
+      "text": "©",
+      "confidence": 77.0,
+      "bbox": [
+        2378,
+        17,
+        2409,
+        43
+      ],
+      "normalized_bbox": [
+        688,
+        7,
+        697,
+        19
+      ]
+    },
+    {
+      "text": "®",
+      "confidence": 53.0,
+      "bbox": [
+        2456,
+        19,
+        2483,
+        47
+      ],
+      "normalized_bbox": [
+        710,
+        8,
+        718,
+        21
+      ]
+    },
+    {
+      "text": "*",
+      "confidence": 0.0,
+      "bbox": [
+        2526,
+        17,
+        2558,
+        49
+      ],
+      "normalized_bbox": [
+        730,
+        7,
+        740,
+        21
+      ]
+    },
+    {
+      "text": "©",
+      "confidence": 89.0,
+      "bbox": [
+        2601,
+        16,
+        2635,
+        50
+      ],
+      "normalized_bbox": [
+        752,
+        7,
+        762,
+        22
+      ]
+    },
+    {
+      "text": ")",
+      "confidence": 19.0,
+      "bbox": [
+        2675,
+        20,
+        2713,
+        47
+      ],
+      "normalized_bbox": [
+        774,
+        8,
+        785,
+        21
+      ]
+    },
+    {
+      "text": "O",
+      "confidence": 73.0,
+      "bbox": [
+        2750,
+        19,
+        2778,
+        47
+      ],
+      "normalized_bbox": [
+        795,
+        8,
+        803,
+        21
+      ]
+    },
+    {
+      "text": "a,",
+      "confidence": 25.0,
+      "bbox": [
+        2888,
+        20,
+        3072,
+        45
+      ],
+      "normalized_bbox": [
+        835,
+        8,
+        888,
+        20
+      ]
+    },
+    {
+      "text": "=.",
+      "confidence": 71.0,
+      "bbox": [
+        3118,
+        20,
+        3145,
+        46
+      ],
+      "normalized_bbox": [
+        902,
+        8,
+        910,
+        20
+      ]
+    },
+    {
+      "text": "tee",
+      "confidence": 24.0,
+      "bbox": [
+        3193,
+        22,
+        3324,
+        41
+      ],
+      "normalized_bbox": [
+        923,
+        9,
+        961,
+        18
+      ]
+    },
+    {
+      "text": ".",
+      "confidence": 0.0,
+      "bbox": [
+        26,
+        123,
+        34,
+        130
+      ],
+      "normalized_bbox": [
+        7,
+        55,
+        9,
+        58
+      ]
+    },
+    {
+      "text": "i",
+      "confidence": 0.0,
+      "bbox": [
+        540,
+        120,
+        578,
+        160
+      ],
+      "normalized_bbox": [
+        156,
+        53,
+        167,
+        71
+      ]
+    },
+    {
+      "text": "ge",
+      "confidence": 5.0,
+      "bbox": [
+        626,
+        119,
+        729,
+        161
+      ],
+      "normalized_bbox": [
+        181,
+        53,
+        210,
+        72
+      ]
+    },
+    {
+      "text": "*",
+      "confidence": 0.0,
+      "bbox": [
+        749,
+        154,
+        757,
+        162
+      ],
+      "normalized_bbox": [
+        216,
+        68,
+        219,
+        72
+      ]
+    },
+    {
+      "text": "dings",
+      "confidence": 27.0,
+      "bbox": [
+        772,
+        140,
+        875,
+        163
+      ],
+      "normalized_bbox": [
+        223,
+        62,
+        253,
+        72
+      ]
+    },
+    {
+      "text": "By",
+      "confidence": 65.0,
+      "bbox": [
+        928,
+        134,
+        1020,
+        198
+      ],
+      "normalized_bbox": [
+        268,
+        59,
+        295,
+        88
+      ]
+    },
+    {
+      "text": "ue",
+      "confidence": 29.0,
+      "bbox": [
+        1150,
+        132,
+        1172,
+        158
+      ],
+      "normalized_bbox": [
+        332,
+        59,
+        339,
+        70
+      ]
+    },
+    {
+      "text": "O<«",
+      "confidence": 24.0,
+      "bbox": [
+        1412,
+        128,
+        1508,
+        156
+      ],
+      "normalized_bbox": [
+        408,
+        57,
+        436,
+        69
+      ]
+    },
+    {
+      "text": "3G",
+      "confidence": 48.0,
+      "bbox": [
+        1544,
+        126,
+        1638,
+        158
+      ],
+      "normalized_bbox": [
+        446,
+        56,
+        473,
+        70
+      ]
+    },
+    {
+      "text": "©",
+      "confidence": 67.0,
+      "bbox": [
+        1799,
+        129,
+        1825,
+        155
+      ],
+      "normalized_bbox": [
+        520,
+        57,
+        528,
+        69
+      ]
+    },
+    {
+      "text": "teams.cloud.microsoft",
+      "confidence": 67.0,
+      "bbox": [
+        1846,
+        132,
+        2137,
+        153
+      ],
+      "normalized_bbox": [
+        534,
+        59,
+        618,
+        68
+      ]
+    },
+    {
+      "text": "@",
+      "confidence": 65.0,
+      "bbox": [
+        3033,
+        128,
+        3061,
+        156
+      ],
+      "normalized_bbox": [
+        877,
+        57,
+        885,
+        69
+      ]
+    },
+    {
+      "text": "~",
+      "confidence": 9.0,
+      "bbox": [
+        3224,
+        140,
+        3248,
+        144
+      ],
+      "normalized_bbox": [
+        932,
+        62,
+        939,
+        64
+      ]
+    },
+    {
+      "text": "ae",
+      "confidence": 41.0,
+      "bbox": [
+        10,
+        329,
+        123,
+        357
+      ],
+      "normalized_bbox": [
+        2,
+        147,
+        35,
+        159
+      ]
+    },
+    {
+      "text": "a",
+      "confidence": 23.0,
+      "bbox": [
+        335,
+        329,
+        404,
+        352
+      ],
+      "normalized_bbox": [
+        96,
+        147,
+        116,
+        157
+      ]
+    },
+    {
+      "text": "a",
+      "confidence": 79.0,
+      "bbox": [
+        516,
+        333,
+        529,
+        350
+      ],
+      "normalized_bbox": [
+        149,
+        149,
+        153,
+        156
+      ]
+    },
+    {
+      "text": "!",
+      "confidence": 0.0,
+      "bbox": [
+        615,
+        328,
+        697,
+        353
+      ],
+      "normalized_bbox": [
+        177,
+        146,
+        201,
+        158
+      ]
+    },
+    {
+      "text": "@",
+      "confidence": 0.0,
+      "bbox": [
+        733,
+        329,
+        754,
+        358
+      ],
+      "normalized_bbox": [
+        212,
+        147,
+        218,
+        160
+      ]
+    },
+    {
+      "text": "e",
+      "confidence": 0.0,
+      "bbox": [
+        834,
+        319,
+        861,
+        332
+      ],
+      "normalized_bbox": [
+        241,
+        142,
+        249,
+        148
+      ]
+    },
+    {
+      "text": ",",
+      "confidence": 0.0,
+      "bbox": [
+        884,
+        331,
+        900,
+        348
+      ],
+      "normalized_bbox": [
+        255,
+        148,
+        260,
+        155
+      ]
+    },
+    {
+      "text": "fs",
+      "confidence": 0.0,
+      "bbox": [
+        1062,
+        312,
+        1071,
+        351
+      ],
+      "normalized_bbox": [
+        307,
+        139,
+        309,
+        157
+      ]
+    },
+    {
+      "text": "B",
+      "confidence": 46.0,
+      "bbox": [
+        1287,
+        300,
+        1346,
+        370
+      ],
+      "normalized_bbox": [
+        372,
+        134,
+        389,
+        165
+      ]
+    },
+    {
+      "text": "Teams",
+      "confidence": 96.0,
+      "bbox": [
+        1431,
+        329,
+        1530,
+        352
+      ],
+      "normalized_bbox": [
+        414,
+        147,
+        442,
+        157
+      ]
+    },
+    {
+      "text": "++",
+      "confidence": 53.0,
+      "bbox": [
+        2856,
+        338,
+        2881,
+        342
+      ],
+      "normalized_bbox": [
+        826,
+        151,
+        833,
+        153
+      ]
+    },
+    {
+      "text": "&8",
+      "confidence": 41.0,
+      "bbox": [
+        2930,
+        325,
+        2965,
+        358
+      ],
+      "normalized_bbox": [
+        847,
+        145,
+        857,
+        160
+      ]
+    },
+    {
+      "text": "Join",
+      "confidence": 96.0,
+      "bbox": [
+        2980,
+        329,
+        3032,
+        352
+      ],
+      "normalized_bbox": [
+        862,
+        147,
+        877,
+        157
+      ]
+    },
+    {
+      "text": "or",
+      "confidence": 96.0,
+      "bbox": [
+        3045,
+        336,
+        3071,
+        351
+      ],
+      "normalized_bbox": [
+        881,
+        150,
+        888,
+        157
+      ]
+    },
+    {
+      "text": "create",
+      "confidence": 96.0,
+      "bbox": [
+        3080,
+        332,
+        3238,
+        351
+      ],
+      "normalized_bbox": [
+        891,
+        148,
+        936,
+        157
+      ]
+    },
+    {
+      "text": "team",
+      "confidence": 96.0,
+      "bbox": [
+        3181,
+        321,
+        3243,
+        364
+      ],
+      "normalized_bbox": [
+        920,
+        143,
+        938,
+        162
+      ]
+    },
+    {
+      "text": "7?",
+      "confidence": 32.0,
+      "bbox": [
+        388,
+        374,
+        417,
+        405
+      ],
+      "normalized_bbox": [
+        112,
+        167,
+        120,
+        181
+      ]
+    },
+    {
+      "text": "«=",
+      "confidence": 2.0,
+      "bbox": [
+        557,
+        399,
+        566,
+        407
+      ],
+      "normalized_bbox": [
+        161,
+        178,
+        163,
+        182
+      ]
+    },
+    {
+      "text": "“a",
+      "confidence": 35.0,
+      "bbox": [
+        636,
+        365,
+        681,
+        405
+      ],
+      "normalized_bbox": [
+        184,
+        163,
+        197,
+        181
+      ]
+    },
+    {
+      "text": "{%",
+      "confidence": 0.0,
+      "bbox": [
+        859,
+        364,
+        893,
+        405
+      ],
+      "normalized_bbox": [
+        248,
+        162,
+        258,
+        181
+      ]
+    },
+    {
+      "text": "Fe",
+      "confidence": 40.0,
+      "bbox": [
+        967,
+        374,
+        1194,
+        407
+      ],
+      "normalized_bbox": [
+        279,
+        167,
+        345,
+        182
+      ]
+    },
+    {
+      "text": "sae",
+      "confidence": 28.0,
+      "bbox": [
+        248,
+        479,
+        280,
+        505
+      ],
+      "normalized_bbox": [
+        71,
+        214,
+        81,
+        226
+      ]
+    },
+    {
+      "text": "ye,",
+      "confidence": 33.0,
+      "bbox": [
+        376,
+        462,
+        529,
+        556
+      ],
+      "normalized_bbox": [
+        108,
+        206,
+        153,
+        248
+      ]
+    },
+    {
+      "text": "“7",
+      "confidence": 41.0,
+      "bbox": [
+        868,
+        382,
+        1040,
+        492
+      ],
+      "normalized_bbox": [
+        251,
+        170,
+        300,
+        220
+      ]
+    },
+    {
+      "text": "ce",
+      "confidence": 41.0,
+      "bbox": [
+        1104,
+        466,
+        1605,
+        527
+      ],
+      "normalized_bbox": [
+        319,
+        208,
+        464,
+        235
+      ]
+    },
+    {
+      "text": "ee",
+      "confidence": 27.0,
+      "bbox": [
+        307,
+        570,
+        416,
+        580
+      ],
+      "normalized_bbox": [
+        88,
+        255,
+        120,
+        259
+      ]
+    },
+    {
+      "text": ";",
+      "confidence": 34.0,
+      "bbox": [
+        581,
+        575,
+        584,
+        578
+      ],
+      "normalized_bbox": [
+        168,
+        257,
+        168,
+        258
+      ]
+    },
+    {
+      "text": "CY",
+      "confidence": 35.0,
+      "bbox": [
+        767,
+        565,
+        789,
+        579
+      ],
+      "normalized_bbox": [
+        221,
+        252,
+        228,
+        259
+      ]
+    },
+    {
+      "text": "7/",
+      "confidence": 7.0,
+      "bbox": [
+        822,
+        569,
+        846,
+        582
+      ],
+      "normalized_bbox": [
+        237,
+        254,
+        244,
+        260
+      ]
+    },
+    {
+      "text": "a",
+      "confidence": 29.0,
+      "bbox": [
+        868,
+        569,
+        907,
+        579
+      ],
+      "normalized_bbox": [
+        251,
+        254,
+        262,
+        259
+      ]
+    },
+    {
+      "text": "ee",
+      "confidence": 33.0,
+      "bbox": [
+        1050,
+        564,
+        1187,
+        580
+      ],
+      "normalized_bbox": [
+        303,
+        252,
+        343,
+        259
+      ]
+    },
+    {
+      "text": "j",
+      "confidence": 68.0,
+      "bbox": [
+        296,
+        584,
+        299,
+        585
+      ],
+      "normalized_bbox": [
+        85,
+        261,
+        86,
+        261
+      ]
+    },
+    {
+      "text": "Nite",
+      "confidence": 34.0,
+      "bbox": [
+        390,
+        567,
+        412,
+        595
+      ],
+      "normalized_bbox": [
+        112,
+        253,
+        119,
+        266
+      ]
+    },
+    {
+      "text": "P",
+      "confidence": 20.0,
+      "bbox": [
+        569,
+        585,
+        571,
+        587
+      ],
+      "normalized_bbox": [
+        164,
+        261,
+        165,
+        262
+      ]
+    },
+    {
+      "text": "3",
+      "confidence": 54.0,
+      "bbox": [
+        746,
+        590,
+        749,
+        594
+      ],
+      "normalized_bbox": [
+        215,
+        264,
+        216,
+        265
+      ]
+    },
+    {
+      "text": "$",
+      "confidence": 43.0,
+      "bbox": [
+        820,
+        580,
+        823,
+        585
+      ],
+      "normalized_bbox": [
+        237,
+        259,
+        238,
+        261
+      ]
+    },
+    {
+      "text": "a",
+      "confidence": 20.0,
+      "bbox": [
+        883,
+        586,
+        962,
+        605
+      ],
+      "normalized_bbox": [
+        255,
+        262,
+        278,
+        270
+      ]
+    },
+    {
+      "text": "a",
+      "confidence": 35.0,
+      "bbox": [
+        1159,
+        583,
+        1169,
+        604
+      ],
+      "normalized_bbox": [
+        335,
+        260,
+        338,
+        270
+      ]
+    },
+    {
+      "text": "Teams",
+      "confidence": 94.0,
+      "bbox": [
+        1292,
+        580,
+        1352,
+        594
+      ],
+      "normalized_bbox": [
+        373,
+        259,
+        391,
+        265
+      ]
+    },
+    {
+      "text": "‘",
+      "confidence": 0.0,
+      "bbox": [
+        551,
+        602,
+        553,
+        605
+      ],
+      "normalized_bbox": [
+        159,
+        269,
+        160,
+        270
+      ]
+    },
+    {
+      "text": "J,",
+      "confidence": 15.0,
+      "bbox": [
+        774,
+        580,
+        823,
+        644
+      ],
+      "normalized_bbox": [
+        223,
+        259,
+        238,
+        288
+      ]
+    },
+    {
+      "text": "a",
+      "confidence": 8.0,
+      "bbox": [
+        872,
+        620,
+        874,
+        623
+      ],
+      "normalized_bbox": [
+        252,
+        277,
+        252,
+        278
+      ]
+    },
+    {
+      "text": "i",
+      "confidence": 0.0,
+      "bbox": [
+        1530,
+        633,
+        1572,
+        639
+      ],
+      "normalized_bbox": [
+        442,
+        283,
+        454,
+        286
+      ]
+    },
+    {
+      "text": "Przetwarzanie_informacji",
+      "confidence": 90.0,
+      "bbox": [
+        1650,
+        600,
+        1971,
+        637
+      ],
+      "normalized_bbox": [
+        477,
+        268,
+        570,
+        285
+      ]
+    },
+    {
+      "text": "a",
+      "confidence": 0.0,
+      "bbox": [
+        2025,
+        636,
+        2050,
+        640
+      ],
+      "normalized_bbox": [
+        585,
+        284,
+        593,
+        286
+      ]
+    },
+    {
+      "text": "Przetwarzanie_informacji",
+      "confidence": 91.0,
+      "bbox": [
+        2330,
+        603,
+        2651,
+        637
+      ],
+      "normalized_bbox": [
+        674,
+        269,
+        767,
+        285
+      ]
+    },
+    {
+      "text": ".",
+      "confidence": 0.0,
+      "bbox": [
+        344,
+        670,
+        346,
+        672
+      ],
+      "normalized_bbox": [
+        99,
+        299,
+        100,
+        300
+      ]
+    },
+    {
+      "text": ":",
+      "confidence": 49.0,
+      "bbox": [
+        732,
+        677,
+        733,
+        680
+      ],
+      "normalized_bbox": [
+        211,
+        303,
+        212,
+        304
+      ]
+    },
+    {
+      "text": ":",
+      "confidence": 64.0,
+      "bbox": [
+        881,
+        670,
+        884,
+        677
+      ],
+      "normalized_bbox": [
+        254,
+        299,
+        255,
+        303
+      ]
+    },
+    {
+      "text": "ee",
+      "confidence": 30.0,
+      "bbox": [
+        955,
+        646,
+        1086,
+        685
+      ],
+      "normalized_bbox": [
+        276,
+        289,
+        314,
+        306
+      ]
+    },
+    {
+      "text": "8",
+      "confidence": 67.0,
+      "bbox": [
+        1306,
+        636,
+        1338,
+        676
+      ],
+      "normalized_bbox": [
+        377,
+        284,
+        387,
+        302
+      ]
+    },
+    {
+      "text": "Pe",
+      "confidence": 90.0,
+      "bbox": [
+        1523,
+        631,
+        1569,
+        664
+      ],
+      "normalized_bbox": [
+        440,
+        282,
+        453,
+        297
+      ]
+    },
+    {
+      "text": "_Z_wykorzystaniem_gfe...",
+      "confidence": 33.0,
+      "bbox": [
+        1648,
+        643,
+        1977,
+        682
+      ],
+      "normalized_bbox": [
+        476,
+        287,
+        572,
+        305
+      ]
+    },
+    {
+      "text": "P2",
+      "confidence": 93.0,
+      "bbox": [
+        2206,
+        629,
+        2250,
+        662
+      ],
+      "normalized_bbox": [
+        638,
+        281,
+        651,
+        296
+      ]
+    },
+    {
+      "text": "_z_wykorzystaniem_gfe...",
+      "confidence": 73.0,
+      "bbox": [
+        2328,
+        647,
+        2657,
+        675
+      ],
+      "normalized_bbox": [
+        673,
+        289,
+        768,
+        302
+      ]
+    },
+    {
+      "text": "ii",
+      "confidence": 35.0,
+      "bbox": [
+        405,
+        687,
+        435,
+        706
+      ],
+      "normalized_bbox": [
+        117,
+        307,
+        125,
+        316
+      ]
+    },
+    {
+      "text": "@",
+      "confidence": 36.0,
+      "bbox": [
+        845,
+        682,
+        872,
+        711
+      ],
+      "normalized_bbox": [
+        244,
+        305,
+        252,
+        318
+      ]
+    },
+    {
+      "text": "i.",
+      "confidence": 26.0,
+      "bbox": [
+        890,
+        679,
+        980,
+        718
+      ],
+      "normalized_bbox": [
+        257,
+        303,
+        283,
+        321
+      ]
+    },
+    {
+      "text": "a",
+      "confidence": 0.0,
+      "bbox": [
+        1203,
+        704,
+        1215,
+        718
+      ],
+      "normalized_bbox": [
+        348,
+        315,
+        351,
+        321
+      ]
+    },
+    {
+      "text": "Assignments",
+      "confidence": 94.0,
+      "bbox": [
+        1264,
+        691,
+        1380,
+        710
+      ],
+      "normalized_bbox": [
+        365,
+        309,
+        399,
+        317
+      ]
+    },
+    {
+      "text": "em",
+      "confidence": 17.0,
+      "bbox": [
+        1035,
+        765,
+        1206,
+        802
+      ],
+      "normalized_bbox": [
+        299,
+        342,
+        348,
+        358
+      ]
+    },
+    {
+      "text": "8&",
+      "confidence": 0.0,
+      "bbox": [
+        1307,
+        761,
+        1337,
+        783
+      ],
+      "normalized_bbox": [
+        378,
+        340,
+        386,
+        350
+      ]
+    },
+    {
+      "text": "86a",
+      "confidence": 53.0,
+      "bbox": [
+        1497,
+        755,
+        1677,
+        793
+      ],
+      "normalized_bbox": [
+        433,
+        337,
+        485,
+        354
+      ]
+    },
+    {
+      "text": "a",
+      "confidence": 16.0,
+      "bbox": [
+        2177,
+        757,
+        2211,
+        791
+      ],
+      "normalized_bbox": [
+        629,
+        338,
+        639,
+        354
+      ]
+    },
+    {
+      "text": "6g",
+      "confidence": 16.0,
+      "bbox": [
+        2252,
+        755,
+        2357,
+        793
+      ],
+      "normalized_bbox": [
+        651,
+        337,
+        682,
+        354
+      ]
+    },
+    {
+      "text": "|",
+      "confidence": 80.0,
+      "bbox": [
+        3420,
+        793,
+        3421,
+        796
+      ],
+      "normalized_bbox": [
+        989,
+        354,
+        989,
+        356
+      ]
+    },
+    {
+      "text": "ae",
+      "confidence": 28.0,
+      "bbox": [
+        1084,
+        800,
+        1135,
+        824
+      ],
+      "normalized_bbox": [
+        313,
+        358,
+        328,
+        368
+      ]
+    },
+    {
+      "text": "4",
+      "confidence": 49.0,
+      "bbox": [
+        1186,
+        804,
+        1192,
+        816
+      ],
+      "normalized_bbox": [
+        343,
+        359,
+        344,
+        365
+      ]
+    },
+    {
+      "text": "Calendar",
+      "confidence": 96.0,
+      "bbox": [
+        1280,
+        797,
+        1364,
+        827
+      ],
+      "normalized_bbox": [
+        370,
+        356,
+        394,
+        370
+      ]
+    },
+    {
+      "text": "d",
+      "confidence": 75.0,
+      "bbox": [
+        3409,
+        804,
+        3423,
+        824
+      ],
+      "normalized_bbox": [
+        986,
+        359,
+        990,
+        368
+      ]
+    },
+    {
+      "text": "eas",
+      "confidence": 48.0,
+      "bbox": [
+        1300,
+        915,
+        1344,
+        930
+      ],
+      "normalized_bbox": [
+        376,
+        409,
+        388,
+        416
+      ]
+    },
+    {
+      "text": "Podstawy",
+      "confidence": 92.0,
+      "bbox": [
+        1650,
+        927,
+        1772,
+        953
+      ],
+      "normalized_bbox": [
+        477,
+        414,
+        512,
+        426
+      ]
+    },
+    {
+      "text": "uczenia",
+      "confidence": 92.0,
+      "bbox": [
+        1783,
+        927,
+        1878,
+        948
+      ],
+      "normalized_bbox": [
+        515,
+        414,
+        543,
+        424
+      ]
+    },
+    {
+      "text": ".",
+      "confidence": 54.0,
+      "bbox": [
+        2025,
+        956,
+        2050,
+        960
+      ],
+      "normalized_bbox": [
+        585,
+        427,
+        593,
+        429
+      ]
+    },
+    {
+      "text": "ae",
+      "confidence": 0.0,
+      "bbox": [
+        2215,
+        951,
+        2240,
+        962
+      ],
+      "normalized_bbox": [
+        640,
+        425,
+        648,
+        430
+      ]
+    },
+    {
+      "text": "Historia",
+      "confidence": 92.0,
+      "bbox": [
+        2330,
+        927,
+        2426,
+        948
+      ],
+      "normalized_bbox": [
+        674,
+        414,
+        701,
+        424
+      ]
+    },
+    {
+      "text": "filozofii.",
+      "confidence": 90.0,
+      "bbox": [
+        2436,
+        927,
+        2534,
+        948
+      ],
+      "normalized_bbox": [
+        704,
+        414,
+        733,
+        424
+      ]
+    },
+    {
+      "text": "Dzieje",
+      "confidence": 91.0,
+      "bbox": [
+        2546,
+        927,
+        2622,
+        953
+      ],
+      "normalized_bbox": [
+        736,
+        414,
+        758,
+        426
+      ]
+    },
+    {
+      "text": ".",
+      "confidence": 40.0,
+      "bbox": [
+        2705,
+        956,
+        2730,
+        960
+      ],
+      "normalized_bbox": [
+        782,
+        427,
+        789,
+        429
+      ]
+    },
+    {
+      "text": "D",
+      "confidence": 61.0,
+      "bbox": [
+        1303,
+        978,
+        1341,
+        1005
+      ],
+      "normalized_bbox": [
+        377,
+        437,
+        388,
+        449
+      ]
+    },
+    {
+      "text": "ru",
+      "confidence": 72.0,
+      "bbox": [
+        1531,
+        962,
+        1572,
+        984
+      ],
+      "normalized_bbox": [
+        442,
+        430,
+        454,
+        440
+      ]
+    },
+    {
+      "text": "maszynowego",
+      "confidence": 91.0,
+      "bbox": [
+        1650,
+        973,
+        1831,
+        993
+      ],
+      "normalized_bbox": [
+        477,
+        435,
+        529,
+        444
+      ]
+    },
+    {
+      "text": "1D",
+      "confidence": 93.0,
+      "bbox": [
+        2216,
+        949,
+        2261,
+        984
+      ],
+      "normalized_bbox": [
+        641,
+        424,
+        654,
+        440
+      ]
+    },
+    {
+      "text": "filozoficznej",
+      "confidence": 92.0,
+      "bbox": [
+        2329,
+        967,
+        2481,
+        993
+      ],
+      "normalized_bbox": [
+        673,
+        432,
+        717,
+        444
+      ]
+    },
+    {
+      "text": "refleksji",
+      "confidence": 89.0,
+      "bbox": [
+        2493,
+        967,
+        2589,
+        993
+      ],
+      "normalized_bbox": [
+        721,
+        432,
+        749,
+        444
+      ]
+    },
+    {
+      "text": "na...",
+      "confidence": 95.0,
+      "bbox": [
+        2600,
+        973,
+        2650,
+        988
+      ],
+      "normalized_bbox": [
+        752,
+        435,
+        766,
+        442
+      ]
+    },
+    {
+      "text": ".",
+      "confidence": 6.0,
+      "bbox": [
+        100,
+        1028,
+        102,
+        1030
+      ],
+      "normalized_bbox": [
+        28,
+        460,
+        29,
+        461
+      ]
+    },
+    {
+      "text": "OneDrive",
+      "confidence": 91.0,
+      "bbox": [
+        1279,
+        1019,
+        1365,
+        1047
+      ],
+      "normalized_bbox": [
+        370,
+        456,
+        394,
+        468
+      ]
+    },
+    {
+      "text": "74",
+      "confidence": 6.0,
+      "bbox": [
+        3302,
+        1010,
+        3361,
+        1053
+      ],
+      "normalized_bbox": [
+        955,
+        452,
+        972,
+        471
+      ]
+    },
+    {
+      "text": "\\",
+      "confidence": 64.0,
+      "bbox": [
+        3401,
+        1028,
+        3419,
+        1074
+      ],
+      "normalized_bbox": [
+        984,
+        460,
+        989,
+        480
+      ]
+    },
+    {
+      "text": "'",
+      "confidence": 0.0,
+      "bbox": [
+        1307,
+        1114,
+        1337,
+        1122
+      ],
+      "normalized_bbox": [
+        378,
+        498,
+        386,
+        502
+      ]
+    },
+    {
+      "text": "aay",
+      "confidence": 42.0,
+      "bbox": [
+        1496,
+        1075,
+        1677,
+        1113
+      ],
+      "normalized_bbox": [
+        432,
+        481,
+        485,
+        498
+      ]
+    },
+    {
+      "text": "aay",
+      "confidence": 42.0,
+      "bbox": [
+        2176,
+        1075,
+        2357,
+        1113
+      ],
+      "normalized_bbox": [
+        629,
+        481,
+        682,
+        498
+      ]
+    },
+    {
+      "text": "ie",
+      "confidence": 61.0,
+      "bbox": [
+        3297,
+        1053,
+        3364,
+        1159
+      ],
+      "normalized_bbox": [
+        953,
+        471,
+        973,
+        518
+      ]
+    },
+    {
+      "text": "yo",
+      "confidence": 68.0,
+      "bbox": [
+        3384,
+        1077,
+        3456,
+        1117
+      ],
+      "normalized_bbox": [
+        979,
+        482,
+        1000,
+        500
+      ]
+    },
+    {
+      "text": "Apps",
+      "confidence": 95.0,
+      "bbox": [
+        1298,
+        1252,
+        1345,
+        1270
+      ],
+      "normalized_bbox": [
+        375,
+        560,
+        389,
+        568
+      ]
+    },
+    {
+      "text": "Programowanie_aplikacji",
+      "confidence": 51.0,
+      "bbox": [
+        1650,
+        1247,
+        1965,
+        1273
+      ],
+      "normalized_bbox": [
+        477,
+        558,
+        568,
+        569
+      ]
+    },
+    {
+      "text": "Ae",
+      "confidence": 15.0,
+      "bbox": [
+        2208,
+        1270,
+        2254,
+        1280
+      ],
+      "normalized_bbox": [
+        638,
+        568,
+        652,
+        572
+      ]
+    },
+    {
+      "text": "Wprowadzenie",
+      "confidence": 85.0,
+      "bbox": [
+        2329,
+        1243,
+        2514,
+        1282
+      ],
+      "normalized_bbox": [
+        673,
+        556,
+        727,
+        573
+      ]
+    },
+    {
+      "text": "do",
+      "confidence": 96.0,
+      "bbox": [
+        2529,
+        1247,
+        2558,
+        1268
+      ],
+      "normalized_bbox": [
+        731,
+        558,
+        740,
+        567
+      ]
+    },
+    {
+      "text": "r",
+      "confidence": 54.0,
+      "bbox": [
+        3309,
+        1241,
+        3369,
+        1280
+      ],
+      "normalized_bbox": [
+        957,
+        555,
+        974,
+        572
+      ]
+    },
+    {
+      "text": "‘",
+      "confidence": 0.0,
+      "bbox": [
+        3421,
+        1275,
+        3438,
+        1282
+      ],
+      "normalized_bbox": [
+        989,
+        570,
+        994,
+        573
+      ]
+    },
+    {
+      "text": "P2",
+      "confidence": 93.0,
+      "bbox": [
+        1526,
+        1269,
+        1570,
+        1302
+      ],
+      "normalized_bbox": [
+        441,
+        568,
+        454,
+        582
+      ]
+    },
+    {
+      "text": "_Data_Science_w_érod...",
+      "confidence": 65.0,
+      "bbox": [
+        1648,
+        1275,
+        1968,
+        1317
+      ],
+      "normalized_bbox": [
+        476,
+        570,
+        569,
+        589
+      ]
+    },
+    {
+      "text": "Wd",
+      "confidence": 94.0,
+      "bbox": [
+        2194,
+        1268,
+        2262,
+        1304
+      ],
+      "normalized_bbox": [
+        634,
+        567,
+        654,
+        583
+      ]
+    },
+    {
+      "text": "fee",
+      "confidence": 8.0,
+      "bbox": [
+        2330,
+        1287,
+        2469,
+        1308
+      ],
+      "normalized_bbox": [
+        674,
+        576,
+        714,
+        585
+      ]
+    },
+    {
+      "text": "poznawczej",
+      "confidence": 63.0,
+      "bbox": [
+        2481,
+        1280,
+        2628,
+        1322
+      ],
+      "normalized_bbox": [
+        717,
+        572,
+        760,
+        591
+      ]
+    },
+    {
+      "text": "id",
+      "confidence": 4.0,
+      "bbox": [
+        3329,
+        1265,
+        3380,
+        1310
+      ],
+      "normalized_bbox": [
+        963,
+        566,
+        978,
+        586
+      ]
+    },
+    {
+      "text": ".",
+      "confidence": 0.0,
+      "bbox": [
+        3423,
+        1297,
+        3425,
+        1299
+      ],
+      "normalized_bbox": [
+        990,
+        580,
+        991,
+        581
+      ]
+    },
+    {
+      "text": "HB",
+      "confidence": 0.0,
+      "bbox": [
+        1496,
+        1397,
+        1531,
+        1431
+      ],
+      "normalized_bbox": [
+        432,
+        625,
+        442,
+        640
+      ]
+    },
+    {
+      "text": "6",
+      "confidence": 0.0,
+      "bbox": [
+        1572,
+        1395,
+        1600,
+        1433
+      ],
+      "normalized_bbox": [
+        454,
+        624,
+        462,
+        641
+      ]
+    },
+    {
+      "text": "@",
+      "confidence": 46.0,
+      "bbox": [
+        1639,
+        1395,
+        1677,
+        1433
+      ],
+      "normalized_bbox": [
+        474,
+        624,
+        485,
+        641
+      ]
+    },
+    {
+      "text": "O86",
+      "confidence": 0.0,
+      "bbox": [
+        2176,
+        1395,
+        2280,
+        1433
+      ],
+      "normalized_bbox": [
+        629,
+        624,
+        659,
+        641
+      ]
+    },
+    {
+      "text": "@",
+      "confidence": 0.0,
+      "bbox": [
+        2319,
+        1395,
+        2357,
+        1433
+      ],
+      "normalized_bbox": [
+        671,
+        624,
+        682,
+        641
+      ]
+    },
+    {
+      "text": "4",
+      "confidence": 76.0,
+      "bbox": [
+        3376,
+        1401,
+        3405,
+        1439
+      ],
+      "normalized_bbox": [
+        976,
+        627,
+        985,
+        644
+      ]
+    },
+    {
+      "text": "os",
+      "confidence": 8.0,
+      "bbox": [
+        1526,
+        1600,
+        1543,
+        1604
+      ],
+      "normalized_bbox": [
+        441,
+        716,
+        446,
+        717
+      ]
+    },
+    {
+      "text": "Gtebokie_sieci_neuronow",
+      "confidence": 57.0,
+      "bbox": [
+        1650,
+        1567,
+        1980,
+        1595
+      ],
+      "normalized_bbox": [
+        477,
+        701,
+        572,
+        713
+      ]
+    },
+    {
+      "text": ":",
+      "confidence": 8.0,
+      "bbox": [
+        2243,
+        1602,
+        2245,
+        1604
+      ],
+      "normalized_bbox": [
+        649,
+        717,
+        649,
+        717
+      ]
+    },
+    {
+      "text": "Sztuczna",
+      "confidence": 89.0,
+      "bbox": [
+        2330,
+        1568,
+        2446,
+        1588
+      ],
+      "normalized_bbox": [
+        674,
+        701,
+        707,
+        710
+      ]
+    },
+    {
+      "text": "inteligencja",
+      "confidence": 83.0,
+      "bbox": [
+        2457,
+        1567,
+        2601,
+        1593
+      ],
+      "normalized_bbox": [
+        710,
+        701,
+        752,
+        713
+      ]
+    },
+    {
+      "text": "-",
+      "confidence": 83.0,
+      "bbox": [
+        2612,
+        1579,
+        2622,
+        1581
+      ],
+      "normalized_bbox": [
+        755,
+        706,
+        758,
+        707
+      ]
+    },
+    {
+      "text": "we",
+      "confidence": 36.0,
+      "bbox": [
+        2705,
+        1596,
+        2730,
+        1600
+      ],
+      "normalized_bbox": [
+        782,
+        714,
+        789,
+        716
+      ]
+    },
+    {
+      "text": "‘a",
+      "confidence": 38.0,
+      "bbox": [
+        3293,
+        1556,
+        3325,
+        1611
+      ],
+      "normalized_bbox": [
+        952,
+        696,
+        962,
+        721
+      ]
+    },
+    {
+      "text": "d",
+      "confidence": 29.0,
+      "bbox": [
+        3449,
+        1573,
+        3456,
+        1599
+      ],
+      "normalized_bbox": [
+        997,
+        704,
+        1000,
+        715
+      ]
+    },
+    {
+      "text": "Uc",
+      "confidence": 57.0,
+      "bbox": [
+        1526,
+        1608,
+        1572,
+        1624
+      ],
+      "normalized_bbox": [
+        441,
+        719,
+        454,
+        726
+      ]
+    },
+    {
+      "text": "@_w_rozpoznawaniu_ob...",
+      "confidence": 46.0,
+      "bbox": [
+        1649,
+        1603,
+        1974,
+        1637
+      ],
+      "normalized_bbox": [
+        477,
+        717,
+        571,
+        732
+      ]
+    },
+    {
+      "text": "~",
+      "confidence": 88.0,
+      "bbox": [
+        2207,
+        1615,
+        2218,
+        1624
+      ],
+      "normalized_bbox": [
+        638,
+        722,
+        641,
+        726
+      ]
+    },
+    {
+      "text": "Przetwarzanie",
+      "confidence": 91.0,
+      "bbox": [
+        2330,
+        1603,
+        2493,
+        1639
+      ],
+      "normalized_bbox": [
+        674,
+        717,
+        721,
+        733
+      ]
+    },
+    {
+      "text": "jezyka...",
+      "confidence": 91.0,
+      "bbox": [
+        2515,
+        1603,
+        2620,
+        1639
+      ],
+      "normalized_bbox": [
+        727,
+        717,
+        758,
+        733
+      ]
+    },
+    {
+      "text": "%",
+      "confidence": 0.0,
+      "bbox": [
+        3318,
+        1622,
+        3339,
+        1633
+      ],
+      "normalized_bbox": [
+        960,
+        726,
+        966,
+        730
+      ]
+    },
+    {
+      "text": "Gm",
+      "confidence": 23.0,
+      "bbox": [
+        3378,
+        1608,
+        3449,
+        1637
+      ],
+      "normalized_bbox": [
+        977,
+        719,
+        997,
+        732
+      ]
+    },
+    {
+      "text": "Wiedza_niedoskonala_w.",
+      "confidence": 92.0,
+      "bbox": [
+        1649,
+        1887,
+        1964,
+        1908
+      ],
+      "normalized_bbox": [
+        477,
+        844,
+        568,
+        854
+      ]
+    },
+    {
+      "text": "TO.",
+      "confidence": 22.0,
+      "bbox": [
+        1744,
+        1909,
+        1848,
+        1930
+      ],
+      "normalized_bbox": [
+        504,
+        854,
+        534,
+        863
+      ]
+    },
+    {
+      "text": "na",
+      "confidence": 19.0,
+      "bbox": [
+        1915,
+        1909,
+        2050,
+        1930
+      ],
+      "normalized_bbox": [
+        554,
+        854,
+        593,
+        863
+      ]
+    },
+    {
+      "text": "Tutoring",
+      "confidence": 89.0,
+      "bbox": [
+        2329,
+        1906,
+        2426,
+        1928
+      ],
+      "normalized_bbox": [
+        673,
+        853,
+        701,
+        863
+      ]
+    },
+    {
+      "text": "grupa",
+      "confidence": 89.0,
+      "bbox": [
+        2472,
+        1913,
+        2497,
+        1928
+      ],
+      "normalized_bbox": [
+        715,
+        856,
+        722,
+        863
+      ]
+    },
+    {
+      "text": "2",
+      "confidence": 96.0,
+      "bbox": [
+        2544,
+        1908,
+        2557,
+        1928
+      ],
+      "normalized_bbox": [
+        736,
+        854,
+        739,
+        863
+      ]
+    },
+    {
+      "text": "oe",
+      "confidence": 48.0,
+      "bbox": [
+        2705,
+        1916,
+        2730,
+        1920
+      ],
+      "normalized_bbox": [
+        782,
+        857,
+        789,
+        859
+      ]
+    },
+    {
+      "text": "d",
+      "confidence": 68.0,
+      "bbox": [
+        691,
+        1949,
+        693,
+        1953
+      ],
+      "normalized_bbox": [
+        199,
+        872,
+        200,
+        874
+      ]
+    },
+    {
+      "text": "sztucznej_inteligencji_...",
+      "confidence": 90.0,
+      "bbox": [
+        1650,
+        1923,
+        1960,
+        1957
+      ],
+      "normalized_bbox": [
+        477,
+        860,
+        567,
+        876
+      ]
+    },
+    {
+      "text": "grup",
+      "confidence": 18.0,
+      "bbox": [
+        2428,
+        1913,
+        2516,
+        1933
+      ],
+      "normalized_bbox": [
+        702,
+        856,
+        728,
+        865
+      ]
+    }
+  ],
+  "confidence": 47.67836257309941,
+  "image_artifact_id": "1e3f8387-15ae-4b8d-8535-57b57c6079fe",
+  "runtime": {
+    "byte_size": 6917740,
+    "language": "eng",
+    "psm": 6,
+    "oem": 3,
+    "image_width": 3456,
+    "image_height": 2234
+  }
+}

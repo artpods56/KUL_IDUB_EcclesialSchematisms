@@ -1,8 +1,7 @@
 """LLM cache backend and key generator for cached engine pattern."""
 
 from __future__ import annotations
-from notarius.shared.constants import CACHES_DIR
-from notarius.infrastructure.persistence.storage.local import LocalFileStorage
+
 import hashlib
 import json
 from typing import final, override, cast, Any
@@ -107,14 +106,14 @@ class LLMCacheBackend[T: BaseModel](CacheBackend[CompletionResult[T]]):
         self,
         cache: LLMCache[T],
         key_generator: LLMCacheKeyGenerator,
-        image_repository: ImageRepository,
+        image_repository: ImageRepository | None = None,
     ):
         """Initialize the cache backend.
 
         Args:
             cache: LLMCache instance for storage
             key_generator: Key generator for creating cache keys from requests
-            image_repository: Repository for storing images by content hash
+            image_repository: Optional repository for storing images by content hash
         """
         self.cache = cache
         self.key_generator = key_generator
@@ -134,10 +133,11 @@ class LLMCacheBackend[T: BaseModel](CacheBackend[CompletionResult[T]]):
         if result is None:
             return None
 
-        # Resolve image references back to base64
-        conversation = conversation_with_images(
-            result.conversation, self.image_repository
-        )
+        if self.image_repository is None:
+            return result
+
+        # Resolve image references back to base64 when image storage is configured.
+        conversation = conversation_with_images(result.conversation, self.image_repository)
 
         return CompletionResult(
             output=result.output,
@@ -155,7 +155,10 @@ class LLMCacheBackend[T: BaseModel](CacheBackend[CompletionResult[T]]):
         Returns:
             True if cached successfully
         """
-        # Replace base64 images with content-addressable references
+        if self.image_repository is None:
+            return self.cache.set(key, value)
+
+        # Replace base64 images with content-addressable references.
         conversation = conversation_with_refs(value.conversation, self.image_repository)
 
         modified_value = CompletionResult(
@@ -180,9 +183,9 @@ class LLMCacheBackend[T: BaseModel](CacheBackend[CompletionResult[T]]):
 
 def create_llm_cache_backend[T: BaseModel](
     model_name: str,
-    image_repository: ImageRepository,
+    image_repository: ImageRepository | None = None,
 ) -> tuple[LLMCacheBackend[T], LLMCacheKeyGenerator]:
-    """Create an LLM cache backend with key generator and image repository.
+    """Create an LLM cache backend with key generator.
 
     This is a convenience factory for setting up LLM caching with automatic
     image deduplication via content-addressable storage.
@@ -192,6 +195,7 @@ def create_llm_cache_backend[T: BaseModel](
 
     Args:
         model_name: Model name for cache directory namespacing
+        image_repository: Optional repository for image deduplication.
 
     Returns:
         Tuple of (cache_backend, key_generator)

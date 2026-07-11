@@ -1,0 +1,14 @@
+model_list:
+  - model_name: gemma-4-31b-it
+    litellm_params:
+      model: hosted_vllm/gemma-4-31b-it
+      api_base: http://vllm:8000/v1
+      api_key: none
+
+litellm_settings:
+  request_timeout: 600
+  num_retries: 2
+  drop_params: true
+
+general_settings:
+  store_model_in_db: true

@@ -194,6 +194,15 @@ pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/visualstudiocode,python
 
+### Node / Next.js ###
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.playwright-cli/
+!apps/web/src/lib/
+!apps/web/src/lib/**
+
 
 .idea/
 **/.DS_Store

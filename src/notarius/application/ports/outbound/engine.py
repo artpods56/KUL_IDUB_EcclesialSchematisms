@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 if TYPE_CHECKING:
     from types import CoroutineType
 from typing import Any, Concatenate
-from collections.abc import Callable, Coroutine, Awaitable
+from collections.abc import Callable
 from functools import wraps
 from typing import Self, TypedDict
 
@@ -91,7 +91,7 @@ def _create_base_stats() -> EngineStats:
 
 def _create_cached_stats() -> CachedEngineStats:
     """Create a fresh CachedEngineStats instance."""
-    return CachedEngineStats(calls=0, errors=0, hits=0, misses=0, invalidations=0)
+    return CachedEngineStats(calls=0, errors=0, hits=0, misses=0)
 
 
 AnyEngine = ConfigurableEngine[Any, Any, Any]

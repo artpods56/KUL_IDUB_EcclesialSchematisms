@@ -10,7 +10,6 @@ import asyncio
 from typing import (
     Never,
     Protocol,
-    final,
     runtime_checkable,
     Any,
     override,
@@ -172,7 +171,7 @@ class CachedEngine[
                         engine_type=type(self._engine).__name__,
                     )
                     self._cache.delete(cache_key)
-                    self._stats["invalidations"] += 1
+                    self._stats["invalidations"] = self._stats.get("invalidations", 0) + 1
                 else:
                     self._stats["hits"] += 1
                     logger.debug(
@@ -254,7 +253,7 @@ class CachedEngine[
                         engine_type=type(self._engine).__name__,
                     )
                     await asyncio.to_thread(self._cache.delete, cache_key)
-                    self._stats["invalidations"] += 1
+                    self._stats["invalidations"] = self._stats.get("invalidations", 0) + 1
                 else:
                     self._stats["hits"] += 1
                     logger.debug(

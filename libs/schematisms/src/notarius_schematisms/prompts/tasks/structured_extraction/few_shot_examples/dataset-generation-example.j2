@@ -1,0 +1,151 @@
+<EXAMPLE>
+    <INPUTS>
+        <IMAGE>
+            Base64 Image
+        </IMAGE>
+        <TEXT>
+            16
+
+            Janiszewek, Janiszewo, Wola Sosnowa, Holendry Wolskie,
+            Józefowo, Milżyn, Holendry Milżyńskie, Zaborowo, Sie-
+            mnówek, Siemnowo, Sołkowo, Sułkówek, Grojec, Micha-
+            łowo, Grójczyk, Smogorzewo, Koniec, Kwilino.
+            Sol. Nativ. BMV.
+            Confr. Misericord. BMV.
+            Cap. pub. lig. in Grojec, cum Sol. Invent. et Exalt. S. Crucis.
+            in Districtu Gostiniensi, Gubern. Varsavien.
+
+            21. Białotarsk, p. TE. Exalt. S. Cruc. lig. n. a. 2608.
+            Cur. Barthol. Prylińsk. n. 25 Aug. 1806 or. 1829.
+            lp. pp. Białotarsk, Dąbrowka, Górki, Piotrowo, Zawada, Za-
+            krzewo, Dziankowo, Dziankówek, Wola Dziankowska,
+            Beszyn, Siemony, Kowalki, Borek, Gulewo, Czarne Holen-
+            dry, Lubaty, Załuskowo, Okna, Skrzynki, Skrzyneczki,
+            Czarne, Trzebowo, Patrowo, Patrówek, Marjanka, Józefo-
+            wo, Kanibród, Zieleniec, Prylin.
+            Sol. Invent. et Exalt. S. Crucis.
+            Confr. Transfig. Dni.
+
+            22. Duninowo, p. TE. SS. Trinit. Patr. S. Nicol. lig.
+            n. a. 2205.
+            Adm. Joan. Przywieczerski n. 2 Febr. 1840 or. 1863.
+            lp. pp. Duninowo, Skoki Wielkie, Skoki Małe, Karolewo,
+            Nowa Wieś, Grodziska, Lipianki, Goren Mały, Kolonia
+            Duninów, Kobyle Błoto, Średuń, Trzcianne, Czołownica,
+            Wólka, Romunki Środuńskie, Leonów, Kamion, Huta, Śro-
+            duń praed., Duninów Stary.
+            Sol. SS. Trinit. S. Nicol. EC.
+            Confr. S. Nicolai.
+            Cap. pub. mur. JXti in Coemet.
+
+            2. Decanatus Radiejoviensis,
+            in Districtu Nieszaviensi, Guber. Varsavien.
+
+            1. Radziejów, os. II. cl. TE. Asumptio BM. mur. n.a.2500.
+            Praep. Thom. Bukowski Decanus n. 12 Dec. 1839
+            or. 1862.
+            Vic. Bolesl. Chyczewski n. 11 Jan. 1845 or. 1871.
+            lp. Radziejów, pp. Czołowo, Czołowek, Klonia Czołowska,
+        </TEXT>
+        <LMV3_HINTS>
+            ```json
+            {
+            "page_number": "16",
+            "entries": [
+            {
+            "deanery": null,
+            "parish": "21. Bialotarsk,",
+            "dedication": "Prylińsk.",
+            "building_material": "lig."
+            },
+            {
+            "deanery": "Decanatus Radiejoviensis,",
+            "parish": "22. Duninowo,",
+            "dedication": "TE. SS. Trimit. Patr. S. Nicol.",
+            "building_material": "lig."
+            },
+            {
+            "deanery": "Decanatus Radiejoviensis,",
+            "parish": "1. Radziejów,",
+            "dedication": "TE. Asumptio ВМ.",
+            "building_material": "mur."
+            }
+            ]
+            }
+            ```
+        </LMV3_HINTS>
+        <POLISH_GROUND_TRUTH>
+            ```json
+            {
+            "page_number": "16",
+            "entries": [
+            {
+            "deanery": "Radziejów",
+            "parish": "Radziejów",
+            "dedication": "Najświętsza Maryja Panna Wniebowzięta",
+            "building_material": "mr"
+            },
+            {
+            "deanery": "Włocławek",
+            "parish": "Duninowo",
+            "dedication": "Św. Trójca",
+            "building_material": "dr"
+            },
+            {
+            "deanery": "Włocławek",
+            "parish": "Białotarsk",
+            "dedication": "Podwyższenie Krzyża Św.",
+            "building_material": "dr"
+            }
+            ]
+            }
+            ```
+        </POLISH_GROUND_TRUTH>
+    </INPUTS>
+    <OUTPUTS>
+        ```json
+        {
+        "page_number": "16",
+        "entries": [
+        {
+        "deanery": null,
+        "parish": "Bialotarsk",
+        "dedication": "Exalt. S. Cruc.",
+        "building_material": "lig."
+        },
+        {
+        "deanery": null,
+        "parish": "Duninowo",
+        "dedication": "SS. Trinit.",
+        "building_material": "lig."
+        },
+        {
+        "deanery": "Decanatus Radiejoviensis,",
+        "parish": "Radziejów",
+        "dedication": "Assumptio BM.",
+        "building_material": "mur."
+        }
+        ]
+        }
+        ```
+    </OUTPUTS>
+    <NOTES>
+        This example teaches the model how to handle a complex, stateful extraction where the ground truth must be used
+        as a guide, but the image is the only source for the final values.
+
+        1. **Entry Order:** The output `entries` array must follow the visual order on the page: Białotarsk (21), then
+        Duninowo (22), then Radziejów (1). The Polish ground truth has a different order, which must be fixed to align
+        with the image.
+
+        2. **Deanery Logic (Stateful Extraction):**
+        * Entries `Białotarsk` and `Duninowo` have a `deanery` of `null` because there is no "Decanatus..." heading
+        *before* them on the page. The deanery values present in the Polish ground truth ("Włocławek") are not in the
+        image for these entries and must be disregarded.
+        * This also teaches the model to correct the LMV3 hints, which incorrectly assigned the deanery to Duninowo.
+
+        3. **Field Extraction Rules:**
+        * For all entries, the parish, dedication, and building material values are taken *verbatim* from the Latin text
+        in the image, even if the Polish ground truth is a translated/normalized version. For example, `Asumptio
+        BM.` is extracted for Radziejów, not the Polish "Najświętsza Maryja Panna Wniebowzięta".
+    </NOTES>
+</EXAMPLE>

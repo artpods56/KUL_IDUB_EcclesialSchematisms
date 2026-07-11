@@ -1,0 +1,810 @@
+{
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "PortShape": {
+        "enum": [
+          "one",
+          "many"
+        ],
+        "title": "PortShape",
+        "type": "string"
+      },
+      "PrototypeArtifactSummaryResponse": {
+        "properties": {
+          "artifact_id": {
+            "format": "uuid",
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "artifact_type": {
+            "title": "Artifact Type",
+            "type": "string"
+          },
+          "byte_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Byte Size"
+          },
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "content_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Url"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "artifact_type",
+          "schema_version",
+          "content_type"
+        ],
+        "title": "PrototypeArtifactSummaryResponse",
+        "type": "object"
+      },
+      "PrototypeArtifactTypeKeyResponse": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schema_version"
+        ],
+        "title": "PrototypeArtifactTypeKeyResponse",
+        "type": "object"
+      },
+      "PrototypeArtifactTypeSpecResponse": {
+        "properties": {
+          "field_projections": {
+            "items": {
+              "$ref": "#/components/schemas/PrototypeFieldProjectionResponse"
+            },
+            "title": "Field Projections",
+            "type": "array"
+          },
+          "key": {
+            "$ref": "#/components/schemas/PrototypeArtifactTypeKeyResponse"
+          },
+          "payload_schema": {
+            "additionalProperties": true,
+            "title": "Payload Schema",
+            "type": "object"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "payload_schema",
+          "field_projections"
+        ],
+        "title": "PrototypeArtifactTypeSpecResponse",
+        "type": "object"
+      },
+      "PrototypeFieldProjectionRequest": {
+        "properties": {
+          "path": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Path",
+            "type": "array"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "PrototypeFieldProjectionRequest",
+        "type": "object"
+      },
+      "PrototypeFieldProjectionResponse": {
+        "properties": {
+          "path": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Path",
+            "type": "array"
+          },
+          "target_artifact_type": {
+            "$ref": "#/components/schemas/PrototypeArtifactTypeKeyResponse"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "target_artifact_type",
+          "title"
+        ],
+        "title": "PrototypeFieldProjectionResponse",
+        "type": "object"
+      },
+      "PrototypeNodeRegistryResponse": {
+        "properties": {
+          "artifact_types": {
+            "items": {
+              "$ref": "#/components/schemas/PrototypeArtifactTypeSpecResponse"
+            },
+            "title": "Artifact Types",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/PrototypeNodeSpecResponse"
+            },
+            "title": "Nodes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "artifact_types",
+          "nodes"
+        ],
+        "title": "PrototypeNodeRegistryResponse",
+        "type": "object"
+      },
+      "PrototypeNodeSpecResponse": {
+        "properties": {
+          "config_schema": {
+            "additionalProperties": true,
+            "title": "Config Schema",
+            "type": "object"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "group": {
+            "enum": [
+              "source",
+              "transform",
+              "ocr",
+              "arithmetic"
+            ],
+            "title": "Group",
+            "type": "string"
+          },
+          "input_schema": {
+            "additionalProperties": true,
+            "title": "Input Schema",
+            "type": "object"
+          },
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/PrototypePortResponse"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
+          "operator_id": {
+            "title": "Operator Id",
+            "type": "string"
+          },
+          "operator_version": {
+            "title": "Operator Version",
+            "type": "integer"
+          },
+          "output_schema": {
+            "additionalProperties": true,
+            "title": "Output Schema",
+            "type": "object"
+          },
+          "outputs": {
+            "items": {
+              "$ref": "#/components/schemas/PrototypePortResponse"
+            },
+            "title": "Outputs",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operator_id",
+          "operator_version",
+          "title",
+          "group",
+          "description",
+          "config_schema",
+          "input_schema",
+          "output_schema",
+          "inputs",
+          "outputs"
+        ],
+        "title": "PrototypeNodeSpecResponse",
+        "type": "object"
+      },
+      "PrototypePortResponse": {
+        "properties": {
+          "artifact_type": {
+            "$ref": "#/components/schemas/PrototypeArtifactTypeKeyResponse"
+          },
+          "direction": {
+            "enum": [
+              "input",
+              "output"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "required": {
+            "default": true,
+            "title": "Required",
+            "type": "boolean"
+          },
+          "shape": {
+            "$ref": "#/components/schemas/PortShape"
+          },
+          "variadic": {
+            "default": false,
+            "title": "Variadic",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "direction",
+          "artifact_type",
+          "shape"
+        ],
+        "title": "PrototypePortResponse",
+        "type": "object"
+      },
+      "PrototypeRunEdgeRequest": {
+        "properties": {
+          "from_node": {
+            "title": "From Node",
+            "type": "string"
+          },
+          "from_port": {
+            "title": "From Port",
+            "type": "string"
+          },
+          "projection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrototypeFieldProjectionRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "to_node": {
+            "title": "To Node",
+            "type": "string"
+          },
+          "to_port": {
+            "title": "To Port",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from_node",
+          "from_port",
+          "to_node",
+          "to_port"
+        ],
+        "title": "PrototypeRunEdgeRequest",
+        "type": "object"
+      },
+      "PrototypeRunNodeRequest": {
+        "properties": {
+          "config": {
+            "additionalProperties": true,
+            "title": "Config",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "operator_id": {
+            "title": "Operator Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "operator_id"
+        ],
+        "title": "PrototypeRunNodeRequest",
+        "type": "object"
+      },
+      "PrototypeRunNodeResponse": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "outputs": {
+            "items": {
+              "$ref": "#/components/schemas/PrototypeRunPortOutputResponse"
+            },
+            "title": "Outputs",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "succeeded",
+              "failed",
+              "skipped"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "status",
+          "error",
+          "outputs"
+        ],
+        "title": "PrototypeRunNodeResponse",
+        "type": "object"
+      },
+      "PrototypeRunPortOutputResponse": {
+        "properties": {
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/PrototypeArtifactSummaryResponse"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          },
+          "kind": {
+            "enum": [
+              "single",
+              "sequence"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "port": {
+            "title": "Port",
+            "type": "string"
+          }
+        },
+        "required": [
+          "port",
+          "kind",
+          "artifacts"
+        ],
+        "title": "PrototypeRunPortOutputResponse",
+        "type": "object"
+      },
+      "PrototypeRunRequest": {
+        "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/PrototypeRunEdgeRequest"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/PrototypeRunNodeRequest"
+            },
+            "title": "Nodes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "nodes"
+        ],
+        "title": "PrototypeRunRequest",
+        "type": "object"
+      },
+      "PrototypeRunResponse": {
+        "properties": {
+          "node_runs": {
+            "items": {
+              "$ref": "#/components/schemas/PrototypeRunNodeResponse"
+            },
+            "title": "Node Runs",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "node_runs"
+        ],
+        "title": "PrototypeRunResponse",
+        "type": "object"
+      },
+      "PrototypeSampleRequest": {
+        "properties": {
+          "count": {
+            "default": 2,
+            "maximum": 8.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "type": "integer"
+          }
+        },
+        "title": "PrototypeSampleRequest",
+        "type": "object"
+      },
+      "PrototypeSelectionItemResponse": {
+        "properties": {
+          "connector_id": {
+            "title": "Connector Id",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "external_uri": {
+            "title": "External Uri",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "connector_id",
+          "external_uri",
+          "display_name",
+          "size_bytes"
+        ],
+        "title": "PrototypeSelectionItemResponse",
+        "type": "object"
+      },
+      "PrototypeUploadRequest": {
+        "properties": {
+          "content_base64": {
+            "title": "Content Base64",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "content_base64"
+        ],
+        "title": "PrototypeUploadRequest",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Notarius Prototype API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/prototype/artifacts/{artifact_id}/content": {
+      "get": {
+        "operationId": "prototype_artifact_content_v1_prototype_artifacts__artifact_id__content_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Prototype Artifact Content",
+        "tags": [
+          "prototype"
+        ]
+      }
+    },
+    "/v1/prototype/nodes": {
+      "get": {
+        "operationId": "list_prototype_nodes_v1_prototype_nodes_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeNodeRegistryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Prototype Nodes",
+        "tags": [
+          "prototype"
+        ]
+      }
+    },
+    "/v1/prototype/run": {
+      "post": {
+        "operationId": "prototype_run_v1_prototype_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrototypeRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Prototype Run",
+        "tags": [
+          "prototype"
+        ]
+      }
+    },
+    "/v1/prototype/samples": {
+      "post": {
+        "operationId": "prototype_samples_v1_prototype_samples_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrototypeSampleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PrototypeSelectionItemResponse"
+                  },
+                  "title": "Response Prototype Samples V1 Prototype Samples Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Prototype Samples",
+        "tags": [
+          "prototype"
+        ]
+      }
+    },
+    "/v1/prototype/uploads": {
+      "post": {
+        "operationId": "prototype_upload_v1_prototype_uploads_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrototypeUploadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrototypeSelectionItemResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Prototype Upload",
+        "tags": [
+          "prototype"
+        ]
+      }
+    }
+  }
+}

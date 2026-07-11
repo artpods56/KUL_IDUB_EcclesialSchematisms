@@ -1,0 +1,133 @@
+<EXAMPLE>
+    <DESCRIPTION>Context inheritance with mid-page deanery change - KEY example for deanery handling</DESCRIPTION>
+    <INPUTS>
+        <IMAGE>
+            Base64 Image
+        </IMAGE>
+        <PREVIOUS_PAGE_CONTEXT>
+            This page continues from a previous page. Use the following context:
+            <ACTIVE_DEANERY>Decanatus Dubnensis</ACTIVE_DEANERY>
+            <LAST_PAGE_NUMBER>64</LAST_PAGE_NUMBER>
+
+            Use the inherited Latin deanery for entries appearing BEFORE any new deanery heading on this page.
+        </PREVIOUS_PAGE_CONTEXT>
+        <OCR_TEXT>
+            65
+
+            4. Ołyka, Eccl. tit. SS. Trinitatis, mur. n. a. 2800.
+            Par. Stephanus Kowalski...
+
+            5. Dubno, civ. Eccl. tit. S. Joan. Nepom. mur. n. a. 5200.
+            Praepos. Andreas Nowak...
+
+            II. Decanatus Luceoriensis,
+            in Districtu Luceoriensi.
+
+            1. Jałowicze, Eccl. tit. B. M. V. mur. n. a. 1900.
+            Par. Petrus Wiśniewski...
+
+            2. Torczyn, Eccl. tit. Assumptio B.M.V. lig. n. a. 2400.
+            Par. Joannes Mazur...
+        </OCR_TEXT>
+        <PARSED_GROUND_TRUTH>
+            ```json
+            {
+              "page_number": "65",
+              "entries": [
+                {
+                  "building_material": "mr",
+                  "deanery": "Dubno",
+                  "dedication": "Św. Trójca",
+                  "parish": "Ołyka"
+                },
+                {
+                  "building_material": "mr",
+                  "deanery": "Dubno",
+                  "dedication": "Jan Nepomucen",
+                  "parish": "Dubno"
+                },
+                {
+                  "building_material": "mr",
+                  "deanery": "Łuck",
+                  "dedication": "Bogarodzica Dziewica",
+                  "parish": "Jałowicze"
+                },
+                {
+                  "building_material": "dr",
+                  "deanery": "Łuck",
+                  "dedication": "Wniebowzięcie NMP",
+                  "parish": "Torczyn"
+                }
+              ]
+            }
+            ```
+        </PARSED_GROUND_TRUTH>
+    </INPUTS>
+    <OUTPUTS>
+        ```json
+        {
+          "page_number": "65",
+          "entries": [
+            {
+              "deanery": "Decanatus Dubnensis",
+              "parish": "Ołyka",
+              "dedication": "SS. Trinitatis",
+              "building_material": "mur."
+            },
+            {
+              "deanery": "Decanatus Dubnensis",
+              "parish": "Dubno",
+              "dedication": "S. Joan. Nepom.",
+              "building_material": "mur."
+            },
+            {
+              "deanery": "Decanatus Luceoriensis",
+              "parish": "Jałowicze",
+              "dedication": "B. M. V.",
+              "building_material": "mur."
+            },
+            {
+              "deanery": "Decanatus Luceoriensis",
+              "parish": "Torczyn",
+              "dedication": "Assumptio B.M.V.",
+              "building_material": "lig."
+            }
+          ],
+          "context": {
+            "active_deanery": "Decanatus Luceoriensis",
+            "last_page_number": "65"
+          }
+        }
+        ```
+    </OUTPUTS>
+    <NOTES>
+        KEY EXAMPLE for deanery inheritance and mid-page changes:
+
+        1. INHERITED DEANERY (entries before new heading):
+           - Ołyka and Dubno appear BEFORE any deanery heading on this page
+           - Parsed says they belong to "Dubno" deanery
+           - We use the inherited Latin "Decanatus Dubnensis" from previous context
+           - This matches the Polish name, confirming correct inheritance
+
+        2. MID-PAGE DEANERY CHANGE:
+           - "II. Decanatus Luceoriensis" heading appears mid-page
+           - Jałowicze and Torczyn appear AFTER this heading
+           - Parsed says they belong to "Łuck" (Polish name for Lutsk)
+           - We use the visible Latin "Decanatus Luceoriensis" from the heading
+
+        3. CONTEXT UPDATE:
+           - Context for next page gets "Decanatus Luceoriensis" (the NEW deanery)
+           - NOT the inherited one, because a new heading appeared
+
+        4. DEDICATION MAPPINGS:
+           - "Św. Trójca" -> "SS. Trinitatis"
+           - "Jan Nepomucen" -> "S. Joan. Nepom."
+           - "Bogarodzica Dziewica" -> "B. M. V." (simple abbreviation on this page)
+           - "Wniebowzięcie NMP" (Assumption) -> "Assumptio B.M.V."
+
+        5. POLISH DEANERY NAMES AS VERIFICATION:
+           - Parsed "Dubno" confirms first two entries match inherited "Decanatus Dubnensis"
+           - Parsed "Łuck" confirms last two entries match visible "Decanatus Luceoriensis"
+           - The Polish names help verify we're assigning entries to correct deaneries
+    </NOTES>
+</EXAMPLE>

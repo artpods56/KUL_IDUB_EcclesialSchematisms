@@ -32,6 +32,14 @@ data
 build/
 dist/
 *.egg-info/
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+**/node_modules/
+**/.next/
+**/out/
+**/*.tsbuildinfo
 
 tmp
 vendor

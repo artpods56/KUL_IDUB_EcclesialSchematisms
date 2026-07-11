@@ -1,0 +1,16 @@
+<PROMPT_VERSION>0.0.1</PROMPT_VERSION>
+<USER_REQUEST>
+    <INSTRUCTION>
+        Convert the visible text on this page scan into Markdown according to the system instructions.
+    </INSTRUCTION>
+    <REQUIREMENTS>
+        - Preserve headings, subheadings, tables, lists, and paragraph structure.
+        - Bolded text must start new paragraphs.
+        - Maintain reading order based on detected layout.
+        - Include only text fully visible on the page.
+        - Do not add explanations or non-Markdown output.
+    </REQUIREMENTS>
+    <RESPONSE_FORMAT>
+        Return only the Markdown document. No surrounding code fences, no commentary.
+    </RESPONSE_FORMAT>
+</USER_REQUEST>

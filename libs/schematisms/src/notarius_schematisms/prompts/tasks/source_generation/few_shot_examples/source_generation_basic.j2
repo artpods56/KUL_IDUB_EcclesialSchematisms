@@ -1,0 +1,97 @@
+<EXAMPLE>
+    <DESCRIPTION>Basic source generation - first page with visible deanery heading</DESCRIPTION>
+    <INPUTS>
+        <IMAGE>
+            Base64 Image
+        </IMAGE>
+        <PREVIOUS_PAGE_CONTEXT>
+            This is the first page or no context is available. Set `deanery` to null for any entries
+            appearing before a visible Latin deanery heading on this page.
+        </PREVIOUS_PAGE_CONTEXT>
+        <OCR_TEXT>
+            19
+
+            ECCLESIAE ET CLERUS
+            curam animarum exercens.
+
+            I. In Officialatu Generali Vladislaviensi.
+
+            1. Decanatus Vladislaviensis,
+            in Districtu, Vladislavien. Guber. Varsavien.
+
+            1. Włocławek, civ. 1 cl. Titul. Eccl. S. Joan. Bapt. murata, numer. animar. 7790.
+            Praepos. Joan. Śliwiński...
+
+            2. Kowal, Titul. Eccl. SS. Trinitatis, lignea, n. a. 3200.
+            Par. Stephanus Nowak...
+        </OCR_TEXT>
+        <PARSED_GROUND_TRUTH>
+            ```json
+            {
+              "page_number": "19",
+              "entries": [
+                {
+                  "building_material": "mr",
+                  "deanery": "Włocławek",
+                  "dedication": "Jan Chrzciciel",
+                  "parish": "Włocławek"
+                },
+                {
+                  "building_material": "dr",
+                  "deanery": "Włocławek",
+                  "dedication": "Św. Trójca",
+                  "parish": "Kowal"
+                }
+              ]
+            }
+            ```
+        </PARSED_GROUND_TRUTH>
+    </INPUTS>
+    <OUTPUTS>
+        ```json
+        {
+          "page_number": "19",
+          "entries": [
+            {
+              "deanery": "Decanatus Vladislaviensis",
+              "parish": "Włocławek",
+              "dedication": "S. Joan. Bapt.",
+              "building_material": "murata"
+            },
+            {
+              "deanery": "Decanatus Vladislaviensis",
+              "parish": "Kowal",
+              "dedication": "SS. Trinitatis",
+              "building_material": "lignea"
+            }
+          ],
+          "context": {
+            "active_deanery": "Decanatus Vladislaviensis",
+            "last_page_number": "19"
+          }
+        }
+        ```
+    </OUTPUTS>
+    <NOTES>
+        Key observations for source generation:
+
+        1. POLISH -> LATIN MAPPING:
+           - Parsed "Jan Chrzciciel" (John the Baptist) -> Latin "S. Joan. Bapt." on page
+           - Parsed "Św. Trójca" (Holy Trinity) -> Latin "SS. Trinitatis" on page
+           - Parsed "mr" (murowany) -> Latin "murata" on page
+           - Parsed "dr" (drewniany) -> Latin "lignea" on page
+
+        2. DEANERY MAPPING:
+           - Parsed says "Włocławek" for both entries
+           - Latin heading on page is "Decanatus Vladislaviensis"
+           - Output uses the LATIN form, not Polish
+
+        3. PARISH NAMES:
+           - "Włocławek" and "Kowal" are the same in both Polish and Latin
+           - Place names often don't change between languages
+
+        4. ABBREVIATIONS PRESERVED:
+           - "S. Joan. Bapt." kept exactly as printed (not expanded to "Sancti Joannis Baptistae")
+           - "SS. Trinitatis" kept exactly (not "Sanctissimae Trinitatis")
+    </NOTES>
+</EXAMPLE>

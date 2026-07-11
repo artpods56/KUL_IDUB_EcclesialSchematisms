@@ -23,7 +23,7 @@ dependencies = [
     "diskcache==5.6.3",
     "geopandas",
     "jinja2",
-    "mistralai",
+    "mistralai>=2.5.0",
     "omegaconf",
     "openai",
     "pillow",
@@ -67,6 +67,20 @@ dependencies = [
     "typer>=0.20.0",
     "pdfplumber>=0.11.7",
     "ty>=0.0.5",
+    "fastapi[standard]>=0.123.0",
+    "faststream[nats]>=0.6.0",
+    "uvicorn>=0.38.0",
+    "tenacity>=9.0.0",
+    "notarius-core",
+    "notarius-schematisms",
+    "notarius-llm",
+    "notarius-storage",
+    "notarius-shared",
+    "notarius-persistence",
+    "notarius-messaging",
+    "notarius-api",
+    "notarius-worker",
+    "notarius-dagster",
 ]
 
 [project.optional-dependencies]
@@ -82,8 +96,34 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.dagster]
-module_name = "notarius.orchestration.defs.dev"
-code_location_name = "notarius"
+module_name = "notarius_dagster.defs.dev"
+code_location_name = "notarius_dagster"
+
+[tool.uv.workspace]
+members = [
+    "libs/core",
+    "libs/schematisms",
+    "libs/llm",
+    "libs/storage",
+    "libs/shared",
+    "libs/persistence",
+    "libs/messaging",
+    "apps/api",
+    "apps/worker",
+    "apps/dagster",
+]
+
+[tool.uv.sources]
+notarius-core = { workspace = true }
+notarius-schematisms = { workspace = true }
+notarius-llm = { workspace = true }
+notarius-storage = { workspace = true }
+notarius-shared = { workspace = true }
+notarius-persistence = { workspace = true }
+notarius-messaging = { workspace = true }
+notarius-api = { workspace = true }
+notarius-worker = { workspace = true }
+notarius-dagster = { workspace = true }
 
 
 [dependency-groups]
@@ -94,4 +134,47 @@ dev = [
     "ty>=0.0.5",
     "typing-inspect>=0.9.0",
     "viztracer>=1.1.1",
+]
+
+[tool.basedpyright]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+include = [
+    "src",
+    "libs/core/src",
+    "libs/schematisms/src",
+    "libs/llm/src",
+    "libs/storage/src",
+    "libs/shared/src",
+    "libs/persistence/src",
+    "libs/messaging/src",
+    "apps/api/src",
+    "apps/worker/src",
+    "apps/dagster/src",
+    "tests",
+]
+exclude = [
+    ".venv",
+    ".notarius-artifacts",
+    ".notarius-objects",
+    ".playwright-cli",
+    "apps/web",
+    "data",
+]
+executionEnvironments = [
+    { root = ".", extraPaths = [
+        "src",
+        "libs/core/src",
+        "libs/schematisms/src",
+        "libs/llm/src",
+        "libs/storage/src",
+        "libs/shared/src",
+        "libs/persistence/src",
+        "libs/messaging/src",
+        "apps/api/src",
+        "apps/worker/src",
+        "apps/dagster/src",
+    ] },
 ]

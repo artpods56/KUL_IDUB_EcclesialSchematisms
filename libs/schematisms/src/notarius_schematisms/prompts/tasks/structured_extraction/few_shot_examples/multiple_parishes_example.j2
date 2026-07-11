@@ -1,0 +1,129 @@
+<EXAMPLE>
+    <DESCRIPTION>Page with inherited context, no new deanery heading - context passthrough</DESCRIPTION>
+    <INPUTS>
+        <IMAGE>
+            Base64 Image
+        </IMAGE>
+        <PREVIOUS_PAGE_CONTEXT>
+            This page continues from a previous page. Use the following context:
+            <ACTIVE_DEANERY>Decanatus Pultuskensis</ACTIVE_DEANERY>
+            <LAST_PAGE_NUMBER>40</LAST_PAGE_NUMBER>
+
+            Apply the active deanery to any parishes appearing BEFORE a new deanery heading on this page.
+        </PREVIOUS_PAGE_CONTEXT>
+        <OCR_TEXT>
+            41
+
+            **7153 Pułtusk**, 1 cl. opp. Eccl. Collegiata simulq. Paro- chialis ex muro fundavit Paul. Giżycki Epus Ploc. 1449 an. cons. Indulg. 14. In h. paroec. inveniuntur. 1-o In Coem. Eccl. S. cruc. mur. fund. Nicol. Brill Suffr. Ploc. Ep. 1539 an. 2-o Filia Maria Magdal. mur. fund. Petrus Gamrat Epus Ploc. 1538 an. 3-o Filia mur. in villa Kacice. 4-o Capel. in villa Grabowice 1830 an. aedif. 5-o Capel. in villa Przemia- rowo 1868 a. aedificata.
+            Cur. Bonavent. Grabowski S. T. C. Prael. Colleg. Pult. etc. q. s. 1823, 1848, 1867.
+            Vicarii: { 1. Jos. Dołęgowski 1857, 1881, 1881. 2. Vict. Mieczkowski 1856, 1880, 1880. 3. vacat.
+            Ibidem etiam: Eccl. Postconv. pp. Benedict. mur. fund. Coll. Societ Jesu 1717 an. restaurata 1879 an. Indulg. 1.
+            Vic. Victor Gogolewski qui inf.
+            Eccl. Postcon. pp. Reform. mur. fund. Adalbert. Wessel 1648 an. Indulg. 4.
+            Vicar. Narciss Wilewski 1813, 1836, 1880.
+            Ibidem Progym. pueror. praec. relig. et moral. Victor Gogolewski Cruce aur. pec. dec. 1845, 1866, 1870.
+
+            **2103 Serock**, 3 cl. Tit. Annunt. BVM. Eccl. ex mur. fund. Janusz et Stanisl. Principes Mazov. 1527 an. Indulg. 4.
+            Adm. Henricus Powichrowski 1846, 1869, 1881.
+
+            **1222 Smogorzewo**, 3 cl. Tit. et Patr. Visitat. BVM. cujus imago miraculos. Eccl. mur. sumpt. Paroch. aedif. 1879. Indulg. 2.
+            Adm. Ant. Dąbrowski 1845, 1869, 1876.
+
+            **2144 Szyszki**, 3 cl. Patr. S. Barthol. Tit. Transfig. Eccl. lign. fundav. Ludov. Załuski Epus Ploc. 1714 an. q. etiam consecr. Indulg. 3 ad praesens Eccl. destructa, Officia Sacra peraguntur in Eccl. Postconv. pp. Bernard. in villa Strzego- cin ex mur. constr. Patr. et Tit. BVM. de
+        </OCR_TEXT>
+        <LMV3_HINTS>
+            ```json
+            {
+              "page_number": "41",
+              "entries": [
+                {
+                  "deanery": null,
+                  "parish": "Pułtusk",
+                  "dedication": "Collegiata",
+                  "building_material": "ex muro"
+                },
+                {
+                  "deanery": null,
+                  "parish": "Smogorzewo",
+                  "dedication": "Visitat. BVM",
+                  "building_material": "mur."
+                },
+                {
+                  "deanery": null,
+                  "parish": "Szyszki",
+                  "dedication": "Transfig.",
+                  "building_material": "mur."
+                },
+                {
+                  "deanery": null,
+                  "parish": "Serock",
+                  "dedication": "Annunt. BVM",
+                  "building_material": "ex mur."
+                }
+              ]
+            }
+            ```
+        </LMV3_HINTS>
+    </INPUTS>
+    <OUTPUTS>
+        ```json
+        {
+          "page_number": "41",
+          "entries": [
+            {
+              "building_material": "ex muro",
+              "deanery": "Decanatus Pultuskensis",
+              "dedication": null,
+              "parish": "Pułtusk"
+            },
+            {
+              "building_material": "ex mur.",
+              "deanery": "Decanatus Pultuskensis",
+              "dedication": null,
+              "parish": "Serock"
+            },
+            {
+              "building_material": "mur.",
+              "deanery": "Decanatus Pultuskensis",
+              "dedication": null,
+              "parish": "Smogorzewo"
+            },
+            {
+              "building_material": "lign.",
+              "deanery": "Decanatus Pultuskensis",
+              "dedication": "S. Barthol.",
+              "parish": "Szyszki"
+            }
+          ],
+          "context": {
+            "active_deanery": "Decanatus Pultuskensis",
+            "last_page_number": "41"
+          }
+        }
+        ```
+    </OUTPUTS>
+    <NOTES>
+        Instruction: This example demonstrates context passthrough when no new deanery heading appears on a page, plus the strict `dedication` extraction rules.
+
+        Reasoning:
+        1.  **Context Passthrough:** The `PREVIOUS_PAGE_CONTEXT` provides `active_deanery: "Decanatus Pultuskensis"`.
+            *   Since NO new deanery heading appears on this page, ALL parishes inherit this deanery
+            *   The LMV3_HINTS incorrectly show `null` for deanery - we use the inherited context instead
+            *   The output `context.active_deanery` remains `"Decanatus Pultuskensis"` (unchanged)
+
+        2.  **Strict Rule for `dedication`:**
+            *   **Correct Extraction (`Szyszki`):** `Patr. S. Barthol.` explicitly names Saint Bartholomew → `"S. Barthol."`
+            *   **Correct Rejection:** Other entries mention titles/events, not saints:
+                *   `Pułtusk`: `Eccl. Collegiata` = church status, not a saint → `null`
+                *   `Serock`: `Tit. Annunt. BVM` = Annunciation event → `null`
+                *   `Smogorzewo`: `Visitat. BVM` = Visitation event → `null`
+
+        3.  **Data and Order Correction:**
+            *   **Order:** Follow document order (`Pułtusk` → `Serock` → `Smogorzewo` → `Szyszki`)
+            *   **Building material:** `Szyszki` corrected from `mur.` to `lign.` based on source text
+
+        4.  **Context Output:**
+            *   `active_deanery`: Same as inherited (`"Decanatus Pultuskensis"`) since no new heading
+            *   `last_page_number`: Updated to `"41"`
+    </NOTES>
+</EXAMPLE>

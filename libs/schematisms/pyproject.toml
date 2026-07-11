@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "notarius-schematisms"
+version = "0.1.0"
+requires-python = "==3.12.9"
+dependencies = [
+    "notarius-core",
+    "notarius-shared",
+    "numpy",
+    "pandas",
+    "pydantic",
+    "scipy",
+    "thefuzz",
+]
+
+[tool.uv.sources]
+notarius-core = { workspace = true }
+notarius-shared = { workspace = true }
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+

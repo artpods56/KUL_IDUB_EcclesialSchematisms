@@ -8,7 +8,7 @@ from notarius.shared.constants import REPOSITORY_ROOT
 
 class StorageConfig(BaseSettings):
     model_config = SettingsConfigDict(env_file=REPOSITORY_ROOT / ".env", extra="allow")
-    storage_root: Path
+    storage_root: Path = REPOSITORY_ROOT / "data" / "storage"
 
 
 class DagsterConfig(BaseSettings):
@@ -19,8 +19,8 @@ class DagsterConfig(BaseSettings):
 class AppConfig(StorageConfig, DagsterConfig):
     model_config = SettingsConfigDict(env_file=REPOSITORY_ROOT / ".env", extra="allow")
 
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-    logs_dir: Path
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    logs_dir: Path = REPOSITORY_ROOT / "logs"
 
 
 app_config = AppConfig()  # pyright: ignore[reportCallIssue]

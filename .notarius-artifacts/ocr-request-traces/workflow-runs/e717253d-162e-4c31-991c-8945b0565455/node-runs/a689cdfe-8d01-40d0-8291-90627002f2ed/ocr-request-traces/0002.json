@@ -1,0 +1,12 @@
+{
+  "sequence_index": 2,
+  "page_number": 2,
+  "engine": "local.tesseract",
+  "image_artifact_id": "60b0f6e1-d799-4a5f-a382-4d30a38ea786",
+  "input_sequence_id": "c7917483-bfe7-4d8f-a8bb-63b2674866db",
+  "image_payload_ref": "artifact://source-page-images/projects/e1ba9010-2b83-4a82-9674-1ef6fa1a5c04/sources/b51a1dff-89db-4aa6-b2ac-e36ea97069a1/pages/0002-Screenshot-2026-04-29-at-22.08.32-2-.png",
+  "image_media_type": "image/png",
+  "payload_byte_size": 6917714,
+  "language_hints": [],
+  "engine_config": {}
+}

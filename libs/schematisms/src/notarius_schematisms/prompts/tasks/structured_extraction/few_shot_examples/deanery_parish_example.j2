@@ -1,0 +1,83 @@
+<EXAMPLE>
+    <DESCRIPTION>First page with a new deanery heading - no previous context</DESCRIPTION>
+    <INPUTS>
+        <IMAGE>
+            Base64 Image
+        </IMAGE>
+        <PREVIOUS_PAGE_CONTEXT>
+            This is the first page or no context is available. Set `deanery` to null for any parishes
+            appearing before a visible deanery heading on this page.
+        </PREVIOUS_PAGE_CONTEXT>
+        <OCR_TEXT>
+        19
+
+        ## ECCLESIAE ET CLERUS
+        curam animarum exercens.
+
+        ---
+
+        ### I. In Officialatu Generali Vladislaviensi.
+
+        ### 1. Decanatus Vladislaviensis,
+        in Districtu, Vladislavien. Guber. Varsavien.
+
+        1.  **Włocławek**, civ. 1 cl. Titul. Eccl. S. Joan. Bapt. murata, numer. animar. 7790.
+
+            *Praepos.* Joan. Śliwiński, Cand. S. Theol. Decan. Regens Cancel. Administr. Dioec. natus 21 Novembr. 1832 or. 1856.
+
+            *Vic.* { 1. Leo Michalski n. 15 Oct. 1845 or. 1869. 2. Adalb. Chorążka n. 5 Apr. 1844 or. 1867.
+
+            *loci parochiales:* Włocławek, pagi: Kępiny, Syberya, Glinki, Lanieszczyzna...
+        </OCR_TEXT>
+        <LMV3_HINTS>
+            ```json
+            {
+              "page_number": "19",
+              "entries": [
+                {
+                  "deanery": "Decanatus Vladislaviensis,",
+                  "parish": "1. Wloclawek",
+                  "dedication": "S. Joan. Bapt.",
+                  "building_material": "murata"
+                }
+              ]
+            }
+            ```
+        </LMV3_HINTS>
+    </INPUTS>
+    <OUTPUTS>
+        ```json
+        {
+          "page_number": "19",
+          "entries": [
+            {
+              "deanery": "Decanatus Vladislaviensis",
+              "parish": "Włocławek",
+              "dedication": "S. Joan. Bapt.",
+              "building_material": "murata"
+            }
+          ],
+          "context": {
+            "active_deanery": "Decanatus Vladislaviensis",
+            "last_page_number": "19"
+          }
+        }
+        ```
+    </OUTPUTS>
+    <NOTES>
+        Instruction: This example demonstrates extraction from a first page with a new deanery heading and proper context output.
+
+        Reasoning:
+        1.  **No Previous Context:** Since this is the first page (no `PREVIOUS_PAGE_CONTEXT` with active_deanery), any parishes before a deanery heading would get `null`. However, the deanery heading appears before the parish.
+
+        2.  **Hierarchical Parsing:** The model recognizes `Decanatus Vladislaviensis` as a heading that applies to `Włocławek`.
+
+        3.  **Data Cleaning:**
+            *   **Parish Name:** Remove list number (`1. Wloclawek` → `Włocławek`)
+            *   **Deanery Name:** Strip trailing comma (`Decanatus Vladislaviensis,` → `Decanatus Vladislaviensis`)
+
+        4.  **Context Output:** The `context` field captures state for the next page:
+            *   `active_deanery`: Set to `"Decanatus Vladislaviensis"` because this deanery is active at page end
+            *   `last_page_number`: Set to `"19"` for validation
+    </NOTES>
+</EXAMPLE>

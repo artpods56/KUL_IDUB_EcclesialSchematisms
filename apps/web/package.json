@@ -1,0 +1,37 @@
+{
+  "name": "web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit --incremental false",
+    "generate:prototype-api:schema": "uv run --directory ../.. --package notarius-api python -m notarius_api.prototype_openapi apps/web/openapi/prototype.json",
+    "generate:prototype-api": "npm run generate:prototype-api:schema && openapi-typescript openapi/prototype.json --immutable --alphabetize --empty-objects-unknown -o src/lib/api/generated/prototype.ts",
+    "check:prototype-api": "npm run generate:prototype-api:schema && openapi-typescript openapi/prototype.json --immutable --alphabetize --empty-objects-unknown -o src/lib/api/generated/prototype.ts --check"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.6.0",
+    "@stylexjs/stylex": "^0.19.0",
+    "@xyflow/react": "^12.11.1",
+    "lucide-react": "^1.22.0",
+    "next": "16.2.9",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "swr": "^2.4.2"
+  },
+  "devDependencies": {
+    "@stylexjs/babel-plugin": "^0.19.0",
+    "@stylexjs/postcss-plugin": "^0.19.0",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "autoprefixer": "^10.5.2",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.9",
+    "openapi-typescript": "^7.13.0",
+    "typescript": "^5"
+  }
+}

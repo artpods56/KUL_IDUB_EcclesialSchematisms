@@ -48,6 +48,9 @@ class DillIOManager(ConfigurableIOManager):
         filepath = self._get_path(context)
         context.log.info(f"Loading dill file: {filepath}")
 
+        if not filepath.exists():
+            raise FileNotFoundError(f"Asset file not found: {filepath}")
+
         with open(filepath, "rb") as f:
             return dill.load(f)
 

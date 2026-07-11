@@ -1,0 +1,109 @@
+<EXAMPLE>
+    <DESCRIPTION>Order mismatch - parsed entries in different order than page visual order</DESCRIPTION>
+    <INPUTS>
+        <IMAGE>
+            Base64 Image
+        </IMAGE>
+        <PREVIOUS_PAGE_CONTEXT>
+            This page continues from a previous page. Use the following context:
+            <ACTIVE_DEANERY>Decanatus Brzezinensis</ACTIVE_DEANERY>
+            <LAST_PAGE_NUMBER>42</LAST_PAGE_NUMBER>
+
+            Use the inherited Latin deanery for entries appearing BEFORE any new deanery heading on this page.
+        </PREVIOUS_PAGE_CONTEXT>
+        <OCR_TEXT>
+            43
+
+            3. Rogów, Eccl. tit. S. Nicolai E.C. mur. n. a. 1850.
+            Par. Andreas Kowalski...
+
+            4. Koluszki, Eccl. tit. Nativitatis B.M.V. lig. n. a. 2100.
+            Par. Josephus Wiśniewski...
+
+            5. Brzeziny, civ. Eccl. tit. S. Annae, mur. n. a. 4500.
+            Praepos. Matthaeus Nowicki...
+        </OCR_TEXT>
+        <PARSED_GROUND_TRUTH>
+            ```json
+            {
+              "page_number": "43",
+              "entries": [
+                {
+                  "building_material": "mr",
+                  "deanery": "Brzeziny",
+                  "dedication": "Anna",
+                  "parish": "Brzeziny"
+                },
+                {
+                  "building_material": "dr",
+                  "deanery": "Brzeziny",
+                  "dedication": "Narodzenie NMP",
+                  "parish": "Koluszki"
+                },
+                {
+                  "building_material": "mr",
+                  "deanery": "Brzeziny",
+                  "dedication": "Mikołaj",
+                  "parish": "Rogów"
+                }
+              ]
+            }
+            ```
+        </PARSED_GROUND_TRUTH>
+    </INPUTS>
+    <OUTPUTS>
+        ```json
+        {
+          "page_number": "43",
+          "entries": [
+            {
+              "deanery": "Decanatus Brzezinensis",
+              "parish": "Rogów",
+              "dedication": "S. Nicolai E.C.",
+              "building_material": "mur."
+            },
+            {
+              "deanery": "Decanatus Brzezinensis",
+              "parish": "Koluszki",
+              "dedication": "Nativitatis B.M.V.",
+              "building_material": "lig."
+            },
+            {
+              "deanery": "Decanatus Brzezinensis",
+              "parish": "Brzeziny",
+              "dedication": "S. Annae",
+              "building_material": "mur."
+            }
+          ],
+          "context": {
+            "active_deanery": "Decanatus Brzezinensis",
+            "last_page_number": "43"
+          }
+        }
+        ```
+    </OUTPUTS>
+    <NOTES>
+        Critical observation - ORDER MISMATCH:
+
+        1. PARSED ORDER vs PAGE ORDER:
+           - Parsed input order: Brzeziny, Koluszki, Rogów
+           - Page visual order: Rogów (3.), Koluszki (4.), Brzeziny (5.)
+           - OUTPUT follows PAGE ORDER, not parsed order!
+
+        2. DEANERY FROM CONTEXT:
+           - No deanery heading visible on this page
+           - All entries inherit "Decanatus Brzezinensis" from previous context
+           - Parsed says "Brzeziny" (Polish) but we use the inherited Latin form
+
+        3. DEDICATION MAPPINGS:
+           - "Mikołaj" (Nicholas) -> "S. Nicolai E.C." (with Bishop Confessor suffix)
+           - "Narodzenie NMP" (Nativity of BVM) -> "Nativitatis B.M.V."
+           - "Anna" -> "S. Annae"
+
+        4. BUILDING MATERIAL:
+           - "mr" -> "mur." (abbreviated form on this page)
+           - "dr" -> "lig." (abbreviated form on this page)
+           - Note: same Polish codes can map to different Latin forms (mur./murata, lig./lignea)
+             depending on how it's printed on the specific page
+    </NOTES>
+</EXAMPLE>
