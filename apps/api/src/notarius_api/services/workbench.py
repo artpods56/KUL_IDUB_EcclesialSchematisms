@@ -1,10 +1,4 @@
-"""In-process execution backend for the prototype workbench UI.
-
-Wires the prototype NodeRuntime (in-memory artifact repository + local object
-store) into the API so the workbench canvas can run real node graphs. All
-state lives in one process-wide service instance; this is a demo surface, not
-the future workflow executor.
-"""
+"""In-process execution backend for the workbench UI."""
 
 import base64
 import binascii
@@ -21,66 +15,74 @@ from uuid import UUID, uuid4
 from PIL import Image as ImageModule
 from PIL import ImageDraw
 
-from notarius_core.prototype import (
-    ARITHMETIC_RESULT,
-    MISTRAL_OCR_RESPONSE,
+from notarius_core.artifacts import (
     TABLE_FRAGMENT,
     TABLE_PAGE,
-    AddSubtractNode,
-    ArithmeticResult,
     ArtifactFieldProjection,
     ArtifactObject,
     ArtifactRef,
     ArtifactRefSequence,
     ArtifactTypeKey,
-    ArtifactWriteContext,
-    ArtifactWriterRegistry,
-    BuildTableCsvBundleNode,
-    EncodedPageImageResolver,
-    ExtractTableFragmentsNode,
-    FakeOcrEngine,
-    ImageSequenceMergeNode,
+    ArtifactTypeSpec,
     InMemoryUnitOfWork,
-    InputMaterializer,
-    InlineModelOutputWriter,
-    InlineModelResolver,
+)
+from notarius_core.nodes import Node, NodeExecutionContext, PortShape
+from notarius_core.operators.arithmetic import (
+    ARITHMETIC_RESULT,
+    ArithmeticResult,
     IntegerValueOutputWriter,
     IntegerValueResolver,
-    LocalUploadImageSourceNode,
-    MaterializationProvenance,
-    MergeTablePagesNode,
-    MistralOcrNode,
-    MistralOcrProvider,
-    MistralOcrResponsePayload,
-    MultiplyNode,
-    Node,
-    NodeExecutionContext,
-    NodeRuntime,
-    NumberNode,
-    OcrPageResultOutputWriter,
-    OutputPersister,
-    PersistedNodeOutput,
-    PilImageResolver,
-    ResolverRegistry,
-    SourcePageImageOutputWriter,
-    TableCsvBundleOutputWriter,
+)
+from notarius_core.operators.tables import (
     TableFragment,
     TablePage,
-    TesseractOcrNode,
+)
+from notarius_core.operators.text import TEXT_VALUE, TextValue
+from notarius_core.plugins import (
+    PluginRegistry,
+    PluginRuntimeContext,
+    UnknownOperatorError,
+)
+from notarius_core.runtime.execution import NodeRuntime
+from notarius_core.runtime.invocation import (
+    InvocationError,
+    InvocationMode,
+    NodeInvocation,
+    effective_input_shape,
+    effective_output_shape,
+    validate_invocation,
+)
+from notarius_core.runtime.materialization import (
+    InputMaterializer,
+    MaterializationProvenance,
+)
+from notarius_core.runtime.persistence import (
+    ArtifactOutputWriter,
+    ArtifactWriteContext,
+    ArtifactWriterRegistry,
+    InlineModelOutputWriter,
+    OutputPersister,
+    PersistedNodeOutput,
+    SourcePageImageOutputWriter,
+    TableCsvBundleOutputWriter,
+)
+from notarius_core.runtime.resolvers import (
+    InlineModelResolver,
+    Resolver,
+    ResolverRegistry,
 )
 from notarius_storage import LocalFileObjectStore
 
-from notarius_api.schemas.prototype import (
-    PrototypeArtifactSummaryResponse,
-    PrototypeRunEdgeRequest,
-    PrototypeRunNodeRequest,
-    PrototypeRunNodeResponse,
-    PrototypeRunPortOutputResponse,
-    PrototypeRunRequest,
-    PrototypeRunResponse,
-    PrototypeSelectionItemResponse,
+from notarius_api.schemas.workbench import (
+    ArtifactSummaryResponse,
+    RunEdgeRequest,
+    RunNodeRequest,
+    RunNodeResponse,
+    RunPortOutputResponse,
+    RunRequest,
+    RunResponse,
+    SelectionItemResponse,
 )
-from notarius_api.services.mistral_ocr import MistralSdkOcrProvider
 
 _WORKBENCH_BUCKET = "workbench-artifacts"
 _SAMPLE_PAGE_TEXTS = (
@@ -88,9 +90,6 @@ _SAMPLE_PAGE_TEXTS = (
     "PAGE {index}\nBaptisatorum liber\nVilla Nova, folio {index}",
     "PAGE {index}\nIndex nominum\nSeries continua",
 )
-_PROJECTABLE_ARTIFACT_TYPES = {
-    ARITHMETIC_RESULT.key: ARITHMETIC_RESULT,
-}
 
 
 class WorkbenchGraphError(RuntimeError):
@@ -99,8 +98,8 @@ class WorkbenchGraphError(RuntimeError):
 
 def _default_workspace() -> Path:
     root = os.getenv(
-        "NOTARIUS_PROTOTYPE_WORKSPACE",
-        ".notarius-artifacts/prototype-workbench",
+        "NOTARIUS_WORKSPACE",
+        ".notarius-artifacts/workbench",
     )
     return Path(root).resolve()
 
@@ -115,111 +114,129 @@ class _RunValue:
 class WorkbenchService:
     def __init__(
         self,
+        *,
+        plugin_registry: PluginRegistry,
         workspace: Path | None = None,
-        mistral_provider: MistralOcrProvider | None = None,
     ) -> None:
+        self._plugin_registry = plugin_registry
         self._workspace = workspace or _default_workspace()
         self._uploads_dir = self._workspace / "uploads"
         self._uploads_dir.mkdir(parents=True, exist_ok=True)
         self._storage = LocalFileObjectStore(self._workspace / "objects")
         self._uow = InMemoryUnitOfWork()
-        self._mistral_provider = mistral_provider or MistralSdkOcrProvider()
-        self._resolvers = ResolverRegistry(
-            [
-                IntegerValueResolver(uow=self._uow),
-                PilImageResolver(uow=self._uow, storage=self._storage),
-                EncodedPageImageResolver(uow=self._uow, storage=self._storage),
-                InlineModelResolver(
-                    source=MISTRAL_OCR_RESPONSE.key,
-                    target=MistralOcrResponsePayload,
-                    uow=self._uow,
-                ),
+        self._plugin_context = PluginRuntimeContext(
+            workspace=self._workspace,
+            uploads_dir=self._uploads_dir,
+            storage=self._storage,
+            uow=self._uow,
+            bucket=_WORKBENCH_BUCKET,
+        )
+        resolvers = [
+            cast(Resolver[object], IntegerValueResolver(uow=self._uow)),
+            cast(
+                Resolver[object],
                 InlineModelResolver(
                     source=ARITHMETIC_RESULT.key,
                     target=ArithmeticResult,
                     uow=self._uow,
                 ),
+            ),
+            cast(
+                Resolver[object],
+                InlineModelResolver(
+                    source=TEXT_VALUE.key,
+                    target=TextValue,
+                    uow=self._uow,
+                ),
+            ),
+            cast(
+                Resolver[object],
                 InlineModelResolver(
                     source=TABLE_FRAGMENT.key,
                     target=TableFragment,
                     uow=self._uow,
                 ),
+            ),
+            cast(
+                Resolver[object],
                 InlineModelResolver(
                     source=TABLE_PAGE.key,
                     target=TablePage,
                     uow=self._uow,
                 ),
-            ]
-        )
-        self._writers = ArtifactWriterRegistry(
-            [
-                IntegerValueOutputWriter(uow=self._uow),
-                SourcePageImageOutputWriter(
-                    storage=self._storage,
-                    uow=self._uow,
-                    bucket=_WORKBENCH_BUCKET,
-                ),
-                OcrPageResultOutputWriter(uow=self._uow, engine="fake"),
-                InlineModelOutputWriter(
-                    artifact_type=MISTRAL_OCR_RESPONSE.key,
-                    model=MistralOcrResponsePayload,
-                    uow=self._uow,
-                ),
-                InlineModelOutputWriter(
-                    artifact_type=ARITHMETIC_RESULT.key,
-                    model=ArithmeticResult,
-                    uow=self._uow,
-                ),
-                InlineModelOutputWriter(
-                    artifact_type=TABLE_FRAGMENT.key,
-                    model=TableFragment,
-                    uow=self._uow,
-                ),
-                InlineModelOutputWriter(
-                    artifact_type=TABLE_PAGE.key,
-                    model=TablePage,
-                    uow=self._uow,
-                ),
-                TableCsvBundleOutputWriter(
-                    storage=self._storage,
-                    uow=self._uow,
-                    bucket=_WORKBENCH_BUCKET,
-                ),
-            ]
-        )
+            ),
+        ]
+        resolvers.extend(plugin_registry.build_resolvers(self._plugin_context))
+        self._resolvers = ResolverRegistry(resolvers)
+
+        writers: list[ArtifactOutputWriter] = [
+            IntegerValueOutputWriter(uow=self._uow),
+            SourcePageImageOutputWriter(
+                storage=self._storage,
+                uow=self._uow,
+                bucket=_WORKBENCH_BUCKET,
+            ),
+            InlineModelOutputWriter(
+                artifact_type=ARITHMETIC_RESULT.key,
+                model=ArithmeticResult,
+                uow=self._uow,
+            ),
+            InlineModelOutputWriter(
+                artifact_type=TEXT_VALUE.key,
+                model=TextValue,
+                uow=self._uow,
+            ),
+            InlineModelOutputWriter(
+                artifact_type=TABLE_FRAGMENT.key,
+                model=TableFragment,
+                uow=self._uow,
+            ),
+            InlineModelOutputWriter(
+                artifact_type=TABLE_PAGE.key,
+                model=TablePage,
+                uow=self._uow,
+            ),
+            TableCsvBundleOutputWriter(
+                storage=self._storage,
+                uow=self._uow,
+                bucket=_WORKBENCH_BUCKET,
+            ),
+        ]
+        writers.extend(plugin_registry.build_writers(self._plugin_context))
+        self._writers = ArtifactWriterRegistry(writers)
+        self._projectable_artifact_types = {
+            artifact_type.key: artifact_type
+            for artifact_type in plugin_registry.artifact_types
+            if artifact_type.field_projections
+        }
         self._runtime = NodeRuntime(
             materializer=InputMaterializer(self._resolvers),
             persister=OutputPersister(self._writers),
         )
 
-    def _build_node(self, operator_id: str) -> Node[Any, Any, Any]:
-        if operator_id == LocalUploadImageSourceNode.operator_id:
-            return LocalUploadImageSourceNode(staging_root=self._uploads_dir)
-        if operator_id == ImageSequenceMergeNode.operator_id:
-            return ImageSequenceMergeNode()
-        if operator_id == TesseractOcrNode.operator_id:
-            return TesseractOcrNode(FakeOcrEngine())
-        if operator_id == MistralOcrNode.operator_id:
-            return MistralOcrNode(self._mistral_provider)
-        if operator_id == ExtractTableFragmentsNode.operator_id:
-            return ExtractTableFragmentsNode()
-        if operator_id == MergeTablePagesNode.operator_id:
-            return MergeTablePagesNode()
-        if operator_id == BuildTableCsvBundleNode.operator_id:
-            return BuildTableCsvBundleNode()
-        if operator_id == NumberNode.operator_id:
-            return NumberNode()
-        if operator_id == AddSubtractNode.operator_id:
-            return AddSubtractNode()
-        if operator_id == MultiplyNode.operator_id:
-            return MultiplyNode()
-        raise WorkbenchGraphError(f"Unknown operator {operator_id!r}")
+    @property
+    def plugin_registry(self) -> PluginRegistry:
+        return self._plugin_registry
+
+    def _build_node(
+        self,
+        operator_id: str,
+        operator_version: int,
+    ) -> Node[Any, Any, Any]:
+        try:
+            return self._plugin_registry.build_node(
+                operator_id,
+                operator_version,
+                self._plugin_context,
+            )
+        except UnknownOperatorError as exc:
+            raise WorkbenchGraphError(str(exc)) from exc
 
     async def save_upload(
         self,
         filename: str,
         content_base64: str,
-    ) -> PrototypeSelectionItemResponse:
+    ) -> SelectionItemResponse:
         try:
             content = base64.b64decode(content_base64, validate=True)
         except (binascii.Error, ValueError) as exc:
@@ -233,8 +250,8 @@ class WorkbenchService:
     async def create_sample_pages(
         self,
         count: int,
-    ) -> list[PrototypeSelectionItemResponse]:
-        items: list[PrototypeSelectionItemResponse] = []
+    ) -> list[SelectionItemResponse]:
+        items: list[SelectionItemResponse] = []
         for index in range(count):
             text = _SAMPLE_PAGE_TEXTS[index % len(_SAMPLE_PAGE_TEXTS)].format(
                 index=index + 1
@@ -256,24 +273,37 @@ class WorkbenchService:
         self,
         path: Path,
         display_name: str,
-    ) -> PrototypeSelectionItemResponse:
-        return PrototypeSelectionItemResponse(
+    ) -> SelectionItemResponse:
+        return SelectionItemResponse(
             connector_id="local_upload",
             external_uri=path.as_uri(),
             display_name=display_name,
             size_bytes=path.stat().st_size,
         )
 
-    async def run_graph(self, request: PrototypeRunRequest) -> PrototypeRunResponse:
+    async def run_graph(self, request: RunRequest) -> RunResponse:
         order = _topological_order(request.nodes, request.edges)
         nodes_by_id = {
-            node_request.id: self._build_node(node_request.operator_id)
+            node_request.id: self._build_node(
+                node_request.operator_id,
+                node_request.operator_version,
+            )
             for node_request in order
         }
-        _validate_edges(nodes_by_id, request.edges)
+        invocations_by_id = _derive_invocations(
+            nodes_by_id,
+            request.edges,
+        )
+
+        _validate_edges(
+            nodes_by_id,
+            invocations_by_id,
+            request.edges,
+            self._projectable_artifact_types,
+        )
         outputs: dict[str, dict[str, _RunValue]] = {}
         failed: set[str] = set()
-        node_runs: list[PrototypeRunNodeResponse] = []
+        node_runs: list[RunNodeResponse] = []
         run_id = uuid4()
 
         for node_request in order:
@@ -285,7 +315,7 @@ class WorkbenchService:
             if upstream & failed:
                 failed.add(node_request.id)
                 node_runs.append(
-                    PrototypeRunNodeResponse(
+                    RunNodeResponse(
                         node_id=node_request.id,
                         status="skipped",
                         error=None,
@@ -312,11 +342,12 @@ class WorkbenchService:
                     ),
                     inputs,
                     config=node_request.config,
+                    invocation=invocations_by_id[node_request.id],
                 )
             except Exception as exc:
                 failed.add(node_request.id)
                 node_runs.append(
-                    PrototypeRunNodeResponse(
+                    RunNodeResponse(
                         node_id=node_request.id,
                         status="failed",
                         error=f"{type(exc).__name__}: {exc}",
@@ -328,7 +359,7 @@ class WorkbenchService:
             port_values = _port_values(node, result)
             outputs[node_request.id] = port_values
             node_runs.append(
-                PrototypeRunNodeResponse(
+                RunNodeResponse(
                     node_id=node_request.id,
                     status="succeeded",
                     error=None,
@@ -340,13 +371,13 @@ class WorkbenchService:
             )
 
         status: Literal["succeeded", "failed"] = "failed" if failed else "succeeded"
-        return PrototypeRunResponse(status=status, node_runs=node_runs)
+        return RunResponse(status=status, node_runs=node_runs)
 
     async def _assemble_inputs(
         self,
         node: Node[Any, Any, Any],
-        node_request: PrototypeRunNodeRequest,
-        edges: list[PrototypeRunEdgeRequest],
+        node_request: RunNodeRequest,
+        edges: list[RunEdgeRequest],
         outputs: dict[str, dict[str, _RunValue]],
         run_id: UUID,
     ) -> dict[str, object]:
@@ -368,6 +399,7 @@ class WorkbenchService:
                 run_value = source_ports[edge.from_port]
                 if edge.projection is not None:
                     projection = _field_projection_for(
+                        self._projectable_artifact_types,
                         _run_value_key(run_value),
                         tuple(edge.projection.path),
                     )
@@ -401,7 +433,7 @@ class WorkbenchService:
         self,
         run_value: _RunValue,
         projection: ArtifactFieldProjection,
-        edge: PrototypeRunEdgeRequest,
+        edge: RunEdgeRequest,
         run_id: UUID,
     ) -> _RunValue:
         if isinstance(run_value.value, ArtifactRef):
@@ -449,7 +481,7 @@ class WorkbenchService:
         self,
         ref: ArtifactRef,
         projection: ArtifactFieldProjection,
-        edge: PrototypeRunEdgeRequest,
+        edge: RunEdgeRequest,
         run_id: UUID,
         *,
         item_index: int | None,
@@ -522,14 +554,14 @@ class WorkbenchService:
         self,
         port_name: str,
         run_value: _RunValue,
-    ) -> PrototypeRunPortOutputResponse:
+    ) -> RunPortOutputResponse:
         if isinstance(run_value.value, ArtifactRefSequence):
             refs = list(run_value.value.item_refs)
             kind: Literal["single", "sequence"] = "sequence"
         else:
             refs = [run_value.value]
             kind = "single"
-        return PrototypeRunPortOutputResponse(
+        return RunPortOutputResponse(
             port=port_name,
             kind=kind,
             artifacts=[await self._artifact_summary(ref) for ref in refs],
@@ -538,10 +570,10 @@ class WorkbenchService:
     async def _artifact_summary(
         self,
         ref: ArtifactRef,
-    ) -> PrototypeArtifactSummaryResponse:
+    ) -> ArtifactSummaryResponse:
         artifact = await self.get_artifact(ref.artifact_id)
         if artifact is None:
-            return PrototypeArtifactSummaryResponse(
+            return ArtifactSummaryResponse(
                 artifact_id=ref.artifact_id,
                 artifact_type=ref.artifact_type,
                 schema_version=ref.schema_version,
@@ -568,7 +600,7 @@ class WorkbenchService:
                         sort_keys=True,
                     )
         content_url = f"./artifacts/{artifact.id}/content"
-        return PrototypeArtifactSummaryResponse(
+        return ArtifactSummaryResponse(
             artifact_id=artifact.id,
             artifact_type=artifact.artifact_type,
             schema_version=artifact.schema_version,
@@ -596,9 +628,7 @@ class WorkbenchService:
                 + "\n"
             ).encode("utf-8")
         if artifact.bucket is None or artifact.object_key is None:
-            raise WorkbenchGraphError(
-                f"Artifact {artifact.id} has no stored payload"
-            )
+            raise WorkbenchGraphError(f"Artifact {artifact.id} has no stored payload")
         stream = await self._storage.load(
             bucket=artifact.bucket,
             path=artifact.object_key,
@@ -610,9 +640,9 @@ class WorkbenchService:
 
 
 def _topological_order(
-    nodes: list[PrototypeRunNodeRequest],
-    edges: list[PrototypeRunEdgeRequest],
-) -> list[PrototypeRunNodeRequest]:
+    nodes: list[RunNodeRequest],
+    edges: list[RunEdgeRequest],
+) -> list[RunNodeRequest]:
     by_id = {node.id: node for node in nodes}
     if len(by_id) != len(nodes):
         raise WorkbenchGraphError("Duplicate node ids in graph")
@@ -627,7 +657,7 @@ def _topological_order(
         incoming_count[edge.to_node] += 1
 
     queue = deque(node for node in nodes if incoming_count[node.id] == 0)
-    ordered: list[PrototypeRunNodeRequest] = []
+    ordered: list[RunNodeRequest] = []
     while queue:
         node = queue.popleft()
         ordered.append(node)
@@ -645,7 +675,9 @@ def _topological_order(
 
 def _validate_edges(
     nodes_by_id: dict[str, Node[Any, Any, Any]],
-    edges: list[PrototypeRunEdgeRequest],
+    invocations_by_id: dict[str, NodeInvocation],
+    edges: list[RunEdgeRequest],
+    projectable_artifact_types: dict[ArtifactTypeKey, ArtifactTypeSpec],
 ) -> None:
     incoming_counts: dict[tuple[str, str], int] = {}
     for edge in edges:
@@ -665,12 +697,29 @@ def _validate_edges(
                 f"{edge.to_node!r}.{edge.to_port!r} references unknown input "
                 f"port {edge.to_port!r} on node {edge.to_node!r}"
             )
-        if source_port.shape != target_port.shape:
+        source_shape = effective_output_shape(
+            source_node,
+            invocations_by_id[edge.from_node],
+            edge.from_port,
+        )
+        target_shape = effective_input_shape(
+            target_node,
+            invocations_by_id[edge.to_node],
+            edge.to_port,
+        )
+        if edge.collection_mode == "map" and source_shape is not PortShape.MANY:
+            raise WorkbenchGraphError(
+                f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
+                f"{edge.to_node!r}.{edge.to_port!r} uses collection mode 'map', "
+                f"which requires a source with shape {PortShape.MANY.value!r}; "
+                f"source is {source_shape.value!r}"
+            )
+        if source_shape != target_shape:
             raise WorkbenchGraphError(
                 f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
                 f"{edge.to_node!r}.{edge.to_port!r} has incompatible shapes: "
-                f"source is {source_port.shape.value!r}, target expects "
-                f"{target_port.shape.value!r}"
+                f"source is {source_shape.value!r}, target expects "
+                f"{target_shape.value!r}"
             )
 
         incoming_key = (edge.to_node, edge.to_port)
@@ -694,7 +743,11 @@ def _validate_edges(
             continue
 
         requested_path = tuple(edge.projection.path)
-        projection = _field_projection_for(source_port.produces, requested_path)
+        projection = _field_projection_for(
+            projectable_artifact_types,
+            source_port.produces,
+            requested_path,
+        )
         if projection is None:
             raise WorkbenchGraphError(
                 f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
@@ -724,11 +777,60 @@ def _validate_edges(
             )
 
 
+def _derive_invocations(
+    nodes_by_id: dict[str, Node[Any, Any, Any]],
+    edges: list[RunEdgeRequest],
+) -> dict[str, NodeInvocation]:
+    map_edges_by_target: dict[str, RunEdgeRequest] = {}
+    for edge in edges:
+        if edge.collection_mode != "map":
+            continue
+        if edge.to_port.strip() == "":
+            raise WorkbenchGraphError(
+                f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
+                f"{edge.to_node!r}.{edge.to_port!r} cannot drive mapped "
+                "execution without a target port"
+            )
+        existing = map_edges_by_target.get(edge.to_node)
+        if existing is not None:
+            raise WorkbenchGraphError(
+                f"Node {edge.to_node!r} has more than one map edge: "
+                f"{existing.from_node!r}.{existing.from_port!r} -> "
+                f"{existing.to_port!r} and {edge.from_node!r}.{edge.from_port!r} "
+                f"-> {edge.to_port!r}; exactly one edge may drive mapped "
+                "execution"
+            )
+        map_edges_by_target[edge.to_node] = edge
+
+    invocations: dict[str, NodeInvocation] = {}
+    for node_id, node in nodes_by_id.items():
+        map_edge = map_edges_by_target.get(node_id)
+        if map_edge is None:
+            invocations[node_id] = NodeInvocation()
+            continue
+
+        invocation = NodeInvocation(
+            mode=InvocationMode.MAP,
+            map_input=map_edge.to_port,
+        )
+        try:
+            validate_invocation(node, invocation)
+        except InvocationError as exc:
+            raise WorkbenchGraphError(
+                f"Edge {map_edge.from_node!r}.{map_edge.from_port!r} -> "
+                f"{map_edge.to_node!r}.{map_edge.to_port!r} cannot drive "
+                f"mapped execution: {exc}"
+            ) from exc
+        invocations[node_id] = invocation
+    return invocations
+
+
 def _field_projection_for(
+    projectable_artifact_types: dict[ArtifactTypeKey, ArtifactTypeSpec],
     artifact_type: ArtifactTypeKey,
     path: tuple[str, ...],
 ) -> ArtifactFieldProjection | None:
-    artifact_spec = _PROJECTABLE_ARTIFACT_TYPES.get(artifact_type)
+    artifact_spec = projectable_artifact_types.get(artifact_type)
     if artifact_spec is None:
         return None
     for projection in artifact_spec.field_projections:
@@ -758,13 +860,3 @@ def _port_values(
         if isinstance(value, ArtifactRef | ArtifactRefSequence):
             values[name] = _RunValue(value=value)
     return values
-
-
-_service: WorkbenchService | None = None
-
-
-def get_workbench_service() -> WorkbenchService:
-    global _service
-    if _service is None:
-        _service = WorkbenchService()
-    return _service

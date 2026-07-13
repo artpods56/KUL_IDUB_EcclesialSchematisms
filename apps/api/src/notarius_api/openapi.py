@@ -7,7 +7,7 @@ from notarius_api.main import app
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Export the isolated Notarius prototype OpenAPI schema.",
+        description="Export the Notarius OpenAPI schema.",
     )
     parser.add_argument("output", type=Path)
     args = parser.parse_args()

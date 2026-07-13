@@ -2,7 +2,8 @@ from uuid import uuid4
 
 import pytest
 
-from notarius_core.prototype.mistral_ocr import (
+from notarius_core.nodes import NodeExecutionContext
+from notarius_plugin_ocr.mistral import (
     EncodedPageImage,
     MistralOcrConfig,
     MistralOcrExecutionError,
@@ -10,7 +11,6 @@ from notarius_core.prototype.mistral_ocr import (
     MistralOcrNode,
     MistralOcrProviderResponse,
 )
-from notarius_core.prototype.nodes import NodeExecutionContext
 
 
 class FakeMistralProvider:

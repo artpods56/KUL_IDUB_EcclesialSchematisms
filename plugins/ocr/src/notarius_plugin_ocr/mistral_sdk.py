@@ -5,7 +5,7 @@ from typing import Protocol, cast, final, override
 from mistralai.client.models import ImageURLChunk, OCRResponse
 from mistralai.client.sdk import Mistral
 
-from notarius_core.prototype.mistral_ocr import (
+from notarius_plugin_ocr.mistral import (
     EncodedPageImage,
     MistralOcrConfig,
     MistralOcrProvider,

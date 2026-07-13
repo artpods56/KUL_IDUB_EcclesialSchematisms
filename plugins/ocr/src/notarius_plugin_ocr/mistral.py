@@ -1,22 +1,19 @@
-from typing import Annotated, ClassVar, Literal, Protocol, cast, final, override
+from typing import Annotated, Literal, Protocol, cast, final, override
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from notarius_core.prototype.artifacts import (
-    MISTRAL_OCR_RESPONSE,
+from notarius_core.artifacts import (
     SOURCE_PAGE_IMAGE,
     JsonObject,
     NodeConfig,
     NodeInput,
     NodeOutput,
 )
-from notarius_core.prototype.nodes import (
-    InPort,
-    Node,
-    NodeExecutionContext,
-    OutPort,
-)
+from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
+
+from notarius_plugin_ocr.artifacts import MISTRAL_OCR_RESPONSE
+from notarius_plugin_ocr.declaration import OCR
 
 
 class EncodedPageImage(BaseModel):
@@ -80,11 +77,13 @@ class MistralOcrConfig(NodeConfig):
     model: str = Field(
         default="mistral-ocr-latest",
         min_length=1,
+        description="Mistral OCR model identifier.",
     )
     timeout_ms: int = Field(
         default=300_000,
         ge=1_000,
         le=900_000,
+        description="Maximum provider request time in milliseconds.",
     )
 
 
@@ -92,7 +91,7 @@ class MistralOcrInput(NodeInput):
     pages: Annotated[
         list[EncodedPageImage],
         InPort(SOURCE_PAGE_IMAGE),
-        Field(min_length=1),
+        Field(min_length=1, description="Ordered encoded page images to process."),
     ]
 
 
@@ -100,6 +99,7 @@ class MistralOcrOutput(NodeOutput):
     responses: Annotated[
         list[MistralOcrResponsePayload],
         OutPort(MISTRAL_OCR_RESPONSE),
+        Field(description="Full Mistral OCR response for each source page."),
     ]
 
 
@@ -116,12 +116,23 @@ class MistralOcrExecutionError(RuntimeError):
     pass
 
 
+def build_mistral_ocr_node(_context: object) -> "MistralOcrNode":
+    from notarius_plugin_ocr.mistral_sdk import MistralSdkOcrProvider
+
+    return MistralOcrNode(MistralSdkOcrProvider())
+
+
+@OCR.node(
+    operator_id="ocr.mistral.tables",
+    version=1,
+    title="Mistral OCR 4",
+    factory=build_mistral_ocr_node,
+)
 @final
 class MistralOcrNode(
     Node[MistralOcrConfig, MistralOcrInput, MistralOcrOutput]
 ):
-    operator_id: ClassVar[str] = "ocr.mistral.tables"
-    operator_version: ClassVar[int] = 1
+    """Runs Mistral OCR while preserving the full provider response."""
 
     def __init__(self, provider: MistralOcrProvider) -> None:
         self._provider = provider

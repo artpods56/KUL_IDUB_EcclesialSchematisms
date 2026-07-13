@@ -1,1 +1,1 @@
-"""HTTP interface for the Notarius workbench prototype."""
+"""HTTP interface for the Notarius workbench."""

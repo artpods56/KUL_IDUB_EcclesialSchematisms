@@ -10,6 +10,7 @@ resolution-markers = [
 members = [
     "notarius-api",
     "notarius-core",
+    "notarius-plugin-ocr",
     "notarius-storage",
     "notarius-workspace",
 ]
@@ -230,7 +231,6 @@ version = "0.1.0"
 source = { editable = "apps/api" }
 dependencies = [
     { name = "fastapi" },
-    { name = "mistralai" },
     { name = "notarius-core" },
     { name = "notarius-storage" },
     { name = "pillow" },
@@ -241,7 +241,6 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.123.0" },
-    { name = "mistralai", specifier = ">=2.5.0" },
     { name = "notarius-core", editable = "libs/core" },
     { name = "notarius-storage", editable = "libs/storage" },
     { name = "pillow" },
@@ -254,12 +253,27 @@ name = "notarius-core"
 version = "0.1.0"
 source = { editable = "libs/core" }
 dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic" }]
+
+[[package]]
+name = "notarius-plugin-ocr"
+version = "0.1.0"
+source = { editable = "plugins/ocr" }
+dependencies = [
+    { name = "mistralai" },
+    { name = "notarius-core" },
     { name = "pillow" },
     { name = "pydantic" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "mistralai", specifier = ">=2.5.0" },
+    { name = "notarius-core", editable = "libs/core" },
     { name = "pillow" },
     { name = "pydantic" },
 ]
@@ -285,6 +299,11 @@ dependencies = [
     { name = "notarius-storage" },
 ]
 
+[package.optional-dependencies]
+ocr = [
+    { name = "notarius-plugin-ocr" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "basedpyright" },
@@ -298,8 +317,10 @@ dev = [
 requires-dist = [
     { name = "notarius-api", editable = "apps/api" },
     { name = "notarius-core", editable = "libs/core" },
+    { name = "notarius-plugin-ocr", marker = "extra == 'ocr'", editable = "plugins/ocr" },
     { name = "notarius-storage", editable = "libs/storage" },
 ]
+provides-extras = ["ocr"]
 
 [package.metadata.requires-dev]
 dev = [

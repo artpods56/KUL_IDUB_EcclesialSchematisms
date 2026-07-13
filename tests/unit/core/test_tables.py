@@ -2,23 +2,25 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from notarius_core.prototype.mistral_ocr import (
-    MistralOcrPagePayload,
-    MistralOcrResponsePayload,
-    MistralOcrTablePayload,
-)
-from notarius_core.prototype.tables import (
+from notarius_core.operators.tables import (
     CsvFile,
     TableCsvBundle,
     TableFragment,
     build_table_csv_bundle,
+    merge_table_fragments,
+    safe_stem,
+)
+from notarius_plugin_ocr.mistral import (
+    MistralOcrPagePayload,
+    MistralOcrResponsePayload,
+    MistralOcrTablePayload,
+)
+from notarius_plugin_ocr.tables import (
     extract_table_fragments,
     is_markdown_separator,
     markdown_table_rows,
     markdown_tables_from_page,
-    merge_table_fragments,
     normalize_rows,
-    safe_stem,
     split_markdown_row,
 )
 

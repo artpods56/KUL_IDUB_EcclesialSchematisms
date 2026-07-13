@@ -3,12 +3,21 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "notarius-core"
+name = "notarius-plugin-ocr"
 version = "0.1.0"
 requires-python = "==3.12.9"
 dependencies = [
+    "mistralai>=2.5.0",
+    "notarius-core",
+    "pillow",
     "pydantic",
 ]
+
+[project.entry-points."notarius.plugins"]
+ocr = "notarius_plugin_ocr.plugin:OCR"
+
+[tool.uv.sources]
+notarius-core = { workspace = true }
 
 [tool.setuptools]
 package-dir = {"" = "src"}

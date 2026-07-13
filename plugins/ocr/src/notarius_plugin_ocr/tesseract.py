@@ -1,23 +1,20 @@
-from typing import Annotated, ClassVar, Protocol, final, override
+from typing import Annotated, Protocol, final, override
 from uuid import UUID
 
 from PIL.Image import Image
 from pydantic import BaseModel, Field
 
-from notarius_core.prototype.artifacts import (
-    OCR_PAGE_RESULT,
+from notarius_core.artifacts import (
     SOURCE_PAGE_IMAGE,
     JsonObject,
     NoConfig,
     NodeInput,
     NodeOutput,
 )
-from notarius_core.prototype.nodes import (
-    InPort,
-    Node,
-    NodeExecutionContext,
-    OutPort,
-)
+from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
+
+from notarius_plugin_ocr.artifacts import OCR_PAGE_RESULT
+from notarius_plugin_ocr.declaration import OCR
 
 
 class SimpleOcrResult(BaseModel):
@@ -55,6 +52,7 @@ class TesseractOcrInput(NodeInput):
     pages: Annotated[
         list[Image],
         InPort(accepts=SOURCE_PAGE_IMAGE),
+        Field(description="Ordered page images to recognize."),
     ]
 
 
@@ -62,12 +60,18 @@ class TesseractOcrOutput(NodeOutput):
     results: Annotated[
         list[SimpleOcrResult],
         OutPort(produces=OCR_PAGE_RESULT),
+        Field(description="Recognized text for each input page."),
     ]
 
 
+@OCR.node(
+    operator_id="ocr.tesseract.pages",
+    version=1,
+    title="Tesseract OCR",
+    factory=lambda _context: TesseractOcrNode(FakeOcrEngine()),
+)
 class TesseractOcrNode(Node[NoConfig, TesseractOcrInput, TesseractOcrOutput]):
-    operator_id: ClassVar[str] = "ocr.tesseract.pages"
-    operator_version: ClassVar[int] = 1
+    """Recognizes plain text from an ordered source page image sequence."""
 
     def __init__(
         self,

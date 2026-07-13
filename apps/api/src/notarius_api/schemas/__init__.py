@@ -1,1 +1,1 @@
-"""HTTP models for the prototype API."""
+"""HTTP models for the Notarius API."""

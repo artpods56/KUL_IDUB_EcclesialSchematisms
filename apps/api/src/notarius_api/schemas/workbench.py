@@ -1,0 +1,137 @@
+from typing import ClassVar, Literal
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from notarius_core.nodes import PortShape
+
+
+PortDirection = Literal["input", "output"]
+
+
+class ApiResponse(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(from_attributes=True)
+
+
+class ArtifactTypeKeyResponse(ApiResponse):
+    id: str
+    schema_version: int
+
+
+class FieldProjectionResponse(ApiResponse):
+    path: list[str]
+    target_artifact_type: ArtifactTypeKeyResponse
+    title: str
+
+
+class ArtifactTypeSpecResponse(ApiResponse):
+    key: ArtifactTypeKeyResponse
+    title: str
+    payload_schema: dict[str, object]
+    field_projections: list[FieldProjectionResponse]
+
+
+class PluginSpecResponse(ApiResponse):
+    slug: str
+    title: str
+
+
+class PortResponse(ApiResponse):
+    name: str
+    title: str | None = None
+    description: str | None = None
+    direction: PortDirection
+    artifact_type: ArtifactTypeKeyResponse
+    shape: PortShape
+    variadic: bool = False
+    required: bool = True
+
+
+class NodeSpecResponse(ApiResponse):
+    operator_id: str
+    operator_version: int
+    plugin_slug: str
+    title: str
+    description: str
+    config_schema: dict[str, object]
+    input_schema: dict[str, object]
+    output_schema: dict[str, object]
+    inputs: list[PortResponse]
+    outputs: list[PortResponse]
+
+
+class NodeRegistryResponse(ApiResponse):
+    plugins: list[PluginSpecResponse]
+    artifact_types: list[ArtifactTypeSpecResponse]
+    nodes: list[NodeSpecResponse]
+
+
+class UploadRequest(BaseModel):
+    filename: str
+    content_base64: str
+
+
+class SampleRequest(BaseModel):
+    count: int = Field(default=2, ge=1, le=8)
+
+
+class SelectionItemResponse(ApiResponse):
+    connector_id: str
+    external_uri: str
+    display_name: str
+    size_bytes: int
+
+
+class RunNodeRequest(BaseModel):
+    id: str
+    operator_id: str
+    operator_version: int
+    config: dict[str, object] = Field(default_factory=dict)
+
+
+class FieldProjectionRequest(BaseModel):
+    path: list[str] = Field(min_length=1)
+
+
+class RunEdgeRequest(BaseModel):
+    from_node: str
+    from_port: str
+    to_node: str
+    to_port: str
+    projection: FieldProjectionRequest | None = None
+    collection_mode: Literal["direct", "map"] = "direct"
+
+
+class RunRequest(BaseModel):
+    nodes: list[RunNodeRequest]
+    edges: list[RunEdgeRequest] = Field(default_factory=list)
+
+
+class ArtifactSummaryResponse(ApiResponse):
+    artifact_id: UUID
+    artifact_type: str
+    schema_version: int
+    content_type: str
+    byte_size: int | None = None
+    sha256: str | None = None
+    text: str | None = None
+    content_url: str | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class RunPortOutputResponse(ApiResponse):
+    port: str
+    kind: Literal["single", "sequence"]
+    artifacts: list[ArtifactSummaryResponse]
+
+
+class RunNodeResponse(ApiResponse):
+    node_id: str
+    status: Literal["succeeded", "failed", "skipped"]
+    error: str | None
+    outputs: list[RunPortOutputResponse]
+
+
+class RunResponse(ApiResponse):
+    status: Literal["succeeded", "failed"]
+    node_runs: list[RunNodeResponse]
