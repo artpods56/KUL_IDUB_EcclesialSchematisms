@@ -2,36 +2,36 @@
 
 import * as React from "react";
 import * as stylex from "@stylexjs/stylex";
-import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
+import { Popover } from "@base-ui/react/popover";
 import {
+  Handle,
+  Position,
+  useUpdateNodeInternals,
+  type Node,
+  type NodeProps,
+} from "@xyflow/react";
+import {
+  CircleHelp,
   ExternalLink,
   LoaderCircle,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 
 import { artifactContentUrl, type Port } from "@/lib/api";
-import { parseArtifactPayload } from "@/lib/artifact-payload";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import { encodeHandleId, handleStyle } from "../handles";
 import { ARTIFACT_TYPE_COLOR } from "../nodes.css";
 import {
   LOCAL_UPLOAD_OPERATOR_ID,
   WORKFLOW_NODE_TYPE,
+  effectivePortShape,
   portMetaForPort,
   selectionSizeLabel,
   selectedSourceItems,
   type WorkflowNodeData,
 } from "../types";
-import {
-  artifactTextForPort,
-  OutputPortRow,
-} from "@/components/canvas/output-port-row";
-import {
-  DEFAULT_PORT_TREATMENT,
-} from "@/components/canvas/output-port-treatment";
-import { artifactTypeSpecForKey } from "@/lib/output-port-projection";
-import { useNodeRegistry } from "@/hooks/use-api";
 
 type WorkflowNode = Node<WorkflowNodeData, typeof WORKFLOW_NODE_TYPE>;
 
@@ -44,6 +44,7 @@ interface SchemaField {
   description?: string;
   type: "string" | "integer" | "number" | "boolean";
   enumValues?: readonly (string | number)[];
+  format?: "textarea";
   minimum?: number;
   maximum?: number;
   minLength?: number;
@@ -130,6 +131,7 @@ function schemaFields(rawSchema: unknown): SchemaField[] {
           : undefined,
       type: candidateType,
       enumValues,
+      format: property.format === "textarea" ? "textarea" : undefined,
       minimum:
         typeof property.minimum === "number" ? property.minimum : undefined,
       maximum:
@@ -190,6 +192,52 @@ const s = stylex.create({
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
+  headerActions: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "2px",
+  },
+  headerButton: {
+    width: "24px",
+    height: "24px",
+    display: "grid",
+    placeItems: "center",
+    borderWidth: 0,
+    borderRadius: "4px",
+    backgroundColor: {
+      default: "transparent",
+      ":hover": tokens.colorHover,
+    },
+    color: { default: tokens.colorSubtle, ":hover": tokens.colorText },
+    cursor: "pointer",
+  },
+  removeButton: {
+    backgroundColor: {
+      default: "transparent",
+      ":hover": tokens.colorDangerHover,
+    },
+    color: { default: tokens.colorSubtle, ":hover": tokens.colorDanger },
+  },
+  helpPopup: {
+    width: "280px",
+    display: "grid",
+    gap: "6px",
+    padding: "10px 11px",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorBorderStrong,
+    borderRadius: "6px",
+    backgroundColor: tokens.colorSurface,
+    boxShadow: tokens.shadowNodeSelected,
+    color: tokens.colorText,
+    zIndex: 50,
+  },
+  helpTitle: { fontSize: tokens.fontSizeSm, fontWeight: 750 },
+  helpDescription: {
+    color: tokens.colorMuted,
+    fontSize: tokens.fontSizeXs,
+    lineHeight: 1.5,
+  },
   ports: { backgroundColor: tokens.colorSurface },
   portRow: {
     position: "relative",
@@ -235,11 +283,6 @@ const s = stylex.create({
   },
   required: { color: tokens.colorWarning, fontSize: tokens.fontSizeSm },
   body: { padding: "10px", backgroundColor: tokens.colorSurface },
-  description: {
-    color: tokens.colorMuted,
-    fontSize: tokens.fontSizeSm,
-    lineHeight: 1.45,
-  },
   upload: {
     width: "100%",
     minHeight: "33px",
@@ -352,6 +395,12 @@ const s = stylex.create({
     color: tokens.colorText,
     fontSize: tokens.fontSizeSm,
   },
+  textarea: {
+    height: "112px",
+    paddingBlock: tokens.space2,
+    lineHeight: 1.45,
+    resize: "none",
+  },
   checkRow: {
     minHeight: "30px",
     display: "flex",
@@ -362,11 +411,33 @@ const s = stylex.create({
     fontWeight: 650,
   },
   check: { accentColor: tokens.colorAccent },
+  artifactAppendix: {
+    padding: "9px 10px 10px",
+    borderTopWidth: 1,
+    borderTopStyle: "solid",
+    borderTopColor: tokens.colorBorder,
+  },
+  artifactAppendixHeader: {
+    display: "flex",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: tokens.space2,
+    color: tokens.colorMuted,
+    fontSize: tokens.fontSizeXs,
+    fontWeight: 700,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+  },
+  artifactCount: {
+    color: tokens.colorSubtle,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontWeight: 500,
+  },
   resultList: {
     maxHeight: "150px",
     display: "grid",
     gap: "5px",
-    marginTop: "9px",
+    marginTop: "7px",
     overflowY: "auto",
   },
   result: {
@@ -422,27 +493,33 @@ function portColor(artifactTypeId: string): string {
   return ARTIFACT_TYPE_COLOR[artifactTypeId] ?? tokens.colorAccent;
 }
 
-function artifactLabel(port: Port): string {
+function artifactLabel(port: Port, shape: Port["shape"] = port.shape): string {
   const name = port.artifact_type.id.split(".").at(-1) ?? port.artifact_type.id;
-  return port.shape === "many" ? `${name}[]` : name;
+  return shape === "many" ? `${name}[]` : name;
 }
 
-function PortRow({ port }: { port: Port }) {
+function PortRow({ port, shape }: { port: Port; shape: Port["shape"] }) {
   const input = port.direction === "input";
+  const metadata = port as Port & {
+    readonly title?: string | null;
+    readonly description?: string | null;
+  };
+  const visibleName = metadata.title ?? port.name;
   const color = portColor(port.artifact_type.id);
-  const contract = artifactLabel(port);
+  const contract = artifactLabel(port, shape);
+  const mappedShape = shape !== port.shape;
   const accessibleLabel = input
-    ? `Input port ${port.name}, accepts ${contract}${port.required ? ", required" : ""}`
-    : `Output port ${port.name}, provides ${contract}`;
+    ? `Input port ${visibleName}, accepts ${contract}${port.required ? ", required" : ""}`
+    : `Output port ${visibleName}, provides ${contract}`;
   const handle = (
     <Handle
       type={input ? "target" : "source"}
       position={input ? Position.Left : Position.Right}
-      id={encodeHandleId(portMetaForPort(port))}
+      id={encodeHandleId(portMetaForPort(port, input ? port.shape : shape))}
       aria-label={accessibleLabel}
       title={input
-        ? `${accessibleLabel}. Connect a compatible output here.`
-        : `${accessibleLabel}. Drag to a compatible input.`}
+        ? `${accessibleLabel}. Connect a compatible output here.${metadata.description ? ` ${metadata.description}` : ""}`
+        : `${accessibleLabel}. Drag to a compatible input.${metadata.description ? ` ${metadata.description}` : ""}`}
       style={handleStyle("50%", color, port.variadic)}
     />
   );
@@ -452,16 +529,34 @@ function PortRow({ port }: { port: Port }) {
       {input ? handle : null}
       {input ? (
         <>
-          <span {...stylex.props(s.portName)}>{port.name}</span>
+          <span title={metadata.description ?? undefined} {...stylex.props(s.portName)}>
+            {visibleName}
+          </span>
           {port.required ? <span {...stylex.props(s.required)}>*</span> : null}
-          {port.shape === "many" ? <span {...stylex.props(s.shape)}>many</span> : null}
-          <span {...stylex.props(s.typeLabel)}>{artifactLabel(port)}</span>
+          {shape === "many" ? (
+            <span
+              title={mappedShape ? "Effective shape while mapping" : undefined}
+              {...stylex.props(s.shape)}
+            >
+              many
+            </span>
+          ) : null}
+          <span {...stylex.props(s.typeLabel)}>{contract}</span>
         </>
       ) : (
         <>
-          <span {...stylex.props(s.typeLabel, s.outputType)}>{artifactLabel(port)}</span>
-          {port.shape === "many" ? <span {...stylex.props(s.shape)}>many</span> : null}
-          <span {...stylex.props(s.portName)}>{port.name}</span>
+          <span {...stylex.props(s.typeLabel, s.outputType)}>{contract}</span>
+          {shape === "many" ? (
+            <span
+              title={mappedShape ? "Effective shape while mapping" : undefined}
+              {...stylex.props(s.shape)}
+            >
+              many
+            </span>
+          ) : null}
+          <span title={metadata.description ?? undefined} {...stylex.props(s.portName)}>
+            {visibleName}
+          </span>
         </>
       )}
       {input ? null : handle}
@@ -537,6 +632,15 @@ function ConfigField({
             </option>
           ))}
         </select>
+      ) : field.type === "string" && field.format === "textarea" ? (
+        <textarea
+          className="nodrag nowheel"
+          value={typeof value === "string" ? value : ""}
+          minLength={field.minLength}
+          maxLength={field.maxLength}
+          {...stylex.props(s.input, s.textarea)}
+          onChange={(event) => onChange(event.currentTarget.value)}
+        />
       ) : (
         <input
           type={
@@ -571,43 +675,55 @@ function ConfigField({
   );
 }
 
-function RunResults({ data }: { data: WorkflowNodeData }) {
+function ProducedArtifactsAppendix({ data }: { data: WorkflowNodeData }) {
   const artifacts = (data.run?.outputs ?? []).flatMap((output) =>
     output.artifacts.map((artifact) => ({ port: output.port, artifact })),
   );
   if (!artifacts.length) return null;
 
   return (
-    <div {...stylex.props(s.resultList)}>
-      {artifacts.map(({ port, artifact }) => {
-        const contentUrl = artifactContentUrl(artifact.content_url);
-        const fallback = artifact.artifact_type.split(".").at(-1) ?? "artifact";
-        return (
-          <div key={`${port}-${artifact.artifact_id}`} {...stylex.props(s.result)}>
-            <span {...stylex.props(s.resultPort)}>{port}</span>
-            <span
-              title={artifact.text ?? fallback}
-              {...stylex.props(s.resultValue)}
+    <footer aria-label="Produced artifacts" {...stylex.props(s.artifactAppendix)}>
+      <div {...stylex.props(s.artifactAppendixHeader)}>
+        <span>Produced artifacts</span>
+        <span {...stylex.props(s.artifactCount)}>{artifacts.length}</span>
+      </div>
+      <div role="list" {...stylex.props(s.resultList)}>
+        {artifacts.map(({ port, artifact }) => {
+          const contentUrl = artifactContentUrl(artifact.content_url);
+          const fallback = artifact.artifact_type.split(".").at(-1) ?? "artifact";
+          const artifactTitle = `${artifact.artifact_type}@${artifact.schema_version} · ${artifact.artifact_id}`;
+          return (
+            <div
+              key={`${port}-${artifact.artifact_id}`}
+              role="listitem"
+              title={artifactTitle}
+              {...stylex.props(s.result)}
             >
-              {artifact.text ?? fallback}
-            </span>
-            {contentUrl ? (
-              <a
-                className="nodrag"
-                href={contentUrl}
-                target="_blank"
-                rel="noreferrer"
-                aria-label={`Open ${port} artifact`}
-                title={`Open ${port} artifact`}
-                {...stylex.props(s.resultLink)}
+              <span {...stylex.props(s.resultPort)}>{port}</span>
+              <span
+                title={artifact.text ?? artifactTitle}
+                {...stylex.props(s.resultValue)}
               >
-                <ExternalLink size={10} />
-              </a>
-            ) : null}
-          </div>
-        );
-      })}
-    </div>
+                {artifact.text ?? fallback}
+              </span>
+              {contentUrl ? (
+                <a
+                  className="nodrag"
+                  href={contentUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={`Open ${port} artifact`}
+                  title={`Open ${port} artifact`}
+                  {...stylex.props(s.resultLink)}
+                >
+                  <ExternalLink size={10} />
+                </a>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </footer>
   );
 }
 
@@ -655,7 +771,6 @@ function SourceBody({ id, data }: { id: string; data: WorkflowNodeData }) {
           ))}
         </div>
       ) : <p {...stylex.props(s.moreFiles)}>PNG, JPEG, WebP, TIFF or BMP · ordered as selected</p>}
-      <RunResults data={data} />
       {data.execution.error ? <div {...stylex.props(s.error)} title={data.execution.error}>{data.execution.error}</div> : null}
     </div>
   );
@@ -669,12 +784,12 @@ function GenericBody({
   data: WorkflowNodeData;
 }) {
   const fields = schemaFields(data.spec.config_schema);
+  if (!fields.length && !data.execution.error) return null;
 
   return (
     <div {...stylex.props(s.body)}>
-      <p {...stylex.props(s.description)}>{data.spec.description}</p>
       {fields.length ? (
-        <div {...stylex.props(s.configList)}>
+        <div {...stylex.props(s.configList)} style={{ marginTop: 0 }}>
           {fields.map((field) => (
             <ConfigField
               key={field.name}
@@ -693,8 +808,21 @@ function GenericBody({
 }
 
 function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
-  const { data: registry } = useNodeRegistry();
-  const artifactTypes = registry?.artifact_types ?? [];
+  const producedArtifactCount = (data.run?.outputs ?? []).reduce(
+    (count, output) => count + output.artifacts.length,
+    0,
+  );
+  const updateNodeInternals = useUpdateNodeInternals();
+
+  React.useEffect(() => {
+    const frame = window.requestAnimationFrame(() => updateNodeInternals(id));
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    data.mappedInputPort,
+    id,
+    producedArtifactCount,
+    updateNodeInternals,
+  ]);
 
   return (
     <article {...stylex.props(s.shell, selected ? s.selected : null)}>
@@ -703,9 +831,51 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
           <span {...stylex.props(s.title)} title={data.spec.title}>{data.spec.title}</span>
           <span {...stylex.props(s.operator)}>{data.spec.operator_id}</span>
         </span>
+        <span {...stylex.props(s.headerActions)}>
+          <Popover.Root>
+            <Popover.Trigger
+              type="button"
+              className="nodrag nowheel"
+              aria-label={`About ${data.spec.title}`}
+              title={`About ${data.spec.title}`}
+              {...stylex.props(s.headerButton)}
+            >
+              <CircleHelp size={13} />
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Positioner side="right" align="start" sideOffset={7}>
+                <Popover.Popup
+                  className="nodrag nowheel"
+                  {...stylex.props(s.helpPopup)}
+                >
+                  <span {...stylex.props(s.helpTitle)}>{data.spec.title}</span>
+                  <span {...stylex.props(s.helpDescription)}>
+                    {data.spec.description || "No description is available for this node."}
+                  </span>
+                </Popover.Popup>
+              </Popover.Positioner>
+            </Popover.Portal>
+          </Popover.Root>
+          <button
+            type="button"
+            className="nodrag nowheel"
+            aria-label={`Remove ${data.spec.title}`}
+            title={`Remove ${data.spec.title}`}
+            {...stylex.props(s.headerButton, s.removeButton)}
+            onClick={() => data.onRemoveNode?.(id)}
+          >
+            <X size={13} />
+          </button>
+        </span>
       </header>
       <div {...stylex.props(s.ports)}>
-        {data.spec.inputs.map((port) => <PortRow key={`in-${port.name}`} port={port} />)}
+        {data.spec.inputs.map((port) => (
+          <PortRow
+            key={`in-${port.name}`}
+            port={port}
+            shape={effectivePortShape(data, port)}
+          />
+        ))}
       </div>
       {data.spec.operator_id === LOCAL_UPLOAD_OPERATOR_ID ? (
         <SourceBody id={id} data={data} />
@@ -713,36 +883,15 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
         <GenericBody id={id} data={data} />
       )}
       <div {...stylex.props(s.ports)}>
-        {data.spec.outputs.map((port) => {
-          const artifactSpec = artifactTypeSpecForKey(
-            artifactTypes,
-            port.artifact_type.id,
-            port.artifact_type.schema_version,
-          );
-          const fieldProjections = artifactSpec?.field_projections ?? [];
-          const artifactText = artifactTextForPort(data.run?.outputs, port.name);
-          const hasPayload = Boolean(parseArtifactPayload(artifactText));
-          const inspectable =
-            fieldProjections.length > 0 || hasPayload;
-
-          return (
-            <OutputPortRow
-              key={`out-${port.name}`}
-              port={port}
-              nodeTitle={data.spec.title}
-              artifactText={artifactText}
-              fieldProjections={fieldProjections}
-              inspectable={inspectable}
-              treatment={
-                data.outputTreatments[port.name] ?? DEFAULT_PORT_TREATMENT
-              }
-              onTreatmentChange={(treatment) =>
-                data.onOutputTreatmentChange?.(id, port.name, treatment)
-              }
-            />
-          );
-        })}
+        {data.spec.outputs.map((port) => (
+          <PortRow
+            key={`out-${port.name}`}
+            port={port}
+            shape={effectivePortShape(data, port)}
+          />
+        ))}
       </div>
+      <ProducedArtifactsAppendix data={data} />
     </article>
   );
 }

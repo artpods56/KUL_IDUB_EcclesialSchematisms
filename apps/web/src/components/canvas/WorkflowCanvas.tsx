@@ -7,7 +7,7 @@ import {
   BackgroundVariant,
   Controls,
   ReactFlow,
-  type Edge,
+  type EdgeTypes,
   type IsValidConnection,
   type Node,
   type NodeTypes,
@@ -24,13 +24,23 @@ import "@xyflow/react/dist/style.css";
 import { useTheme } from "@/components/theme";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import { connectionIsValid } from "./handles";
+import WorkflowEdgeControl from "./edges/WorkflowEdge";
 import WorkflowNodeCard from "./nodes/WorkflowNode";
-import { WORKFLOW_NODE_TYPE, type WorkflowNodeData } from "./types";
+import {
+  WORKFLOW_EDGE_TYPE,
+  WORKFLOW_NODE_TYPE,
+  type WorkflowEdge,
+  type WorkflowNodeData,
+} from "./types";
 
 type WorkflowNode = Node<WorkflowNodeData, typeof WORKFLOW_NODE_TYPE>;
 
 export const nodeTypes: NodeTypes = {
   [WORKFLOW_NODE_TYPE]: WorkflowNodeCard,
+};
+
+export const edgeTypes: EdgeTypes = {
+  [WORKFLOW_EDGE_TYPE]: WorkflowEdgeControl,
 };
 
 const s = stylex.create({
@@ -42,21 +52,21 @@ const s = stylex.create({
   },
 });
 
-export interface WorkflowCanvasProps<FlowEdge extends Edge = Edge> {
+export interface WorkflowCanvasProps {
   nodes: WorkflowNode[];
-  edges: FlowEdge[];
+  edges: WorkflowEdge[];
   onNodesChange: OnNodesChange<WorkflowNode>;
-  onEdgesChange: OnEdgesChange<FlowEdge>;
+  onEdgesChange: OnEdgesChange<WorkflowEdge>;
   onConnect: OnConnect;
-  isValidConnection?: IsValidConnection<FlowEdge>;
+  isValidConnection?: IsValidConnection<WorkflowEdge>;
   onPaneReady?: (
-    instance: ReactFlowInstance<WorkflowNode, FlowEdge>,
+    instance: ReactFlowInstance<WorkflowNode, WorkflowEdge>,
   ) => void;
   onPaneClick?: () => void;
   animateEdges?: boolean;
 }
 
-export function WorkflowCanvas<FlowEdge extends Edge = Edge>({
+export function WorkflowCanvas({
   nodes,
   edges,
   onNodesChange,
@@ -66,7 +76,7 @@ export function WorkflowCanvas<FlowEdge extends Edge = Edge>({
   onPaneReady,
   onPaneClick,
   animateEdges = false,
-}: WorkflowCanvasProps<FlowEdge>) {
+}: WorkflowCanvasProps) {
   const { resolved } = useTheme();
   const renderedEdges = React.useMemo(
     () => edges.map((edge) => ({ ...edge, animated: animateEdges })),
@@ -75,10 +85,11 @@ export function WorkflowCanvas<FlowEdge extends Edge = Edge>({
 
   return (
     <div {...stylex.props(s.wrapper)}>
-      <ReactFlow<WorkflowNode, FlowEdge>
+      <ReactFlow<WorkflowNode, WorkflowEdge>
         nodes={nodes}
         edges={renderedEdges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
@@ -91,12 +102,14 @@ export function WorkflowCanvas<FlowEdge extends Edge = Edge>({
         maxZoom={1.7}
         colorMode={resolved}
         panOnScroll
+        panOnDrag={[1, 2]}
         selectionOnDrag
+        multiSelectionKeyCode="Shift"
         zoomOnDoubleClick={false}
         proOptions={{ hideAttribution: true }}
         defaultEdgeOptions={{
           animated: false,
-          type: "default",
+          type: WORKFLOW_EDGE_TYPE,
           style: {
             stroke: tokens.colorAccent,
             strokeWidth: 2,

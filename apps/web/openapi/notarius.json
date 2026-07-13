@@ -198,9 +198,17 @@
             },
             "title": "Nodes",
             "type": "array"
+          },
+          "plugins": {
+            "items": {
+              "$ref": "#/components/schemas/PluginSpecResponse"
+            },
+            "title": "Plugins",
+            "type": "array"
           }
         },
         "required": [
+          "plugins",
           "artifact_types",
           "nodes"
         ],
@@ -216,16 +224,6 @@
           },
           "description": {
             "title": "Description",
-            "type": "string"
-          },
-          "group": {
-            "enum": [
-              "source",
-              "transform",
-              "ocr",
-              "arithmetic"
-            ],
-            "title": "Group",
             "type": "string"
           },
           "input_schema": {
@@ -260,6 +258,10 @@
             "title": "Outputs",
             "type": "array"
           },
+          "plugin_slug": {
+            "title": "Plugin Slug",
+            "type": "string"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -268,8 +270,8 @@
         "required": [
           "operator_id",
           "operator_version",
+          "plugin_slug",
           "title",
-          "group",
           "description",
           "config_schema",
           "input_schema",
@@ -280,10 +282,39 @@
         "title": "NodeSpecResponse",
         "type": "object"
       },
+      "PluginSpecResponse": {
+        "properties": {
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "title"
+        ],
+        "title": "PluginSpecResponse",
+        "type": "object"
+      },
       "PortResponse": {
         "properties": {
           "artifact_type": {
             "$ref": "#/components/schemas/ArtifactTypeKeyResponse"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
           },
           "direction": {
             "enum": [
@@ -304,6 +335,17 @@
           },
           "shape": {
             "$ref": "#/components/schemas/PortShape"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
           },
           "variadic": {
             "default": false,
@@ -330,6 +372,15 @@
       },
       "RunEdgeRequest": {
         "properties": {
+          "collection_mode": {
+            "default": "direct",
+            "enum": [
+              "direct",
+              "map"
+            ],
+            "title": "Collection Mode",
+            "type": "string"
+          },
           "from_node": {
             "title": "From Node",
             "type": "string"
@@ -380,11 +431,16 @@
           "operator_id": {
             "title": "Operator Id",
             "type": "string"
+          },
+          "operator_version": {
+            "title": "Operator Version",
+            "type": "integer"
           }
         },
         "required": [
           "id",
-          "operator_id"
+          "operator_id",
+          "operator_version"
         ],
         "title": "RunNodeRequest",
         "type": "object"

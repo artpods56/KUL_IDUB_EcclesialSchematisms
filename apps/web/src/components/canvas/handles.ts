@@ -66,6 +66,22 @@ export function connectionIsValid(connection: {
   );
 }
 
+/** Artifact identity compatibility without collection-shape handling. */
+export function connectionArtifactContractIsValid(connection: {
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
+}): boolean {
+  const source = decodeHandleId(connection.sourceHandle);
+  const target = decodeHandleId(connection.targetHandle);
+  if (!source || !target) return false;
+  return (
+    source.direction === "output" &&
+    target.direction === "input" &&
+    source.artifactTypeId === target.artifactTypeId &&
+    source.schemaVersion === target.schemaVersion
+  );
+}
+
 /** Declared source-field projections that can satisfy a typed connection. */
 export function projectionCandidatesForConnection(
   connection: {
@@ -81,7 +97,6 @@ export function projectionCandidatesForConnection(
     !target ||
     source.direction !== "output" ||
     target.direction !== "input" ||
-    source.shape !== target.shape ||
     (source.artifactTypeId === target.artifactTypeId &&
       source.schemaVersion === target.schemaVersion)
   ) {
@@ -110,7 +125,7 @@ export function projectionAwareConnectionIsValid(
   artifactTypes: readonly ArtifactTypeSpec[],
 ): boolean {
   return (
-    connectionIsValid(connection) ||
+    connectionArtifactContractIsValid(connection) ||
     projectionCandidatesForConnection(connection, artifactTypes).length > 0
   );
 }

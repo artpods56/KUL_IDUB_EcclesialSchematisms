@@ -4,17 +4,44 @@ import type {
   NodeSpec,
   NodeConfigInput,
   Port,
+  RunEdgeCollectionMode,
   RunEdgeProjectionInput,
   RunNodeResult,
   SelectionItem,
 } from "@/lib/api";
-import type { OutputPortTreatment } from "./output-port-treatment";
-import { defaultTreatments } from "./output-port-treatment";
 
 export type WorkflowEdgeProjection = RunEdgeProjectionInput;
 
-export interface WorkflowEdgeData extends Record<string, unknown> {
+export interface WorkflowEdgeProjectionOption {
+  title: string;
+  path: readonly string[];
+}
+
+export interface WorkflowEdgeRouteOffset {
+  x: number;
+  y: number;
+}
+
+export interface WorkflowEdgeUpdate {
+  collectionMode?: RunEdgeCollectionMode;
   projection?: WorkflowEdgeProjection;
+  clearProjection?: boolean;
+}
+
+export interface WorkflowEdgeData extends Record<string, unknown> {
+  collectionMode: RunEdgeCollectionMode;
+  projection?: WorkflowEdgeProjection;
+  /** Visual routing adjustment from the edge's natural midpoint. */
+  routeOffset?: WorkflowEdgeRouteOffset;
+  sourcePortName?: string;
+  projectionOptions?: readonly WorkflowEdgeProjectionOption[];
+  allowWholeArtifact?: boolean;
+  allowedCollectionModes?: readonly RunEdgeCollectionMode[];
+  onUpdate?: (edgeId: string, update: WorkflowEdgeUpdate) => void;
+  onRouteOffsetChange?: (
+    edgeId: string,
+    offset: WorkflowEdgeRouteOffset,
+  ) => void;
 }
 
 export type WorkflowEdge = Edge<WorkflowEdgeData>;
@@ -48,21 +75,19 @@ export interface NodeExecution {
 
 export interface WorkflowNodeData extends Record<string, unknown> {
   spec: NodeSpec;
+  /** Derived from incoming map edges; never persisted as node configuration. */
+  mappedInputPort: string | null;
   config: WorkflowNodeConfig;
   run: RunNodeResult | null;
   execution: NodeExecution;
-  outputTreatments: Record<string, OutputPortTreatment>;
   onFilesSelected?: (nodeId: string, files: File[]) => void;
   onConfigChange?: (nodeId: string, name: string, value: unknown) => void;
+  onRemoveNode?: (nodeId: string) => void;
   onRemoveSelection?: (nodeId: string, index: number) => void;
-  onOutputTreatmentChange?: (
-    nodeId: string,
-    portName: string,
-    treatment: OutputPortTreatment,
-  ) => void;
 }
 
 export const WORKFLOW_NODE_TYPE = "notariusWorkflowNode";
+export const WORKFLOW_EDGE_TYPE = "notariusWorkflowEdge";
 export const LOCAL_UPLOAD_OPERATOR_ID = "source.local_upload.images";
 
 function schemaRecord(value: unknown): Record<string, unknown> | null {
@@ -100,10 +125,10 @@ export function createWorkflowNodeData(
 ): WorkflowNodeData {
   return {
     spec,
+    mappedInputPort: null,
     config: defaultNodeConfig(spec),
     run: null,
     execution: { status: "idle" },
-    outputTreatments: defaultTreatments(spec.outputs),
   };
 }
 
@@ -188,12 +213,24 @@ export function updateNodeRun(
   };
 }
 
-export function portMetaForPort(port: Port): PortMeta {
+export function effectivePortShape(
+  data: WorkflowNodeData,
+  port: Port,
+): Port["shape"] {
+  if (!data.mappedInputPort) return port.shape;
+  if (port.direction === "output") return "many";
+  return data.mappedInputPort === port.name ? "many" : port.shape;
+}
+
+export function portMetaForPort(
+  port: Port,
+  shape: Port["shape"] = port.shape,
+): PortMeta {
   return {
     portName: port.name,
     artifactTypeId: port.artifact_type.id,
     schemaVersion: port.artifact_type.schema_version,
-    shape: port.shape,
+    shape,
     direction: port.direction,
   };
 }

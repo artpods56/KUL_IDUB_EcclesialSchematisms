@@ -162,6 +162,8 @@ export interface components {
             readonly artifact_types: readonly components["schemas"]["ArtifactTypeSpecResponse"][];
             /** Nodes */
             readonly nodes: readonly components["schemas"]["NodeSpecResponse"][];
+            /** Plugins */
+            readonly plugins: readonly components["schemas"]["PluginSpecResponse"][];
         };
         /** NodeSpecResponse */
         readonly NodeSpecResponse: {
@@ -171,11 +173,6 @@ export interface components {
             };
             /** Description */
             readonly description: string;
-            /**
-             * Group
-             * @enum {string}
-             */
-            readonly group: "source" | "transform" | "ocr" | "arithmetic";
             /** Input Schema */
             readonly input_schema: {
                 readonly [key: string]: unknown;
@@ -192,12 +189,23 @@ export interface components {
             };
             /** Outputs */
             readonly outputs: readonly components["schemas"]["PortResponse"][];
+            /** Plugin Slug */
+            readonly plugin_slug: string;
+            /** Title */
+            readonly title: string;
+        };
+        /** PluginSpecResponse */
+        readonly PluginSpecResponse: {
+            /** Slug */
+            readonly slug: string;
             /** Title */
             readonly title: string;
         };
         /** PortResponse */
         readonly PortResponse: {
             readonly artifact_type: components["schemas"]["ArtifactTypeKeyResponse"];
+            /** Description */
+            readonly description?: string | null;
             /**
              * Direction
              * @enum {string}
@@ -211,6 +219,8 @@ export interface components {
              */
             readonly required: boolean;
             readonly shape: components["schemas"]["PortShape"];
+            /** Title */
+            readonly title?: string | null;
             /**
              * Variadic
              * @default false
@@ -224,6 +234,12 @@ export interface components {
         readonly PortShape: "one" | "many";
         /** RunEdgeRequest */
         readonly RunEdgeRequest: {
+            /**
+             * Collection Mode
+             * @default direct
+             * @enum {string}
+             */
+            readonly collection_mode: "direct" | "map";
             /** From Node */
             readonly from_node: string;
             /** From Port */
@@ -244,6 +260,8 @@ export interface components {
             readonly id: string;
             /** Operator Id */
             readonly operator_id: string;
+            /** Operator Version */
+            readonly operator_version: number;
         };
         /** RunNodeResponse */
         readonly RunNodeResponse: {

@@ -12,13 +12,12 @@ export type Port = Schemas["PortResponse"];
 export type NodeSpec = Schemas["NodeSpecResponse"];
 export type SelectionItem =
   Schemas["SelectionItemResponse"];
-export type RunNodeInput =
-  Schemas["RunNodeRequest"];
+export type RunNodeInput = Schemas["RunNodeRequest"];
 export type NodeConfigInput = NonNullable<
   RunNodeInput["config"]
 >;
-export type RunEdgeInput =
-  Schemas["RunEdgeRequest"];
+export type RunEdgeInput = Schemas["RunEdgeRequest"];
+export type RunEdgeCollectionMode = RunEdgeInput["collection_mode"];
 export type RunEdgeProjectionInput = NonNullable<
   RunEdgeInput["projection"]
 >;
@@ -40,7 +39,6 @@ export type RunRequest =
 export type RunResponse =
   paths["/v1/runs"]["post"]["responses"][200]["content"]["application/json"];
 
-export type NodeGroup = NodeSpec["group"];
 export type PortDirection = Port["direction"];
 export type PortShape = Port["shape"];
 export type RunStatus = RunResponse["status"];
