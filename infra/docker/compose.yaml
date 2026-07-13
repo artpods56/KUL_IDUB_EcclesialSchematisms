@@ -3,12 +3,13 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/api.Dockerfile
+      target: api-ocr
     environment:
       MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
       NOTARIUS_CORS_ORIGINS: ${NOTARIUS_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
-      NOTARIUS_PROTOTYPE_WORKSPACE: /data/prototype-workbench
+      NOTARIUS_WORKSPACE: /data/workbench
     volumes:
-      - prototype-data:/data
+      - notarius-data:/data
     ports:
       - "8000:8000"
 
@@ -26,4 +27,4 @@ services:
       - api
 
 volumes:
-  prototype-data:
+  notarius-data:

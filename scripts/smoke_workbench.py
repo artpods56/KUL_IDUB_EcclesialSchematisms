@@ -4,33 +4,35 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from notarius_core.prototype import (
-    ArtifactRefSequence,
-    ArtifactWriterRegistry,
-    FakeOcrEngine,
-    ImageSequenceMergeNode,
-    InMemoryUnitOfWork,
-    InputMaterializer,
-    LocalUploadImageSourceNode,
-    NodeExecutionContext,
-    NodeRuntime,
-    OCR_PAGE_RESULT,
-    OcrPageResultOutputWriter,
-    OutputPersister,
-    PersistedNodeOutput,
-    PilImageResolver,
-    ResolverRegistry,
+from notarius_core.artifacts import (
     SOURCE_PAGE_IMAGE,
-    SourcePageImageOutputWriter,
-    TesseractOcrNode,
+    ArtifactRefSequence,
+    InMemoryUnitOfWork,
 )
+from notarius_core.nodes import NodeExecutionContext
+from notarius_core.operators.sources import (
+    ImageSequenceMergeNode,
+    LocalUploadImageSourceNode,
+)
+from notarius_core.runtime.execution import NodeRuntime, PersistedNodeOutput
+from notarius_core.runtime.materialization import InputMaterializer
+from notarius_core.runtime.persistence import (
+    ArtifactWriterRegistry,
+    OutputPersister,
+    SourcePageImageOutputWriter,
+)
+from notarius_core.runtime.resolvers import ResolverRegistry
+from notarius_plugin_ocr.artifacts import OCR_PAGE_RESULT
+from notarius_plugin_ocr.persistence import OcrPageResultOutputWriter
+from notarius_plugin_ocr.resolvers import PilImageResolver
+from notarius_plugin_ocr.tesseract import FakeOcrEngine, TesseractOcrNode
 from notarius_storage import LocalFileObjectStore
 
 
-WORKSPACE = Path(".notarius-artifacts/prototype-manual-run").resolve()
+WORKSPACE = Path(".notarius-artifacts/workbench-smoke").resolve()
 UPLOADS = WORKSPACE / "uploads"
 OBJECT_STORE = WORKSPACE / "objects"
-BUCKET = "prototype-artifacts"
+BUCKET = "workbench-artifacts"
 
 
 async def main() -> None:
