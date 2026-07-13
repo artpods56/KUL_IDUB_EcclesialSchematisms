@@ -1,9 +1,15 @@
 # Notarius Workbench
 
 Notarius is a node-first workbench for building and running typed artifact
-graphs. The current codebase is the working prototype: nodes declare typed
-ports, edges may select declared fields from compound artifacts, and the
-runtime materializes those values only when a downstream node executes.
+graphs. Nodes declare typed ports, edges may select declared fields from
+compound artifacts, and the runtime materializes those values only when a
+downstream node executes.
+
+Each edge declares how its value is transported. `direct` passes a compatible
+value with its collection shape unchanged; `map` connects a sequence to one
+item input, invokes the target once per item, broadcasts its other inputs, and
+returns ordered output sequences. The runtime derives invocation from those
+edges, so mapping is explicit workflow structure rather than hidden node state.
 
 That field-projection model is the important compatibility primitive. An
 `arithmetic.result@1` artifact can expose `addition` and `subtraction` as
@@ -14,22 +20,48 @@ input without a visible adapter node.
 
 ```mermaid
 flowchart LR
-    Web["Next.js workbench"] --> API["FastAPI prototype routes"]
+    Web["Next.js workbench"] --> API["FastAPI workbench API"]
     API --> Core["Typed artifact-graph runtime"]
-    Core --> Storage["Local object storage"]
+    API --> Storage["Local object storage"]
+    API -. "discovers entry points" .-> Plugins["Installed node plugins"]
+    Plugins --> Core
 ```
 
-- `apps/web` owns the canvas, node rendering, schema-driven controls, and field
-  projection picker.
-- `apps/api` exposes the five `/v1/prototype/*` routes and server-side Mistral
-  OCR adapter.
-- `libs/core/src/notarius_core/prototype` owns artifacts, nodes, ports,
-  projections, materialization, execution, and persistence.
+- `apps/web` owns the canvas, node rendering, schema-driven controls, and edge
+  projection/mapping editor.
+- `apps/api` owns plugin discovery and runtime composition, and exposes the five
+  workbench routes under `/v1`.
+- `libs/core/src/notarius_core` owns artifacts, nodes, ports, projections,
+  runtime execution, persistence, the plugin contract, and built-in operators.
 - `libs/storage` owns the local file object store.
+- `plugins/ocr` is an independently packaged example plugin. It owns OCR nodes,
+  OCR persistence/resolution, the server-side Mistral adapter, and its Mistral
+  SDK dependency.
 - `CONTEXT.md` defines the product vocabulary and active scope.
+- `docs/workbench-interaction-plan.md` records the current interaction decisions,
+  their rationale, acceptance criteria, and deliberately deferred work.
 
 There is intentionally no legacy extraction pipeline, Dagster deployment,
 message broker, worker service, or platform API in this workspace.
+
+## Register a plugin
+
+Plugins are ordinary Python distributions that export one
+`notarius_core.plugins.Plugin` declaration through the `notarius.plugins`
+entry-point group:
+
+```toml
+[project.entry-points."notarius.plugins"]
+my_plugin = "my_package.plugin:PLUGIN"
+```
+
+Install the distribution in the API environment and restart the API. FastAPI's
+lifespan discovers installed entries, validates collisions, freezes the catalog,
+and exposes the contributed nodes and artifact types through `/v1/nodes`.
+Plugins depend on core contracts and ports; they do not import the API host or a
+concrete storage implementation. The OCR package follows this boundary, while
+the API package has no OCR or Mistral dependency. Installing a plugin also
+installs the third-party dependencies declared by that plugin.
 
 ## Run locally
 
@@ -45,12 +77,23 @@ Install both workspaces:
 make install
 ```
 
+The default installation contains the API, core, storage, and web application;
+it does not install OCR or Mistral. Enable the optional OCR plugin with:
+
+```bash
+make install-ocr
+```
+
 Start the API and web app in separate terminals:
 
 ```bash
 make api
 make web
 ```
+
+After a default installation, `make api-ocr` installs the OCR extra and starts
+the API in one command. Use `make api-ocr` whenever that plugin should be
+available; `make api` keeps the API environment on its minimal package graph.
 
 Open <http://localhost:3000>. The API is available at
 <http://localhost:8000>; its health endpoint is `/health`.
@@ -69,7 +112,9 @@ make check
 
 The check runs backend tests, Python and TypeScript lint/type checks, verifies
 that the generated OpenAPI client is current, and builds the production web
-bundle.
+bundle. It enables the OCR extra while running Python tests and type checks so
+the external example plugin remains covered without becoming a default runtime
+dependency.
 
 To exercise the runtime without the browser:
 
@@ -79,8 +124,10 @@ make smoke
 
 ## Containers
 
-The Compose stack contains only the API and web app. Prototype artifacts are
-stored in the `prototype-data` volume.
+The API Dockerfile's default `api` target contains no OCR or Mistral dependency.
+The Compose stack explicitly selects its `api-ocr` target so the example plugin
+is available in that deployment. The stack otherwise contains only the API and
+web app, and Workbench artifacts are stored in the `notarius-data` volume.
 
 ```bash
 make docker-up

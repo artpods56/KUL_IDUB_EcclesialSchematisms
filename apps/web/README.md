@@ -10,14 +10,21 @@ tested directly; **Wire example** installs the canonical four-edge graph in one
 click. Two integer nodes feed an Add & subtract node whose single `result`
 artifact contains `addition` and `subtraction`. Each nested field is routed over
 a labeled edge into Multiply, without adding adapter nodes or
-operation-specific integer artifact types. The OCR and table operators remain
-available in the node library.
+operation-specific integer artifact types. The OCR and table operators are
+available in the node library when the OCR extra is installed.
 
 Node configuration is rendered directly inside each node from the live
 `config_schema`. Primitive JSON Schema fields use a compact preset: text,
 number/integer (including bounds), boolean, or enum selection. Source files and
 run artifacts are also managed from the node, so the canvas does not depend on
-a separate inspector sidebar.
+a separate inspector sidebar. The node header keeps only two local controls:
+help from the registered description and removal from the canvas.
+
+Connections own transport behavior. Every edge has an inline control for
+choosing the whole output or a declared nested-field projection, showing
+whether the target receives the value directly or maps each list item, and
+removing the connection. Different outgoing edges from one output can therefore
+carry different fields without changing the source node.
 
 ## Source of truth
 
@@ -68,7 +75,9 @@ Requirements:
 1. Node 20+ and npm.
 2. Python 3.12.9 with the repository uv workspace synced.
 3. The Notarius API running on `http://localhost:8000`.
-4. `MISTRAL_API_KEY` configured in the API process environment only when using
+4. `make install-ocr` and `make api-ocr` used from the repository root when OCR
+   operators should be available.
+5. `MISTRAL_API_KEY` configured in the API process environment only when using
    the Mistral OCR operator.
 
 ```bash
@@ -90,15 +99,23 @@ sent to the browser.
    connections. The user may wire the ports manually or choose **Wire example**.
 3. Add & subtract emits one `arithmetic.result@1` artifact containing
    `{addition: 13, subtraction: 5}`.
-4. Edges select `result.addition` and `result.subtraction`; the server
+4. Two independent edges select `result.addition` and `result.subtraction`; the server
    materializes each as `scalar.integer@1` for Multiply, which produces `65`.
 5. Dragging the compound result to a compatible integer input opens a picker
-   populated from the artifact type's declared field projections.
-6. Editing a node's schema-derived controls invalidates stale run results before
+   populated from the artifact type's declared field projections. The created
+   edge remains editable and owns that choice.
+6. List-valued edges expose whether the target receives the whole list directly
+   or maps the target operation over each item. Mapping is edge state, not node
+   invocation configuration.
+7. Drag-selecting nodes enables **Run selected**, which sends exactly the
+   selected nodes and their internal edges. A required input crossing in from an
+   unselected node is reported as a non-self-contained selection; unselected
+   node results remain untouched. **Run all** executes the complete graph.
+8. Editing a node's schema-derived controls invalidates stale run results before
    the next execution.
-7. `POST /v1/runs` validates the graph and projection paths before
+9. `POST /v1/runs` validates the graph, collection modes, and projection paths before
    executing it through the runtime.
-8. Node results expose values and content URLs served by
+10. Node results expose values and content URLs served by
    `GET /v1/artifacts/{artifact_id}/content`.
 
 ## Project layout
@@ -107,7 +124,7 @@ sent to the browser.
 src/
   app/                         # workbench route and global styles
   components/
-    canvas/                    # React Flow adapter and node rendering
+    canvas/                    # React Flow adapter, edge controls, and node rendering
     ui/dialog.tsx              # field-projection picker primitive
     providers.tsx              # registry SWR and theme providers
     theme.tsx                  # persisted light/dark/system preference
