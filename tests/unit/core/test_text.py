@@ -1,0 +1,132 @@
+import pytest
+from pydantic import ValidationError
+
+from notarius_core.artifacts import InMemoryUnitOfWork
+from notarius_core.nodes import NodeExecutionContext, PortShape
+from notarius_core.operators.text import (
+    TEXT_VALUE,
+    JoinTextConfig,
+    JoinTextInput,
+    JoinTextNode,
+    ReplaceTextConfig,
+    ReplaceTextInput,
+    ReplaceTextNode,
+    SplitTextConfig,
+    SplitTextInput,
+    SplitTextNode,
+    TextInputConfig,
+    TextInputInput,
+    TextInputNode,
+    TextValue,
+)
+from notarius_core.runtime.invocation import (
+    InvocationMode,
+    map_input_candidates,
+    supported_invocation_modes,
+)
+from notarius_core.runtime.materialization import MaterializationProvenance
+from notarius_core.runtime.persistence import (
+    ArtifactWriteContext,
+    InlineModelOutputWriter,
+)
+from notarius_core.runtime.resolvers import InlineModelResolver
+
+
+@pytest.mark.asyncio
+async def test_text_input_preserves_multiline_text() -> None:
+    output = await TextInputNode().run(
+        NodeExecutionContext(node_id="input"),
+        TextInputConfig(text="first line\n\nthird line\n"),
+        TextInputInput(),
+    )
+
+    assert output.text == TextValue(value="first line\n\nthird line\n")
+    text_schema = TextInputConfig.model_json_schema()["properties"]["text"]
+    assert text_schema["format"] == "textarea"
+
+
+@pytest.mark.asyncio
+async def test_text_split_uses_exact_separator_and_preserves_empty_parts() -> None:
+    output = await SplitTextNode().run(
+        NodeExecutionContext(node_id="split"),
+        SplitTextConfig(separator="||"),
+        SplitTextInput(text=TextValue(value="||alpha||||beta||")),
+    )
+
+    assert [part.value for part in output.parts] == ["", "alpha", "", "beta", ""]
+    assert SplitTextNode.output_contract.ports["parts"].shape is PortShape.MANY
+
+
+@pytest.mark.asyncio
+async def test_text_replace_replaces_every_exact_match() -> None:
+    output = await ReplaceTextNode().run(
+        NodeExecutionContext(node_id="replace"),
+        ReplaceTextConfig(search="cat", replacement="dog"),
+        ReplaceTextInput(text=TextValue(value="cat scatter cat")),
+    )
+
+    assert output.text == TextValue(value="dog sdogter dog")
+    assert map_input_candidates(ReplaceTextNode) == ("text",)
+    assert supported_invocation_modes(ReplaceTextNode) == (
+        InvocationMode.ONCE,
+        InvocationMode.MAP,
+    )
+
+
+@pytest.mark.asyncio
+async def test_text_join_preserves_order_and_accepts_empty_parts() -> None:
+    output = await JoinTextNode().run(
+        NodeExecutionContext(node_id="join"),
+        JoinTextConfig(separator="|"),
+        JoinTextInput(
+            parts=[
+                TextValue(value="alpha"),
+                TextValue(value=""),
+                TextValue(value="beta"),
+            ]
+        ),
+    )
+
+    assert output.text == TextValue(value="alpha||beta")
+    assert JoinTextNode.input_contract.ports["parts"].shape is PortShape.MANY
+
+
+@pytest.mark.parametrize(
+    ("model", "payload"),
+    [
+        (TextValue, {"value": 1}),
+        (TextInputConfig, {"text": 1}),
+        (SplitTextConfig, {"separator": ""}),
+        (ReplaceTextConfig, {"search": ""}),
+    ],
+)
+def test_text_models_reject_invalid_values(
+    model: type[TextValue | TextInputConfig | SplitTextConfig | ReplaceTextConfig],
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        model.model_validate(payload)
+
+
+@pytest.mark.asyncio
+async def test_text_value_uses_generic_inline_persistence() -> None:
+    uow = InMemoryUnitOfWork()
+    writer = InlineModelOutputWriter(
+        artifact_type=TEXT_VALUE.key,
+        model=TextValue,
+        uow=uow,
+    )
+    ref = await writer.write(
+        TextValue(value="persisted text"),
+        ArtifactWriteContext(
+            node_context=NodeExecutionContext(node_id="text"),
+            provenance=MaterializationProvenance(refs_by_input={}),
+        ),
+    )
+    resolver = InlineModelResolver(
+        source=TEXT_VALUE.key,
+        target=TextValue,
+        uow=uow,
+    )
+
+    assert await resolver.resolve(ref) == TextValue(value="persisted text")
