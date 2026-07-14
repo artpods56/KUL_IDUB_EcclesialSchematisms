@@ -126,8 +126,13 @@ the controls that users actually need during graph editing.
 ### T4. Run the current selection — Done
 
 **Description.** Add `Run selected` alongside `Run all`. Selected execution uses
-the exact induced subgraph: selected nodes plus edges whose source and target are
-both selected. It does not silently add upstream nodes.
+the selected nodes, their internal edges, and incoming edges that cross from an
+unselected upstream node. It does not silently add or execute upstream nodes.
+For every crossing edge, the client pins the exact `ArtifactRef` or
+`ArtifactRefSequence` from the upstream node's latest visible successful output.
+The edge still owns and applies its projection and `direct`/`map` collection
+mode. If a current upstream output is absent, `Run selected` refuses to submit;
+the server never substitutes a fuzzy lookup for the latest artifact.
 
 **Justification.** Building a workflow is iterative. Re-running unrelated OCR or
 other expensive branches just to test a small arithmetic or text fragment makes
@@ -136,11 +141,19 @@ faithful to what the user highlighted.
 
 **Acceptance criteria.**
 
-- Drag-selecting nodes and choosing `Run selected` submits only those nodes and
-  their internal edges.
-- A selected fragment with an unsatisfied required input reports a useful error
-  instead of silently executing additional nodes.
+- Drag-selecting nodes and choosing `Run selected` submits only those nodes,
+  their internal edges, and their incoming crossing edges; upstream source nodes
+  remain unexecuted.
+- Each incoming crossing edge carries the exact latest visible successful
+  upstream `ArtifactRef` or `ArtifactRefSequence` as a run-scoped pin.
+- Projection and `direct`/`map` semantics continue to be applied by the crossing
+  edge after its source value is pinned.
+- A selected fragment whose crossing edge has no current upstream output reports
+  a useful error instead of executing additional nodes or asking the server to
+  discover a "latest" artifact.
 - Results and running state outside the selected fragment remain untouched.
+- Run results and pins remain transient across page reload and API restart under
+  the current architecture.
 - `Run all` preserves the existing whole-graph behavior.
 
 ### T5. Derive useful metadata from node definitions — Done
@@ -198,23 +211,17 @@ user sees. [R20: Verify After Signature Changes] [R43: Tests Are Behavioral Cont
   node together with its incident edges and stale artifacts.
 - The whole arithmetic example ran and displayed each produced artifact on its
   node.
-- Drag selection executed the exact three-node fragment, preserved an unselected
-  node's existing artifact, and reported a self-contained-selection error when
-  the selected node depended on an unselected source.
+- At that date, drag selection executed the then-current exact-fragment contract.
+  Upstream output pinning was implemented later; no additional verification
+  result is recorded here.
 
 ## Deliberately deferred
 
-### Reuse artifacts from outside a selected subgraph — Deferred
-
-The first `Run selected` requires a self-contained fragment. Reusing the latest
-artifact from an unselected upstream node needs an explicit artifact binding or
-pinning contract; otherwise the same graph could silently consume stale data.
-
 ### Run to here / upstream closure — Deferred
 
-This is a useful shortcut after exact selected execution is stable. It should
-compute and display the upstream closure before execution rather than quietly
-expanding an ordinary selection.
+This remains distinct from selected-subgraph execution with pinned upstream
+outputs. It should compute and display the upstream closure before execution
+rather than quietly expanding an ordinary selection.
 
 ### Zip, Cartesian, and multi-driver mapping — Deferred
 
@@ -226,4 +233,10 @@ must not emerge accidentally from multiple mapped edges.
 
 Python package entry points solve the current plugin registration and dependency
 boundary. Workspace discovery or isolated remote runtimes should be introduced
-only when an actual deployment or development workflow requires them.
+only when an actual deployment or development workflow requires them. This does
+not include saved-graph persistence: graph documents are stored in the active
+workbench's migrated SQLite database, while discovery of multiple filesystem
+workspaces remains deferred. The web route
+`/workspaces/local/graphs/{graph_uuid}` is only the canonical address for that
+single active workbench; its `local` segment does not imply tenant isolation or
+workspace-scoped authorization.

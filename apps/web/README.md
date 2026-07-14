@@ -91,6 +91,13 @@ Open <http://localhost:3000>.
 The API key stays on the server. It is never stored in node configuration or
 sent to the browser.
 
+Saved graphs have canonical browser URLs at
+`/workspaces/local/graphs/{graph_uuid}`. A blank draft uses
+`/workspaces/local/graphs/new`; the root route retains the arithmetic example.
+`local` is intentionally the only accepted workspace slug today. It names the
+single active workbench in the URL, but it is not yet a tenant or authorization
+boundary.
+
 ## Current flow
 
 1. `GET /v1/nodes` returns the catalog, typed ports, JSON schemas, and
@@ -107,16 +114,24 @@ sent to the browser.
 6. List-valued edges expose whether the target receives the whole list directly
    or maps the target operation over each item. Mapping is edge state, not node
    invocation configuration.
-7. Drag-selecting nodes enables **Run selected**, which sends exactly the
-   selected nodes and their internal edges. A required input crossing in from an
-   unselected node is reported as a non-self-contained selection; unselected
-   node results remain untouched. **Run all** executes the complete graph.
+7. Drag-selecting nodes enables **Run selected**, which sends the selected nodes,
+   their internal edges, and incoming edges crossing from unselected upstream
+   nodes. Each crossing edge pins the exact `ArtifactRef` or
+   `ArtifactRefSequence` from its source port's latest visible successful output;
+   its projection and `direct`/`map` mode still apply. The upstream source is not
+   re-executed, and its result remains untouched. If that current output is
+   absent, the run is refused instead of asking the server for a fuzzy "latest"
+   artifact. **Run all** executes the complete graph.
 8. Editing a node's schema-derived controls invalidates stale run results before
    the next execution.
 9. `POST /v1/runs` validates the graph, collection modes, and projection paths before
    executing it through the runtime.
 10. Node results expose values and content URLs served by
    `GET /v1/artifacts/{artifact_id}/content`.
+
+Run results and selected-run pins are transient client/API process state under
+the current architecture. They are not restored after a page reload or API
+restart, even when the graph itself has been saved.
 
 ## Project layout
 
