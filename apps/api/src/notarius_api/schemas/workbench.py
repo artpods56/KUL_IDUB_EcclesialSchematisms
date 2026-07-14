@@ -3,6 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from notarius_core.artifacts import ArtifactRef, ArtifactRefSequence
 from notarius_core.nodes import PortShape
 
 
@@ -102,9 +103,16 @@ class RunEdgeRequest(BaseModel):
     collection_mode: Literal["direct", "map"] = "direct"
 
 
+class PinnedOutputRequest(BaseModel):
+    from_node: str
+    from_port: str
+    value: ArtifactRef | ArtifactRefSequence
+
+
 class RunRequest(BaseModel):
     nodes: list[RunNodeRequest]
     edges: list[RunEdgeRequest] = Field(default_factory=list)
+    pinned_outputs: list[PinnedOutputRequest] = Field(default_factory=list)
 
 
 class ArtifactSummaryResponse(ApiResponse):
@@ -122,6 +130,7 @@ class ArtifactSummaryResponse(ApiResponse):
 class RunPortOutputResponse(ApiResponse):
     port: str
     kind: Literal["single", "sequence"]
+    value: ArtifactRef | ArtifactRefSequence
     artifacts: list[ArtifactSummaryResponse]
 
 

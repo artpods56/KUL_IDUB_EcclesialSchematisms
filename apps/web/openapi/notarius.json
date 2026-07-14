@@ -1,6 +1,87 @@
 {
   "components": {
     "schemas": {
+      "ArtifactRef": {
+        "properties": {
+          "artifact_id": {
+            "format": "uuid",
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "artifact_type": {
+            "title": "Artifact Type",
+            "type": "string"
+          },
+          "content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Hash"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "artifact_type",
+          "schema_version"
+        ],
+        "title": "ArtifactRef",
+        "type": "object"
+      },
+      "ArtifactRefSequence": {
+        "properties": {
+          "artifact_type": {
+            "title": "Artifact Type",
+            "type": "string"
+          },
+          "index_key": {
+            "default": "order_index",
+            "title": "Index Key",
+            "type": "string"
+          },
+          "item_refs": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactRef"
+            },
+            "title": "Item Refs",
+            "type": "array"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "ordered": {
+            "default": true,
+            "title": "Ordered",
+            "type": "boolean"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "sequence_id": {
+            "format": "uuid",
+            "title": "Sequence Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifact_type",
+          "schema_version",
+          "item_refs"
+        ],
+        "title": "ArtifactRefSequence",
+        "type": "object"
+      },
       "ArtifactSummaryResponse": {
         "properties": {
           "artifact_id": {
@@ -128,6 +209,36 @@
         "title": "ArtifactTypeSpecResponse",
         "type": "object"
       },
+      "CreateSavedGraphRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/SavedGraphEdgeModel"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/SavedGraphNodeModel"
+            },
+            "title": "Nodes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CreateSavedGraphRequest",
+        "type": "object"
+      },
       "FieldProjectionRequest": {
         "properties": {
           "path": {
@@ -168,6 +279,25 @@
           "title"
         ],
         "title": "FieldProjectionResponse",
+        "type": "object"
+      },
+      "GraphPointModel": {
+        "additionalProperties": false,
+        "properties": {
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "title": "GraphPointModel",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -280,6 +410,36 @@
           "outputs"
         ],
         "title": "NodeSpecResponse",
+        "type": "object"
+      },
+      "PinnedOutputRequest": {
+        "properties": {
+          "from_node": {
+            "title": "From Node",
+            "type": "string"
+          },
+          "from_port": {
+            "title": "From Port",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactRef"
+              },
+              {
+                "$ref": "#/components/schemas/ArtifactRefSequence"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "from_node",
+          "from_port",
+          "value"
+        ],
+        "title": "PinnedOutputRequest",
         "type": "object"
       },
       "PluginSpecResponse": {
@@ -508,11 +668,23 @@
           "port": {
             "title": "Port",
             "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactRef"
+              },
+              {
+                "$ref": "#/components/schemas/ArtifactRefSequence"
+              }
+            ],
+            "title": "Value"
           }
         },
         "required": [
           "port",
           "kind",
+          "value",
           "artifacts"
         ],
         "title": "RunPortOutputResponse",
@@ -532,6 +704,13 @@
               "$ref": "#/components/schemas/RunNodeRequest"
             },
             "title": "Nodes",
+            "type": "array"
+          },
+          "pinned_outputs": {
+            "items": {
+              "$ref": "#/components/schemas/PinnedOutputRequest"
+            },
+            "title": "Pinned Outputs",
             "type": "array"
           }
         },
@@ -579,6 +758,248 @@
         "title": "SampleRequest",
         "type": "object"
       },
+      "SavedGraphEdgeModel": {
+        "additionalProperties": false,
+        "properties": {
+          "collection_mode": {
+            "default": "direct",
+            "enum": [
+              "direct",
+              "map"
+            ],
+            "title": "Collection Mode",
+            "type": "string"
+          },
+          "from_node": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "From Node",
+            "type": "string"
+          },
+          "from_port": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "From Port",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "projection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SavedGraphProjectionModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "route_offset": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GraphPointModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "to_node": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "To Node",
+            "type": "string"
+          },
+          "to_port": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "To Port",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "from_node",
+          "from_port",
+          "to_node",
+          "to_port"
+        ],
+        "title": "SavedGraphEdgeModel",
+        "type": "object"
+      },
+      "SavedGraphListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "graphs": {
+            "items": {
+              "$ref": "#/components/schemas/SavedGraphSummaryResponse"
+            },
+            "title": "Graphs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "graphs"
+        ],
+        "title": "SavedGraphListResponse",
+        "type": "object"
+      },
+      "SavedGraphNodeModel": {
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "additionalProperties": true,
+            "title": "Config",
+            "type": "object"
+          },
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "operator_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Operator Id",
+            "type": "string"
+          },
+          "operator_version": {
+            "minimum": 1.0,
+            "title": "Operator Version",
+            "type": "integer"
+          },
+          "position": {
+            "$ref": "#/components/schemas/GraphPointModel"
+          }
+        },
+        "required": [
+          "id",
+          "operator_id",
+          "operator_version",
+          "position"
+        ],
+        "title": "SavedGraphNodeModel",
+        "type": "object"
+      },
+      "SavedGraphProjectionModel": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "items": {
+              "maxLength": 255,
+              "minLength": 1,
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Path",
+            "type": "array"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "SavedGraphProjectionModel",
+        "type": "object"
+      },
+      "SavedGraphResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/SavedGraphEdgeModel"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/SavedGraphNodeModel"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "id",
+          "revision",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "SavedGraphResponse",
+        "type": "object"
+      },
+      "SavedGraphSummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "edge_count": {
+            "title": "Edge Count",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "node_count": {
+            "title": "Node Count",
+            "type": "integer"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "revision",
+          "node_count",
+          "edge_count",
+          "updated_at"
+        ],
+        "title": "SavedGraphSummaryResponse",
+        "type": "object"
+      },
       "SelectionItemResponse": {
         "properties": {
           "connector_id": {
@@ -605,6 +1026,42 @@
           "size_bytes"
         ],
         "title": "SelectionItemResponse",
+        "type": "object"
+      },
+      "UpdateSavedGraphRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/SavedGraphEdgeModel"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/SavedGraphNodeModel"
+            },
+            "title": "Nodes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "expected_revision"
+        ],
+        "title": "UpdateSavedGraphRequest",
         "type": "object"
       },
       "UploadRequest": {
@@ -711,6 +1168,204 @@
         "summary": "Get Artifact Content",
         "tags": [
           "workbench"
+        ]
+      }
+    },
+    "/v1/graphs": {
+      "get": {
+        "operationId": "list_saved_graphs_v1_graphs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedGraphListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Saved Graphs",
+        "tags": [
+          "saved graphs"
+        ]
+      },
+      "post": {
+        "operationId": "create_saved_graph_v1_graphs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSavedGraphRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedGraphResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Saved Graph",
+        "tags": [
+          "saved graphs"
+        ]
+      }
+    },
+    "/v1/graphs/{graph_id}": {
+      "delete": {
+        "operationId": "delete_saved_graph_v1_graphs__graph_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "graph_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Graph Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Revision",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Saved Graph",
+        "tags": [
+          "saved graphs"
+        ]
+      },
+      "get": {
+        "operationId": "get_saved_graph_v1_graphs__graph_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "graph_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Graph Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedGraphResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Saved Graph",
+        "tags": [
+          "saved graphs"
+        ]
+      },
+      "put": {
+        "operationId": "update_saved_graph_v1_graphs__graph_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "graph_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Graph Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSavedGraphRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedGraphResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Saved Graph",
+        "tags": [
+          "saved graphs"
         ]
       }
     },

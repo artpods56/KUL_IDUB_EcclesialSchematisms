@@ -1,4 +1,6 @@
 import json
+from uuid import uuid4
+
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, ValidationError
@@ -6,8 +8,10 @@ from pydantic import BaseModel, ValidationError
 from notarius_api.schemas.workbench import (
     NodeRegistryResponse,
     RunEdgeRequest,
+    RunPortOutputResponse,
     RunResponse,
 )
+from notarius_core.artifacts import ArtifactRef, ArtifactRefSequence
 from notarius_core.operators.arithmetic import (
     AddSubtractInput,
     ArithmeticResult,
@@ -142,6 +146,15 @@ def _mapped_sum_run_request(
     }
 
 
+def _run_output(
+    result: RunResponse,
+    node_id: str,
+    port: str,
+) -> RunPortOutputResponse:
+    node_run = next(run for run in result.node_runs if run.node_id == node_id)
+    return next(output for output in node_run.outputs if output.port == port)
+
+
 def test_registry_declares_generic_integer_and_arithmetic_result_projections(
     builtin_client: TestClient,
 ) -> None:
@@ -233,6 +246,71 @@ def test_arithmetic_graph_projects_both_result_fields_into_multiply(
     assert product_content.json() == {"value": 65}
 
 
+def test_selected_target_projects_two_edges_from_one_pinned_compound_output(
+    builtin_client: TestClient,
+) -> None:
+    upstream_response = builtin_client.post(
+        "/v1/runs",
+        json=_arithmetic_run_request(
+            left_projection={"path": ["addition"]},
+            right_projection={"path": ["subtraction"]},
+        ),
+    )
+    assert upstream_response.status_code == 200
+    upstream_result = RunResponse.model_validate(upstream_response.json())
+    compound_output = _run_output(upstream_result, "add-subtract", "result")
+    assert isinstance(compound_output.value, ArtifactRef)
+    assert compound_output.value.artifact_id == compound_output.artifacts[0].artifact_id
+    assert compound_output.value.content_hash == compound_output.artifacts[0].sha256
+
+    selected_response = builtin_client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "multiply",
+                    "operator_id": "arithmetic.multiply",
+                    "operator_version": 1,
+                    "config": {},
+                }
+            ],
+            "edges": [
+                {
+                    "from_node": "add-subtract",
+                    "from_port": "result",
+                    "to_node": "multiply",
+                    "to_port": "left",
+                    "projection": {"path": ["addition"]},
+                },
+                {
+                    "from_node": "add-subtract",
+                    "from_port": "result",
+                    "to_node": "multiply",
+                    "to_port": "right",
+                    "projection": {"path": ["subtraction"]},
+                },
+            ],
+            "pinned_outputs": [
+                {
+                    "from_node": "add-subtract",
+                    "from_port": "result",
+                    "value": compound_output.value.model_dump(mode="json"),
+                }
+            ],
+        },
+    )
+
+    assert selected_response.status_code == 200
+    selected_result = RunResponse.model_validate(selected_response.json())
+    assert selected_result.status == "succeeded"
+    assert [run.node_id for run in selected_result.node_runs] == ["multiply"]
+    product_output = _run_output(selected_result, "multiply", "result")
+    assert isinstance(product_output.value, ArtifactRef)
+    assert product_output.value.artifact_id == product_output.artifacts[0].artifact_id
+    assert product_output.value.content_hash == product_output.artifacts[0].sha256
+    assert product_output.artifacts[0].text == "65"
+
+
 def test_integer_sequence_maps_multiply_and_sums_once(
     builtin_client: TestClient,
 ) -> None:
@@ -258,6 +336,379 @@ def test_integer_sequence_maps_multiply_and_sums_once(
     ]
     assert runs["sum"].outputs[0].kind == "single"
     assert runs["sum"].outputs[0].artifacts[0].text == "60"
+
+
+def test_selected_mapped_run_uses_exact_pinned_sequence_envelope_in_order(
+    builtin_client: TestClient,
+) -> None:
+    upstream_response = builtin_client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "sequence",
+                    "operator_id": "arithmetic.integer_sequence",
+                    "operator_version": 1,
+                    "config": {"start": 1, "count": 3, "step": 1},
+                },
+                {
+                    "id": "ten",
+                    "operator_id": "arithmetic.number",
+                    "operator_version": 1,
+                    "config": {"value": 10},
+                },
+            ],
+            "edges": [],
+        },
+    )
+    assert upstream_response.status_code == 200
+    upstream_result = RunResponse.model_validate(upstream_response.json())
+    sequence_output = _run_output(upstream_result, "sequence", "values")
+    ten_output = _run_output(upstream_result, "ten", "value")
+    assert isinstance(sequence_output.value, ArtifactRefSequence)
+    assert isinstance(ten_output.value, ArtifactRef)
+    assert [ref.artifact_id for ref in sequence_output.value.item_refs] == [
+        artifact.artifact_id for artifact in sequence_output.artifacts
+    ]
+
+    selected_response = builtin_client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "multiply",
+                    "operator_id": "arithmetic.multiply",
+                    "operator_version": 1,
+                    "config": {},
+                }
+            ],
+            "edges": [
+                {
+                    "from_node": "sequence",
+                    "from_port": "values",
+                    "to_node": "multiply",
+                    "to_port": "left",
+                    "collection_mode": "map",
+                },
+                {
+                    "from_node": "ten",
+                    "from_port": "value",
+                    "to_node": "multiply",
+                    "to_port": "right",
+                },
+            ],
+            "pinned_outputs": [
+                {
+                    "from_node": "sequence",
+                    "from_port": "values",
+                    "value": sequence_output.value.model_dump(mode="json"),
+                },
+                {
+                    "from_node": "ten",
+                    "from_port": "value",
+                    "value": ten_output.value.model_dump(mode="json"),
+                },
+            ],
+        },
+    )
+
+    assert selected_response.status_code == 200
+    selected_result = RunResponse.model_validate(selected_response.json())
+    multiplied_output = _run_output(selected_result, "multiply", "result")
+    assert isinstance(multiplied_output.value, ArtifactRefSequence)
+    assert [artifact.text for artifact in multiplied_output.artifacts] == [
+        "10",
+        "20",
+        "30",
+    ]
+    assert multiplied_output.value.ordered is sequence_output.value.ordered
+    assert multiplied_output.value.index_key == sequence_output.value.index_key
+    assert multiplied_output.value.metadata["source_sequence_id"] == str(
+        sequence_output.value.sequence_id
+    )
+
+
+def test_selected_run_uses_submitted_older_or_newer_pin_without_latest_lookup(
+    builtin_client: TestClient,
+) -> None:
+    pinned_values: list[ArtifactRef] = []
+    for value in (3, 7):
+        response = builtin_client.post(
+            "/v1/runs",
+            json={
+                "nodes": [
+                    {
+                        "id": "source",
+                        "operator_id": "arithmetic.number",
+                        "operator_version": 1,
+                        "config": {"value": value},
+                    }
+                ],
+                "edges": [],
+            },
+        )
+        assert response.status_code == 200
+        result = RunResponse.model_validate(response.json())
+        output_value = _run_output(result, "source", "value").value
+        assert isinstance(output_value, ArtifactRef)
+        pinned_values.append(output_value)
+    assert pinned_values[0].artifact_id != pinned_values[1].artifact_id
+
+    products: list[str | None] = []
+    for pinned_value in pinned_values:
+        response = builtin_client.post(
+            "/v1/runs",
+            json={
+                "nodes": [
+                    {
+                        "id": "multiply",
+                        "operator_id": "arithmetic.multiply",
+                        "operator_version": 1,
+                        "config": {},
+                    }
+                ],
+                "edges": [
+                    {
+                        "from_node": "source",
+                        "from_port": "value",
+                        "to_node": "multiply",
+                        "to_port": "left",
+                    },
+                    {
+                        "from_node": "source",
+                        "from_port": "value",
+                        "to_node": "multiply",
+                        "to_port": "right",
+                    },
+                ],
+                "pinned_outputs": [
+                    {
+                        "from_node": "source",
+                        "from_port": "value",
+                        "value": pinned_value.model_dump(mode="json"),
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 200
+        result = RunResponse.model_validate(response.json())
+        products.append(_run_output(result, "multiply", "result").artifacts[0].text)
+
+    assert products == ["9", "49"]
+
+
+@pytest.mark.parametrize(
+    ("case", "error_fragment"),
+    [
+        ("missing-artifact", "references missing artifact"),
+        ("mismatched-ref", "does not match the repository ref for artifact"),
+        ("missing-pin", "requires a pinned output"),
+        ("duplicate-pin", "Duplicate pinned output"),
+        ("unused-pin", "is not used by any incoming edge"),
+        (
+            "wrong-artifact-type",
+            "cannot connect arithmetic.result@1 to scalar.integer@1",
+        ),
+    ],
+)
+def test_invalid_selected_run_pins_are_rejected_before_target_execution(
+    builtin_client: TestClient,
+    case: str,
+    error_fragment: str,
+) -> None:
+    upstream_response = builtin_client.post(
+        "/v1/runs",
+        json=_arithmetic_run_request(
+            left_projection={"path": ["addition"]},
+            right_projection={"path": ["subtraction"]},
+        ),
+    )
+    assert upstream_response.status_code == 200
+    upstream_result = RunResponse.model_validate(upstream_response.json())
+    integer_value = _run_output(upstream_result, "nine", "value").value
+    compound_value = _run_output(upstream_result, "add-subtract", "result").value
+    assert isinstance(integer_value, ArtifactRef)
+    assert isinstance(compound_value, ArtifactRef)
+
+    edges: list[dict[str, object]] = [
+        {
+            "from_node": "source",
+            "from_port": "value",
+            "to_node": "multiply",
+            "to_port": "left",
+        },
+        {
+            "from_node": "source",
+            "from_port": "value",
+            "to_node": "multiply",
+            "to_port": "right",
+        },
+    ]
+    pinned_outputs: list[dict[str, object]] = [
+        {
+            "from_node": "source",
+            "from_port": "value",
+            "value": integer_value.model_dump(mode="json"),
+        }
+    ]
+    if case == "missing-artifact":
+        missing_value = integer_value.model_copy(
+            update={"artifact_id": uuid4()},
+        )
+        pinned_outputs[0]["value"] = missing_value.model_dump(mode="json")
+    elif case == "mismatched-ref":
+        mismatched_value = integer_value.model_copy(
+            update={"content_hash": "not-the-repository-hash"},
+        )
+        pinned_outputs[0]["value"] = mismatched_value.model_dump(mode="json")
+    elif case == "missing-pin":
+        pinned_outputs = []
+    elif case == "duplicate-pin":
+        pinned_outputs.append(dict(pinned_outputs[0]))
+    elif case == "unused-pin":
+        pinned_outputs.append(
+            {
+                "from_node": "unused",
+                "from_port": "value",
+                "value": integer_value.model_dump(mode="json"),
+            }
+        )
+    elif case == "wrong-artifact-type":
+        edges = [
+            {
+                "from_node": "source",
+                "from_port": "result",
+                "to_node": "multiply",
+                "to_port": "left",
+            },
+            {
+                "from_node": "source",
+                "from_port": "result",
+                "to_node": "multiply",
+                "to_port": "right",
+            },
+        ]
+        pinned_outputs = [
+            {
+                "from_node": "source",
+                "from_port": "result",
+                "value": compound_value.model_dump(mode="json"),
+            }
+        ]
+
+    response = builtin_client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "multiply",
+                    "operator_id": "arithmetic.multiply",
+                    "operator_version": 1,
+                    "config": {},
+                }
+            ],
+            "edges": edges,
+            "pinned_outputs": pinned_outputs,
+        },
+    )
+
+    assert response.status_code == 422
+    assert error_fragment in response.json()["detail"]
+
+
+def test_pin_for_executing_source_is_rejected_before_source_config_runs(
+    builtin_client: TestClient,
+) -> None:
+    upstream_response = builtin_client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "source",
+                    "operator_id": "arithmetic.number",
+                    "operator_version": 1,
+                    "config": {"value": 3},
+                }
+            ],
+            "edges": [],
+        },
+    )
+    assert upstream_response.status_code == 200
+    upstream_result = RunResponse.model_validate(upstream_response.json())
+    pinned_value = _run_output(upstream_result, "source", "value").value
+    assert isinstance(pinned_value, ArtifactRef)
+
+    response = builtin_client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "source",
+                    "operator_id": "arithmetic.number",
+                    "operator_version": 1,
+                    "config": {"value": "invalid"},
+                },
+                {
+                    "id": "multiply",
+                    "operator_id": "arithmetic.multiply",
+                    "operator_version": 1,
+                    "config": {},
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "source",
+                    "from_port": "value",
+                    "to_node": "multiply",
+                    "to_port": "left",
+                },
+                {
+                    "from_node": "source",
+                    "from_port": "value",
+                    "to_node": "multiply",
+                    "to_port": "right",
+                },
+            ],
+            "pinned_outputs": [
+                {
+                    "from_node": "source",
+                    "from_port": "value",
+                    "value": pinned_value.model_dump(mode="json"),
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Pinned output 'source'.'value' is invalid because source node "
+        "'source' is also being executed"
+    )
+
+
+def test_crossing_edge_to_unknown_target_is_rejected(
+    builtin_client: TestClient,
+) -> None:
+    response = builtin_client.post(
+        "/v1/runs",
+        json={
+            "nodes": [],
+            "edges": [
+                {
+                    "from_node": "source",
+                    "from_port": "value",
+                    "to_node": "missing-target",
+                    "to_port": "left",
+                }
+            ],
+            "pinned_outputs": [],
+        },
+    )
+
+    assert response.status_code == 422
+    assert (
+        "references unknown target node 'missing-target'" in response.json()["detail"]
+    )
 
 
 def test_many_output_cannot_feed_once_item_input(

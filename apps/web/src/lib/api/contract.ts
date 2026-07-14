@@ -21,12 +21,19 @@ export type RunEdgeCollectionMode = RunEdgeInput["collection_mode"];
 export type RunEdgeProjectionInput = NonNullable<
   RunEdgeInput["projection"]
 >;
+export type PinnedOutputInput = Schemas["PinnedOutputRequest"];
 export type ArtifactSummary =
   Schemas["ArtifactSummaryResponse"];
 export type RunPortOutput =
   Schemas["RunPortOutputResponse"];
 export type RunNodeResult =
   Schemas["RunNodeResponse"];
+export type SavedGraphNode =
+  Schemas["SavedGraphNodeModel"];
+export type SavedGraphEdge =
+  Schemas["SavedGraphEdgeModel"];
+export type SavedGraphSummary =
+  Schemas["SavedGraphSummaryResponse"];
 
 export type NodeRegistry =
   paths["/v1/nodes"]["get"]["responses"][200]["content"]["application/json"];
@@ -38,6 +45,16 @@ export type RunRequest =
   paths["/v1/runs"]["post"]["requestBody"]["content"]["application/json"];
 export type RunResponse =
   paths["/v1/runs"]["post"]["responses"][200]["content"]["application/json"];
+export type SavedGraphList =
+  paths["/v1/graphs"]["get"]["responses"][200]["content"]["application/json"];
+export type CreateSavedGraphRequest =
+  paths["/v1/graphs"]["post"]["requestBody"]["content"]["application/json"];
+export type CreateSavedGraphResponse =
+  paths["/v1/graphs"]["post"]["responses"][201]["content"]["application/json"];
+export type SavedGraph =
+  paths["/v1/graphs/{graph_id}"]["get"]["responses"][200]["content"]["application/json"];
+export type UpdateSavedGraphRequest =
+  paths["/v1/graphs/{graph_id}"]["put"]["requestBody"]["content"]["application/json"];
 
 export type PortDirection = Port["direction"];
 export type PortShape = Port["shape"];

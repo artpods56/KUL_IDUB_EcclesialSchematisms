@@ -75,6 +75,7 @@ from notarius_storage import LocalFileObjectStore
 
 from notarius_api.schemas.workbench import (
     ArtifactSummaryResponse,
+    PinnedOutputRequest,
     RunEdgeRequest,
     RunNodeRequest,
     RunNodeResponse,
@@ -119,7 +120,7 @@ class WorkbenchService:
         workspace: Path | None = None,
     ) -> None:
         self._plugin_registry = plugin_registry
-        self._workspace = workspace or _default_workspace()
+        self._workspace = (workspace or _default_workspace()).expanduser().resolve()
         self._uploads_dir = self._workspace / "uploads"
         self._uploads_dir.mkdir(parents=True, exist_ok=True)
         self._storage = LocalFileObjectStore(self._workspace / "objects")
@@ -283,6 +284,12 @@ class WorkbenchService:
 
     async def run_graph(self, request: RunRequest) -> RunResponse:
         order = _topological_order(request.nodes, request.edges)
+        pinned_outputs = _pinned_outputs_by_endpoint(
+            request.nodes,
+            request.edges,
+            request.pinned_outputs,
+        )
+        outputs = await self._resolve_pinned_outputs(pinned_outputs)
         nodes_by_id = {
             node_request.id: self._build_node(
                 node_request.operator_id,
@@ -300,8 +307,8 @@ class WorkbenchService:
             invocations_by_id,
             request.edges,
             self._projectable_artifact_types,
+            pinned_outputs,
         )
-        outputs: dict[str, dict[str, _RunValue]] = {}
         failed: set[str] = set()
         node_runs: list[RunNodeResponse] = []
         run_id = uuid4()
@@ -372,6 +379,39 @@ class WorkbenchService:
 
         status: Literal["succeeded", "failed"] = "failed" if failed else "succeeded"
         return RunResponse(status=status, node_runs=node_runs)
+
+    async def _resolve_pinned_outputs(
+        self,
+        pinned_outputs: dict[
+            tuple[str, str],
+            ArtifactRef | ArtifactRefSequence,
+        ],
+    ) -> dict[str, dict[str, _RunValue]]:
+        outputs: dict[str, dict[str, _RunValue]] = {}
+        for (from_node, from_port), value in pinned_outputs.items():
+            refs = (
+                value.item_refs if isinstance(value, ArtifactRefSequence) else [value]
+            )
+            for index, ref in enumerate(refs):
+                item_context = (
+                    f" sequence item {index}"
+                    if isinstance(value, ArtifactRefSequence)
+                    else ""
+                )
+                artifact = await self.get_artifact(ref.artifact_id)
+                if artifact is None:
+                    raise WorkbenchGraphError(
+                        f"Pinned output {from_node!r}.{from_port!r}{item_context} "
+                        f"references missing artifact {ref.artifact_id}"
+                    )
+                if artifact.ref() != ref:
+                    raise WorkbenchGraphError(
+                        f"Pinned output {from_node!r}.{from_port!r}{item_context} "
+                        f"does not match the repository ref for artifact "
+                        f"{ref.artifact_id}"
+                    )
+            outputs.setdefault(from_node, {})[from_port] = _RunValue(value=value)
+        return outputs
 
     async def _assemble_inputs(
         self,
@@ -564,6 +604,7 @@ class WorkbenchService:
         return RunPortOutputResponse(
             port=port_name,
             kind=kind,
+            value=run_value.value,
             artifacts=[await self._artifact_summary(ref) for ref in refs],
         )
 
@@ -647,14 +688,17 @@ def _topological_order(
     if len(by_id) != len(nodes):
         raise WorkbenchGraphError("Duplicate node ids in graph")
     for edge in edges:
-        if edge.from_node not in by_id or edge.to_node not in by_id:
+        if edge.to_node not in by_id:
             raise WorkbenchGraphError(
-                f"Edge references unknown node {edge.from_node!r} -> {edge.to_node!r}"
+                f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
+                f"{edge.to_node!r}.{edge.to_port!r} references unknown target "
+                f"node {edge.to_node!r}"
             )
 
     incoming_count = {node.id: 0 for node in nodes}
     for edge in edges:
-        incoming_count[edge.to_node] += 1
+        if edge.from_node in by_id:
+            incoming_count[edge.to_node] += 1
 
     queue = deque(node for node in nodes if incoming_count[node.id] == 0)
     ordered: list[RunNodeRequest] = []
@@ -662,7 +706,7 @@ def _topological_order(
         node = queue.popleft()
         ordered.append(node)
         for edge in edges:
-            if edge.from_node != node.id:
+            if edge.from_node != node.id or edge.to_node not in by_id:
                 continue
             incoming_count[edge.to_node] -= 1
             if incoming_count[edge.to_node] == 0:
@@ -673,23 +717,62 @@ def _topological_order(
     return ordered
 
 
+def _pinned_outputs_by_endpoint(
+    nodes: list[RunNodeRequest],
+    edges: list[RunEdgeRequest],
+    pinned_outputs: list[PinnedOutputRequest],
+) -> dict[tuple[str, str], ArtifactRef | ArtifactRefSequence]:
+    node_ids = {node.id for node in nodes}
+    by_endpoint: dict[tuple[str, str], ArtifactRef | ArtifactRefSequence] = {}
+    for pinned_output in pinned_outputs:
+        endpoint = (pinned_output.from_node, pinned_output.from_port)
+        if endpoint in by_endpoint:
+            raise WorkbenchGraphError(
+                f"Duplicate pinned output for {pinned_output.from_node!r}."
+                f"{pinned_output.from_port!r}"
+            )
+        if pinned_output.from_node in node_ids:
+            raise WorkbenchGraphError(
+                f"Pinned output {pinned_output.from_node!r}."
+                f"{pinned_output.from_port!r} is invalid because source node "
+                f"{pinned_output.from_node!r} is also being executed"
+            )
+        by_endpoint[endpoint] = pinned_output.value
+
+    external_endpoints: set[tuple[str, str]] = set()
+    for edge in edges:
+        if edge.from_node in node_ids:
+            continue
+        endpoint = (edge.from_node, edge.from_port)
+        external_endpoints.add(endpoint)
+        if endpoint not in by_endpoint:
+            raise WorkbenchGraphError(
+                f"External edge {edge.from_node!r}.{edge.from_port!r} -> "
+                f"{edge.to_node!r}.{edge.to_port!r} requires a pinned output"
+            )
+
+    for from_node, from_port in by_endpoint:
+        if (from_node, from_port) not in external_endpoints:
+            raise WorkbenchGraphError(
+                f"Pinned output {from_node!r}.{from_port!r} is not used by any "
+                "incoming edge"
+            )
+    return by_endpoint
+
+
 def _validate_edges(
     nodes_by_id: dict[str, Node[Any, Any, Any]],
     invocations_by_id: dict[str, NodeInvocation],
     edges: list[RunEdgeRequest],
     projectable_artifact_types: dict[ArtifactTypeKey, ArtifactTypeSpec],
+    pinned_outputs: dict[
+        tuple[str, str],
+        ArtifactRef | ArtifactRefSequence,
+    ],
 ) -> None:
     incoming_counts: dict[tuple[str, str], int] = {}
     for edge in edges:
-        source_node = nodes_by_id[edge.from_node]
         target_node = nodes_by_id[edge.to_node]
-        source_port = source_node.output_contract.ports.get(edge.from_port)
-        if source_port is None:
-            raise WorkbenchGraphError(
-                f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
-                f"{edge.to_node!r}.{edge.to_port!r} references unknown output "
-                f"port {edge.from_port!r} on node {edge.from_node!r}"
-            )
         target_port = target_node.input_contract.ports.get(edge.to_port)
         if target_port is None:
             raise WorkbenchGraphError(
@@ -697,11 +780,29 @@ def _validate_edges(
                 f"{edge.to_node!r}.{edge.to_port!r} references unknown input "
                 f"port {edge.to_port!r} on node {edge.to_node!r}"
             )
-        source_shape = effective_output_shape(
-            source_node,
-            invocations_by_id[edge.from_node],
-            edge.from_port,
-        )
+        source_node = nodes_by_id.get(edge.from_node)
+        if source_node is None:
+            pinned_value = pinned_outputs[(edge.from_node, edge.from_port)]
+            source_shape = (
+                PortShape.MANY
+                if isinstance(pinned_value, ArtifactRefSequence)
+                else PortShape.ONE
+            )
+            source_key = _value_key(pinned_value)
+        else:
+            source_port = source_node.output_contract.ports.get(edge.from_port)
+            if source_port is None:
+                raise WorkbenchGraphError(
+                    f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
+                    f"{edge.to_node!r}.{edge.to_port!r} references unknown output "
+                    f"port {edge.from_port!r} on node {edge.from_node!r}"
+                )
+            source_shape = effective_output_shape(
+                source_node,
+                invocations_by_id[edge.from_node],
+                edge.from_port,
+            )
+            source_key = source_port.produces
         target_shape = effective_input_shape(
             target_node,
             invocations_by_id[edge.to_node],
@@ -731,12 +832,11 @@ def _validate_edges(
             )
 
         if edge.projection is None:
-            if source_port.produces != target_port.accepts:
+            if source_key != target_port.accepts:
                 raise WorkbenchGraphError(
                     f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
                     f"{edge.to_node!r}.{edge.to_port!r} cannot connect "
-                    f"{source_port.produces.id}@"
-                    f"{source_port.produces.schema_version} to "
+                    f"{source_key.id}@{source_key.schema_version} to "
                     f"{target_port.accepts.id}@{target_port.accepts.schema_version} "
                     f"without a declared field projection"
                 )
@@ -745,7 +845,7 @@ def _validate_edges(
         requested_path = tuple(edge.projection.path)
         projection = _field_projection_for(
             projectable_artifact_types,
-            source_port.produces,
+            source_key,
             requested_path,
         )
         if projection is None:
@@ -753,7 +853,7 @@ def _validate_edges(
                 f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
                 f"{edge.to_node!r}.{edge.to_port!r} requests undeclared "
                 f"projection {'.'.join(requested_path)!r} on "
-                f"{source_port.produces.id}@{source_port.produces.schema_version}"
+                f"{source_key.id}@{source_key.schema_version}"
             )
         if projection.target != target_port.accepts:
             raise WorkbenchGraphError(
@@ -840,11 +940,15 @@ def _field_projection_for(
 
 
 def _run_value_key(run_value: _RunValue) -> ArtifactTypeKey:
-    if isinstance(run_value.value, ArtifactRef):
-        return run_value.value.key()
+    return _value_key(run_value.value)
+
+
+def _value_key(value: ArtifactRef | ArtifactRefSequence) -> ArtifactTypeKey:
+    if isinstance(value, ArtifactRef):
+        return value.key()
     return ArtifactTypeKey(
-        run_value.value.artifact_type,
-        run_value.value.schema_version,
+        value.artifact_type,
+        value.schema_version,
     )
 
 

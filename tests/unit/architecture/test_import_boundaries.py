@@ -6,11 +6,15 @@ from typing import cast
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 FORBIDDEN_CORE_IMPORTS = (
+    "aiosqlite",
+    "alembic",
     "fastapi",
     "mistralai",
     "notarius_api",
+    "notarius_persistence",
     "notarius_plugin_ocr",
     "notarius_storage",
+    "sqlalchemy",
 )
 FORBIDDEN_OCR_PLUGIN_IMPORTS = (
     "notarius_api",
@@ -74,6 +78,37 @@ def test_ocr_sdk_dependency_is_owned_by_the_optional_plugin() -> None:
     )
 
 
+def test_relational_dependencies_are_owned_by_persistence() -> None:
+    api_document = tomllib.loads(
+        (REPO_ROOT / "apps/api/pyproject.toml").read_text()
+    )
+    core_document = tomllib.loads(
+        (REPO_ROOT / "libs/core/pyproject.toml").read_text()
+    )
+    persistence_document = tomllib.loads(
+        (REPO_ROOT / "libs/persistence/pyproject.toml").read_text()
+    )
+
+    api_project = cast(dict[str, object], api_document["project"])
+    core_project = cast(dict[str, object], core_document["project"])
+    persistence_project = cast(dict[str, object], persistence_document["project"])
+    api_dependencies = cast(list[str], api_project["dependencies"])
+    core_dependencies = cast(list[str], core_project["dependencies"])
+    persistence_dependencies = cast(list[str], persistence_project["dependencies"])
+
+    assert "notarius-persistence" in api_dependencies
+    for dependencies in (api_dependencies, core_dependencies):
+        assert not any(
+            requirement.startswith(("aiosqlite", "alembic", "sqlalchemy"))
+            for requirement in dependencies
+        )
+    for dependency in ("aiosqlite", "alembic", "sqlalchemy"):
+        assert any(
+            requirement.startswith(dependency)
+            for requirement in persistence_dependencies
+        )
+
+
 def test_core_does_not_import_outer_layers_or_domain_adapters() -> None:
     core_root = REPO_ROOT / "libs/core/src/notarius_core"
     offenders: list[str] = []
@@ -81,6 +116,19 @@ def test_core_does_not_import_outer_layers_or_domain_adapters() -> None:
     for path in core_root.rglob("*.py"):
         text = path.read_text()
         for forbidden in FORBIDDEN_CORE_IMPORTS:
+            if f"import {forbidden}" in text or f"from {forbidden}" in text:
+                offenders.append(f"{path.relative_to(REPO_ROOT)}: {forbidden}")
+
+    assert offenders == []
+
+
+def test_persistence_does_not_import_api_or_plugins() -> None:
+    persistence_root = REPO_ROOT / "libs/persistence/src/notarius_persistence"
+    offenders: list[str] = []
+
+    for path in persistence_root.rglob("*.py"):
+        text = path.read_text()
+        for forbidden in ("notarius_api", "notarius_plugin_ocr"):
             if f"import {forbidden}" in text or f"from {forbidden}" in text:
                 offenders.append(f"{path.relative_to(REPO_ROOT)}: {forbidden}")
 

@@ -3,15 +3,23 @@ from fastapi.testclient import TestClient
 from notarius_api.main import app
 
 
-def test_openapi_contains_only_workbench_routes() -> None:
+def test_openapi_contains_exact_public_routes() -> None:
     schema = app.openapi()
 
     assert set(schema["paths"]) == {
         "/v1/artifacts/{artifact_id}/content",
+        "/v1/graphs",
+        "/v1/graphs/{graph_id}",
         "/v1/nodes",
         "/v1/runs",
         "/v1/samples",
         "/v1/uploads",
+    }
+    assert set(schema["paths"]["/v1/graphs"]) == {"get", "post"}
+    assert set(schema["paths"]["/v1/graphs/{graph_id}"]) == {
+        "delete",
+        "get",
+        "put",
     }
     node_schema = schema["components"]["schemas"]["NodeSpecResponse"]
     assert "config_schema" in node_schema["properties"]

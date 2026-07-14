@@ -22,6 +22,8 @@ input without a visible adapter node.
 flowchart LR
     Web["Next.js workbench"] --> API["FastAPI workbench API"]
     API --> Core["Typed artifact-graph runtime"]
+    API --> Persistence["SQLAlchemy repositories + UoW"]
+    Persistence --> SQLite["SQLite saved graphs"]
     API --> Storage["Local object storage"]
     API -. "discovers entry points" .-> Plugins["Installed node plugins"]
     Plugins --> Core
@@ -29,10 +31,13 @@ flowchart LR
 
 - `apps/web` owns the canvas, node rendering, schema-driven controls, and edge
   projection/mapping editor.
-- `apps/api` owns plugin discovery and runtime composition, and exposes the five
-  workbench routes under `/v1`.
+- `apps/api` owns plugin discovery, runtime composition, and the HTTP adapters
+  for execution and saved-graph CRUD under `/v1`.
 - `libs/core/src/notarius_core` owns artifacts, nodes, ports, projections,
-  runtime execution, persistence, the plugin contract, and built-in operators.
+  runtime execution, saved-graph aggregates and use cases, the plugin contract,
+  and built-in operators.
+- `libs/persistence` owns the async SQLAlchemy repository and unit-of-work
+  adapters for saved graphs. Alembic is the only schema authority.
 - `libs/storage` owns the local file object store.
 - `plugins/ocr` is an independently packaged example plugin. It owns OCR nodes,
   OCR persistence/resolution, the server-side Mistral adapter, and its Mistral
@@ -77,8 +82,9 @@ Install both workspaces:
 make install
 ```
 
-The default installation contains the API, core, storage, and web application;
-it does not install OCR or Mistral. Enable the optional OCR plugin with:
+The default installation contains the API, core, persistence, storage, and web
+application; it does not install OCR or Mistral. Enable the optional OCR plugin
+with:
 
 ```bash
 make install-ocr
@@ -90,6 +96,13 @@ Start the API and web app in separate terminals:
 make api
 make web
 ```
+
+`make api` applies pending Alembic migrations before starting FastAPI. Saved
+graphs are stored in SQLite at
+`.notarius-artifacts/workbench/notarius.sqlite3` by default. Override
+`NOTARIUS_DATABASE_URL` when another SQLite location is required. Useful
+migration commands are `make db-current`, `make db-history`, and
+`make db-revision message="describe change"`.
 
 After a default installation, `make api-ocr` installs the OCR extra and starts
 the API in one command. Use `make api-ocr` whenever that plugin should be
@@ -126,8 +139,9 @@ make smoke
 
 The API Dockerfile's default `api` target contains no OCR or Mistral dependency.
 The Compose stack explicitly selects its `api-ocr` target so the example plugin
-is available in that deployment. The stack otherwise contains only the API and
-web app, and Workbench artifacts are stored in the `notarius-data` volume.
+is available in that deployment. A one-shot migration service must complete
+before the API starts. SQLite, uploads, and artifact objects share the durable
+`notarius-data` volume.
 
 ```bash
 make docker-up

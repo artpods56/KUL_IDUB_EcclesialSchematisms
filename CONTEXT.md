@@ -25,6 +25,16 @@ version, payload schema, display title, and any declared field projections.
 A lightweight reference to a persisted artifact. Graph execution moves
 references between nodes and materializes Python values only at a node input.
 
+### Upstream output pin
+
+An exact `ArtifactRef` or `ArtifactRefSequence` captured from the latest visible
+successful output of an unselected upstream node when `Run selected` begins.
+The incoming crossing edge remains in the selected-subgraph request and keeps
+owning its projection and `direct`/`map` collection mode; the pin supplies that
+edge's source value without executing its source node. If the current upstream
+output is absent, selected execution is refused. The server consumes the
+submitted reference and never performs a fuzzy "latest artifact" lookup.
+
 ### Field projection
 
 A declared path from one compound artifact payload to a value that satisfies
@@ -68,9 +78,26 @@ validated for operator identity and version, edge collection modes, port
 existence, required inputs, effective cardinality, compatibility, declared
 projections, and cycles before any node executes.
 
+### Saved graph
+
+A durable workbench document containing a workflow graph plus user-authored
+canvas layout. It stores configured node identities, positions, semantic edge
+endpoints, projections, collection modes, and edge routing offsets. Registry
+metadata, callbacks, selection, viewport state, and execution results are
+derived or transient and are not part of the saved aggregate. Upstream output
+pins belong to an individual run request and are transient too. Drafts may be
+saved before they are executable.
+
+Saved graphs use optimistic revisions. Replacing a graph requires the revision
+last read by the caller so competing edits are reported instead of silently
+overwriting one another.
+
 ### Workbench
 
 The user-facing graph editor and its execution interface. Node configuration is
 rendered on the node from JSON Schema. Nested artifact fields and collection
-mapping are selected on each edge. The complete graph or an exact,
-self-contained node selection can be executed.
+mapping are selected on each edge. The complete graph or a selected subgraph
+can be executed. Selected execution includes internal and incoming crossing
+edges, pinning each crossing edge to the exact latest visible successful output
+of its unselected source. Run results and these pins are not restored after a
+page reload or API restart under the current architecture.

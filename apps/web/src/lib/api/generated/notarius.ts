@@ -21,6 +21,43 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/graphs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List Saved Graphs */
+        readonly get: operations["list_saved_graphs_v1_graphs_get"];
+        readonly put?: never;
+        /** Create Saved Graph */
+        readonly post: operations["create_saved_graph_v1_graphs_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/graphs/{graph_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Saved Graph */
+        readonly get: operations["get_saved_graph_v1_graphs__graph_id__get"];
+        /** Update Saved Graph */
+        readonly put: operations["update_saved_graph_v1_graphs__graph_id__put"];
+        readonly post?: never;
+        /** Delete Saved Graph */
+        readonly delete: operations["delete_saved_graph_v1_graphs__graph_id__delete"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/nodes": {
         readonly parameters: {
             readonly query?: never;
@@ -93,6 +130,48 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ArtifactRef */
+        readonly ArtifactRef: {
+            /**
+             * Artifact Id
+             * Format: uuid
+             */
+            readonly artifact_id: string;
+            /** Artifact Type */
+            readonly artifact_type: string;
+            /** Content Hash */
+            readonly content_hash?: string | null;
+            /** Schema Version */
+            readonly schema_version: number;
+        };
+        /** ArtifactRefSequence */
+        readonly ArtifactRefSequence: {
+            /** Artifact Type */
+            readonly artifact_type: string;
+            /**
+             * Index Key
+             * @default order_index
+             */
+            readonly index_key: string;
+            /** Item Refs */
+            readonly item_refs: readonly components["schemas"]["ArtifactRef"][];
+            /** Metadata */
+            readonly metadata?: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Ordered
+             * @default true
+             */
+            readonly ordered: boolean;
+            /** Schema Version */
+            readonly schema_version: number;
+            /**
+             * Sequence Id
+             * Format: uuid
+             */
+            readonly sequence_id?: string;
+        };
         /** ArtifactSummaryResponse */
         readonly ArtifactSummaryResponse: {
             /**
@@ -138,6 +217,15 @@ export interface components {
             /** Title */
             readonly title: string;
         };
+        /** CreateSavedGraphRequest */
+        readonly CreateSavedGraphRequest: {
+            /** Edges */
+            readonly edges?: readonly components["schemas"]["SavedGraphEdgeModel"][];
+            /** Name */
+            readonly name: string;
+            /** Nodes */
+            readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel"][];
+        };
         /** FieldProjectionRequest */
         readonly FieldProjectionRequest: {
             /** Path */
@@ -150,6 +238,13 @@ export interface components {
             readonly target_artifact_type: components["schemas"]["ArtifactTypeKeyResponse"];
             /** Title */
             readonly title: string;
+        };
+        /** GraphPointModel */
+        readonly GraphPointModel: {
+            /** X */
+            readonly x: number;
+            /** Y */
+            readonly y: number;
         };
         /** HTTPValidationError */
         readonly HTTPValidationError: {
@@ -193,6 +288,15 @@ export interface components {
             readonly plugin_slug: string;
             /** Title */
             readonly title: string;
+        };
+        /** PinnedOutputRequest */
+        readonly PinnedOutputRequest: {
+            /** From Node */
+            readonly from_node: string;
+            /** From Port */
+            readonly from_port: string;
+            /** Value */
+            readonly value: components["schemas"]["ArtifactRef"] | components["schemas"]["ArtifactRefSequence"];
         };
         /** PluginSpecResponse */
         readonly PluginSpecResponse: {
@@ -288,6 +392,8 @@ export interface components {
             readonly kind: "single" | "sequence";
             /** Port */
             readonly port: string;
+            /** Value */
+            readonly value: components["schemas"]["ArtifactRef"] | components["schemas"]["ArtifactRefSequence"];
         };
         /** RunRequest */
         readonly RunRequest: {
@@ -295,6 +401,8 @@ export interface components {
             readonly edges?: readonly components["schemas"]["RunEdgeRequest"][];
             /** Nodes */
             readonly nodes: readonly components["schemas"]["RunNodeRequest"][];
+            /** Pinned Outputs */
+            readonly pinned_outputs?: readonly components["schemas"]["PinnedOutputRequest"][];
         };
         /** RunResponse */
         readonly RunResponse: {
@@ -314,6 +422,98 @@ export interface components {
              */
             readonly count: number;
         };
+        /** SavedGraphEdgeModel */
+        readonly SavedGraphEdgeModel: {
+            /**
+             * Collection Mode
+             * @default direct
+             * @enum {string}
+             */
+            readonly collection_mode: "direct" | "map";
+            /** From Node */
+            readonly from_node: string;
+            /** From Port */
+            readonly from_port: string;
+            /** Id */
+            readonly id: string;
+            readonly projection?: components["schemas"]["SavedGraphProjectionModel"] | null;
+            readonly route_offset?: components["schemas"]["GraphPointModel"] | null;
+            /** To Node */
+            readonly to_node: string;
+            /** To Port */
+            readonly to_port: string;
+        };
+        /** SavedGraphListResponse */
+        readonly SavedGraphListResponse: {
+            /** Graphs */
+            readonly graphs: readonly components["schemas"]["SavedGraphSummaryResponse"][];
+        };
+        /** SavedGraphNodeModel */
+        readonly SavedGraphNodeModel: {
+            /** Config */
+            readonly config?: {
+                readonly [key: string]: unknown;
+            };
+            /** Id */
+            readonly id: string;
+            /** Operator Id */
+            readonly operator_id: string;
+            /** Operator Version */
+            readonly operator_version: number;
+            readonly position: components["schemas"]["GraphPointModel"];
+        };
+        /** SavedGraphProjectionModel */
+        readonly SavedGraphProjectionModel: {
+            /** Path */
+            readonly path: readonly string[];
+        };
+        /** SavedGraphResponse */
+        readonly SavedGraphResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Edges */
+            readonly edges?: readonly components["schemas"]["SavedGraphEdgeModel"][];
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Nodes */
+            readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel"][];
+            /** Revision */
+            readonly revision: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
+        /** SavedGraphSummaryResponse */
+        readonly SavedGraphSummaryResponse: {
+            /** Edge Count */
+            readonly edge_count: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Node Count */
+            readonly node_count: number;
+            /** Revision */
+            readonly revision: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
         /** SelectionItemResponse */
         readonly SelectionItemResponse: {
             /** Connector Id */
@@ -324,6 +524,17 @@ export interface components {
             readonly external_uri: string;
             /** Size Bytes */
             readonly size_bytes: number;
+        };
+        /** UpdateSavedGraphRequest */
+        readonly UpdateSavedGraphRequest: {
+            /** Edges */
+            readonly edges?: readonly components["schemas"]["SavedGraphEdgeModel"][];
+            /** Expected Revision */
+            readonly expected_revision: number;
+            /** Name */
+            readonly name: string;
+            /** Nodes */
+            readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel"][];
         };
         /** UploadRequest */
         readonly UploadRequest: {
@@ -373,6 +584,156 @@ export interface operations {
                 content: {
                     readonly "application/json": unknown;
                 };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly list_saved_graphs_v1_graphs_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SavedGraphListResponse"];
+                };
+            };
+        };
+    };
+    readonly create_saved_graph_v1_graphs_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CreateSavedGraphRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SavedGraphResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly get_saved_graph_v1_graphs__graph_id__get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly graph_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SavedGraphResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly update_saved_graph_v1_graphs__graph_id__put: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly graph_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["UpdateSavedGraphRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SavedGraphResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly delete_saved_graph_v1_graphs__graph_id__delete: {
+        readonly parameters: {
+            readonly query: {
+                readonly expected_revision: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly graph_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             readonly 422: {

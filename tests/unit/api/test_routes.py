@@ -1,8 +1,13 @@
+import base64
+from pathlib import Path
 from typing import cast
 
+import pytest
 from fastapi.testclient import TestClient
 
+from notarius_api.builtins import builtin_plugins
 from notarius_api.main import create_app
+from notarius_api.plugin_discovery import build_plugin_registry
 from notarius_api.schemas.workbench import NodeRegistryResponse, RunResponse
 from notarius_api.services.workbench import WorkbenchService
 
@@ -110,6 +115,31 @@ def test_run_accepts_empty_graph(builtin_client: TestClient) -> None:
     result = RunResponse.model_validate(response.json())
     assert result.status == "succeeded"
     assert result.node_runs == []
+
+
+@pytest.mark.asyncio
+async def test_upload_from_relative_workspace_returns_absolute_file_uri(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    service = WorkbenchService(
+        plugin_registry=build_plugin_registry(
+            builtin_plugins(),
+            external_plugins=(),
+        ),
+        workspace=Path("relative-workbench"),
+    )
+
+    item = await service.save_upload(
+        "page.png",
+        base64.b64encode(b"image-bytes").decode("ascii"),
+    )
+
+    uploads_uri = (tmp_path / "relative-workbench" / "uploads").as_uri()
+    assert item.external_uri.startswith(f"{uploads_uri}/")
+    assert item.display_name == "page.png"
+    assert item.size_bytes == len(b"image-bytes")
 
 
 def test_source_nodes_materialize_and_merge_sample_images(
