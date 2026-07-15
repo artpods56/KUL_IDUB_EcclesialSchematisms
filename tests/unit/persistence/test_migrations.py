@@ -28,6 +28,8 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
     with create_engine(f"sqlite:///{database_path}").connect() as connection:
         assert set(inspect(connection).get_table_names()) == {
             "alembic_version",
+            "artifact_objects",
+            "materialized_node_outputs",
             "saved_graphs",
         }
     command.check(config)
@@ -38,6 +40,11 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
 
     command.upgrade(config, "head")
     with create_engine(f"sqlite:///{database_path}").connect() as connection:
-        assert "saved_graphs" in inspect(connection).get_table_names()
+        assert set(inspect(connection).get_table_names()) == {
+            "alembic_version",
+            "artifact_objects",
+            "materialized_node_outputs",
+            "saved_graphs",
+        }
 
     get_settings.cache_clear()

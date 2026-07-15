@@ -9,6 +9,7 @@ requires-python = "==3.12.9"
 dependencies = [
     "aiosqlite>=0.22.1",
     "alembic>=1.18.5",
+    "asyncpg>=0.30.0",
     "notarius-core",
     "sqlalchemy[asyncio]>=2.0.51",
 ]

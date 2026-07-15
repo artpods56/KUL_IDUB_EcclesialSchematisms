@@ -1,10 +1,16 @@
 from copy import deepcopy
 from dataclasses import dataclass, field
 from types import TracebackType
-from typing import Protocol, Self, TypeAlias, final, override
+from typing import TYPE_CHECKING, Protocol, Self, TypeAlias, final, override
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+if TYPE_CHECKING:
+    from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
+    from notarius_core.ports.materialized_outputs import (
+        MaterializedNodeOutputsRepositoryPort,
+    )
 
 JsonObject: TypeAlias = dict[str, object]
 
@@ -145,7 +151,7 @@ class ArtifactRefSequence(BaseModel):
         return self
 
 
-@dataclass(slots=True)
+@dataclass
 class ArtifactObject:
     artifact_type: str
     schema_version: int
@@ -180,12 +186,17 @@ class ArtifactRepositoryPort(Protocol):
 @dataclass(slots=True)
 class InMemoryDataStore:
     artifacts: dict[UUID, ArtifactObject] = field(default_factory=dict)
+    materialized_outputs: dict[
+        tuple[UUID, int, str],
+        "MaterializedNodeOutputs",
+    ] = field(default_factory=dict)
 
     def clone(self) -> Self:
         return _clone(self)
 
     def replace_with(self, other: Self) -> None:
         self.artifacts = _clone(other.artifacts)
+        self.materialized_outputs = _clone(other.materialized_outputs)
 
 
 class UnitOfWorkPort(Protocol):
@@ -233,11 +244,49 @@ class InMemoryArtifactRepository(ArtifactRepositoryPort):
         ]
 
 
+@final
+class InMemoryMaterializedNodeOutputsRepository:
+    def __init__(self, store: InMemoryDataStore) -> None:
+        self._store = store
+
+    async def upsert(self, value: "MaterializedNodeOutputs") -> None:
+        key = (value.graph_id, value.graph_revision, value.node_id)
+        self._store.materialized_outputs[key] = _clone(value)
+
+    async def get(
+        self,
+        graph_id: UUID,
+        graph_revision: int,
+        node_id: str,
+    ) -> "MaterializedNodeOutputs | None":
+        value = self._store.materialized_outputs.get(
+            (graph_id, graph_revision, node_id)
+        )
+        return _clone(value) if value is not None else None
+
+    async def list_for_graph(
+        self,
+        graph_id: UUID,
+        graph_revision: int,
+    ) -> list["MaterializedNodeOutputs"]:
+        values = [
+            value
+            for (saved_graph_id, saved_revision, _), value in (
+                self._store.materialized_outputs.items()
+            )
+            if saved_graph_id == graph_id and saved_revision == graph_revision
+        ]
+        return _clone(sorted(values, key=lambda value: value.node_id))
+
+
 class InMemoryUnitOfWork(UnitOfWorkPort):
     def __init__(self, store: InMemoryDataStore | None = None) -> None:
         self._store = store or InMemoryDataStore()
         self._working_store: InMemoryDataStore | None = None
         self._artifacts: ArtifactRepositoryPort | None = None
+        self._materialized_outputs: (
+            "MaterializedNodeOutputsRepositoryPort | None"
+        ) = None
         self.commit_count = 0
         self.rollback_count = 0
 
@@ -248,6 +297,12 @@ class InMemoryUnitOfWork(UnitOfWorkPort):
             raise RuntimeError("Unit of work is not entered")
         return self._artifacts
 
+    @property
+    def materialized_outputs(self) -> "MaterializedNodeOutputsRepositoryPort":
+        if self._materialized_outputs is None:
+            raise RuntimeError("Unit of work is not entered")
+        return self._materialized_outputs
+
     @override
     async def __aenter__(self) -> Self:
         if self._working_store is not None:
@@ -256,6 +311,9 @@ class InMemoryUnitOfWork(UnitOfWorkPort):
         working_store = self._store.clone()
         self._working_store = working_store
         self._artifacts = InMemoryArtifactRepository(working_store)
+        self._materialized_outputs = InMemoryMaterializedNodeOutputsRepository(
+            working_store
+        )
         return self
 
     @override
@@ -270,6 +328,7 @@ class InMemoryUnitOfWork(UnitOfWorkPort):
             await self.rollback()
         self._working_store = None
         self._artifacts = None
+        self._materialized_outputs = None
 
     @override
     async def commit(self) -> None:

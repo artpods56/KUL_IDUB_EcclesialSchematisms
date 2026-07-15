@@ -1,40 +1,86 @@
+from contextvars import ContextVar
+from dataclasses import dataclass
 from types import TracebackType
 from typing import override
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
 
+from notarius_core.artifacts import ArtifactRepositoryPort
 from notarius_core.domain.errors import ConcurrentWriteError
+from notarius_core.ports.materialized_outputs import (
+    MaterializedNodeOutputsRepositoryPort,
+    WorkbenchUnitOfWorkPort,
+)
 from notarius_core.ports.saved_graphs import (
     SavedGraphRepositoryPort,
     SavedGraphUnitOfWorkPort,
 )
 
-from notarius_persistence.adapters.repositories import SqlSavedGraphRepository
+from notarius_persistence.adapters.repositories import (
+    SqlArtifactRepository,
+    SqlMaterializedNodeOutputsRepository,
+    SqlSavedGraphRepository,
+)
 
 
-class SqlAlchemySavedGraphUnitOfWork(SavedGraphUnitOfWorkPort):
+@dataclass(frozen=True, slots=True)
+class _SqlAlchemyUnitOfWorkState:
+    session: AsyncSession
+    graphs: SavedGraphRepositoryPort
+    artifacts: ArtifactRepositoryPort
+    materialized_outputs: MaterializedNodeOutputsRepositoryPort
+
+
+class SqlAlchemyUnitOfWork(
+    WorkbenchUnitOfWorkPort,
+    SavedGraphUnitOfWorkPort,
+):
+    """Reusable task-local SQLAlchemy transaction boundary.
+
+    The API keeps one unit-of-work object in long-lived writers and resolvers.
+    Context-local state gives each concurrent async task its own session while
+    preserving the existing ``async with uow`` port.
+    """
+
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         self._session_factory = session_factory
-        self._session: AsyncSession | None = None
-        self._graphs: SavedGraphRepositoryPort | None = None
+        self._state: ContextVar[_SqlAlchemyUnitOfWorkState | None] = ContextVar(
+            "notarius_sqlalchemy_unit_of_work_state",
+            default=None,
+        )
 
     @property
     @override
     def graphs(self) -> SavedGraphRepositoryPort:
-        if self._graphs is None:
-            raise RuntimeError("Unit of work is not entered")
-        return self._graphs
+        return self._entered_state().graphs
+
+    @property
+    @override
+    def artifacts(self) -> ArtifactRepositoryPort:
+        return self._entered_state().artifacts
+
+    @property
+    @override
+    def materialized_outputs(self) -> MaterializedNodeOutputsRepositoryPort:
+        return self._entered_state().materialized_outputs
 
     @override
-    async def __aenter__(self) -> "SqlAlchemySavedGraphUnitOfWork":
-        if self._session is not None:
-            raise RuntimeError("Unit of work is already entered")
-        self._session = self._session_factory()
-        self._graphs = SqlSavedGraphRepository(self._session)
+    async def __aenter__(self) -> "SqlAlchemyUnitOfWork":
+        if self._state.get() is not None:
+            raise RuntimeError("Unit of work is already entered in this task")
+        session = self._session_factory()
+        self._state.set(
+            _SqlAlchemyUnitOfWorkState(
+                session=session,
+                graphs=SqlSavedGraphRepository(session),
+                artifacts=SqlArtifactRepository(session),
+                materialized_outputs=SqlMaterializedNodeOutputsRepository(session),
+            )
+        )
         return self
 
     @override
@@ -45,28 +91,39 @@ class SqlAlchemySavedGraphUnitOfWork(SavedGraphUnitOfWorkPort):
         traceback: TracebackType | None,
     ) -> None:
         del exc, traceback
-        if self._session is None:
+        state = self._state.get()
+        if state is None:
             return
-        if exc_type is not None:
-            await self.rollback()
-        await self._session.close()
-        self._session = None
-        self._graphs = None
+        try:
+            if exc_type is not None:
+                await state.session.rollback()
+        finally:
+            try:
+                await state.session.close()
+            finally:
+                self._state.set(None)
 
     @override
     async def commit(self) -> None:
-        if self._session is None:
-            raise RuntimeError("Unit of work is not entered")
+        state = self._entered_state()
         try:
-            await self._session.commit()
+            await state.session.commit()
         except StaleDataError as exc:
-            await self._session.rollback()
+            await state.session.rollback()
             raise ConcurrentWriteError(
                 "The saved graph changed in another transaction"
             ) from exc
 
     @override
     async def rollback(self) -> None:
-        if self._session is None:
+        await self._entered_state().session.rollback()
+
+    def _entered_state(self) -> _SqlAlchemyUnitOfWorkState:
+        state = self._state.get()
+        if state is None:
             raise RuntimeError("Unit of work is not entered")
-        await self._session.rollback()
+        return state
+
+
+# Existing callers use the narrower historical name for saved-graph operations.
+SqlAlchemySavedGraphUnitOfWork = SqlAlchemyUnitOfWork
