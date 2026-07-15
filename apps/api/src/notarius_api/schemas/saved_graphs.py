@@ -14,6 +14,7 @@ from pydantic import (
 from notarius_core.domain.saved_graphs import (
     GraphPoint,
     SavedGraph,
+    SavedGraphConversion,
     SavedGraphDocument,
     SavedGraphEdge,
     SavedGraphNode,
@@ -51,6 +52,11 @@ class SavedGraphProjectionModel(SavedGraphApiModel):
     path: list[Identifier] = Field(min_length=1)
 
 
+class SavedGraphConversionModel(SavedGraphApiModel):
+    id: Identifier
+    version: int = Field(ge=1)
+
+
 class SavedGraphEdgeModel(SavedGraphApiModel):
     id: Identifier
     from_node: Identifier
@@ -59,6 +65,7 @@ class SavedGraphEdgeModel(SavedGraphApiModel):
     to_port: Identifier
     collection_mode: Literal["direct", "map"] = "direct"
     projection: SavedGraphProjectionModel | None = None
+    conversion: SavedGraphConversionModel | None = None
     route_offset: GraphPointModel | None = None
 
 
@@ -105,6 +112,14 @@ class SavedGraphWriteModel(SavedGraphApiModel):
                     projection=(
                         SavedGraphProjection(path=tuple(edge.projection.path))
                         if edge.projection is not None
+                        else None
+                    ),
+                    conversion=(
+                        SavedGraphConversion(
+                            id=edge.conversion.id,
+                            version=edge.conversion.version,
+                        )
+                        if edge.conversion is not None
                         else None
                     ),
                     route_offset=(
@@ -167,6 +182,14 @@ class SavedGraphResponse(SavedGraphWriteModel):
                     projection=(
                         SavedGraphProjectionModel(path=list(edge.projection.path))
                         if edge.projection is not None
+                        else None
+                    ),
+                    conversion=(
+                        SavedGraphConversionModel(
+                            id=edge.conversion.id,
+                            version=edge.conversion.version,
+                        )
+                        if edge.conversion is not None
                         else None
                     ),
                     route_offset=(

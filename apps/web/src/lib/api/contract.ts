@@ -6,6 +6,10 @@ export type ArtifactTypeKey =
   Schemas["ArtifactTypeKeyResponse"];
 export type ArtifactTypeSpec =
   Schemas["ArtifactTypeSpecResponse"];
+export type ArtifactConversionSpec =
+  Schemas["ArtifactConversionSpecResponse"];
+export type ArtifactConversionInput =
+  Schemas["ArtifactConversionRequest"];
 export type FieldProjection =
   Schemas["FieldProjectionResponse"];
 export type Port = Schemas["PortResponse"];
@@ -28,6 +32,8 @@ export type RunPortOutput =
   Schemas["RunPortOutputResponse"];
 export type RunNodeResult =
   Schemas["RunNodeResponse"];
+export type GraphMaterializations =
+  Schemas["GraphMaterializationsResponse"];
 export type SavedGraphNode =
   Schemas["SavedGraphNodeModel"];
 export type SavedGraphEdge =

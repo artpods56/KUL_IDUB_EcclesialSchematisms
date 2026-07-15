@@ -31,6 +31,7 @@ def _graph_payload(name: str = "Draft graph") -> dict[str, object]:
                 "to_port": "value",
                 "collection_mode": "map",
                 "projection": {"path": ["payload", "text"]},
+                "conversion": {"id": "example.text.normalize", "version": 2},
                 "route_offset": {"x": 5.0, "y": -3.0},
             }
         ],
@@ -51,6 +52,10 @@ def test_saved_graph_crud_round_trip(builtin_client: TestClient) -> None:
     assert len(created["nodes"]) == 2
     assert len(created["edges"]) == 1
     assert created["edges"][0]["projection"] == {"path": ["payload", "text"]}
+    assert created["edges"][0]["conversion"] == {
+        "id": "example.text.normalize",
+        "version": 2,
+    }
 
     get_response = builtin_client.get(f"/v1/graphs/{graph_id}")
     assert get_response.status_code == 200

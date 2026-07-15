@@ -8,6 +8,7 @@ from notarius_core.artifacts import (
     ArtifactTypeSpec,
     UnitOfWorkPort,
 )
+from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
 from notarius_core.nodes import Node
 from notarius_core.ports.storage import FileStoragePort
 
@@ -26,6 +27,7 @@ class PluginRuntimeContext:
     storage: FileStoragePort
     uow: UnitOfWorkPort
     bucket: str
+    storage_backend: str = "local"
 
 
 NodeFactory: TypeAlias = Callable[
@@ -85,6 +87,10 @@ class Plugin:
         self.title = title
         self._nodes: dict[tuple[str, int], NodeRegistration] = {}
         self._artifact_types: dict[tuple[str, int], ArtifactTypeSpec] = {}
+        self._artifact_conversions: dict[
+            ArtifactConversionKey,
+            ArtifactConversion[Any, Any],
+        ] = {}
         self._resolver_factories: list[ResolverFactory] = []
         self._writer_factories: list[WriterFactory] = []
 
@@ -142,6 +148,17 @@ class Plugin:
             )
         self._artifact_types[key] = artifact_type
 
+    def register_artifact_conversion[SourceT, TargetT](
+        self,
+        conversion: ArtifactConversion[SourceT, TargetT],
+    ) -> None:
+        if conversion.key in self._artifact_conversions:
+            raise PluginRegistrationError(
+                f"Plugin {self.slug!r} already declares artifact conversion "
+                f"{conversion.key.id}@{conversion.key.version}"
+            )
+        self._artifact_conversions[conversion.key] = conversion
+
     def register_resolver(self, factory: ResolverFactory) -> None:
         self._resolver_factories.append(factory)
 
@@ -157,6 +174,10 @@ class Plugin:
         return tuple(self._artifact_types.values())
 
     @property
+    def artifact_conversions(self) -> tuple[ArtifactConversion[Any, Any], ...]:
+        return tuple(self._artifact_conversions.values())
+
+    @property
     def resolver_factories(self) -> tuple[ResolverFactory, ...]:
         return tuple(self._resolver_factories)
 
@@ -170,6 +191,10 @@ class PluginRegistry:
         self._plugins: dict[str, Plugin] = {}
         self._nodes: dict[tuple[str, int], NodeRegistration] = {}
         self._artifact_types: dict[tuple[str, int], ArtifactTypeSpec] = {}
+        self._artifact_conversions: dict[
+            ArtifactConversionKey,
+            ArtifactConversion[Any, Any],
+        ] = {}
         self._resolver_factories: list[ResolverFactory] = []
         self._writer_factories: list[WriterFactory] = []
         self._frozen = False
@@ -211,6 +236,18 @@ class PluginRegistry:
                 f"{artifact_id}@{schema_version} is already installed"
             )
 
+        duplicate_conversions = [
+            conversion.key
+            for conversion in plugin.artifact_conversions
+            if conversion.key in self._artifact_conversions
+        ]
+        if duplicate_conversions:
+            conversion_key = duplicate_conversions[0]
+            raise PluginRegistrationError(
+                f"Plugin {plugin.slug!r} artifact conversion "
+                f"{conversion_key.id}@{conversion_key.version} is already installed"
+            )
+
         self._plugins[plugin.slug] = plugin
         for registration in plugin.nodes:
             self._nodes[registration.key] = registration
@@ -220,10 +257,27 @@ class PluginRegistry:
                 artifact_type.key.schema_version,
             )
             self._artifact_types[key] = artifact_type
+        for conversion in plugin.artifact_conversions:
+            self._artifact_conversions[conversion.key] = conversion
         self._resolver_factories.extend(plugin.resolver_factories)
         self._writer_factories.extend(plugin.writer_factories)
 
     def freeze(self) -> None:
+        for conversion in self._artifact_conversions.values():
+            endpoints = (
+                ("source", conversion.source),
+                ("target", conversion.target),
+            )
+            for endpoint_name, artifact_type in endpoints:
+                key = (artifact_type.id, artifact_type.schema_version)
+                if key in self._artifact_types:
+                    continue
+                raise PluginRegistrationError(
+                    f"Artifact conversion {conversion.key.id}@"
+                    f"{conversion.key.version} references {endpoint_name} artifact "
+                    f"type {artifact_type.id}@{artifact_type.schema_version}, which "
+                    "is not installed"
+                )
         self._frozen = True
 
     @property
@@ -237,6 +291,10 @@ class PluginRegistry:
     @property
     def artifact_types(self) -> tuple[ArtifactTypeSpec, ...]:
         return tuple(self._artifact_types.values())
+
+    @property
+    def artifact_conversions(self) -> tuple[ArtifactConversion[Any, Any], ...]:
+        return tuple(self._artifact_conversions.values())
 
     def build_node(
         self,

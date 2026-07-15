@@ -13,3 +13,18 @@ def test_database_url_is_redacted_from_serialized_settings() -> None:
     assert isinstance(dumped_url, SecretStr)
     assert dumped_url.get_secret_value() == database_url
     assert database_url not in str(settings.model_dump())
+
+
+def test_s3_credentials_are_redacted_from_serialized_settings() -> None:
+    access_key = "sensitive-access-key"
+    secret_key = "sensitive-secret-key"
+    settings = Settings(
+        storage_backend="s3",
+        s3_access_key_id=SecretStr(access_key),
+        s3_secret_access_key=SecretStr(secret_key),
+    )
+
+    assert access_key not in repr(settings)
+    assert secret_key not in repr(settings)
+    assert access_key not in str(settings.model_dump())
+    assert secret_key not in str(settings.model_dump())

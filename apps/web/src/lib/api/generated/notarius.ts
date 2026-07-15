@@ -58,6 +58,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/graphs/{graph_id}/materializations": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Graph Materializations */
+        readonly get: operations["get_graph_materializations_v1_graphs__graph_id__materializations_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/nodes": {
         readonly parameters: {
             readonly query?: never;
@@ -130,6 +147,28 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ArtifactConversionKeyResponse */
+        readonly ArtifactConversionKeyResponse: {
+            /** Id */
+            readonly id: string;
+            /** Version */
+            readonly version: number;
+        };
+        /** ArtifactConversionRequest */
+        readonly ArtifactConversionRequest: {
+            /** Id */
+            readonly id: string;
+            /** Version */
+            readonly version: number;
+        };
+        /** ArtifactConversionSpecResponse */
+        readonly ArtifactConversionSpecResponse: {
+            readonly key: components["schemas"]["ArtifactConversionKeyResponse"];
+            readonly source_artifact_type: components["schemas"]["ArtifactTypeKeyResponse"];
+            readonly target_artifact_type: components["schemas"]["ArtifactTypeKeyResponse"];
+            /** Title */
+            readonly title: string;
+        };
         /** ArtifactRef */
         readonly ArtifactRef: {
             /**
@@ -239,6 +278,18 @@ export interface components {
             /** Title */
             readonly title: string;
         };
+        /** GraphMaterializationsResponse */
+        readonly GraphMaterializationsResponse: {
+            /**
+             * Graph Id
+             * Format: uuid
+             */
+            readonly graph_id: string;
+            /** Graph Revision */
+            readonly graph_revision: number;
+            /** Node Runs */
+            readonly node_runs: readonly components["schemas"]["RunNodeResponse"][];
+        };
         /** GraphPointModel */
         readonly GraphPointModel: {
             /** X */
@@ -253,6 +304,8 @@ export interface components {
         };
         /** NodeRegistryResponse */
         readonly NodeRegistryResponse: {
+            /** Artifact Conversions */
+            readonly artifact_conversions: readonly components["schemas"]["ArtifactConversionSpecResponse"][];
             /** Artifact Types */
             readonly artifact_types: readonly components["schemas"]["ArtifactTypeSpecResponse"][];
             /** Nodes */
@@ -344,6 +397,7 @@ export interface components {
              * @enum {string}
              */
             readonly collection_mode: "direct" | "map";
+            readonly conversion?: components["schemas"]["ArtifactConversionRequest"] | null;
             /** From Node */
             readonly from_node: string;
             /** From Port */
@@ -399,6 +453,10 @@ export interface components {
         readonly RunRequest: {
             /** Edges */
             readonly edges?: readonly components["schemas"]["RunEdgeRequest"][];
+            /** Graph Id */
+            readonly graph_id?: string | null;
+            /** Graph Revision */
+            readonly graph_revision?: number | null;
             /** Nodes */
             readonly nodes: readonly components["schemas"]["RunNodeRequest"][];
             /** Pinned Outputs */
@@ -422,6 +480,13 @@ export interface components {
              */
             readonly count: number;
         };
+        /** SavedGraphConversionModel */
+        readonly SavedGraphConversionModel: {
+            /** Id */
+            readonly id: string;
+            /** Version */
+            readonly version: number;
+        };
         /** SavedGraphEdgeModel */
         readonly SavedGraphEdgeModel: {
             /**
@@ -430,6 +495,7 @@ export interface components {
              * @enum {string}
              */
             readonly collection_mode: "direct" | "map";
+            readonly conversion?: components["schemas"]["SavedGraphConversionModel"] | null;
             /** From Node */
             readonly from_node: string;
             /** From Port */
@@ -734,6 +800,39 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly get_graph_materializations_v1_graphs__graph_id__materializations_get: {
+        readonly parameters: {
+            readonly query: {
+                readonly graph_revision: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly graph_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GraphMaterializationsResponse"];
+                };
             };
             /** @description Validation Error */
             readonly 422: {

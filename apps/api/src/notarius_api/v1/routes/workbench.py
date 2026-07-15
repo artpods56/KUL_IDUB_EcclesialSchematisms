@@ -1,12 +1,16 @@
 from typing import Annotated, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 from pydantic.errors import PydanticInvalidForJsonSchema
 
 from notarius_core.artifacts import ArtifactTypeKey, ArtifactTypeSpec
+from notarius_core.domain.errors import (
+    NotFoundError,
+    SavedGraphRevisionConflictError,
+)
 from notarius_core.nodes import (
     InputPortSpec,
     OutputPortSpec,
@@ -15,9 +19,12 @@ from notarius_core.nodes import (
 from notarius_core.plugins import NodeRegistration
 
 from notarius_api.schemas.workbench import (
+    ArtifactConversionKeyResponse,
+    ArtifactConversionSpecResponse,
     ArtifactTypeKeyResponse,
     ArtifactTypeSpecResponse,
     FieldProjectionResponse,
+    GraphMaterializationsResponse,
     NodeRegistryResponse,
     NodeSpecResponse,
     PluginSpecResponse,
@@ -58,6 +65,18 @@ async def list_nodes(service: WorkbenchDependency) -> NodeRegistryResponse:
         artifact_types=[
             _artifact_type_spec_response(spec) for spec in registry.artifact_types
         ],
+        artifact_conversions=[
+            ArtifactConversionSpecResponse(
+                key=ArtifactConversionKeyResponse(
+                    id=conversion.key.id,
+                    version=conversion.key.version,
+                ),
+                source_artifact_type=_artifact_type_key_response(conversion.source),
+                target_artifact_type=_artifact_type_key_response(conversion.target),
+                title=conversion.title,
+            )
+            for conversion in registry.artifact_conversions
+        ],
         nodes=[
             _node_registration_response(registration) for registration in registry.nodes
         ],
@@ -93,6 +112,32 @@ async def run_graph(
 ) -> RunResponse:
     try:
         return await service.run_graph(request)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SavedGraphRevisionConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except WorkbenchGraphError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get(
+    "/graphs/{graph_id}/materializations",
+    response_model=GraphMaterializationsResponse,
+)
+async def get_graph_materializations(
+    graph_id: UUID,
+    graph_revision: Annotated[int, Query(ge=1)],
+    service: WorkbenchDependency,
+) -> GraphMaterializationsResponse:
+    try:
+        return await service.get_graph_materializations(
+            graph_id=graph_id,
+            graph_revision=graph_revision,
+        )
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SavedGraphRevisionConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except WorkbenchGraphError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

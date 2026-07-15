@@ -17,7 +17,8 @@ import { tokens } from "@/lib/stylex/tokens.stylex";
 import type {
   WorkflowEdge,
   WorkflowEdgeData,
-  WorkflowEdgeProjectionOption,
+  WorkflowEdgeRoute,
+  WorkflowEdgeRouteOption,
   WorkflowEdgeRouteOffset,
 } from "../types";
 
@@ -187,15 +188,34 @@ const s = stylex.create({
   check: { color: tokens.colorAccent },
 });
 
-function pathsEqual(
-  left: readonly string[] | undefined,
-  right: readonly string[],
+function projectionsEqual(
+  left: WorkflowEdgeRoute["projection"],
+  right: WorkflowEdgeRoute["projection"],
 ): boolean {
-  return Boolean(
-    left &&
-      left.length === right.length &&
-      left.every((segment, index) => segment === right[index]),
+  if (!left || !right) return left === right;
+  return (
+    left.path.length === right.path.length &&
+    left.path.every((segment, index) => segment === right.path[index])
   );
+}
+
+function conversionsEqual(
+  left: WorkflowEdgeRoute["conversion"],
+  right: WorkflowEdgeRoute["conversion"],
+): boolean {
+  if (!left || !right) return left === right;
+  return left.id === right.id && left.version === right.version;
+}
+
+function routeSelection(option: WorkflowEdgeRouteOption): WorkflowEdgeRoute {
+  return {
+    projection: option.projection
+      ? { path: [...option.projection.path] }
+      : undefined,
+    conversion: option.conversion
+      ? { id: option.conversion.id, version: option.conversion.version }
+      : undefined,
+  };
 }
 
 function projectionLabel(
@@ -308,29 +328,27 @@ function routedBezierPath({
   };
 }
 
-function ProjectionOption({
-  edgeId,
-  option,
+function EdgeOption({
+  title,
+  description,
   active,
-  onUpdate,
+  onSelect,
 }: {
-  edgeId: string;
-  option: WorkflowEdgeProjectionOption;
+  title: string;
+  description: string;
   active: boolean;
-  onUpdate: NonNullable<WorkflowEdgeData["onUpdate"]>;
+  onSelect: () => void;
 }) {
   return (
     <button
       type="button"
       {...stylex.props(s.option, active ? s.optionActive : null)}
-      onClick={() =>
-        onUpdate(edgeId, { projection: { path: [...option.path] } })
-      }
+      onClick={onSelect}
     >
       <span {...stylex.props(s.optionCopy)}>
-        <span {...stylex.props(s.optionTitle)}>{option.title}</span>
+        <span {...stylex.props(s.optionTitle)}>{title}</span>
         <span {...stylex.props(s.optionDescription)}>
-          {option.path.join(".")}
+          {description}
         </span>
       </span>
       {active ? <Check size={12} {...stylex.props(s.check)} /> : null}
@@ -372,9 +390,70 @@ export default function WorkflowEdgeControl({
     routeOffset,
   });
   const sourcePortName = edgeData.sourcePortName ?? "output";
-  const projectionOptions = edgeData.projectionOptions ?? [];
+  const activeRoute: WorkflowEdgeRoute = {
+    projection: edgeData.projection,
+    conversion: edgeData.conversion,
+  };
+  const routeOptions = edgeData.routeOptions?.length
+    ? edgeData.routeOptions
+    : [
+        {
+          ...activeRoute,
+          conversionTitle: edgeData.conversionTitle,
+        },
+      ];
+  const valueOptions: Array<{
+    title: string;
+    description: string;
+    routes: WorkflowEdgeRouteOption[];
+  }> = [];
+  for (const route of routeOptions) {
+    const existing = valueOptions.find((option) =>
+      projectionsEqual(option.routes[0]?.projection, route.projection),
+    );
+    if (existing) {
+      existing.routes.push(route);
+      continue;
+    }
+    valueOptions.push({
+      title: route.projection
+        ? (route.projectionTitle ?? route.projection.path.join("."))
+        : "Whole output",
+      description: route.projection
+        ? route.projection.path.join(".")
+        : "Pass the complete source artifact.",
+      routes: [route],
+    });
+  }
+  const conversionOptions: Array<{
+    title: string;
+    description: string;
+    route: WorkflowEdgeRouteOption;
+  }> = [];
+  for (const route of routeOptions) {
+    if (!projectionsEqual(route.projection, activeRoute.projection)) continue;
+    if (
+      conversionOptions.some((option) =>
+        conversionsEqual(option.route.conversion, route.conversion),
+      )
+    ) {
+      continue;
+    }
+    conversionOptions.push({
+      title: route.conversion
+        ? (route.conversionTitle ?? route.conversion.id)
+        : "No conversion",
+      description: route.conversion
+        ? `${route.conversion.id}@${route.conversion.version}`
+        : "Keep the selected artifact contract.",
+      route,
+    });
+  }
   const allowedModes = edgeData.allowedCollectionModes ?? [edgeData.collectionMode];
-  const label = `${projectionLabel(sourcePortName, edgeData.projection)}${
+  const conversionLabel = edgeData.conversion
+    ? ` → ${edgeData.conversionTitle ?? edgeData.conversion.id}`
+    : "";
+  const label = `${projectionLabel(sourcePortName, edgeData.projection)}${conversionLabel}${
     edgeData.collectionMode === "map" ? " · each" : ""
   }`;
 
@@ -533,7 +612,7 @@ export default function WorkflowEdgeControl({
               <Popover.Trigger
                 type="button"
                 aria-label={`Edit connection ${label}`}
-                title="Edit projection and collection handling"
+                title="Edit projection, conversion, and collection handling"
                 {...stylex.props(s.editButton)}
               >
                 <span {...stylex.props(s.editLabel)}>{label}</span>
@@ -558,41 +637,59 @@ export default function WorkflowEdgeControl({
 
                     <section {...stylex.props(s.section)}>
                       <span {...stylex.props(s.sectionTitle)}>Value</span>
-                      {edgeData.allowWholeArtifact ? (
-                        <button
-                          type="button"
-                          {...stylex.props(
-                            s.option,
-                            edgeData.projection ? null : s.optionActive,
-                          )}
-                          onClick={() =>
-                            edgeData.onUpdate?.(id, { clearProjection: true })
-                          }
-                        >
-                          <span {...stylex.props(s.optionCopy)}>
-                            <span {...stylex.props(s.optionTitle)}>
-                              Whole output
-                            </span>
-                            <span {...stylex.props(s.optionDescription)}>
-                              Pass the artifact without selecting a nested field.
-                            </span>
-                          </span>
-                          {!edgeData.projection ? (
-                            <Check size={12} {...stylex.props(s.check)} />
-                          ) : null}
-                        </button>
-                      ) : null}
                       {onUpdate
-                        ? projectionOptions.map((option) => (
-                            <ProjectionOption
-                              key={option.path.join(".")}
-                              edgeId={id}
-                              option={option}
-                              active={pathsEqual(
-                                edgeData.projection?.path,
-                                option.path,
+                        ? valueOptions.map((option) => {
+                            const route =
+                              option.routes.find((candidate) =>
+                                conversionsEqual(
+                                  candidate.conversion,
+                                  activeRoute.conversion,
+                                ),
+                              ) ??
+                              option.routes.find(
+                                (candidate) => !candidate.conversion,
+                              ) ??
+                              option.routes[0];
+                            if (!route) return null;
+                            return (
+                              <EdgeOption
+                                key={option.routes[0]?.projection?.path.join(".") ?? "whole"}
+                                title={option.title}
+                                description={option.description}
+                                active={projectionsEqual(
+                                  activeRoute.projection,
+                                  route.projection,
+                                )}
+                                onSelect={() =>
+                                  onUpdate(id, { route: routeSelection(route) })
+                                }
+                              />
+                            );
+                          })
+                        : null}
+                    </section>
+
+                    <section {...stylex.props(s.section)}>
+                      <span {...stylex.props(s.sectionTitle)}>Conversion</span>
+                      {onUpdate
+                        ? conversionOptions.map((option) => (
+                            <EdgeOption
+                              key={
+                                option.route.conversion
+                                  ? `${option.route.conversion.id}@${option.route.conversion.version}`
+                                  : "none"
+                              }
+                              title={option.title}
+                              description={option.description}
+                              active={conversionsEqual(
+                                activeRoute.conversion,
+                                option.route.conversion,
                               )}
-                              onUpdate={onUpdate}
+                              onSelect={() =>
+                                onUpdate(id, {
+                                  route: routeSelection(option.route),
+                                })
+                              }
                             />
                           ))
                         : null}

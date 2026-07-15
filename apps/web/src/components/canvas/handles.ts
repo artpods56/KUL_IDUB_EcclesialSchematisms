@@ -1,4 +1,6 @@
 import type {
+  ArtifactConversionInput,
+  ArtifactConversionSpec,
   ArtifactTypeSpec,
   FieldProjection,
 } from "@/lib/api";
@@ -117,17 +119,172 @@ export function projectionCandidatesForConnection(
   );
 }
 
-export function projectionAwareConnectionIsValid(
+export type ConnectionRoute =
+  | { kind: "exact" }
+  | { kind: "projection"; projection: FieldProjection }
+  | { kind: "conversion"; conversion: ArtifactConversionSpec }
+  | {
+      kind: "projection-conversion";
+      projection: FieldProjection;
+      conversion: ArtifactConversionSpec;
+    };
+
+export interface ConnectionRouteSelection {
+  projection?: { path: readonly string[] };
+  conversion?: ArtifactConversionInput;
+}
+
+function artifactTypeMatches(
+  artifactType: { id: string; schema_version: number },
+  id: string,
+  schemaVersion: number,
+): boolean {
+  return artifactType.id === id && artifactType.schema_version === schemaVersion;
+}
+
+function conversionMatches(
+  conversion: ArtifactConversionSpec,
+  sourceId: string,
+  sourceSchemaVersion: number,
+  targetId: string,
+  targetSchemaVersion: number,
+): boolean {
+  return (
+    artifactTypeMatches(
+      conversion.source_artifact_type,
+      sourceId,
+      sourceSchemaVersion,
+    ) &&
+    artifactTypeMatches(
+      conversion.target_artifact_type,
+      targetId,
+      targetSchemaVersion,
+    )
+  );
+}
+
+/** All single-step routes, plus projection-then-conversion, between two ports. */
+export function connectionRoutesFor(
   connection: {
     sourceHandle?: string | null;
     targetHandle?: string | null;
   },
   artifactTypes: readonly ArtifactTypeSpec[],
-): boolean {
-  return (
-    connectionArtifactContractIsValid(connection) ||
-    projectionCandidatesForConnection(connection, artifactTypes).length > 0
+  conversions: readonly ArtifactConversionSpec[],
+): ConnectionRoute[] {
+  const source = decodeHandleId(connection.sourceHandle);
+  const target = decodeHandleId(connection.targetHandle);
+  if (
+    !source ||
+    !target ||
+    source.direction !== "output" ||
+    target.direction !== "input"
+  ) {
+    return [];
+  }
+
+  if (
+    source.artifactTypeId === target.artifactTypeId &&
+    source.schemaVersion === target.schemaVersion
+  ) {
+    return [{ kind: "exact" }];
+  }
+
+  const sourceArtifact = artifactTypes.find(
+    (artifact) =>
+      artifact.key.id === source.artifactTypeId &&
+      artifact.key.schema_version === source.schemaVersion,
   );
+  const routes: ConnectionRoute[] = [];
+
+  for (const projection of sourceArtifact?.field_projections ?? []) {
+    if (
+      artifactTypeMatches(
+        projection.target_artifact_type,
+        target.artifactTypeId,
+        target.schemaVersion,
+      )
+    ) {
+      routes.push({ kind: "projection", projection });
+    }
+  }
+
+  for (const conversion of conversions) {
+    if (
+      conversionMatches(
+        conversion,
+        source.artifactTypeId,
+        source.schemaVersion,
+        target.artifactTypeId,
+        target.schemaVersion,
+      )
+    ) {
+      routes.push({ kind: "conversion", conversion });
+    }
+  }
+
+  for (const projection of sourceArtifact?.field_projections ?? []) {
+    for (const conversion of conversions) {
+      if (
+        conversionMatches(
+          conversion,
+          projection.target_artifact_type.id,
+          projection.target_artifact_type.schema_version,
+          target.artifactTypeId,
+          target.schemaVersion,
+        )
+      ) {
+        routes.push({
+          kind: "projection-conversion",
+          projection,
+          conversion,
+        });
+      }
+    }
+  }
+
+  return routes;
+}
+
+export function connectionRouteSelection(
+  route: ConnectionRoute,
+): ConnectionRouteSelection {
+  const projection =
+    route.kind === "projection" || route.kind === "projection-conversion"
+      ? { path: [...route.projection.path] }
+      : undefined;
+  const conversion =
+    route.kind === "conversion" || route.kind === "projection-conversion"
+      ? {
+          id: route.conversion.key.id,
+          version: route.conversion.key.version,
+        }
+      : undefined;
+  return { projection, conversion };
+}
+
+export function connectionRouteMatchesSelection(
+  route: ConnectionRoute,
+  selection: ConnectionRouteSelection,
+): boolean {
+  const candidate = connectionRouteSelection(route);
+  const projectionMatches = candidate.projection
+    ? Boolean(
+        selection.projection &&
+          candidate.projection.path.length === selection.projection.path.length &&
+          candidate.projection.path.every(
+            (segment, index) => segment === selection.projection?.path[index],
+          ),
+      )
+    : selection.projection === undefined;
+  const conversionMatchesSelection = candidate.conversion
+    ? Boolean(
+        selection.conversion &&
+          candidate.conversion.id === selection.conversion.id &&
+          candidate.conversion.version === selection.conversion.version,
+      )
+    : selection.conversion === undefined;
+  return projectionMatches && conversionMatchesSelection;
 }
 
 export type CSSProperties = Record<string, string | number>;

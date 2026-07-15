@@ -107,6 +107,11 @@ class SavedGraphProjection(SavedGraphValue):
     path: tuple[GraphIdentifier, ...] = Field(min_length=1)
 
 
+class SavedGraphConversion(SavedGraphValue):
+    id: GraphIdentifier
+    version: int = Field(ge=1)
+
+
 class SavedGraphEdge(SavedGraphValue):
     id: GraphIdentifier
     from_node: GraphIdentifier
@@ -115,6 +120,7 @@ class SavedGraphEdge(SavedGraphValue):
     to_port: GraphIdentifier
     collection_mode: Literal["direct", "map"] = "direct"
     projection: SavedGraphProjection | None = None
+    conversion: SavedGraphConversion | None = None
     route_offset: GraphPoint | None = None
 
 

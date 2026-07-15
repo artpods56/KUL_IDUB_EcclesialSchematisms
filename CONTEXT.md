@@ -19,6 +19,8 @@ always explicit.
 
 The contract for an artifact payload. It owns the stable type id, schema
 version, payload schema, display title, and any declared field projections.
+Installed plugins may also declare versioned conversions between artifact
+types.
 
 ### Artifact reference
 
@@ -27,19 +29,39 @@ references between nodes and materializes Python values only at a node input.
 
 ### Upstream output pin
 
-An exact `ArtifactRef` or `ArtifactRefSequence` captured from the latest visible
-successful output of an unselected upstream node when `Run selected` begins.
-The incoming crossing edge remains in the selected-subgraph request and keeps
-owning its projection and `direct`/`map` collection mode; the pin supplies that
-edge's source value without executing its source node. If the current upstream
-output is absent, selected execution is refused. The server consumes the
-submitted reference and never performs a fuzzy "latest artifact" lookup.
+An exact `ArtifactRef` or `ArtifactRefSequence` copied from a materialized output
+binding when a selected run begins. The incoming crossing edge remains in the
+selected-subgraph request and keeps owning its projection, conversion, and
+`direct`/`map` collection mode; the pin supplies that edge's source value
+without executing its source node. The server consumes the submitted reference
+and never performs a fuzzy "latest artifact" lookup.
+
+### Materialized output binding
+
+The durable record of a successful output for one exact saved graph revision,
+node, and output port. In this workbench, **latest** means the binding identified
+by `(graph id, graph revision, node id, output port)`; it never means the newest
+artifact with a matching type or producer. A binding is reusable only when all
+of its artifact references are accessible through the active runtime.
+Inaccessible references are not advertised as available outputs.
 
 ### Field projection
 
 A declared path from one compound artifact payload to a value that satisfies
 another artifact type. A projection is selected on an edge; it is not a visible
 adapter node and does not introduce operation-specific leaf artifact types.
+
+### Artifact conversion
+
+A declared, versioned, shape-preserving conversion from one artifact type to
+another, such as `scalar.integer@1` to `scalar.text@1`. A conversion changes the
+artifact representation; unlike a field projection, it does not select a nested
+value. The selected conversion key is stored on the edge, validated against the
+installed registry, and materialized as a target-typed artifact before the
+downstream node runs. A conversion may be selected automatically while drawing
+an edge when it is the only compatible route, but it is never inferred again at
+execution time. Configurable, lossy, or domain-significant transformations
+remain visible nodes.
 
 ### Node
 
@@ -48,11 +70,12 @@ single execution method. Port contracts are derived from its model annotations.
 
 ### Plugin
 
-An installable declaration that groups nodes, artifact types, and the runtime
-resolver/writer factories they require under one stable slug. Built-in plugins
-are installed explicitly by the host; external plugins are discovered from the
-`notarius.plugins` Python entry-point group. Plugins depend inward on core
-contracts and ports, never on the API host or concrete storage adapters.
+An installable declaration that groups nodes, artifact types, artifact
+conversions, and the runtime resolver/writer factories they require under one
+stable slug. Built-in plugins are installed explicitly by the host; external
+plugins are discovered from the `notarius.plugins` Python entry-point group.
+Plugins depend inward on core contracts and ports, never on the API host or
+concrete storage adapters.
 
 ### Port
 
@@ -76,17 +99,22 @@ implicit flattening semantics are not part of the contract.
 A set of configured node instances and directed edges. The graph must be
 validated for operator identity and version, edge collection modes, port
 existence, required inputs, effective cardinality, compatibility, declared
-projections, and cycles before any node executes.
+projections and conversions, and cycles before any node executes. Edge value
+handling has one fixed order: optional field projection, optional artifact
+conversion, then `direct` or `map` collection handling. Conversion chains are
+not implicit.
 
 ### Saved graph
 
 A durable workbench document containing a workflow graph plus user-authored
 canvas layout. It stores configured node identities, positions, semantic edge
-endpoints, projections, collection modes, and edge routing offsets. Registry
-metadata, callbacks, selection, viewport state, and execution results are
-derived or transient and are not part of the saved aggregate. Upstream output
-pins belong to an individual run request and are transient too. Drafts may be
-saved before they are executable.
+endpoints, projections, conversion keys, collection modes, and edge routing
+offsets. Registry metadata, callbacks, selection, viewport state, and execution
+results are derived or runtime state and are not part of the saved aggregate.
+Materialized output bindings are durable runtime records keyed to a saved
+revision, not fields inside the saved graph. Upstream output pins belong to an
+individual run request and remain transient. Drafts may be saved before they
+are executable.
 
 Saved graphs use optimistic revisions. Replacing a graph requires the revision
 last read by the caller so competing edits are reported instead of silently
@@ -96,8 +124,14 @@ overwriting one another.
 
 The user-facing graph editor and its execution interface. Node configuration is
 rendered on the node from JSON Schema. Nested artifact fields and collection
-mapping are selected on each edge. The complete graph or a selected subgraph
-can be executed. Selected execution includes internal and incoming crossing
-edges, pinning each crossing edge to the exact latest visible successful output
-of its unselected source. Run results and these pins are not restored after a
-page reload or API restart under the current architecture.
+mapping are selected on each edge. Compatible declared conversions are also
+stored and displayed on the edge; a unique conversion may be selected
+automatically when the user connects otherwise-incompatible ports. The complete
+graph or a selected subgraph can be executed. By default, selected execution
+includes internal and incoming crossing edges and reuses the exact materialized
+output binding for each unselected source port. If a required binding is
+missing, the run is blocked and the workbench directs the user to run the
+upstream node or run with dependencies. `Run with dependencies` is a separate
+action that expands the selection to its full upstream closure and executes that
+expanded graph. Pins and live running state remain transient; revision-scoped
+materialized outputs are restored when a saved graph is reopened.

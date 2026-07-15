@@ -11,6 +11,7 @@ from notarius_core.artifacts import (
     NodeInput,
     NodeOutput,
 )
+from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
 from notarius_core.nodes import Node, NodeExecutionContext
 from notarius_core.plugins import (
     Plugin,
@@ -19,6 +20,10 @@ from notarius_core.plugins import (
     PluginRuntimeContext,
 )
 from notarius_storage import LocalFileObjectStore
+
+
+def _stringify_integer(value: int) -> str:
+    return str(value)
 
 
 class EmptyInput(NodeInput):
@@ -129,6 +134,140 @@ def test_registry_reports_operator_and_artifact_collisions() -> None:
         ),
     ):
         registry.install(conflicting_artifact)
+
+
+def test_registry_registers_artifact_conversions_across_plugin_boundaries() -> None:
+    source = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.source", 1),
+        title="Example source",
+    )
+    target = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.target", 1),
+        title="Example target",
+    )
+    conversion = ArtifactConversion(
+        key=ArtifactConversionKey("example.source_to_target", 1),
+        source=source.key,
+        target=target.key,
+        source_type=int,
+        title="Source to target",
+        convert=_stringify_integer,
+    )
+    source_plugin = Plugin(slug="example.source", title="Source")
+    source_plugin.register_artifact_type(source)
+    target_plugin = Plugin(slug="example.target", title="Target")
+    target_plugin.register_artifact_type(target)
+    target_plugin.register_artifact_conversion(conversion)
+    registry = PluginRegistry()
+
+    registry.install(source_plugin)
+    registry.install(target_plugin)
+    registry.freeze()
+
+    assert target_plugin.artifact_conversions == (conversion,)
+    assert registry.artifact_conversions == (conversion,)
+    assert registry.artifact_conversions[0].convert(7) == "7"
+
+
+def test_artifact_conversion_requires_valid_identity_and_title() -> None:
+    with pytest.raises(ValueError, match="id must not be blank"):
+        ArtifactConversionKey("   ", 1)
+    with pytest.raises(ValueError, match="version must be positive"):
+        ArtifactConversionKey("example.invalid", 0)
+    with pytest.raises(ValueError, match="title must not be blank"):
+        ArtifactConversion(
+            key=ArtifactConversionKey("example.invalid", 1),
+            source=ArtifactTypeKey("example.source", 1),
+            target=ArtifactTypeKey("example.target", 1),
+            source_type=int,
+            title="   ",
+            convert=_stringify_integer,
+        )
+
+
+def test_plugin_and_registry_report_artifact_conversion_collisions() -> None:
+    conversion = ArtifactConversion(
+        key=ArtifactConversionKey("example.duplicate", 1),
+        source=ArtifactTypeKey("example.source", 1),
+        target=ArtifactTypeKey("example.target", 1),
+        source_type=int,
+        title="Duplicate",
+        convert=_stringify_integer,
+    )
+    first = Plugin(slug="example.first-conversion", title="First conversion")
+    first.register_artifact_conversion(conversion)
+
+    with pytest.raises(
+        PluginRegistrationError,
+        match=(
+            "Plugin 'example.first-conversion' already declares artifact conversion "
+            "example.duplicate@1"
+        ),
+    ):
+        first.register_artifact_conversion(conversion)
+
+    second = Plugin(slug="example.second-conversion", title="Second conversion")
+    second.register_artifact_conversion(conversion)
+    registry = PluginRegistry()
+    registry.install(first)
+
+    with pytest.raises(
+        PluginRegistrationError,
+        match=(
+            "Plugin 'example.second-conversion' artifact conversion "
+            "example.duplicate@1 is already installed"
+        ),
+    ):
+        registry.install(second)
+
+
+@pytest.mark.parametrize(
+    ("register_source", "register_target", "missing_endpoint"),
+    [
+        (False, True, "source"),
+        (True, False, "target"),
+    ],
+)
+def test_registry_freeze_rejects_conversion_with_missing_artifact_endpoint(
+    register_source: bool,
+    register_target: bool,
+    missing_endpoint: str,
+) -> None:
+    source = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.source", 1),
+        title="Example source",
+    )
+    target = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.target", 1),
+        title="Example target",
+    )
+    conversion = ArtifactConversion(
+        key=ArtifactConversionKey("example.incomplete", 1),
+        source=source.key,
+        target=target.key,
+        source_type=int,
+        title="Incomplete",
+        convert=_stringify_integer,
+    )
+    plugin = Plugin(slug="example.incomplete", title="Incomplete")
+    if register_source:
+        plugin.register_artifact_type(source)
+    if register_target:
+        plugin.register_artifact_type(target)
+    plugin.register_artifact_conversion(conversion)
+    registry = PluginRegistry()
+    registry.install(plugin)
+
+    missing_type = source.key if missing_endpoint == "source" else target.key
+    with pytest.raises(
+        PluginRegistrationError,
+        match=(
+            f"Artifact conversion example.incomplete@1 references {missing_endpoint} "
+            f"artifact type {missing_type.id}@{missing_type.schema_version}, which "
+            "is not installed"
+        ),
+    ):
+        registry.freeze()
 
 
 def test_frozen_registry_rejects_late_installation() -> None:

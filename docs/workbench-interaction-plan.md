@@ -9,8 +9,9 @@ criteria appear below.
 
 The visual thesis is a restrained graph canvas where **nodes own operations** and
 **edges own transport semantics**. Configuration and produced artifacts stay on
-the node. Projection, collection mapping, and removal stay on the edge. Run
-controls act on either the complete canvas or the user's current selection.
+the node. Projection, declared conversion, collection mapping, and removal stay
+on the edge. Run controls act on either the complete canvas or the user's current
+selection.
 
 ## Status
 
@@ -23,7 +24,7 @@ controls act on either the complete canvas or the user's current selection.
 ```mermaid
 flowchart LR
     Registry["Plugin registry"] --> Node["Node: operation, config, metadata"]
-    Node --> Edge["Edge: projection and collection mode"]
+    Node --> Edge["Edge: projection, conversion, collection mode"]
     Edge --> Runtime["Runtime: validate and execute"]
     Runtime --> Artifact["Produced artifact"]
     Artifact --> Node
@@ -33,7 +34,11 @@ An artifact type and schema version are the nominal compatibility boundary. A
 Python class is the runtime representation of that contract, not an alternative
 graph-level compatibility system. A declared field projection lets an edge take
 a nested value from a compound artifact without introducing a boilerplate
-adapter node.
+adapter node. A declared, versioned artifact conversion lets the same edge
+materialize one nominal artifact type as another. Projection selects a value;
+conversion changes its representation. The fixed edge order is projection,
+conversion, then collection handling; the runtime does not discover conversion
+chains.
 
 Collection behavior follows the same ownership rule. An operator declares the
 value shape it handles for one call. An incoming edge decides whether to pass a
@@ -51,6 +56,7 @@ rewrite:
 | Configuration rendered directly on each node | Done | The canvas remains the place where a workflow is understood and edited; no configuration sidebar is needed. |
 | Produced-artifact appendix after execution | Done | Results remain associated with the operation that produced them and can expose their content links. |
 | Nominal artifact types, schema versions, and declared projections | Done | Compatibility is deterministic and can be validated before execution. |
+| Declared, versioned artifact conversions | In progress | Canonical representation changes such as integer to text should remain explicit without requiring boilerplate nodes. |
 | Plugin discovery through `notarius.plugins` entry points | Done | External plugins can depend on their own optional packages without adding those dependencies to the Notarius host. |
 | OCR as an external plugin package | Done | It proves the host/plugin dependency boundary while keeping Mistral optional. |
 | Basic arithmetic, source, text, and table operators | Done | They provide a dependency-light vocabulary for exercising graph behavior. |
@@ -129,10 +135,11 @@ the controls that users actually need during graph editing.
 the selected nodes, their internal edges, and incoming edges that cross from an
 unselected upstream node. It does not silently add or execute upstream nodes.
 For every crossing edge, the client pins the exact `ArtifactRef` or
-`ArtifactRefSequence` from the upstream node's latest visible successful output.
-The edge still owns and applies its projection and `direct`/`map` collection
-mode. If a current upstream output is absent, `Run selected` refuses to submit;
-the server never substitutes a fuzzy lookup for the latest artifact.
+`ArtifactRefSequence` from the materialized binding for the current graph id,
+graph revision, upstream node id, and source port. The edge still owns and
+applies its projection and `direct`/`map` collection mode. If that exact binding
+is absent, `Run selected` refuses to submit; the server never substitutes a
+fuzzy lookup for the latest artifact.
 
 **Justification.** Building a workflow is iterative. Re-running unrelated OCR or
 other expensive branches just to test a small arithmetic or text fragment makes
@@ -144,16 +151,17 @@ faithful to what the user highlighted.
 - Drag-selecting nodes and choosing `Run selected` submits only those nodes,
   their internal edges, and their incoming crossing edges; upstream source nodes
   remain unexecuted.
-- Each incoming crossing edge carries the exact latest visible successful
-  upstream `ArtifactRef` or `ArtifactRefSequence` as a run-scoped pin.
+- Each incoming crossing edge carries the exact revision-scoped upstream
+  `ArtifactRef` or `ArtifactRefSequence` as a run-scoped pin.
 - Projection and `direct`/`map` semantics continue to be applied by the crossing
   edge after its source value is pinned.
 - A selected fragment whose crossing edge has no current upstream output reports
-  a useful error instead of executing additional nodes or asking the server to
-  discover a "latest" artifact.
+  a useful error with run-upstream and `Run with dependencies` guidance instead
+  of executing additional nodes or asking the server to discover a "latest"
+  artifact.
 - Results and running state outside the selected fragment remain untouched.
-- Run results and pins remain transient across page reload and API restart under
-  the current architecture.
+- Pins and live running state remain transient. Revision-scoped materialized
+  outputs are durable runtime records outside the saved graph aggregate.
 - `Run all` preserves the existing whole-graph behavior.
 
 ### T5. Derive useful metadata from node definitions — Done
@@ -215,13 +223,73 @@ user sees. [R20: Verify After Signature Changes] [R43: Tests Are Behavioral Cont
   Upstream output pinning was implemented later; no additional verification
   result is recorded here.
 
+### T8. Persist exact graph materializations — Done
+
+**Description.** Record each successful saved-graph output as runtime state keyed
+by graph id, graph revision, node id, and output port. Loading a saved graph
+restores only bindings for that exact revision whose artifact references are
+accessible through the active runtime. This does not add execution results to
+the saved graph document.
+
+Default `Run selected` reuses these exact bindings for unselected crossing
+sources. `Run with dependencies` is a separate action: it computes the full
+upstream closure of the selection and executes the expanded graph instead of
+quietly changing the meaning of the default action.
+
+**Justification.** Durable revision-scoped bindings let users continue work after
+reloading a saved graph without making graph structure depend on runtime state.
+The exact key prevents outputs from another revision, node, or port from being
+treated as "latest", while explicit dependency expansion keeps execution scope
+predictable.
+
+**Acceptance criteria.**
+
+- Successful outputs for saved runs are stored separately from saved graph
+  structure and canvas layout.
+- "Latest" resolves only by graph id, graph revision, node id, and output port;
+  there is no type-wide or producer-wide fallback.
+- Loading materializations returns only bindings whose references are accessible
+  through the active runtime.
+- Default selected execution reuses exact bindings and blocks when a required
+  binding is missing, with guidance to run upstream or run with dependencies.
+- `Run with dependencies` expands and executes the selection's full upstream
+  closure.
+
+### T9. Put canonical artifact conversions on edges — In progress
+
+**Description.** Let plugins register a stable conversion key, source artifact
+type, target artifact type, display title, source runtime type, and pure
+conversion callable. Run and saved edges store at most one conversion key. The
+runtime applies an optional field projection first, then the selected conversion,
+then the edge's `direct` or `map` collection handling.
+
+The first declared conversion is `scalar.integer@1` to `scalar.text@1`. Drawing
+that connection should select the conversion automatically when it is the only
+compatible route, while the resulting edge label and editor continue to show
+the choice explicitly.
+
+**Justification.** Canonical, context-free representation changes do not earn a
+visible operation node, but silently coercing Python values would bypass the
+nominal artifact contract and make saved graphs depend on the currently
+installed registry. A persisted conversion key keeps authoring concise and
+execution deterministic.
+
+**Acceptance criteria.**
+
+- Registry metadata exposes active conversion keys, source and target artifact
+  contracts, versions, and titles; duplicate or dangling declarations fail
+  during registry construction.
+- Run and saved edges round-trip their optional conversion key.
+- Graph validation rejects unknown conversions and source/target mismatches
+  before any node executes.
+- Runtime order is projection, conversion, collection handling; projection plus
+  conversion and item-wise sequence conversion are covered behaviorally.
+- A unique compatible conversion is selected automatically during a real
+  pointer-drag connection and remains visibly labeled on the edge.
+- Saving, reopening, and running the graph preserve the selected conversion.
+- Generated OpenAPI and TypeScript contracts match the server.
+
 ## Deliberately deferred
-
-### Run to here / upstream closure — Deferred
-
-This remains distinct from selected-subgraph execution with pinned upstream
-outputs. It should compute and display the upstream closure before execution
-rather than quietly expanding an ordinary selection.
 
 ### Zip, Cartesian, and multi-driver mapping — Deferred
 

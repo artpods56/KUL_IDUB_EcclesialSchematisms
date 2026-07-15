@@ -10,7 +10,9 @@ from notarius_core.artifacts import (
     NodeInput,
     NodeOutput,
 )
+from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
 from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
+from notarius_core.operators.arithmetic import INTEGER_VALUE
 from notarius_core.plugins import Plugin
 
 
@@ -26,11 +28,27 @@ TEXT_VALUE = ArtifactTypeSpec(
     payload_schema=cast(JsonObject, TextValue.model_json_schema()),
 )
 
+
+def _integer_to_text(value: int) -> TextValue:
+    return TextValue(value=str(value))
+
+
+INTEGER_TO_TEXT = ArtifactConversion(
+    key=ArtifactConversionKey("builtin.scalar.integer_to_text", 1),
+    source=INTEGER_VALUE.key,
+    target=TEXT_VALUE.key,
+    source_type=int,
+    title="As text",
+    convert=_integer_to_text,
+)
+
+
 TEXT = Plugin(
     slug="builtin.text",
     title="Text",
 )
 TEXT.register_artifact_type(TEXT_VALUE)
+TEXT.register_artifact_conversion(INTEGER_TO_TEXT)
 
 
 class TextInputConfig(NodeConfig):

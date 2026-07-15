@@ -1,7 +1,7 @@
-from typing import ClassVar, Literal
+from typing import Annotated, ClassVar, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from notarius_core.artifacts import ArtifactRef, ArtifactRefSequence
 from notarius_core.nodes import PortShape
@@ -30,6 +30,18 @@ class ArtifactTypeSpecResponse(ApiResponse):
     title: str
     payload_schema: dict[str, object]
     field_projections: list[FieldProjectionResponse]
+
+
+class ArtifactConversionKeyResponse(ApiResponse):
+    id: str
+    version: int
+
+
+class ArtifactConversionSpecResponse(ApiResponse):
+    key: ArtifactConversionKeyResponse
+    source_artifact_type: ArtifactTypeKeyResponse
+    target_artifact_type: ArtifactTypeKeyResponse
+    title: str
 
 
 class PluginSpecResponse(ApiResponse):
@@ -64,6 +76,7 @@ class NodeSpecResponse(ApiResponse):
 class NodeRegistryResponse(ApiResponse):
     plugins: list[PluginSpecResponse]
     artifact_types: list[ArtifactTypeSpecResponse]
+    artifact_conversions: list[ArtifactConversionSpecResponse]
     nodes: list[NodeSpecResponse]
 
 
@@ -94,12 +107,21 @@ class FieldProjectionRequest(BaseModel):
     path: list[str] = Field(min_length=1)
 
 
+class ArtifactConversionRequest(BaseModel):
+    id: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1),
+    ]
+    version: int = Field(ge=1)
+
+
 class RunEdgeRequest(BaseModel):
     from_node: str
     from_port: str
     to_node: str
     to_port: str
     projection: FieldProjectionRequest | None = None
+    conversion: ArtifactConversionRequest | None = None
     collection_mode: Literal["direct", "map"] = "direct"
 
 
@@ -113,6 +135,14 @@ class RunRequest(BaseModel):
     nodes: list[RunNodeRequest]
     edges: list[RunEdgeRequest] = Field(default_factory=list)
     pinned_outputs: list[PinnedOutputRequest] = Field(default_factory=list)
+    graph_id: UUID | None = None
+    graph_revision: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_graph_context(self) -> Self:
+        if (self.graph_id is None) != (self.graph_revision is None):
+            raise ValueError("graph_id and graph_revision must be provided together")
+        return self
 
 
 class ArtifactSummaryResponse(ApiResponse):
@@ -143,4 +173,10 @@ class RunNodeResponse(ApiResponse):
 
 class RunResponse(ApiResponse):
     status: Literal["succeeded", "failed"]
+    node_runs: list[RunNodeResponse]
+
+
+class GraphMaterializationsResponse(ApiResponse):
+    graph_id: UUID
+    graph_revision: int
     node_runs: list[RunNodeResponse]

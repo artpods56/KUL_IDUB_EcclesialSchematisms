@@ -1,9 +1,14 @@
+from uuid import UUID
+
 import pytest
 from pydantic import ValidationError
 
-from notarius_core.artifacts import InMemoryUnitOfWork
+from notarius_core.artifacts import ArtifactRef, InMemoryUnitOfWork
 from notarius_core.nodes import NodeExecutionContext, PortShape
+from notarius_core.operators.arithmetic import ARITHMETIC, INTEGER_VALUE
 from notarius_core.operators.text import (
+    INTEGER_TO_TEXT,
+    TEXT,
     TEXT_VALUE,
     JoinTextConfig,
     JoinTextInput,
@@ -19,6 +24,7 @@ from notarius_core.operators.text import (
     TextInputNode,
     TextValue,
 )
+from notarius_core.plugins import PluginRegistry
 from notarius_core.runtime.invocation import (
     InvocationMode,
     map_input_candidates,
@@ -108,9 +114,31 @@ def test_text_models_reject_invalid_values(
         model.model_validate(payload)
 
 
+def test_builtin_integer_to_text_conversion_is_declared_and_nominal() -> None:
+    registry = PluginRegistry()
+    registry.install(ARITHMETIC)
+    registry.install(TEXT)
+    registry.freeze()
+
+    assert INTEGER_TO_TEXT.key.id == "builtin.scalar.integer_to_text"
+    assert INTEGER_TO_TEXT.key.version == 1
+    assert INTEGER_TO_TEXT.source == INTEGER_VALUE.key
+    assert INTEGER_TO_TEXT.target == TEXT_VALUE.key
+    assert INTEGER_TO_TEXT.source_type is int
+    assert INTEGER_TO_TEXT.title == "As text"
+    assert INTEGER_TO_TEXT.convert(42) == TextValue(value="42")
+    assert TEXT.artifact_conversions == (INTEGER_TO_TEXT,)
+    assert registry.artifact_conversions == (INTEGER_TO_TEXT,)
+
+
 @pytest.mark.asyncio
 async def test_text_value_uses_generic_inline_persistence() -> None:
     uow = InMemoryUnitOfWork()
+    source_ref = ArtifactRef(
+        artifact_id=UUID("00000000-0000-0000-0000-000000000042"),
+        artifact_type="scalar.integer",
+        schema_version=1,
+    )
     writer = InlineModelOutputWriter(
         artifact_type=TEXT_VALUE.key,
         model=TextValue,
@@ -120,7 +148,13 @@ async def test_text_value_uses_generic_inline_persistence() -> None:
         TextValue(value="persisted text"),
         ArtifactWriteContext(
             node_context=NodeExecutionContext(node_id="text"),
-            provenance=MaterializationProvenance(refs_by_input={}),
+            provenance=MaterializationProvenance(
+                refs_by_input={"value": (source_ref,)}
+            ),
+            metadata={
+                "conversion_id": "builtin.scalar.integer_to_text",
+                "conversion_version": 1,
+            },
         ),
     )
     resolver = InlineModelResolver(
@@ -130,3 +164,20 @@ async def test_text_value_uses_generic_inline_persistence() -> None:
     )
 
     assert await resolver.resolve(ref) == TextValue(value="persisted text")
+    async with uow as entered:
+        artifact = await entered.artifacts.get(ref.artifact_id)
+    assert artifact is not None
+    assert artifact.metadata == {
+        "producer_node_id": "text",
+        "provenance": {
+            "value": [
+                {
+                    "artifact_id": str(source_ref.artifact_id),
+                    "artifact_type": "scalar.integer",
+                    "schema_version": 1,
+                }
+            ]
+        },
+        "conversion_id": "builtin.scalar.integer_to_text",
+        "conversion_version": 1,
+    }

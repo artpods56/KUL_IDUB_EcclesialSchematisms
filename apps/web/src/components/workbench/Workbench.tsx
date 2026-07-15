@@ -50,15 +50,18 @@ import {
 } from "@/components/canvas/WorkflowCanvas";
 import {
   connectionArtifactContractIsValid,
+  connectionRouteSelection,
+  connectionRoutesFor,
   decodeHandleId,
   encodeHandleId,
-  projectionAwareConnectionIsValid,
   projectionCandidatesForConnection,
+  type ConnectionRoute,
 } from "@/components/canvas/handles";
 import {
   hydrateSavedGraph,
   savedGraphDraft,
   savedGraphFingerprint,
+  withMaterializedNodeRuns,
 } from "@/components/canvas/saved-graph";
 import {
   ARTIFACT_TYPE_COLOR,
@@ -76,6 +79,7 @@ import {
   selectedSourceItems,
   serializeNodeConfig,
   type WorkflowEdge,
+  type WorkflowEdgeRouteOption,
   type WorkflowEdgeRouteOffset,
   type WorkflowEdgeUpdate,
   type WorkflowNodeData,
@@ -85,23 +89,25 @@ import {
   createSavedGraph,
   deleteSavedGraph,
   fileToBase64,
+  getGraphMaterializations,
   getSavedGraph,
   runGraph,
   updateSavedGraph,
   uploadFile,
   type ArtifactTypeSpec,
-  type FieldProjection,
   type NodeSpec,
   type PinnedOutputInput,
   type Port,
   type RunEdgeCollectionMode,
   type RunEdgeInput,
+  type RunNodeResult,
   type SavedGraphSummary,
 } from "@/lib/api";
 import { ApiError } from "@/lib/api/client";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 
 type WorkflowNode = Node<WorkflowNodeData, typeof WORKFLOW_NODE_TYPE>;
+type RunScope = "all" | "selected" | "selected-with-dependencies";
 
 interface ActiveSavedGraph {
   id: string;
@@ -179,18 +185,60 @@ const ARITHMETIC_LINKS = [
   },
 ] as const;
 
-interface ProjectionEndpoint {
+interface ConnectionEndpoint {
   nodeTitle: string;
   portName: string;
   artifactType: string;
 }
 
-interface PendingProjection {
+interface PendingConnectionRoute {
   connection: Connection;
   collectionMode: RunEdgeCollectionMode;
-  candidates: FieldProjection[];
-  source: ProjectionEndpoint;
-  target: ProjectionEndpoint;
+  candidates: ConnectionRoute[];
+  source: ConnectionEndpoint;
+  target: ConnectionEndpoint;
+}
+
+function connectionRouteTitle(route: ConnectionRoute): string {
+  if (route.kind === "projection") return route.projection.title;
+  if (route.kind === "conversion") return route.conversion.title;
+  if (route.kind === "projection-conversion") {
+    return `${route.projection.title} → ${route.conversion.title}`;
+  }
+  return "Whole output";
+}
+
+function connectionRouteDescription(
+  sourcePortName: string,
+  route: ConnectionRoute,
+): string {
+  if (route.kind === "projection") {
+    return `${sourcePortName}.${route.projection.path.join(".")}`;
+  }
+  if (route.kind === "conversion") {
+    return `${sourcePortName} → ${route.conversion.title}`;
+  }
+  if (route.kind === "projection-conversion") {
+    return `${sourcePortName}.${route.projection.path.join(".")} → ${route.conversion.title}`;
+  }
+  return sourcePortName;
+}
+
+function workflowEdgeRouteOption(
+  route: ConnectionRoute,
+): WorkflowEdgeRouteOption {
+  const selection = connectionRouteSelection(route);
+  return {
+    ...selection,
+    projectionTitle:
+      route.kind === "projection" || route.kind === "projection-conversion"
+        ? route.projection.title
+        : undefined,
+    conversionTitle:
+      route.kind === "conversion" || route.kind === "projection-conversion"
+        ? route.conversion.title
+        : undefined,
+  };
 }
 
 function mappedInputPortForNode(
@@ -268,6 +316,36 @@ function nodeAndDescendantIds(
   return invalidatedNodeIds;
 }
 
+function selectedNodeAndAncestorIds(
+  nodes: readonly WorkflowNode[],
+  edges: readonly WorkflowEdge[],
+): Set<string> {
+  const knownNodeIds = new Set(nodes.map((node) => node.id));
+  const executionNodeIds = new Set(
+    nodes.filter((node) => node.selected).map((node) => node.id),
+  );
+  const pendingNodeIds = [...executionNodeIds];
+
+  while (pendingNodeIds.length) {
+    const targetNodeId = pendingNodeIds.shift();
+    if (targetNodeId === undefined) continue;
+
+    for (const edge of edges) {
+      if (
+        edge.target !== targetNodeId ||
+        !knownNodeIds.has(edge.source) ||
+        executionNodeIds.has(edge.source)
+      ) {
+        continue;
+      }
+      executionNodeIds.add(edge.source);
+      pendingNodeIds.push(edge.source);
+    }
+  }
+
+  return executionNodeIds;
+}
+
 interface MissingRequiredInput {
   nodeTitle: string;
   portName: string;
@@ -296,12 +374,12 @@ function missingRequiredInputsFor(
 }
 
 function executionValidationError(
-  scope: "all" | "selected",
+  scope: RunScope,
   executionNodes: readonly WorkflowNode[],
   executionEdges: readonly WorkflowEdge[],
 ): string | null {
   if (!executionNodes.length) {
-    return scope === "selected"
+    return scope !== "all"
       ? "Select at least one node before running a selection."
       : "Add at least one node before running the workflow.";
   }
@@ -777,13 +855,11 @@ export function Workbench({
   const [libraryOpen, setLibraryOpen] = React.useState(false);
   const [graphBrowserOpen, setGraphBrowserOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
-  const [runningScope, setRunningScope] = React.useState<
-    "all" | "selected" | null
-  >(null);
+  const [runningScope, setRunningScope] = React.useState<RunScope | null>(null);
   const running = runningScope !== null;
   const [runError, setRunError] = React.useState<string | null>(null);
-  const [pendingProjection, setPendingProjection] =
-    React.useState<PendingProjection | null>(null);
+  const [pendingConnectionRoute, setPendingConnectionRoute] =
+    React.useState<PendingConnectionRoute | null>(null);
   const [saving, setSaving] = React.useState(false);
   const [openingGraphId, setOpeningGraphId] = React.useState<string | null>(null);
   const [deletingGraphId, setDeletingGraphId] = React.useState<string | null>(null);
@@ -793,6 +869,7 @@ export function Workbench({
   const approvedRouteGraphIdRef = React.useRef<string | null>(null);
   const openRequestRef = React.useRef<AbortController | null>(null);
   const currentFingerprintRef = React.useRef("");
+  const activeGraphRef = React.useRef<ActiveSavedGraph | null>(null);
 
   const updateConfig = React.useCallback(
     (nodeId: string, name: string, value: unknown) => {
@@ -837,7 +914,7 @@ export function Workbench({
         (edge) => edge.source !== nodeId && edge.target !== nodeId,
       ),
     );
-    setPendingProjection(null);
+    setPendingConnectionRoute(null);
     setRunError(null);
   }, []);
 
@@ -975,6 +1052,9 @@ export function Workbench({
   React.useEffect(() => {
     currentFingerprintRef.current = currentFingerprint;
   }, [currentFingerprint]);
+  React.useEffect(() => {
+    activeGraphRef.current = activeGraph;
+  }, [activeGraph]);
   const hasUnsavedDraft =
     nodes.length > 0 ||
     edges.length > 0 ||
@@ -1012,6 +1092,10 @@ export function Workbench({
     (node) => node.data.spec.operator_id === LOCAL_UPLOAD_OPERATOR_ID && !selectedSourceItems(node.data).length,
   );
   const selectedNodeCount = nodes.filter((node) => node.selected).length;
+  const selectedWithDependenciesCount = selectedNodeAndAncestorIds(
+    nodes,
+    edges,
+  ).size;
   const missingOperators = registry
     ? ARITHMETIC_OPERATORS.filter((operatorId) => !registry.nodes.some((spec) => spec.operator_id === operatorId))
     : [];
@@ -1036,17 +1120,19 @@ export function Workbench({
     !registry || running || selectedNodeCount === 0;
   const statusMessage = runningScope === "selected"
     ? "running selected nodes · latest upstream outputs are pinned"
-    : !registry
-      ? registryError
-        ? "registry unavailable · run disabled"
-        : "loading live registry…"
-      : persistenceError
-        ? persistenceError
-        : runError
-          ? runError
-          : sourceWithoutFiles
-            ? "choose source files before running"
-            : connectionInstruction ?? "all required inputs connected · ready to run";
+    : runningScope === "selected-with-dependencies"
+      ? "running selected nodes and all upstream dependencies"
+      : !registry
+        ? registryError
+          ? "registry unavailable · run disabled"
+          : "loading live registry…"
+        : persistenceError
+          ? persistenceError
+          : runError
+            ? runError
+            : sourceWithoutFiles
+              ? "choose source files before running"
+              : connectionInstruction ?? "all required inputs connected · ready to run";
 
   const onNodesChange: OnNodesChange<WorkflowNode> = React.useCallback(
     (changes) => setNodes((current) => applyNodeChanges(changes, current)),
@@ -1080,9 +1166,12 @@ export function Workbench({
       setEdges((current) =>
         current.map((edge) => {
           if (edge.id !== edgeId) return edge;
-          const projection = update.clearProjection
-            ? undefined
-            : (update.projection ?? edge.data?.projection);
+          const projection = update.route
+            ? update.route.projection
+            : edge.data?.projection;
+          const conversion = update.route
+            ? update.route.conversion
+            : edge.data?.conversion;
           return {
             ...edge,
             data: {
@@ -1092,6 +1181,7 @@ export function Workbench({
                 edge.data?.collectionMode ??
                 "direct",
               projection,
+              conversion,
             },
           };
         }),
@@ -1124,7 +1214,7 @@ export function Workbench({
   const addWorkflowEdge = React.useCallback((
     connection: Connection,
     collectionMode: RunEdgeCollectionMode,
-    projection?: FieldProjection,
+    route: ConnectionRoute,
   ) => {
     const source = decodeHandleId(connection.sourceHandle);
     const color = source
@@ -1134,6 +1224,7 @@ export function Workbench({
       stroke: color,
       strokeWidth: 2,
     };
+    const selection = connectionRouteSelection(route);
     const edge: WorkflowEdge = {
       ...connection,
       id: `edge-${crypto.randomUUID()}`,
@@ -1141,9 +1232,15 @@ export function Workbench({
       animated: false,
       data: {
         collectionMode,
-        ...(projection
-          ? { projection: { path: [...projection.path] } }
-          : {}),
+        projection: selection.projection
+          ? { path: [...selection.projection.path] }
+          : undefined,
+        conversion: selection.conversion
+          ? {
+              id: selection.conversion.id,
+              version: selection.conversion.version,
+            }
+          : undefined,
       },
       style: edgeStyle,
     };
@@ -1167,10 +1264,11 @@ export function Workbench({
     );
     if (
       !collectionMode ||
-      !projectionAwareConnectionIsValid(
+      !connectionRoutesFor(
         candidate,
         registry?.artifact_types ?? [],
-      )
+        registry?.artifact_conversions ?? [],
+      ).length
     ) return false;
 
     const target = decodeHandleId(candidate.targetHandle);
@@ -1212,7 +1310,12 @@ export function Workbench({
       edge.target === candidate.target &&
       decodeHandleId(edge.targetHandle)?.portName === target.portName,
     );
-  }, [edges, nodes, registry?.artifact_types]);
+  }, [
+    edges,
+    nodes,
+    registry?.artifact_conversions,
+    registry?.artifact_types,
+  ]);
 
   const onConnect: OnConnect = React.useCallback((connection) => {
     if (!isValidConnection(connection)) return;
@@ -1223,26 +1326,28 @@ export function Workbench({
     );
     if (!collectionMode) return;
 
-    if (connectionArtifactContractIsValid(connection)) {
-      addWorkflowEdge(connection, collectionMode);
+    const candidates = connectionRoutesFor(
+      connection,
+      registry?.artifact_types ?? [],
+      registry?.artifact_conversions ?? [],
+    );
+    const firstCandidate = candidates[0];
+    if (!firstCandidate) return;
+    if (firstCandidate.kind === "exact" || candidates.length === 1) {
+      addWorkflowEdge(connection, collectionMode, firstCandidate);
       return;
     }
 
-    const artifactTypes = registry?.artifact_types ?? [];
-    const candidates = projectionCandidatesForConnection(
-      connection,
-      artifactTypes,
-    );
     const source = decodeHandleId(connection.sourceHandle);
     const sourceNode = nodes.find((node) => node.id === connection.source);
 
     const target = decodeHandleId(connection.targetHandle);
     const targetNode = nodes.find((node) => node.id === connection.target);
-    if (!source || !target || !sourceNode || !targetNode || !candidates.length) {
+    if (!source || !target || !sourceNode || !targetNode) {
       return;
     }
 
-    setPendingProjection({
+    setPendingConnectionRoute({
       connection,
       collectionMode,
       candidates,
@@ -1262,6 +1367,7 @@ export function Workbench({
     edges,
     isValidConnection,
     nodes,
+    registry?.artifact_conversions,
     registry?.artifact_types,
   ]);
 
@@ -1280,7 +1386,7 @@ export function Workbench({
   const wireExample = React.useCallback(() => {
     if (!registry || !canWireExample || running) return;
     setEdges(exampleWorkflowEdges(nodes, registry.artifact_types));
-    setPendingProjection(null);
+    setPendingConnectionRoute(null);
     clearWorkflowResults();
   }, [canWireExample, clearWorkflowResults, nodes, registry, running]);
 
@@ -1298,9 +1404,10 @@ export function Workbench({
     setNodes([]);
     setEdges([]);
     setGraphName(NEW_GRAPH_NAME);
+    activeGraphRef.current = null;
     setActiveGraph(null);
     setSavedFingerprint(null);
-    setPendingProjection(null);
+    setPendingConnectionRoute(null);
     setRunError(null);
     setPersistenceError(null);
     setLibraryOpen(false);
@@ -1321,7 +1428,7 @@ export function Workbench({
   }, [confirmDiscard, router, showBlankGraph, workspaceSlug]);
 
   const saveCurrentGraph = React.useCallback(async () => {
-    if (saving || openingGraphId || deletingGraphId) return;
+    if (running || saving || openingGraphId || deletingGraphId) return;
     if (!currentDraft.name) {
       setPersistenceError("Enter a graph name before saving.");
       return;
@@ -1342,14 +1449,17 @@ export function Workbench({
         nodes: savedGraph.nodes ?? [],
         edges: savedGraph.edges ?? [],
       };
-      setActiveGraph({
+      const nextActiveGraph = {
         id: savedGraph.id,
         revision: savedGraph.revision,
-      });
+      };
+      activeGraphRef.current = nextActiveGraph;
+      setActiveGraph(nextActiveGraph);
       setSavedFingerprint(savedGraphFingerprint(responseDraft));
       setGraphName((current) =>
         current.trim() === submittedDraft.name ? savedGraph.name : current,
       );
+      clearWorkflowResults();
       if (!activeGraph) {
         approvedRouteGraphIdRef.current = savedGraph.id;
         router.replace(
@@ -1373,11 +1483,13 @@ export function Workbench({
     }
   }, [
     activeGraph,
+    clearWorkflowResults,
     currentDraft,
     deletingGraphId,
     openingGraphId,
     refreshSavedGraphs,
     router,
+    running,
     saving,
     workspaceSlug,
   ]);
@@ -1412,7 +1524,27 @@ export function Workbench({
     setPersistenceError(null);
     try {
       const savedGraph = await getSavedGraph(graphId, controller.signal);
-      const hydrated = hydrateSavedGraph(savedGraph, registry);
+      let materializationWarning: string | null = null;
+      let materializedNodeRuns: RunNodeResult[] = [];
+      try {
+        const materializations = await getGraphMaterializations(
+          graphId,
+          savedGraph.revision,
+          controller.signal,
+        );
+        materializedNodeRuns = [...materializations.node_runs];
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        const message = error instanceof Error
+          ? error.message
+          : "Latest materialized outputs could not be loaded.";
+        materializationWarning = `Graph opened without its latest materialized outputs: ${message}`;
+      }
+      const hydrated = hydrateSavedGraph(
+        savedGraph,
+        registry,
+        materializedNodeRuns,
+      );
       if (controller.signal.aborted) return;
       if (currentFingerprintRef.current !== openingFingerprint) {
         setPersistenceError(
@@ -1434,10 +1566,16 @@ export function Workbench({
       );
       setEdges(hydrated.edges);
       setGraphName(savedGraph.name);
-      setActiveGraph({ id: savedGraph.id, revision: savedGraph.revision });
+      const nextActiveGraph = {
+        id: savedGraph.id,
+        revision: savedGraph.revision,
+      };
+      activeGraphRef.current = nextActiveGraph;
+      setActiveGraph(nextActiveGraph);
       setSavedFingerprint(savedGraphFingerprint(responseDraft));
-      setPendingProjection(null);
+      setPendingConnectionRoute(null);
       setRunError(null);
+      setPersistenceError(materializationWarning);
       setLibraryOpen(false);
       setSearch("");
       setGraphBrowserOpen(false);
@@ -1545,6 +1683,7 @@ export function Workbench({
             { scroll: false },
           );
         } else {
+          activeGraphRef.current = null;
           setActiveGraph(null);
           setSavedFingerprint(null);
           setPersistenceError(
@@ -1608,13 +1747,18 @@ export function Workbench({
           targetHandle: edge.targetHandle ?? null,
         };
         const source = decodeHandleId(edge.sourceHandle);
-        const projectionOptions = projectionCandidatesForConnection(
+        const routeOptions = connectionRoutesFor(
           connection,
           registry?.artifact_types ?? [],
-        ).map((projection) => ({
-          title: projection.title,
-          path: [...projection.path],
-        }));
+          registry?.artifact_conversions ?? [],
+        ).map(workflowEdgeRouteOption);
+        const conversionTitle = edge.data?.conversion
+          ? registry?.artifact_conversions.find(
+              (conversion) =>
+                conversion.key.id === edge.data?.conversion?.id &&
+                conversion.key.version === edge.data.conversion.version,
+            )?.title
+          : undefined;
         const otherEdges = edges.filter((candidate) => candidate.id !== edge.id);
         const validMode = collectionModeForConnection(
           connection,
@@ -1628,8 +1772,8 @@ export function Workbench({
             ...edge.data,
             collectionMode: edge.data?.collectionMode ?? "direct",
             sourcePortName: source?.portName,
-            projectionOptions,
-            allowWholeArtifact: connectionArtifactContractIsValid(connection),
+            conversionTitle,
+            routeOptions,
             allowedCollectionModes: validMode ? [validMode] : [],
             onUpdate: updateEdge,
             onRouteOffsetChange: updateEdgeRoute,
@@ -1639,20 +1783,76 @@ export function Workbench({
     [
       edges,
       nodes,
+      registry?.artifact_conversions,
       registry?.artifact_types,
       updateEdge,
       updateEdgeRoute,
     ],
   );
 
-  const runWorkflow = async (scope: "all" | "selected") => {
+  const runWorkflow = async (scope: RunScope) => {
     if (!registry || running) return;
-    const executionNodes =
-      scope === "selected" ? nodes.filter((node) => node.selected) : nodes;
-    const executionNodeIds = new Set(executionNodes.map((node) => node.id));
-    const executionEdges = scope === "selected"
-      ? edges.filter((edge) => executionNodeIds.has(edge.target))
-      : edges;
+    const planningFingerprint = currentFingerprint;
+    const planningActiveGraph = activeGraph;
+    let planningNodes = nodes;
+
+    if (scope === "selected" && activeGraph && !isDirty) {
+      try {
+        const materializations = await getGraphMaterializations(
+          activeGraph.id,
+          activeGraph.revision,
+        );
+        const currentActiveGraph = activeGraphRef.current;
+        if (
+          currentFingerprintRef.current !== planningFingerprint ||
+          currentActiveGraph?.id !== planningActiveGraph?.id ||
+          currentActiveGraph?.revision !== planningActiveGraph?.revision
+        ) {
+          setRunError(
+            "The active graph changed while latest materialized outputs were loading. Run the selection again.",
+          );
+          return;
+        }
+        planningNodes = withMaterializedNodeRuns(
+          planningNodes,
+          materializations.node_runs,
+        );
+        setNodes((current) =>
+          withMaterializedNodeRuns(current, materializations.node_runs),
+        );
+        setPersistenceError(null);
+      } catch (error) {
+        const message = error instanceof Error
+          ? error.message
+          : "Latest materialized outputs could not be loaded.";
+        setRunError(
+          `Cannot verify the latest upstream outputs for this saved graph: ${message}`,
+        );
+        return;
+      }
+    }
+
+    const executionNodeIds = scope === "all"
+      ? new Set(planningNodes.map((node) => node.id))
+      : scope === "selected-with-dependencies"
+        ? selectedNodeAndAncestorIds(planningNodes, edges)
+        : new Set(
+            planningNodes
+              .filter((node) => node.selected)
+              .map((node) => node.id),
+          );
+    const executionNodes = planningNodes.filter((node) =>
+      executionNodeIds.has(node.id),
+    );
+    const executionEdges = scope === "all"
+      ? edges
+      : scope === "selected-with-dependencies"
+        ? edges.filter(
+            (edge) =>
+              executionNodeIds.has(edge.source) &&
+              executionNodeIds.has(edge.target),
+          )
+        : edges.filter((edge) => executionNodeIds.has(edge.target));
     const validationError = executionValidationError(
       scope,
       executionNodes,
@@ -1665,8 +1865,11 @@ export function Workbench({
 
     const pinnedOutputs: PinnedOutputInput[] = [];
     if (scope === "selected") {
-      const nodesById = new Map(nodes.map((node) => [node.id, node]));
+      const nodesById = new Map(
+        planningNodes.map((node) => [node.id, node]),
+      );
       const pinnedSourcePorts = new Map<string, Set<string>>();
+      const missingPinnedOutputs: string[] = [];
 
       for (const edge of executionEdges) {
         if (executionNodeIds.has(edge.source)) continue;
@@ -1686,7 +1889,6 @@ export function Workbench({
         pinnedSourcePorts.set(edge.source, sourcePorts);
 
         const sourceNode = nodesById.get(edge.source);
-        const targetNode = nodesById.get(edge.target);
         const output = sourceNode?.data.run?.status === "succeeded"
           ? sourceNode.data.run.outputs.find(
               (candidate) => candidate.port === source.portName,
@@ -1694,11 +1896,8 @@ export function Workbench({
           : undefined;
         if (!output) {
           const sourceName = sourceNode?.data.spec.title ?? edge.source;
-          const targetName = targetNode?.data.spec.title ?? edge.target;
-          setRunError(
-            `Cannot run ${targetName}.${target.portName}: ${sourceName}.${source.portName} has no latest successful output to pin. Run ${sourceName} first or include it in the selection.`,
-          );
-          return;
+          missingPinnedOutputs.push(`${sourceName}.${source.portName}`);
+          continue;
         }
 
         pinnedOutputs.push({
@@ -1706,6 +1905,14 @@ export function Workbench({
           from_port: source.portName,
           value: output.value,
         });
+      }
+
+      if (missingPinnedOutputs.length) {
+        const endpoints = missingPinnedOutputs.join(", ");
+        setRunError(
+          `Cannot run the selection because no accessible materialized output is available for ${endpoints}. Select the missing upstream nodes too, or choose “Run with dependencies”.`,
+        );
+        return;
       }
     }
 
@@ -1737,12 +1944,17 @@ export function Workbench({
             to_node: edge.target,
             to_port: target.portName,
             collection_mode: edge.data?.collectionMode ?? "direct",
+            projection: edge.data?.projection
+              ? { path: [...edge.data.projection.path] }
+              : null,
+            conversion: edge.data?.conversion
+              ? {
+                  id: edge.data.conversion.id,
+                  version: edge.data.conversion.version,
+                }
+              : null,
           };
-          if (!edge.data?.projection) return [runEdge];
-          return [{
-            ...runEdge,
-            projection: { path: [...edge.data.projection.path] },
-          }];
+          return [runEdge];
         },
       );
       const runNodes = executionNodes.map((node) => ({
@@ -1751,16 +1963,29 @@ export function Workbench({
         operator_version: node.data.spec.operator_version,
         config: serializeNodeConfig(node.data),
       }));
-      const response = scope === "selected"
-        ? await runGraph({
-            nodes: runNodes,
-            edges: runEdges,
-            pinned_outputs: pinnedOutputs,
-          })
-        : await runGraph({
-            nodes: runNodes,
-            edges: runEdges,
-          });
+      const graphContext = activeGraph && !isDirty
+        ? {
+            graph_id: activeGraph.id,
+            graph_revision: activeGraph.revision,
+          }
+        : {};
+      const response = await runGraph({
+        nodes: runNodes,
+        edges: runEdges,
+        ...(scope === "selected" ? { pinned_outputs: pinnedOutputs } : {}),
+        ...graphContext,
+      });
+      const currentActiveGraph = activeGraphRef.current;
+      if (
+        currentFingerprintRef.current !== planningFingerprint ||
+        currentActiveGraph?.id !== planningActiveGraph?.id ||
+        currentActiveGraph?.revision !== planningActiveGraph?.revision
+      ) {
+        setRunError(
+          "The graph changed while it was running. Results were recorded for the original saved revision and were not applied to this canvas.",
+        );
+        return;
+      }
       const byNode = new Map(response.node_runs.map((run) => [run.node_id, run]));
       setNodes((current) => current.map((node) => {
         if (!executionNodeIds.has(node.id)) return node;
@@ -1780,7 +2005,26 @@ export function Workbench({
         setRunError("The workflow completed with node errors. Check the failed node for details.");
       }
     } catch (runFailure) {
-      const message = runFailure instanceof Error ? runFailure.message : "Workflow run failed";
+      const currentActiveGraph = activeGraphRef.current;
+      if (
+        currentFingerprintRef.current !== planningFingerprint ||
+        currentActiveGraph?.id !== planningActiveGraph?.id ||
+        currentActiveGraph?.revision !== planningActiveGraph?.revision
+      ) {
+        setRunError(
+          "The graph changed while it was running. The completed run was not applied to this canvas.",
+        );
+        return;
+      }
+      const missingPinnedArtifact =
+        scope === "selected" &&
+        runFailure instanceof ApiError &&
+        runFailure.detail.includes("references missing artifact");
+      const message = missingPinnedArtifact
+        ? "A previously materialized upstream artifact is no longer accessible. Run the missing upstream nodes too, or choose “Run with dependencies”."
+        : runFailure instanceof Error
+          ? runFailure.message
+          : "Workflow run failed";
       setRunError(message);
       setNodes((current) => current.map((node) =>
         executionNodeIds.has(node.id)
@@ -1862,6 +2106,7 @@ export function Workbench({
             type="button"
             disabled={
               saving ||
+              running ||
               Boolean(openingGraphId) ||
               Boolean(deletingGraphId) ||
               !graphName.trim() ||
@@ -1935,7 +2180,7 @@ export function Workbench({
             disabled={runSelectedDisabled}
             title={
               selectedNodeCount
-                ? "Run selected nodes; latest upstream outputs from unselected sources are pinned"
+                ? "Run only the selected nodes; latest accessible upstream outputs are pinned"
                 : "Drag-select or shift-click at least one node"
             }
             {...stylex.props(s.toolButton)}
@@ -1949,6 +2194,26 @@ export function Workbench({
             {runningScope === "selected"
               ? "Running…"
               : `Run selected${selectedNodeCount ? ` (${selectedNodeCount})` : ""}`}
+          </button>
+          <button
+            type="button"
+            disabled={runSelectedDisabled}
+            title={
+              selectedNodeCount
+                ? `Run the selected nodes and every upstream dependency (${selectedWithDependenciesCount} total)`
+                : "Drag-select or shift-click at least one node"
+            }
+            {...stylex.props(s.toolButton)}
+            onClick={() => void runWorkflow("selected-with-dependencies")}
+          >
+            {runningScope === "selected-with-dependencies" ? (
+              <LoaderCircle size={13} {...stylex.props(s.spinner)} />
+            ) : (
+              <Workflow size={13} />
+            )}
+            {runningScope === "selected-with-dependencies"
+              ? "Running…"
+              : `Run with dependencies${selectedNodeCount ? ` (${selectedWithDependenciesCount})` : ""}`}
           </button>
           <button
             type="button"
@@ -2029,63 +2294,70 @@ export function Workbench({
       ) : null}
 
       <Dialog
-        open={pendingProjection !== null}
+        open={pendingConnectionRoute !== null}
         onOpenChange={(open) => {
-          if (!open) setPendingProjection(null);
+          if (!open) setPendingConnectionRoute(null);
         }}
       >
         <DialogContent style={{ width: "430px" }}>
           <DialogHeader>
-            <DialogTitle>Choose a result field</DialogTitle>
+            <DialogTitle>Choose a connection route</DialogTitle>
             <DialogDescription>
-              This edge can satisfy the input through a declared field projection.
+              More than one declared route can satisfy this input.
             </DialogDescription>
           </DialogHeader>
           <DialogBody>
-            {pendingProjection ? (
+            {pendingConnectionRoute ? (
               <>
                 <div {...stylex.props(s.projectionFlow)}>
                   <div {...stylex.props(s.projectionEndpoint)}>
                     <span {...stylex.props(s.projectionDirection)}>Source</span>
                     <span {...stylex.props(s.projectionEndpointName)}>
-                      {pendingProjection.source.nodeTitle} · {pendingProjection.source.portName}
+                      {pendingConnectionRoute.source.nodeTitle} · {pendingConnectionRoute.source.portName}
                     </span>
                     <span {...stylex.props(s.projectionEndpointType)}>
-                      {pendingProjection.source.artifactType}
+                      {pendingConnectionRoute.source.artifactType}
                     </span>
                   </div>
                   <span aria-hidden="true" {...stylex.props(s.projectionArrow)}>→</span>
                   <div {...stylex.props(s.projectionEndpoint)}>
                     <span {...stylex.props(s.projectionDirection)}>Target</span>
                     <span {...stylex.props(s.projectionEndpointName)}>
-                      {pendingProjection.target.nodeTitle} · {pendingProjection.target.portName}
+                      {pendingConnectionRoute.target.nodeTitle} · {pendingConnectionRoute.target.portName}
                     </span>
                     <span {...stylex.props(s.projectionEndpointType)}>
-                      {pendingProjection.target.artifactType}
+                      {pendingConnectionRoute.target.artifactType}
                     </span>
                   </div>
                 </div>
-                <p {...stylex.props(s.projectionPrompt)}>Route one field into this input:</p>
+                <p {...stylex.props(s.projectionPrompt)}>
+                  Choose how this edge carries the value:
+                </p>
                 <div {...stylex.props(s.projectionChoices)}>
-                  {pendingProjection.candidates.map((candidate, index) => (
+                  {pendingConnectionRoute.candidates.map((candidate, index) => (
                     <button
-                      key={`${candidate.title}-${candidate.path.join(".")}`}
+                      key={`${candidate.kind}-${connectionRouteDescription(pendingConnectionRoute.source.portName, candidate)}`}
                       type="button"
                       autoFocus={index === 0}
-                      aria-label={`Use ${candidate.title} field from ${pendingProjection.source.nodeTitle}`}
+                      aria-label={`Use ${connectionRouteTitle(candidate)} from ${pendingConnectionRoute.source.nodeTitle}`}
                       {...stylex.props(s.projectionChoice)}
                       onClick={() => {
                         addWorkflowEdge(
-                          pendingProjection.connection,
-                          pendingProjection.collectionMode,
+                          pendingConnectionRoute.connection,
+                          pendingConnectionRoute.collectionMode,
                           candidate,
                         );
-                        setPendingProjection(null);
+                        setPendingConnectionRoute(null);
                       }}
                     >
-                      <span {...stylex.props(s.projectionChoiceTitle)}>{candidate.title}</span>
+                      <span {...stylex.props(s.projectionChoiceTitle)}>
+                        {connectionRouteTitle(candidate)}
+                      </span>
                       <span {...stylex.props(s.projectionChoicePath)}>
-                        {pendingProjection.source.portName}.{candidate.path.join(".")}
+                        {connectionRouteDescription(
+                          pendingConnectionRoute.source.portName,
+                          candidate,
+                        )}
                       </span>
                     </button>
                   ))}
@@ -2094,7 +2366,7 @@ export function Workbench({
                   <button
                     type="button"
                     {...stylex.props(s.projectionCancel)}
-                    onClick={() => setPendingProjection(null)}
+                    onClick={() => setPendingConnectionRoute(null)}
                   >
                     Cancel
                   </button>

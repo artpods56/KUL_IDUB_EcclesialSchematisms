@@ -2,6 +2,7 @@ import { API_BASE, request } from "./client";
 import type {
   CreateSavedGraphRequest,
   CreateSavedGraphResponse,
+  GraphMaterializations,
   RunRequest,
   RunResponse,
   SavedGraph,
@@ -17,6 +18,21 @@ export function getSavedGraph(
   return request<SavedGraph>(
     "GET",
     `/v1/graphs/${encodeURIComponent(graphId)}`,
+    { signal },
+  );
+}
+
+export function getGraphMaterializations(
+  graphId: string,
+  graphRevision: number,
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams({
+    graph_revision: String(graphRevision),
+  });
+  return request<GraphMaterializations>(
+    "GET",
+    `/v1/graphs/${encodeURIComponent(graphId)}/materializations?${query}`,
     { signal },
   );
 }

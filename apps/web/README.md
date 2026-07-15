@@ -96,7 +96,9 @@ Saved graphs have canonical browser URLs at
 `/workspaces/local/graphs/new`; the root route retains the arithmetic example.
 `local` is intentionally the only accepted workspace slug today. It names the
 single active workbench in the URL, but it is not yet a tenant or authorization
-boundary.
+boundary. Reopening a saved graph also loads accessible materialized outputs for
+that exact graph revision. These runtime records are separate from the saved
+graph's workflow structure and canvas layout.
 
 ## Current flow
 
@@ -114,24 +116,31 @@ boundary.
 6. List-valued edges expose whether the target receives the whole list directly
    or maps the target operation over each item. Mapping is edge state, not node
    invocation configuration.
-7. Drag-selecting nodes enables **Run selected**, which sends the selected nodes,
-   their internal edges, and incoming edges crossing from unselected upstream
-   nodes. Each crossing edge pins the exact `ArtifactRef` or
-   `ArtifactRefSequence` from its source port's latest visible successful output;
-   its projection and `direct`/`map` mode still apply. The upstream source is not
-   re-executed, and its result remains untouched. If that current output is
-   absent, the run is refused instead of asking the server for a fuzzy "latest"
-   artifact. **Run all** executes the complete graph.
-8. Editing a node's schema-derived controls invalidates stale run results before
+7. Drag-selecting nodes enables **Run selected**. By default it sends the
+   selected nodes, their internal edges, and incoming edges crossing from
+   unselected upstream nodes. Each crossing edge pins the exact `ArtifactRef` or
+   `ArtifactRefSequence` bound to its source graph id, graph revision, node id,
+   and output port; its projection and `direct`/`map` mode still apply. Only
+   bindings whose references are accessible through the active runtime are
+   available. The upstream source is not re-executed, and its result remains
+   untouched.
+8. If a required source-port binding is missing, **Run selected** is blocked
+   instead of asking the server for a fuzzy "latest" artifact. The error directs
+   the user to run the upstream node or choose **Run with dependencies**. That
+   separate action expands the selection to its full upstream closure and
+   executes every node in the expanded graph. **Run all** executes the complete
+   graph.
+9. Editing a node's schema-derived controls invalidates stale run results before
    the next execution.
-9. `POST /v1/runs` validates the graph, collection modes, and projection paths before
+10. `POST /v1/runs` validates the graph, collection modes, and projection paths before
    executing it through the runtime.
-10. Node results expose values and content URLs served by
+11. Node results expose values and content URLs served by
    `GET /v1/artifacts/{artifact_id}/content`.
 
-Run results and selected-run pins are transient client/API process state under
-the current architecture. They are not restored after a page reload or API
-restart, even when the graph itself has been saved.
+Live running state and selected-run pins remain transient. Successful outputs
+for a saved graph are materialized separately from the graph document and are
+restored by exact graph revision when the referenced artifacts remain
+accessible.
 
 ## Project layout
 

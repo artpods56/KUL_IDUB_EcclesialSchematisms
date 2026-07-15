@@ -1,6 +1,69 @@
 {
   "components": {
     "schemas": {
+      "ArtifactConversionKeyResponse": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "version"
+        ],
+        "title": "ArtifactConversionKeyResponse",
+        "type": "object"
+      },
+      "ArtifactConversionRequest": {
+        "properties": {
+          "id": {
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "version"
+        ],
+        "title": "ArtifactConversionRequest",
+        "type": "object"
+      },
+      "ArtifactConversionSpecResponse": {
+        "properties": {
+          "key": {
+            "$ref": "#/components/schemas/ArtifactConversionKeyResponse"
+          },
+          "source_artifact_type": {
+            "$ref": "#/components/schemas/ArtifactTypeKeyResponse"
+          },
+          "target_artifact_type": {
+            "$ref": "#/components/schemas/ArtifactTypeKeyResponse"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "source_artifact_type",
+          "target_artifact_type",
+          "title"
+        ],
+        "title": "ArtifactConversionSpecResponse",
+        "type": "object"
+      },
       "ArtifactRef": {
         "properties": {
           "artifact_id": {
@@ -281,6 +344,33 @@
         "title": "FieldProjectionResponse",
         "type": "object"
       },
+      "GraphMaterializationsResponse": {
+        "properties": {
+          "graph_id": {
+            "format": "uuid",
+            "title": "Graph Id",
+            "type": "string"
+          },
+          "graph_revision": {
+            "title": "Graph Revision",
+            "type": "integer"
+          },
+          "node_runs": {
+            "items": {
+              "$ref": "#/components/schemas/RunNodeResponse"
+            },
+            "title": "Node Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "graph_id",
+          "graph_revision",
+          "node_runs"
+        ],
+        "title": "GraphMaterializationsResponse",
+        "type": "object"
+      },
       "GraphPointModel": {
         "additionalProperties": false,
         "properties": {
@@ -315,6 +405,13 @@
       },
       "NodeRegistryResponse": {
         "properties": {
+          "artifact_conversions": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactConversionSpecResponse"
+            },
+            "title": "Artifact Conversions",
+            "type": "array"
+          },
           "artifact_types": {
             "items": {
               "$ref": "#/components/schemas/ArtifactTypeSpecResponse"
@@ -340,6 +437,7 @@
         "required": [
           "plugins",
           "artifact_types",
+          "artifact_conversions",
           "nodes"
         ],
         "title": "NodeRegistryResponse",
@@ -541,6 +639,16 @@
             "title": "Collection Mode",
             "type": "string"
           },
+          "conversion": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactConversionRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "from_node": {
             "title": "From Node",
             "type": "string"
@@ -699,6 +807,30 @@
             "title": "Edges",
             "type": "array"
           },
+          "graph_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Id"
+          },
+          "graph_revision": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Revision"
+          },
           "nodes": {
             "items": {
               "$ref": "#/components/schemas/RunNodeRequest"
@@ -758,6 +890,28 @@
         "title": "SampleRequest",
         "type": "object"
       },
+      "SavedGraphConversionModel": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "version"
+        ],
+        "title": "SavedGraphConversionModel",
+        "type": "object"
+      },
       "SavedGraphEdgeModel": {
         "additionalProperties": false,
         "properties": {
@@ -769,6 +923,16 @@
             ],
             "title": "Collection Mode",
             "type": "string"
+          },
+          "conversion": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SavedGraphConversionModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "from_node": {
             "maxLength": 255,
@@ -1366,6 +1530,59 @@
         "summary": "Update Saved Graph",
         "tags": [
           "saved graphs"
+        ]
+      }
+    },
+    "/v1/graphs/{graph_id}/materializations": {
+      "get": {
+        "operationId": "get_graph_materializations_v1_graphs__graph_id__materializations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "graph_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Graph Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "graph_revision",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Graph Revision",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphMaterializationsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Graph Materializations",
+        "tags": [
+          "workbench"
         ]
       }
     },

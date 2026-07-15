@@ -5,8 +5,9 @@ import binascii
 import json
 import os
 import re
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -26,6 +27,10 @@ from notarius_core.artifacts import (
     ArtifactTypeSpec,
     InMemoryUnitOfWork,
 )
+from notarius_core.application.saved_graphs import SavedGraphService
+from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
+from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
+from notarius_core.domain.saved_graphs import SavedGraph
 from notarius_core.nodes import Node, NodeExecutionContext, PortShape
 from notarius_core.operators.arithmetic import (
     ARITHMETIC_RESULT,
@@ -43,6 +48,8 @@ from notarius_core.plugins import (
     PluginRuntimeContext,
     UnknownOperatorError,
 )
+from notarius_core.ports.materialized_outputs import WorkbenchUnitOfWorkPort
+from notarius_core.ports.storage import FileStoragePort
 from notarius_core.runtime.execution import NodeRuntime
 from notarius_core.runtime.invocation import (
     InvocationError,
@@ -75,6 +82,7 @@ from notarius_storage import LocalFileObjectStore
 
 from notarius_api.schemas.workbench import (
     ArtifactSummaryResponse,
+    GraphMaterializationsResponse,
     PinnedOutputRequest,
     RunEdgeRequest,
     RunNodeRequest,
@@ -118,19 +126,28 @@ class WorkbenchService:
         *,
         plugin_registry: PluginRegistry,
         workspace: Path | None = None,
+        uow: WorkbenchUnitOfWorkPort | None = None,
+        storage: FileStoragePort | None = None,
+        storage_backend: str = "local",
+        bucket: str = _WORKBENCH_BUCKET,
+        saved_graphs: SavedGraphService | None = None,
     ) -> None:
         self._plugin_registry = plugin_registry
         self._workspace = (workspace or _default_workspace()).expanduser().resolve()
         self._uploads_dir = self._workspace / "uploads"
         self._uploads_dir.mkdir(parents=True, exist_ok=True)
-        self._storage = LocalFileObjectStore(self._workspace / "objects")
-        self._uow = InMemoryUnitOfWork()
+        self._storage = storage or LocalFileObjectStore(self._workspace / "objects")
+        self._storage_backend = storage_backend
+        self._bucket = bucket
+        self._uow = uow or InMemoryUnitOfWork()
+        self._saved_graphs = saved_graphs
         self._plugin_context = PluginRuntimeContext(
             workspace=self._workspace,
             uploads_dir=self._uploads_dir,
             storage=self._storage,
             uow=self._uow,
-            bucket=_WORKBENCH_BUCKET,
+            bucket=self._bucket,
+            storage_backend=self._storage_backend,
         )
         resolvers = [
             cast(Resolver[object], IntegerValueResolver(uow=self._uow)),
@@ -175,7 +192,8 @@ class WorkbenchService:
             SourcePageImageOutputWriter(
                 storage=self._storage,
                 uow=self._uow,
-                bucket=_WORKBENCH_BUCKET,
+                bucket=self._bucket,
+                storage_backend=self._storage_backend,
             ),
             InlineModelOutputWriter(
                 artifact_type=ARITHMETIC_RESULT.key,
@@ -200,7 +218,8 @@ class WorkbenchService:
             TableCsvBundleOutputWriter(
                 storage=self._storage,
                 uow=self._uow,
-                bucket=_WORKBENCH_BUCKET,
+                bucket=self._bucket,
+                storage_backend=self._storage_backend,
             ),
         ]
         writers.extend(plugin_registry.build_writers(self._plugin_context))
@@ -209,6 +228,10 @@ class WorkbenchService:
             artifact_type.key: artifact_type
             for artifact_type in plugin_registry.artifact_types
             if artifact_type.field_projections
+        }
+        self._artifact_conversions = {
+            conversion.key: conversion
+            for conversion in plugin_registry.artifact_conversions
         }
         self._runtime = NodeRuntime(
             materializer=InputMaterializer(self._resolvers),
@@ -283,12 +306,28 @@ class WorkbenchService:
         )
 
     async def run_graph(self, request: RunRequest) -> RunResponse:
+        if request.graph_id is not None and request.graph_revision is not None:
+            saved_graph = await self._saved_graph_for_context(
+                request.graph_id,
+                request.graph_revision,
+            )
+            _validate_saved_graph_fragment(
+                saved_graph,
+                request.nodes,
+                request.edges,
+            )
         order = _topological_order(request.nodes, request.edges)
         pinned_outputs = _pinned_outputs_by_endpoint(
             request.nodes,
             request.edges,
             request.pinned_outputs,
         )
+        if request.graph_id is not None and request.graph_revision is not None:
+            await self._validate_materialized_pins(
+                request.graph_id,
+                request.graph_revision,
+                pinned_outputs,
+            )
         outputs = await self._resolve_pinned_outputs(pinned_outputs)
         nodes_by_id = {
             node_request.id: self._build_node(
@@ -307,6 +346,7 @@ class WorkbenchService:
             invocations_by_id,
             request.edges,
             self._projectable_artifact_types,
+            self._artifact_conversions,
             pinned_outputs,
         )
         failed: set[str] = set()
@@ -365,20 +405,152 @@ class WorkbenchService:
 
             port_values = _port_values(node, result)
             outputs[node_request.id] = port_values
-            node_runs.append(
-                RunNodeResponse(
-                    node_id=node_request.id,
-                    status="succeeded",
-                    error=None,
-                    outputs=[
-                        await self._port_output_response(name, run_value)
-                        for name, run_value in port_values.items()
-                    ],
-                )
+            node_run = RunNodeResponse(
+                node_id=node_request.id,
+                status="succeeded",
+                error=None,
+                outputs=[
+                    await self._port_output_response(name, run_value)
+                    for name, run_value in port_values.items()
+                ],
             )
+            if request.graph_id is not None and request.graph_revision is not None:
+                async with self._uow as uow:
+                    await uow.materialized_outputs.upsert(
+                        MaterializedNodeOutputs(
+                            graph_id=request.graph_id,
+                            graph_revision=request.graph_revision,
+                            node_id=node_request.id,
+                            workflow_run_id=run_id,
+                            outputs={
+                                name: run_value.value
+                                for name, run_value in port_values.items()
+                            },
+                            materialized_at=datetime.now(UTC),
+                        )
+                    )
+                    await uow.commit()
+            node_runs.append(node_run)
 
         status: Literal["succeeded", "failed"] = "failed" if failed else "succeeded"
         return RunResponse(status=status, node_runs=node_runs)
+
+    async def get_graph_materializations(
+        self,
+        *,
+        graph_id: UUID,
+        graph_revision: int,
+    ) -> GraphMaterializationsResponse:
+        if graph_revision < 1:
+            raise WorkbenchGraphError("Graph revision must be positive")
+        await self._saved_graph_for_context(graph_id, graph_revision)
+        async with self._uow as uow:
+            materializations = await uow.materialized_outputs.list_for_graph(
+                graph_id,
+                graph_revision,
+            )
+
+        node_runs: list[RunNodeResponse] = []
+        for materialization in materializations:
+            accessible_outputs: list[RunPortOutputResponse] = []
+            for port_name, value in materialization.outputs.items():
+                if await self._run_value_is_accessible(value):
+                    accessible_outputs.append(
+                        await self._port_output_response(
+                            port_name,
+                            _RunValue(value=value),
+                        )
+                    )
+            if materialization.outputs and not accessible_outputs:
+                continue
+            node_runs.append(
+                RunNodeResponse(
+                    node_id=materialization.node_id,
+                    status="succeeded",
+                    error=None,
+                    outputs=accessible_outputs,
+                )
+            )
+        return GraphMaterializationsResponse(
+            graph_id=graph_id,
+            graph_revision=graph_revision,
+            node_runs=node_runs,
+        )
+
+    async def _saved_graph_for_context(
+        self,
+        graph_id: UUID,
+        graph_revision: int,
+    ) -> SavedGraph:
+        if self._saved_graphs is None:
+            raise WorkbenchGraphError(
+                "Saved graph context is not configured for this workbench"
+            )
+        graph = await self._saved_graphs.get(graph_id)
+        graph.ensure_revision(graph_revision)
+        return graph
+
+    async def _validate_materialized_pins(
+        self,
+        graph_id: UUID,
+        graph_revision: int,
+        submitted_pins: dict[
+            tuple[str, str],
+            ArtifactRef | ArtifactRefSequence,
+        ],
+    ) -> None:
+        if not submitted_pins:
+            return
+        async with self._uow as uow:
+            materializations = await uow.materialized_outputs.list_for_graph(
+                graph_id,
+                graph_revision,
+            )
+        by_node = {
+            materialization.node_id: materialization
+            for materialization in materializations
+        }
+
+        for (from_node, from_port), submitted_value in submitted_pins.items():
+            materialization = by_node.get(from_node)
+            materialized_value = (
+                materialization.outputs.get(from_port)
+                if materialization is not None
+                else None
+            )
+            if materialized_value is None or not await self._run_value_is_accessible(
+                materialized_value
+            ):
+                raise WorkbenchGraphError(
+                    f"Cannot reuse upstream output {from_node!r}.{from_port!r}: "
+                    "there is no accessible materialized artifact for this graph "
+                    "revision. Run the upstream node too or choose "
+                    "'Run with dependencies'."
+                )
+            if submitted_value != materialized_value:
+                raise WorkbenchGraphError(
+                    f"Pinned output {from_node!r}.{from_port!r} is not the latest "
+                    f"materialized output for graph {graph_id} revision "
+                    f"{graph_revision}. Refresh the graph materializations and "
+                    "try again, or choose 'Run with dependencies'."
+                )
+
+    async def _run_value_is_accessible(
+        self,
+        value: ArtifactRef | ArtifactRefSequence,
+    ) -> bool:
+        refs = value.item_refs if isinstance(value, ArtifactRefSequence) else [value]
+        for ref in refs:
+            artifact = await self.get_artifact(ref.artifact_id)
+            if artifact is None or artifact.ref() != ref:
+                return False
+            if artifact.inline_payload is not None:
+                continue
+            if artifact.bucket is None or artifact.object_key is None:
+                return False
+            if not self._storage.exists(artifact.bucket, artifact.object_key):
+                return False
+        return True
 
     async def _resolve_pinned_outputs(
         self,
@@ -410,6 +582,10 @@ class WorkbenchService:
                         f"does not match the repository ref for artifact "
                         f"{ref.artifact_id}"
                     )
+            if not await self._run_value_is_accessible(value):
+                raise WorkbenchGraphError(
+                    f"Pinned output {from_node!r}.{from_port!r} is not accessible"
+                )
             outputs.setdefault(from_node, {})[from_port] = _RunValue(value=value)
         return outputs
 
@@ -456,6 +632,25 @@ class WorkbenchService:
                         edge,
                         run_id,
                     )
+                if edge.conversion is not None:
+                    conversion_key = ArtifactConversionKey(
+                        id=edge.conversion.id,
+                        version=edge.conversion.version,
+                    )
+                    conversion = self._artifact_conversions.get(conversion_key)
+                    if conversion is None:
+                        raise WorkbenchGraphError(
+                            f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
+                            f"{edge.to_node!r}.{edge.to_port!r} uses undeclared "
+                            f"conversion {conversion_key.id!r}@"
+                            f"{conversion_key.version}"
+                        )
+                    run_value = await self._convert_run_value(
+                        run_value,
+                        conversion,
+                        edge,
+                        run_id,
+                    )
                 port_values.append(run_value.value)
 
             if spec.variadic:
@@ -468,6 +663,115 @@ class WorkbenchService:
                     f"connection, got {len(port_values)}"
                 )
         return values
+
+    async def _convert_run_value(
+        self,
+        run_value: _RunValue,
+        conversion: ArtifactConversion[Any, Any],
+        edge: RunEdgeRequest,
+        run_id: UUID,
+    ) -> _RunValue:
+        if isinstance(run_value.value, ArtifactRef):
+            return _RunValue(
+                value=await self._convert_ref(
+                    run_value.value,
+                    conversion,
+                    edge,
+                    run_id,
+                    item_index=None,
+                )
+            )
+
+        source_sequence = run_value.value
+        converted_refs = [
+            await self._convert_ref(
+                ref,
+                conversion,
+                edge,
+                run_id,
+                item_index=index,
+            )
+            for index, ref in enumerate(source_sequence.item_refs)
+        ]
+        sequence_metadata = dict(source_sequence.metadata)
+        sequence_metadata.update(
+            {
+                "source_sequence_id": str(source_sequence.sequence_id),
+                "conversion_id": conversion.key.id,
+                "conversion_version": conversion.key.version,
+                "conversion_title": conversion.title,
+            }
+        )
+        return _RunValue(
+            value=ArtifactRefSequence(
+                artifact_type=conversion.target.id,
+                schema_version=conversion.target.schema_version,
+                item_refs=converted_refs,
+                ordered=source_sequence.ordered,
+                index_key=source_sequence.index_key,
+                metadata=sequence_metadata,
+            )
+        )
+
+    async def _convert_ref(
+        self,
+        ref: ArtifactRef,
+        conversion: ArtifactConversion[Any, Any],
+        edge: RunEdgeRequest,
+        run_id: UUID,
+        *,
+        item_index: int | None,
+    ) -> ArtifactRef:
+        try:
+            source_value = await self._resolvers.resolve(
+                ref=ref,
+                target=conversion.source_type,
+            )
+            converted_value = conversion.convert(source_value)
+        except Exception as exc:
+            message = (
+                f"Failed conversion {conversion.key.id!r}@"
+                f"{conversion.key.version} for artifact {ref.artifact_id} on edge "
+                f"{edge.from_node!r}.{edge.from_port!r} -> "
+                f"{edge.to_node!r}.{edge.to_port!r}"
+            )
+            raise WorkbenchGraphError(message) from exc
+
+        writer = self._writers.writer_for(conversion.target)
+        return await writer.write(
+            converted_value,
+            ArtifactWriteContext(
+                node_context=NodeExecutionContext(
+                    workflow_run_id=run_id,
+                    node_run_id=uuid4(),
+                    node_id=edge.from_node,
+                ),
+                provenance=MaterializationProvenance(
+                    refs_by_input={edge.from_port: (ref,)}
+                ),
+                item_index=item_index,
+                metadata={
+                    "source_artifact_id": str(ref.artifact_id),
+                    "source_artifact_type": ref.artifact_type,
+                    "source_schema_version": ref.schema_version,
+                    "source_node_id": edge.from_node,
+                    "source_port": edge.from_port,
+                    "conversion_id": conversion.key.id,
+                    "conversion_version": conversion.key.version,
+                    "conversion_title": conversion.title,
+                    "conversion_source_artifact_type": conversion.source.id,
+                    "conversion_source_schema_version": (
+                        conversion.source.schema_version
+                    ),
+                    "conversion_target_artifact_type": conversion.target.id,
+                    "conversion_target_schema_version": (
+                        conversion.target.schema_version
+                    ),
+                    "target_node_id": edge.to_node,
+                    "target_port": edge.to_port,
+                },
+            ),
+        )
 
     async def _project_run_value(
         self,
@@ -680,6 +984,73 @@ class WorkbenchService:
             stream.close()
 
 
+def _validate_saved_graph_fragment(
+    graph: SavedGraph,
+    nodes: list[RunNodeRequest],
+    edges: list[RunEdgeRequest],
+) -> None:
+    saved_nodes = {node.id: node for node in graph.document.nodes}
+    for node in nodes:
+        saved_node = saved_nodes.get(node.id)
+        if saved_node is None:
+            raise WorkbenchGraphError(
+                f"Run node {node.id!r} does not belong to saved graph {graph.id} "
+                f"revision {graph.revision}"
+            )
+        if (
+            node.operator_id != saved_node.operator_id
+            or node.operator_version != saved_node.operator_version
+            or node.config != saved_node.config_dict()
+        ):
+            raise WorkbenchGraphError(
+                f"Run node {node.id!r} does not match saved graph {graph.id} "
+                f"revision {graph.revision}"
+            )
+
+    executed_node_ids = {node.id for node in nodes}
+    saved_incoming_edges = Counter(
+        (
+            edge.from_node,
+            edge.from_port,
+            edge.to_node,
+            edge.to_port,
+            edge.collection_mode,
+            tuple(edge.projection.path) if edge.projection is not None else None,
+            (
+                (edge.conversion.id, edge.conversion.version)
+                if edge.conversion is not None
+                else None
+            ),
+        )
+        for edge in graph.document.edges
+        if edge.to_node in executed_node_ids
+    )
+    submitted_edges = Counter(
+        (
+            edge.from_node,
+            edge.from_port,
+            edge.to_node,
+            edge.to_port,
+            edge.collection_mode,
+            tuple(edge.projection.path) if edge.projection is not None else None,
+            (
+                (edge.conversion.id, edge.conversion.version)
+                if edge.conversion is not None
+                else None
+            ),
+        )
+        for edge in edges
+    )
+    if submitted_edges != saved_incoming_edges:
+        missing_count = sum((saved_incoming_edges - submitted_edges).values())
+        unexpected_count = sum((submitted_edges - saved_incoming_edges).values())
+        raise WorkbenchGraphError(
+            "Run edges do not match the saved incoming edges for the executed "
+            f"nodes in graph {graph.id} revision {graph.revision}: "
+            f"{missing_count} missing and {unexpected_count} unexpected or duplicated"
+        )
+
+
 def _topological_order(
     nodes: list[RunNodeRequest],
     edges: list[RunEdgeRequest],
@@ -765,6 +1136,10 @@ def _validate_edges(
     invocations_by_id: dict[str, NodeInvocation],
     edges: list[RunEdgeRequest],
     projectable_artifact_types: dict[ArtifactTypeKey, ArtifactTypeSpec],
+    artifact_conversions: dict[
+        ArtifactConversionKey,
+        ArtifactConversion[Any, Any],
+    ],
     pinned_outputs: dict[
         tuple[str, str],
         ArtifactRef | ArtifactRefSequence,
@@ -831,38 +1206,75 @@ def _validate_edges(
                 f"connection, got {incoming_counts[incoming_key]}"
             )
 
-        if edge.projection is None:
-            if source_key != target_port.accepts:
+        effective_source_key = source_key
+        if edge.projection is not None:
+            requested_path = tuple(edge.projection.path)
+            projection = _field_projection_for(
+                projectable_artifact_types,
+                effective_source_key,
+                requested_path,
+            )
+            if projection is None:
                 raise WorkbenchGraphError(
                     f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
-                    f"{edge.to_node!r}.{edge.to_port!r} cannot connect "
-                    f"{source_key.id}@{source_key.schema_version} to "
-                    f"{target_port.accepts.id}@{target_port.accepts.schema_version} "
-                    f"without a declared field projection"
+                    f"{edge.to_node!r}.{edge.to_port!r} requests undeclared "
+                    f"projection {'.'.join(requested_path)!r} on "
+                    f"{effective_source_key.id}@"
+                    f"{effective_source_key.schema_version}"
                 )
-            continue
+            effective_source_key = projection.target
 
-        requested_path = tuple(edge.projection.path)
-        projection = _field_projection_for(
-            projectable_artifact_types,
-            source_key,
-            requested_path,
-        )
-        if projection is None:
+        conversion: ArtifactConversion[Any, Any] | None = None
+        if edge.conversion is not None:
+            conversion_key = ArtifactConversionKey(
+                id=edge.conversion.id,
+                version=edge.conversion.version,
+            )
+            conversion = artifact_conversions.get(conversion_key)
+            if conversion is None:
+                raise WorkbenchGraphError(
+                    f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
+                    f"{edge.to_node!r}.{edge.to_port!r} requests undeclared "
+                    f"conversion {conversion_key.id!r}@{conversion_key.version}"
+                )
+            if conversion.source != effective_source_key:
+                raise WorkbenchGraphError(
+                    f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
+                    f"{edge.to_node!r}.{edge.to_port!r} applies conversion "
+                    f"{conversion.key.id!r}@{conversion.key.version}, which expects "
+                    f"{conversion.source.id}@{conversion.source.schema_version}, "
+                    f"to {effective_source_key.id}@"
+                    f"{effective_source_key.schema_version}"
+                )
+            effective_source_key = conversion.target
+
+        if effective_source_key == target_port.accepts:
+            continue
+        if conversion is not None:
             raise WorkbenchGraphError(
                 f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
-                f"{edge.to_node!r}.{edge.to_port!r} requests undeclared "
-                f"projection {'.'.join(requested_path)!r} on "
-                f"{source_key.id}@{source_key.schema_version}"
+                f"{edge.to_node!r}.{edge.to_port!r} converts with "
+                f"{conversion.key.id!r}@{conversion.key.version} as "
+                f"{effective_source_key.id}@{effective_source_key.schema_version}, "
+                f"but target expects {target_port.accepts.id}@"
+                f"{target_port.accepts.schema_version}"
             )
-        if projection.target != target_port.accepts:
+        if edge.projection is not None:
             raise WorkbenchGraphError(
                 f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
                 f"{edge.to_node!r}.{edge.to_port!r} projects "
-                f"{'.'.join(requested_path)!r} as {projection.target.id}@"
-                f"{projection.target.schema_version}, but target expects "
-                f"{target_port.accepts.id}@{target_port.accepts.schema_version}"
+                f"{'.'.join(edge.projection.path)!r} as "
+                f"{effective_source_key.id}@{effective_source_key.schema_version}, "
+                f"but target expects {target_port.accepts.id}@"
+                f"{target_port.accepts.schema_version}"
             )
+        raise WorkbenchGraphError(
+            f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
+            f"{edge.to_node!r}.{edge.to_port!r} cannot connect "
+            f"{effective_source_key.id}@{effective_source_key.schema_version} to "
+            f"{target_port.accepts.id}@{target_port.accepts.schema_version} "
+            "without a declared field projection or conversion"
+        )
 
     for node_id, node in nodes_by_id.items():
         for port_name, port in node.input_contract.ports.items():

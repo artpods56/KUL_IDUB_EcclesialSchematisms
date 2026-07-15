@@ -117,6 +117,23 @@ class InlineModelOutputWriter[T: BaseModel](ArtifactOutputWriter):
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
+        provenance: dict[str, object] = {
+            input_name: [
+                {
+                    "artifact_id": str(ref.artifact_id),
+                    "artifact_type": ref.artifact_type,
+                    "schema_version": ref.schema_version,
+                }
+                for ref in refs
+            ]
+            for input_name, refs in context.provenance.refs_by_input.items()
+        }
+        metadata: JsonObject = {
+            "producer_node_id": context.node_context.node_id,
+        }
+        if provenance:
+            metadata["provenance"] = provenance
+        metadata.update(context.metadata)
         artifact = ArtifactObject(
             artifact_type=self.artifact_type.id,
             schema_version=self.artifact_type.schema_version,
@@ -125,9 +142,7 @@ class InlineModelOutputWriter[T: BaseModel](ArtifactOutputWriter):
             inline_payload=payload_json,
             byte_size=len(payload_bytes),
             sha256=sha256(payload_bytes).hexdigest(),
-            metadata={
-                "producer_node_id": context.node_context.node_id,
-            },
+            metadata=metadata,
         )
         async with self._uow as uow:
             await uow.artifacts.add(artifact)
@@ -145,10 +160,12 @@ class TableCsvBundleOutputWriter(ArtifactOutputWriter):
         storage: FileStoragePort,
         uow: UnitOfWorkPort,
         bucket: str,
+        storage_backend: str = "local",
     ) -> None:
         self._storage = storage
         self._uow = uow
         self._bucket = bucket
+        self._storage_backend = storage_backend
 
     @override
     async def write(
@@ -202,7 +219,7 @@ class TableCsvBundleOutputWriter(ArtifactOutputWriter):
             artifact_type=self.artifact_type.id,
             schema_version=self.artifact_type.schema_version,
             content_type="application/zip",
-            storage_backend="local",
+            storage_backend=self._storage_backend,
             bucket=stored_file.bucket,
             object_key=stored_file.path,
             byte_size=stored_file.byte_size,

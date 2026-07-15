@@ -1,6 +1,7 @@
 import type { Edge } from "@xyflow/react";
 
 import type {
+  ArtifactConversionInput,
   NodeSpec,
   NodeConfigInput,
   Port,
@@ -11,10 +12,16 @@ import type {
 } from "@/lib/api";
 
 export type WorkflowEdgeProjection = RunEdgeProjectionInput;
+export type WorkflowEdgeConversion = ArtifactConversionInput;
 
-export interface WorkflowEdgeProjectionOption {
-  title: string;
-  path: readonly string[];
+export interface WorkflowEdgeRoute {
+  projection?: WorkflowEdgeProjection;
+  conversion?: WorkflowEdgeConversion;
+}
+
+export interface WorkflowEdgeRouteOption extends WorkflowEdgeRoute {
+  projectionTitle?: string;
+  conversionTitle?: string;
 }
 
 export interface WorkflowEdgeRouteOffset {
@@ -24,18 +31,18 @@ export interface WorkflowEdgeRouteOffset {
 
 export interface WorkflowEdgeUpdate {
   collectionMode?: RunEdgeCollectionMode;
-  projection?: WorkflowEdgeProjection;
-  clearProjection?: boolean;
+  route?: WorkflowEdgeRoute;
 }
 
 export interface WorkflowEdgeData extends Record<string, unknown> {
   collectionMode: RunEdgeCollectionMode;
   projection?: WorkflowEdgeProjection;
+  conversion?: WorkflowEdgeConversion;
   /** Visual routing adjustment from the edge's natural midpoint. */
   routeOffset?: WorkflowEdgeRouteOffset;
   sourcePortName?: string;
-  projectionOptions?: readonly WorkflowEdgeProjectionOption[];
-  allowWholeArtifact?: boolean;
+  conversionTitle?: string;
+  routeOptions?: readonly WorkflowEdgeRouteOption[];
   allowedCollectionModes?: readonly RunEdgeCollectionMode[];
   onUpdate?: (edgeId: string, update: WorkflowEdgeUpdate) => void;
   onRouteOffsetChange?: (

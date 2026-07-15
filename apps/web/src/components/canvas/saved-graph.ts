@@ -4,11 +4,17 @@ import {
   type CreateSavedGraphRequest,
   type NodeRegistry,
   type NodeSpec,
+  type RunNodeResult,
   type SavedGraph,
   type SavedGraphEdge,
 } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
-import { decodeHandleId, encodeHandleId } from "./handles";
+import {
+  connectionRouteMatchesSelection,
+  connectionRoutesFor,
+  decodeHandleId,
+  encodeHandleId,
+} from "./handles";
 import { ARTIFACT_TYPE_COLOR } from "./nodes.css";
 import {
   WORKFLOW_EDGE_TYPE,
@@ -27,6 +33,29 @@ export type SavedGraphWorkflowNode = Node<
 export interface HydratedSavedGraph {
   nodes: SavedGraphWorkflowNode[];
   edges: WorkflowEdge[];
+}
+
+export function withMaterializedNodeRuns(
+  nodes: readonly SavedGraphWorkflowNode[],
+  nodeRuns: readonly RunNodeResult[],
+): SavedGraphWorkflowNode[] {
+  const runsByNodeId = new Map(
+    nodeRuns
+      .filter((run) => run.status === "succeeded")
+      .map((run) => [run.node_id, run]),
+  );
+
+  return nodes.map((node) => {
+    const run = runsByNodeId.get(node.id) ?? null;
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        run,
+        execution: run ? { status: "succeeded" } : { status: "idle" },
+      },
+    };
+  });
 }
 
 export class SavedGraphHydrationError extends Error {
@@ -87,6 +116,12 @@ export function savedGraphDraft(
         collection_mode: edge.data?.collectionMode ?? "direct",
         projection: edge.data?.projection
           ? { path: [...edge.data.projection.path] }
+          : null,
+        conversion: edge.data?.conversion
+          ? {
+              id: edge.data.conversion.id,
+              version: edge.data.conversion.version,
+            }
           : null,
         route_offset: edge.data?.routeOffset
           ? {
@@ -155,7 +190,7 @@ function requireEdgeEndpoint(
   return { sourceNode, targetNode };
 }
 
-function projectionIsValid(
+function connectionRouteIsValid(
   edge: SavedGraphEdge,
   sourceNode: SavedGraphWorkflowNode,
   targetNode: SavedGraphWorkflowNode,
@@ -169,36 +204,26 @@ function projectionIsValid(
   );
   if (!sourcePort || !targetPort) return false;
 
-  if (!edge.projection) {
-    return (
-      sourcePort.artifact_type.id === targetPort.artifact_type.id &&
-      sourcePort.artifact_type.schema_version ===
-        targetPort.artifact_type.schema_version
-    );
-  }
-
-  const sourceArtifact = registry.artifact_types.find(
-    (artifact) =>
-      artifact.key.id === sourcePort.artifact_type.id &&
-      artifact.key.schema_version === sourcePort.artifact_type.schema_version,
-  );
-  return Boolean(
-    sourceArtifact?.field_projections.some(
-      (projection) =>
-        projection.path.length === edge.projection?.path.length &&
-        projection.path.every(
-          (segment, index) => segment === edge.projection?.path[index],
-        ) &&
-        projection.target_artifact_type.id === targetPort.artifact_type.id &&
-        projection.target_artifact_type.schema_version ===
-          targetPort.artifact_type.schema_version,
-    ),
+  const connection = {
+    sourceHandle: encodeHandleId(portMetaForPort(sourcePort)),
+    targetHandle: encodeHandleId(portMetaForPort(targetPort)),
+  };
+  return connectionRoutesFor(
+    connection,
+    registry.artifact_types,
+    registry.artifact_conversions,
+  ).some((route) =>
+    connectionRouteMatchesSelection(route, {
+      projection: edge.projection ?? undefined,
+      conversion: edge.conversion ?? undefined,
+    }),
   );
 }
 
 export function hydrateSavedGraph(
   savedGraph: SavedGraph,
   registry: NodeRegistry,
+  nodeRuns: readonly RunNodeResult[] = [],
 ): HydratedSavedGraph {
   const specs = new Map(
     registry.nodes.map((spec) => [
@@ -264,9 +289,9 @@ export function hydrateSavedGraph(
         `Cannot open “${savedGraph.name}”: edge ${savedEdge.id} references missing input ${targetNode.data.spec.operator_id}.${savedEdge.to_port}`,
       );
     }
-    if (!projectionIsValid(savedEdge, sourceNode, targetNode, registry)) {
+    if (!connectionRouteIsValid(savedEdge, sourceNode, targetNode, registry)) {
       throw new SavedGraphHydrationError(
-        `Cannot open “${savedGraph.name}”: edge ${savedEdge.id} has an incompatible artifact projection`,
+        `Cannot open “${savedGraph.name}”: edge ${savedEdge.id} has an incompatible artifact route`,
       );
     }
 
@@ -288,6 +313,14 @@ export function hydrateSavedGraph(
         ...(savedEdge.projection
           ? { projection: { path: [...savedEdge.projection.path] } }
           : {}),
+        ...(savedEdge.conversion
+          ? {
+              conversion: {
+                id: savedEdge.conversion.id,
+                version: savedEdge.conversion.version,
+              },
+            }
+          : {}),
         ...(savedEdge.route_offset
           ? {
               routeOffset: {
@@ -304,5 +337,5 @@ export function hydrateSavedGraph(
     } satisfies WorkflowEdge;
   });
 
-  return { nodes, edges };
+  return { nodes: withMaterializedNodeRuns(nodes, nodeRuns), edges };
 }

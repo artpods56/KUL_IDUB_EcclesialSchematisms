@@ -9,6 +9,7 @@ from notarius_core.domain.errors import ConcurrentWriteError
 from notarius_core.domain.saved_graphs import (
     GraphPoint,
     SavedGraph,
+    SavedGraphConversion,
     SavedGraphDocument,
     SavedGraphEdge,
     SavedGraphNode,
@@ -59,6 +60,10 @@ def _document(label: str = "draft") -> SavedGraphDocument:
                 to_port="value",
                 collection_mode="map",
                 projection=SavedGraphProjection(path=("payload", "text")),
+                conversion=SavedGraphConversion(
+                    id="example.text.normalize",
+                    version=2,
+                ),
                 route_offset=GraphPoint(x=4.0, y=-8.0),
             ),
         ),

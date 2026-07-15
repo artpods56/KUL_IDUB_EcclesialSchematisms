@@ -8,7 +8,11 @@ from pydantic import BaseModel
 from notarius_core.application.saved_graphs import SavedGraphService
 
 from notarius_persistence.database import create_database
-from notarius_persistence.unit_of_work import SqlAlchemySavedGraphUnitOfWork
+from notarius_persistence.unit_of_work import (
+    SqlAlchemySavedGraphUnitOfWork,
+    SqlAlchemyUnitOfWork,
+)
+from notarius_storage import create_file_storage
 
 from notarius_api.builtins import builtin_plugins
 from notarius_api.plugin_discovery import build_plugin_registry
@@ -33,13 +37,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         registry = build_plugin_registry(builtin_plugins())
+        s3_access_key_id: str | None = None
+        if resolved_settings.s3_access_key_id is not None:
+            configured_access_key_id = (
+                resolved_settings.s3_access_key_id.get_secret_value().strip()
+            )
+            if configured_access_key_id != "":
+                s3_access_key_id = configured_access_key_id
+        s3_secret_access_key: str | None = None
+        if resolved_settings.s3_secret_access_key is not None:
+            configured_secret_access_key = (
+                resolved_settings.s3_secret_access_key.get_secret_value()
+            )
+            if configured_secret_access_key != "":
+                s3_secret_access_key = configured_secret_access_key
+        s3_endpoint_url = resolved_settings.s3_endpoint_url
+        if s3_endpoint_url == "":
+            s3_endpoint_url = None
+        storage = create_file_storage(
+            backend=resolved_settings.storage_backend,
+            local_root=resolved_settings.workspace / "objects",
+            s3_endpoint_url=s3_endpoint_url,
+            s3_region=resolved_settings.s3_region,
+            s3_access_key_id=s3_access_key_id,
+            s3_secret_access_key=s3_secret_access_key,
+            s3_force_path_style=resolved_settings.s3_force_path_style,
+        )
+        saved_graphs = SavedGraphService(
+            lambda: SqlAlchemySavedGraphUnitOfWork(database.sessions)
+        )
         app.state.workbench = WorkbenchService(
             plugin_registry=registry,
             workspace=resolved_settings.workspace,
+            uow=SqlAlchemyUnitOfWork(database.sessions),
+            storage=storage,
+            storage_backend=resolved_settings.storage_backend,
+            bucket=resolved_settings.storage_bucket,
+            saved_graphs=saved_graphs,
         )
-        app.state.saved_graphs = SavedGraphService(
-            lambda: SqlAlchemySavedGraphUnitOfWork(database.sessions)
-        )
+        app.state.saved_graphs = saved_graphs
         try:
             yield
         finally:

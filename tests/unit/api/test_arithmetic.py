@@ -1,4 +1,5 @@
 import json
+from typing import cast
 from uuid import uuid4
 
 import pytest
@@ -205,6 +206,310 @@ def test_registry_declares_generic_integer_and_arithmetic_result_projections(
         ("Add & subtract", "builtin.arithmetic"),
         ("Multiply", "builtin.arithmetic"),
     ]
+
+
+def test_integer_output_converts_to_text_before_text_node_execution(
+    builtin_client: TestClient,
+) -> None:
+    response = builtin_client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "number",
+                    "operator_id": "arithmetic.number",
+                    "operator_version": 1,
+                    "config": {"value": 9},
+                },
+                {
+                    "id": "replace",
+                    "operator_id": "text.replace",
+                    "operator_version": 1,
+                    "config": {"search": "9", "replacement": "nine"},
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "number",
+                    "from_port": "value",
+                    "to_node": "replace",
+                    "to_port": "text",
+                    "conversion": {
+                        "id": "builtin.scalar.integer_to_text",
+                        "version": 1,
+                    },
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    result = RunResponse.model_validate(response.json())
+    replaced = _run_output(result, "replace", "text")
+    assert replaced.kind == "single"
+    assert replaced.artifacts[0].artifact_type == "scalar.text"
+    replaced_content = builtin_client.get(
+        f"/v1/artifacts/{replaced.artifacts[0].artifact_id}/content"
+    )
+    assert replaced_content.status_code == 200
+    assert replaced_content.json() == {"value": "nine"}
+
+    provenance = cast(
+        dict[str, list[dict[str, object]]],
+        replaced.artifacts[0].metadata["provenance"],
+    )
+    assert isinstance(provenance, dict)
+    converted_refs = provenance["text"]
+    assert isinstance(converted_refs, list)
+    converted_ref = converted_refs[0]
+    assert isinstance(converted_ref, dict)
+    converted_content = builtin_client.get(
+        f"/v1/artifacts/{converted_ref['artifact_id']}/content"
+    )
+    assert converted_content.status_code == 200
+    assert converted_content.json() == {"value": "9"}
+
+
+def test_projection_runs_before_declared_integer_to_text_conversion(
+    builtin_client: TestClient,
+) -> None:
+    response = builtin_client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "nine",
+                    "operator_id": "arithmetic.number",
+                    "operator_version": 1,
+                    "config": {"value": 9},
+                },
+                {
+                    "id": "four",
+                    "operator_id": "arithmetic.number",
+                    "operator_version": 1,
+                    "config": {"value": 4},
+                },
+                {
+                    "id": "add-subtract",
+                    "operator_id": "arithmetic.add_subtract",
+                    "operator_version": 1,
+                    "config": {},
+                },
+                {
+                    "id": "replace",
+                    "operator_id": "text.replace",
+                    "operator_version": 1,
+                    "config": {"search": "13", "replacement": "thirteen"},
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "nine",
+                    "from_port": "value",
+                    "to_node": "add-subtract",
+                    "to_port": "left",
+                },
+                {
+                    "from_node": "four",
+                    "from_port": "value",
+                    "to_node": "add-subtract",
+                    "to_port": "right",
+                },
+                {
+                    "from_node": "add-subtract",
+                    "from_port": "result",
+                    "to_node": "replace",
+                    "to_port": "text",
+                    "projection": {"path": ["addition"]},
+                    "conversion": {
+                        "id": "builtin.scalar.integer_to_text",
+                        "version": 1,
+                    },
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    result = RunResponse.model_validate(response.json())
+    replaced = _run_output(result, "replace", "text")
+    replaced_content = builtin_client.get(
+        f"/v1/artifacts/{replaced.artifacts[0].artifact_id}/content"
+    )
+    assert replaced_content.status_code == 200
+    assert replaced_content.json() == {"value": "thirteen"}
+
+
+def test_integer_sequence_conversion_preserves_order_through_mapped_text_node(
+    builtin_client: TestClient,
+) -> None:
+    response = builtin_client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "sequence",
+                    "operator_id": "arithmetic.integer_sequence",
+                    "operator_version": 1,
+                    "config": {"start": 1, "count": 3, "step": 1},
+                },
+                {
+                    "id": "replace",
+                    "operator_id": "text.replace",
+                    "operator_version": 1,
+                    "config": {"search": "2", "replacement": "two"},
+                },
+                {
+                    "id": "join",
+                    "operator_id": "text.join",
+                    "operator_version": 1,
+                    "config": {"separator": ","},
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "sequence",
+                    "from_port": "values",
+                    "to_node": "replace",
+                    "to_port": "text",
+                    "collection_mode": "map",
+                    "conversion": {
+                        "id": "builtin.scalar.integer_to_text",
+                        "version": 1,
+                    },
+                },
+                {
+                    "from_node": "replace",
+                    "from_port": "text",
+                    "to_node": "join",
+                    "to_port": "parts",
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    result = RunResponse.model_validate(response.json())
+    replaced = _run_output(result, "replace", "text")
+    assert isinstance(replaced.value, ArtifactRefSequence)
+    assert replaced.value.ordered is True
+    assert replaced.value.index_key == "order_index"
+    assert [
+        builtin_client.get(
+            f"/v1/artifacts/{artifact.artifact_id}/content"
+        ).json()["value"]
+        for artifact in replaced.artifacts
+    ] == ["1", "two", "3"]
+    joined = _run_output(result, "join", "text").artifacts[0]
+    joined_content = builtin_client.get(
+        f"/v1/artifacts/{joined.artifact_id}/content"
+    )
+    assert joined_content.status_code == 200
+    assert joined_content.json() == {"value": "1,two,3"}
+
+
+@pytest.mark.parametrize(
+    ("nodes", "edge", "error_fragment"),
+    cast(
+        list[tuple[list[dict[str, object]], dict[str, object], str]],
+        [
+            (
+                [
+                    {
+                        "id": "source",
+                        "operator_id": "arithmetic.number",
+                        "operator_version": 1,
+                        "config": {"value": "not-an-integer"},
+                    },
+                    {
+                        "id": "target",
+                        "operator_id": "text.replace",
+                        "operator_version": 1,
+                        "config": {"search": "x", "replacement": "y"},
+                    },
+                ],
+                {
+                    "from_node": "source",
+                    "from_port": "value",
+                    "to_node": "target",
+                    "to_port": "text",
+                    "conversion": {
+                        "id": "missing.integer_to_text",
+                        "version": 1,
+                    },
+                },
+                "requests undeclared conversion 'missing.integer_to_text'@1",
+            ),
+            (
+                [
+                    {
+                        "id": "source",
+                        "operator_id": "text.input",
+                        "operator_version": 1,
+                        "config": {"text": 123},
+                    },
+                    {
+                        "id": "target",
+                        "operator_id": "text.replace",
+                        "operator_version": 1,
+                        "config": {"search": "x", "replacement": "y"},
+                    },
+                ],
+                {
+                    "from_node": "source",
+                    "from_port": "text",
+                    "to_node": "target",
+                    "to_port": "text",
+                    "conversion": {
+                        "id": "builtin.scalar.integer_to_text",
+                        "version": 1,
+                    },
+                },
+                "expects scalar.integer@1, to scalar.text@1",
+            ),
+            (
+                [
+                    {
+                        "id": "source",
+                        "operator_id": "arithmetic.integer_sequence",
+                        "operator_version": 1,
+                        "config": {"start": "not-an-integer", "count": 3},
+                    },
+                    {
+                        "id": "target",
+                        "operator_id": "arithmetic.sum",
+                        "operator_version": 1,
+                        "config": {},
+                    },
+                ],
+                {
+                    "from_node": "source",
+                    "from_port": "values",
+                    "to_node": "target",
+                    "to_port": "values",
+                    "conversion": {
+                        "id": "builtin.scalar.integer_to_text",
+                        "version": 1,
+                    },
+                },
+                "as scalar.text@1, but target expects scalar.integer@1",
+            ),
+        ],
+    ),
+)
+def test_invalid_conversion_is_422_before_node_execution(
+    builtin_client: TestClient,
+    nodes: list[dict[str, object]],
+    edge: dict[str, object],
+    error_fragment: str,
+) -> None:
+    response = builtin_client.post(
+        "/v1/runs",
+        json={"nodes": nodes, "edges": [edge]},
+    )
+
+    assert response.status_code == 422
+    assert error_fragment in response.json()["detail"]
 
 
 def test_arithmetic_graph_projects_both_result_fields_into_multiply(
@@ -982,5 +1287,27 @@ def test_edge_collection_mode_is_narrow() -> None:
                 "to_node": "target",
                 "to_port": "value",
                 "collection_mode": "broadcast",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "conversion",
+    [
+        {"id": "   ", "version": 1},
+        {"id": "builtin.scalar.integer_to_text", "version": 0},
+    ],
+)
+def test_edge_conversion_identity_is_narrow(
+    conversion: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        RunEdgeRequest.model_validate(
+            {
+                "from_node": "source",
+                "from_port": "value",
+                "to_node": "target",
+                "to_port": "text",
+                "conversion": conversion,
             }
         )

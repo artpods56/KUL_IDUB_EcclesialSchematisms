@@ -68,6 +68,23 @@ def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
         ("table.page", 1),
         ("tabular.csv_bundle", 1),
     }
+    assert [conversion.model_dump() for conversion in registry.artifact_conversions] == [
+        {
+            "key": {
+                "id": "builtin.scalar.integer_to_text",
+                "version": 1,
+            },
+            "source_artifact_type": {
+                "id": "scalar.integer",
+                "schema_version": 1,
+            },
+            "target_artifact_type": {
+                "id": "scalar.text",
+                "schema_version": 1,
+            },
+            "title": "As text",
+        }
+    ]
 
     source = nodes["source.local_upload.images"]
     assert source.plugin_slug == "builtin.sources"
