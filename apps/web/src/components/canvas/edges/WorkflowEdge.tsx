@@ -199,12 +199,18 @@ function projectionsEqual(
   );
 }
 
-function conversionsEqual(
-  left: WorkflowEdgeRoute["conversion"],
-  right: WorkflowEdgeRoute["conversion"],
+function conversionPathsEqual(
+  left: WorkflowEdgeRoute["conversionPath"],
+  right: WorkflowEdgeRoute["conversionPath"],
 ): boolean {
-  if (!left || !right) return left === right;
-  return left.id === right.id && left.version === right.version;
+  return (
+    left.length === right.length &&
+    left.every(
+      (conversion, index) =>
+        conversion.id === right[index]?.id &&
+        conversion.version === right[index]?.version,
+    )
+  );
 }
 
 function routeSelection(option: WorkflowEdgeRouteOption): WorkflowEdgeRoute {
@@ -212,9 +218,10 @@ function routeSelection(option: WorkflowEdgeRouteOption): WorkflowEdgeRoute {
     projection: option.projection
       ? { path: [...option.projection.path] }
       : undefined,
-    conversion: option.conversion
-      ? { id: option.conversion.id, version: option.conversion.version }
-      : undefined,
+    conversionPath: option.conversionPath.map((conversion) => ({
+      id: conversion.id,
+      version: conversion.version,
+    })),
   };
 }
 
@@ -392,14 +399,14 @@ export default function WorkflowEdgeControl({
   const sourcePortName = edgeData.sourcePortName ?? "output";
   const activeRoute: WorkflowEdgeRoute = {
     projection: edgeData.projection,
-    conversion: edgeData.conversion,
+    conversionPath: edgeData.conversionPath ?? [],
   };
   const routeOptions = edgeData.routeOptions?.length
     ? edgeData.routeOptions
     : [
         {
           ...activeRoute,
-          conversionTitle: edgeData.conversionTitle,
+          conversionTitles: edgeData.conversionTitles ?? [],
         },
       ];
   const valueOptions: Array<{
@@ -434,24 +441,34 @@ export default function WorkflowEdgeControl({
     if (!projectionsEqual(route.projection, activeRoute.projection)) continue;
     if (
       conversionOptions.some((option) =>
-        conversionsEqual(option.route.conversion, route.conversion),
+        conversionPathsEqual(
+          option.route.conversionPath,
+          route.conversionPath,
+        ),
       )
     ) {
       continue;
     }
     conversionOptions.push({
-      title: route.conversion
-        ? (route.conversionTitle ?? route.conversion.id)
+      title: route.conversionPath.length
+        ? route.conversionTitles.join(" → ")
         : "No conversion",
-      description: route.conversion
-        ? `${route.conversion.id}@${route.conversion.version}`
+      description: route.conversionPath.length
+        ? route.conversionPath
+            .map((conversion) => `${conversion.id}@${conversion.version}`)
+            .join(" → ")
         : "Keep the selected artifact contract.",
       route,
     });
   }
   const allowedModes = edgeData.allowedCollectionModes ?? [edgeData.collectionMode];
-  const conversionLabel = edgeData.conversion
-    ? ` → ${edgeData.conversionTitle ?? edgeData.conversion.id}`
+  const conversionLabel = activeRoute.conversionPath.length
+    ? ` → ${activeRoute.conversionPath
+        .map(
+          (conversion, index) =>
+            edgeData.conversionTitles?.[index] ?? conversion.id,
+        )
+        .join(" → ")}`
     : "";
   const label = `${projectionLabel(sourcePortName, edgeData.projection)}${conversionLabel}${
     edgeData.collectionMode === "map" ? " · each" : ""
@@ -641,15 +658,20 @@ export default function WorkflowEdgeControl({
                         ? valueOptions.map((option) => {
                             const route =
                               option.routes.find((candidate) =>
-                                conversionsEqual(
-                                  candidate.conversion,
-                                  activeRoute.conversion,
+                                conversionPathsEqual(
+                                  candidate.conversionPath,
+                                  activeRoute.conversionPath,
                                 ),
                               ) ??
                               option.routes.find(
-                                (candidate) => !candidate.conversion,
+                                (candidate) =>
+                                  candidate.conversionPath.length === 0,
                               ) ??
-                              option.routes[0];
+                              [...option.routes].sort(
+                                (left, right) =>
+                                  left.conversionPath.length -
+                                  right.conversionPath.length,
+                              )[0];
                             if (!route) return null;
                             return (
                               <EdgeOption
@@ -670,20 +692,25 @@ export default function WorkflowEdgeControl({
                     </section>
 
                     <section {...stylex.props(s.section)}>
-                      <span {...stylex.props(s.sectionTitle)}>Conversion</span>
+                      <span {...stylex.props(s.sectionTitle)}>Conversion path</span>
                       {onUpdate
                         ? conversionOptions.map((option) => (
                             <EdgeOption
                               key={
-                                option.route.conversion
-                                  ? `${option.route.conversion.id}@${option.route.conversion.version}`
+                                option.route.conversionPath.length
+                                  ? option.route.conversionPath
+                                      .map(
+                                        (conversion) =>
+                                          `${conversion.id}@${conversion.version}`,
+                                      )
+                                      .join("|")
                                   : "none"
                               }
                               title={option.title}
                               description={option.description}
-                              active={conversionsEqual(
-                                activeRoute.conversion,
-                                option.route.conversion,
+                              active={conversionPathsEqual(
+                                activeRoute.conversionPath,
+                                option.route.conversionPath,
                               )}
                               onSelect={() =>
                                 onUpdate(id, {

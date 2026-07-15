@@ -5,23 +5,34 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
+from notarius_core.artifacts import ArtifactTypeKey
 from notarius_core.domain.errors import SavedGraphRevisionConflictError
 from notarius_core.domain.saved_graphs import (
     GraphPoint,
     SavedGraph,
+    SavedGraphArtifactTypeBinding,
     SavedGraphDocument,
+    SavedGraphConversion,
     SavedGraphEdge,
+    SavedGraphInputPlug,
     SavedGraphNode,
 )
 
 
-def _node(node_id: str) -> SavedGraphNode:
+def _node(
+    node_id: str,
+    *,
+    input_plugs: tuple[SavedGraphInputPlug, ...] = (),
+    artifact_type_bindings: tuple[SavedGraphArtifactTypeBinding, ...] = (),
+) -> SavedGraphNode:
     return SavedGraphNode(
         id=node_id,
         operator_id="example.operator",
         operator_version=1,
         config={},
         position=GraphPoint(x=10.0, y=20.0),
+        input_plugs=input_plugs,
+        artifact_type_bindings=artifact_type_bindings,
     )
 
 
@@ -60,6 +71,58 @@ def test_saved_graph_document_allows_drafts_without_executable_connections() -> 
     assert incomplete_draft.edges == ()
 
 
+def test_saved_graph_document_migrates_v1_singular_conversion_in_memory() -> None:
+    edge_payload = _edge("converted").model_dump(mode="json")
+    edge_payload.pop("conversion_path")
+    edge_payload["conversion"] = {"id": "example.convert", "version": 3}
+    document = SavedGraphDocument.model_validate(
+        {
+            "schema_version": 1,
+            "nodes": [
+                _node("source").model_dump(mode="json"),
+                _node("target").model_dump(mode="json"),
+            ],
+            "edges": [edge_payload],
+        }
+    )
+
+    assert document.schema_version == 3
+    assert document.edges[0].conversion_path == (
+        SavedGraphConversion(id="example.convert", version=3),
+    )
+    assert document.nodes[1].input_plugs == ()
+    assert document.edges[0].to_plug is None
+    assert "conversion" not in document.model_dump(mode="json")["edges"][0]
+
+
+def test_saved_graph_document_migrates_v2_bindings_to_v3() -> None:
+    document = SavedGraphDocument.model_validate(
+        {
+            "schema_version": 2,
+            "nodes": [
+                {
+                    **_node("collect").model_dump(mode="json"),
+                    "artifact_type_bindings": [
+                        {
+                            "variable": "T",
+                            "artifact_type": {
+                                "id": "example.value",
+                                "schema_version": 2,
+                            },
+                        }
+                    ],
+                }
+            ],
+            "edges": [],
+        }
+    )
+
+    assert document.schema_version == 3
+    assert document.nodes[0].artifact_type_binding_map() == {
+        "T": ArtifactTypeKey("example.value", 2)
+    }
+
+
 def test_saved_graph_node_config_is_deeply_immutable_and_serializable() -> None:
     node = SavedGraphNode(
         id="configured",
@@ -81,6 +144,64 @@ def test_saved_graph_node_config_is_deeply_immutable_and_serializable() -> None:
     assert node.model_dump(mode="json")["config"] == node.config_dict()
 
 
+def test_saved_graph_node_serializes_validated_artifact_type_bindings() -> None:
+    binding = SavedGraphArtifactTypeBinding(
+        variable="T",
+        artifact_type=ArtifactTypeKey("source.page_image", 1),
+    )
+    node = _node("collect", artifact_type_bindings=(binding,))
+
+    payload = node.model_dump(mode="json")
+
+    assert payload["artifact_type_bindings"] == [
+        {
+            "variable": "T",
+            "artifact_type": {
+                "id": "source.page_image",
+                "schema_version": 1,
+            },
+        }
+    ]
+    assert SavedGraphNode.model_validate(payload) == node
+    assert node.artifact_type_binding_map() == {
+        "T": ArtifactTypeKey("source.page_image", 1)
+    }
+
+
+def test_saved_graph_node_requires_unique_artifact_type_binding_variables() -> None:
+    first = SavedGraphArtifactTypeBinding(
+        variable="T",
+        artifact_type=ArtifactTypeKey("example.first", 1),
+    )
+    second = SavedGraphArtifactTypeBinding(
+        variable="T",
+        artifact_type=ArtifactTypeKey("example.second", 1),
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="artifact type binding variables must be unique",
+    ):
+        _node("collect", artifact_type_bindings=(first, second))
+
+
+@pytest.mark.parametrize(
+    "artifact_type",
+    [
+        ArtifactTypeKey("", 1),
+        ArtifactTypeKey("example.value", 0),
+    ],
+)
+def test_saved_graph_artifact_type_binding_rejects_invalid_concrete_key(
+    artifact_type: ArtifactTypeKey,
+) -> None:
+    with pytest.raises(ValidationError, match="bound artifact type"):
+        SavedGraphArtifactTypeBinding(
+            variable="T",
+            artifact_type=artifact_type,
+        )
+
+
 def test_saved_graph_document_requires_unique_node_ids() -> None:
     with pytest.raises(ValidationError, match="node ids must be unique"):
         SavedGraphDocument(nodes=(_node("duplicate"), _node("duplicate")))
@@ -91,6 +212,80 @@ def test_saved_graph_document_requires_unique_edge_ids() -> None:
         SavedGraphDocument(
             nodes=(_node("source"), _node("target")),
             edges=(_edge("duplicate"), _edge("duplicate")),
+        )
+
+
+def test_saved_graph_document_preserves_ordered_input_plugs() -> None:
+    plugs = (
+        SavedGraphInputPlug(id="second", port="items"),
+        SavedGraphInputPlug(id="first", port="items"),
+    )
+
+    document = SavedGraphDocument(nodes=(_node("collect", input_plugs=plugs),))
+
+    assert document.nodes[0].input_plugs == plugs
+    assert document.model_dump(mode="json")["nodes"][0]["input_plugs"] == [
+        {"id": "second", "port": "items"},
+        {"id": "first", "port": "items"},
+    ]
+
+
+def test_saved_graph_document_requires_unique_input_plug_ids_per_node() -> None:
+    duplicate_plugs = (
+        SavedGraphInputPlug(id="item", port="items"),
+        SavedGraphInputPlug(id="item", port="items"),
+    )
+
+    with pytest.raises(ValidationError, match="input plug ids must be unique"):
+        SavedGraphDocument(nodes=(_node("collect", input_plugs=duplicate_plugs),))
+
+
+def test_saved_graph_document_requires_edges_to_reference_target_input_plugs() -> None:
+    target = _node(
+        "target",
+        input_plugs=(SavedGraphInputPlug(id="item", port="items"),),
+    )
+
+    with pytest.raises(ValidationError, match="missing input plug absent"):
+        SavedGraphDocument(
+            nodes=(_node("source"), target),
+            edges=(
+                _edge("plugged").model_copy(
+                    update={"to_port": "items", "to_plug": "absent"}
+                ),
+            ),
+        )
+
+
+def test_saved_graph_document_requires_edge_port_to_match_input_plug_port() -> None:
+    target = _node(
+        "target",
+        input_plugs=(SavedGraphInputPlug(id="item", port="items"),),
+    )
+
+    with pytest.raises(ValidationError, match="belongs to port items"):
+        SavedGraphDocument(
+            nodes=(_node("source"), target),
+            edges=(_edge("plugged").model_copy(update={"to_plug": "item"}),),
+        )
+
+
+def test_saved_graph_document_allows_at_most_one_edge_per_input_plug() -> None:
+    target = _node(
+        "target",
+        input_plugs=(SavedGraphInputPlug(id="item", port="items"),),
+    )
+    plugged_edge = _edge("first").model_copy(
+        update={"to_port": "items", "to_plug": "item"}
+    )
+
+    with pytest.raises(ValidationError, match="accepts at most one edge"):
+        SavedGraphDocument(
+            nodes=(_node("source"), target),
+            edges=(
+                plugged_edge,
+                plugged_edge.model_copy(update={"id": "second"}),
+            ),
         )
 
 

@@ -1,3 +1,4 @@
+from typing import cast
 from uuid import UUID
 
 from fastapi.testclient import TestClient
@@ -20,6 +21,18 @@ def _graph_payload(name: str = "Draft graph") -> dict[str, object]:
                 "operator_version": 1,
                 "config": {},
                 "position": {"x": 300.0, "y": 20.0},
+                "input_plugs": [
+                    {"id": "primary-value", "port": "value"},
+                ],
+                "artifact_type_bindings": [
+                    {
+                        "variable": "T",
+                        "artifact_type": {
+                            "id": "source.page_image",
+                            "schema_version": 1,
+                        },
+                    }
+                ],
             },
         ],
         "edges": [
@@ -29,6 +42,7 @@ def _graph_payload(name: str = "Draft graph") -> dict[str, object]:
                 "from_port": "result",
                 "to_node": "target",
                 "to_port": "value",
+                "to_plug": "primary-value",
                 "collection_mode": "map",
                 "projection": {"path": ["payload", "text"]},
                 "conversion": {"id": "example.text.normalize", "version": 2},
@@ -51,11 +65,28 @@ def test_saved_graph_crud_round_trip(builtin_client: TestClient) -> None:
     assert created["revision"] == 1
     assert len(created["nodes"]) == 2
     assert len(created["edges"]) == 1
+    assert created["nodes"][0]["input_plugs"] == []
+    assert created["nodes"][1]["input_plugs"] == [
+        {"id": "primary-value", "port": "value"}
+    ]
+    assert created["nodes"][1]["artifact_type_bindings"] == [
+        {
+            "variable": "T",
+            "artifact_type": {
+                "id": "source.page_image",
+                "schema_version": 1,
+            },
+        }
+    ]
+    assert created["edges"][0]["to_plug"] == "primary-value"
     assert created["edges"][0]["projection"] == {"path": ["payload", "text"]}
-    assert created["edges"][0]["conversion"] == {
-        "id": "example.text.normalize",
-        "version": 2,
-    }
+    assert created["edges"][0]["conversion_path"] == [
+        {
+            "id": "example.text.normalize",
+            "version": 2,
+        }
+    ]
+    assert "conversion" not in created["edges"][0]
 
     get_response = builtin_client.get(f"/v1/graphs/{graph_id}")
     assert get_response.status_code == 200
@@ -115,6 +146,63 @@ def test_create_rejects_structurally_invalid_graph(builtin_client: TestClient) -
     assert response.status_code == 422
     assert "missing target node missing" in str(response.json())
     assert builtin_client.get("/v1/graphs").json() == {"graphs": []}
+
+
+def test_create_rejects_ambiguous_conversion_fields(
+    builtin_client: TestClient,
+) -> None:
+    payload = _graph_payload()
+    edge = cast(list[dict[str, object]], payload["edges"])[0]
+    edge["conversion_path"] = [edge["conversion"]]
+
+    response = builtin_client.post("/v1/graphs", json=payload)
+
+    assert response.status_code == 422
+    assert "both conversion and conversion_path" in str(response.json())
+
+
+def test_create_rejects_duplicate_artifact_type_binding_variables(
+    builtin_client: TestClient,
+) -> None:
+    payload = _graph_payload()
+    nodes = cast(list[dict[str, object]], payload["nodes"])
+    target = nodes[1]
+    bindings = cast(list[dict[str, object]], target["artifact_type_bindings"])
+    bindings.append(
+        {
+            "variable": "T",
+            "artifact_type": {
+                "id": "scalar.text",
+                "schema_version": 1,
+            },
+        }
+    )
+
+    response = builtin_client.post("/v1/graphs", json=payload)
+
+    assert response.status_code == 422
+    assert "binding variables must be unique" in str(response.json())
+
+
+def test_saved_graph_preserves_conversion_path_order(
+    builtin_client: TestClient,
+) -> None:
+    payload = _graph_payload("Conversion path")
+    edge = cast(list[dict[str, object]], payload["edges"])[0]
+    edge.pop("conversion")
+    edge["conversion_path"] = [
+        {"id": "example.text.normalize", "version": 2},
+        {"id": "example.text.finalize", "version": 7},
+    ]
+
+    create_response = builtin_client.post("/v1/graphs", json=payload)
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["edges"][0]["conversion_path"] == edge["conversion_path"]
+    loaded = builtin_client.get(f"/v1/graphs/{created['id']}")
+    assert loaded.status_code == 200
+    assert loaded.json()["edges"][0]["conversion_path"] == edge["conversion_path"]
 
 
 def test_update_requires_positive_expected_revision(builtin_client: TestClient) -> None:

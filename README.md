@@ -1,9 +1,9 @@
 # Notarius Workbench
 
 Notarius is a node-first workbench for building and running typed artifact
-graphs. Nodes declare typed ports, while edges may select declared fields from
-compound artifacts or apply a declared, versioned artifact conversion before a
-downstream node executes.
+graphs. Nodes declare typed ports, while edges may select schema-derived or
+explicit fields from compound artifacts or apply an ordered path of declared,
+versioned artifact conversions before a downstream node executes.
 
 Each edge declares how its value is transported. `direct` passes a compatible
 value with its collection shape unchanged; `map` connects a sequence to one
@@ -12,11 +12,14 @@ returns ordered output sequences. The runtime derives invocation from those
 edges, so mapping is explicit workflow structure rather than hidden node state.
 
 Field projection and artifact conversion are distinct compatibility primitives.
-An `arithmetic.result@1` artifact can expose `addition` and `subtraction` as
-`scalar.integer@1`; a declared conversion can then materialize that integer as
-`scalar.text@1`. Both choices live visibly on the edge without adding
-boilerplate adapter nodes. Configurable or domain-significant transformations
-remain nodes.
+Nested JSON Schema `string` and `integer` leaves are automatically exposed as
+the installed canonical scalar artifact types. An `arithmetic.result@1`
+artifact therefore exposes `addition` and `subtraction` as `scalar.integer@1`;
+a declared conversion can then materialize that integer as `scalar.text@1`. If
+the registry declares `X -> Y` and `Y -> Z`, the workbench can persist and
+execute the exact `X -> Y -> Z` path on one edge. These choices remain visible
+without adding boilerplate adapter nodes. Configurable or domain-significant
+transformations remain nodes.
 
 ## Architecture
 

@@ -36,6 +36,7 @@ def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
     registry = NodeRegistryResponse.model_validate(response.json())
     assert [(plugin.slug, plugin.title) for plugin in registry.plugins] == [
         ("builtin.sources", "Sources"),
+        ("builtin.sequence", "Sequence"),
         ("builtin.arithmetic", "Arithmetic"),
         ("builtin.text", "Text"),
         ("builtin.tables", "Tables"),
@@ -44,6 +45,7 @@ def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
     assert set(nodes) == {
         "source.local_upload.images",
         "source.image_sequence.merge",
+        "sequence.collect",
         "arithmetic.number",
         "arithmetic.integer_sequence",
         "arithmetic.add_subtract",
@@ -53,6 +55,7 @@ def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
         "text.split",
         "text.replace",
         "text.join",
+        "text.collect",
         "table.page.merge",
         "table.csv.export",
     }
@@ -68,7 +71,9 @@ def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
         ("table.page", 1),
         ("tabular.csv_bundle", 1),
     }
-    assert [conversion.model_dump() for conversion in registry.artifact_conversions] == [
+    assert [
+        conversion.model_dump() for conversion in registry.artifact_conversions
+    ] == [
         {
             "key": {
                 "id": "builtin.scalar.integer_to_text",
@@ -91,6 +96,7 @@ def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
     assert source.description == (
         "Imports staged local images as an ordered artifact sequence."
     )
+    assert source.outputs[0].artifact_type is not None
     assert source.outputs[0].artifact_type.id == "source.page_image"
     assert source.outputs[0].shape == "many"
     assert source.outputs[0].description == (
@@ -99,14 +105,23 @@ def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
 
     merge_tables = nodes["table.page.merge"]
     assert merge_tables.plugin_slug == "builtin.tables"
+    assert merge_tables.inputs[0].artifact_type is not None
     assert merge_tables.inputs[0].artifact_type.id == "table.fragment"
     assert merge_tables.inputs[0].shape == "many"
+    assert merge_tables.outputs[0].artifact_type is not None
     assert merge_tables.outputs[0].artifact_type.id == "table.page"
     export_tables = nodes["table.csv.export"]
-    assert [port.artifact_type.id for port in export_tables.inputs] == [
+    export_input_types = [
+        port.artifact_type
+        for port in export_tables.inputs
+        if port.artifact_type is not None
+    ]
+    assert len(export_input_types) == len(export_tables.inputs)
+    assert [artifact_type.id for artifact_type in export_input_types] == [
         "table.fragment",
         "table.page",
     ]
+    assert export_tables.outputs[0].artifact_type is not None
     assert export_tables.outputs[0].artifact_type.id == "tabular.csv_bundle"
 
     text_input_properties = cast(
@@ -123,6 +138,20 @@ def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
     add_subtract = nodes["arithmetic.add_subtract"]
     assert add_subtract.inputs[0].title == "Left"
     assert add_subtract.inputs[0].description == "Left-hand integer operand."
+
+    collect = nodes["text.collect"]
+    assert collect.inputs[0].name == "items"
+    assert collect.inputs[0].shape == "one"
+    assert collect.inputs[0].accepted_shapes == ["one", "many"]
+    assert collect.inputs[0].instance_plugs is True
+    assert collect.outputs[0].accepted_shapes == ["many"]
+    assert collect.outputs[0].instance_plugs is False
+
+    generic_collect = nodes["sequence.collect"]
+    assert generic_collect.inputs[0].artifact_type is None
+    assert generic_collect.inputs[0].artifact_type_variable == "T"
+    assert generic_collect.outputs[0].artifact_type is None
+    assert generic_collect.outputs[0].artifact_type_variable == "T"
 
 
 def test_run_accepts_empty_graph(builtin_client: TestClient) -> None:

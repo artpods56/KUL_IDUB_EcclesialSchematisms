@@ -15,6 +15,8 @@ import { ARTIFACT_TYPE_COLOR } from "../../nodes.css";
 import {
   WORKFLOW_NODE_TYPE,
   portMetaForPort,
+  resolvedPortArtifactType,
+  type WorkflowArtifactTypeBindings,
   type WorkflowNodeData,
 } from "../../types";
 
@@ -112,21 +114,34 @@ function portColor(artifactTypeId: string): string {
   return ARTIFACT_TYPE_COLOR[artifactTypeId] ?? tokens.colorAccent;
 }
 
-function portTypeLabel(port: Port): string {
-  const name = port.artifact_type.id.split(".").at(-1) ?? port.artifact_type.id;
+function portTypeLabel(
+  port: Port,
+  artifactTypeBindings: WorkflowArtifactTypeBindings,
+): string {
+  const artifactType = resolvedPortArtifactType(port, artifactTypeBindings);
+  if (!artifactType) return "Any artifact";
+  const name = artifactType.id.split(".").at(-1) ?? artifactType.id;
   return port.shape === "many" ? `${name}[]` : name;
 }
 
 function PortBand({
   ports,
   placement,
+  artifactTypeBindings,
 }: {
   ports: readonly Port[];
   placement: "top" | "bottom";
+  artifactTypeBindings: WorkflowArtifactTypeBindings;
 }) {
   if (!ports.length) return null;
 
-  const dominantColor = portColor(ports[0].artifact_type.id);
+  const dominantArtifactType = resolvedPortArtifactType(
+    ports[0],
+    artifactTypeBindings,
+  );
+  const dominantColor = dominantArtifactType
+    ? portColor(dominantArtifactType.id)
+    : tokens.colorAccent;
 
   return (
     <div
@@ -137,7 +152,13 @@ function PortBand({
     >
       {ports.map((port) => {
         const isInput = port.direction === "input";
-        const color = portColor(port.artifact_type.id);
+        const artifactType = resolvedPortArtifactType(
+          port,
+          artifactTypeBindings,
+        );
+        const color = artifactType
+          ? portColor(artifactType.id)
+          : tokens.colorAccent;
 
         return (
           <div
@@ -147,14 +168,21 @@ function PortBand({
             <Handle
               type={isInput ? "target" : "source"}
               position={isInput ? Position.Left : Position.Right}
-              id={encodeHandleId(portMetaForPort(port))}
+              id={encodeHandleId(
+                portMetaForPort(
+                  port,
+                  port.shape,
+                  undefined,
+                  artifactTypeBindings,
+                ),
+              )}
               style={handleStyle("50%", color, port.variadic)}
             />
             <span {...stylex.props(s.bandName)}>
               {port.title ?? port.name}
             </span>
             <span {...stylex.props(s.bandType, isInput ? null : s.bandTypeOut)}>
-              {portTypeLabel(port)}
+              {portTypeLabel(port, artifactTypeBindings)}
             </span>
           </div>
         );
@@ -166,7 +194,11 @@ function PortBand({
 export default function BandsTint({ data, selected }: BandsTintProps) {
   return (
     <article {...stylex.props(s.shell, selected ? s.selected : null)}>
-      <PortBand ports={data.spec.inputs} placement="top" />
+      <PortBand
+        ports={data.spec.inputs}
+        placement="top"
+        artifactTypeBindings={data.artifactTypeBindings}
+      />
       <header {...stylex.props(s.header)}>
         <span {...stylex.props(s.title)} title={data.spec.title}>
           {data.spec.title}
@@ -179,7 +211,11 @@ export default function BandsTint({ data, selected }: BandsTintProps) {
         {data.spec.description ||
           "No description is available for this node."}
       </div>
-      <PortBand ports={data.spec.outputs} placement="bottom" />
+      <PortBand
+        ports={data.spec.outputs}
+        placement="bottom"
+        artifactTypeBindings={data.artifactTypeBindings}
+      />
     </article>
   );
 }

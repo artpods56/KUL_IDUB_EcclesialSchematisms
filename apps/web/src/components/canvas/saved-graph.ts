@@ -10,8 +10,7 @@ import {
 } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import {
-  connectionRouteMatchesSelection,
-  connectionRoutesFor,
+  connectionRouteForSelection,
   decodeHandleId,
   encodeHandleId,
 } from "./handles";
@@ -19,9 +18,18 @@ import { ARTIFACT_TYPE_COLOR } from "./nodes.css";
 import {
   WORKFLOW_EDGE_TYPE,
   WORKFLOW_NODE_TYPE,
+  acceptedPortShapes,
   createWorkflowNodeData,
+  declaredArtifactTypeVariables,
+  portHasInstancePlugs,
   portMetaForPort,
+  resolvedPortArtifactType,
+  serializeArtifactTypeBindings,
+  serializeInputPlugs,
+  serializeWorkflowEdgeTransport,
   type WorkflowEdge,
+  type WorkflowArtifactTypeBindingInput,
+  type WorkflowArtifactTypeBindings,
   type WorkflowNodeData,
 } from "./types";
 
@@ -89,18 +97,21 @@ export function savedGraphDraft(
   nodes: readonly SavedGraphWorkflowNode[],
   edges: readonly WorkflowEdge[],
 ): CreateSavedGraphRequest {
+  const savedNodes = nodes.map((node) => ({
+    id: node.id,
+    operator_id: node.data.spec.operator_id,
+    operator_version: node.data.spec.operator_version,
+    config: structuredClone(node.data.config),
+    input_plugs: serializeInputPlugs(node.data),
+    artifact_type_bindings: serializeArtifactTypeBindings(node.data),
+    position: {
+      x: node.position.x,
+      y: node.position.y,
+    },
+  }));
   return {
     name: name.trim(),
-    nodes: nodes.map((node) => ({
-      id: node.id,
-      operator_id: node.data.spec.operator_id,
-      operator_version: node.data.spec.operator_version,
-      config: structuredClone(node.data.config),
-      position: {
-        x: node.position.x,
-        y: node.position.y,
-      },
-    })),
+    nodes: savedNodes,
     edges: edges.map((edge) => {
       const source = decodeHandleId(edge.sourceHandle);
       const target = decodeHandleId(edge.targetHandle);
@@ -113,16 +124,8 @@ export function savedGraphDraft(
         from_port: source.portName,
         to_node: edge.target,
         to_port: target.portName,
-        collection_mode: edge.data?.collectionMode ?? "direct",
-        projection: edge.data?.projection
-          ? { path: [...edge.data.projection.path] }
-          : null,
-        conversion: edge.data?.conversion
-          ? {
-              id: edge.data.conversion.id,
-              version: edge.data.conversion.version,
-            }
-          : null,
+        to_plug: target.plugId ?? null,
+        ...serializeWorkflowEdgeTransport(edge.data),
         route_offset: edge.data?.routeOffset
           ? {
               x: edge.data.routeOffset.x,
@@ -132,6 +135,46 @@ export function savedGraphDraft(
       };
     }),
   };
+}
+
+function requireArtifactTypeBindings(
+  savedGraph: SavedGraph,
+  savedNode: NonNullable<SavedGraph["nodes"]>[number],
+  spec: NodeSpec,
+  registry: NodeRegistry,
+): WorkflowArtifactTypeBindings {
+  const declaredVariables = new Set(declaredArtifactTypeVariables(spec));
+  const registryArtifactTypes = new Set(
+    registry.artifact_types.map(
+      (artifact) =>
+        `${artifact.key.id}@${artifact.key.schema_version}`,
+    ),
+  );
+  const bindings: Record<string, WorkflowArtifactTypeBindingInput["artifact_type"]> = {};
+  for (const binding of savedNode.artifact_type_bindings ?? []) {
+    if (!declaredVariables.has(binding.variable)) {
+      throw new SavedGraphHydrationError(
+        `Cannot open “${savedGraph.name}”: node ${savedNode.id} binds undeclared artifact type variable ${binding.variable}`,
+      );
+    }
+    if (binding.variable in bindings) {
+      throw new SavedGraphHydrationError(
+        `Cannot open “${savedGraph.name}”: node ${savedNode.id} binds artifact type variable ${binding.variable} more than once`,
+      );
+    }
+    const artifactTypeKey =
+      `${binding.artifact_type.id}@${binding.artifact_type.schema_version}`;
+    if (!registryArtifactTypes.has(artifactTypeKey)) {
+      throw new SavedGraphHydrationError(
+        `Cannot open “${savedGraph.name}”: node ${savedNode.id} binds unavailable artifact type ${artifactTypeKey}`,
+      );
+    }
+    bindings[binding.variable] = {
+      id: binding.artifact_type.id,
+      schema_version: binding.artifact_type.schema_version,
+    };
+  }
+  return bindings;
 }
 
 export function savedGraphFingerprint(
@@ -165,6 +208,30 @@ function requireSpec(
     );
   }
   return spec;
+}
+
+function requireInputPlugs(
+  savedGraph: SavedGraph,
+  savedNode: NonNullable<SavedGraph["nodes"]>[number],
+  spec: NodeSpec,
+): NonNullable<typeof savedNode.input_plugs> {
+  const inputPlugs = savedNode.input_plugs ?? [];
+  const plugIds = new Set<string>();
+  for (const plug of inputPlugs) {
+    const port = spec.inputs.find((candidate) => candidate.name === plug.port);
+    if (!port || !portHasInstancePlugs(port)) {
+      throw new SavedGraphHydrationError(
+        `Cannot open “${savedGraph.name}”: node ${savedNode.id} input plug ${plug.id} references non-instance input ${plug.port}`,
+      );
+    }
+    if (plugIds.has(plug.id)) {
+      throw new SavedGraphHydrationError(
+        `Cannot open “${savedGraph.name}”: node ${savedNode.id} has duplicate input plug id ${plug.id}`,
+      );
+    }
+    plugIds.add(plug.id);
+  }
+  return inputPlugs;
 }
 
 function requireEdgeEndpoint(
@@ -205,19 +272,32 @@ function connectionRouteIsValid(
   if (!sourcePort || !targetPort) return false;
 
   const connection = {
-    sourceHandle: encodeHandleId(portMetaForPort(sourcePort)),
-    targetHandle: encodeHandleId(portMetaForPort(targetPort)),
+    sourceHandle: encodeHandleId(
+      portMetaForPort(
+        sourcePort,
+        sourcePort.shape,
+        undefined,
+        sourceNode.data.artifactTypeBindings,
+      ),
+    ),
+    targetHandle: encodeHandleId(
+      portMetaForPort(
+        targetPort,
+        targetPort.shape,
+        edge.to_plug ?? undefined,
+        targetNode.data.artifactTypeBindings,
+      ),
+    ),
   };
-  return connectionRoutesFor(
+  return connectionRouteForSelection(
     connection,
     registry.artifact_types,
     registry.artifact_conversions,
-  ).some((route) =>
-    connectionRouteMatchesSelection(route, {
+    {
       projection: edge.projection ?? undefined,
-      conversion: edge.conversion ?? undefined,
-    }),
-  );
+      conversionPath: edge.conversion_path ?? [],
+    },
+  ) !== null;
 }
 
 export function hydrateSavedGraph(
@@ -240,7 +320,14 @@ export function hydrateSavedGraph(
     }
     nodeIds.add(savedNode.id);
     const spec = requireSpec(savedGraph, savedNode, specs);
-    const data = createWorkflowNodeData(spec);
+    const inputPlugs = requireInputPlugs(savedGraph, savedNode, spec);
+    const data = createWorkflowNodeData(spec, inputPlugs);
+    data.artifactTypeBindings = requireArtifactTypeBindings(
+      savedGraph,
+      savedNode,
+      spec,
+      registry,
+    );
     data.config = structuredClone(savedNode.config ?? {});
     return {
       id: savedNode.id,
@@ -254,12 +341,19 @@ export function hydrateSavedGraph(
     } satisfies SavedGraphWorkflowNode;
   });
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
-  const mappedNodeIds = new Set(
-    (savedGraph.edges ?? [])
-      .filter((edge) => edge.collection_mode === "map")
-      .map((edge) => edge.to_node),
-  );
+  const mapEdgeByTargetNode = new Map<string, SavedGraphEdge>();
+  for (const edge of savedGraph.edges ?? []) {
+    if (edge.collection_mode !== "map") continue;
+    const existing = mapEdgeByTargetNode.get(edge.to_node);
+    if (existing) {
+      throw new SavedGraphHydrationError(
+        `Cannot open “${savedGraph.name}”: node ${edge.to_node} has more than one map edge: ${existing.id} targets input ${existing.to_port} and ${edge.id} targets input ${edge.to_port}; exactly one edge may drive mapped execution`,
+      );
+    }
+    mapEdgeByTargetNode.set(edge.to_node, edge);
+  }
   const edgeIds = new Set<string>();
+  const occupiedTargetPlugIds = new Set<string>();
 
   const edges = (savedGraph.edges ?? []).map((savedEdge) => {
     if (edgeIds.has(savedEdge.id)) {
@@ -289,23 +383,89 @@ export function hydrateSavedGraph(
         `Cannot open “${savedGraph.name}”: edge ${savedEdge.id} references missing input ${targetNode.data.spec.operator_id}.${savedEdge.to_port}`,
       );
     }
+    if (portHasInstancePlugs(targetPort)) {
+      const targetPlug = targetNode.data.inputPlugs.find(
+        (plug) =>
+          plug.id === savedEdge.to_plug && plug.portName === targetPort.name,
+      );
+      if (!targetPlug) {
+        throw new SavedGraphHydrationError(
+          `Cannot open “${savedGraph.name}”: edge ${savedEdge.id} references missing input plug ${savedEdge.to_plug ?? "null"}`,
+        );
+      }
+      const targetPlugKey = `${targetNode.id}::${targetPlug.id}`;
+      if (occupiedTargetPlugIds.has(targetPlugKey)) {
+        throw new SavedGraphHydrationError(
+          `Cannot open “${savedGraph.name}”: multiple edges target input plug ${targetPlug.id} on node ${targetNode.id}`,
+        );
+      }
+      occupiedTargetPlugIds.add(targetPlugKey);
+    } else if (savedEdge.to_plug !== null && savedEdge.to_plug !== undefined) {
+      throw new SavedGraphHydrationError(
+        `Cannot open “${savedGraph.name}”: edge ${savedEdge.id} assigns input plug ${savedEdge.to_plug} to non-instance input ${targetPort.name}`,
+      );
+    }
+
+    const sourceShape = mapEdgeByTargetNode.has(sourceNode.id)
+      ? "many"
+      : sourcePort.shape;
+    const otherMapEdge = mapEdgeByTargetNode.get(targetNode.id);
+    const targetShape =
+      otherMapEdge !== savedEdge && otherMapEdge?.to_port === targetPort.name
+        ? "many"
+        : targetPort.shape;
+    let expectedCollectionMode: SavedGraphEdge["collection_mode"] | null = null;
+    if (acceptedPortShapes(targetPort).includes(sourceShape)) {
+      expectedCollectionMode = "direct";
+    } else if (!portHasInstancePlugs(targetPort)) {
+      if (sourceShape === targetShape) {
+        expectedCollectionMode = "direct";
+      } else if (sourceShape === "many" && targetShape === "one") {
+        expectedCollectionMode = "map";
+      }
+    }
+    if (savedEdge.collection_mode !== expectedCollectionMode) {
+      const expectedMode = expectedCollectionMode
+        ? `'${expectedCollectionMode}'`
+        : "no supported collection mode";
+      throw new SavedGraphHydrationError(
+        `Cannot open “${savedGraph.name}”: edge ${savedEdge.id} uses collection mode '${savedEdge.collection_mode}' for source shape '${sourceShape}' and target shape '${targetShape}', expected ${expectedMode}`,
+      );
+    }
+
     if (!connectionRouteIsValid(savedEdge, sourceNode, targetNode, registry)) {
       throw new SavedGraphHydrationError(
         `Cannot open “${savedGraph.name}”: edge ${savedEdge.id} has an incompatible artifact route`,
       );
     }
 
-    const sourceShape = mappedNodeIds.has(sourceNode.id)
-      ? "many"
-      : sourcePort.shape;
-    const color =
-      ARTIFACT_TYPE_COLOR[sourcePort.artifact_type.id] ?? tokens.colorAccent;
+    const sourceArtifactType = resolvedPortArtifactType(
+      sourcePort,
+      sourceNode.data.artifactTypeBindings,
+    );
+    const color = sourceArtifactType
+      ? ARTIFACT_TYPE_COLOR[sourceArtifactType.id] ?? tokens.colorAccent
+      : tokens.colorAccent;
     return {
       id: savedEdge.id,
       source: savedEdge.from_node,
-      sourceHandle: encodeHandleId(portMetaForPort(sourcePort, sourceShape)),
+      sourceHandle: encodeHandleId(
+        portMetaForPort(
+          sourcePort,
+          sourceShape,
+          undefined,
+          sourceNode.data.artifactTypeBindings,
+        ),
+      ),
       target: savedEdge.to_node,
-      targetHandle: encodeHandleId(portMetaForPort(targetPort)),
+      targetHandle: encodeHandleId(
+        portMetaForPort(
+          targetPort,
+          targetPort.shape,
+          savedEdge.to_plug ?? undefined,
+          targetNode.data.artifactTypeBindings,
+        ),
+      ),
       type: WORKFLOW_EDGE_TYPE,
       animated: false,
       data: {
@@ -313,14 +473,10 @@ export function hydrateSavedGraph(
         ...(savedEdge.projection
           ? { projection: { path: [...savedEdge.projection.path] } }
           : {}),
-        ...(savedEdge.conversion
-          ? {
-              conversion: {
-                id: savedEdge.conversion.id,
-                version: savedEdge.conversion.version,
-              },
-            }
-          : {}),
+        conversionPath: [...(savedEdge.conversion_path ?? [])].map((conversion) => ({
+          id: conversion.id,
+          version: conversion.version,
+        })),
         ...(savedEdge.route_offset
           ? {
               routeOffset: {

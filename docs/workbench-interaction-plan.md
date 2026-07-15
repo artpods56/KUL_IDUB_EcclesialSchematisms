@@ -24,7 +24,7 @@ selection.
 ```mermaid
 flowchart LR
     Registry["Plugin registry"] --> Node["Node: operation, config, metadata"]
-    Node --> Edge["Edge: projection, conversion, collection mode"]
+    Node --> Edge["Edge: projection, conversion path, collection mode"]
     Edge --> Runtime["Runtime: validate and execute"]
     Runtime --> Artifact["Produced artifact"]
     Artifact --> Node
@@ -36,9 +36,10 @@ graph-level compatibility system. A declared field projection lets an edge take
 a nested value from a compound artifact without introducing a boilerplate
 adapter node. A declared, versioned artifact conversion lets the same edge
 materialize one nominal artifact type as another. Projection selects a value;
-conversion changes its representation. The fixed edge order is projection,
-conversion, then collection handling; the runtime does not discover conversion
-chains.
+conversion changes its representation. Installed conversions form a directed
+graph, while each edge persists one bounded, acyclic path through that graph.
+The fixed edge order is projection, conversion path, then collection handling;
+the runtime validates and replays the stored path instead of rediscovering it.
 
 Collection behavior follows the same ownership rule. An operator declares the
 value shape it handles for one call. An incoming edge decides whether to pass a
@@ -56,7 +57,7 @@ rewrite:
 | Configuration rendered directly on each node | Done | The canvas remains the place where a workflow is understood and edited; no configuration sidebar is needed. |
 | Produced-artifact appendix after execution | Done | Results remain associated with the operation that produced them and can expose their content links. |
 | Nominal artifact types, schema versions, and declared projections | Done | Compatibility is deterministic and can be validated before execution. |
-| Declared, versioned artifact conversions | In progress | Canonical representation changes such as integer to text should remain explicit without requiring boilerplate nodes. |
+| Declared, versioned artifact conversions | Done | Canonical representation changes such as integer to text remain explicit without requiring boilerplate nodes. |
 | Plugin discovery through `notarius.plugins` entry points | Done | External plugins can depend on their own optional packages without adding those dependencies to the Notarius host. |
 | OCR as an external plugin package | Done | It proves the host/plugin dependency boundary while keeping Mistral optional. |
 | Basic arithmetic, source, text, and table operators | Done | They provide a dependency-light vocabulary for exercising graph behavior. |
@@ -255,18 +256,20 @@ predictable.
 - `Run with dependencies` expands and executes the selection's full upstream
   closure.
 
-### T9. Put canonical artifact conversions on edges — In progress
+### T9. Put canonical artifact conversions on edges — Done
 
 **Description.** Let plugins register a stable conversion key, source artifact
 type, target artifact type, display title, source runtime type, and pure
-conversion callable. Run and saved edges store at most one conversion key. The
-runtime applies an optional field projection first, then the selected conversion,
-then the edge's `direct` or `map` collection handling.
+conversion callable. Run and saved edges store an ordered, bounded path of exact
+conversion keys. The runtime applies an optional field projection first,
+composes every stored conversion in memory, materializes the final target
+artifact, then applies the edge's `direct` or `map` collection handling.
 
 The first declared conversion is `scalar.integer@1` to `scalar.text@1`. Drawing
 that connection should select the conversion automatically when it is the only
 compatible route, while the resulting edge label and editor continue to show
-the choice explicitly.
+the choice explicitly. Declarations `X -> Y` and `Y -> Z` also make an
+`X -> Z` route available without adding a visible adapter node.
 
 **Justification.** Canonical, context-free representation changes do not earn a
 visible operation node, but silently coercing Python values would bypass the
@@ -279,15 +282,124 @@ execution deterministic.
 - Registry metadata exposes active conversion keys, source and target artifact
   contracts, versions, and titles; duplicate or dangling declarations fail
   during registry construction.
-- Run and saved edges round-trip their optional conversion key.
-- Graph validation rejects unknown conversions and source/target mismatches
-  before any node executes.
-- Runtime order is projection, conversion, collection handling; projection plus
-  conversion and item-wise sequence conversion are covered behaviorally.
-- A unique compatible conversion is selected automatically during a real
+- Run and saved edges round-trip their ordered conversion path, while legacy
+  singular conversion input migrates to a one-step path.
+- Graph validation rejects unknown, discontinuous, cyclic, or excessive paths
+  and source/target mismatches before any node executes.
+- Runtime order is projection, conversion path, collection handling; projection
+  plus multi-hop conversion and item-wise sequence conversion are covered
+  behaviorally, and only the final converted artifact is materialized.
+- A unique compatible shortest path is selected automatically during a real
   pointer-drag connection and remains visibly labeled on the edge.
 - Saving, reopening, and running the graph preserve the selected conversion.
 - Generated OpenAPI and TypeScript contracts match the server.
+
+**Completed verification (2026-07-15).**
+
+- `make check` passed 205 Python tests, 7 web conversion-route tests, Ruff,
+  ESLint, basedpyright, TypeScript, generated OpenAPI client verification, and
+  the production Next.js build.
+- Focused graph tests covered direct and transitive conversion, projection before
+  every conversion step, full-path conversion of ordered sequences, final-only
+  materialization, exact persisted-path replay, ambiguity and traversal bounds,
+  registry runtime-type composability, and pre-execution rejection of invalid
+  paths. [R20: Verify After Signature Changes] [R43: Tests Are Behavioral Contracts]
+- A real browser pointer drag from a Number output to a Replace text input
+  selected the sole declared route and displayed `value → As text`; the edge
+  editor exposed `builtin.scalar.integer_to_text@1`.
+- Saving and reloading preserved the conversion key and label, and the reloaded
+  graph ran successfully from `9` to the displayed text output `nine` with no
+  browser-console errors.
+
+### T10. Derive structural scalar projections from artifact schemas — Done
+
+**Description.** Let a canonical scalar artifact declare the JSON value type it
+materializes. When the plugin registry freezes, derive projections for nested
+object fields whose JSON Schema type is `string` or `integer`. A string field can
+then connect directly to `scalar.text@1`; an integer field first projects to
+`scalar.integer@1` and can continue through the declared integer-to-text
+conversion path. The edge persists the exact field path and conversion path.
+
+Text nodes operate on raw Python strings. `TextValue` remains the compatibility
+name for the persisted `{ "value": ... }` payload model, so existing artifacts
+and their schema identity remain stable while the wrapper no longer leaks into
+node execution.
+
+**Justification.** Selecting a runtime scalar from a structured API response is
+transport behavior, not a user-visible operation. Deriving the mechanical cases
+from the registered schema removes boilerplate projection declarations without
+weakening nominal artifact compatibility or adding implicit runtime coercion.
+
+**Acceptance criteria.**
+
+- Nested object `string` and `integer` leaves, including local JSON Schema
+  references, become deterministic field projections at registry freeze time.
+- Explicit declarations win at the same path and remain available for
+  plugin-owned semantics; invalid, duplicate, dangling, cyclic, or incompatible
+  declarations fail with artifact and path context.
+- Arrays and schema-less dynamic values are not guessed. Plugins must declare
+  those projections explicitly.
+- Runtime order remains projection, conversion path, collection handling, and
+  saved graphs replay the exact persisted route.
+- Projection traversal and conversion paths are bounded, and conversion runtime
+  types use conservative composability rules that cannot admit a chain rejected
+  by strict runtime validation.
+- Text persistence keeps the existing inline payload, hashes, provenance, and
+  public payload schema while node inputs, outputs, and conversions use `str`.
+
+**Completed verification (2026-07-15).**
+
+- `make check` passed 284 Python tests, 31 web tests, Ruff, ESLint,
+  basedpyright, TypeScript, generated OpenAPI client verification, and the
+  production Next.js build. [R20: Verify After Signature Changes]
+- Focused API tests executed a nested JSON string directly as text and a nested
+  integer through `scalar.integer@1 -> scalar.text@1`, then verified the
+  resulting artifact content. Registry tests cover local references, explicit
+  overrides, invalid canonical targets, cycles, depth/count limits, and strict
+  runtime-type composability. [R43: Tests Are Behavioral Contracts]
+- A real browser pointer drag from `arithmetic.result@1` to a text input offered
+  `Addition -> As text` and `Subtraction -> As text`; choosing Addition created
+  the visible `result.addition -> As text` edge with no browser-console errors.
+
+### T11. Collect any homogeneous artifact type — Done
+
+**Description.** Add the generic `sequence.collect@1` operation with one shared
+artifact-type variable, `T`. Each Collect node instance persists one concrete
+binding for `T`; its ordered input plugs accept either one `T` artifact or one
+sequence of `T`, and its output is one sequence of `T`. Execution expands source
+sequences exactly one level in plug order and preserves the existing artifact
+references.
+
+The first compatible connection binds an unbound Collect instance. The edge
+continues to own any field projection and artifact conversion path used to reach
+that bound type. Removing edges does not silently discard the binding. Once all
+incident edges are gone, the user can explicitly reset the node to `Any artifact`
+and bind it again.
+
+**Justification.** Collection changes cardinality, not domain meaning. Keeping a
+separate collector for text, images, and every future artifact type duplicates
+the same ordering behavior and prevents users from composing heterogeneous
+shapes of the same type. A node-owned generic binding keeps the operation
+homogeneous and executable while allowing the existing edge conversion system
+to remain the one representation-change boundary. [R01: Direct Ownership]
+
+**Acceptance criteria.**
+
+- Registry contracts distinguish a concrete artifact type from a named
+  artifact-type variable without encoding variables as fake artifact ids.
+- One Collect instance accepts scalar and sequence inputs of its bound type,
+  flattens one level in saved plug order, and rejects a different artifact type.
+- Connecting a compatible concrete endpoint binds an unbound Collect; unique
+  projection/conversion routes can establish the binding as part of the same
+  connection.
+- The concrete binding is included in run requests and saved graph documents,
+  survives reloads and restarts, and participates in exact saved-fragment
+  validation.
+- The binding can be reset only when the node has no incident edges.
+- A selected Collect-only run can reuse accessible materialized scalar and
+  sequence outputs from its unselected upstream nodes.
+- Legacy text and image-specific collection nodes remain registered until a
+  separate persisted-graph migration and retirement decision is made.
 
 ## Deliberately deferred
 

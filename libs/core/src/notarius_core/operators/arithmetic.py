@@ -6,7 +6,6 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
 from notarius_core.domain.errors import NotFoundError
 from notarius_core.artifacts import (
-    ArtifactFieldProjection,
     ArtifactObject,
     ArtifactRef,
     ArtifactTypeKey,
@@ -53,24 +52,13 @@ INTEGER_VALUE = ArtifactTypeSpec(
     key=ArtifactTypeKey("scalar.integer", 1),
     title="Integer value",
     payload_schema=cast(JsonObject, IntegerValuePayload.model_json_schema()),
+    materialized_json_type="integer",
 )
 
 ARITHMETIC_RESULT = ArtifactTypeSpec(
     key=ArtifactTypeKey("arithmetic.result", 1),
     title="Arithmetic result",
     payload_schema=cast(JsonObject, ArithmeticResult.model_json_schema()),
-    field_projections=(
-        ArtifactFieldProjection(
-            path=("addition",),
-            target=INTEGER_VALUE.key,
-            title="Addition",
-        ),
-        ArtifactFieldProjection(
-            path=("subtraction",),
-            target=INTEGER_VALUE.key,
-            title="Subtraction",
-        ),
-    ),
 )
 
 ARITHMETIC = Plugin(

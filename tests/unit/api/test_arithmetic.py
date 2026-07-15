@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import cast
 from uuid import uuid4
@@ -12,8 +13,16 @@ from notarius_api.schemas.workbench import (
     RunPortOutputResponse,
     RunResponse,
 )
-from notarius_core.artifacts import ArtifactRef, ArtifactRefSequence
+from notarius_core.artifacts import (
+    ArtifactObject,
+    ArtifactRef,
+    ArtifactRefSequence,
+    ArtifactTypeKey,
+    InMemoryUnitOfWork,
+)
+from notarius_core.conversions import MAX_ARTIFACT_CONVERSION_HOPS
 from notarius_core.operators.arithmetic import (
+    ARITHMETIC_RESULT,
     AddSubtractInput,
     ArithmeticResult,
     IntegerSequenceConfig,
@@ -26,6 +35,7 @@ from notarius_core.operators.arithmetic import (
     SumIntegersInput,
     SumIntegersOutput,
 )
+from notarius_core.operators.text import TEXT_VALUE
 
 
 def _arithmetic_run_request(
@@ -154,6 +164,14 @@ def _run_output(
 ) -> RunPortOutputResponse:
     node_run = next(run for run in result.node_runs if run.node_id == node_id)
     return next(output for output in node_run.outputs if output.port == port)
+
+
+async def _stored_artifacts(
+    uow: InMemoryUnitOfWork,
+    key: ArtifactTypeKey,
+) -> list[ArtifactObject]:
+    async with uow as entered:
+        return await entered.artifacts.list_by_type(key)
 
 
 def test_registry_declares_generic_integer_and_arithmetic_result_projections(
@@ -395,17 +413,333 @@ def test_integer_sequence_conversion_preserves_order_through_mapped_text_node(
     assert replaced.value.ordered is True
     assert replaced.value.index_key == "order_index"
     assert [
-        builtin_client.get(
-            f"/v1/artifacts/{artifact.artifact_id}/content"
-        ).json()["value"]
+        builtin_client.get(f"/v1/artifacts/{artifact.artifact_id}/content").json()[
+            "value"
+        ]
         for artifact in replaced.artifacts
     ] == ["1", "two", "3"]
     joined = _run_output(result, "join", "text").artifacts[0]
-    joined_content = builtin_client.get(
-        f"/v1/artifacts/{joined.artifact_id}/content"
-    )
+    joined_content = builtin_client.get(f"/v1/artifacts/{joined.artifact_id}/content")
     assert joined_content.status_code == 200
     assert joined_content.json() == {"value": "1,two,3"}
+
+
+def test_transitive_conversion_path_composes_in_memory_and_writes_final_only(
+    conversion_path_client: tuple[TestClient, InMemoryUnitOfWork],
+) -> None:
+    client, uow = conversion_path_client
+    response = client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "number",
+                    "operator_id": "arithmetic.number",
+                    "operator_version": 1,
+                    "config": {"value": 9},
+                },
+                {
+                    "id": "consumer",
+                    "operator_id": "test.arithmetic_result_consumer",
+                    "operator_version": 1,
+                    "config": {},
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "number",
+                    "from_port": "value",
+                    "to_node": "consumer",
+                    "to_port": "result",
+                    "conversion_path": [
+                        {
+                            "id": "builtin.scalar.integer_to_text",
+                            "version": 1,
+                        },
+                        {
+                            "id": "test.scalar.text_to_arithmetic_result",
+                            "version": 1,
+                        },
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    result = RunResponse.model_validate(response.json())
+    assert result.status == "succeeded"
+    assert _run_output(result, "consumer", "value").artifacts[0].text == "80"
+    assert asyncio.run(_stored_artifacts(uow, TEXT_VALUE.key)) == []
+    final_artifacts = asyncio.run(_stored_artifacts(uow, ARITHMETIC_RESULT.key))
+    assert len(final_artifacts) == 1
+    assert final_artifacts[0].inline_payload == {"addition": 10, "subtraction": 8}
+    assert final_artifacts[0].metadata["conversion_path"] == [
+        {"id": "builtin.scalar.integer_to_text", "version": 1},
+        {"id": "test.scalar.text_to_arithmetic_result", "version": 1},
+    ]
+
+
+def test_projection_runs_before_every_step_in_a_transitive_conversion_path(
+    conversion_path_client: tuple[TestClient, InMemoryUnitOfWork],
+) -> None:
+    client, uow = conversion_path_client
+    response = client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "nine",
+                    "operator_id": "arithmetic.number",
+                    "operator_version": 1,
+                    "config": {"value": 9},
+                },
+                {
+                    "id": "four",
+                    "operator_id": "arithmetic.number",
+                    "operator_version": 1,
+                    "config": {"value": 4},
+                },
+                {
+                    "id": "add-subtract",
+                    "operator_id": "arithmetic.add_subtract",
+                    "operator_version": 1,
+                    "config": {},
+                },
+                {
+                    "id": "consumer",
+                    "operator_id": "test.arithmetic_result_consumer",
+                    "operator_version": 1,
+                    "config": {},
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "nine",
+                    "from_port": "value",
+                    "to_node": "add-subtract",
+                    "to_port": "left",
+                },
+                {
+                    "from_node": "four",
+                    "from_port": "value",
+                    "to_node": "add-subtract",
+                    "to_port": "right",
+                },
+                {
+                    "from_node": "add-subtract",
+                    "from_port": "result",
+                    "to_node": "consumer",
+                    "to_port": "result",
+                    "projection": {"path": ["addition"]},
+                    "conversion_path": [
+                        {
+                            "id": "builtin.scalar.integer_to_text",
+                            "version": 1,
+                        },
+                        {
+                            "id": "test.scalar.text_to_arithmetic_result",
+                            "version": 1,
+                        },
+                    ],
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    result = RunResponse.model_validate(response.json())
+    assert result.status == "succeeded"
+    assert _run_output(result, "consumer", "value").artifacts[0].text == "168"
+    assert asyncio.run(_stored_artifacts(uow, TEXT_VALUE.key)) == []
+    final_artifacts = asyncio.run(_stored_artifacts(uow, ARITHMETIC_RESULT.key))
+    assert len(final_artifacts) == 2
+    converted = next(
+        artifact
+        for artifact in final_artifacts
+        if "conversion_path" in artifact.metadata
+    )
+    assert converted.inline_payload == {"addition": 14, "subtraction": 12}
+
+
+def test_sequence_items_each_traverse_the_full_conversion_path_before_mapping(
+    conversion_path_client: tuple[TestClient, InMemoryUnitOfWork],
+) -> None:
+    client, uow = conversion_path_client
+    response = client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "sequence",
+                    "operator_id": "arithmetic.integer_sequence",
+                    "operator_version": 1,
+                    "config": {"start": 1, "count": 3, "step": 1},
+                },
+                {
+                    "id": "consumer",
+                    "operator_id": "test.arithmetic_result_consumer",
+                    "operator_version": 1,
+                    "config": {},
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "sequence",
+                    "from_port": "values",
+                    "to_node": "consumer",
+                    "to_port": "result",
+                    "collection_mode": "map",
+                    "conversion_path": [
+                        {
+                            "id": "builtin.scalar.integer_to_text",
+                            "version": 1,
+                        },
+                        {
+                            "id": "test.scalar.text_to_arithmetic_result",
+                            "version": 1,
+                        },
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    result = RunResponse.model_validate(response.json())
+    assert result.status == "succeeded"
+    output = _run_output(result, "consumer", "value")
+    assert output.kind == "sequence"
+    assert [artifact.text for artifact in output.artifacts] == ["0", "3", "8"]
+    assert asyncio.run(_stored_artifacts(uow, TEXT_VALUE.key)) == []
+    assert len(asyncio.run(_stored_artifacts(uow, ARITHMETIC_RESULT.key))) == 3
+
+
+@pytest.mark.parametrize(
+    ("conversion_path", "error_fragment"),
+    [
+        (
+            [
+                {"id": "builtin.scalar.integer_to_text", "version": 1},
+                {"id": "missing.text_to_result", "version": 1},
+            ],
+            "requests undeclared conversion 'missing.text_to_result'@1 at step 2",
+        ),
+        (
+            [
+                {"id": "builtin.scalar.integer_to_text", "version": 1},
+                {"id": "builtin.scalar.integer_to_text", "version": 1},
+            ],
+            "applies conversion step 2",
+        ),
+        (
+            [{"id": "builtin.scalar.integer_to_text", "version": 1}],
+            "as scalar.text@1, but target expects arithmetic.result@1",
+        ),
+        (
+            [
+                {"id": "builtin.scalar.integer_to_text", "version": 1},
+                {"id": "test.scalar.text_to_integer", "version": 1},
+            ],
+            "conversion path repeats artifact type scalar.integer@1 at step 2",
+        ),
+    ],
+)
+def test_invalid_conversion_paths_are_rejected_before_node_execution(
+    conversion_path_client: tuple[TestClient, InMemoryUnitOfWork],
+    conversion_path: list[dict[str, object]],
+    error_fragment: str,
+) -> None:
+    client, _uow = conversion_path_client
+    response = client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "invalid-number",
+                    "operator_id": "arithmetic.number",
+                    "operator_version": 1,
+                    "config": {"value": "would-fail-if-executed"},
+                },
+                {
+                    "id": "consumer",
+                    "operator_id": "test.arithmetic_result_consumer",
+                    "operator_version": 1,
+                    "config": {},
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "invalid-number",
+                    "from_port": "value",
+                    "to_node": "consumer",
+                    "to_port": "result",
+                    "conversion_path": conversion_path,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert error_fragment in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "failing_conversion",
+    [
+        "test.scalar.text_to_arithmetic_result_failure",
+        "test.scalar.text_to_invalid_arithmetic_result",
+    ],
+)
+def test_conversion_path_errors_identify_the_exact_failing_step(
+    conversion_path_client: tuple[TestClient, InMemoryUnitOfWork],
+    failing_conversion: str,
+) -> None:
+    client, uow = conversion_path_client
+    response = client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "number",
+                    "operator_id": "arithmetic.number",
+                    "operator_version": 1,
+                    "config": {"value": 9},
+                },
+                {
+                    "id": "consumer",
+                    "operator_id": "test.arithmetic_result_consumer",
+                    "operator_version": 1,
+                    "config": {},
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "number",
+                    "from_port": "value",
+                    "to_node": "consumer",
+                    "to_port": "result",
+                    "conversion_path": [
+                        {
+                            "id": "builtin.scalar.integer_to_text",
+                            "version": 1,
+                        },
+                        {"id": failing_conversion, "version": 1},
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    result = RunResponse.model_validate(response.json())
+    consumer_run = next(run for run in result.node_runs if run.node_id == "consumer")
+    assert consumer_run.status == "failed"
+    assert consumer_run.error is not None
+    assert "Failed conversion step 2/2" in consumer_run.error
+    assert f"{failing_conversion!r}@1" in consumer_run.error
+    assert asyncio.run(_stored_artifacts(uow, TEXT_VALUE.key)) == []
+    assert asyncio.run(_stored_artifacts(uow, ARITHMETIC_RESULT.key)) == []
 
 
 @pytest.mark.parametrize(
@@ -1309,5 +1643,52 @@ def test_edge_conversion_identity_is_narrow(
                 "to_node": "target",
                 "to_port": "text",
                 "conversion": conversion,
+            }
+        )
+
+
+def test_run_edge_normalizes_legacy_conversion_and_rejects_ambiguous_fields() -> None:
+    legacy = RunEdgeRequest.model_validate(
+        {
+            "from_node": "source",
+            "from_port": "value",
+            "to_node": "target",
+            "to_port": "text",
+            "conversion": {
+                "id": "builtin.scalar.integer_to_text",
+                "version": 1,
+            },
+        }
+    )
+
+    assert [step.model_dump() for step in legacy.conversion_path] == [
+        {"id": "builtin.scalar.integer_to_text", "version": 1}
+    ]
+    assert "conversion" not in legacy.model_dump(mode="json")
+
+    with pytest.raises(ValidationError, match="both conversion and conversion_path"):
+        RunEdgeRequest.model_validate(
+            {
+                **legacy.model_dump(mode="json"),
+                "conversion": {
+                    "id": "builtin.scalar.integer_to_text",
+                    "version": 1,
+                },
+            }
+        )
+
+
+def test_run_edge_conversion_path_has_a_bounded_hop_count() -> None:
+    with pytest.raises(ValidationError, match="at most 8 items"):
+        RunEdgeRequest.model_validate(
+            {
+                "from_node": "source",
+                "from_port": "value",
+                "to_node": "target",
+                "to_port": "text",
+                "conversion_path": [
+                    {"id": f"test.conversion.{index}", "version": 1}
+                    for index in range(MAX_ARTIFACT_CONVERSION_HOPS + 1)
+                ],
             }
         )

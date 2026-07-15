@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from types import UnionType
-from typing import Annotated, Any, ClassVar, Union, get_args, get_origin
+from typing import Annotated, Any, ClassVar, Union, cast, get_args, get_origin
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -28,29 +28,58 @@ class NodeContractError(TypeError):
     pass
 
 
+class NodeContractResolutionError(ValueError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactTypeVariable:
+    """A named artifact type chosen when a node instance is bound."""
+
+    name: str
+
+    def __post_init__(self) -> None:
+        if self.name.strip() == "":
+            raise ValueError("Artifact type variable name must not be empty")
+        if self.name != self.name.strip():
+            raise ValueError(
+                "Artifact type variable name must not have surrounding whitespace"
+            )
+        if len(self.name) > 255:
+            raise ValueError(
+                "Artifact type variable name must be at most 255 characters"
+            )
+
+
+ArtifactTypeContract = ArtifactTypeKey | ArtifactTypeVariable
+
+
 @dataclass(frozen=True, slots=True)
 class InPort:
     """Marks an input model field as an artifact port via Annotated metadata."""
 
-    accepts: ArtifactTypeSpec | ArtifactTypeKey
+    accepts: ArtifactTypeSpec | ArtifactTypeContract
     variadic: bool = False
+    instance_plugs: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class OutPort:
     """Marks an output model field as an artifact port via Annotated metadata."""
 
-    produces: ArtifactTypeSpec | ArtifactTypeKey
+    produces: ArtifactTypeSpec | ArtifactTypeContract
 
 
 @dataclass(frozen=True, slots=True)
 class InputPortSpec:
     name: str
-    accepts: ArtifactTypeKey
+    accepts: ArtifactTypeContract
     title: str | None = None
     description: str | None = None
     shape: PortShape = PortShape.ONE
     variadic: bool = False
+    instance_plugs: bool = False
+    accepted_shapes: tuple[PortShape, ...] = (PortShape.ONE,)
     target_type: type[object] | None = None
     preserves_ref_container: bool = False
     allows_none: bool = False
@@ -60,7 +89,7 @@ class InputPortSpec:
 @dataclass(frozen=True, slots=True)
 class OutputPortSpec:
     name: str
-    produces: ArtifactTypeKey
+    produces: ArtifactTypeContract
     title: str | None = None
     description: str | None = None
     shape: PortShape = PortShape.ONE
@@ -85,6 +114,12 @@ class ConfigContract[T: BaseModel]:
 
 
 @dataclass(frozen=True, slots=True)
+class ResolvedNodeContracts:
+    input_contract: InputContract[Any]
+    output_contract: OutputContract[Any]
+
+
+@dataclass(frozen=True, slots=True)
 class NodeExecutionContext:
     workflow_run_id: UUID | None = None
     node_run_id: UUID | None = None
@@ -92,7 +127,9 @@ class NodeExecutionContext:
     invocation_index: int | None = None
 
 
-def _artifact_type_key(value: ArtifactTypeSpec | ArtifactTypeKey) -> ArtifactTypeKey:
+def _artifact_type_contract(
+    value: ArtifactTypeSpec | ArtifactTypeContract,
+) -> ArtifactTypeContract:
     if isinstance(value, ArtifactTypeSpec):
         return value.key
     return value
@@ -104,21 +141,28 @@ def derive_input_contract[T: BaseModel](model: type[T]) -> InputContract[T]:
         port = _single_port_meta(model, name, field.metadata, InPort, OutPort)
         if port is None:
             continue
-        shape, target_type, preserves_ref_container, allows_none = (
-            _input_annotation_contract(
-                model=model,
-                field_name=name,
-                annotation=field.annotation,
-                variadic=port.variadic,
-            )
+        (
+            shape,
+            accepted_shapes,
+            target_type,
+            preserves_ref_container,
+            allows_none,
+        ) = _input_annotation_contract(
+            model=model,
+            field_name=name,
+            annotation=field.annotation,
+            variadic=port.variadic,
+            instance_plugs=port.instance_plugs,
         )
         ports[name] = InputPortSpec(
             name=name,
-            accepts=_artifact_type_key(port.accepts),
+            accepts=_artifact_type_contract(port.accepts),
             title=field.title,
             description=field.description,
             shape=shape,
             variadic=port.variadic,
+            instance_plugs=port.instance_plugs,
+            accepted_shapes=accepted_shapes,
             target_type=target_type,
             preserves_ref_container=preserves_ref_container,
             allows_none=allows_none,
@@ -140,7 +184,7 @@ def derive_output_contract[T: BaseModel](model: type[T]) -> OutputContract[T]:
         )
         ports[name] = OutputPortSpec(
             name=name,
-            produces=_artifact_type_key(port.produces),
+            produces=_artifact_type_contract(port.produces),
             title=field.title,
             description=field.description,
             shape=shape,
@@ -178,7 +222,52 @@ def _input_annotation_contract(
     field_name: str,
     annotation: object,
     variadic: bool,
-) -> tuple[PortShape, type[object] | None, bool, bool]:
+    instance_plugs: bool,
+) -> tuple[
+    PortShape,
+    tuple[PortShape, ...],
+    type[object] | None,
+    bool,
+    bool,
+]:
+    if instance_plugs:
+        if not variadic:
+            message = (
+                f"{model.__name__}.{field_name} declares instance_plugs=True; "
+                "instance plugs require variadic=True"
+            )
+            raise NodeContractError(message)
+        if get_origin(annotation) is not list:
+            message = (
+                f"{model.__name__}.{field_name} must use exactly "
+                "list[ArtifactRef | ArtifactRefSequence] for instance plugs"
+            )
+            raise NodeContractError(message)
+        item_type = _sequence_item_type(
+            model=model,
+            field_name=field_name,
+            annotation=annotation,
+            purpose="instance plugs",
+        )
+        item_origin = get_origin(item_type)
+        item_types = set(get_args(item_type))
+        if item_origin not in (UnionType, Union) or item_types != {
+            ArtifactRef,
+            ArtifactRefSequence,
+        }:
+            message = (
+                f"{model.__name__}.{field_name} must use exactly "
+                "list[ArtifactRef | ArtifactRefSequence] for instance plugs"
+            )
+            raise NodeContractError(message)
+        return (
+            PortShape.ONE,
+            (PortShape.ONE, PortShape.MANY),
+            None,
+            True,
+            False,
+        )
+
     value_type, allows_none = _unwrap_optional(annotation)
     if variadic:
         value_type = _sequence_item_type(
@@ -191,9 +280,9 @@ def _input_annotation_contract(
         allows_none = allows_none or item_allows_none
 
     if value_type is ArtifactRef:
-        return PortShape.ONE, None, True, allows_none
+        return PortShape.ONE, (PortShape.ONE,), None, True, allows_none
     if value_type is ArtifactRefSequence:
-        return PortShape.MANY, None, True, allows_none
+        return PortShape.MANY, (PortShape.MANY,), None, True, allows_none
 
     origin = get_origin(value_type)
     if _is_sequence_origin(origin):
@@ -205,10 +294,17 @@ def _input_annotation_contract(
         )
         item_type, _ = _unwrap_optional(item_type)
         target_type = _concrete_type(model, field_name, item_type)
-        return PortShape.MANY, target_type, False, allows_none
+        return (
+            PortShape.MANY,
+            (PortShape.MANY,),
+            target_type,
+            False,
+            allows_none,
+        )
 
     return (
         PortShape.ONE,
+        (PortShape.ONE,),
         _concrete_type(model, field_name, value_type),
         False,
         allows_none,
@@ -337,3 +433,83 @@ class Node[
         inputs: InputT,
         /,
     ) -> OutputT: ...
+
+
+def resolve_node_contracts(
+    node: Node[Any, Any, Any],
+    bindings: Mapping[str, ArtifactTypeKey],
+) -> ResolvedNodeContracts:
+    """Resolve every artifact type variable declared by one node instance."""
+
+    variables: set[str] = set()
+    for port in node.input_contract.ports.values():
+        if isinstance(port.accepts, ArtifactTypeVariable):
+            variables.add(port.accepts.name)
+    for port in node.output_contract.ports.values():
+        if isinstance(port.produces, ArtifactTypeVariable):
+            variables.add(port.produces.name)
+    raw_bindings = cast(Mapping[object, object], bindings)
+    binding_names: set[str] = set()
+    for raw_name in raw_bindings:
+        if not isinstance(raw_name, str):
+            raise NodeContractResolutionError(
+                f"Node {node.operator_id!r} artifact type binding names must be "
+                f"strings, got {type(raw_name).__name__}"
+            )
+        binding_names.add(raw_name)
+
+    unknown = sorted(binding_names - variables)
+    if unknown:
+        rendered = ", ".join(unknown)
+        raise NodeContractResolutionError(
+            f"Node {node.operator_id!r} received unknown artifact type bindings: "
+            f"{rendered}"
+        )
+
+    missing = sorted(variables - binding_names)
+    if missing:
+        rendered = ", ".join(missing)
+        raise NodeContractResolutionError(
+            f"Node {node.operator_id!r} is missing artifact type bindings: {rendered}"
+        )
+
+    for raw_name, raw_key in raw_bindings.items():
+        if not isinstance(raw_name, str):
+            continue
+        if not isinstance(raw_key, ArtifactTypeKey):
+            raise NodeContractResolutionError(
+                f"Node {node.operator_id!r} artifact type binding {raw_name!r} "
+                f"must be an ArtifactTypeKey, got {type(raw_key).__name__}"
+            )
+        if raw_key.id.strip() == "":
+            raise NodeContractResolutionError(
+                f"Node {node.operator_id!r} artifact type binding {raw_name!r} must "
+                "reference a non-empty artifact type id"
+            )
+        if raw_key.id != raw_key.id.strip():
+            raise NodeContractResolutionError(
+                f"Node {node.operator_id!r} artifact type binding {raw_name!r} must "
+                "reference an artifact type id without surrounding whitespace"
+            )
+        if isinstance(raw_key.schema_version, bool) or raw_key.schema_version < 1:
+            raise NodeContractResolutionError(
+                f"Node {node.operator_id!r} artifact type binding {raw_name!r} must "
+                "reference a positive schema version"
+            )
+
+    input_ports = {
+        name: replace(port, accepts=bindings[port.accepts.name])
+        if isinstance(port.accepts, ArtifactTypeVariable)
+        else port
+        for name, port in node.input_contract.ports.items()
+    }
+    output_ports = {
+        name: replace(port, produces=bindings[port.produces.name])
+        if isinstance(port.produces, ArtifactTypeVariable)
+        else port
+        for name, port in node.output_contract.ports.items()
+    }
+    return ResolvedNodeContracts(
+        input_contract=replace(node.input_contract, ports=input_ports),
+        output_contract=replace(node.output_contract, ports=output_ports),
+    )

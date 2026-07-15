@@ -4,6 +4,8 @@ import * as React from "react";
 import * as stylex from "@stylexjs/stylex";
 import { useRouter } from "next/navigation";
 import {
+  NodeToolbar,
+  Position,
   type Connection,
   type IsValidConnection,
   type Node,
@@ -13,22 +15,21 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import {
-  Cable,
   ChevronDown,
+  Copy,
   LoaderCircle,
   Maximize2,
   Monitor,
-  MousePointer2,
   Moon,
   Play,
   Plus,
   Save,
-  Search,
   Sun,
+  Trash2,
   Workflow,
-  X,
 } from "lucide-react";
 
+import { NodeSelector } from "@/components/workbench/NodeSelector";
 import { SavedGraphBrowser } from "@/components/workbench/SavedGraphBrowser";
 import {
   NEW_GRAPH_ROUTE_ID,
@@ -49,14 +50,22 @@ import {
   applyNodeChanges,
 } from "@/components/canvas/WorkflowCanvas";
 import {
-  connectionArtifactContractIsValid,
+  connectionRouteForSelection,
+  connectionRouteMatchesSelection,
   connectionRouteSelection,
   connectionRoutesFor,
+  decodedHandleArtifactType,
   decodeHandleId,
   encodeHandleId,
-  projectionCandidatesForConnection,
   type ConnectionRoute,
 } from "@/components/canvas/handles";
+import {
+  appendInputPlug,
+  collectContributionLabel,
+  inputPlugsForPort,
+  removeInputPlug as withoutInputPlug,
+  reorderInputPlug as withReorderedInputPlug,
+} from "@/components/canvas/input-plugs";
 import {
   hydrateSavedGraph,
   savedGraphDraft,
@@ -71,18 +80,26 @@ import {
   LOCAL_UPLOAD_OPERATOR_ID,
   WORKFLOW_EDGE_TYPE,
   WORKFLOW_NODE_TYPE,
+  acceptedPortShapes,
+  bindArtifactTypeVariable,
   createWorkflowNodeData,
   effectivePortShape,
-  portMetaForPort,
+  invalidateWorkflowNodeRuns,
+  portHasInstancePlugs,
   removeSelectionItem,
   replaceSelection,
+  resetArtifactTypeBinding,
   selectedSourceItems,
+  serializeArtifactTypeBindings,
   serializeNodeConfig,
+  serializeInputPlugs,
+  serializeWorkflowEdgeTransport,
   type WorkflowEdge,
   type WorkflowEdgeRouteOption,
   type WorkflowEdgeRouteOffset,
   type WorkflowEdgeUpdate,
   type WorkflowNodeData,
+  type WorkflowInputPlugBinding,
 } from "@/components/canvas/types";
 import { useNodeRegistry, useSavedGraphs } from "@/hooks/use-api";
 import {
@@ -94,7 +111,7 @@ import {
   runGraph,
   updateSavedGraph,
   uploadFile,
-  type ArtifactTypeSpec,
+  type NodeRegistry,
   type NodeSpec,
   type PinnedOutputInput,
   type Port,
@@ -122,12 +139,15 @@ interface WorkbenchProps {
 
 const INITIAL_GRAPH_NAME = "Arithmetic field projection";
 const NEW_GRAPH_NAME = "Untitled workflow";
-
-const ARITHMETIC_OPERATORS = [
-  "arithmetic.number",
-  "arithmetic.add_subtract",
-  "arithmetic.multiply",
-] as const;
+const WORKBENCH_FIT_VIEW_OPTIONS = {
+  padding: {
+    top: "90px",
+    right: "48px",
+    bottom: "64px",
+    left: "165px",
+  },
+  maxZoom: 0.88,
+} as const;
 
 const ARITHMETIC_NODE_LAYOUT = [
   {
@@ -156,35 +176,6 @@ const ARITHMETIC_NODE_LAYOUT = [
   },
 ] as const;
 
-const ARITHMETIC_LINKS = [
-  {
-    sourceId: "node-number-nine",
-    sourcePort: "value",
-    targetId: "node-add-subtract",
-    targetPort: "left",
-  },
-  {
-    sourceId: "node-number-four",
-    sourcePort: "value",
-    targetId: "node-add-subtract",
-    targetPort: "right",
-  },
-  {
-    sourceId: "node-add-subtract",
-    sourcePort: "result",
-    targetId: "node-multiply",
-    targetPort: "left",
-    projectionPath: ["addition"],
-  },
-  {
-    sourceId: "node-add-subtract",
-    sourcePort: "result",
-    targetId: "node-multiply",
-    targetPort: "right",
-    projectionPath: ["subtraction"],
-  },
-] as const;
-
 interface ConnectionEndpoint {
   nodeTitle: string;
   portName: string;
@@ -200,26 +191,39 @@ interface PendingConnectionRoute {
 }
 
 function connectionRouteTitle(route: ConnectionRoute): string {
-  if (route.kind === "projection") return route.projection.title;
-  if (route.kind === "conversion") return route.conversion.title;
+  const conversionTitle = route.conversionPath
+    .map((conversion) => conversion.title)
+    .join(" → ");
+  let title = "Whole output";
+  if (route.kind === "projection") title = route.projection.title;
+  if (route.kind === "conversion") title = conversionTitle;
   if (route.kind === "projection-conversion") {
-    return `${route.projection.title} → ${route.conversion.title}`;
+    title = `${route.projection.title} → ${conversionTitle}`;
   }
-  return "Whole output";
+  const binding = route.artifactTypeBinding;
+  return binding
+    ? `${title} · ${binding.artifactType.id}@${binding.artifactType.schema_version}`
+    : title;
 }
 
 function connectionRouteDescription(
   sourcePortName: string,
   route: ConnectionRoute,
 ): string {
+  const conversionDescription = route.conversionPath
+    .map(
+      (conversion) =>
+        `${conversion.title} · ${conversion.key.id}@${conversion.key.version}`,
+    )
+    .join(" → ");
   if (route.kind === "projection") {
     return `${sourcePortName}.${route.projection.path.join(".")}`;
   }
   if (route.kind === "conversion") {
-    return `${sourcePortName} → ${route.conversion.title}`;
+    return `${sourcePortName} → ${conversionDescription}`;
   }
   if (route.kind === "projection-conversion") {
-    return `${sourcePortName}.${route.projection.path.join(".")} → ${route.conversion.title}`;
+    return `${sourcePortName}.${route.projection.path.join(".")} → ${conversionDescription}`;
   }
   return sourcePortName;
 }
@@ -234,10 +238,9 @@ function workflowEdgeRouteOption(
       route.kind === "projection" || route.kind === "projection-conversion"
         ? route.projection.title
         : undefined,
-    conversionTitle:
-      route.kind === "conversion" || route.kind === "projection-conversion"
-        ? route.conversion.title
-        : undefined,
+    conversionTitles: route.conversionPath.map(
+      (conversion) => conversion.title,
+    ),
   };
 }
 
@@ -284,10 +287,65 @@ function collectionModeForConnection(
   if (!sourceNode || !targetNode || !sourcePort || !targetPort) return null;
 
   const sourceShape = effectiveShapeForPort(sourceNode, sourcePort, edges);
+  if (acceptedPortShapes(targetPort).includes(sourceShape)) return "direct";
+  if (portHasInstancePlugs(targetPort)) return null;
+
   const targetShape = effectiveShapeForPort(targetNode, targetPort, edges);
   if (sourceShape === targetShape) return "direct";
   if (sourceShape === "many" && targetShape === "one") return "map";
   return null;
+}
+
+function inputPlugBindingsForNode(
+  node: WorkflowNode,
+  nodes: readonly WorkflowNode[],
+  edges: readonly WorkflowEdge[],
+  registry: NodeRegistry | undefined,
+): Readonly<Record<string, WorkflowInputPlugBinding>> {
+  const bindings: Record<string, WorkflowInputPlugBinding> = {};
+  for (const port of node.data.spec.inputs.filter(portHasInstancePlugs)) {
+    const portPlugs = inputPlugsForPort(node.data.inputPlugs, port.name);
+    portPlugs.forEach((plug, inputIndex) => {
+      const edge = edges.find(
+        (candidate) =>
+          candidate.target === node.id &&
+          decodeHandleId(candidate.targetHandle)?.plugId === plug.id,
+      );
+      if (!edge) return;
+
+      const sourceHandle = decodeHandleId(edge.sourceHandle);
+      const sourceNode = nodes.find((candidate) => candidate.id === edge.source);
+      const sourcePort = sourceNode?.data.spec.outputs.find(
+        (candidate) => candidate.name === sourceHandle?.portName,
+      );
+      if (!sourceHandle || !sourceNode || !sourcePort) return;
+
+      const projectionLabel = edge.data?.projection?.path.join(".");
+      const conversionLabels = (edge.data?.conversionPath ?? []).map(
+        (requestedConversion) =>
+          registry?.artifact_conversions.find(
+            (conversion) =>
+              conversion.key.id === requestedConversion.id &&
+              conversion.key.version === requestedConversion.version,
+          )?.title ??
+          `${requestedConversion.id}@${requestedConversion.version}`,
+      );
+      const conversionLabel = [projectionLabel, ...conversionLabels]
+        .filter((label): label is string => Boolean(label))
+        .join(" → ");
+      const contributionLabel = collectContributionLabel(
+        node.data.run,
+        inputIndex,
+      );
+      bindings[plug.id] = {
+        sourceLabel: `${sourceNode.data.spec.title} · ${sourcePort.title ?? sourcePort.name}`,
+        sourceShape: effectiveShapeForPort(sourceNode, sourcePort, edges),
+        ...(conversionLabel ? { conversionLabel } : {}),
+        ...(contributionLabel ? { contributionLabel } : {}),
+      };
+    });
+  }
+  return bindings;
 }
 
 function nodeAndDescendantIds(
@@ -356,20 +414,36 @@ function missingRequiredInputsFor(
   edges: readonly WorkflowEdge[],
 ): MissingRequiredInput[] {
   return nodes.flatMap((node) =>
-    node.data.spec.inputs
-      .filter(
-        (port) =>
-          port.required &&
-          !edges.some(
+    node.data.spec.inputs.flatMap((port) => {
+      if (portHasInstancePlugs(port)) {
+        const plugs = inputPlugsForPort(node.data.inputPlugs, port.name);
+        if (!plugs.length) {
+          return port.required
+            ? [{ nodeTitle: node.data.spec.title, portName: port.name }]
+            : [];
+        }
+        return plugs.flatMap((plug, index) =>
+          edges.some(
             (edge) =>
               edge.target === node.id &&
-              decodeHandleId(edge.targetHandle)?.portName === port.name,
-          ),
+              decodeHandleId(edge.targetHandle)?.plugId === plug.id,
+          )
+            ? []
+            : [{
+                nodeTitle: node.data.spec.title,
+                portName: `${port.name} input ${index + 1}`,
+              }],
+        );
+      }
+      if (!port.required) return [];
+      return edges.some(
+        (edge) =>
+          edge.target === node.id &&
+          decodeHandleId(edge.targetHandle)?.portName === port.name,
       )
-      .map((port) => ({
-        nodeTitle: node.data.spec.title,
-        portName: port.name,
-      })),
+        ? []
+        : [{ nodeTitle: node.data.spec.title, portName: port.name }];
+    }),
   );
 }
 
@@ -401,70 +475,6 @@ function executionValidationError(
 
   const first = missingInputs[0];
   return `${first.nodeTitle}.${first.portName} is required but unconnected in this run.`;
-}
-
-function exampleWorkflowEdges(
-  nodes: readonly WorkflowNode[],
-  artifactTypes: readonly ArtifactTypeSpec[],
-): WorkflowEdge[] {
-  const edges: WorkflowEdge[] = [];
-
-  for (const link of ARITHMETIC_LINKS) {
-    const source = nodes.find((node) => node.id === link.sourceId);
-    const target = nodes.find((node) => node.id === link.targetId);
-    const output = source?.data.spec.outputs.find(
-      (port) => port.name === link.sourcePort,
-    );
-    const input = target?.data.spec.inputs.find(
-      (port) => port.name === link.targetPort,
-    );
-    if (!source || !target || !output || !input) continue;
-
-    const connection: Connection = {
-      source: source.id,
-      sourceHandle: encodeHandleId(portMetaForPort(output)),
-      target: target.id,
-      targetHandle: encodeHandleId(portMetaForPort(input)),
-    };
-    const color =
-      ARTIFACT_TYPE_COLOR[output.artifact_type.id] ?? tokens.colorAccent;
-    const edgeStyle = {
-      stroke: color,
-      strokeWidth: 2,
-    };
-
-    if (!("projectionPath" in link)) {
-      if (!connectionArtifactContractIsValid(connection)) continue;
-      edges.push({
-        ...connection,
-        id: `edge-${source.id}-${output.name}-${target.id}-${input.name}`,
-        type: WORKFLOW_EDGE_TYPE,
-        data: { collectionMode: "direct" },
-        style: edgeStyle,
-      });
-      continue;
-    }
-
-    const projection = projectionCandidatesForConnection(
-      connection,
-      artifactTypes,
-    ).find(
-      (candidate) =>
-        candidate.path.join(".") === link.projectionPath.join("."),
-    );
-    if (!projection) continue;
-    edges.push({
-      ...connection,
-      id: `edge-${source.id}-${output.name}-${target.id}-${input.name}`,
-      type: WORKFLOW_EDGE_TYPE,
-      data: {
-        collectionMode: "direct",
-        projection: { path: [...projection.path] },
-      },
-      style: edgeStyle,
-    });
-  }
-  return edges;
 }
 
 function workflowNodes(
@@ -523,21 +533,12 @@ const s = stylex.create({
   identity: {
     minHeight: "43px",
     gap: "9px",
-    padding: "6px 9px 6px 7px",
-  },
-  brandMark: {
-    width: "29px",
-    height: "29px",
-    display: "grid",
-    placeItems: "center",
-    borderRadius: "6px",
-    borderWidth: 0,
-    backgroundColor: tokens.colorAccent,
-    color: tokens.colorOnAccent,
-    cursor: "pointer",
+    padding: "6px 9px 6px 11px",
+    borderRadius: "12px",
+    boxShadow: tokens.shadowNode,
   },
   identityCopy: {
-    width: "230px",
+    width: "min(230px, 42vw)",
     minWidth: 0,
     display: "grid",
     gap: "1px",
@@ -585,7 +586,28 @@ const s = stylex.create({
     lineHeight: 1.2,
     textOverflow: "ellipsis",
   },
-  actions: { height: "43px", gap: "4px", padding: "5px" },
+  identityDivider: {
+    width: "1px",
+    height: "28px",
+    flexShrink: 0,
+    backgroundColor: tokens.colorDivider,
+  },
+  identityActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: "2px",
+  },
+  identityAction: {
+    width: "29px",
+    paddingInline: 0,
+  },
+  identityActionActive: {
+    backgroundColor: {
+      default: tokens.colorAccentSoft,
+      ":hover": tokens.colorAccentSoft,
+    },
+    color: tokens.colorAccent,
+  },
   toolButton: {
     height: "31px",
     display: "inline-flex",
@@ -609,104 +631,122 @@ const s = stylex.create({
     color: { default: tokens.colorOnAccent, ":disabled": tokens.colorTextDisabled },
     fontWeight: 700,
   },
+  actionRail: {
+    position: "absolute",
+    zIndex: 20,
+    top: "70px",
+    left: "13px",
+    width: {
+      default: "118px",
+      "@media (max-width: 640px)": "44px",
+    },
+    display: "grid",
+    gap: "3px",
+    padding: "6px",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorBorder,
+    borderRadius: "14px",
+    backgroundColor: tokens.colorChrome,
+    boxShadow: tokens.shadowNode,
+  },
+  railButton: {
+    width: "100%",
+    height: "34px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: {
+      default: "flex-start",
+      "@media (max-width: 640px)": "center",
+    },
+    gap: "8px",
+    paddingInline: {
+      default: "9px",
+      "@media (max-width: 640px)": 0,
+    },
+    borderWidth: 0,
+    borderRadius: "9px",
+    backgroundColor: {
+      default: "transparent",
+      ":hover": tokens.colorHover,
+      ":disabled": "transparent",
+    },
+    color: {
+      default: tokens.colorMuted,
+      ":hover": tokens.colorTextEmphasis,
+      ":disabled": tokens.colorTextDisabled,
+    },
+    cursor: { default: "pointer", ":disabled": "not-allowed" },
+    fontSize: tokens.fontSizeSm,
+    fontWeight: 650,
+    textAlign: "left",
+    transitionDuration: "120ms",
+    transitionProperty: "background-color, color",
+  },
+  railPrimary: {
+    backgroundColor: {
+      default: tokens.colorAccentSoft,
+      ":hover": tokens.colorAccentSoft,
+    },
+    color: { default: tokens.colorAccent, ":hover": tokens.colorAccent },
+  },
+  railDanger: {
+    backgroundColor: {
+      default: "transparent",
+      ":hover": tokens.colorDangerHover,
+      ":disabled": "transparent",
+    },
+    color: {
+      default: tokens.colorMuted,
+      ":hover": tokens.colorDanger,
+      ":disabled": tokens.colorTextDisabled,
+    },
+  },
+  railLabel: {
+    display: {
+      default: "inline",
+      "@media (max-width: 640px)": "none",
+    },
+  },
+  railDivider: {
+    height: "1px",
+    marginBlock: "3px",
+    backgroundColor: tokens.colorDivider,
+  },
+  selectionToolbar: {
+    zIndex: 25,
+    minHeight: "42px",
+    display: "flex",
+    alignItems: "center",
+    gap: "3px",
+    padding: "5px",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorBorderStrong,
+    borderRadius: "12px",
+    backgroundColor: tokens.colorChrome,
+    boxShadow: tokens.shadowNodeSelected,
+    pointerEvents: "auto",
+  },
+  selectionLabel: {
+    paddingInline: "7px 9px",
+    color: tokens.colorSubtle,
+    fontSize: tokens.fontSizeXs,
+    fontWeight: 700,
+    whiteSpace: "nowrap",
+  },
+  selectionDivider: {
+    width: "1px",
+    height: "24px",
+    marginInline: "2px",
+    backgroundColor: tokens.colorDivider,
+  },
   spinner: {
     animationName: "ns-spin",
     animationDuration: "900ms",
     animationIterationCount: "infinite",
     animationTimingFunction: "linear",
   },
-  library: {
-    position: "absolute",
-    zIndex: 30,
-    top: "66px",
-    left: "13px",
-    width: "310px",
-    maxHeight: "min(620px, calc(100vh - 92px))",
-    overflow: "hidden",
-    borderWidth: 1,
-    borderStyle: "solid",
-    borderColor: tokens.colorBorder,
-    borderRadius: "9px",
-    backgroundColor: tokens.colorSurface,
-  },
-  libraryHeader: {
-    height: "40px",
-    display: "flex",
-    alignItems: "center",
-    gap: "7px",
-    paddingInline: "11px 7px",
-    borderBottomWidth: 1,
-    borderBottomStyle: "solid",
-    borderBottomColor: tokens.colorBorder,
-  },
-  libraryTitle: { flex: 1, fontSize: tokens.fontSizeSm, fontWeight: 700 },
-  closeButton: {
-    width: "24px",
-    height: "24px",
-    display: "grid",
-    placeItems: "center",
-    borderWidth: 0,
-    borderRadius: "4px",
-    backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
-    color: tokens.colorSubtle,
-    cursor: "pointer",
-  },
-  searchWrap: { position: "relative", padding: "9px" },
-  searchIcon: { position: "absolute", top: "19px", left: "19px", color: tokens.colorSubtle },
-  searchInput: {
-    width: "100%",
-    height: "32px",
-    padding: "0 9px 0 29px",
-    borderWidth: 1,
-    borderStyle: "solid",
-    borderColor: { default: tokens.colorBorderStrong, ":focus": tokens.colorAccent },
-    borderRadius: "5px",
-    outline: "none",
-    backgroundColor: tokens.colorSurfaceSunken,
-    color: tokens.colorText,
-    fontSize: tokens.fontSizeSm,
-  },
-  libraryGroup: { maxHeight: "500px", overflowY: "auto", padding: "0 9px 9px" },
-  groupLabel: {
-    padding: "5px 2px 6px",
-    color: tokens.colorSubtle,
-    fontSize: "10px",
-    fontWeight: 800,
-    letterSpacing: "0.12em",
-    textTransform: "uppercase",
-  },
-  libraryItem: {
-    position: "relative",
-    width: "100%",
-    minHeight: "52px",
-    display: "grid",
-    gridTemplateColumns: "minmax(0,1fr) auto",
-    alignItems: "center",
-    gap: "9px",
-    marginTop: "4px",
-    padding: "7px 8px",
-    overflow: "hidden",
-    borderWidth: 1,
-    borderStyle: "solid",
-    borderColor: { default: tokens.colorBorder, ":hover": tokens.colorBorderStrong },
-    borderRadius: "5px",
-    backgroundColor: { default: tokens.colorSurfaceMuted, ":hover": tokens.colorHover },
-    color: tokens.colorText,
-    cursor: "pointer",
-    textAlign: "left",
-  },
-  libraryCopy: { minWidth: 0, display: "grid", gap: "2px" },
-  libraryTitleText: { fontSize: tokens.fontSizeSm, fontWeight: 700 },
-  libraryMeta: {
-    overflow: "hidden",
-    color: tokens.colorSubtle,
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    fontSize: tokens.fontSizeXs,
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  libraryPorts: { color: tokens.colorSubtle, fontSize: tokens.fontSizeXs, whiteSpace: "nowrap" },
-  empty: { padding: "18px", color: tokens.colorSubtle, fontSize: tokens.fontSizeSm, textAlign: "center" },
   statusBar: {
     position: "absolute",
     zIndex: 15,
@@ -854,7 +894,6 @@ export function Workbench({
   >();
   const [libraryOpen, setLibraryOpen] = React.useState(false);
   const [graphBrowserOpen, setGraphBrowserOpen] = React.useState(false);
-  const [search, setSearch] = React.useState("");
   const [runningScope, setRunningScope] = React.useState<RunScope | null>(null);
   const running = runningScope !== null;
   const [runError, setRunError] = React.useState<string | null>(null);
@@ -897,17 +936,15 @@ export function Workbench({
   );
 
   const removeNode = React.useCallback((nodeId: string) => {
+    const changedTargetNodeIds = edges
+      .filter((edge) => edge.source === nodeId)
+      .map((edge) => edge.target);
     setNodes((current) =>
-      current
-        .filter((node) => node.id !== nodeId)
-        .map((node) => ({
-          ...node,
-          data: {
-            ...node.data,
-            run: null,
-            execution: { status: "idle" },
-          },
-        })),
+      invalidateWorkflowNodeRuns(
+        current.filter((node) => node.id !== nodeId),
+        edges,
+        changedTargetNodeIds,
+      ),
     );
     setEdges((current) =>
       current.filter(
@@ -916,7 +953,7 @@ export function Workbench({
     );
     setPendingConnectionRoute(null);
     setRunError(null);
-  }, []);
+  }, [edges]);
 
   const removeSelection = React.useCallback(
     (nodeId: string, index: number) => {
@@ -930,6 +967,99 @@ export function Workbench({
               ...(node.id === nodeId
                 ? removeSelectionItem(node.data, index)
                 : node.data),
+              run: null,
+              execution: { status: "idle" },
+            },
+          };
+        }),
+      );
+      setRunError(null);
+    },
+    [edges],
+  );
+
+  const addNodeInputPlug = React.useCallback(
+    (nodeId: string, portName: string) => {
+      const invalidatedNodeIds = nodeAndDescendantIds(nodeId, edges);
+      setNodes((current) =>
+        current.map((node) => {
+          if (!invalidatedNodeIds.has(node.id)) return node;
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              inputPlugs:
+                node.id === nodeId
+                  ? appendInputPlug(node.data.inputPlugs, portName)
+                  : node.data.inputPlugs,
+              run: null,
+              execution: { status: "idle" },
+            },
+          };
+        }),
+      );
+      setRunError(null);
+    },
+    [edges],
+  );
+
+  const removeNodeInputPlug = React.useCallback(
+    (nodeId: string, plugId: string) => {
+      const invalidatedNodeIds = nodeAndDescendantIds(nodeId, edges);
+      setNodes((current) =>
+        current.map((node) => {
+          if (!invalidatedNodeIds.has(node.id)) return node;
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              inputPlugs:
+                node.id === nodeId
+                  ? withoutInputPlug(node.data.inputPlugs, plugId)
+                  : node.data.inputPlugs,
+              run: null,
+              execution: { status: "idle" },
+            },
+          };
+        }),
+      );
+      setEdges((current) =>
+        current.filter(
+          (edge) =>
+            edge.target !== nodeId ||
+            decodeHandleId(edge.targetHandle)?.plugId !== plugId,
+        ),
+      );
+      setPendingConnectionRoute(null);
+      setRunError(null);
+    },
+    [edges],
+  );
+
+  const reorderNodeInputPlug = React.useCallback(
+    (
+      nodeId: string,
+      portName: string,
+      plugId: string,
+      toIndex: number,
+    ) => {
+      const invalidatedNodeIds = nodeAndDescendantIds(nodeId, edges);
+      setNodes((current) =>
+        current.map((node) => {
+          if (!invalidatedNodeIds.has(node.id)) return node;
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              inputPlugs:
+                node.id === nodeId
+                  ? withReorderedInputPlug(
+                      node.data.inputPlugs,
+                      portName,
+                      plugId,
+                      toIndex,
+                    )
+                  : node.data.inputPlugs,
               run: null,
               execution: { status: "idle" },
             },
@@ -982,6 +1112,29 @@ export function Workbench({
     }
   }, [edges]);
 
+  const resetNodeArtifactTypeBinding = React.useCallback(
+    (nodeId: string, variable: string) => {
+      const hasIncidentEdges = edges.some(
+        (edge) => edge.source === nodeId || edge.target === nodeId,
+      );
+      if (hasIncidentEdges) return;
+
+      setNodes((current) =>
+        current.map((node) =>
+          node.id === nodeId
+            ? {
+                ...node,
+                data: resetArtifactTypeBinding(node.data, variable, false),
+              }
+            : node,
+        ),
+      );
+      setPendingConnectionRoute(null);
+      setRunError(null);
+    },
+    [edges],
+  );
+
   const attachNodeCallbacks = React.useCallback(
     (data: WorkflowNodeData): WorkflowNodeData => ({
       ...data,
@@ -992,11 +1145,19 @@ export function Workbench({
           ? handleFilesSelected
           : undefined,
       onRemoveSelection: removeSelection,
+      onAddInputPlug: addNodeInputPlug,
+      onRemoveInputPlug: removeNodeInputPlug,
+      onReorderInputPlug: reorderNodeInputPlug,
+      onResetArtifactTypeBinding: resetNodeArtifactTypeBinding,
     }),
     [
+      addNodeInputPlug,
       handleFilesSelected,
       removeNode,
+      removeNodeInputPlug,
       removeSelection,
+      reorderNodeInputPlug,
+      resetNodeArtifactTypeBinding,
       updateConfig,
     ],
   );
@@ -1037,7 +1198,9 @@ export function Workbench({
 
   React.useEffect(() => {
     if (!flow || !nodes.length) return;
-    const frame = window.requestAnimationFrame(() => void flow.fitView({ padding: 0.12, maxZoom: 0.88 }));
+    const frame = window.requestAnimationFrame(
+      () => void flow.fitView(WORKBENCH_FIT_VIEW_OPTIONS),
+    );
     return () => window.cancelAnimationFrame(frame);
   }, [fitRevision, flow, nodes.length]);
 
@@ -1083,39 +1246,22 @@ export function Workbench({
     [],
   );
 
-  const catalog = registry?.nodes ?? [];
-  const filteredCatalog = catalog.filter((spec) => {
-    const query = search.trim().toLowerCase();
-    return !query || spec.title.toLowerCase().includes(query) || spec.operator_id.toLowerCase().includes(query);
-  });
   const sourceWithoutFiles = nodes.some(
     (node) => node.data.spec.operator_id === LOCAL_UPLOAD_OPERATOR_ID && !selectedSourceItems(node.data).length,
   );
-  const selectedNodeCount = nodes.filter((node) => node.selected).length;
+  const selectedNodeIds = React.useMemo(
+    () => nodes.flatMap((node) => (node.selected ? [node.id] : [])),
+    [nodes],
+  );
+  const selectedNodeCount = selectedNodeIds.length;
   const selectedWithDependenciesCount = selectedNodeAndAncestorIds(
     nodes,
     edges,
   ).size;
-  const missingOperators = registry
-    ? ARITHMETIC_OPERATORS.filter((operatorId) => !registry.nodes.some((spec) => spec.operator_id === operatorId))
-    : [];
   const missingRequiredInputs = missingRequiredInputsFor(nodes, edges);
   const connectionInstruction = missingRequiredInputs.length
-    ? `${missingRequiredInputs.length} required input${missingRequiredInputs.length === 1 ? "" : "s"} unconnected · drag between ports or use Wire example`
+    ? `${missingRequiredInputs.length} required input${missingRequiredInputs.length === 1 ? "" : "s"} unconnected · drag between ports to connect them`
     : null;
-  const canWireExample = Boolean(
-    registry &&
-    missingOperators.length === 0 &&
-    ARITHMETIC_NODE_LAYOUT.every((definition) =>
-      nodes.some((node) => node.id === definition.id),
-    ),
-  );
-  const runAllDisabled =
-    !registry ||
-    !nodes.length ||
-    running ||
-    sourceWithoutFiles ||
-    missingRequiredInputs.length > 0;
   const runSelectedDisabled =
     !registry || running || selectedNodeCount === 0;
   const statusMessage = runningScope === "selected"
@@ -1151,27 +1297,58 @@ export function Workbench({
     setRunError(null);
   }, []);
 
+  const invalidateWorkflowResults = React.useCallback(
+    (
+      changedTargetNodeIds: readonly string[],
+      workflowEdges: readonly WorkflowEdge[],
+    ) => {
+      if (!changedTargetNodeIds.length) return;
+      setNodes((current) =>
+        invalidateWorkflowNodeRuns(
+          current,
+          workflowEdges,
+          changedTargetNodeIds,
+        ),
+      );
+      setRunError(null);
+    },
+    [],
+  );
+
   const onEdgesChange: OnEdgesChange<WorkflowEdge> = React.useCallback(
     (changes) => {
-      setEdges((current) => applyEdgeChanges(changes, current));
-      if (changes.some((change) => change.type !== "select")) {
-        clearWorkflowResults();
+      const changedTargetNodeIds = new Set<string>();
+      for (const change of changes) {
+        if (change.type === "remove" || change.type === "replace") {
+          const previousEdge = edges.find((edge) => edge.id === change.id);
+          if (previousEdge) changedTargetNodeIds.add(previousEdge.target);
+        }
+        if (change.type === "add" || change.type === "replace") {
+          changedTargetNodeIds.add(change.item.target);
+        }
       }
+      setEdges((current) => applyEdgeChanges(changes, current));
+      invalidateWorkflowResults([...changedTargetNodeIds], edges);
     },
-    [clearWorkflowResults],
+    [edges, invalidateWorkflowResults],
   );
 
   const updateEdge = React.useCallback(
     (edgeId: string, update: WorkflowEdgeUpdate) => {
+      const changedEdge = edges.find((edge) => edge.id === edgeId);
+      if (!changedEdge) return;
       setEdges((current) =>
         current.map((edge) => {
           if (edge.id !== edgeId) return edge;
           const projection = update.route
             ? update.route.projection
             : edge.data?.projection;
-          const conversion = update.route
-            ? update.route.conversion
-            : edge.data?.conversion;
+          const conversionPath = update.route
+            ? update.route.conversionPath.map((conversion) => ({
+                id: conversion.id,
+                version: conversion.version,
+              }))
+            : (edge.data?.conversionPath ?? []);
           return {
             ...edge,
             data: {
@@ -1181,14 +1358,14 @@ export function Workbench({
                 edge.data?.collectionMode ??
                 "direct",
               projection,
-              conversion,
+              conversionPath,
             },
           };
         }),
       );
-      clearWorkflowResults();
+      invalidateWorkflowResults([changedEdge.target], edges);
     },
-    [clearWorkflowResults],
+    [edges, invalidateWorkflowResults],
   );
 
   const updateEdgeRoute = React.useCallback(
@@ -1216,9 +1393,63 @@ export function Workbench({
     collectionMode: RunEdgeCollectionMode,
     route: ConnectionRoute,
   ) => {
-    const source = decodeHandleId(connection.sourceHandle);
-    const color = source
-      ? ARTIFACT_TYPE_COLOR[source.artifactTypeId] ?? tokens.colorAccent
+    let committedConnection = connection;
+    const binding = route.artifactTypeBinding;
+    if (binding) {
+      const handleId = binding.endpoint === "source"
+        ? connection.sourceHandle
+        : connection.targetHandle;
+      const handle = decodeHandleId(handleId);
+      const nodeId = binding.endpoint === "source"
+        ? connection.source
+        : connection.target;
+      const node = nodes.find((candidate) => candidate.id === nodeId);
+      const existingBinding = node?.data.artifactTypeBindings[binding.variable];
+      if (
+        !handle ||
+        handle.artifactTypeVariable !== binding.variable ||
+        !node ||
+        (existingBinding &&
+          (existingBinding.id !== binding.artifactType.id ||
+            existingBinding.schema_version !==
+              binding.artifactType.schema_version))
+      ) {
+        return;
+      }
+
+      const concreteHandleId = encodeHandleId({
+        portName: handle.portName,
+        artifactTypeId: binding.artifactType.id,
+        schemaVersion: binding.artifactType.schema_version,
+        shape: handle.shape,
+        direction: handle.direction,
+        ...(handle.plugId ? { plugId: handle.plugId } : {}),
+      });
+      committedConnection = binding.endpoint === "source"
+        ? { ...connection, sourceHandle: concreteHandleId }
+        : { ...connection, targetHandle: concreteHandleId };
+      setNodes((current) =>
+        current.map((candidate) =>
+          candidate.id === nodeId
+            ? {
+                ...candidate,
+                data: bindArtifactTypeVariable(
+                  candidate.data,
+                  binding.variable,
+                  binding.artifactType,
+                ),
+              }
+            : candidate,
+        ),
+      );
+    }
+
+    const source = decodeHandleId(committedConnection.sourceHandle);
+    const sourceArtifactType = source
+      ? decodedHandleArtifactType(source)
+      : null;
+    const color = sourceArtifactType
+      ? ARTIFACT_TYPE_COLOR[sourceArtifactType.id] ?? tokens.colorAccent
       : tokens.colorAccent;
     const edgeStyle = {
       stroke: color,
@@ -1226,7 +1457,7 @@ export function Workbench({
     };
     const selection = connectionRouteSelection(route);
     const edge: WorkflowEdge = {
-      ...connection,
+      ...committedConnection,
       id: `edge-${crypto.randomUUID()}`,
       type: WORKFLOW_EDGE_TYPE,
       animated: false,
@@ -1235,18 +1466,16 @@ export function Workbench({
         projection: selection.projection
           ? { path: [...selection.projection.path] }
           : undefined,
-        conversion: selection.conversion
-          ? {
-              id: selection.conversion.id,
-              version: selection.conversion.version,
-            }
-          : undefined,
+        conversionPath: selection.conversionPath.map((conversion) => ({
+          id: conversion.id,
+          version: conversion.version,
+        })),
       },
       style: edgeStyle,
     };
     setEdges((current) => addEdge(edge, current));
-    clearWorkflowResults();
-  }, [clearWorkflowResults]);
+    invalidateWorkflowResults([edge.target], [...edges, edge]);
+  }, [edges, invalidateWorkflowResults, nodes]);
 
   const isValidConnection = React.useCallback<
     IsValidConnection<WorkflowEdge>
@@ -1277,6 +1506,19 @@ export function Workbench({
       (port) => port.name === target?.portName,
     );
     if (!target || !input) return false;
+    if (portHasInstancePlugs(input)) {
+      if (
+        !target.plugId ||
+        !targetNode?.data.inputPlugs.some(
+          (plug) =>
+            plug.id === target.plugId && plug.portName === input.name,
+        )
+      ) {
+        return false;
+      }
+    } else if (target.plugId) {
+      return false;
+    }
 
     if (
       collectionMode === "map" &&
@@ -1304,6 +1546,14 @@ export function Workbench({
       }
     }
 
+    if (portHasInstancePlugs(input)) {
+      return !edges.some(
+        (edge) =>
+          edge.id !== connectionEdgeId &&
+          edge.target === candidate.target &&
+          decodeHandleId(edge.targetHandle)?.plugId === target.plugId,
+      );
+    }
     if (input.variadic) return true;
     return !edges.some((edge) =>
       edge.id !== connectionEdgeId &&
@@ -1331,10 +1581,10 @@ export function Workbench({
       registry?.artifact_types ?? [],
       registry?.artifact_conversions ?? [],
     );
-    const firstCandidate = candidates[0];
-    if (!firstCandidate) return;
-    if (firstCandidate.kind === "exact" || candidates.length === 1) {
-      addWorkflowEdge(connection, collectionMode, firstCandidate);
+    const candidate = candidates[0];
+    if (!candidate) return;
+    if (candidates.length === 1) {
+      addWorkflowEdge(connection, collectionMode, candidate);
       return;
     }
 
@@ -1346,6 +1596,8 @@ export function Workbench({
     if (!source || !target || !sourceNode || !targetNode) {
       return;
     }
+    const sourceArtifactType = decodedHandleArtifactType(source);
+    const targetArtifactType = decodedHandleArtifactType(target);
 
     setPendingConnectionRoute({
       connection,
@@ -1354,12 +1606,16 @@ export function Workbench({
       source: {
         nodeTitle: sourceNode.data.spec.title,
         portName: source.portName,
-        artifactType: `${source.artifactTypeId}@${source.schemaVersion}`,
+        artifactType: sourceArtifactType
+          ? `${sourceArtifactType.id}@${sourceArtifactType.schema_version}`
+          : `Any artifact · ${source.artifactTypeVariable}`,
       },
       target: {
         nodeTitle: targetNode.data.spec.title,
         portName: target.portName,
-        artifactType: `${target.artifactTypeId}@${target.schemaVersion}`,
+        artifactType: targetArtifactType
+          ? `${targetArtifactType.id}@${targetArtifactType.schema_version}`
+          : `Any artifact · ${target.artifactTypeVariable}`,
       },
     });
   }, [
@@ -1380,15 +1636,72 @@ export function Workbench({
       { id, type: WORKFLOW_NODE_TYPE, position: { x: center.x - 140, y: center.y - 110 }, selected: true, data },
     ]);
     setLibraryOpen(false);
-    setSearch("");
   }, [attachNodeCallbacks, flow]);
 
-  const wireExample = React.useCallback(() => {
-    if (!registry || !canWireExample || running) return;
-    setEdges(exampleWorkflowEdges(nodes, registry.artifact_types));
+  const duplicateSelectedNodes = React.useCallback(() => {
+    const selectedNodes = nodes.filter((node) => node.selected);
+    if (!selectedNodes.length || running) return;
+
+    const duplicates = selectedNodes.map((node) => ({
+      node,
+      id: `node-${crypto.randomUUID()}`,
+    }));
+    const duplicatedNodeIds = new Map(
+      duplicates.map(({ node, id }) => [node.id, id]),
+    );
+    const duplicatedNodes: WorkflowNode[] = duplicates.map(({ node, id }) => ({
+      ...node,
+      id,
+      position: { x: node.position.x + 36, y: node.position.y + 36 },
+      selected: true,
+      dragging: false,
+      data: {
+        ...node.data,
+        inputPlugs: node.data.inputPlugs.map((plug) => ({ ...plug })),
+        inputPlugBindings: {},
+        artifactTypeBindings: structuredClone(
+          node.data.artifactTypeBindings,
+        ),
+        mappedInputPort: null,
+        config: structuredClone(node.data.config),
+        run: null,
+        execution: { status: "idle" },
+      },
+    }));
+    const duplicatedEdges: WorkflowEdge[] = edges.flatMap((edge) => {
+      const source = duplicatedNodeIds.get(edge.source);
+      const target = duplicatedNodeIds.get(edge.target);
+      if (!source || !target) return [];
+      return [{
+        ...edge,
+        id: `edge-${crypto.randomUUID()}`,
+        source,
+        target,
+        selected: false,
+        data: edge.data ? structuredClone(edge.data) : undefined,
+      }];
+    });
+
+    setNodes([
+      ...nodes.map((node) => ({ ...node, selected: false })),
+      ...duplicatedNodes,
+    ]);
+    setEdges([
+      ...edges.map((edge) => ({ ...edge, selected: false })),
+      ...duplicatedEdges,
+    ]);
     setPendingConnectionRoute(null);
-    clearWorkflowResults();
-  }, [canWireExample, clearWorkflowResults, nodes, registry, running]);
+    setRunError(null);
+  }, [edges, nodes, running]);
+
+  const deleteSelectedNodes = React.useCallback(() => {
+    if (!flow || !selectedNodeIds.length || running) return;
+    setPendingConnectionRoute(null);
+    setRunError(null);
+    void flow.deleteElements({
+      nodes: selectedNodeIds.map((id) => ({ id })),
+    });
+  }, [flow, running, selectedNodeIds]);
 
   const confirmDiscard = React.useCallback(
     (action: string): boolean =>
@@ -1411,7 +1724,6 @@ export function Workbench({
     setRunError(null);
     setPersistenceError(null);
     setLibraryOpen(false);
-    setSearch("");
     setFitRevision((current) => current + 1);
   }, []);
 
@@ -1577,7 +1889,6 @@ export function Workbench({
       setRunError(null);
       setPersistenceError(materializationWarning);
       setLibraryOpen(false);
-      setSearch("");
       setGraphBrowserOpen(false);
       setFitRevision((current) => current + 1);
     } catch (error) {
@@ -1732,9 +2043,15 @@ export function Workbench({
         data: {
           ...node.data,
           mappedInputPort: mappedInputPortForNode(node.id, edges),
+          inputPlugBindings: inputPlugBindingsForNode(
+            node,
+            nodes,
+            edges,
+            registry,
+          ),
         },
       })),
-    [edges, nodes],
+    [edges, nodes, registry],
   );
 
   const canvasEdges = React.useMemo(
@@ -1747,18 +2064,38 @@ export function Workbench({
           targetHandle: edge.targetHandle ?? null,
         };
         const source = decodeHandleId(edge.sourceHandle);
-        const routeOptions = connectionRoutesFor(
+        const activeSelection = {
+          projection: edge.data?.projection,
+          conversionPath: edge.data?.conversionPath ?? [],
+        };
+        const routes = connectionRoutesFor(
           connection,
           registry?.artifact_types ?? [],
           registry?.artifact_conversions ?? [],
-        ).map(workflowEdgeRouteOption);
-        const conversionTitle = edge.data?.conversion
-          ? registry?.artifact_conversions.find(
+        );
+        const activeRoute = connectionRouteForSelection(
+          connection,
+          registry?.artifact_types ?? [],
+          registry?.artifact_conversions ?? [],
+          activeSelection,
+        );
+        if (
+          activeRoute &&
+          !routes.some((route) =>
+            connectionRouteMatchesSelection(route, activeSelection),
+          )
+        ) {
+          routes.push(activeRoute);
+        }
+        const routeOptions = routes.map(workflowEdgeRouteOption);
+        const conversionTitles = activeSelection.conversionPath.map(
+          (requestedConversion) =>
+            registry?.artifact_conversions.find(
               (conversion) =>
-                conversion.key.id === edge.data?.conversion?.id &&
-                conversion.key.version === edge.data.conversion.version,
-            )?.title
-          : undefined;
+                conversion.key.id === requestedConversion.id &&
+                conversion.key.version === requestedConversion.version,
+            )?.title ?? `${requestedConversion.id}@${requestedConversion.version}`,
+        );
         const otherEdges = edges.filter((candidate) => candidate.id !== edge.id);
         const validMode = collectionModeForConnection(
           connection,
@@ -1772,7 +2109,7 @@ export function Workbench({
             ...edge.data,
             collectionMode: edge.data?.collectionMode ?? "direct",
             sourcePortName: source?.portName,
-            conversionTitle,
+            conversionTitles,
             routeOptions,
             allowedCollectionModes: validMode ? [validMode] : [],
             onUpdate: updateEdge,
@@ -1943,16 +2280,8 @@ export function Workbench({
             from_port: source.portName,
             to_node: edge.target,
             to_port: target.portName,
-            collection_mode: edge.data?.collectionMode ?? "direct",
-            projection: edge.data?.projection
-              ? { path: [...edge.data.projection.path] }
-              : null,
-            conversion: edge.data?.conversion
-              ? {
-                  id: edge.data.conversion.id,
-                  version: edge.data.conversion.version,
-                }
-              : null,
+            to_plug: target.plugId ?? null,
+            ...serializeWorkflowEdgeTransport(edge.data),
           };
           return [runEdge];
         },
@@ -1962,6 +2291,8 @@ export function Workbench({
         operator_id: node.data.spec.operator_id,
         operator_version: node.data.spec.operator_version,
         config: serializeNodeConfig(node.data),
+        input_plugs: serializeInputPlugs(node.data),
+        artifact_type_bindings: serializeArtifactTypeBindings(node.data),
       }));
       const graphContext = activeGraph && !isDirty
         ? {
@@ -2046,6 +2377,7 @@ export function Workbench({
     <main {...stylex.props(s.shell)}>
       <section {...stylex.props(s.canvas)} aria-label="Workflow canvas">
         <WorkflowCanvas
+          fitViewOptions={WORKBENCH_FIT_VIEW_OPTIONS}
           nodes={canvasNodes}
           edges={canvasEdges}
           onNodesChange={onNodesChange}
@@ -2058,20 +2390,56 @@ export function Workbench({
             setGraphBrowserOpen(false);
           }}
           animateEdges={running}
-        />
+        >
+          {selectedNodeIds.length ? (
+            <NodeToolbar
+              nodeId={selectedNodeIds}
+              isVisible
+              position={Position.Bottom}
+              offset={16}
+              className={`ns-node-detail ${stylex.props(s.selectionToolbar).className}`}
+            >
+              <span {...stylex.props(s.selectionLabel)}>
+                {selectedNodeCount} selected
+              </span>
+              <span {...stylex.props(s.selectionDivider)} />
+              <button
+                type="button"
+                disabled={runSelectedDisabled}
+                title="Run only the selected nodes; latest accessible upstream outputs are pinned"
+                {...stylex.props(s.toolButton, s.primaryButton)}
+                onClick={() => void runWorkflow("selected")}
+              >
+                {runningScope === "selected" ? (
+                  <LoaderCircle size={13} {...stylex.props(s.spinner)} />
+                ) : (
+                  <Play size={13} />
+                )}
+                {runningScope === "selected" ? "Running…" : "Run"}
+              </button>
+              <button
+                type="button"
+                disabled={runSelectedDisabled}
+                title={`Run the selection and every upstream dependency (${selectedWithDependenciesCount} total)`}
+                {...stylex.props(s.toolButton)}
+                onClick={() => void runWorkflow("selected-with-dependencies")}
+              >
+                {runningScope === "selected-with-dependencies" ? (
+                  <LoaderCircle size={13} {...stylex.props(s.spinner)} />
+                ) : (
+                  <Workflow size={13} />
+                )}
+                {runningScope === "selected-with-dependencies"
+                  ? "Running…"
+                  : "With dependencies"}
+              </button>
+            </NodeToolbar>
+          ) : null}
+        </WorkflowCanvas>
       </section>
 
       <div {...stylex.props(s.topBar)}>
         <div {...stylex.props(s.chrome, s.identity)}>
-          <button
-            type="button"
-            aria-label="Browse saved graphs"
-            title="Browse saved graphs"
-            {...stylex.props(s.brandMark)}
-            onClick={toggleGraphBrowser}
-          >
-            <Workflow size={16} strokeWidth={2.2} />
-          </button>
           <span {...stylex.props(s.identityCopy)}>
             <button
               type="button"
@@ -2099,142 +2467,129 @@ export function Workbench({
               }}
             />
           </span>
-        </div>
-
-        <div {...stylex.props(s.chrome, s.actions)}>
-          <button
-            type="button"
-            disabled={
-              saving ||
-              running ||
-              Boolean(openingGraphId) ||
-              Boolean(deletingGraphId) ||
-              !graphName.trim() ||
-              Boolean(activeGraph && !isDirty)
-            }
-            title={activeGraph && !isDirty ? "All changes are saved" : "Save graph"}
-            {...stylex.props(s.toolButton)}
-            onClick={() => void saveCurrentGraph()}
-          >
-            {saving ? (
-              <LoaderCircle size={13} {...stylex.props(s.spinner)} />
-            ) : (
-              <Save size={13} />
-            )}
-            {saving ? "Saving…" : activeGraph && !isDirty ? "Saved" : "Save"}
-          </button>
-          <button
-            type="button"
-            {...stylex.props(s.toolButton)}
-            disabled={!registry}
-            onClick={() => {
-              setGraphBrowserOpen(false);
-              setLibraryOpen((open) => !open);
-            }}
-          >
-            <Plus size={13} /> Add node
-          </button>
-          <button
-            type="button"
-            disabled={!canWireExample || running}
-            title={canWireExample
-              ? "Replace current connections with the canonical four-edge example"
-              : "Waiting for all arithmetic example nodes"}
-            {...stylex.props(s.toolButton)}
-            onClick={wireExample}
-          >
-            <Cable size={13} /> Wire example
-          </button>
-          <button type="button" aria-label="Fit workflow" {...stylex.props(s.toolButton)} onClick={() => void flow?.fitView({ padding: 0.12 })}>
-            <Maximize2 size={13} />
-          </button>
-          <button
-            type="button"
-            aria-label={
-              preference === "light"
-                ? "Switch to dark theme"
-                : preference === "dark"
-                  ? "Switch to system theme"
-                  : "Switch to light theme"
-            }
-            title={
-              preference === "light"
-                ? "Light theme"
-                : preference === "dark"
-                  ? "Dark theme"
-                  : "System theme"
-            }
-            {...stylex.props(s.toolButton)}
-            onClick={cycleTheme}
-          >
-            {preference === "light" ? (
-              <Sun size={13} />
-            ) : preference === "dark" ? (
-              <Moon size={13} />
-            ) : (
-              <Monitor size={13} />
-            )}
-          </button>
-          <button
-            type="button"
-            disabled={runSelectedDisabled}
-            title={
-              selectedNodeCount
-                ? "Run only the selected nodes; latest accessible upstream outputs are pinned"
-                : "Drag-select or shift-click at least one node"
-            }
-            {...stylex.props(s.toolButton)}
-            onClick={() => void runWorkflow("selected")}
-          >
-            {runningScope === "selected" ? (
-              <LoaderCircle size={13} {...stylex.props(s.spinner)} />
-            ) : (
-              <MousePointer2 size={13} />
-            )}
-            {runningScope === "selected"
-              ? "Running…"
-              : `Run selected${selectedNodeCount ? ` (${selectedNodeCount})` : ""}`}
-          </button>
-          <button
-            type="button"
-            disabled={runSelectedDisabled}
-            title={
-              selectedNodeCount
-                ? `Run the selected nodes and every upstream dependency (${selectedWithDependenciesCount} total)`
-                : "Drag-select or shift-click at least one node"
-            }
-            {...stylex.props(s.toolButton)}
-            onClick={() => void runWorkflow("selected-with-dependencies")}
-          >
-            {runningScope === "selected-with-dependencies" ? (
-              <LoaderCircle size={13} {...stylex.props(s.spinner)} />
-            ) : (
-              <Workflow size={13} />
-            )}
-            {runningScope === "selected-with-dependencies"
-              ? "Running…"
-              : `Run with dependencies${selectedNodeCount ? ` (${selectedWithDependenciesCount})` : ""}`}
-          </button>
-          <button
-            type="button"
-            disabled={runAllDisabled}
-            title={!registry
-              ? "Waiting for the live node registry"
-              : sourceWithoutFiles
-                  ? "Choose at least one source image"
-                  : connectionInstruction ?? undefined}
-            {...stylex.props(s.toolButton, s.primaryButton)}
-            onClick={() => void runWorkflow("all")}
-          >
-            {runningScope === "all" ? (
-              <LoaderCircle size={13} {...stylex.props(s.spinner)} />
-            ) : (
-              <Play size={13} />
-            )}
-            {runningScope === "all" ? "Running…" : "Run all"}
-          </button>
+          <span {...stylex.props(s.identityDivider)} />
+          <span {...stylex.props(s.identityActions)}>
+            <button
+              type="button"
+              aria-label={
+                saving
+                  ? "Saving graph"
+                  : activeGraph && !isDirty
+                    ? "Graph saved"
+                    : "Save graph"
+              }
+              disabled={
+                saving ||
+                running ||
+                Boolean(openingGraphId) ||
+                Boolean(deletingGraphId) ||
+                !graphName.trim() ||
+                Boolean(activeGraph && !isDirty)
+              }
+              title={
+                activeGraph && !isDirty
+                  ? "All changes are saved"
+                  : "Save graph"
+              }
+              {...stylex.props(
+                s.toolButton,
+                s.identityAction,
+                isDirty ? s.identityActionActive : null,
+              )}
+              onClick={() => void saveCurrentGraph()}
+            >
+              {saving ? (
+                <LoaderCircle size={13} {...stylex.props(s.spinner)} />
+              ) : (
+                <Save size={13} />
+              )}
+            </button>
+            <button
+              type="button"
+              aria-label={
+                preference === "light"
+                  ? "Switch to dark theme"
+                  : preference === "dark"
+                    ? "Switch to system theme"
+                    : "Switch to light theme"
+              }
+              title={
+                preference === "light"
+                  ? "Light theme"
+                  : preference === "dark"
+                    ? "Dark theme"
+                    : "System theme"
+              }
+              {...stylex.props(s.toolButton, s.identityAction)}
+              onClick={cycleTheme}
+            >
+              {preference === "light" ? (
+                <Sun size={13} />
+              ) : preference === "dark" ? (
+                <Moon size={13} />
+              ) : (
+                <Monitor size={13} />
+              )}
+            </button>
+          </span>
         </div>
       </div>
+
+      <aside aria-label="Canvas actions" {...stylex.props(s.actionRail)}>
+        <button
+          type="button"
+          aria-label="Add node"
+          disabled={!registry || running}
+          title="Add node"
+          {...stylex.props(s.railButton, s.railPrimary)}
+          onClick={() => {
+            setGraphBrowserOpen(false);
+            setLibraryOpen((open) => !open);
+          }}
+        >
+          <Plus size={14} />
+          <span {...stylex.props(s.railLabel)}>Node</span>
+        </button>
+        <button
+          type="button"
+          disabled={!flow}
+          title="Fit workflow"
+          {...stylex.props(s.railButton)}
+          onClick={() => void flow?.fitView(WORKBENCH_FIT_VIEW_OPTIONS)}
+        >
+          <Maximize2 size={14} />
+          <span {...stylex.props(s.railLabel)}>Fit</span>
+        </button>
+        <span {...stylex.props(s.railDivider)} />
+        <button
+          type="button"
+          disabled={!selectedNodeCount || running}
+          title={
+            selectedNodeCount
+              ? `Duplicate ${selectedNodeCount} selected node${selectedNodeCount === 1 ? "" : "s"}`
+              : "Select one or more nodes to duplicate"
+          }
+          {...stylex.props(s.railButton)}
+          onClick={duplicateSelectedNodes}
+        >
+          <Copy size={14} />
+          <span {...stylex.props(s.railLabel)}>Duplicate</span>
+        </button>
+        <button
+          type="button"
+          disabled={!flow || !selectedNodeCount || running}
+          title={
+            selectedNodeCount
+              ? `Delete ${selectedNodeCount} selected node${selectedNodeCount === 1 ? "" : "s"}`
+              : "Select one or more nodes to delete"
+          }
+          {...stylex.props(s.railButton, s.railDanger)}
+          onClick={deleteSelectedNodes}
+        >
+          <Trash2 size={14} />
+          <span {...stylex.props(s.railLabel)}>Delete</span>
+        </button>
+      </aside>
 
       {graphBrowserOpen ? (
         <SavedGraphBrowser
@@ -2260,37 +2615,13 @@ export function Workbench({
         />
       ) : null}
 
-      {libraryOpen ? (
-        <aside {...stylex.props(s.library)} aria-label="Node library">
-          <header {...stylex.props(s.libraryHeader)}>
-            <Plus size={13} />
-            <h2 {...stylex.props(s.libraryTitle)}>Add a node</h2>
-            <button type="button" aria-label="Close node library" {...stylex.props(s.closeButton)} onClick={() => setLibraryOpen(false)}><X size={13} /></button>
-          </header>
-          <div {...stylex.props(s.searchWrap)}>
-            <Search size={12} {...stylex.props(s.searchIcon)} />
-            <input
-              autoFocus
-              aria-label="Search registered nodes"
-              value={search}
-              placeholder="Search registered nodes…"
-              {...stylex.props(s.searchInput)}
-              onChange={(event) => setSearch(event.currentTarget.value)}
-            />
-          </div>
-          <div {...stylex.props(s.libraryGroup)}>
-            <div {...stylex.props(s.groupLabel)}>Live operators</div>
-            {filteredCatalog.length ? filteredCatalog.map((spec) => (
-              <button key={`${spec.operator_id}@${spec.operator_version}`} type="button" {...stylex.props(s.libraryItem)} onClick={() => addCatalogNode(spec)}>
-                <span {...stylex.props(s.libraryCopy)}>
-                  <span {...stylex.props(s.libraryTitleText)}>{spec.title}</span>
-                  <span {...stylex.props(s.libraryMeta)}>{spec.operator_id}@{spec.operator_version}</span>
-                </span>
-                <span {...stylex.props(s.libraryPorts)}>{spec.inputs.length} in · {spec.outputs.length} out</span>
-              </button>
-            )) : <div {...stylex.props(s.empty)}>No matching registered nodes.</div>}
-          </div>
-        </aside>
+      {registry ? (
+        <NodeSelector
+          open={libraryOpen}
+          registry={registry}
+          onOpenChange={setLibraryOpen}
+          onAddNode={addCatalogNode}
+        />
       ) : null}
 
       <Dialog

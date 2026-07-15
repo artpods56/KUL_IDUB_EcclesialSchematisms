@@ -1,4 +1,5 @@
 from notarius_core.operators.arithmetic import ARITHMETIC
+from notarius_core.operators.sequences import SEQUENCES
 from notarius_core.operators.sources import SOURCES
 from notarius_core.operators.tables import TABLES
 from notarius_core.operators.text import TEXT
@@ -10,6 +11,7 @@ def builtin_plugins() -> tuple[Plugin, ...]:
 
     return (
         SOURCES,
+        SEQUENCES,
         ARITHMETIC,
         TEXT,
         TABLES,

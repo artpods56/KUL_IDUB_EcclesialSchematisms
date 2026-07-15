@@ -1,7 +1,81 @@
+from typing import cast
+
 from fastapi.testclient import TestClient
 
 from notarius_api.schemas.workbench import NodeRegistryResponse, RunResponse
-from notarius_core.operators.text import TextInputConfig, TextValue
+from notarius_core.artifacts import ArtifactRefSequence
+from notarius_core.operators.text import TextInputConfig, TextValuePayload
+
+
+def _collect_run_payload() -> dict[str, object]:
+    return {
+        "nodes": [
+            {
+                "id": "sequence-input",
+                "operator_id": "text.input",
+                "operator_version": 1,
+                "config": {"text": "first|second"},
+            },
+            {
+                "id": "split",
+                "operator_id": "text.split",
+                "operator_version": 1,
+                "config": {"separator": "|"},
+            },
+            {
+                "id": "single-input",
+                "operator_id": "text.input",
+                "operator_version": 1,
+                "config": {"text": "third"},
+            },
+            {
+                "id": "collect",
+                "operator_id": "text.collect",
+                "operator_version": 1,
+                "config": {},
+                "input_plugs": [
+                    {"id": "sequence", "port": "items"},
+                    {"id": "single", "port": "items"},
+                ],
+            },
+        ],
+        "edges": [
+            {
+                "from_node": "sequence-input",
+                "from_port": "text",
+                "to_node": "split",
+                "to_port": "text",
+            },
+            {
+                "from_node": "single-input",
+                "from_port": "text",
+                "to_node": "collect",
+                "to_port": "items",
+                "to_plug": "single",
+            },
+            {
+                "from_node": "split",
+                "from_port": "parts",
+                "to_node": "collect",
+                "to_port": "items",
+                "to_plug": "sequence",
+            },
+        ],
+    }
+
+
+def _collect_node(payload: dict[str, object]) -> dict[str, object]:
+    nodes = cast(list[dict[str, object]], payload["nodes"])
+    return next(node for node in nodes if node["id"] == "collect")
+
+
+def _collect_input_plugs(payload: dict[str, object]) -> list[dict[str, object]]:
+    return cast(list[dict[str, object]], _collect_node(payload)["input_plugs"])
+
+
+def _collect_edges(payload: dict[str, object]) -> list[dict[str, object]]:
+    edges = cast(list[dict[str, object]], payload["edges"])
+    return [edge for edge in edges if edge["to_node"] == "collect"]
 
 
 def test_registry_declares_text_artifact_and_operator_contracts(
@@ -14,7 +88,10 @@ def test_registry_declares_text_artifact_and_operator_contracts(
     artifact_types = {
         artifact_type.key.id: artifact_type for artifact_type in registry.artifact_types
     }
-    assert artifact_types["scalar.text"].payload_schema == TextValue.model_json_schema()
+    assert (
+        artifact_types["scalar.text"].payload_schema
+        == TextValuePayload.model_json_schema()
+    )
 
     nodes = {node.operator_id: node for node in registry.nodes}
     assert nodes["text.input"].config_schema == TextInputConfig.model_json_schema()
@@ -28,6 +105,12 @@ def test_registry_declares_text_artifact_and_operator_contracts(
 
     assert nodes["text.join"].inputs[0].name == "parts"
     assert nodes["text.join"].inputs[0].shape == "many"
+
+    collect_input = nodes["text.collect"].inputs[0]
+    assert collect_input.name == "items"
+    assert collect_input.shape == "one"
+    assert collect_input.accepted_shapes == ["one", "many"]
+    assert collect_input.instance_plugs is True
 
 
 def test_text_graph_splits_maps_replacement_and_joins(
@@ -107,3 +190,100 @@ def test_text_graph_splits_maps_replacement_and_joins(
     assert builtin_client.get(f"/v1/artifacts/{joined.artifact_id}/content").json() == {
         "value": "AlphA|betA||gAmmA|"
     }
+
+
+def test_text_collect_accepts_mixed_shapes_in_declared_plug_order(
+    builtin_client: TestClient,
+) -> None:
+    response = builtin_client.post("/v1/runs", json=_collect_run_payload())
+
+    assert response.status_code == 200
+    result = RunResponse.model_validate(response.json())
+    assert result.status == "succeeded"
+    collect_run = next(run for run in result.node_runs if run.node_id == "collect")
+    output = collect_run.outputs[0]
+    assert isinstance(output.value, ArtifactRefSequence)
+    assert [
+        builtin_client.get(f"/v1/artifacts/{artifact.artifact_id}/content").json()[
+            "value"
+        ]
+        for artifact in output.artifacts
+    ] == ["first", "second", "third"]
+    assert output.value.metadata == {
+        "collect_segments": [
+            {
+                "input_index": 0,
+                "start_index": 0,
+                "item_count": 2,
+                "source_kind": "sequence",
+            },
+            {
+                "input_index": 1,
+                "start_index": 2,
+                "item_count": 1,
+                "source_kind": "single",
+            },
+        ]
+    }
+
+
+def test_text_collect_rejects_invalid_executable_plug_structures(
+    builtin_client: TestClient,
+) -> None:
+    invalid_payloads: list[tuple[dict[str, object], str]] = []
+
+    missing_plugs = _collect_run_payload()
+    _collect_node(missing_plugs)["input_plugs"] = []
+    invalid_payloads.append((missing_plugs, "has no submitted plugs"))
+
+    duplicate_plugs = _collect_run_payload()
+    duplicate_plug_values = _collect_input_plugs(duplicate_plugs)
+    duplicate_plug_values[1]["id"] = duplicate_plug_values[0]["id"]
+    invalid_payloads.append((duplicate_plugs, "duplicate input plug id"))
+
+    unknown_port = _collect_run_payload()
+    unknown_port_plugs = _collect_input_plugs(unknown_port)
+    unknown_port_plugs[0]["port"] = "absent"
+    invalid_payloads.append((unknown_port, "unknown input port"))
+
+    normal_port_plug = _collect_run_payload()
+    normal_nodes = cast(
+        list[dict[str, object]],
+        normal_port_plug["nodes"],
+    )
+    split_node = next(node for node in normal_nodes if node["id"] == "split")
+    split_node["input_plugs"] = [{"id": "normal", "port": "text"}]
+    invalid_payloads.append((normal_port_plug, "does not accept instance plugs"))
+
+    missing_edge_plug = _collect_run_payload()
+    _collect_edges(missing_edge_plug)[0].pop("to_plug")
+    invalid_payloads.append((missing_edge_plug, "must target an input plug"))
+
+    unknown_edge_plug = _collect_run_payload()
+    _collect_edges(unknown_edge_plug)[0]["to_plug"] = "absent"
+    invalid_payloads.append((unknown_edge_plug, "unknown input plug"))
+
+    duplicate_edge_plug = _collect_run_payload()
+    duplicate_edges = _collect_edges(duplicate_edge_plug)
+    duplicate_edges[1]["to_plug"] = duplicate_edges[0]["to_plug"]
+    invalid_payloads.append((duplicate_edge_plug, "exactly one incoming edge"))
+
+    mapped_plug = _collect_run_payload()
+    _collect_edges(mapped_plug)[0]["collection_mode"] = "map"
+    invalid_payloads.append((mapped_plug, "cannot use collection mode 'map'"))
+
+    normal_edge_plug = _collect_run_payload()
+    all_edges = cast(list[dict[str, object]], normal_edge_plug["edges"])
+    all_edges[0]["to_plug"] = "normal"
+    invalid_payloads.append((normal_edge_plug, "does not accept instance plugs"))
+
+    unconnected_plug = _collect_run_payload()
+    unconnected_values = _collect_input_plugs(unconnected_plug)
+    unconnected_values.append({"id": "unconnected", "port": "items"})
+    invalid_payloads.append((unconnected_plug, "requires exactly one incoming edge"))
+
+    for payload, expected_detail in invalid_payloads:
+        response = builtin_client.post("/v1/runs", json=payload)
+
+        assert response.status_code == 422
+        assert expected_detail in response.json()["detail"]

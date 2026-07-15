@@ -1,18 +1,26 @@
+from datetime import date, datetime
 from pathlib import Path
-from typing import override
+from typing import Annotated, cast, override
 
 import pytest
+from pydantic import BaseModel, ConfigDict
 
 from notarius_core.artifacts import (
+    ArtifactFieldProjection,
     ArtifactTypeKey,
     ArtifactTypeSpec,
     InMemoryUnitOfWork,
+    JsonObject,
     NoConfig,
     NodeInput,
     NodeOutput,
 )
-from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
-from notarius_core.nodes import Node, NodeExecutionContext
+from notarius_core.conversions import (
+    ArtifactConversion,
+    ArtifactConversionKey,
+    conversion_runtime_types_are_compatible,
+)
+from notarius_core.nodes import InPort, Node, NodeExecutionContext
 from notarius_core.plugins import (
     Plugin,
     PluginRegistrationError,
@@ -24,6 +32,37 @@ from notarius_storage import LocalFileObjectStore
 
 def _stringify_integer(value: int) -> str:
     return str(value)
+
+
+def _integer_is_positive(value: int) -> bool:
+    return value > 0
+
+
+class ConversionBase:
+    pass
+
+
+class ConversionChild(ConversionBase):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("produced", "accepted", "expected"),
+    [
+        (bool, int, False),
+        (bool, float, False),
+        (bool, object, True),
+        (datetime, date, False),
+        (int, float, True),
+        (ConversionChild, ConversionBase, False),
+    ],
+)
+def test_conversion_runtime_type_compatibility_matches_strict_validation(
+    produced: type[object],
+    accepted: type[object],
+    expected: bool,
+) -> None:
+    assert conversion_runtime_types_are_compatible(produced, accepted) is expected
 
 
 class EmptyInput(NodeInput):
@@ -61,6 +100,42 @@ class ContextNode(Node[NoConfig, EmptyInput, EmptyOutput]):
         /,
     ) -> EmptyOutput:
         return EmptyOutput()
+
+
+UNREGISTERED_VALUE = ArtifactTypeSpec(
+    key=ArtifactTypeKey("example.unregistered", 1),
+    title="Unregistered value",
+)
+
+
+class ConcretePortInput(NodeInput):
+    value: Annotated[object, InPort(UNREGISTERED_VALUE)]
+
+
+class ConcretePortNode(Node[NoConfig, ConcretePortInput, EmptyOutput]):
+    @override
+    async def run(
+        self,
+        _context: NodeExecutionContext,
+        _config: NoConfig,
+        _inputs: ConcretePortInput,
+        /,
+    ) -> EmptyOutput:
+        return EmptyOutput()
+
+
+class ProjectionCustomer(BaseModel):
+    model_config = ConfigDict(title="Customer")
+
+    name: str
+    age: int
+
+
+class ProjectionPayload(BaseModel):
+    customer: ProjectionCustomer
+    label: str
+    quantity: int
+    tags: list[str]
 
 
 def runtime_context(tmp_path: Path) -> PluginRuntimeContext:
@@ -136,6 +211,26 @@ def test_registry_reports_operator_and_artifact_collisions() -> None:
         registry.install(conflicting_artifact)
 
 
+def test_registry_freeze_requires_concrete_node_port_artifact_registration() -> None:
+    plugin = Plugin(slug="example.concrete-port", title="Concrete port")
+    plugin.node(
+        operator_id="example.concrete-port",
+        version=1,
+        title="Concrete port",
+    )(ConcretePortNode)
+    registry = PluginRegistry()
+    registry.install(plugin)
+
+    with pytest.raises(
+        PluginRegistrationError,
+        match=(
+            "operator example.concrete-port@1 input port 'value' references "
+            "artifact type example.unregistered@1, which is not installed"
+        ),
+    ):
+        registry.freeze()
+
+
 def test_registry_registers_artifact_conversions_across_plugin_boundaries() -> None:
     source = ArtifactTypeSpec(
         key=ArtifactTypeKey("example.source", 1),
@@ -150,6 +245,7 @@ def test_registry_registers_artifact_conversions_across_plugin_boundaries() -> N
         source=source.key,
         target=target.key,
         source_type=int,
+        target_type=str,
         title="Source to target",
         convert=_stringify_integer,
     )
@@ -180,6 +276,7 @@ def test_artifact_conversion_requires_valid_identity_and_title() -> None:
             source=ArtifactTypeKey("example.source", 1),
             target=ArtifactTypeKey("example.target", 1),
             source_type=int,
+            target_type=str,
             title="   ",
             convert=_stringify_integer,
         )
@@ -191,6 +288,7 @@ def test_plugin_and_registry_report_artifact_conversion_collisions() -> None:
         source=ArtifactTypeKey("example.source", 1),
         target=ArtifactTypeKey("example.target", 1),
         source_type=int,
+        target_type=str,
         title="Duplicate",
         convert=_stringify_integer,
     )
@@ -246,6 +344,7 @@ def test_registry_freeze_rejects_conversion_with_missing_artifact_endpoint(
         source=source.key,
         target=target.key,
         source_type=int,
+        target_type=str,
         title="Incomplete",
         convert=_stringify_integer,
     )
@@ -265,6 +364,56 @@ def test_registry_freeze_rejects_conversion_with_missing_artifact_endpoint(
             f"Artifact conversion example.incomplete@1 references {missing_endpoint} "
             f"artifact type {missing_type.id}@{missing_type.schema_version}, which "
             "is not installed"
+        ),
+    ):
+        registry.freeze()
+
+
+def test_registry_freeze_rejects_nominally_contiguous_runtime_type_mismatch() -> None:
+    source = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.source", 1),
+        title="Example source",
+    )
+    intermediate = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.intermediate", 1),
+        title="Example intermediate",
+    )
+    target = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.target", 1),
+        title="Example target",
+    )
+    source_to_intermediate = ArtifactConversion(
+        key=ArtifactConversionKey("example.source_to_intermediate", 1),
+        source=source.key,
+        target=intermediate.key,
+        source_type=int,
+        target_type=bool,
+        title="Source to intermediate",
+        convert=_integer_is_positive,
+    )
+    intermediate_to_target = ArtifactConversion(
+        key=ArtifactConversionKey("example.intermediate_to_target", 1),
+        source=intermediate.key,
+        target=target.key,
+        source_type=int,
+        target_type=str,
+        title="Intermediate to target",
+        convert=_stringify_integer,
+    )
+    plugin = Plugin(slug="example.non-composable", title="Non-composable")
+    for artifact_type in (source, intermediate, target):
+        plugin.register_artifact_type(artifact_type)
+    plugin.register_artifact_conversion(source_to_intermediate)
+    plugin.register_artifact_conversion(intermediate_to_target)
+    registry = PluginRegistry()
+    registry.install(plugin)
+
+    with pytest.raises(
+        PluginRegistrationError,
+        match=(
+            "Artifact conversions example.source_to_intermediate@1 and "
+            "example.intermediate_to_target@1 meet at example.intermediate@1 "
+            "but have incompatible runtime types"
         ),
     ):
         registry.freeze()
@@ -315,3 +464,458 @@ def test_missing_factory_error_preserves_plugin_and_operator_context(
         ),
     ):
         registry.build_node("example.context", 1, runtime_context(tmp_path))
+
+
+def test_registry_freeze_derives_nested_scalar_projections_from_pydantic_refs() -> None:
+    text = ArtifactTypeSpec(
+        key=ArtifactTypeKey("scalar.text", 1),
+        title="Text",
+        payload_schema={
+            "properties": {"value": {"title": "Value", "type": "string"}},
+            "type": "object",
+        },
+        materialized_json_type="string",
+    )
+    integer = ArtifactTypeSpec(
+        key=ArtifactTypeKey("scalar.integer", 1),
+        title="Integer",
+        materialized_json_type="integer",
+    )
+    payload = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.payload", 1),
+        title="Payload",
+        payload_schema=cast(JsonObject, ProjectionPayload.model_json_schema()),
+    )
+    plugin = Plugin(slug="example.projections", title="Projections")
+    for artifact_type in (text, integer, payload):
+        plugin.register_artifact_type(artifact_type)
+    registry = PluginRegistry()
+    registry.install(plugin)
+
+    registry.freeze()
+
+    registered = {spec.key: spec for spec in registry.artifact_types}
+    assert registered[text.key].field_projections == ()
+    assert registered[payload.key] is not payload
+    assert payload.field_projections == ()
+    assert registered[payload.key].field_projections == (
+        ArtifactFieldProjection(
+            path=("customer", "age"),
+            target=integer.key,
+            title="Customer · Age",
+        ),
+        ArtifactFieldProjection(
+            path=("customer", "name"),
+            target=text.key,
+            title="Customer · Name",
+        ),
+        ArtifactFieldProjection(
+            path=("label",),
+            target=text.key,
+            title="Label",
+        ),
+        ArtifactFieldProjection(
+            path=("quantity",),
+            target=integer.key,
+            title="Quantity",
+        ),
+    )
+
+
+def test_registry_freeze_keeps_explicit_projection_for_derived_path() -> None:
+    text = ArtifactTypeSpec(
+        key=ArtifactTypeKey("scalar.text", 1),
+        title="Text",
+        materialized_json_type="string",
+    )
+    integer = ArtifactTypeSpec(
+        key=ArtifactTypeKey("scalar.integer", 1),
+        title="Integer",
+        materialized_json_type="integer",
+    )
+    explicit = ArtifactFieldProjection(
+        path=("customer", "name"),
+        target=text.key,
+        title="Explicit customer name",
+    )
+    payload = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.override", 1),
+        title="Override",
+        payload_schema=cast(JsonObject, ProjectionPayload.model_json_schema()),
+        field_projections=(explicit,),
+    )
+    plugin = Plugin(slug="example.override", title="Override")
+    for artifact_type in (text, integer, payload):
+        plugin.register_artifact_type(artifact_type)
+    registry = PluginRegistry()
+    registry.install(plugin)
+
+    registry.freeze()
+
+    expanded = next(spec for spec in registry.artifact_types if spec.key == payload.key)
+    matching = [
+        projection
+        for projection in expanded.field_projections
+        if projection.path == explicit.path
+    ]
+    assert matching == [explicit]
+
+
+def test_registry_freeze_allows_explicit_plugin_owned_object_semantics() -> None:
+    plugin_owned_target = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.customer", 1),
+        title="Customer",
+    )
+    explicit = ArtifactFieldProjection(
+        path=("customer",),
+        target=plugin_owned_target.key,
+        title="Customer",
+    )
+    payload = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.plugin-owned-projection", 1),
+        title="Plugin-owned projection",
+        payload_schema=cast(JsonObject, ProjectionPayload.model_json_schema()),
+        field_projections=(explicit,),
+    )
+    plugin = Plugin(slug="example.plugin-owned", title="Plugin-owned")
+    plugin.register_artifact_type(plugin_owned_target)
+    plugin.register_artifact_type(payload)
+    registry = PluginRegistry()
+    registry.install(plugin)
+
+    registry.freeze()
+
+    expanded = next(spec for spec in registry.artifact_types if spec.key == payload.key)
+    assert explicit in expanded.field_projections
+
+
+@pytest.mark.parametrize(
+    "property_schema",
+    [
+        pytest.param({}, id="schema-less"),
+        pytest.param({"type": "custom"}, id="unknown-type"),
+    ],
+)
+def test_registry_freeze_allows_canonical_target_for_unknown_schema_node(
+    property_schema: JsonObject,
+) -> None:
+    text = ArtifactTypeSpec(
+        key=ArtifactTypeKey("scalar.text", 1),
+        title="Text",
+        materialized_json_type="string",
+    )
+    explicit = ArtifactFieldProjection(
+        path=("value",),
+        target=text.key,
+        title="Value",
+    )
+    payload = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.unknown-projection", 1),
+        title="Unknown projection",
+        payload_schema={
+            "properties": {"value": property_schema},
+            "type": "object",
+        },
+        field_projections=(explicit,),
+    )
+    plugin = Plugin(slug="example.unknown-projection", title="Unknown projection")
+    plugin.register_artifact_type(text)
+    plugin.register_artifact_type(payload)
+    registry = PluginRegistry()
+    registry.install(plugin)
+
+    registry.freeze()
+
+    expanded = next(spec for spec in registry.artifact_types if spec.key == payload.key)
+    assert explicit in expanded.field_projections
+
+
+def test_registry_freeze_rejects_empty_explicit_projection_path() -> None:
+    target = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.target", 1),
+        title="Target",
+    )
+    payload = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.empty-projection", 1),
+        title="Empty projection",
+        field_projections=(
+            ArtifactFieldProjection(
+                path=(),
+                target=target.key,
+                title="Empty",
+            ),
+        ),
+    )
+    plugin = Plugin(slug="example.empty-projection", title="Empty projection")
+    plugin.register_artifact_type(target)
+    plugin.register_artifact_type(payload)
+    registry = PluginRegistry()
+    registry.install(plugin)
+
+    with pytest.raises(
+        PluginRegistrationError,
+        match=(
+            "Artifact type example.empty-projection@1 declares a field projection "
+            "with an empty path"
+        ),
+    ):
+        registry.freeze()
+
+
+def test_registry_freeze_rejects_duplicate_explicit_projection_path() -> None:
+    target = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.target", 1),
+        title="Target",
+    )
+    payload = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.duplicate-projection", 1),
+        title="Duplicate projection",
+        field_projections=(
+            ArtifactFieldProjection(
+                path=("value",),
+                target=target.key,
+                title="First",
+            ),
+            ArtifactFieldProjection(
+                path=("value",),
+                target=target.key,
+                title="Second",
+            ),
+        ),
+    )
+    plugin = Plugin(
+        slug="example.duplicate-projection",
+        title="Duplicate projection",
+    )
+    plugin.register_artifact_type(target)
+    plugin.register_artifact_type(payload)
+    registry = PluginRegistry()
+    registry.install(plugin)
+
+    with pytest.raises(
+        PluginRegistrationError,
+        match=(
+            "Artifact type example.duplicate-projection@1 declares duplicate field "
+            "projection path 'value'"
+        ),
+    ):
+        registry.freeze()
+
+
+def test_registry_freeze_rejects_explicit_projection_to_missing_target() -> None:
+    payload = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.missing-projection-target", 1),
+        title="Missing projection target",
+        field_projections=(
+            ArtifactFieldProjection(
+                path=("value",),
+                target=ArtifactTypeKey("example.missing", 1),
+                title="Missing",
+            ),
+        ),
+    )
+    plugin = Plugin(
+        slug="example.missing-projection-target",
+        title="Missing projection target",
+    )
+    plugin.register_artifact_type(payload)
+    registry = PluginRegistry()
+    registry.install(plugin)
+
+    with pytest.raises(
+        PluginRegistrationError,
+        match=(
+            "Artifact type example.missing-projection-target@1 field projection "
+            "'value' targets artifact type example.missing@1, which is not installed"
+        ),
+    ):
+        registry.freeze()
+
+
+def test_registry_freeze_rejects_explicit_canonical_scalar_type_mismatch() -> None:
+    text = ArtifactTypeSpec(
+        key=ArtifactTypeKey("scalar.text", 1),
+        title="Text",
+        materialized_json_type="string",
+    )
+    integer = ArtifactTypeSpec(
+        key=ArtifactTypeKey("scalar.integer", 1),
+        title="Integer",
+        materialized_json_type="integer",
+    )
+    payload = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.mismatched-projection", 1),
+        title="Mismatched projection",
+        payload_schema=cast(JsonObject, ProjectionPayload.model_json_schema()),
+        field_projections=(
+            ArtifactFieldProjection(
+                path=("customer", "name"),
+                target=integer.key,
+                title="Customer name",
+            ),
+        ),
+    )
+    plugin = Plugin(
+        slug="example.mismatched-projection",
+        title="Mismatched projection",
+    )
+    for artifact_type in (text, integer, payload):
+        plugin.register_artifact_type(artifact_type)
+    registry = PluginRegistry()
+    registry.install(plugin)
+
+    with pytest.raises(
+        PluginRegistrationError,
+        match=(
+            "Artifact type example.mismatched-projection@1 field projection "
+            "'customer.name' targets scalar.integer@1, which materializes JSON "
+            "Schema 'integer', but the projected field is 'string'"
+        ),
+    ):
+        registry.freeze()
+
+
+@pytest.mark.parametrize(
+    "schema_type",
+    ["array", "boolean", "null", "number", "object"],
+)
+def test_registry_freeze_rejects_canonical_scalar_for_known_schema_node(
+    schema_type: str,
+) -> None:
+    text = ArtifactTypeSpec(
+        key=ArtifactTypeKey("scalar.text", 1),
+        title="Text",
+        materialized_json_type="string",
+    )
+    payload = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.non-scalar-projection", 1),
+        title="Non-scalar projection",
+        payload_schema={
+            "properties": {"value": {"type": schema_type}},
+            "type": "object",
+        },
+        field_projections=(
+            ArtifactFieldProjection(
+                path=("value",),
+                target=text.key,
+                title="Value",
+            ),
+        ),
+    )
+    plugin = Plugin(
+        slug="example.non-scalar-projection",
+        title="Non-scalar projection",
+    )
+    plugin.register_artifact_type(text)
+    plugin.register_artifact_type(payload)
+    registry = PluginRegistry()
+    registry.install(plugin)
+
+    with pytest.raises(
+        PluginRegistrationError,
+        match=(
+            "Artifact type example.non-scalar-projection@1 field projection 'value' "
+            "targets scalar.text@1, which materializes JSON Schema 'string', but "
+            f"the projected field is {schema_type!r}"
+        ),
+    ):
+        registry.freeze()
+
+
+def test_registry_freeze_rejects_duplicate_canonical_scalar_targets() -> None:
+    first = ArtifactTypeSpec(
+        key=ArtifactTypeKey("scalar.first-text", 1),
+        title="First text",
+        materialized_json_type="string",
+    )
+    second = ArtifactTypeSpec(
+        key=ArtifactTypeKey("scalar.second-text", 1),
+        title="Second text",
+        materialized_json_type="string",
+    )
+    plugin = Plugin(slug="example.duplicate-scalars", title="Duplicate scalars")
+    plugin.register_artifact_type(first)
+    plugin.register_artifact_type(second)
+    registry = PluginRegistry()
+    registry.install(plugin)
+
+    with pytest.raises(
+        PluginRegistrationError,
+        match=(
+            "Artifact types scalar.first-text@1 and scalar.second-text@1 both "
+            "declare the canonical JSON Schema 'string' scalar target"
+        ),
+    ):
+        registry.freeze()
+
+
+def test_registry_freeze_rejects_cyclic_local_schema_ref() -> None:
+    text = ArtifactTypeSpec(
+        key=ArtifactTypeKey("scalar.text", 1),
+        title="Text",
+        materialized_json_type="string",
+    )
+    recursive = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.recursive", 1),
+        title="Recursive",
+        payload_schema={
+            "$defs": {
+                "Branch": {
+                    "properties": {
+                        "child": {"$ref": "#/$defs/Branch"},
+                        "name": {"title": "Name", "type": "string"},
+                    },
+                    "title": "Branch",
+                    "type": "object",
+                }
+            },
+            "properties": {"branch": {"$ref": "#/$defs/Branch"}},
+            "type": "object",
+        },
+    )
+    plugin = Plugin(slug="example.recursive", title="Recursive")
+    plugin.register_artifact_type(text)
+    plugin.register_artifact_type(recursive)
+    registry = PluginRegistry()
+    registry.install(plugin)
+
+    with pytest.raises(
+        PluginRegistrationError,
+        match=(
+            "Artifact type example.recursive@1 payload schema contains cyclic "
+            "local reference '#/\\$defs/Branch' at path 'branch.child'"
+        ),
+    ):
+        registry.freeze()
+
+
+def test_registry_freeze_bounds_derived_projection_count() -> None:
+    text = ArtifactTypeSpec(
+        key=ArtifactTypeKey("scalar.text", 1),
+        title="Text",
+        materialized_json_type="string",
+    )
+    payload = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.too-many-fields", 1),
+        title="Too many fields",
+        payload_schema={
+            "properties": {
+                f"value_{index:04d}": {"type": "string"} for index in range(1025)
+            },
+            "type": "object",
+        },
+    )
+    plugin = Plugin(slug="example.too-many-fields", title="Too many fields")
+    plugin.register_artifact_type(text)
+    plugin.register_artifact_type(payload)
+    registry = PluginRegistry()
+    registry.install(plugin)
+
+    with pytest.raises(
+        PluginRegistrationError,
+        match=(
+            "Artifact type example.too-many-fields@1 payload schema expands beyond "
+            "the maximum of 1024 field projections"
+        ),
+    ):
+        registry.freeze()

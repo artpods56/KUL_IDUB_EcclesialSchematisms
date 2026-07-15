@@ -13,7 +13,13 @@ from notarius_core.artifacts import (
     NodeInput,
     NodeOutput,
 )
-from notarius_core.nodes import Node, NodeExecutionContext
+from notarius_core.nodes import (
+    InputContract,
+    Node,
+    NodeExecutionContext,
+    OutputContract,
+    resolve_node_contracts,
+)
 from notarius_core.runtime.materialization import (
     InputMaterializer,
     MaterializationProvenance,
@@ -45,11 +51,14 @@ class NodeRuntime:
         self,
         node: Node[ConfigT, InputT, OutputT],
         context: NodeExecutionContext | None = None,
+        *,
+        artifact_type_bindings: Mapping[str, ArtifactTypeKey] | None = None,
     ) -> "BoundNode[ConfigT, InputT, OutputT]":
         return BoundNode(
             runtime=self,
             node=node,
             context=context or NodeExecutionContext(node_id=node.operator_id),
+            artifact_type_bindings=artifact_type_bindings,
         )
 
     async def run_node[
@@ -63,7 +72,12 @@ class NodeRuntime:
         inputs: Mapping[str, object],
         config: JsonObject | None = None,
         invocation: NodeInvocation | None = None,
+        artifact_type_bindings: Mapping[str, ArtifactTypeKey] | None = None,
     ) -> PersistedNodeOutput | BaseModel:
+        resolved_contracts = resolve_node_contracts(
+            node,
+            artifact_type_bindings or {},
+        )
         effective_invocation = invocation or NodeInvocation()
         validate_invocation(node, effective_invocation)
         raw_config: JsonObject = {} if config is None else config
@@ -75,6 +89,14 @@ class NodeRuntime:
                 inputs=inputs,
                 config=cast(ConfigT, validated_config),
                 invocation=effective_invocation,
+                input_contract=cast(
+                    InputContract[InputT],
+                    resolved_contracts.input_contract,
+                ),
+                output_contract=cast(
+                    OutputContract[OutputT],
+                    resolved_contracts.output_contract,
+                ),
             )
 
         run_output, provenance = await self._invoke(
@@ -82,9 +104,13 @@ class NodeRuntime:
             context=context,
             inputs=inputs,
             config=cast(ConfigT, validated_config),
+            input_contract=cast(
+                InputContract[InputT],
+                resolved_contracts.input_contract,
+            ),
         )
         return await self._persister.persist(
-            contract=node.output_contract,
+            contract=resolved_contracts.output_contract,
             context=context,
             output=run_output,
             provenance=provenance,
@@ -101,15 +127,16 @@ class NodeRuntime:
         context: NodeExecutionContext,
         inputs: Mapping[str, object],
         config: ConfigT,
+        input_contract: InputContract[InputT],
     ) -> tuple[OutputT, MaterializationProvenance]:
         materialized_inputs, provenance = await self._materializer.materialize(
-            contract=node.input_contract,
+            contract=input_contract,
             inputs=inputs,
         )
         run_output = await node.run(
             context,
             config,
-            cast(InputT, materialized_inputs),
+            materialized_inputs,
         )
         return run_output, provenance
 
@@ -125,6 +152,8 @@ class NodeRuntime:
         inputs: Mapping[str, object],
         config: ConfigT,
         invocation: NodeInvocation,
+        input_contract: InputContract[InputT],
+        output_contract: OutputContract[OutputT],
     ) -> PersistedNodeOutput:
         map_input = invocation.map_input
         if map_input is None:
@@ -143,7 +172,12 @@ class NodeRuntime:
                 f"Node {node.operator_id!r} MAP input {map_input!r} must not be empty"
             )
 
-        input_port = node.input_contract.ports[map_input]
+        input_port = input_contract.ports[map_input]
+        if not isinstance(input_port.accepts, ArtifactTypeKey):
+            raise InvocationError(
+                f"Node {node.operator_id!r} MAP input {map_input!r} has an "
+                "unresolved artifact type contract"
+            )
         sequence_key = ArtifactTypeKey(
             raw_sequence.artifact_type,
             raw_sequence.schema_version,
@@ -168,6 +202,7 @@ class NodeRuntime:
                     context=invocation_context,
                     inputs=invocation_inputs,
                     config=config,
+                    input_contract=input_contract,
                 )
             except Exception as exc:
                 message = (
@@ -178,12 +213,12 @@ class NodeRuntime:
             completed.append((run_output, provenance, invocation_context))
 
         refs_by_output: dict[str, list[ArtifactRef]] = {
-            name: [] for name in node.output_contract.ports
+            name: [] for name in output_contract.ports
         }
         for index, (run_output, provenance, invocation_context) in enumerate(completed):
             try:
                 persisted = await self._persister.persist(
-                    contract=node.output_contract,
+                    contract=output_contract,
                     context=invocation_context,
                     output=run_output,
                     provenance=provenance,
@@ -199,7 +234,7 @@ class NodeRuntime:
                     f"Node {node.operator_id!r} MAP invocation did not produce "
                     "persisted artifact outputs"
                 )
-            for name in node.output_contract.ports:
+            for name in output_contract.ports:
                 value = persisted.values.get(name)
                 if not isinstance(value, ArtifactRef):
                     raise InvocationError(
@@ -210,7 +245,12 @@ class NodeRuntime:
                 refs_by_output[name].append(value)
 
         values: dict[str, object] = {}
-        for name, output_port in node.output_contract.ports.items():
+        for name, output_port in output_contract.ports.items():
+            if not isinstance(output_port.produces, ArtifactTypeKey):
+                raise InvocationError(
+                    f"Node {node.operator_id!r} MAP output {name!r} has an "
+                    "unresolved artifact type contract"
+                )
             values[name] = ArtifactRefSequence(
                 artifact_type=output_port.produces.id,
                 schema_version=output_port.produces.schema_version,
@@ -238,21 +278,30 @@ class BoundNode[
         runtime: NodeRuntime,
         node: Node[ConfigT, InputT, OutputT],
         context: NodeExecutionContext,
+        artifact_type_bindings: Mapping[str, ArtifactTypeKey] | None,
     ) -> None:
         self._runtime = runtime
         self._node = node
         self._context = context
+        self._artifact_type_bindings = dict(artifact_type_bindings or {})
 
     async def __call__(
         self,
         inputs: Mapping[str, object],
         config: JsonObject | None = None,
         invocation: NodeInvocation | None = None,
+        artifact_type_bindings: Mapping[str, ArtifactTypeKey] | None = None,
     ) -> PersistedNodeOutput | BaseModel:
+        effective_bindings = (
+            self._artifact_type_bindings
+            if artifact_type_bindings is None
+            else artifact_type_bindings
+        )
         return await self._runtime.run_node(
             self._node,
             self._context,
             inputs,
             config=config,
             invocation=invocation,
+            artifact_type_bindings=effective_bindings,
         )

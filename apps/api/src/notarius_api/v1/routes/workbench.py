@@ -12,6 +12,7 @@ from notarius_core.domain.errors import (
     SavedGraphRevisionConflictError,
 )
 from notarius_core.nodes import (
+    ArtifactTypeVariable,
     InputPortSpec,
     OutputPortSpec,
     PortShape,
@@ -194,8 +195,10 @@ def _input_port_response(port: InputPortSpec) -> PortResponse:
         title=port.title,
         description=port.description,
         direction="input",
-        artifact_type=port.accepts,
+        artifact_type_contract=port.accepts,
         shape=port.shape,
+        accepted_shapes=port.accepted_shapes,
+        instance_plugs=port.instance_plugs,
         variadic=port.variadic,
         required=port.required,
     )
@@ -207,8 +210,10 @@ def _output_port_response(port: OutputPortSpec) -> PortResponse:
         title=port.title,
         description=port.description,
         direction="output",
-        artifact_type=port.produces,
+        artifact_type_contract=port.produces,
         shape=port.shape,
+        accepted_shapes=(port.shape,),
+        instance_plugs=False,
         variadic=False,
         required=port.required,
     )
@@ -220,18 +225,29 @@ def _port_response(
     title: str | None,
     description: str | None,
     direction: PortDirection,
-    artifact_type: ArtifactTypeKey,
+    artifact_type_contract: ArtifactTypeKey | ArtifactTypeVariable,
     shape: PortShape,
+    accepted_shapes: tuple[PortShape, ...],
+    instance_plugs: bool,
     variadic: bool,
     required: bool,
 ) -> PortResponse:
+    if isinstance(artifact_type_contract, ArtifactTypeVariable):
+        artifact_type = None
+        artifact_type_variable = artifact_type_contract.name
+    else:
+        artifact_type = _artifact_type_key_response(artifact_type_contract)
+        artifact_type_variable = None
     return PortResponse(
         name=name,
         title=title,
         description=description,
         direction=direction,
-        artifact_type=_artifact_type_key_response(artifact_type),
+        artifact_type=artifact_type,
+        artifact_type_variable=artifact_type_variable,
         shape=shape,
+        accepted_shapes=list(accepted_shapes),
+        instance_plugs=instance_plugs,
         variadic=variadic,
         required=required,
     )

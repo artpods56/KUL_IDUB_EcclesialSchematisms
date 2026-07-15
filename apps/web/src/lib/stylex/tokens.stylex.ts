@@ -45,9 +45,10 @@ export const tokens = stylex.defineVars({
   colorGrid: "light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.035))",
   colorFlowControls: "light-dark(#ffffff, rgba(29, 31, 35, 0.92))",
   // elevation
-  shadowNode: "light-dark(0 1px 3px rgba(0, 0, 0, 0.1), 0 4px 12px rgba(0, 0, 0, 0.28))",
+  shadowNode:
+    "0 1px 2px light-dark(rgba(20, 24, 32, 0.1), rgba(0, 0, 0, 0.38)), 0 8px 22px light-dark(rgba(20, 24, 32, 0.1), rgba(0, 0, 0, 0.32))",
   shadowNodeSelected:
-    "light-dark(0 2px 8px rgba(107, 82, 212, 0.18), 0 4px 16px rgba(0, 0, 0, 0.42))",
+    "0 2px 5px light-dark(rgba(107, 82, 212, 0.16), rgba(128, 103, 232, 0.22)), 0 12px 30px light-dark(rgba(20, 24, 32, 0.14), rgba(0, 0, 0, 0.46))",
   // geometry
   radiusSm: "6px",
   radiusMd: "10px",

@@ -8,6 +8,11 @@ import { useNodeRegistry } from "@/hooks/use-api";
 import type { Port } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import { ARTIFACT_TYPE_COLOR } from "../nodes.css";
+import {
+  portArtifactTypeVariable,
+  resolvedPortArtifactType,
+  type WorkflowArtifactTypeBindings,
+} from "../types";
 
 /**
  * Port type inspector — a popover that renders the artifact payload schema
@@ -267,10 +272,12 @@ export function SchemaTree({ schema }: { schema: Schema }) {
 export function PortTypePopover({
   port,
   shape,
+  artifactTypeBindings = {},
   children,
 }: {
   port: Port;
   shape: Port["shape"];
+  artifactTypeBindings?: WorkflowArtifactTypeBindings;
   children: React.ReactNode;
 }) {
   const {
@@ -278,14 +285,21 @@ export function PortTypePopover({
     error: registryError,
     isLoading: registryLoading,
   } = useNodeRegistry();
-  const spec = registry?.artifact_types.find(
-    (artifact) =>
-      artifact.key.id === port.artifact_type.id &&
-      artifact.key.schema_version === port.artifact_type.schema_version,
-  );
-  const color =
-    ARTIFACT_TYPE_COLOR[port.artifact_type.id] ?? tokens.colorAccent;
-  const contract = `${port.artifact_type.id}@${port.artifact_type.schema_version}`;
+  const artifactType = resolvedPortArtifactType(port, artifactTypeBindings);
+  const variable = portArtifactTypeVariable(port);
+  const spec = artifactType
+    ? registry?.artifact_types.find(
+        (artifact) =>
+          artifact.key.id === artifactType.id &&
+          artifact.key.schema_version === artifactType.schema_version,
+      )
+    : undefined;
+  const color = artifactType
+    ? ARTIFACT_TYPE_COLOR[artifactType.id] ?? tokens.colorAccent
+    : tokens.colorAccent;
+  const contract = artifactType
+    ? `${artifactType.id}@${artifactType.schema_version}`
+    : "Any artifact";
   const payloadSchema = record(spec?.payload_schema) ?? {};
   const projections = spec?.field_projections ?? [];
 
@@ -319,7 +333,12 @@ export function PortTypePopover({
               <div {...stylex.props(s.sectionTitle)}>
                 {spec?.title ?? "Payload"}
               </div>
-              {registryLoading ? (
+              {!artifactType ? (
+                <p {...stylex.props(s.empty)}>
+                  This generic port binds to a concrete artifact type when it is
+                  connected{variable ? ` (${variable})` : ""}.
+                </p>
+              ) : registryLoading ? (
                 <p {...stylex.props(s.empty)}>Loading payload schema…</p>
               ) : registryError ? (
                 <p

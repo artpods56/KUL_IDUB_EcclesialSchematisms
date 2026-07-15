@@ -1,6 +1,7 @@
 import type {
   ArtifactConversionInput,
   ArtifactConversionSpec,
+  ArtifactTypeKey,
   ArtifactTypeSpec,
   FieldProjection,
 } from "@/lib/api";
@@ -13,41 +14,98 @@ import type { PortMeta } from "./types";
  * lookups.
  */
 export function encodeHandleId(port: PortMeta): string {
-  return [
-    port.portName,
-    port.artifactTypeId,
-    port.schemaVersion,
-    port.shape,
-    port.direction,
-  ].join("::");
+  const parts = port.artifactTypeVariable
+    ? [
+        port.portName,
+        encodeURIComponent(port.artifactTypeVariable),
+        "$generic",
+        port.shape,
+        port.direction,
+      ]
+    : [
+        port.portName,
+        port.artifactTypeId,
+        port.schemaVersion,
+        port.shape,
+        port.direction,
+      ];
+  if (port.plugId) parts.push(port.plugId);
+  return parts.join("::");
 }
 
-export interface DecodedHandle {
+interface DecodedHandleBase {
   portName: string;
-  artifactTypeId: string;
-  schemaVersion: number;
   shape: PortMeta["shape"];
   direction: PortMeta["direction"];
+  plugId?: string;
 }
+
+interface DecodedConcreteHandle extends DecodedHandleBase {
+  artifactTypeId: string;
+  schemaVersion: number;
+  artifactTypeVariable?: never;
+}
+
+interface DecodedGenericHandle extends DecodedHandleBase {
+  artifactTypeId?: never;
+  schemaVersion?: never;
+  artifactTypeVariable: string;
+}
+
+export type DecodedHandle = DecodedConcreteHandle | DecodedGenericHandle;
 
 export function decodeHandleId(
   id: string | null | undefined,
 ): DecodedHandle | null {
   if (!id) return null;
   const p = id.split("::");
-  if (p.length !== 5) return null;
-  const schemaVersion = Number(p[2]);
+  if (p.length !== 5 && p.length !== 6) return null;
   const shape = p[3];
   const direction = p[4];
-  if (!Number.isInteger(schemaVersion)) return null;
   if (shape !== "one" && shape !== "many") return null;
   if (direction !== "input" && direction !== "output") return null;
+  if (p.length === 6 && !p[5]) return null;
+
+  if (p[2] === "$generic") {
+    try {
+      const artifactTypeVariable = decodeURIComponent(p[1]);
+      if (!artifactTypeVariable) return null;
+      return {
+        portName: p[0],
+        artifactTypeVariable,
+        shape,
+        direction,
+        ...(p[5] ? { plugId: p[5] } : {}),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  const schemaVersion = Number(p[2]);
+  if (!Number.isInteger(schemaVersion)) return null;
   return {
     portName: p[0],
     artifactTypeId: p[1],
     schemaVersion,
     shape,
     direction,
+    ...(p[5] ? { plugId: p[5] } : {}),
+  };
+}
+
+export function decodedHandleArtifactType(
+  handle: DecodedHandle,
+): ArtifactTypeKey | null {
+  if (
+    typeof handle.artifactTypeId !== "string" ||
+    typeof handle.schemaVersion !== "number"
+  ) {
+    return null;
+  }
+  return {
+    id: handle.artifactTypeId,
+    schema_version: handle.schemaVersion,
   };
 }
 
@@ -59,11 +117,15 @@ export function connectionIsValid(connection: {
   const s = decodeHandleId(connection.sourceHandle);
   const t = decodeHandleId(connection.targetHandle);
   if (!s || !t) return false;
+  const sourceArtifactType = decodedHandleArtifactType(s);
+  const targetArtifactType = decodedHandleArtifactType(t);
+  if (!sourceArtifactType && !targetArtifactType) return false;
   return (
     s.direction === "output" &&
     t.direction === "input" &&
-    s.artifactTypeId === t.artifactTypeId &&
-    s.schemaVersion === t.schemaVersion &&
+    (!sourceArtifactType ||
+      !targetArtifactType ||
+      artifactTypeKey(sourceArtifactType) === artifactTypeKey(targetArtifactType)) &&
     s.shape === t.shape
   );
 }
@@ -76,11 +138,13 @@ export function connectionArtifactContractIsValid(connection: {
   const source = decodeHandleId(connection.sourceHandle);
   const target = decodeHandleId(connection.targetHandle);
   if (!source || !target) return false;
+  const sourceArtifactType = decodedHandleArtifactType(source);
+  const targetArtifactType = decodedHandleArtifactType(target);
+  if (!sourceArtifactType || !targetArtifactType) return false;
   return (
     source.direction === "output" &&
     target.direction === "input" &&
-    source.artifactTypeId === target.artifactTypeId &&
-    source.schemaVersion === target.schemaVersion
+    artifactTypeKey(sourceArtifactType) === artifactTypeKey(targetArtifactType)
   );
 }
 
@@ -94,45 +158,73 @@ export function projectionCandidatesForConnection(
 ): FieldProjection[] {
   const source = decodeHandleId(connection.sourceHandle);
   const target = decodeHandleId(connection.targetHandle);
+  const sourceArtifactType = source
+    ? decodedHandleArtifactType(source)
+    : null;
+  const targetArtifactType = target
+    ? decodedHandleArtifactType(target)
+    : null;
   if (
     !source ||
     !target ||
+    !sourceArtifactType ||
+    !targetArtifactType ||
     source.direction !== "output" ||
     target.direction !== "input" ||
-    (source.artifactTypeId === target.artifactTypeId &&
-      source.schemaVersion === target.schemaVersion)
+    artifactTypeKey(sourceArtifactType) === artifactTypeKey(targetArtifactType)
   ) {
     return [];
   }
 
   const sourceArtifact = artifactTypes.find(
     (artifact) =>
-      artifact.key.id === source.artifactTypeId &&
-      artifact.key.schema_version === source.schemaVersion,
+      artifactTypeKey(artifact.key) === artifactTypeKey(sourceArtifactType),
   );
   if (!sourceArtifact?.field_projections) return [];
 
   return sourceArtifact.field_projections.filter(
     (projection) =>
-      projection.target_artifact_type.id === target.artifactTypeId &&
-      projection.target_artifact_type.schema_version === target.schemaVersion,
+      artifactTypeKey(projection.target_artifact_type) ===
+      artifactTypeKey(targetArtifactType),
   );
 }
 
 export type ConnectionRoute =
-  | { kind: "exact" }
-  | { kind: "projection"; projection: FieldProjection }
-  | { kind: "conversion"; conversion: ArtifactConversionSpec }
+  | ({ kind: "exact"; conversionPath: readonly ArtifactConversionSpec[] } &
+      ConnectionRouteBinding)
+  | {
+      kind: "projection";
+      projection: FieldProjection;
+      conversionPath: readonly ArtifactConversionSpec[];
+    } & ConnectionRouteBinding
+  | {
+      kind: "conversion";
+      conversionPath: readonly ArtifactConversionSpec[];
+    } & ConnectionRouteBinding
   | {
       kind: "projection-conversion";
       projection: FieldProjection;
-      conversion: ArtifactConversionSpec;
-    };
+      conversionPath: readonly ArtifactConversionSpec[];
+    } & ConnectionRouteBinding;
+
+export interface ConnectionArtifactTypeBinding {
+  endpoint: "source" | "target";
+  variable: string;
+  artifactType: ArtifactTypeKey;
+}
+
+interface ConnectionRouteBinding {
+  artifactTypeBinding?: ConnectionArtifactTypeBinding;
+}
 
 export interface ConnectionRouteSelection {
   projection?: { path: readonly string[] };
-  conversion?: ArtifactConversionInput;
+  conversionPath: readonly ArtifactConversionInput[];
 }
+
+export const MAX_CONVERSION_PATH_LENGTH = 8;
+export const MAX_CONVERSION_SEARCH_STATES = 4_096;
+export const MAX_CONVERSION_PATH_CANDIDATES = 256;
 
 function artifactTypeMatches(
   artifactType: { id: string; schema_version: number },
@@ -142,28 +234,183 @@ function artifactTypeMatches(
   return artifactType.id === id && artifactType.schema_version === schemaVersion;
 }
 
-function conversionMatches(
-  conversion: ArtifactConversionSpec,
-  sourceId: string,
-  sourceSchemaVersion: number,
-  targetId: string,
-  targetSchemaVersion: number,
-): boolean {
+function artifactTypeKey(
+  artifactType: { id: string; schema_version: number },
+): string {
+  return `${artifactType.id}@${artifactType.schema_version}`;
+}
+
+function compareConversions(
+  left: ArtifactConversionSpec,
+  right: ArtifactConversionSpec,
+): number {
   return (
-    artifactTypeMatches(
-      conversion.source_artifact_type,
-      sourceId,
-      sourceSchemaVersion,
-    ) &&
-    artifactTypeMatches(
-      conversion.target_artifact_type,
-      targetId,
-      targetSchemaVersion,
-    )
+    left.key.id.localeCompare(right.key.id) ||
+    left.key.version - right.key.version
   );
 }
 
-/** All single-step routes, plus projection-then-conversion, between two ports. */
+function compareConversionPaths(
+  left: readonly ArtifactConversionSpec[],
+  right: readonly ArtifactConversionSpec[],
+): number {
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const comparison = compareConversions(left[index], right[index]);
+    if (comparison !== 0) return comparison;
+  }
+  return left.length - right.length;
+}
+
+function shortestConversionPaths(
+  source: { id: string; schema_version: number },
+  target: { id: string; schema_version: number },
+  conversions: readonly ArtifactConversionSpec[],
+): ArtifactConversionSpec[][] | null {
+  if (artifactTypeKey(source) === artifactTypeKey(target)) return [[]];
+
+  const sortedConversions = [...conversions].sort(compareConversions);
+  const conversionsBySource = new Map<string, ArtifactConversionSpec[]>();
+  for (const conversion of sortedConversions) {
+    const sourceKey = artifactTypeKey(conversion.source_artifact_type);
+    const outgoing = conversionsBySource.get(sourceKey) ?? [];
+    outgoing.push(conversion);
+    conversionsBySource.set(sourceKey, outgoing);
+  }
+  let expandedStates = 0;
+  let frontier: Array<{
+    artifactType: { id: string; schema_version: number };
+    conversionPath: ArtifactConversionSpec[];
+    visitedArtifactTypes: ReadonlySet<string>;
+  }> = [
+    {
+      artifactType: source,
+      conversionPath: [],
+      visitedArtifactTypes: new Set([artifactTypeKey(source)]),
+    },
+  ];
+
+  for (let depth = 0; depth < MAX_CONVERSION_PATH_LENGTH; depth += 1) {
+    const completed: ArtifactConversionSpec[][] = [];
+    const nextFrontier: typeof frontier = [];
+    for (const state of frontier) {
+      for (const conversion of
+        conversionsBySource.get(artifactTypeKey(state.artifactType)) ?? []) {
+        const nextArtifactType = conversion.target_artifact_type;
+        const nextArtifactTypeKey = artifactTypeKey(nextArtifactType);
+        if (state.visitedArtifactTypes.has(nextArtifactTypeKey)) continue;
+
+        const conversionPath = [...state.conversionPath, conversion];
+        expandedStates += 1;
+        if (expandedStates > MAX_CONVERSION_SEARCH_STATES) return null;
+        if (nextArtifactTypeKey === artifactTypeKey(target)) {
+          completed.push(conversionPath);
+          if (completed.length > MAX_CONVERSION_PATH_CANDIDATES) return null;
+          continue;
+        }
+
+        nextFrontier.push({
+          artifactType: nextArtifactType,
+          conversionPath,
+          visitedArtifactTypes: new Set([
+            ...state.visitedArtifactTypes,
+            nextArtifactTypeKey,
+          ]),
+        });
+      }
+    }
+
+    if (completed.length) return completed.sort(compareConversionPaths);
+    if (!nextFrontier.length) return [];
+    frontier = nextFrontier;
+  }
+
+  // Reaching the hop bound leaves the registry search incomplete, so no route
+  // is advertised instead of guessing that a longer chain is safe.
+  return [];
+}
+
+function connectionRoute(
+  projection: FieldProjection | undefined,
+  conversionPath: readonly ArtifactConversionSpec[],
+  artifactTypeBinding?: ConnectionArtifactTypeBinding,
+): ConnectionRoute {
+  const binding = artifactTypeBinding ? { artifactTypeBinding } : {};
+  if (projection) {
+    return conversionPath.length
+      ? {
+          kind: "projection-conversion",
+          projection,
+          conversionPath,
+          ...binding,
+        }
+      : {
+          kind: "projection",
+          projection,
+          conversionPath,
+          ...binding,
+        };
+  }
+  return conversionPath.length
+    ? { kind: "conversion", conversionPath, ...binding }
+    : { kind: "exact", conversionPath, ...binding };
+}
+
+function sortedConversionTargetTypes(
+  conversions: readonly ArtifactConversionSpec[],
+): ArtifactTypeKey[] {
+  const byKey = new Map<string, ArtifactTypeKey>();
+  for (const conversion of conversions) {
+    byKey.set(
+      artifactTypeKey(conversion.target_artifact_type),
+      conversion.target_artifact_type,
+    );
+  }
+  return [...byKey.values()].sort((left, right) =>
+    artifactTypeKey(left).localeCompare(artifactTypeKey(right)),
+  );
+}
+
+function genericTargetRoutesFrom(
+  sourceArtifactType: ArtifactTypeKey,
+  projection: FieldProjection | undefined,
+  variable: string,
+  conversions: readonly ArtifactConversionSpec[],
+): ConnectionRoute[] | null {
+  const routes = [
+    connectionRoute(projection, [], {
+      endpoint: "target",
+      variable,
+      artifactType: sourceArtifactType,
+    }),
+  ];
+  for (const targetArtifactType of sortedConversionTargetTypes(conversions)) {
+    if (
+      artifactTypeKey(sourceArtifactType) === artifactTypeKey(targetArtifactType)
+    ) {
+      continue;
+    }
+    const conversionPaths = shortestConversionPaths(
+      sourceArtifactType,
+      targetArtifactType,
+      conversions,
+    );
+    if (conversionPaths === null) return null;
+    for (const conversionPath of conversionPaths) {
+      routes.push(
+        connectionRoute(projection, conversionPath, {
+          endpoint: "target",
+          variable,
+          artifactType: targetArtifactType,
+        }),
+      );
+      if (routes.length > MAX_CONVERSION_PATH_CANDIDATES) return null;
+    }
+  }
+  return routes;
+}
+
+/** Shortest simple conversion paths for the whole output and each projection. */
 export function connectionRoutesFor(
   connection: {
     sourceHandle?: string | null;
@@ -183,67 +430,190 @@ export function connectionRoutesFor(
     return [];
   }
 
+  const sourceArtifactType = decodedHandleArtifactType(source);
+  const targetArtifactType = decodedHandleArtifactType(target);
+  const sourceVariable = source.artifactTypeVariable;
+  const targetVariable = target.artifactTypeVariable;
+  if (!sourceArtifactType && !targetArtifactType) return [];
+  if (!sourceArtifactType && targetArtifactType && sourceVariable) {
+    return [
+      connectionRoute(undefined, [], {
+        endpoint: "source",
+        variable: sourceVariable,
+        artifactType: targetArtifactType,
+      }),
+    ];
+  }
+  if (sourceArtifactType && !targetArtifactType && targetVariable) {
+    const routes = genericTargetRoutesFrom(
+      sourceArtifactType,
+      undefined,
+      targetVariable,
+      conversions,
+    );
+    if (routes === null) return [];
+
+    const sourceArtifact = artifactTypes.find(
+      (artifact) =>
+        artifactTypeKey(artifact.key) === artifactTypeKey(sourceArtifactType),
+    );
+    const projections = [...(sourceArtifact?.field_projections ?? [])].sort(
+      (left, right) =>
+        left.path.join(".").localeCompare(right.path.join(".")) ||
+        left.title.localeCompare(right.title),
+    );
+    for (const projection of projections) {
+      const projectionRoutes = genericTargetRoutesFrom(
+        projection.target_artifact_type,
+        projection,
+        targetVariable,
+        conversions,
+      );
+      if (
+        projectionRoutes === null ||
+        routes.length + projectionRoutes.length >
+          MAX_CONVERSION_PATH_CANDIDATES
+      ) {
+        return [];
+      }
+      routes.push(...projectionRoutes);
+    }
+    return routes;
+  }
+  if (!sourceArtifactType || !targetArtifactType) return [];
+
   if (
-    source.artifactTypeId === target.artifactTypeId &&
-    source.schemaVersion === target.schemaVersion
+    artifactTypeKey(sourceArtifactType) === artifactTypeKey(targetArtifactType)
   ) {
-    return [{ kind: "exact" }];
+    return [{ kind: "exact", conversionPath: [] }];
   }
 
   const sourceArtifact = artifactTypes.find(
     (artifact) =>
-      artifact.key.id === source.artifactTypeId &&
-      artifact.key.schema_version === source.schemaVersion,
+      artifactTypeKey(artifact.key) === artifactTypeKey(sourceArtifactType),
   );
-  const routes: ConnectionRoute[] = [];
+  const wholeOutputPaths = shortestConversionPaths(
+    sourceArtifactType,
+    targetArtifactType,
+    conversions,
+  );
+  if (wholeOutputPaths === null) return [];
+  const routes = wholeOutputPaths.map((conversionPath) =>
+    connectionRoute(undefined, conversionPath),
+  );
+  if (routes.length > MAX_CONVERSION_PATH_CANDIDATES) return [];
 
-  for (const projection of sourceArtifact?.field_projections ?? []) {
+  const projections = [...(sourceArtifact?.field_projections ?? [])].sort(
+    (left, right) =>
+      left.path.join(".").localeCompare(right.path.join(".")) ||
+      left.title.localeCompare(right.title),
+  );
+  for (const projection of projections) {
+    const conversionPaths = shortestConversionPaths(
+      projection.target_artifact_type,
+      targetArtifactType,
+      conversions,
+    );
+    if (conversionPaths === null) return [];
+    const projectionRoutes = conversionPaths.map((conversionPath) =>
+      connectionRoute(projection, conversionPath),
+    );
     if (
-      artifactTypeMatches(
-        projection.target_artifact_type,
-        target.artifactTypeId,
-        target.schemaVersion,
-      )
+      routes.length + projectionRoutes.length >
+      MAX_CONVERSION_PATH_CANDIDATES
     ) {
-      routes.push({ kind: "projection", projection });
+      return [];
     }
-  }
-
-  for (const conversion of conversions) {
-    if (
-      conversionMatches(
-        conversion,
-        source.artifactTypeId,
-        source.schemaVersion,
-        target.artifactTypeId,
-        target.schemaVersion,
-      )
-    ) {
-      routes.push({ kind: "conversion", conversion });
-    }
-  }
-
-  for (const projection of sourceArtifact?.field_projections ?? []) {
-    for (const conversion of conversions) {
-      if (
-        conversionMatches(
-          conversion,
-          projection.target_artifact_type.id,
-          projection.target_artifact_type.schema_version,
-          target.artifactTypeId,
-          target.schemaVersion,
-        )
-      ) {
-        routes.push({
-          kind: "projection-conversion",
-          projection,
-          conversion,
-        });
-      }
-    }
+    routes.push(...projectionRoutes);
   }
 
   return routes;
+}
+
+/** Replay one exact persisted selection without replacing it with a shorter path. */
+export function connectionRouteForSelection(
+  connection: {
+    sourceHandle?: string | null;
+    targetHandle?: string | null;
+  },
+  artifactTypes: readonly ArtifactTypeSpec[],
+  conversions: readonly ArtifactConversionSpec[],
+  selection: ConnectionRouteSelection,
+): ConnectionRoute | null {
+  const source = decodeHandleId(connection.sourceHandle);
+  const target = decodeHandleId(connection.targetHandle);
+  const sourceArtifactType = source
+    ? decodedHandleArtifactType(source)
+    : null;
+  const targetArtifactType = target
+    ? decodedHandleArtifactType(target)
+    : null;
+  if (
+    !source ||
+    !target ||
+    !sourceArtifactType ||
+    !targetArtifactType ||
+    source.direction !== "output" ||
+    target.direction !== "input" ||
+    selection.conversionPath.length > MAX_CONVERSION_PATH_LENGTH
+  ) {
+    return null;
+  }
+
+  const sourceArtifact = artifactTypes.find(
+    (artifact) =>
+      artifactTypeKey(artifact.key) === artifactTypeKey(sourceArtifactType),
+  );
+  const projection = selection.projection
+    ? sourceArtifact?.field_projections.find(
+        (candidate) =>
+          candidate.path.length === selection.projection?.path.length &&
+          candidate.path.every(
+            (segment, index) =>
+              segment === selection.projection?.path[index],
+          ),
+      )
+    : undefined;
+  if (selection.projection && !projection) return null;
+
+  let currentArtifactType = projection?.target_artifact_type ?? {
+    id: sourceArtifactType.id,
+    schema_version: sourceArtifactType.schema_version,
+  };
+  const visitedArtifactTypes = new Set([artifactTypeKey(currentArtifactType)]);
+  const conversionPath: ArtifactConversionSpec[] = [];
+  for (const requestedConversion of selection.conversionPath) {
+    const conversion = conversions.find(
+      (candidate) =>
+        candidate.key.id === requestedConversion.id &&
+        candidate.key.version === requestedConversion.version,
+    );
+    if (
+      !conversion ||
+      artifactTypeKey(conversion.source_artifact_type) !==
+        artifactTypeKey(currentArtifactType)
+    ) {
+      return null;
+    }
+    const nextArtifactTypeKey = artifactTypeKey(
+      conversion.target_artifact_type,
+    );
+    if (visitedArtifactTypes.has(nextArtifactTypeKey)) return null;
+    visitedArtifactTypes.add(nextArtifactTypeKey);
+    conversionPath.push(conversion);
+    currentArtifactType = conversion.target_artifact_type;
+  }
+
+  if (
+    !artifactTypeMatches(
+      currentArtifactType,
+      targetArtifactType.id,
+      targetArtifactType.schema_version,
+    )
+  ) {
+    return null;
+  }
+  return connectionRoute(projection, conversionPath);
 }
 
 export function connectionRouteSelection(
@@ -253,14 +623,11 @@ export function connectionRouteSelection(
     route.kind === "projection" || route.kind === "projection-conversion"
       ? { path: [...route.projection.path] }
       : undefined;
-  const conversion =
-    route.kind === "conversion" || route.kind === "projection-conversion"
-      ? {
-          id: route.conversion.key.id,
-          version: route.conversion.key.version,
-        }
-      : undefined;
-  return { projection, conversion };
+  const conversionPath = route.conversionPath.map((conversion) => ({
+    id: conversion.key.id,
+    version: conversion.key.version,
+  }));
+  return { projection, conversionPath };
 }
 
 export function connectionRouteMatchesSelection(
@@ -277,14 +644,14 @@ export function connectionRouteMatchesSelection(
           ),
       )
     : selection.projection === undefined;
-  const conversionMatchesSelection = candidate.conversion
-    ? Boolean(
-        selection.conversion &&
-          candidate.conversion.id === selection.conversion.id &&
-          candidate.conversion.version === selection.conversion.version,
-      )
-    : selection.conversion === undefined;
-  return projectionMatches && conversionMatchesSelection;
+  const conversionPathMatches =
+    candidate.conversionPath.length === selection.conversionPath.length &&
+    candidate.conversionPath.every(
+      (conversion, index) =>
+        conversion.id === selection.conversionPath[index]?.id &&
+        conversion.version === selection.conversionPath[index]?.version,
+    );
+  return projectionMatches && conversionPathMatches;
 }
 
 export type CSSProperties = Record<string, string | number>;

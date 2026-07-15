@@ -20,11 +20,19 @@ run artifacts are also managed from the node, so the canvas does not depend on
 a separate inspector sidebar. The node header keeps only two local controls:
 help from the registered description and removal from the canvas.
 
+The node catalog groups registered operators by installed plugin. Selecting an
+operator previews its description, compatible upstream and downstream nodes,
+typed input and output ports, and editable configuration fields before the user
+adds it to the canvas. Compatibility is derived from the same artifact types,
+field projections, bounded conversion paths, and collection shapes used for
+live wiring.
+
 Connections own transport behavior. Every edge has an inline control for
-choosing the whole output or a declared nested-field projection, showing
-whether the target receives the value directly or maps each list item, and
-removing the connection. Different outgoing edges from one output can therefore
-carry different fields without changing the source node.
+choosing the whole output or a schema-derived/explicit nested-field projection,
+reviewing its ordered conversion path, showing whether the target receives the
+value directly or maps each list item, and removing the connection. Different
+outgoing edges from one output can therefore carry different fields without
+changing the source node.
 
 ## Source of truth
 
@@ -110,9 +118,10 @@ graph's workflow structure and canvas layout.
    `{addition: 13, subtraction: 5}`.
 4. Two independent edges select `result.addition` and `result.subtraction`; the server
    materializes each as `scalar.integer@1` for Multiply, which produces `65`.
-5. Dragging the compound result to a compatible integer input opens a picker
-   populated from the artifact type's declared field projections. The created
-   edge remains editable and owns that choice.
+5. Dragging the compound result to a compatible input opens a picker populated
+   from explicit projections and structural `string`/`integer` leaves derived
+   from the artifact's JSON Schema. The created edge remains editable and owns
+   that exact path.
 6. List-valued edges expose whether the target receives the whole list directly
    or maps the target operation over each item. Mapping is edge state, not node
    invocation configuration.
@@ -132,8 +141,8 @@ graph's workflow structure and canvas layout.
    graph.
 9. Editing a node's schema-derived controls invalidates stale run results before
    the next execution.
-10. `POST /v1/runs` validates the graph, collection modes, and projection paths before
-   executing it through the runtime.
+10. `POST /v1/runs` validates the graph, collection modes, projection paths, and
+    every stored conversion-path hop before executing it through the runtime.
 11. Node results expose values and content URLs served by
    `GET /v1/artifacts/{artifact_id}/content`.
 
@@ -165,6 +174,7 @@ src/
 
 ```bash
 npm run check:api
+npm test
 npm run lint
 npm run typecheck
 npm run build

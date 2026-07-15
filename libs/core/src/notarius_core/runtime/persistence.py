@@ -281,6 +281,10 @@ class OutputPersister:
         value: object,
         context: ArtifactWriteContext,
     ) -> object:
+        if not isinstance(spec.produces, ArtifactTypeKey):
+            raise RuntimeError(
+                f"Output {spec.name!r} has an unresolved artifact type contract"
+            )
         if isinstance(value, ArtifactRef):
             if value.key() != spec.produces:
                 raise RuntimeError(

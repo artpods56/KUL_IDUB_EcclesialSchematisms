@@ -1,9 +1,11 @@
-from typing import Annotated, ClassVar, Literal, Self
+from collections.abc import Mapping
+from typing import Annotated, ClassVar, Literal, Self, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from notarius_core.artifacts import ArtifactRef, ArtifactRefSequence
+from notarius_core.artifacts import ArtifactRef, ArtifactRefSequence, ArtifactTypeKey
+from notarius_core.conversions import MAX_ARTIFACT_CONVERSION_HOPS
 from notarius_core.nodes import PortShape
 
 
@@ -16,7 +18,26 @@ class ApiResponse(BaseModel):
 
 class ArtifactTypeKeyResponse(ApiResponse):
     id: str
-    schema_version: int
+    schema_version: int = Field(ge=1, strict=True)
+
+    def to_key(self) -> ArtifactTypeKey:
+        return ArtifactTypeKey(id=self.id, schema_version=self.schema_version)
+
+
+ArtifactTypeVariableIdentifier = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=255),
+]
+
+
+class ArtifactTypeBindingModel(ApiResponse):
+    model_config: ClassVar[ConfigDict] = ConfigDict(
+        from_attributes=True,
+        extra="forbid",
+    )
+
+    variable: ArtifactTypeVariableIdentifier
+    artifact_type: ArtifactTypeKeyResponse
 
 
 class FieldProjectionResponse(ApiResponse):
@@ -54,10 +75,22 @@ class PortResponse(ApiResponse):
     title: str | None = None
     description: str | None = None
     direction: PortDirection
-    artifact_type: ArtifactTypeKeyResponse
+    artifact_type: ArtifactTypeKeyResponse | None = None
+    artifact_type_variable: ArtifactTypeVariableIdentifier | None = None
     shape: PortShape
+    accepted_shapes: list[PortShape]
+    instance_plugs: bool = False
     variadic: bool = False
     required: bool = True
+
+    @model_validator(mode="after")
+    def validate_artifact_type_contract(self) -> Self:
+        if (self.artifact_type is None) == (self.artifact_type_variable is None):
+            raise ValueError(
+                "Port must declare exactly one of artifact_type or "
+                "artifact_type_variable"
+            )
+        return self
 
 
 class NodeSpecResponse(ApiResponse):
@@ -96,11 +129,33 @@ class SelectionItemResponse(ApiResponse):
     size_bytes: int
 
 
+InputPlugIdentifier = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=255),
+]
+
+
+class RunInputPlugRequest(BaseModel):
+    id: InputPlugIdentifier
+    port: InputPlugIdentifier
+
+
 class RunNodeRequest(BaseModel):
     id: str
     operator_id: str
     operator_version: int
     config: dict[str, object] = Field(default_factory=dict)
+    input_plugs: list[RunInputPlugRequest] = Field(default_factory=list)
+    artifact_type_bindings: list[ArtifactTypeBindingModel] = Field(
+        default_factory=list,
+    )
+
+    @model_validator(mode="after")
+    def validate_artifact_type_bindings(self) -> Self:
+        variables = [binding.variable for binding in self.artifact_type_bindings]
+        if len(variables) != len(set(variables)):
+            raise ValueError("Node artifact type binding variables must be unique")
+        return self
 
 
 class FieldProjectionRequest(BaseModel):
@@ -120,9 +175,30 @@ class RunEdgeRequest(BaseModel):
     from_port: str
     to_node: str
     to_port: str
+    to_plug: InputPlugIdentifier | None = None
     projection: FieldProjectionRequest | None = None
-    conversion: ArtifactConversionRequest | None = None
+    conversion_path: list[ArtifactConversionRequest] = Field(
+        default_factory=list,
+        max_length=MAX_ARTIFACT_CONVERSION_HOPS,
+    )
     collection_mode: Literal["direct", "map"] = "direct"
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_singular_conversion(cls, value: object) -> object:
+        if not isinstance(value, Mapping):
+            return value
+        raw = cast(Mapping[object, object], value)
+        if "conversion" not in raw:
+            return dict(raw)
+        if "conversion_path" in raw:
+            raise ValueError(
+                "Run edge cannot declare both conversion and conversion_path"
+            )
+        normalized = dict(raw)
+        conversion = normalized.pop("conversion")
+        normalized["conversion_path"] = [] if conversion is None else [conversion]
+        return normalized
 
 
 class PinnedOutputRequest(BaseModel):

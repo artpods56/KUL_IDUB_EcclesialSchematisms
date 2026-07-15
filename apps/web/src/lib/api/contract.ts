@@ -16,11 +16,15 @@ export type Port = Schemas["PortResponse"];
 export type NodeSpec = Schemas["NodeSpecResponse"];
 export type SelectionItem =
   Schemas["SelectionItemResponse"];
+export type InputPlugInput = Schemas["RunInputPlugRequest"];
 export type RunNodeInput = Schemas["RunNodeRequest"];
 export type NodeConfigInput = NonNullable<
   RunNodeInput["config"]
 >;
 export type RunEdgeInput = Schemas["RunEdgeRequest"];
+export type ArtifactConversionPathInput = NonNullable<
+  RunEdgeInput["conversion_path"]
+>;
 export type RunEdgeCollectionMode = RunEdgeInput["collection_mode"];
 export type RunEdgeProjectionInput = NonNullable<
   RunEdgeInput["projection"]
@@ -34,10 +38,8 @@ export type RunNodeResult =
   Schemas["RunNodeResponse"];
 export type GraphMaterializations =
   Schemas["GraphMaterializationsResponse"];
-export type SavedGraphNode =
-  Schemas["SavedGraphNodeModel"];
-export type SavedGraphEdge =
-  Schemas["SavedGraphEdgeModel"];
+export type SavedGraphNode = Schemas["SavedGraphNodeModel-Output"];
+export type SavedGraphEdge = Schemas["SavedGraphEdgeModel"];
 export type SavedGraphSummary =
   Schemas["SavedGraphSummaryResponse"];
 

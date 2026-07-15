@@ -22,6 +22,7 @@ web:
 
 test:
 	uv run --extra ocr pytest
+	npm --prefix apps/web test
 
 lint:
 	uv run ruff check apps/api/src libs/core/src libs/persistence/src libs/storage/src plugins/ocr/src infra/db/migrations scripts tests

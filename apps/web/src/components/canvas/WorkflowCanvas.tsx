@@ -8,6 +8,7 @@ import {
   Controls,
   ReactFlow,
   type EdgeTypes,
+  type FitViewOptions,
   type IsValidConnection,
   type Node,
   type NodeTypes,
@@ -53,6 +54,8 @@ const s = stylex.create({
 });
 
 export interface WorkflowCanvasProps {
+  children?: React.ReactNode;
+  fitViewOptions?: FitViewOptions<WorkflowNode>;
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
   onNodesChange: OnNodesChange<WorkflowNode>;
@@ -67,6 +70,8 @@ export interface WorkflowCanvasProps {
 }
 
 export function WorkflowCanvas({
+  children,
+  fitViewOptions,
   nodes,
   edges,
   onNodesChange,
@@ -97,7 +102,7 @@ export function WorkflowCanvas({
         onPaneClick={onPaneClick}
         isValidConnection={isValidConnection}
         fitView
-        fitViewOptions={{ padding: 0.18, maxZoom: 0.98 }}
+        fitViewOptions={fitViewOptions ?? { padding: 0.18, maxZoom: 0.98 }}
         minZoom={0.35}
         maxZoom={1.7}
         colorMode={resolved}
@@ -121,6 +126,7 @@ export function WorkflowCanvas({
           strokeWidth: 2,
         }}
       >
+        {children}
         <Background
           variant={BackgroundVariant.Lines}
           gap={54}

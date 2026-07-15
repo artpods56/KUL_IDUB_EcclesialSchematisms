@@ -1,7 +1,7 @@
 from copy import deepcopy
 from dataclasses import dataclass, field
 from types import TracebackType
-from typing import TYPE_CHECKING, Protocol, Self, TypeAlias, final, override
+from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeAlias, final, override
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     )
 
 JsonObject: TypeAlias = dict[str, object]
+MaterializedJsonType: TypeAlias = Literal["string", "integer"]
 
 
 class NodeConfig(BaseModel):
@@ -62,6 +63,7 @@ class ArtifactTypeSpec:
     title: str
     payload_schema: JsonObject = field(default_factory=dict)
     field_projections: tuple[ArtifactFieldProjection, ...] = ()
+    materialized_json_type: MaterializedJsonType | None = None
 
 SOURCE_PAGE_IMAGE = ArtifactTypeSpec(
     key=ArtifactTypeKey("source.page_image", 1),

@@ -16,6 +16,8 @@ from pydantic import (
     model_validator,
 )
 
+from notarius_core.artifacts import ArtifactTypeKey
+from notarius_core.conversions import MAX_ARTIFACT_CONVERSION_HOPS
 from notarius_core.domain.errors import SavedGraphRevisionConflictError
 
 
@@ -71,12 +73,71 @@ def _thaw_json(value: object) -> object:
     return value
 
 
+class SavedGraphInputPlug(SavedGraphValue):
+    id: GraphIdentifier
+    port: GraphIdentifier
+
+
+class SavedGraphArtifactTypeBinding(SavedGraphValue):
+    variable: GraphIdentifier
+    artifact_type: ArtifactTypeKey
+
+    @field_validator("artifact_type", mode="before")
+    @classmethod
+    def validate_artifact_type_shape(cls, value: object) -> object:
+        if not isinstance(value, Mapping):
+            return value
+        raw = cast(Mapping[object, object], value)
+        expected_fields = {"id", "schema_version"}
+        if set(raw) != expected_fields:
+            raise ValueError(
+                "Saved graph artifact type binding must contain exactly id and "
+                "schema_version"
+            )
+        return dict(raw)
+
+    @field_validator("artifact_type")
+    @classmethod
+    def validate_artifact_type_key(
+        cls,
+        value: ArtifactTypeKey,
+    ) -> ArtifactTypeKey:
+        if value.id.strip() == "":
+            raise ValueError("Saved graph bound artifact type id must not be empty")
+        if value.id != value.id.strip():
+            raise ValueError(
+                "Saved graph bound artifact type id must not have surrounding "
+                "whitespace"
+            )
+        if len(value.id) > 255:
+            raise ValueError(
+                "Saved graph bound artifact type id must be at most 255 characters"
+            )
+        if value.schema_version < 1:
+            raise ValueError(
+                "Saved graph bound artifact type schema version must be positive"
+            )
+        return value
+
+    @field_serializer("artifact_type")
+    def serialize_artifact_type(
+        self,
+        value: ArtifactTypeKey,
+    ) -> dict[str, object]:
+        return {
+            "id": value.id,
+            "schema_version": value.schema_version,
+        }
+
+
 class SavedGraphNode(SavedGraphValue):
     id: GraphIdentifier
     operator_id: GraphIdentifier
     operator_version: int = Field(ge=1)
     config: Mapping[str, object] = Field(default_factory=dict)
     position: GraphPoint
+    input_plugs: tuple[SavedGraphInputPlug, ...] = ()
+    artifact_type_bindings: tuple[SavedGraphArtifactTypeBinding, ...] = ()
 
     @field_validator("config")
     @classmethod
@@ -102,6 +163,21 @@ class SavedGraphNode(SavedGraphValue):
             raise ValueError("Saved graph node config must be an object")
         return cast(dict[str, object], thawed)
 
+    @model_validator(mode="after")
+    def validate_artifact_type_bindings(self) -> Self:
+        variables = [binding.variable for binding in self.artifact_type_bindings]
+        if len(variables) != len(set(variables)):
+            raise ValueError(
+                "Saved graph node artifact type binding variables must be unique"
+            )
+        return self
+
+    def artifact_type_binding_map(self) -> dict[str, ArtifactTypeKey]:
+        return {
+            binding.variable: binding.artifact_type
+            for binding in self.artifact_type_bindings
+        }
+
 
 class SavedGraphProjection(SavedGraphValue):
     path: tuple[GraphIdentifier, ...] = Field(min_length=1)
@@ -118,16 +194,49 @@ class SavedGraphEdge(SavedGraphValue):
     from_port: GraphIdentifier
     to_node: GraphIdentifier
     to_port: GraphIdentifier
+    to_plug: GraphIdentifier | None = None
     collection_mode: Literal["direct", "map"] = "direct"
     projection: SavedGraphProjection | None = None
-    conversion: SavedGraphConversion | None = None
+    conversion_path: tuple[SavedGraphConversion, ...] = Field(
+        default=(),
+        max_length=MAX_ARTIFACT_CONVERSION_HOPS,
+    )
     route_offset: GraphPoint | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_singular_conversion(cls, value: object) -> object:
+        if not isinstance(value, Mapping):
+            return value
+        raw = cast(Mapping[object, object], value)
+        if "conversion" not in raw:
+            return dict(raw)
+        if "conversion_path" in raw:
+            raise ValueError(
+                "Saved graph edge cannot declare both conversion and conversion_path"
+            )
+        migrated = dict(raw)
+        conversion = migrated.pop("conversion")
+        migrated["conversion_path"] = [] if conversion is None else [conversion]
+        return migrated
 
 
 class SavedGraphDocument(SavedGraphValue):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[3] = 3
     nodes: tuple[SavedGraphNode, ...] = ()
     edges: tuple[SavedGraphEdge, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_document(cls, value: object) -> object:
+        if not isinstance(value, Mapping):
+            return value
+        raw = cast(Mapping[object, object], value)
+        if raw.get("schema_version", 1) not in (1, 2):
+            return dict(raw)
+        migrated = dict(raw)
+        migrated["schema_version"] = 3
+        return migrated
 
     @model_validator(mode="after")
     def validate_structure(self) -> Self:
@@ -140,6 +249,16 @@ class SavedGraphDocument(SavedGraphValue):
             raise ValueError("Saved graph edge ids must be unique")
 
         known_nodes = set(node_ids)
+        plugs_by_node: dict[str, dict[str, SavedGraphInputPlug]] = {}
+        for node in self.nodes:
+            plug_ids = [plug.id for plug in node.input_plugs]
+            if len(plug_ids) != len(set(plug_ids)):
+                raise ValueError(
+                    f"Saved graph input plug ids must be unique within node {node.id}"
+                )
+            plugs_by_node[node.id] = {plug.id: plug for plug in node.input_plugs}
+
+        connected_plugs: set[tuple[str, str]] = set()
         for edge in self.edges:
             if edge.from_node not in known_nodes:
                 raise ValueError(
@@ -151,6 +270,26 @@ class SavedGraphDocument(SavedGraphValue):
                     f"Saved graph edge {edge.id} references missing target node "
                     f"{edge.to_node}"
                 )
+            if edge.to_plug is None:
+                continue
+            target_plug = plugs_by_node[edge.to_node].get(edge.to_plug)
+            if target_plug is None:
+                raise ValueError(
+                    f"Saved graph edge {edge.id} references missing input plug "
+                    f"{edge.to_plug} on target node {edge.to_node}"
+                )
+            if target_plug.port != edge.to_port:
+                raise ValueError(
+                    f"Saved graph edge {edge.id} targets port {edge.to_port}, but "
+                    f"input plug {edge.to_plug} belongs to port {target_plug.port}"
+                )
+            plug_key = (edge.to_node, edge.to_plug)
+            if plug_key in connected_plugs:
+                raise ValueError(
+                    f"Saved graph input plug {edge.to_plug} on node "
+                    f"{edge.to_node} accepts at most one edge"
+                )
+            connected_plugs.add(plug_key)
         return self
 
 

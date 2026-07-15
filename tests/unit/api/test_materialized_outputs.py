@@ -1,7 +1,9 @@
 import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
+from copy import deepcopy
 from pathlib import Path
+from typing import cast
 from uuid import UUID
 
 import pytest
@@ -9,7 +11,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import delete
 
-from notarius_core.artifacts import ArtifactObject, ArtifactRef
+from notarius_core.artifacts import ArtifactObject, ArtifactRef, ArtifactRefSequence
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
 from notarius_persistence import schema
 from notarius_persistence.database import create_database
@@ -74,9 +76,7 @@ async def _persist_partially_accessible_materialization(
                     graph_id=graph_id,
                     graph_revision=graph_revision,
                     node_id="add-subtract",
-                    workflow_run_id=UUID(
-                        "00000000-0000-0000-0000-000000000998"
-                    ),
+                    workflow_run_id=UUID("00000000-0000-0000-0000-000000000998"),
                     outputs={
                         "accessible": accessible.ref(),
                         "missing": missing,
@@ -128,8 +128,7 @@ def _graph_payload() -> dict[str, object]:
             for index, (node_id, operator_id, config) in enumerate(nodes)
         ],
         "edges": [
-            {"id": f"edge-{index}", **edge}
-            for index, edge in enumerate(edges, start=1)
+            {"id": f"edge-{index}", **edge} for index, edge in enumerate(edges, start=1)
         ],
     }
 
@@ -163,6 +162,97 @@ def _edges() -> list[dict[str, object]]:
             "projection": {"path": ["subtraction"]},
         },
     ]
+
+
+def _collect_graph_payload() -> dict[str, object]:
+    return {
+        "name": "Durable collect graph",
+        "nodes": [
+            {
+                "id": "first",
+                "operator_id": "text.input",
+                "operator_version": 1,
+                "config": {"text": "first"},
+                "position": {"x": 0.0, "y": 0.0},
+            },
+            {
+                "id": "sequence-input",
+                "operator_id": "text.input",
+                "operator_version": 1,
+                "config": {"text": "second|third"},
+                "position": {"x": 200.0, "y": 0.0},
+            },
+            {
+                "id": "split",
+                "operator_id": "text.split",
+                "operator_version": 1,
+                "config": {"separator": "|"},
+                "position": {"x": 400.0, "y": 0.0},
+            },
+            {
+                "id": "collect",
+                "operator_id": "sequence.collect",
+                "operator_version": 1,
+                "config": {},
+                "position": {"x": 600.0, "y": 0.0},
+                "artifact_type_bindings": [
+                    {
+                        "variable": "T",
+                        "artifact_type": {
+                            "id": "scalar.text",
+                            "schema_version": 1,
+                        },
+                    }
+                ],
+                "input_plugs": [
+                    {"id": "sequence-plug", "port": "items"},
+                    {"id": "first-plug", "port": "items"},
+                ],
+            },
+        ],
+        "edges": [
+            {
+                "id": "first-edge",
+                "from_node": "first",
+                "from_port": "text",
+                "to_node": "collect",
+                "to_port": "items",
+                "to_plug": "first-plug",
+            },
+            {
+                "id": "sequence-input-edge",
+                "from_node": "sequence-input",
+                "from_port": "text",
+                "to_node": "split",
+                "to_port": "text",
+            },
+            {
+                "id": "sequence-edge",
+                "from_node": "split",
+                "from_port": "parts",
+                "to_node": "collect",
+                "to_port": "items",
+                "to_plug": "sequence-plug",
+            },
+        ],
+    }
+
+
+def _collect_run_payload(graph: SavedGraphResponse) -> dict[str, object]:
+    graph_payload = _collect_graph_payload()
+    nodes = cast(list[dict[str, object]], graph_payload["nodes"])
+    edges = cast(list[dict[str, object]], graph_payload["edges"])
+    return {
+        "nodes": [
+            {key: value for key, value in node.items() if key != "position"}
+            for node in nodes
+        ],
+        "edges": [
+            {key: value for key, value in edge.items() if key != "id"} for edge in edges
+        ],
+        "graph_id": str(graph.id),
+        "graph_revision": graph.revision,
+    }
 
 
 def _full_run_payload(graph_id: str, graph_revision: int) -> dict[str, object]:
@@ -318,9 +408,10 @@ def test_graph_context_run_rejects_omitted_saved_incoming_edge(
     assert response.status_code == 422
     assert "1 missing and 0 unexpected or duplicated" in response.json()["detail"]
     assert materializations.status_code == 200
-    assert GraphMaterializationsResponse.model_validate(
-        materializations.json()
-    ).node_runs == []
+    assert (
+        GraphMaterializationsResponse.model_validate(materializations.json()).node_runs
+        == []
+    )
 
 
 def test_graph_context_run_rejects_duplicated_saved_incoming_edge(
@@ -343,9 +434,148 @@ def test_graph_context_run_rejects_duplicated_saved_incoming_edge(
     assert response.status_code == 422
     assert "0 missing and 1 unexpected or duplicated" in response.json()["detail"]
     assert materializations.status_code == 200
-    assert GraphMaterializationsResponse.model_validate(
-        materializations.json()
-    ).node_runs == []
+    assert (
+        GraphMaterializationsResponse.model_validate(materializations.json()).node_runs
+        == []
+    )
+
+
+def test_saved_collect_fragment_matches_ordered_plugs_and_edge_targets(
+    durable_api: tuple[Settings, str],
+) -> None:
+    settings, _ = durable_api
+    with _client(settings) as client:
+        created = client.post("/v1/graphs", json=_collect_graph_payload())
+        assert created.status_code == 201
+        graph = SavedGraphResponse.model_validate(created.json())
+
+        matching_run = _collect_run_payload(graph)
+        matching = client.post("/v1/runs", json=matching_run)
+        assert matching.status_code == 200
+        assert RunResponse.model_validate(matching.json()).status == "succeeded"
+
+        reordered_run = deepcopy(matching_run)
+        reordered_nodes = cast(
+            list[dict[str, object]],
+            reordered_run["nodes"],
+        )
+        collect_node = next(node for node in reordered_nodes if node["id"] == "collect")
+        input_plugs = cast(
+            list[dict[str, object]],
+            collect_node["input_plugs"],
+        )
+        input_plugs.reverse()
+        reordered = client.post("/v1/runs", json=reordered_run)
+
+        retargeted_run = deepcopy(matching_run)
+        retargeted_edges = cast(
+            list[dict[str, object]],
+            retargeted_run["edges"],
+        )
+        collect_edges = [
+            edge for edge in retargeted_edges if edge["to_node"] == "collect"
+        ]
+        collect_edges[0]["to_plug"], collect_edges[1]["to_plug"] = (
+            collect_edges[1]["to_plug"],
+            collect_edges[0]["to_plug"],
+        )
+        retargeted = client.post("/v1/runs", json=retargeted_run)
+
+    assert reordered.status_code == 422
+    assert "does not match saved graph" in reordered.json()["detail"]
+    assert retargeted.status_code == 422
+    assert (
+        "Run edges do not match the saved incoming edges" in retargeted.json()["detail"]
+    )
+
+
+def test_fresh_app_runs_collect_only_from_persisted_scalar_and_sequence_pins(
+    durable_api: tuple[Settings, str],
+) -> None:
+    settings, _ = durable_api
+    with _client(settings) as client:
+        graph = SavedGraphResponse.model_validate(
+            client.post("/v1/graphs", json=_collect_graph_payload()).json()
+        )
+        full_run = client.post("/v1/runs", json=_collect_run_payload(graph))
+        assert full_run.status_code == 200
+
+    with _client(settings) as fresh_client:
+        materializations_response = fresh_client.get(
+            f"/v1/graphs/{graph.id}/materializations",
+            params={"graph_revision": graph.revision},
+        )
+        assert materializations_response.status_code == 200
+        materializations = GraphMaterializationsResponse.model_validate(
+            materializations_response.json()
+        )
+        first_run = next(
+            node_run
+            for node_run in materializations.node_runs
+            if node_run.node_id == "first"
+        )
+        split_run = next(
+            node_run
+            for node_run in materializations.node_runs
+            if node_run.node_id == "split"
+        )
+        first_value = first_run.outputs[0].value
+        split_value = split_run.outputs[0].value
+        assert isinstance(first_value, ArtifactRef)
+        assert isinstance(split_value, ArtifactRefSequence)
+
+        graph_payload = _collect_graph_payload()
+        collect_node = next(
+            node
+            for node in cast(list[dict[str, object]], graph_payload["nodes"])
+            if node["id"] == "collect"
+        )
+        incoming_edges = [
+            edge
+            for edge in cast(list[dict[str, object]], graph_payload["edges"])
+            if edge["to_node"] == "collect"
+        ]
+        selected_run = fresh_client.post(
+            "/v1/runs",
+            json={
+                "nodes": [
+                    {
+                        key: value
+                        for key, value in collect_node.items()
+                        if key != "position"
+                    }
+                ],
+                "edges": [
+                    {key: value for key, value in edge.items() if key != "id"}
+                    for edge in incoming_edges
+                ],
+                "pinned_outputs": [
+                    {
+                        "from_node": "first",
+                        "from_port": "text",
+                        "value": first_value.model_dump(mode="json"),
+                    },
+                    {
+                        "from_node": "split",
+                        "from_port": "parts",
+                        "value": split_value.model_dump(mode="json"),
+                    },
+                ],
+                "graph_id": str(graph.id),
+                "graph_revision": graph.revision,
+            },
+        )
+
+        assert selected_run.status_code == 200
+        selected_result = RunResponse.model_validate(selected_run.json())
+        collected = _output(selected_result, "collect")
+        assert isinstance(collected.value, ArtifactRefSequence)
+        assert [
+            fresh_client.get(
+                f"/v1/artifacts/{artifact.artifact_id}/content"
+            ).json()["value"]
+            for artifact in collected.artifacts
+        ] == ["second", "third", "first"]
 
 
 def test_full_run_persists_outputs_and_fresh_app_reuses_them_for_downstream_run(
@@ -373,9 +603,12 @@ def test_full_run_persists_outputs_and_fresh_app_reuses_them_for_downstream_run(
         materialized = GraphMaterializationsResponse.model_validate(
             materializations.json()
         )
-        assert {
-            node_run.node_id for node_run in materialized.node_runs
-        } == {"nine", "four", "add-subtract", "multiply"}
+        assert {node_run.node_id for node_run in materialized.node_runs} == {
+            "nine",
+            "four",
+            "add-subtract",
+            "multiply",
+        }
 
     with _client(settings) as fresh_client:
         reloaded = fresh_client.get(
@@ -474,9 +707,7 @@ def test_inaccessible_artifact_is_filtered_and_blocks_downstream_reuse(
         materialized = GraphMaterializationsResponse.model_validate(
             materializations.json()
         )
-        visible_nodes = {
-            node_run.node_id for node_run in materialized.node_runs
-        }
+        visible_nodes = {node_run.node_id for node_run in materialized.node_runs}
         assert "add-subtract" not in visible_nodes
 
         downstream = client.post(

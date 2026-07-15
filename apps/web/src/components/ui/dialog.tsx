@@ -74,10 +74,16 @@ export const DialogContent = React.forwardRef<
   }
 >(({ className, children, ...props }, ref) => (
   <DialogPrimitive.Portal>
-    <DialogPrimitive.Backdrop {...stylex.props(s.overlay)} />
+    <DialogPrimitive.Backdrop
+      className={cx(stylex.props(s.overlay).className, "ns-dialog-backdrop")}
+    />
     <DialogPrimitive.Popup
       ref={ref}
-      className={cx(stylex.props(s.content).className, className)}
+      className={cx(
+        stylex.props(s.content).className,
+        "ns-dialog-popup",
+        className,
+      )}
       {...props}
     >
       {children}

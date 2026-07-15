@@ -59,6 +59,12 @@ class InputMaterializer:
                     raise MaterializationError(name, "is required")
                 continue
 
+            if not isinstance(spec.accepts, ArtifactTypeKey):
+                raise MaterializationError(
+                    name,
+                    "has an unresolved artifact type contract",
+                )
+
             value = inputs[name]
             if value is None and spec.allows_none:
                 values[name] = None
@@ -68,38 +74,62 @@ class InputMaterializer:
             # refs per incoming edge. Everything below reads from `edges` and
             # never re-inspects the raw value.
             edges: list[list[ArtifactRef]]
-            match spec.variadic, spec.shape, value:
-                case False, PortShape.ONE, ArtifactRef() as ref:
-                    edges = [[ref]]
-                case False, PortShape.MANY, ArtifactRefSequence() as sequence:
-                    _validate_sequence_key(name, sequence, spec.accepts)
-                    edges = [list(sequence.item_refs)]
-                case True, PortShape.ONE, list() | tuple():
-                    edges = []
-                    for item in cast(Sequence[object], value):
-                        if not isinstance(item, ArtifactRef):
-                            raise MaterializationError(
-                                name,
-                                f"expected one ArtifactRef per incoming edge, "
-                                f"got {type(item).__name__}",
-                            )
+            if spec.instance_plugs:
+                if not isinstance(value, list):
+                    raise MaterializationError(
+                        name,
+                        "expected a list with one ArtifactRef or "
+                        "ArtifactRefSequence per incoming plug, got "
+                        f"{type(value).__name__}",
+                    )
+                edges = []
+                for item in cast(list[object], value):
+                    if isinstance(item, ArtifactRef):
                         edges.append([item])
-                case True, PortShape.MANY, list() | tuple():
-                    edges = []
-                    for item in cast(Sequence[object], value):
-                        if not isinstance(item, ArtifactRefSequence):
-                            raise MaterializationError(
-                                name,
-                                f"expected one ArtifactRefSequence per incoming "
-                                f"edge, got {type(item).__name__}",
-                            )
+                        continue
+                    if isinstance(item, ArtifactRefSequence):
                         _validate_sequence_key(name, item, spec.accepts)
                         edges.append(list(item.item_refs))
-                case _:
-                    expected = _EXPECTED_PORT_VALUE[(spec.variadic, spec.shape)]
+                        continue
                     raise MaterializationError(
-                        name, f"expected {expected}, got {type(value).__name__}"
+                        name,
+                        "expected an ArtifactRef or ArtifactRefSequence per "
+                        f"incoming plug, got {type(item).__name__}",
                     )
+            else:
+                match spec.variadic, spec.shape, value:
+                    case False, PortShape.ONE, ArtifactRef() as ref:
+                        edges = [[ref]]
+                    case False, PortShape.MANY, ArtifactRefSequence() as sequence:
+                        _validate_sequence_key(name, sequence, spec.accepts)
+                        edges = [list(sequence.item_refs)]
+                    case True, PortShape.ONE, list() | tuple():
+                        edges = []
+                        for item in cast(Sequence[object], value):
+                            if not isinstance(item, ArtifactRef):
+                                raise MaterializationError(
+                                    name,
+                                    f"expected one ArtifactRef per incoming edge, "
+                                    f"got {type(item).__name__}",
+                                )
+                            edges.append([item])
+                    case True, PortShape.MANY, list() | tuple():
+                        edges = []
+                        for item in cast(Sequence[object], value):
+                            if not isinstance(item, ArtifactRefSequence):
+                                raise MaterializationError(
+                                    name,
+                                    f"expected one ArtifactRefSequence per incoming "
+                                    f"edge, got {type(item).__name__}",
+                                )
+                            _validate_sequence_key(name, item, spec.accepts)
+                            edges.append(list(item.item_refs))
+                    case _:
+                        expected = _EXPECTED_PORT_VALUE[(spec.variadic, spec.shape)]
+                        raise MaterializationError(
+                            name,
+                            f"expected {expected}, got {type(value).__name__}",
+                        )
 
             if spec.variadic and len(edges) == 0 and spec.required:
                 raise MaterializationError(name, "expected at least one incoming edge")

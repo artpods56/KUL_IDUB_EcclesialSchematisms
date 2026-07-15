@@ -223,6 +223,26 @@
         "title": "ArtifactSummaryResponse",
         "type": "object"
       },
+      "ArtifactTypeBindingModel": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_type": {
+            "$ref": "#/components/schemas/ArtifactTypeKeyResponse"
+          },
+          "variable": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Variable",
+            "type": "string"
+          }
+        },
+        "required": [
+          "variable",
+          "artifact_type"
+        ],
+        "title": "ArtifactTypeBindingModel",
+        "type": "object"
+      },
       "ArtifactTypeKeyResponse": {
         "properties": {
           "id": {
@@ -230,6 +250,7 @@
             "type": "string"
           },
           "schema_version": {
+            "minimum": 1.0,
             "title": "Schema Version",
             "type": "integer"
           }
@@ -290,7 +311,7 @@
           },
           "nodes": {
             "items": {
-              "$ref": "#/components/schemas/SavedGraphNodeModel"
+              "$ref": "#/components/schemas/SavedGraphNodeModel-Input"
             },
             "title": "Nodes",
             "type": "array"
@@ -560,8 +581,35 @@
       },
       "PortResponse": {
         "properties": {
+          "accepted_shapes": {
+            "items": {
+              "$ref": "#/components/schemas/PortShape"
+            },
+            "title": "Accepted Shapes",
+            "type": "array"
+          },
           "artifact_type": {
-            "$ref": "#/components/schemas/ArtifactTypeKeyResponse"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactTypeKeyResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "artifact_type_variable": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Type Variable"
           },
           "description": {
             "anyOf": [
@@ -581,6 +629,11 @@
             ],
             "title": "Direction",
             "type": "string"
+          },
+          "instance_plugs": {
+            "default": false,
+            "title": "Instance Plugs",
+            "type": "boolean"
           },
           "name": {
             "title": "Name",
@@ -614,8 +667,8 @@
         "required": [
           "name",
           "direction",
-          "artifact_type",
-          "shape"
+          "shape",
+          "accepted_shapes"
         ],
         "title": "PortResponse",
         "type": "object"
@@ -639,15 +692,13 @@
             "title": "Collection Mode",
             "type": "string"
           },
-          "conversion": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ArtifactConversionRequest"
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "conversion_path": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactConversionRequest"
+            },
+            "maxItems": 8,
+            "title": "Conversion Path",
+            "type": "array"
           },
           "from_node": {
             "title": "From Node",
@@ -671,6 +722,19 @@
             "title": "To Node",
             "type": "string"
           },
+          "to_plug": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Plug"
+          },
           "to_port": {
             "title": "To Port",
             "type": "string"
@@ -685,8 +749,37 @@
         "title": "RunEdgeRequest",
         "type": "object"
       },
+      "RunInputPlugRequest": {
+        "properties": {
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "port": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Port",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "port"
+        ],
+        "title": "RunInputPlugRequest",
+        "type": "object"
+      },
       "RunNodeRequest": {
         "properties": {
+          "artifact_type_bindings": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactTypeBindingModel"
+            },
+            "title": "Artifact Type Bindings",
+            "type": "array"
+          },
           "config": {
             "additionalProperties": true,
             "title": "Config",
@@ -695,6 +788,13 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "input_plugs": {
+            "items": {
+              "$ref": "#/components/schemas/RunInputPlugRequest"
+            },
+            "title": "Input Plugs",
+            "type": "array"
           },
           "operator_id": {
             "title": "Operator Id",
@@ -924,15 +1024,13 @@
             "title": "Collection Mode",
             "type": "string"
           },
-          "conversion": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SavedGraphConversionModel"
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "conversion_path": {
+            "items": {
+              "$ref": "#/components/schemas/SavedGraphConversionModel"
+            },
+            "maxItems": 8,
+            "title": "Conversion Path",
+            "type": "array"
           },
           "from_node": {
             "maxLength": 255,
@@ -978,6 +1076,19 @@
             "title": "To Node",
             "type": "string"
           },
+          "to_plug": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Plug"
+          },
           "to_port": {
             "maxLength": 255,
             "minLength": 1,
@@ -993,6 +1104,29 @@
           "to_port"
         ],
         "title": "SavedGraphEdgeModel",
+        "type": "object"
+      },
+      "SavedGraphInputPlugModel": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "port": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Port",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "port"
+        ],
+        "title": "SavedGraphInputPlugModel",
         "type": "object"
       },
       "SavedGraphListResponse": {
@@ -1012,9 +1146,16 @@
         "title": "SavedGraphListResponse",
         "type": "object"
       },
-      "SavedGraphNodeModel": {
+      "SavedGraphNodeModel-Input": {
         "additionalProperties": false,
         "properties": {
+          "artifact_type_bindings": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactTypeBindingModel"
+            },
+            "title": "Artifact Type Bindings",
+            "type": "array"
+          },
           "config": {
             "additionalProperties": true,
             "title": "Config",
@@ -1025,6 +1166,65 @@
             "minLength": 1,
             "title": "Id",
             "type": "string"
+          },
+          "input_plugs": {
+            "items": {
+              "$ref": "#/components/schemas/SavedGraphInputPlugModel"
+            },
+            "title": "Input Plugs",
+            "type": "array"
+          },
+          "operator_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Operator Id",
+            "type": "string"
+          },
+          "operator_version": {
+            "minimum": 1.0,
+            "title": "Operator Version",
+            "type": "integer"
+          },
+          "position": {
+            "$ref": "#/components/schemas/GraphPointModel"
+          }
+        },
+        "required": [
+          "id",
+          "operator_id",
+          "operator_version",
+          "position"
+        ],
+        "title": "SavedGraphNodeModel",
+        "type": "object"
+      },
+      "SavedGraphNodeModel-Output": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_type_bindings": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactTypeBindingModel"
+            },
+            "title": "Artifact Type Bindings",
+            "type": "array"
+          },
+          "config": {
+            "additionalProperties": true,
+            "title": "Config",
+            "type": "object"
+          },
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "input_plugs": {
+            "items": {
+              "$ref": "#/components/schemas/SavedGraphInputPlugModel"
+            },
+            "title": "Input Plugs",
+            "type": "array"
           },
           "operator_id": {
             "maxLength": 255,
@@ -1098,7 +1298,7 @@
           },
           "nodes": {
             "items": {
-              "$ref": "#/components/schemas/SavedGraphNodeModel"
+              "$ref": "#/components/schemas/SavedGraphNodeModel-Output"
             },
             "title": "Nodes",
             "type": "array"
@@ -1215,7 +1415,7 @@
           },
           "nodes": {
             "items": {
-              "$ref": "#/components/schemas/SavedGraphNodeModel"
+              "$ref": "#/components/schemas/SavedGraphNodeModel-Input"
             },
             "title": "Nodes",
             "type": "array"

@@ -237,6 +237,12 @@ export interface components {
             /** Text */
             readonly text?: string | null;
         };
+        /** ArtifactTypeBindingModel */
+        readonly ArtifactTypeBindingModel: {
+            readonly artifact_type: components["schemas"]["ArtifactTypeKeyResponse"];
+            /** Variable */
+            readonly variable: string;
+        };
         /** ArtifactTypeKeyResponse */
         readonly ArtifactTypeKeyResponse: {
             /** Id */
@@ -263,7 +269,7 @@ export interface components {
             /** Name */
             readonly name: string;
             /** Nodes */
-            readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel"][];
+            readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel-Input"][];
         };
         /** FieldProjectionRequest */
         readonly FieldProjectionRequest: {
@@ -360,7 +366,11 @@ export interface components {
         };
         /** PortResponse */
         readonly PortResponse: {
-            readonly artifact_type: components["schemas"]["ArtifactTypeKeyResponse"];
+            /** Accepted Shapes */
+            readonly accepted_shapes: readonly components["schemas"]["PortShape"][];
+            readonly artifact_type?: components["schemas"]["ArtifactTypeKeyResponse"] | null;
+            /** Artifact Type Variable */
+            readonly artifact_type_variable?: string | null;
             /** Description */
             readonly description?: string | null;
             /**
@@ -368,6 +378,11 @@ export interface components {
              * @enum {string}
              */
             readonly direction: "input" | "output";
+            /**
+             * Instance Plugs
+             * @default false
+             */
+            readonly instance_plugs: boolean;
             /** Name */
             readonly name: string;
             /**
@@ -397,7 +412,8 @@ export interface components {
              * @enum {string}
              */
             readonly collection_mode: "direct" | "map";
-            readonly conversion?: components["schemas"]["ArtifactConversionRequest"] | null;
+            /** Conversion Path */
+            readonly conversion_path?: readonly components["schemas"]["ArtifactConversionRequest"][];
             /** From Node */
             readonly from_node: string;
             /** From Port */
@@ -405,17 +421,30 @@ export interface components {
             readonly projection?: components["schemas"]["FieldProjectionRequest"] | null;
             /** To Node */
             readonly to_node: string;
+            /** To Plug */
+            readonly to_plug?: string | null;
             /** To Port */
             readonly to_port: string;
         };
+        /** RunInputPlugRequest */
+        readonly RunInputPlugRequest: {
+            /** Id */
+            readonly id: string;
+            /** Port */
+            readonly port: string;
+        };
         /** RunNodeRequest */
         readonly RunNodeRequest: {
+            /** Artifact Type Bindings */
+            readonly artifact_type_bindings?: readonly components["schemas"]["ArtifactTypeBindingModel"][];
             /** Config */
             readonly config?: {
                 readonly [key: string]: unknown;
             };
             /** Id */
             readonly id: string;
+            /** Input Plugs */
+            readonly input_plugs?: readonly components["schemas"]["RunInputPlugRequest"][];
             /** Operator Id */
             readonly operator_id: string;
             /** Operator Version */
@@ -495,7 +524,8 @@ export interface components {
              * @enum {string}
              */
             readonly collection_mode: "direct" | "map";
-            readonly conversion?: components["schemas"]["SavedGraphConversionModel"] | null;
+            /** Conversion Path */
+            readonly conversion_path?: readonly components["schemas"]["SavedGraphConversionModel"][];
             /** From Node */
             readonly from_node: string;
             /** From Port */
@@ -506,8 +536,17 @@ export interface components {
             readonly route_offset?: components["schemas"]["GraphPointModel"] | null;
             /** To Node */
             readonly to_node: string;
+            /** To Plug */
+            readonly to_plug?: string | null;
             /** To Port */
             readonly to_port: string;
+        };
+        /** SavedGraphInputPlugModel */
+        readonly SavedGraphInputPlugModel: {
+            /** Id */
+            readonly id: string;
+            /** Port */
+            readonly port: string;
         };
         /** SavedGraphListResponse */
         readonly SavedGraphListResponse: {
@@ -515,13 +554,35 @@ export interface components {
             readonly graphs: readonly components["schemas"]["SavedGraphSummaryResponse"][];
         };
         /** SavedGraphNodeModel */
-        readonly SavedGraphNodeModel: {
+        readonly "SavedGraphNodeModel-Input": {
+            /** Artifact Type Bindings */
+            readonly artifact_type_bindings?: readonly components["schemas"]["ArtifactTypeBindingModel"][];
             /** Config */
             readonly config?: {
                 readonly [key: string]: unknown;
             };
             /** Id */
             readonly id: string;
+            /** Input Plugs */
+            readonly input_plugs?: readonly components["schemas"]["SavedGraphInputPlugModel"][];
+            /** Operator Id */
+            readonly operator_id: string;
+            /** Operator Version */
+            readonly operator_version: number;
+            readonly position: components["schemas"]["GraphPointModel"];
+        };
+        /** SavedGraphNodeModel */
+        readonly "SavedGraphNodeModel-Output": {
+            /** Artifact Type Bindings */
+            readonly artifact_type_bindings?: readonly components["schemas"]["ArtifactTypeBindingModel"][];
+            /** Config */
+            readonly config?: {
+                readonly [key: string]: unknown;
+            };
+            /** Id */
+            readonly id: string;
+            /** Input Plugs */
+            readonly input_plugs?: readonly components["schemas"]["SavedGraphInputPlugModel"][];
             /** Operator Id */
             readonly operator_id: string;
             /** Operator Version */
@@ -550,7 +611,7 @@ export interface components {
             /** Name */
             readonly name: string;
             /** Nodes */
-            readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel"][];
+            readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel-Output"][];
             /** Revision */
             readonly revision: number;
             /**
@@ -600,7 +661,7 @@ export interface components {
             /** Name */
             readonly name: string;
             /** Nodes */
-            readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel"][];
+            readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel-Input"][];
         };
         /** UploadRequest */
         readonly UploadRequest: {

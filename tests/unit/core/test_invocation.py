@@ -14,11 +14,13 @@ from notarius_core.artifacts import (
     NodeOutput,
 )
 from notarius_core.nodes import (
+    ArtifactTypeVariable,
     InPort,
     Node,
     NodeExecutionContext,
     OutPort,
     PortShape,
+    derive_input_contract,
     derive_output_contract,
 )
 from notarius_core.runtime.execution import NodeRuntime
@@ -177,6 +179,13 @@ class VariadicDriverInput(NodeInput):
     items: Annotated[list[int], InPort(INPUT_VALUE, variadic=True)]
 
 
+class MixedInstancePlugInput(NodeInput):
+    items: Annotated[
+        list[ArtifactRef | ArtifactRefSequence],
+        InPort(INPUT_VALUE, variadic=True, instance_plugs=True),
+    ]
+
+
 class VariadicDriverNode(Node[NoConfig, VariadicDriverInput, ScalarOutput]):
     operator_id: ClassVar[str] = "test.variadic_driver"
     operator_version: ClassVar[int] = 1
@@ -233,6 +242,34 @@ class ExtraOutputNode(Node[NoConfig, ScalarInput, ExtraOutput]):
 
 class PassthroughOutput(NodeOutput):
     value: Annotated[object, OutPort(OUTPUT_VALUE)]
+
+
+GENERIC_VALUE = ArtifactTypeVariable("T")
+
+
+class GenericPassthroughInput(NodeInput):
+    value: Annotated[ArtifactRef, InPort(GENERIC_VALUE)]
+
+
+class GenericPassthroughOutput(NodeOutput):
+    value: Annotated[ArtifactRef, OutPort(GENERIC_VALUE)]
+
+
+class GenericPassthroughNode(
+    Node[NoConfig, GenericPassthroughInput, GenericPassthroughOutput]
+):
+    operator_id: ClassVar[str] = "test.generic_passthrough"
+    operator_version: ClassVar[int] = 1
+
+    @override
+    async def run(
+        self,
+        _context: NodeExecutionContext,
+        _config: NoConfig,
+        inputs: GenericPassthroughInput,
+        /,
+    ) -> GenericPassthroughOutput:
+        return GenericPassthroughOutput(value=inputs.value)
 
 
 def runtime_with(
@@ -322,6 +359,38 @@ async def test_map_invokes_in_order_broadcasts_and_aggregates_outputs() -> None:
         "map_input": "item",
         "source_sequence_id": str(source_sequence.sequence_id),
     }
+
+
+@pytest.mark.asyncio
+async def test_map_uses_resolved_generic_contract_for_validation_and_output() -> None:
+    first_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=INPUT_VALUE.key)
+    second_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=INPUT_VALUE.key)
+    source = ArtifactRefSequence.from_key(
+        key=INPUT_VALUE.key,
+        item_refs=[first_ref, second_ref],
+    )
+    runtime = NodeRuntime(
+        materializer=InputMaterializer(ResolverRegistry()),
+        persister=OutputPersister(ArtifactWriterRegistry()),
+    )
+
+    result = await runtime.run_node(
+        GenericPassthroughNode(),
+        NodeExecutionContext(node_id="generic"),
+        {"value": source},
+        invocation=NodeInvocation(
+            mode=InvocationMode.MAP,
+            map_input="value",
+        ),
+        artifact_type_bindings={"T": INPUT_VALUE.key},
+    )
+
+    assert isinstance(result, PersistedNodeOutput)
+    output = result["value"]
+    assert isinstance(output, ArtifactRefSequence)
+    assert output.item_refs == [first_ref, second_ref]
+    assert output.artifact_type == INPUT_VALUE.key.id
+    assert output.schema_version == INPUT_VALUE.key.schema_version
 
 
 def test_invocation_capabilities_and_effective_shapes() -> None:
@@ -435,6 +504,61 @@ async def test_materializer_rejects_wrong_key_empty_sequence() -> None:
                     item_refs=[],
                 )
             },
+        )
+
+
+@pytest.mark.asyncio
+async def test_materializer_preserves_mixed_plugs_and_flattens_provenance() -> None:
+    first_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=INPUT_VALUE.key)
+    second_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=INPUT_VALUE.key)
+    third_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=INPUT_VALUE.key)
+    sequence = ArtifactRefSequence.from_key(
+        key=INPUT_VALUE.key,
+        item_refs=[second_ref, third_ref],
+    )
+    raw_items: list[ArtifactRef | ArtifactRefSequence] = [first_ref, sequence]
+
+    inputs, provenance = await InputMaterializer(ResolverRegistry()).materialize(
+        derive_input_contract(MixedInstancePlugInput),
+        {"items": raw_items},
+    )
+
+    assert inputs.items == raw_items
+    assert isinstance(inputs.items[0], ArtifactRef)
+    assert isinstance(inputs.items[1], ArtifactRefSequence)
+    assert provenance.refs_for("items") == (first_ref, second_ref, third_ref)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "value",
+    [
+        [ArtifactRef.from_key(artifact_id=uuid4(), key=OTHER_VALUE.key)],
+        [ArtifactRefSequence.from_key(key=OTHER_VALUE.key, item_refs=[])],
+    ],
+)
+async def test_materializer_rejects_wrong_instance_plug_keys(
+    value: list[ArtifactRef | ArtifactRefSequence],
+) -> None:
+    with pytest.raises(
+        MaterializationError,
+        match="expected test.input_value@1, got test.other_value@1",
+    ):
+        await InputMaterializer(ResolverRegistry()).materialize(
+            derive_input_contract(MixedInstancePlugInput),
+            {"items": value},
+        )
+
+
+@pytest.mark.asyncio
+async def test_materializer_rejects_empty_required_instance_plugs() -> None:
+    with pytest.raises(
+        MaterializationError,
+        match="expected at least one incoming edge",
+    ):
+        await InputMaterializer(ResolverRegistry()).materialize(
+            derive_input_contract(MixedInstancePlugInput),
+            {"items": []},
         )
 
 

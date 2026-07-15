@@ -6,22 +6,39 @@ import { Popover } from "@base-ui/react/popover";
 import {
   Handle,
   Position,
+  useNodeConnections,
   useUpdateNodeInternals,
   type Node,
   type NodeProps,
 } from "@xyflow/react";
-import { CircleHelp, LoaderCircle, Trash2, Upload, X } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  CircleHelp,
+  GripVertical,
+  LoaderCircle,
+  Plus,
+  RotateCcw,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
 
 import type { Port } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import { schemaFields, type SchemaField } from "../config-schema";
 import { encodeHandleId, handleStyle } from "../handles";
+import { inputPlugsForPort } from "../input-plugs";
 import { ARTIFACT_TYPE_COLOR } from "../nodes.css";
 import {
   LOCAL_UPLOAD_OPERATOR_ID,
   WORKFLOW_NODE_TYPE,
+  acceptedPortShapes,
+  declaredArtifactTypeVariables,
   effectivePortShape,
+  portHasInstancePlugs,
   portMetaForPort,
+  resolvedPortArtifactType,
   selectionSizeLabel,
   selectedSourceItems,
   type WorkflowNodeData,
@@ -41,13 +58,14 @@ const s = stylex.create({
     overflow: "visible",
     borderRadius: tokens.radiusLg,
     backgroundColor: tokens.colorSurface,
-    boxShadow: tokens.shadowNode,
+    boxShadow:
+      "0 1px 2px light-dark(rgba(20, 24, 32, 0.1), rgba(0, 0, 0, 0.38)), 0 8px 22px light-dark(rgba(20, 24, 32, 0.1), rgba(0, 0, 0, 0.32))",
     color: tokens.colorText,
     fontSize: tokens.fontSizeSm,
     boxSizing: "border-box",
   },
   selected: {
-    boxShadow: `${tokens.shadowNode}, 0 0 0 2px ${tokens.colorAccentBorder}`,
+    boxShadow: `0 2px 5px light-dark(rgba(107, 82, 212, 0.16), rgba(128, 103, 232, 0.22)), 0 12px 30px light-dark(rgba(20, 24, 32, 0.14), rgba(0, 0, 0, 0.46)), 0 0 0 2px ${tokens.colorAccentBorder}`,
   },
   header: {
     display: "grid",
@@ -129,6 +147,199 @@ const s = stylex.create({
     gap: "5px",
     paddingTop: "2px",
     paddingBottom: "14px",
+  },
+  genericTypes: {
+    display: "grid",
+    gap: "5px",
+    padding: "0 10px 8px",
+  },
+  genericTypeRow: {
+    minHeight: "30px",
+    display: "flex",
+    alignItems: "center",
+    gap: "7px",
+    padding: "5px 7px",
+    borderRadius: "7px",
+    backgroundColor: tokens.colorSurfaceMuted,
+  },
+  genericTypeDot: {
+    width: "6px",
+    height: "6px",
+    flexShrink: 0,
+    borderRadius: "9999px",
+    backgroundColor: tokens.colorAccent,
+  },
+  genericTypeCopy: {
+    minWidth: 0,
+    flex: 1,
+    overflow: "hidden",
+    color: tokens.colorMuted,
+    fontSize: tokens.fontSizeXs,
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  genericTypeBound: {
+    color: tokens.colorTextEmphasis,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontWeight: 650,
+  },
+  resetType: {
+    minHeight: "22px",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    paddingInline: "6px",
+    borderWidth: 0,
+    borderRadius: "5px",
+    backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
+    color: { default: tokens.colorMuted, ":hover": tokens.colorText },
+    cursor: "pointer",
+    fontSize: "10px",
+    fontWeight: 650,
+  },
+  resetTypeDisabled: {
+    color: tokens.colorSubtle,
+    cursor: "not-allowed",
+    opacity: 0.55,
+  },
+  plugGroup: {
+    display: "grid",
+    gap: "5px",
+    paddingBottom: "4px",
+  },
+  plugPortHeader: {
+    minHeight: "24px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+    paddingInline: "12px 10px",
+  },
+  plugPortTitle: {
+    display: "flex",
+    minWidth: 0,
+    alignItems: "center",
+    gap: "7px",
+    padding: 0,
+    overflow: "hidden",
+    borderWidth: 0,
+    backgroundColor: "transparent",
+    color: tokens.colorTextEmphasis,
+    cursor: "pointer",
+    fontSize: tokens.fontSizeXs,
+    fontWeight: 700,
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  plugPortRule: {
+    flexShrink: 0,
+    color: tokens.colorSubtle,
+    fontSize: "10px",
+  },
+  plugList: {
+    display: "grid",
+    gap: "4px",
+    paddingInline: "8px",
+  },
+  plugRow: {
+    position: "relative",
+    minWidth: 0,
+    minHeight: "38px",
+    display: "grid",
+    gridTemplateColumns: "20px 20px minmax(0, 1fr) auto",
+    alignItems: "center",
+    gap: "4px",
+    padding: "3px 4px 3px 28px",
+    borderRadius: "9px",
+    backgroundColor: tokens.colorSurfaceMuted,
+  },
+  plugRowDragging: {
+    backgroundColor: tokens.colorAccentSoft,
+    boxShadow: `inset 0 0 0 1px ${tokens.colorAccentBorder}`,
+  },
+  plugGrip: {
+    width: "20px",
+    height: "26px",
+    display: "grid",
+    placeItems: "center",
+    padding: 0,
+    borderWidth: 0,
+    borderRadius: "5px",
+    backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
+    color: tokens.colorSubtle,
+    cursor: "grab",
+    touchAction: "none",
+  },
+  plugIndex: {
+    color: tokens.colorSubtle,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontSize: "10px",
+    textAlign: "center",
+  },
+  plugCopy: {
+    minWidth: 0,
+    display: "grid",
+    gap: "1px",
+  },
+  plugSource: {
+    overflow: "hidden",
+    color: tokens.colorTextEmphasis,
+    fontSize: tokens.fontSizeXs,
+    fontWeight: 600,
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  plugSourceEmpty: { color: tokens.colorMuted, fontWeight: 550 },
+  plugMeta: {
+    overflow: "hidden",
+    color: tokens.colorSubtle,
+    fontSize: "10px",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  plugActions: { display: "flex", alignItems: "center", gap: "1px" },
+  plugAction: {
+    width: "18px",
+    height: "20px",
+    display: "grid",
+    placeItems: "center",
+    padding: 0,
+    borderWidth: 0,
+    borderRadius: "5px",
+    backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
+    color: { default: tokens.colorSubtle, ":hover": tokens.colorText },
+    cursor: "pointer",
+  },
+  plugActionDisabled: {
+    color: tokens.colorTextDisabled,
+    cursor: "default",
+    opacity: 0.45,
+  },
+  plugRemove: {
+    backgroundColor: {
+      default: "transparent",
+      ":hover": tokens.colorDangerHover,
+    },
+    color: { default: tokens.colorSubtle, ":hover": tokens.colorDanger },
+  },
+  addPlug: {
+    minHeight: "26px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "5px",
+    marginInline: "8px",
+    paddingInline: "8px",
+    borderWidth: 0,
+    borderRadius: "8px",
+    backgroundColor: {
+      default: tokens.colorSurfaceMuted,
+      ":hover": tokens.colorHoverStrong,
+    },
+    color: tokens.colorMuted,
+    cursor: "pointer",
+    fontSize: tokens.fontSizeXs,
+    fontWeight: 650,
   },
   tabRow: {
     position: "relative",
@@ -331,11 +542,27 @@ function nodeInteractionProps(props: ReturnType<typeof stylex.props>) {
   };
 }
 
-function PortTab({ port, shape }: { port: Port; shape: Port["shape"] }) {
+function PortTab({
+  data,
+  port,
+  shape,
+}: {
+  data: WorkflowNodeData;
+  port: Port;
+  shape: Port["shape"];
+}) {
   const input = port.direction === "input";
   const visibleName = port.title ?? port.name;
-  const color = ARTIFACT_TYPE_COLOR[port.artifact_type.id] ?? tokens.colorAccent;
-  const artifactContract = `${port.artifact_type.id}@${port.artifact_type.schema_version}`;
+  const artifactType = resolvedPortArtifactType(
+    port,
+    data.artifactTypeBindings,
+  );
+  const color = artifactType
+    ? ARTIFACT_TYPE_COLOR[artifactType.id] ?? tokens.colorAccent
+    : tokens.colorAccent;
+  const artifactContract = artifactType
+    ? `${artifactType.id}@${artifactType.schema_version}`
+    : "Any artifact";
   const effectiveContract =
     shape === "many" ? `list[${artifactContract}]` : artifactContract;
   const accessibleLabel = input
@@ -344,7 +571,11 @@ function PortTab({ port, shape }: { port: Port; shape: Port["shape"] }) {
 
   return (
     <div {...stylex.props(s.tabRow, input ? null : s.tabRowOut)}>
-      <PortTypePopover port={port} shape={shape}>
+      <PortTypePopover
+        port={port}
+        shape={shape}
+        artifactTypeBindings={data.artifactTypeBindings}
+      >
         <Popover.Trigger
           type="button"
           aria-label={`Inspect ${visibleName} type`}
@@ -353,7 +584,6 @@ function PortTab({ port, shape }: { port: Port; shape: Port["shape"] }) {
             stylex.props(s.tab, input ? s.tabIn : s.tabOut),
           )}
         >
-          <span {...stylex.props(s.dot)} style={{ backgroundColor: color }} />
           <span {...stylex.props(s.tabLabel)}>{visibleName}</span>
           {input && port.required ? (
             <span {...stylex.props(s.required, s.tabShape)}>*</span>
@@ -366,7 +596,14 @@ function PortTab({ port, shape }: { port: Port; shape: Port["shape"] }) {
       <Handle
         type={input ? "target" : "source"}
         position={input ? Position.Left : Position.Right}
-        id={encodeHandleId(portMetaForPort(port, input ? port.shape : shape))}
+        id={encodeHandleId(
+          portMetaForPort(
+            port,
+            input ? port.shape : shape,
+            undefined,
+            data.artifactTypeBindings,
+          ),
+        )}
         aria-label={accessibleLabel}
         title={
           input
@@ -375,6 +612,317 @@ function PortTab({ port, shape }: { port: Port; shape: Port["shape"] }) {
         }
         style={handleStyle("50%", color, port.variadic)}
       />
+    </div>
+  );
+}
+
+function InstancePlugPort({
+  id,
+  data,
+  port,
+}: {
+  id: string;
+  data: WorkflowNodeData;
+  port: Port;
+}) {
+  const plugs = inputPlugsForPort(data.inputPlugs, port.name);
+  const [draggedPlugId, setDraggedPlugId] = React.useState<string | null>(null);
+  const draggedPlugIdRef = React.useRef<string | null>(null);
+  const lastPointerTargetRef = React.useRef<string | null>(null);
+  const visibleName = port.title ?? port.name;
+  const artifactType = resolvedPortArtifactType(
+    port,
+    data.artifactTypeBindings,
+  );
+  const color = artifactType
+    ? ARTIFACT_TYPE_COLOR[artifactType.id] ?? tokens.colorAccent
+    : tokens.colorAccent;
+  const acceptedShapeLabel = acceptedPortShapes(port)
+    .map((shape) => (shape === "many" ? "sequence" : "single"))
+    .join(" or ");
+
+  const finishPointerDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    draggedPlugIdRef.current = null;
+    lastPointerTargetRef.current = null;
+    setDraggedPlugId(null);
+  };
+
+  return (
+    <section {...stylex.props(s.plugGroup)} aria-label={`${visibleName} inputs`}>
+      <div {...stylex.props(s.plugPortHeader)}>
+        <PortTypePopover
+          port={port}
+          shape={port.shape}
+          artifactTypeBindings={data.artifactTypeBindings}
+        >
+          <button
+            type="button"
+            aria-label={`Inspect ${visibleName} type`}
+            title={port.description ?? `Inspect ${visibleName} type`}
+            {...nodeInteractionProps(stylex.props(s.plugPortTitle))}
+          >
+            <span {...stylex.props(s.dot)} style={{ backgroundColor: color }} />
+            <span {...stylex.props(s.tabLabel)}>{visibleName}</span>
+            {port.required ? <span {...stylex.props(s.required)}>*</span> : null}
+          </button>
+        </PortTypePopover>
+        <span {...stylex.props(s.plugPortRule)}>
+          {acceptedShapeLabel} · plug order
+        </span>
+      </div>
+
+      <div {...stylex.props(s.plugList)}>
+        {plugs.map((plug, index) => {
+          const binding = data.inputPlugBindings[plug.id];
+          const connectionMeta = binding
+            ? [
+                binding.sourceShape === "many" ? "sequence" : "single",
+                binding.conversionLabel
+                  ? `via ${binding.conversionLabel}`
+                  : null,
+                binding.contributionLabel,
+              ]
+                .filter((label): label is string => Boolean(label))
+                .join(" · ")
+            : `Accepts ${acceptedShapeLabel}`;
+          const accessibleLabel = `${visibleName} input ${index + 1}, accepts ${acceptedShapeLabel}`;
+          return (
+            <div
+              key={plug.id}
+              data-input-plug-id={plug.id}
+              data-input-plug-port={port.name}
+              {...stylex.props(
+                s.plugRow,
+                draggedPlugId === plug.id ? s.plugRowDragging : null,
+              )}
+            >
+              <Handle
+                className="nodrag nowheel"
+                type="target"
+                position={Position.Left}
+                id={encodeHandleId(
+                  portMetaForPort(
+                    port,
+                    port.shape,
+                    plug.id,
+                    data.artifactTypeBindings,
+                  ),
+                )}
+                aria-label={accessibleLabel}
+                title={`${accessibleLabel}. Connect one compatible output here.`}
+                style={handleStyle("50%", color, true)}
+              />
+              <button
+                type="button"
+                aria-label={`Drag to reorder ${visibleName} input ${index + 1}`}
+                title="Drag to reorder; arrow buttons also move this input"
+                {...nodeInteractionProps(stylex.props(s.plugGrip))}
+                onPointerDown={(event) => {
+                  if (event.button !== 0) return;
+                  event.stopPropagation();
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  draggedPlugIdRef.current = plug.id;
+                  lastPointerTargetRef.current = plug.id;
+                  setDraggedPlugId(plug.id);
+                }}
+                onPointerMove={(event) => {
+                  const activePlugId = draggedPlugIdRef.current;
+                  if (!activePlugId) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const target = document
+                    .elementFromPoint(event.clientX, event.clientY)
+                    ?.closest<HTMLElement>("[data-input-plug-id]");
+                  const targetPlugId = target?.dataset.inputPlugId;
+                  if (targetPlugId === activePlugId) {
+                    lastPointerTargetRef.current = null;
+                    return;
+                  }
+                  if (
+                    !targetPlugId ||
+                    target?.dataset.inputPlugPort !== port.name ||
+                    targetPlugId === lastPointerTargetRef.current
+                  ) {
+                    return;
+                  }
+                  const targetIndex = plugs.findIndex(
+                    (candidate) => candidate.id === targetPlugId,
+                  );
+                  if (targetIndex === -1) return;
+                  lastPointerTargetRef.current = targetPlugId;
+                  data.onReorderInputPlug?.(
+                    id,
+                    port.name,
+                    activePlugId,
+                    targetIndex,
+                  );
+                }}
+                onPointerUp={finishPointerDrag}
+                onPointerCancel={finishPointerDrag}
+              >
+                <GripVertical size={12} />
+              </button>
+              <span {...stylex.props(s.plugIndex)}>{index + 1}</span>
+              <span {...stylex.props(s.plugCopy)}>
+                <span
+                  {...stylex.props(
+                    s.plugSource,
+                    binding ? null : s.plugSourceEmpty,
+                  )}
+                  title={binding?.sourceLabel}
+                >
+                  {binding?.sourceLabel ?? "Connect input"}
+                </span>
+                <span {...stylex.props(s.plugMeta)} title={connectionMeta}>
+                  {connectionMeta}
+                </span>
+              </span>
+              <span {...stylex.props(s.plugActions)}>
+                <button
+                  type="button"
+                  disabled={index === 0}
+                  aria-label={`Move ${visibleName} input ${index + 1} up`}
+                  title="Move input up"
+                  {...nodeInteractionProps(
+                    stylex.props(
+                      s.plugAction,
+                      index === 0 ? s.plugActionDisabled : null,
+                    ),
+                  )}
+                  onClick={() =>
+                    data.onReorderInputPlug?.(
+                      id,
+                      port.name,
+                      plug.id,
+                      index - 1,
+                    )
+                  }
+                >
+                  <ArrowUp size={10} />
+                </button>
+                <button
+                  type="button"
+                  disabled={index === plugs.length - 1}
+                  aria-label={`Move ${visibleName} input ${index + 1} down`}
+                  title="Move input down"
+                  {...nodeInteractionProps(
+                    stylex.props(
+                      s.plugAction,
+                      index === plugs.length - 1
+                        ? s.plugActionDisabled
+                        : null,
+                    ),
+                  )}
+                  onClick={() =>
+                    data.onReorderInputPlug?.(
+                      id,
+                      port.name,
+                      plug.id,
+                      index + 1,
+                    )
+                  }
+                >
+                  <ArrowDown size={10} />
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Remove ${visibleName} input ${index + 1}`}
+                  title="Remove input and its connection"
+                  {...nodeInteractionProps(
+                    stylex.props(s.plugAction, s.plugRemove),
+                  )}
+                  onClick={() => data.onRemoveInputPlug?.(id, plug.id)}
+                >
+                  <Trash2 size={10} />
+                </button>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        {...nodeInteractionProps(stylex.props(s.addPlug))}
+        onClick={() => data.onAddInputPlug?.(id, port.name)}
+      >
+        <Plus size={11} />
+        Add input
+      </button>
+    </section>
+  );
+}
+
+function GenericArtifactTypeState({
+  id,
+  data,
+  resettable,
+}: {
+  id: string;
+  data: WorkflowNodeData;
+  resettable: boolean;
+}) {
+  const variables = declaredArtifactTypeVariables(data.spec);
+  if (!variables.length) return null;
+
+  return (
+    <div {...stylex.props(s.genericTypes)} aria-label="Generic artifact types">
+      {variables.map((variable) => {
+        const artifactType = data.artifactTypeBindings[variable];
+        const label = artifactType
+          ? `${artifactType.id}@${artifactType.schema_version}`
+          : "Any artifact · binds on connect";
+        return (
+          <div key={variable} {...stylex.props(s.genericTypeRow)}>
+            <span
+              aria-hidden="true"
+              {...stylex.props(s.genericTypeDot)}
+              style={
+                artifactType
+                  ? {
+                      backgroundColor:
+                        ARTIFACT_TYPE_COLOR[artifactType.id] ??
+                        tokens.colorAccent,
+                    }
+                  : undefined
+              }
+            />
+            <span
+              title={`${variable}: ${label}`}
+              {...stylex.props(
+                s.genericTypeCopy,
+                artifactType ? s.genericTypeBound : null,
+              )}
+            >
+              {label}
+            </span>
+            {artifactType ? (
+              <button
+                type="button"
+                disabled={!resettable || !data.onResetArtifactTypeBinding}
+                aria-label={`Reset artifact type ${variable}`}
+                title={
+                  resettable
+                    ? "Reset type"
+                    : "Disconnect this node before resetting its type"
+                }
+                {...nodeInteractionProps(
+                  stylex.props(
+                    s.resetType,
+                    resettable ? null : s.resetTypeDisabled,
+                  ),
+                )}
+                onClick={() => data.onResetArtifactTypeBinding?.(id, variable)}
+              >
+                <RotateCcw size={10} />
+                Reset type
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -646,6 +1194,17 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
     (count, output) => count + output.artifacts.length,
     0,
   );
+  const inputPlugRevision = data.inputPlugs
+    .map((plug) => `${plug.portName}:${plug.id}`)
+    .join("|");
+  const artifactTypeBindingRevision = Object.entries(data.artifactTypeBindings)
+    .map(
+      ([variable, artifactType]) =>
+        `${variable}:${artifactType.id}@${artifactType.schema_version}`,
+    )
+    .sort()
+    .join("|");
+  const incidentConnections = useNodeConnections({ id });
   const updateNodeInternals = useUpdateNodeInternals();
 
   React.useEffect(() => {
@@ -653,6 +1212,8 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
     return () => window.cancelAnimationFrame(frame);
   }, [
     data.mappedInputPort,
+    artifactTypeBindingRevision,
+    inputPlugRevision,
     data.spec.inputs.length,
     data.spec.outputs.length,
     fields.length,
@@ -665,14 +1226,29 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
     <>
       <article {...stylex.props(s.shell, selected ? s.selected : null)}>
         <NodeHeader id={id} data={data} />
+        <GenericArtifactTypeState
+          id={id}
+          data={data}
+          resettable={incidentConnections.length === 0}
+        />
         {data.spec.inputs.length ? (
           <div {...stylex.props(s.tabs)}>
             {data.spec.inputs.map((port) => (
-              <PortTab
-                key={`in-${port.name}`}
-                port={port}
-                shape={effectivePortShape(data, port)}
-              />
+              portHasInstancePlugs(port) ? (
+                <InstancePlugPort
+                  key={`in-${port.name}`}
+                  id={id}
+                  data={data}
+                  port={port}
+                />
+              ) : (
+                <PortTab
+                  key={`in-${port.name}`}
+                  data={data}
+                  port={port}
+                  shape={effectivePortShape(data, port)}
+                />
+              )
             ))}
           </div>
         ) : null}
@@ -688,6 +1264,7 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
             {data.spec.outputs.map((port) => (
               <PortTab
                 key={`out-${port.name}`}
+                data={data}
                 port={port}
                 shape={effectivePortShape(data, port)}
               />

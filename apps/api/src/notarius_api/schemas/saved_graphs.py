@@ -1,5 +1,6 @@
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Annotated, ClassVar, Literal, Self
+from typing import Annotated, ClassVar, Literal, Self, cast
 from uuid import UUID
 
 from pydantic import (
@@ -11,14 +12,22 @@ from pydantic import (
     model_validator,
 )
 
+from notarius_core.conversions import MAX_ARTIFACT_CONVERSION_HOPS
 from notarius_core.domain.saved_graphs import (
     GraphPoint,
     SavedGraph,
+    SavedGraphArtifactTypeBinding,
     SavedGraphConversion,
     SavedGraphDocument,
     SavedGraphEdge,
+    SavedGraphInputPlug,
     SavedGraphNode,
     SavedGraphProjection,
+)
+
+from notarius_api.schemas.workbench import (
+    ArtifactTypeBindingModel,
+    ArtifactTypeKeyResponse,
 )
 
 
@@ -40,12 +49,28 @@ class GraphPointModel(SavedGraphApiModel):
     y: float
 
 
+class SavedGraphInputPlugModel(SavedGraphApiModel):
+    id: Identifier
+    port: Identifier
+
+
 class SavedGraphNodeModel(SavedGraphApiModel):
     id: Identifier
     operator_id: Identifier
     operator_version: int = Field(ge=1)
     config: dict[str, object] = Field(default_factory=dict)
     position: GraphPointModel
+    input_plugs: list[SavedGraphInputPlugModel] = Field(default_factory=list)
+    artifact_type_bindings: list[ArtifactTypeBindingModel] = Field(
+        default_factory=list,
+    )
+
+    @model_validator(mode="after")
+    def validate_artifact_type_bindings(self) -> Self:
+        variables = [binding.variable for binding in self.artifact_type_bindings]
+        if len(variables) != len(set(variables)):
+            raise ValueError("Node artifact type binding variables must be unique")
+        return self
 
 
 class SavedGraphProjectionModel(SavedGraphApiModel):
@@ -63,10 +88,31 @@ class SavedGraphEdgeModel(SavedGraphApiModel):
     from_port: Identifier
     to_node: Identifier
     to_port: Identifier
+    to_plug: Identifier | None = None
     collection_mode: Literal["direct", "map"] = "direct"
     projection: SavedGraphProjectionModel | None = None
-    conversion: SavedGraphConversionModel | None = None
+    conversion_path: list[SavedGraphConversionModel] = Field(
+        default_factory=list,
+        max_length=MAX_ARTIFACT_CONVERSION_HOPS,
+    )
     route_offset: GraphPointModel | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_singular_conversion(cls, value: object) -> object:
+        if not isinstance(value, Mapping):
+            return value
+        raw = cast(Mapping[object, object], value)
+        if "conversion" not in raw:
+            return dict(raw)
+        if "conversion_path" in raw:
+            raise ValueError(
+                "Saved graph edge cannot declare both conversion and conversion_path"
+            )
+        normalized = dict(raw)
+        conversion = normalized.pop("conversion")
+        normalized["conversion_path"] = [] if conversion is None else [conversion]
+        return normalized
 
 
 class SavedGraphWriteModel(SavedGraphApiModel):
@@ -98,6 +144,20 @@ class SavedGraphWriteModel(SavedGraphApiModel):
                         x=node.position.x,
                         y=node.position.y,
                     ),
+                    input_plugs=tuple(
+                        SavedGraphInputPlug(
+                            id=plug.id,
+                            port=plug.port,
+                        )
+                        for plug in node.input_plugs
+                    ),
+                    artifact_type_bindings=tuple(
+                        SavedGraphArtifactTypeBinding(
+                            variable=binding.variable,
+                            artifact_type=binding.artifact_type.to_key(),
+                        )
+                        for binding in node.artifact_type_bindings
+                    ),
                 )
                 for node in self.nodes
             ),
@@ -108,19 +168,19 @@ class SavedGraphWriteModel(SavedGraphApiModel):
                     from_port=edge.from_port,
                     to_node=edge.to_node,
                     to_port=edge.to_port,
+                    to_plug=edge.to_plug,
                     collection_mode=edge.collection_mode,
                     projection=(
                         SavedGraphProjection(path=tuple(edge.projection.path))
                         if edge.projection is not None
                         else None
                     ),
-                    conversion=(
+                    conversion_path=tuple(
                         SavedGraphConversion(
-                            id=edge.conversion.id,
-                            version=edge.conversion.version,
+                            id=conversion.id,
+                            version=conversion.version,
                         )
-                        if edge.conversion is not None
-                        else None
+                        for conversion in edge.conversion_path
                     ),
                     route_offset=(
                         GraphPoint(
@@ -168,6 +228,25 @@ class SavedGraphResponse(SavedGraphWriteModel):
                         x=node.position.x,
                         y=node.position.y,
                     ),
+                    input_plugs=[
+                        SavedGraphInputPlugModel(
+                            id=plug.id,
+                            port=plug.port,
+                        )
+                        for plug in node.input_plugs
+                    ],
+                    artifact_type_bindings=[
+                        ArtifactTypeBindingModel(
+                            variable=binding.variable,
+                            artifact_type=ArtifactTypeKeyResponse(
+                                id=binding.artifact_type.id,
+                                schema_version=(
+                                    binding.artifact_type.schema_version
+                                ),
+                            ),
+                        )
+                        for binding in node.artifact_type_bindings
+                    ],
                 )
                 for node in graph.document.nodes
             ],
@@ -178,20 +257,20 @@ class SavedGraphResponse(SavedGraphWriteModel):
                     from_port=edge.from_port,
                     to_node=edge.to_node,
                     to_port=edge.to_port,
+                    to_plug=edge.to_plug,
                     collection_mode=edge.collection_mode,
                     projection=(
                         SavedGraphProjectionModel(path=list(edge.projection.path))
                         if edge.projection is not None
                         else None
                     ),
-                    conversion=(
+                    conversion_path=[
                         SavedGraphConversionModel(
-                            id=edge.conversion.id,
-                            version=edge.conversion.version,
+                            id=conversion.id,
+                            version=conversion.version,
                         )
-                        if edge.conversion is not None
-                        else None
-                    ),
+                        for conversion in edge.conversion_path
+                    ],
                     route_offset=(
                         GraphPointModel(
                             x=edge.route_offset.x,

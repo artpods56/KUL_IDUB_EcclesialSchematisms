@@ -1,19 +1,36 @@
+import json
+from hashlib import sha256
 from typing import Annotated, cast, final, override
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
 
 from notarius_core.artifacts import (
+    ArtifactObject,
+    ArtifactRef,
+    ArtifactRefSequence,
     ArtifactTypeKey,
     ArtifactTypeSpec,
     JsonObject,
+    NoConfig,
     NodeConfig,
     NodeInput,
     NodeOutput,
+    UnitOfWorkPort,
 )
 from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
+from notarius_core.domain.errors import NotFoundError
 from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
 from notarius_core.operators.arithmetic import INTEGER_VALUE
 from notarius_core.plugins import Plugin
+from notarius_core.runtime.persistence import (
+    ArtifactOutputWriter,
+    ArtifactWriteContext,
+)
+from notarius_core.runtime.resolvers import (
+    ArtifactContractError,
+    ResolutionError,
+    Resolver,
+)
 
 
 class TextValue(BaseModel):
@@ -22,15 +39,19 @@ class TextValue(BaseModel):
     value: StrictStr
 
 
+TextValuePayload = TextValue
+
+
 TEXT_VALUE = ArtifactTypeSpec(
     key=ArtifactTypeKey("scalar.text", 1),
     title="Text value",
-    payload_schema=cast(JsonObject, TextValue.model_json_schema()),
+    payload_schema=cast(JsonObject, TextValuePayload.model_json_schema()),
+    materialized_json_type="string",
 )
 
 
-def _integer_to_text(value: int) -> TextValue:
-    return TextValue(value=str(value))
+def _integer_to_text(value: int) -> str:
+    return str(value)
 
 
 INTEGER_TO_TEXT = ArtifactConversion(
@@ -38,6 +59,7 @@ INTEGER_TO_TEXT = ArtifactConversion(
     source=INTEGER_VALUE.key,
     target=TEXT_VALUE.key,
     source_type=int,
+    target_type=str,
     title="As text",
     convert=_integer_to_text,
 )
@@ -64,7 +86,7 @@ class TextInputInput(NodeInput):
 
 class TextInputOutput(NodeOutput):
     text: Annotated[
-        TextValue,
+        StrictStr,
         OutPort(TEXT_VALUE),
         Field(description="The configured text value."),
     ]
@@ -87,7 +109,7 @@ class TextInputNode(Node[TextInputConfig, TextInputInput, TextInputOutput]):
         _inputs: TextInputInput,
         /,
     ) -> TextInputOutput:
-        return TextInputOutput(text=TextValue(value=config.text))
+        return TextInputOutput(text=config.text)
 
 
 class SplitTextConfig(NodeConfig):
@@ -99,7 +121,7 @@ class SplitTextConfig(NodeConfig):
 
 class SplitTextInput(NodeInput):
     text: Annotated[
-        TextValue,
+        StrictStr,
         InPort(TEXT_VALUE),
         Field(description="Text value to split."),
     ]
@@ -107,7 +129,7 @@ class SplitTextInput(NodeInput):
 
 class SplitTextOutput(NodeOutput):
     parts: Annotated[
-        list[TextValue],
+        list[StrictStr],
         OutPort(TEXT_VALUE),
         Field(description="Ordered text parts, including empty parts."),
     ]
@@ -130,12 +152,7 @@ class SplitTextNode(Node[SplitTextConfig, SplitTextInput, SplitTextOutput]):
         inputs: SplitTextInput,
         /,
     ) -> SplitTextOutput:
-        return SplitTextOutput(
-            parts=[
-                TextValue(value=part)
-                for part in inputs.text.value.split(config.separator)
-            ]
-        )
+        return SplitTextOutput(parts=inputs.text.split(config.separator))
 
 
 class ReplaceTextConfig(NodeConfig):
@@ -151,7 +168,7 @@ class ReplaceTextConfig(NodeConfig):
 
 class ReplaceTextInput(NodeInput):
     text: Annotated[
-        TextValue,
+        StrictStr,
         InPort(TEXT_VALUE),
         Field(description="Text value in which replacements are made."),
     ]
@@ -159,7 +176,7 @@ class ReplaceTextInput(NodeInput):
 
 class ReplaceTextOutput(NodeOutput):
     text: Annotated[
-        TextValue,
+        StrictStr,
         OutPort(TEXT_VALUE),
         Field(description="Text after all exact replacements."),
     ]
@@ -183,9 +200,7 @@ class ReplaceTextNode(Node[ReplaceTextConfig, ReplaceTextInput, ReplaceTextOutpu
         /,
     ) -> ReplaceTextOutput:
         return ReplaceTextOutput(
-            text=TextValue(
-                value=inputs.text.value.replace(config.search, config.replacement)
-            )
+            text=inputs.text.replace(config.search, config.replacement)
         )
 
 
@@ -198,7 +213,7 @@ class JoinTextConfig(NodeConfig):
 
 class JoinTextInput(NodeInput):
     parts: Annotated[
-        list[TextValue],
+        list[StrictStr],
         InPort(TEXT_VALUE),
         Field(description="Ordered text values to join."),
     ]
@@ -206,7 +221,7 @@ class JoinTextInput(NodeInput):
 
 class JoinTextOutput(NodeOutput):
     text: Annotated[
-        TextValue,
+        StrictStr,
         OutPort(TEXT_VALUE),
         Field(description="The joined text value."),
     ]
@@ -229,8 +244,196 @@ class JoinTextNode(Node[JoinTextConfig, JoinTextInput, JoinTextOutput]):
         inputs: JoinTextInput,
         /,
     ) -> JoinTextOutput:
-        return JoinTextOutput(
-            text=TextValue(
-                value=config.separator.join(part.value for part in inputs.parts)
+        return JoinTextOutput(text=config.separator.join(inputs.parts))
+
+
+class CollectTextInput(NodeInput):
+    items: Annotated[
+        list[ArtifactRef | ArtifactRefSequence],
+        InPort(
+            TEXT_VALUE,
+            variadic=True,
+            instance_plugs=True,
+        ),
+        Field(
+            min_length=1,
+            description="Text artifacts and sequences in connection order.",
+        ),
+    ]
+
+
+class CollectTextOutput(NodeOutput):
+    items: Annotated[
+        ArtifactRefSequence,
+        OutPort(TEXT_VALUE),
+        Field(description="One sequence containing every input text artifact."),
+    ]
+
+
+@TEXT.node(
+    operator_id="text.collect",
+    version=1,
+    title="Collect text",
+)
+@final
+class CollectTextNode(Node[NoConfig, CollectTextInput, CollectTextOutput]):
+    """Collects scalar and sequence text references without rewriting artifacts."""
+
+    @override
+    async def run(
+        self,
+        _context: NodeExecutionContext,
+        _config: NoConfig,
+        inputs: CollectTextInput,
+        /,
+    ) -> CollectTextOutput:
+        item_refs: list[ArtifactRef] = []
+        collect_segments: list[JsonObject] = []
+        ordered = True
+
+        for input_index, source in enumerate(inputs.items):
+            start_index = len(item_refs)
+            if isinstance(source, ArtifactRef):
+                item_refs.append(source)
+                item_count = 1
+                source_kind = "single"
+            else:
+                item_refs.extend(source.item_refs)
+                item_count = len(source.item_refs)
+                source_kind = "sequence"
+                if not source.ordered:
+                    ordered = False
+            collect_segments.append(
+                {
+                    "input_index": input_index,
+                    "start_index": start_index,
+                    "item_count": item_count,
+                    "source_kind": source_kind,
+                }
+            )
+
+        return CollectTextOutput(
+            items=ArtifactRefSequence(
+                artifact_type=TEXT_VALUE.key.id,
+                schema_version=TEXT_VALUE.key.schema_version,
+                item_refs=item_refs,
+                ordered=ordered,
+                metadata={"collect_segments": collect_segments},
             )
         )
+
+
+@final
+class TextValueOutputWriter(ArtifactOutputWriter):
+    artifact_type = TEXT_VALUE.key
+
+    def __init__(self, *, uow: UnitOfWorkPort) -> None:
+        self._uow = uow
+
+    @override
+    async def write(
+        self,
+        value: object,
+        context: ArtifactWriteContext,
+    ) -> ArtifactRef:
+        try:
+            payload = TextValuePayload.model_validate({"value": value})
+        except ValidationError as exc:
+            message = (
+                f"Failed to serialize {self.artifact_type.id}@"
+                f"{self.artifact_type.schema_version} value produced by node "
+                f"{context.node_context.node_id!r}"
+            )
+            raise RuntimeError(message) from exc
+
+        payload_json = cast(JsonObject, payload.model_dump(mode="json"))
+        payload_bytes = json.dumps(
+            payload_json,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        provenance: dict[str, object] = {
+            input_name: [
+                {
+                    "artifact_id": str(ref.artifact_id),
+                    "artifact_type": ref.artifact_type,
+                    "schema_version": ref.schema_version,
+                }
+                for ref in refs
+            ]
+            for input_name, refs in context.provenance.refs_by_input.items()
+        }
+        metadata: JsonObject = {
+            "producer_node_id": context.node_context.node_id,
+        }
+        if provenance:
+            metadata["provenance"] = provenance
+        metadata.update(context.metadata)
+        artifact = ArtifactObject(
+            artifact_type=self.artifact_type.id,
+            schema_version=self.artifact_type.schema_version,
+            content_type="application/json",
+            storage_backend="inline",
+            inline_payload=payload_json,
+            byte_size=len(payload_bytes),
+            sha256=sha256(payload_bytes).hexdigest(),
+            metadata=metadata,
+        )
+        try:
+            async with self._uow as uow:
+                await uow.artifacts.add(artifact)
+                await uow.commit()
+        except Exception as exc:
+            message = (
+                f"Failed to persist {self.artifact_type.id}@"
+                f"{self.artifact_type.schema_version} produced by node "
+                f"{context.node_context.node_id!r}"
+            )
+            raise RuntimeError(message) from exc
+        return artifact.ref()
+
+
+@final
+class TextValueResolver(Resolver[str]):
+    source = TEXT_VALUE.key
+    target: type[object] = str
+
+    def __init__(self, *, uow: UnitOfWorkPort) -> None:
+        self._uow = uow
+
+    @override
+    async def resolve(self, ref: ArtifactRef) -> str:
+        if ref.key() != self.source:
+            message = (
+                f"Text resolver expected {self.source.id}@"
+                f"{self.source.schema_version}, got {ref.artifact_type}@"
+                f"{ref.schema_version} for artifact {ref.artifact_id}"
+            )
+            raise ArtifactContractError(message)
+
+        async with self._uow as uow:
+            artifact = await uow.artifacts.get(ref.artifact_id)
+        if artifact is None:
+            raise NotFoundError("Artifact", str(ref.artifact_id))
+        if artifact.ref() != ref:
+            message = (
+                "Artifact repository returned a different artifact ref for "
+                f"text artifact {ref.artifact_id}"
+            )
+            raise ArtifactContractError(message)
+        if artifact.inline_payload is None:
+            message = (
+                f"Text artifact {ref.artifact_id} does not have an inline "
+                "JSON payload"
+            )
+            raise ArtifactContractError(message)
+
+        try:
+            return TextValuePayload.model_validate(artifact.inline_payload).value
+        except ValidationError as exc:
+            message = (
+                f"Failed to resolve artifact {ref.artifact_id} as "
+                f"{self.source.id}@{self.source.schema_version} text value"
+            )
+            raise ResolutionError(message) from exc

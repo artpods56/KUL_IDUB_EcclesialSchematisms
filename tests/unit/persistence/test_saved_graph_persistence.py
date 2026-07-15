@@ -1,17 +1,22 @@
+import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
 import pytest
+from sqlalchemy import text
 
+from notarius_core.artifacts import ArtifactTypeKey
 from notarius_core.domain.errors import ConcurrentWriteError
 from notarius_core.domain.saved_graphs import (
     GraphPoint,
     SavedGraph,
+    SavedGraphArtifactTypeBinding,
     SavedGraphConversion,
     SavedGraphDocument,
     SavedGraphEdge,
+    SavedGraphInputPlug,
     SavedGraphNode,
     SavedGraphProjection,
 )
@@ -49,6 +54,7 @@ def _document(label: str = "draft") -> SavedGraphDocument:
                 operator_version=2,
                 config={"optional": True},
                 position=GraphPoint(x=310.0, y=24.75),
+                input_plugs=(SavedGraphInputPlug(id="primary-value", port="value"),),
             ),
         ),
         edges=(
@@ -58,11 +64,14 @@ def _document(label: str = "draft") -> SavedGraphDocument:
                 from_port="result",
                 to_node="target",
                 to_port="value",
+                to_plug="primary-value",
                 collection_mode="map",
                 projection=SavedGraphProjection(path=("payload", "text")),
-                conversion=SavedGraphConversion(
-                    id="example.text.normalize",
-                    version=2,
+                conversion_path=(
+                    SavedGraphConversion(
+                        id="example.text.normalize",
+                        version=2,
+                    ),
                 ),
                 route_offset=GraphPoint(x=4.0, y=-8.0),
             ),
@@ -114,6 +123,116 @@ async def test_file_backed_sqlite_round_trips_saved_graph_in_a_fresh_session(
     assert loaded.updated_at == graph.updated_at
     assert loaded.created_at.tzinfo is UTC
     assert loaded.updated_at.tzinfo is UTC
+
+
+@pytest.mark.asyncio
+async def test_legacy_sql_json_loads_then_updates_as_v3_in_a_fresh_session(
+    database: Database,
+) -> None:
+    graph_id = UUID("00000000-0000-0000-0000-000000000102")
+    legacy_time = datetime(2026, 7, 14, 8, 0, tzinfo=UTC)
+    legacy_storage_time = legacy_time.replace(tzinfo=None).isoformat(" ")
+    legacy_document = {
+        "schema_version": 1,
+        "nodes": [
+            {
+                "id": "source",
+                "operator_id": "text.input",
+                "operator_version": 1,
+                "config": {"text": "legacy"},
+                "position": {"x": 0.0, "y": 0.0},
+            },
+            {
+                "id": "collect",
+                "operator_id": "sequence.collect",
+                "operator_version": 1,
+                "config": {},
+                "position": {"x": 200.0, "y": 0.0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "source-to-collect",
+                "from_node": "source",
+                "from_port": "text",
+                "to_node": "collect",
+                "to_port": "items",
+                "conversion": {
+                    "id": "example.text.normalize",
+                    "version": 2,
+                },
+            }
+        ],
+    }
+    async with database.engine.begin() as connection:
+        await connection.execute(
+            text(
+                "INSERT INTO saved_graphs "
+                "(id, name, document, revision, created_at, updated_at) "
+                "VALUES (:id, :name, :document, :revision, :created_at, :updated_at)"
+            ),
+            {
+                "id": graph_id.hex,
+                "name": "Legacy graph",
+                "document": json.dumps(legacy_document),
+                "revision": 1,
+                "created_at": legacy_storage_time,
+                "updated_at": legacy_storage_time,
+            },
+        )
+
+    async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
+        loaded = await unit_of_work.graphs.get(graph_id)
+        assert loaded is not None
+        assert loaded.document.schema_version == 3
+        assert loaded.document.edges[0].conversion_path == (
+            SavedGraphConversion(id="example.text.normalize", version=2),
+        )
+
+        source, collect = loaded.document.nodes
+        bound_collect = collect.model_copy(
+            update={
+                "artifact_type_bindings": (
+                    SavedGraphArtifactTypeBinding(
+                        variable="T",
+                        artifact_type=ArtifactTypeKey("scalar.text", 1),
+                    ),
+                )
+            }
+        )
+        loaded.replace(
+            name="Migrated graph",
+            document=SavedGraphDocument(
+                nodes=(source, bound_collect),
+                edges=loaded.document.edges,
+            ),
+            expected_revision=1,
+        )
+        await unit_of_work.commit()
+
+    async with database.engine.connect() as connection:
+        raw_document = await connection.scalar(
+            text("SELECT document FROM saved_graphs WHERE id = :id"),
+            {"id": graph_id.hex},
+        )
+    assert isinstance(raw_document, str)
+    stored_document = json.loads(raw_document)
+    assert stored_document["schema_version"] == 3
+    assert "conversion" not in stored_document["edges"][0]
+    assert stored_document["edges"][0]["conversion_path"] == [
+        {"id": "example.text.normalize", "version": 2}
+    ]
+
+    async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
+        reloaded = await unit_of_work.graphs.get(graph_id)
+
+    assert reloaded is not None
+    assert reloaded.name == "Migrated graph"
+    assert reloaded.revision == 2
+    assert reloaded.document.schema_version == 3
+    assert reloaded.document.nodes[1].artifact_type_binding_map() == {
+        "T": ArtifactTypeKey("scalar.text", 1)
+    }
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 
 from PIL import Image as ImageModule
 from PIL import ImageDraw
+from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from notarius_core.artifacts import (
     TABLE_FRAGMENT,
@@ -28,10 +29,22 @@ from notarius_core.artifacts import (
     InMemoryUnitOfWork,
 )
 from notarius_core.application.saved_graphs import SavedGraphService
-from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
+from notarius_core.conversions import (
+    MAX_ARTIFACT_CONVERSION_HOPS,
+    ArtifactConversion,
+    ArtifactConversionKey,
+    conversion_runtime_types_are_compatible,
+)
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
 from notarius_core.domain.saved_graphs import SavedGraph
-from notarius_core.nodes import Node, NodeExecutionContext, PortShape
+from notarius_core.nodes import (
+    Node,
+    NodeContractResolutionError,
+    NodeExecutionContext,
+    PortShape,
+    ResolvedNodeContracts,
+    resolve_node_contracts,
+)
 from notarius_core.operators.arithmetic import (
     ARITHMETIC_RESULT,
     ArithmeticResult,
@@ -42,7 +55,7 @@ from notarius_core.operators.tables import (
     TableFragment,
     TablePage,
 )
-from notarius_core.operators.text import TEXT_VALUE, TextValue
+from notarius_core.operators.text import TextValueOutputWriter, TextValueResolver
 from notarius_core.plugins import (
     PluginRegistry,
     PluginRuntimeContext,
@@ -161,11 +174,7 @@ class WorkbenchService:
             ),
             cast(
                 Resolver[object],
-                InlineModelResolver(
-                    source=TEXT_VALUE.key,
-                    target=TextValue,
-                    uow=self._uow,
-                ),
+                TextValueResolver(uow=self._uow),
             ),
             cast(
                 Resolver[object],
@@ -200,11 +209,7 @@ class WorkbenchService:
                 model=ArithmeticResult,
                 uow=self._uow,
             ),
-            InlineModelOutputWriter(
-                artifact_type=TEXT_VALUE.key,
-                model=TextValue,
-                uow=self._uow,
-            ),
+            TextValueOutputWriter(uow=self._uow),
             InlineModelOutputWriter(
                 artifact_type=TABLE_FRAGMENT.key,
                 model=TableFragment,
@@ -228,6 +233,9 @@ class WorkbenchService:
             artifact_type.key: artifact_type
             for artifact_type in plugin_registry.artifact_types
             if artifact_type.field_projections
+        }
+        self._artifact_types = {
+            artifact_type.key for artifact_type in plugin_registry.artifact_types
         }
         self._artifact_conversions = {
             conversion.key: conversion
@@ -336,6 +344,40 @@ class WorkbenchService:
             )
             for node_request in order
         }
+        artifact_type_bindings_by_node: dict[
+            str,
+            dict[str, ArtifactTypeKey],
+        ] = {}
+        resolved_contracts_by_node: dict[str, ResolvedNodeContracts] = {}
+        for node_request in order:
+            bindings = {
+                binding.variable: binding.artifact_type.to_key()
+                for binding in node_request.artifact_type_bindings
+            }
+            node = nodes_by_id[node_request.id]
+            try:
+                resolved_contracts = resolve_node_contracts(node, bindings)
+            except NodeContractResolutionError as exc:
+                raise WorkbenchGraphError(
+                    f"Node {node_request.id!r} ({node.operator_id}@"
+                    f"{node.operator_version}) has invalid artifact type "
+                    f"bindings: {exc}"
+                ) from exc
+            for variable, artifact_type in bindings.items():
+                if artifact_type in self._artifact_types:
+                    continue
+                raise WorkbenchGraphError(
+                    f"Node {node_request.id!r} artifact type variable "
+                    f"{variable!r} is bound to unavailable artifact type "
+                    f"{artifact_type.id}@{artifact_type.schema_version}"
+                )
+            artifact_type_bindings_by_node[node_request.id] = bindings
+            resolved_contracts_by_node[node_request.id] = resolved_contracts
+        _validate_input_plugs(
+            nodes_by_id,
+            request.nodes,
+            request.edges,
+        )
         invocations_by_id = _derive_invocations(
             nodes_by_id,
             request.edges,
@@ -343,6 +385,7 @@ class WorkbenchService:
 
         _validate_edges(
             nodes_by_id,
+            resolved_contracts_by_node,
             invocations_by_id,
             request.edges,
             self._projectable_artifact_types,
@@ -390,6 +433,9 @@ class WorkbenchService:
                     inputs,
                     config=node_request.config,
                     invocation=invocations_by_id[node_request.id],
+                    artifact_type_bindings=artifact_type_bindings_by_node[
+                        node_request.id
+                    ],
                 )
             except Exception as exc:
                 failed.add(node_request.id)
@@ -599,11 +645,25 @@ class WorkbenchService:
     ) -> dict[str, object]:
         values: dict[str, object] = {}
         for name, spec in node.input_contract.ports.items():
-            incoming = [
-                edge
+            incoming_by_plug = {
+                edge.to_plug: edge
                 for edge in edges
-                if edge.to_node == node_request.id and edge.to_port == name
-            ]
+                if edge.to_node == node_request.id
+                and edge.to_port == name
+                and edge.to_plug is not None
+            }
+            if spec.instance_plugs:
+                incoming = [
+                    incoming_by_plug[plug.id]
+                    for plug in node_request.input_plugs
+                    if plug.port == name
+                ]
+            else:
+                incoming = [
+                    edge
+                    for edge in edges
+                    if edge.to_node == node_request.id and edge.to_port == name
+                ]
             port_values: list[ArtifactRef | ArtifactRefSequence] = []
             for edge in incoming:
                 source_ports = outputs.get(edge.from_node)
@@ -632,28 +692,25 @@ class WorkbenchService:
                         edge,
                         run_id,
                     )
-                if edge.conversion is not None:
-                    conversion_key = ArtifactConversionKey(
-                        id=edge.conversion.id,
-                        version=edge.conversion.version,
+                if edge.conversion_path:
+                    conversions = tuple(
+                        self._artifact_conversions[
+                            ArtifactConversionKey(
+                                id=conversion.id,
+                                version=conversion.version,
+                            )
+                        ]
+                        for conversion in edge.conversion_path
                     )
-                    conversion = self._artifact_conversions.get(conversion_key)
-                    if conversion is None:
-                        raise WorkbenchGraphError(
-                            f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
-                            f"{edge.to_node!r}.{edge.to_port!r} uses undeclared "
-                            f"conversion {conversion_key.id!r}@"
-                            f"{conversion_key.version}"
-                        )
                     run_value = await self._convert_run_value(
                         run_value,
-                        conversion,
+                        conversions,
                         edge,
                         run_id,
                     )
                 port_values.append(run_value.value)
 
-            if spec.variadic:
+            if spec.instance_plugs or spec.variadic:
                 values[name] = port_values
             elif len(port_values) == 1:
                 values[name] = port_values[0]
@@ -667,15 +724,16 @@ class WorkbenchService:
     async def _convert_run_value(
         self,
         run_value: _RunValue,
-        conversion: ArtifactConversion[Any, Any],
+        conversions: tuple[ArtifactConversion[Any, Any], ...],
         edge: RunEdgeRequest,
         run_id: UUID,
     ) -> _RunValue:
+        final_conversion = conversions[-1]
         if isinstance(run_value.value, ArtifactRef):
             return _RunValue(
                 value=await self._convert_ref(
                     run_value.value,
-                    conversion,
+                    conversions,
                     edge,
                     run_id,
                     item_index=None,
@@ -686,7 +744,7 @@ class WorkbenchService:
         converted_refs = [
             await self._convert_ref(
                 ref,
-                conversion,
+                conversions,
                 edge,
                 run_id,
                 item_index=index,
@@ -697,15 +755,13 @@ class WorkbenchService:
         sequence_metadata.update(
             {
                 "source_sequence_id": str(source_sequence.sequence_id),
-                "conversion_id": conversion.key.id,
-                "conversion_version": conversion.key.version,
-                "conversion_title": conversion.title,
+                **_conversion_path_metadata(conversions),
             }
         )
         return _RunValue(
             value=ArtifactRefSequence(
-                artifact_type=conversion.target.id,
-                schema_version=conversion.target.schema_version,
+                artifact_type=final_conversion.target.id,
+                schema_version=final_conversion.target.schema_version,
                 item_refs=converted_refs,
                 ordered=source_sequence.ordered,
                 index_key=source_sequence.index_key,
@@ -716,62 +772,107 @@ class WorkbenchService:
     async def _convert_ref(
         self,
         ref: ArtifactRef,
-        conversion: ArtifactConversion[Any, Any],
+        conversions: tuple[ArtifactConversion[Any, Any], ...],
         edge: RunEdgeRequest,
         run_id: UUID,
         *,
         item_index: int | None,
     ) -> ArtifactRef:
+        first_conversion = conversions[0]
+        final_conversion = conversions[-1]
+        item_context = "" if item_index is None else f" at sequence item {item_index}"
         try:
             source_value = await self._resolvers.resolve(
                 ref=ref,
-                target=conversion.source_type,
+                target=first_conversion.source_type,
             )
-            converted_value = conversion.convert(source_value)
+            converted_value: object = _validated_conversion_value(
+                source_value,
+                first_conversion.source_type,
+            )
         except Exception as exc:
             message = (
-                f"Failed conversion {conversion.key.id!r}@"
-                f"{conversion.key.version} for artifact {ref.artifact_id} on edge "
+                f"Failed to resolve artifact {ref.artifact_id}{item_context} for "
+                f"conversion path on edge "
                 f"{edge.from_node!r}.{edge.from_port!r} -> "
                 f"{edge.to_node!r}.{edge.to_port!r}"
             )
             raise WorkbenchGraphError(message) from exc
 
-        writer = self._writers.writer_for(conversion.target)
-        return await writer.write(
-            converted_value,
-            ArtifactWriteContext(
-                node_context=NodeExecutionContext(
-                    workflow_run_id=run_id,
-                    node_run_id=uuid4(),
-                    node_id=edge.from_node,
-                ),
-                provenance=MaterializationProvenance(
-                    refs_by_input={edge.from_port: (ref,)}
-                ),
-                item_index=item_index,
-                metadata={
-                    "source_artifact_id": str(ref.artifact_id),
-                    "source_artifact_type": ref.artifact_type,
-                    "source_schema_version": ref.schema_version,
-                    "source_node_id": edge.from_node,
-                    "source_port": edge.from_port,
-                    "conversion_id": conversion.key.id,
-                    "conversion_version": conversion.key.version,
-                    "conversion_title": conversion.title,
-                    "conversion_source_artifact_type": conversion.source.id,
-                    "conversion_source_schema_version": (
-                        conversion.source.schema_version
+        for step_index, conversion in enumerate(conversions):
+            try:
+                step_input = _validated_conversion_value(
+                    converted_value,
+                    conversion.source_type,
+                )
+                converted_value = _validated_conversion_value(
+                    conversion.convert(step_input),
+                    conversion.target_type,
+                )
+            except Exception as exc:
+                message = (
+                    f"Failed conversion step {step_index + 1}/{len(conversions)} "
+                    f"{conversion.key.id!r}@{conversion.key.version} for artifact "
+                    f"{ref.artifact_id}{item_context} on edge "
+                    f"{edge.from_node!r}.{edge.from_port!r} -> "
+                    f"{edge.to_node!r}.{edge.to_port!r}"
+                )
+                raise WorkbenchGraphError(message) from exc
+
+        metadata: dict[str, object] = {
+            "source_artifact_id": str(ref.artifact_id),
+            "source_artifact_type": ref.artifact_type,
+            "source_schema_version": ref.schema_version,
+            "source_node_id": edge.from_node,
+            "source_port": edge.from_port,
+            **_conversion_path_metadata(conversions),
+            "conversion_source_artifact_type": first_conversion.source.id,
+            "conversion_source_schema_version": first_conversion.source.schema_version,
+            "conversion_target_artifact_type": final_conversion.target.id,
+            "conversion_target_schema_version": final_conversion.target.schema_version,
+            "target_node_id": edge.to_node,
+            "target_port": edge.to_port,
+        }
+        try:
+            writer = self._writers.writer_for(final_conversion.target)
+            written_ref = await writer.write(
+                converted_value,
+                ArtifactWriteContext(
+                    node_context=NodeExecutionContext(
+                        workflow_run_id=run_id,
+                        node_run_id=uuid4(),
+                        node_id=edge.from_node,
                     ),
-                    "conversion_target_artifact_type": conversion.target.id,
-                    "conversion_target_schema_version": (
-                        conversion.target.schema_version
+                    provenance=MaterializationProvenance(
+                        refs_by_input={edge.from_port: (ref,)}
                     ),
-                    "target_node_id": edge.to_node,
-                    "target_port": edge.to_port,
-                },
-            ),
-        )
+                    item_index=item_index,
+                    metadata=metadata,
+                ),
+            )
+            if written_ref.key() != final_conversion.target:
+                raise WorkbenchGraphError(
+                    f"Final conversion writer returned {written_ref.artifact_type}@"
+                    f"{written_ref.schema_version}, expected "
+                    f"{final_conversion.target.id}@"
+                    f"{final_conversion.target.schema_version} for artifact "
+                    f"{ref.artifact_id}{item_context} on edge "
+                    f"{edge.from_node!r}.{edge.from_port!r} -> "
+                    f"{edge.to_node!r}.{edge.to_port!r}"
+                )
+            return written_ref
+        except WorkbenchGraphError:
+            raise
+        except Exception as exc:
+            message = (
+                f"Failed to materialize final target "
+                f"{final_conversion.target.id}@"
+                f"{final_conversion.target.schema_version} for conversion path "
+                f"from artifact {ref.artifact_id}{item_context} on edge "
+                f"{edge.from_node!r}.{edge.from_port!r} -> "
+                f"{edge.to_node!r}.{edge.to_port!r}"
+            )
+            raise WorkbenchGraphError(message) from exc
 
     async def _project_run_value(
         self,
@@ -1001,6 +1102,16 @@ def _validate_saved_graph_fragment(
             node.operator_id != saved_node.operator_id
             or node.operator_version != saved_node.operator_version
             or node.config != saved_node.config_dict()
+            or tuple((plug.id, plug.port) for plug in node.input_plugs)
+            != tuple((plug.id, plug.port) for plug in saved_node.input_plugs)
+            or {
+                binding.variable: binding.artifact_type.to_key()
+                for binding in node.artifact_type_bindings
+            }
+            != {
+                binding.variable: binding.artifact_type
+                for binding in saved_node.artifact_type_bindings
+            }
         ):
             raise WorkbenchGraphError(
                 f"Run node {node.id!r} does not match saved graph {graph.id} "
@@ -1014,12 +1125,12 @@ def _validate_saved_graph_fragment(
             edge.from_port,
             edge.to_node,
             edge.to_port,
+            edge.to_plug,
             edge.collection_mode,
             tuple(edge.projection.path) if edge.projection is not None else None,
-            (
-                (edge.conversion.id, edge.conversion.version)
-                if edge.conversion is not None
-                else None
+            tuple(
+                (conversion.id, conversion.version)
+                for conversion in edge.conversion_path
             ),
         )
         for edge in graph.document.edges
@@ -1031,12 +1142,12 @@ def _validate_saved_graph_fragment(
             edge.from_port,
             edge.to_node,
             edge.to_port,
+            edge.to_plug,
             edge.collection_mode,
             tuple(edge.projection.path) if edge.projection is not None else None,
-            (
-                (edge.conversion.id, edge.conversion.version)
-                if edge.conversion is not None
-                else None
+            tuple(
+                (conversion.id, conversion.version)
+                for conversion in edge.conversion_path
             ),
         )
         for edge in edges
@@ -1131,8 +1242,105 @@ def _pinned_outputs_by_endpoint(
     return by_endpoint
 
 
+def _validate_input_plugs(
+    nodes_by_id: dict[str, Node[Any, Any, Any]],
+    node_requests: list[RunNodeRequest],
+    edges: list[RunEdgeRequest],
+) -> None:
+    plugs_by_node: dict[str, dict[str, str]] = {}
+    for node_request in node_requests:
+        node = nodes_by_id[node_request.id]
+        plugs: dict[str, str] = {}
+        for plug in node_request.input_plugs:
+            if plug.id in plugs:
+                raise WorkbenchGraphError(
+                    f"Node {node_request.id!r} has duplicate input plug id {plug.id!r}"
+                )
+            target_port = node.input_contract.ports.get(plug.port)
+            if target_port is None:
+                raise WorkbenchGraphError(
+                    f"Node {node_request.id!r} input plug {plug.id!r} references "
+                    f"unknown input port {plug.port!r}"
+                )
+            if not target_port.instance_plugs:
+                raise WorkbenchGraphError(
+                    f"Node {node_request.id!r} input port {plug.port!r} does not "
+                    "accept instance plugs"
+                )
+            plugs[plug.id] = plug.port
+        plugs_by_node[node_request.id] = plugs
+
+        for port_name, port in node.input_contract.ports.items():
+            if not port.instance_plugs or not port.required:
+                continue
+            if any(plug.port == port_name for plug in node_request.input_plugs):
+                continue
+            raise WorkbenchGraphError(
+                f"Node {node_request.id!r} ({node.operator_id}@"
+                f"{node.operator_version}) required instance-plug input "
+                f"{port_name!r} has no submitted plugs"
+            )
+
+    incoming_by_plug: Counter[tuple[str, str]] = Counter()
+    for edge in edges:
+        target_node = nodes_by_id[edge.to_node]
+        target_port = target_node.input_contract.ports.get(edge.to_port)
+        if target_port is None:
+            continue
+        if not target_port.instance_plugs:
+            if edge.to_plug is not None:
+                raise WorkbenchGraphError(
+                    f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
+                    f"{edge.to_node!r}.{edge.to_port!r} declares input plug "
+                    f"{edge.to_plug!r}, but the target port does not accept "
+                    "instance plugs"
+                )
+            continue
+        if edge.collection_mode == "map":
+            raise WorkbenchGraphError(
+                f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
+                f"{edge.to_node!r}.{edge.to_port!r} cannot use collection mode "
+                "'map' with an instance-plug input"
+            )
+        if edge.to_plug is None:
+            raise WorkbenchGraphError(
+                f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
+                f"{edge.to_node!r}.{edge.to_port!r} must target an input plug"
+            )
+        plug_port = plugs_by_node[edge.to_node].get(edge.to_plug)
+        if plug_port is None:
+            raise WorkbenchGraphError(
+                f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
+                f"{edge.to_node!r}.{edge.to_port!r} targets unknown input plug "
+                f"{edge.to_plug!r}"
+            )
+        if plug_port != edge.to_port:
+            raise WorkbenchGraphError(
+                f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
+                f"{edge.to_node!r}.{edge.to_port!r} targets input plug "
+                f"{edge.to_plug!r}, which belongs to port {plug_port!r}"
+            )
+        plug_key = (edge.to_node, edge.to_plug)
+        incoming_by_plug[plug_key] += 1
+        if incoming_by_plug[plug_key] > 1:
+            raise WorkbenchGraphError(
+                f"Node {edge.to_node!r} input plug {edge.to_plug!r} requires "
+                "exactly one incoming edge"
+            )
+
+    for node_id, plugs in plugs_by_node.items():
+        for plug_id in plugs:
+            if incoming_by_plug[(node_id, plug_id)] == 1:
+                continue
+            raise WorkbenchGraphError(
+                f"Node {node_id!r} input plug {plug_id!r} requires exactly one "
+                "incoming edge"
+            )
+
+
 def _validate_edges(
     nodes_by_id: dict[str, Node[Any, Any, Any]],
+    resolved_contracts_by_node: dict[str, ResolvedNodeContracts],
     invocations_by_id: dict[str, NodeInvocation],
     edges: list[RunEdgeRequest],
     projectable_artifact_types: dict[ArtifactTypeKey, ArtifactTypeSpec],
@@ -1148,12 +1356,20 @@ def _validate_edges(
     incoming_counts: dict[tuple[str, str], int] = {}
     for edge in edges:
         target_node = nodes_by_id[edge.to_node]
-        target_port = target_node.input_contract.ports.get(edge.to_port)
+        target_port = resolved_contracts_by_node[
+            edge.to_node
+        ].input_contract.ports.get(edge.to_port)
         if target_port is None:
             raise WorkbenchGraphError(
                 f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
                 f"{edge.to_node!r}.{edge.to_port!r} references unknown input "
                 f"port {edge.to_port!r} on node {edge.to_node!r}"
+            )
+        target_key = target_port.accepts
+        if not isinstance(target_key, ArtifactTypeKey):
+            raise WorkbenchGraphError(
+                f"Node {edge.to_node!r} input {edge.to_port!r} retained "
+                f"unresolved artifact type variable {target_key.name!r}"
             )
         source_node = nodes_by_id.get(edge.from_node)
         if source_node is None:
@@ -1165,7 +1381,9 @@ def _validate_edges(
             )
             source_key = _value_key(pinned_value)
         else:
-            source_port = source_node.output_contract.ports.get(edge.from_port)
+            source_port = resolved_contracts_by_node[
+                edge.from_node
+            ].output_contract.ports.get(edge.from_port)
             if source_port is None:
                 raise WorkbenchGraphError(
                     f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
@@ -1178,11 +1396,11 @@ def _validate_edges(
                 edge.from_port,
             )
             source_key = source_port.produces
-        target_shape = effective_input_shape(
-            target_node,
-            invocations_by_id[edge.to_node],
-            edge.to_port,
-        )
+            if not isinstance(source_key, ArtifactTypeKey):
+                raise WorkbenchGraphError(
+                    f"Node {edge.from_node!r} output {edge.from_port!r} retained "
+                    f"unresolved artifact type variable {source_key.name!r}"
+                )
         if edge.collection_mode == "map" and source_shape is not PortShape.MANY:
             raise WorkbenchGraphError(
                 f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
@@ -1190,14 +1408,6 @@ def _validate_edges(
                 f"which requires a source with shape {PortShape.MANY.value!r}; "
                 f"source is {source_shape.value!r}"
             )
-        if source_shape != target_shape:
-            raise WorkbenchGraphError(
-                f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
-                f"{edge.to_node!r}.{edge.to_port!r} has incompatible shapes: "
-                f"source is {source_shape.value!r}, target expects "
-                f"{target_shape.value!r}"
-            )
-
         incoming_key = (edge.to_node, edge.to_port)
         incoming_counts[incoming_key] = incoming_counts.get(incoming_key, 0) + 1
         if not target_port.variadic and incoming_counts[incoming_key] > 1:
@@ -1224,56 +1434,119 @@ def _validate_edges(
                 )
             effective_source_key = projection.target
 
-        conversion: ArtifactConversion[Any, Any] | None = None
-        if edge.conversion is not None:
+        if len(edge.conversion_path) > MAX_ARTIFACT_CONVERSION_HOPS:
+            raise WorkbenchGraphError(
+                f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
+                f"{edge.to_node!r}.{edge.to_port!r} conversion path exceeds "
+                f"the maximum of {MAX_ARTIFACT_CONVERSION_HOPS} steps"
+            )
+        seen_artifact_keys = {effective_source_key}
+        resolved_conversions: list[ArtifactConversion[Any, Any]] = []
+        for step_index, requested_conversion in enumerate(edge.conversion_path):
             conversion_key = ArtifactConversionKey(
-                id=edge.conversion.id,
-                version=edge.conversion.version,
+                id=requested_conversion.id,
+                version=requested_conversion.version,
             )
             conversion = artifact_conversions.get(conversion_key)
             if conversion is None:
                 raise WorkbenchGraphError(
                     f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
                     f"{edge.to_node!r}.{edge.to_port!r} requests undeclared "
-                    f"conversion {conversion_key.id!r}@{conversion_key.version}"
+                    f"conversion {conversion_key.id!r}@{conversion_key.version} "
+                    f"at step {step_index + 1}"
                 )
             if conversion.source != effective_source_key:
                 raise WorkbenchGraphError(
                     f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
-                    f"{edge.to_node!r}.{edge.to_port!r} applies conversion "
+                    f"{edge.to_node!r}.{edge.to_port!r} applies conversion step "
+                    f"{step_index + 1} "
                     f"{conversion.key.id!r}@{conversion.key.version}, which expects "
                     f"{conversion.source.id}@{conversion.source.schema_version}, "
                     f"to {effective_source_key.id}@"
                     f"{effective_source_key.schema_version}"
                 )
+            if resolved_conversions and not conversion_runtime_types_are_compatible(
+                resolved_conversions[-1].target_type,
+                conversion.source_type,
+            ):
+                previous = resolved_conversions[-1]
+                raise WorkbenchGraphError(
+                    f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
+                    f"{edge.to_node!r}.{edge.to_port!r} conversion steps "
+                    f"{step_index} and {step_index + 1} have incompatible runtime "
+                    f"types: {previous.target_type} does not match "
+                    f"{conversion.source_type}"
+                )
+            if conversion.target in seen_artifact_keys:
+                raise WorkbenchGraphError(
+                    f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
+                    f"{edge.to_node!r}.{edge.to_port!r} conversion path repeats "
+                    f"artifact type {conversion.target.id}@"
+                    f"{conversion.target.schema_version} at step {step_index + 1}"
+                )
+            resolved_conversions.append(conversion)
             effective_source_key = conversion.target
+            seen_artifact_keys.add(effective_source_key)
 
-        if effective_source_key == target_port.accepts:
+        if effective_source_key != target_key:
+            if resolved_conversions:
+                conversion_path = " -> ".join(
+                    f"{conversion.key.id}@{conversion.key.version}"
+                    for conversion in resolved_conversions
+                )
+                raise WorkbenchGraphError(
+                    f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
+                    f"{edge.to_node!r}.{edge.to_port!r} converts through "
+                    f"{conversion_path} as "
+                    f"{effective_source_key.id}@"
+                    f"{effective_source_key.schema_version}, but target expects "
+                    f"{target_key.id}@"
+                    f"{target_key.schema_version}"
+                )
+            if edge.projection is not None:
+                raise WorkbenchGraphError(
+                    f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
+                    f"{edge.to_node!r}.{edge.to_port!r} projects "
+                    f"{'.'.join(edge.projection.path)!r} as "
+                    f"{effective_source_key.id}@"
+                    f"{effective_source_key.schema_version}, but target expects "
+                    f"{target_key.id}@"
+                    f"{target_key.schema_version}"
+                )
+            raise WorkbenchGraphError(
+                f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
+                f"{edge.to_node!r}.{edge.to_port!r} cannot connect "
+                f"{effective_source_key.id}@"
+                f"{effective_source_key.schema_version} to "
+                f"{target_key.id}@{target_key.schema_version} "
+                "without a declared field projection or conversion"
+            )
+
+        invocation = invocations_by_id[edge.to_node]
+        if (
+            invocation.mode is InvocationMode.MAP
+            and invocation.map_input == edge.to_port
+        ):
+            accepted_shapes = (
+                effective_input_shape(
+                    target_node,
+                    invocation,
+                    edge.to_port,
+                ),
+            )
+        else:
+            accepted_shapes = target_port.accepted_shapes
+        if source_shape in accepted_shapes:
             continue
-        if conversion is not None:
-            raise WorkbenchGraphError(
-                f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
-                f"{edge.to_node!r}.{edge.to_port!r} converts with "
-                f"{conversion.key.id!r}@{conversion.key.version} as "
-                f"{effective_source_key.id}@{effective_source_key.schema_version}, "
-                f"but target expects {target_port.accepts.id}@"
-                f"{target_port.accepts.schema_version}"
-            )
-        if edge.projection is not None:
-            raise WorkbenchGraphError(
-                f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
-                f"{edge.to_node!r}.{edge.to_port!r} projects "
-                f"{'.'.join(edge.projection.path)!r} as "
-                f"{effective_source_key.id}@{effective_source_key.schema_version}, "
-                f"but target expects {target_port.accepts.id}@"
-                f"{target_port.accepts.schema_version}"
-            )
+        expected_shapes = ", ".join(repr(shape.value) for shape in accepted_shapes)
+        if len(accepted_shapes) == 1:
+            target_shapes = f"expects {expected_shapes}"
+        else:
+            target_shapes = f"accepts one of {expected_shapes}"
         raise WorkbenchGraphError(
             f"Edge {edge.from_node!r}.{edge.from_port!r} -> "
-            f"{edge.to_node!r}.{edge.to_port!r} cannot connect "
-            f"{effective_source_key.id}@{effective_source_key.schema_version} to "
-            f"{target_port.accepts.id}@{target_port.accepts.schema_version} "
-            "without a declared field projection or conversion"
+            f"{edge.to_node!r}.{edge.to_port!r} has incompatible shapes: "
+            f"source is {source_shape.value!r}, target {target_shapes}"
         )
 
     for node_id, node in nodes_by_id.items():
@@ -1335,6 +1608,49 @@ def _derive_invocations(
             ) from exc
         invocations[node_id] = invocation
     return invocations
+
+
+def _conversion_path_metadata(
+    conversions: tuple[ArtifactConversion[Any, Any], ...],
+) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "conversion_path": [
+            {
+                "id": conversion.key.id,
+                "version": conversion.key.version,
+            }
+            for conversion in conversions
+        ],
+        "conversion_titles": [conversion.title for conversion in conversions],
+    }
+    if len(conversions) == 1:
+        conversion = conversions[0]
+        metadata.update(
+            {
+                "conversion_id": conversion.key.id,
+                "conversion_version": conversion.key.version,
+                "conversion_title": conversion.title,
+            }
+        )
+    return metadata
+
+
+def _validated_conversion_value[ValueT](
+    value: object,
+    target: type[ValueT],
+) -> ValueT:
+    if issubclass(target, BaseModel):
+        if not isinstance(value, target):
+            raise TypeError(
+                f"Expected {target.__module__}.{target.__qualname__}, got "
+                f"{type(value).__module__}.{type(value).__qualname__}"
+            )
+        raw_value = value.model_dump(mode="python", round_trip=True)
+        return target.model_validate(raw_value, strict=True)
+    return TypeAdapter(
+        target,
+        config=ConfigDict(arbitrary_types_allowed=True),
+    ).validate_python(value, strict=True)
 
 
 def _field_projection_for(

@@ -1,15 +1,23 @@
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from inspect import getdoc
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, Final, TypeAlias, cast
 
 from notarius_core.artifacts import (
+    ArtifactFieldProjection,
+    ArtifactTypeKey,
     ArtifactTypeSpec,
+    JsonObject,
+    MaterializedJsonType,
     UnitOfWorkPort,
 )
-from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
-from notarius_core.nodes import Node
+from notarius_core.conversions import (
+    ArtifactConversion,
+    ArtifactConversionKey,
+    conversion_runtime_types_are_compatible,
+)
+from notarius_core.nodes import ArtifactTypeVariable, Node
 from notarius_core.ports.storage import FileStoragePort
 
 if TYPE_CHECKING:
@@ -18,6 +26,8 @@ if TYPE_CHECKING:
 
 
 PLUGIN_ENTRY_POINT_GROUP = "notarius.plugins"
+_MAX_PROJECTION_SCHEMA_DEPTH: Final = 32
+_MAX_FIELD_PROJECTIONS: Final = 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,7 +273,31 @@ class PluginRegistry:
         self._writer_factories.extend(plugin.writer_factories)
 
     def freeze(self) -> None:
-        for conversion in self._artifact_conversions.values():
+        for registration in self._nodes.values():
+            port_contracts = [
+                ("input", port.name, port.accepts)
+                for port in registration.node_class.input_contract.ports.values()
+            ]
+            port_contracts.extend(
+                ("output", port.name, port.produces)
+                for port in registration.node_class.output_contract.ports.values()
+            )
+            for direction, port_name, artifact_type in port_contracts:
+                if isinstance(artifact_type, ArtifactTypeVariable):
+                    continue
+                key = (artifact_type.id, artifact_type.schema_version)
+                if key in self._artifact_types:
+                    continue
+                raise PluginRegistrationError(
+                    f"Plugin {registration.plugin_slug!r} operator "
+                    f"{registration.key[0]}@{registration.key[1]} {direction} "
+                    f"port {port_name!r} references artifact type "
+                    f"{artifact_type.id}@{artifact_type.schema_version}, which "
+                    "is not installed"
+                )
+
+        conversions = tuple(self._artifact_conversions.values())
+        for conversion in conversions:
             endpoints = (
                 ("source", conversion.source),
                 ("target", conversion.target),
@@ -278,6 +312,88 @@ class PluginRegistry:
                     f"type {artifact_type.id}@{artifact_type.schema_version}, which "
                     "is not installed"
                 )
+
+        conversions_by_source: dict[
+            ArtifactTypeKey,
+            list[ArtifactConversion[Any, Any]],
+        ] = {}
+        for conversion in conversions:
+            conversions_by_source.setdefault(conversion.source, []).append(conversion)
+        for preceding in conversions:
+            for following in conversions_by_source.get(preceding.target, []):
+                if conversion_runtime_types_are_compatible(
+                    preceding.target_type,
+                    following.source_type,
+                ):
+                    continue
+                raise PluginRegistrationError(
+                    f"Artifact conversions {preceding.key.id}@"
+                    f"{preceding.key.version} and {following.key.id}@"
+                    f"{following.key.version} meet at {preceding.target.id}@"
+                    f"{preceding.target.schema_version} but have incompatible "
+                    f"runtime types: {preceding.target_type} cannot feed "
+                    f"{following.source_type}"
+                )
+
+        artifact_types_by_key = {
+            artifact_type.key: artifact_type
+            for artifact_type in self._artifact_types.values()
+        }
+        for artifact_type in self._artifact_types.values():
+            declared_paths: set[tuple[str, ...]] = set()
+            for projection in artifact_type.field_projections:
+                if not projection.path:
+                    raise PluginRegistrationError(
+                        f"Artifact type {artifact_type.key.id}@"
+                        f"{artifact_type.key.schema_version} declares a field "
+                        "projection with an empty path"
+                    )
+                rendered_path = ".".join(projection.path)
+                if projection.path in declared_paths:
+                    raise PluginRegistrationError(
+                        f"Artifact type {artifact_type.key.id}@"
+                        f"{artifact_type.key.schema_version} declares duplicate "
+                        f"field projection path {rendered_path!r}"
+                    )
+                declared_paths.add(projection.path)
+                if projection.target not in artifact_types_by_key:
+                    raise PluginRegistrationError(
+                        f"Artifact type {artifact_type.key.id}@"
+                        f"{artifact_type.key.schema_version} field projection "
+                        f"{rendered_path!r} targets artifact type "
+                        f"{projection.target.id}@"
+                        f"{projection.target.schema_version}, which is not installed"
+                    )
+
+        scalar_targets: dict[MaterializedJsonType, ArtifactTypeKey] = {}
+        for artifact_type in self._artifact_types.values():
+            materialized_json_type = artifact_type.materialized_json_type
+            if materialized_json_type is None:
+                continue
+            existing_target = scalar_targets.get(materialized_json_type)
+            if existing_target is not None:
+                raise PluginRegistrationError(
+                    f"Artifact types {existing_target.id}@"
+                    f"{existing_target.schema_version} and {artifact_type.key.id}@"
+                    f"{artifact_type.key.schema_version} both declare the canonical "
+                    f"JSON Schema {materialized_json_type!r} scalar target"
+                )
+            scalar_targets[materialized_json_type] = artifact_type.key
+
+        expanded_artifact_types: dict[tuple[str, int], ArtifactTypeSpec] = {}
+        for key, artifact_type in self._artifact_types.items():
+            projections = _expanded_field_projections(
+                artifact_type,
+                scalar_targets,
+                artifact_types_by_key,
+                derive_automatic=artifact_type.materialized_json_type is None,
+            )
+            expanded_artifact_types[key] = replace(
+                artifact_type,
+                field_projections=projections,
+            )
+
+        self._artifact_types = expanded_artifact_types
         self._frozen = True
 
     @property
@@ -329,3 +445,201 @@ class PluginRegistry:
         context: PluginRuntimeContext,
     ) -> tuple["ArtifactOutputWriter", ...]:
         return tuple(factory(context) for factory in self._writer_factories)
+
+
+_KNOWN_JSON_SCHEMA_TYPES: Final = frozenset(
+    {"array", "boolean", "integer", "null", "number", "object", "string"}
+)
+
+
+def _expanded_field_projections(
+    artifact_type: ArtifactTypeSpec,
+    scalar_targets: dict[MaterializedJsonType, ArtifactTypeKey],
+    artifact_types_by_key: dict[ArtifactTypeKey, ArtifactTypeSpec],
+    *,
+    derive_automatic: bool,
+) -> tuple[ArtifactFieldProjection, ...]:
+    explicit_by_path = {
+        projection.path: projection for projection in artifact_type.field_projections
+    }
+    derived: list[ArtifactFieldProjection] = []
+    stack: list[
+        tuple[
+            JsonObject,
+            tuple[str, ...],
+            tuple[str, ...],
+            frozenset[str],
+            int,
+        ]
+    ] = [(artifact_type.payload_schema, (), (), frozenset(), 0)]
+
+    while stack:
+        schema, path, ancestor_titles, active_refs, depth = stack.pop()
+        if depth > _MAX_PROJECTION_SCHEMA_DEPTH:
+            rendered_path = ".".join(path) or "<root>"
+            raise PluginRegistrationError(
+                f"Artifact type {artifact_type.key.id}@"
+                f"{artifact_type.key.schema_version} payload schema exceeds the "
+                f"maximum projection depth of {_MAX_PROJECTION_SCHEMA_DEPTH} at "
+                f"path {rendered_path!r}"
+            )
+
+        raw_title = _schema_title(schema)
+        resolved_schema = schema
+        branch_refs = active_refs
+        resolved_depth = depth
+        while True:
+            ref = resolved_schema.get("$ref")
+            if not isinstance(ref, str):
+                break
+            if not ref.startswith("#/"):
+                resolved_schema = {}
+                break
+            if ref in branch_refs:
+                rendered_path = ".".join(path) or "<root>"
+                raise PluginRegistrationError(
+                    f"Artifact type {artifact_type.key.id}@"
+                    f"{artifact_type.key.schema_version} payload schema contains "
+                    f"cyclic local reference {ref!r} at path {rendered_path!r}"
+                )
+            branch_refs = branch_refs | {ref}
+            resolved_depth += 1
+            if resolved_depth > _MAX_PROJECTION_SCHEMA_DEPTH:
+                rendered_path = ".".join(path) or "<root>"
+                raise PluginRegistrationError(
+                    f"Artifact type {artifact_type.key.id}@"
+                    f"{artifact_type.key.schema_version} payload schema exceeds the "
+                    f"maximum projection depth of {_MAX_PROJECTION_SCHEMA_DEPTH} "
+                    f"while resolving {ref!r} at path {rendered_path!r}"
+                )
+            resolved_schema = _resolve_local_schema_ref(
+                artifact_type,
+                ref,
+            )
+            if raw_title is None:
+                raw_title = _schema_title(resolved_schema)
+
+        if not path:
+            titles = ancestor_titles
+        else:
+            current_title = raw_title or _humanized_schema_segment(path[-1])
+            titles = (*ancestor_titles, current_title)
+
+        schema_type = resolved_schema.get("type")
+        explicit_projection = explicit_by_path.get(path)
+        if (
+            explicit_projection is not None
+            and isinstance(schema_type, str)
+            and schema_type in _KNOWN_JSON_SCHEMA_TYPES
+        ):
+            target_spec = artifact_types_by_key[explicit_projection.target]
+            target_json_type = target_spec.materialized_json_type
+            if target_json_type is not None and target_json_type != schema_type:
+                rendered_path = ".".join(path)
+                raise PluginRegistrationError(
+                    f"Artifact type {artifact_type.key.id}@"
+                    f"{artifact_type.key.schema_version} field projection "
+                    f"{rendered_path!r} targets {target_spec.key.id}@"
+                    f"{target_spec.key.schema_version}, which materializes JSON "
+                    f"Schema {target_json_type!r}, but the projected field is "
+                    f"{schema_type!r}"
+                )
+
+        if schema_type == "string" or schema_type == "integer":
+            materialized_schema_type = cast(MaterializedJsonType, schema_type)
+            if explicit_projection is None and derive_automatic and path:
+                target = scalar_targets.get(materialized_schema_type)
+                if target is None:
+                    continue
+                derived.append(
+                    ArtifactFieldProjection(
+                        path=path,
+                        target=target,
+                        title=" · ".join(titles),
+                    )
+                )
+                if (
+                    len(artifact_type.field_projections) + len(derived)
+                    > _MAX_FIELD_PROJECTIONS
+                ):
+                    raise PluginRegistrationError(
+                        f"Artifact type {artifact_type.key.id}@"
+                        f"{artifact_type.key.schema_version} payload schema expands "
+                        f"beyond the maximum of {_MAX_FIELD_PROJECTIONS} field "
+                        "projections"
+                    )
+            continue
+        if schema_type == "array":
+            continue
+
+        properties = resolved_schema.get("properties")
+        if not isinstance(properties, dict):
+            continue
+        schema_properties = cast(dict[object, object], properties)
+        property_names = sorted(
+            name for name in schema_properties if isinstance(name, str)
+        )
+        for property_name in reversed(property_names):
+            property_schema = schema_properties[property_name]
+            if not isinstance(property_schema, dict):
+                continue
+            stack.append(
+                (
+                    cast(JsonObject, property_schema),
+                    (*path, property_name),
+                    titles,
+                    branch_refs,
+                    resolved_depth + 1,
+                )
+            )
+
+    projections = (*artifact_type.field_projections, *derived)
+    if len(projections) > _MAX_FIELD_PROJECTIONS:
+        raise PluginRegistrationError(
+            f"Artifact type {artifact_type.key.id}@"
+            f"{artifact_type.key.schema_version} declares more than the maximum "
+            f"of {_MAX_FIELD_PROJECTIONS} field projections"
+        )
+    return tuple(sorted(projections, key=lambda projection: projection.path))
+
+
+def _resolve_local_schema_ref(
+    artifact_type: ArtifactTypeSpec,
+    ref: str,
+) -> JsonObject:
+    value: object = artifact_type.payload_schema
+    for raw_segment in ref[2:].split("/"):
+        segment = raw_segment.replace("~1", "/").replace("~0", "~")
+        if not isinstance(value, dict):
+            raise PluginRegistrationError(
+                f"Artifact type {artifact_type.key.id}@"
+                f"{artifact_type.key.schema_version} payload schema contains "
+                f"unresolvable local reference {ref!r}"
+            )
+        schema_object = cast(dict[object, object], value)
+        if segment not in schema_object:
+            raise PluginRegistrationError(
+                f"Artifact type {artifact_type.key.id}@"
+                f"{artifact_type.key.schema_version} payload schema contains "
+                f"unresolvable local reference {ref!r}"
+            )
+        value = schema_object[segment]
+    if not isinstance(value, dict):
+        raise PluginRegistrationError(
+            f"Artifact type {artifact_type.key.id}@"
+            f"{artifact_type.key.schema_version} payload schema local reference "
+            f"{ref!r} does not resolve to a schema object"
+        )
+    return cast(JsonObject, value)
+
+
+def _schema_title(schema: JsonObject) -> str | None:
+    title = schema.get("title")
+    if isinstance(title, str) and title.strip():
+        return title.strip()
+    return None
+
+
+def _humanized_schema_segment(segment: str) -> str:
+    words = segment.replace("_", " ").replace("-", " ").split()
+    return " ".join(word.capitalize() for word in words) or segment
