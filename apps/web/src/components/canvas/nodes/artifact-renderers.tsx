@@ -9,7 +9,7 @@ import { tokens } from "@/lib/stylex/tokens.stylex";
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 
 const s = stylex.create({
-  raw: {
+  jsonCode: {
     margin: 0,
     fontFamily: MONO,
     fontSize: "10px",
@@ -85,6 +85,19 @@ function record(value: unknown): Record<string, unknown> | null {
     return null;
   }
   return value as Record<string, unknown>;
+}
+
+export function formatJsonSchemaPayload(payload: unknown): string | null {
+  const schemaText = record(payload)?.value;
+  if (typeof schemaText !== "string") return null;
+
+  try {
+    const schema: unknown = JSON.parse(schemaText);
+    if (record(schema) === null) return null;
+    return JSON.stringify(schema, null, 2);
+  } catch {
+    return null;
+  }
 }
 
 export function PrettyValue({ value }: { value: unknown }) {
@@ -164,6 +177,26 @@ const imageRenderer: ArtifactRendererSpec = {
   },
 };
 
+const jsonSchemaRenderer: ArtifactRendererSpec = {
+  id: "json-schema",
+  modes: ["pretty", "raw"],
+  matches: (artifact) =>
+    artifact.artifact_type === "json.schema" && artifact.schema_version === 1,
+  Component: ({ artifact, payload, mode }) => {
+    const value = payload === undefined ? artifactMeta(artifact) : payload;
+    if (mode === "pretty") {
+      const formattedSchema = formatJsonSchemaPayload(value);
+      if (formattedSchema !== null) {
+        return <pre {...stylex.props(s.jsonCode)}>{formattedSchema}</pre>;
+      }
+      return <PrettyValue value={value} />;
+    }
+    return (
+      <pre {...stylex.props(s.jsonCode)}>{JSON.stringify(value, null, 2)}</pre>
+    );
+  },
+};
+
 const jsonRenderer: ArtifactRendererSpec = {
   id: "json",
   modes: ["pretty", "raw"],
@@ -172,7 +205,9 @@ const jsonRenderer: ArtifactRendererSpec = {
   Component: ({ artifact, payload, mode }) => {
     const value = payload === undefined ? artifactMeta(artifact) : payload;
     if (mode === "raw") {
-      return <pre {...stylex.props(s.raw)}>{JSON.stringify(value, null, 2)}</pre>;
+      return (
+        <pre {...stylex.props(s.jsonCode)}>{JSON.stringify(value, null, 2)}</pre>
+      );
     }
     return <PrettyValue value={value} />;
   },
@@ -187,6 +222,7 @@ export const META_ARTIFACT_RENDERER: ArtifactRendererSpec = {
 
 export const ARTIFACT_RENDERERS: readonly ArtifactRendererSpec[] = [
   imageRenderer,
+  jsonSchemaRenderer,
   jsonRenderer,
   META_ARTIFACT_RENDERER,
 ];
