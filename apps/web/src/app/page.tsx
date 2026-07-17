@@ -1,12 +1,11 @@
-import { Workbench } from "@/components/workbench/Workbench";
-import { LOCAL_WORKSPACE_SLUG } from "@/components/workbench/routes";
+import { redirect } from "next/navigation";
+
+import {
+  LOCAL_WORKSPACE_SLUG,
+  NEW_GRAPH_ROUTE_ID,
+  workbenchGraphPath,
+} from "@/components/workbench/routes";
 
 export default function Home() {
-  return (
-    <Workbench
-      workspaceSlug={LOCAL_WORKSPACE_SLUG}
-      initialGraphId={null}
-      seedExample
-    />
-  );
+  redirect(workbenchGraphPath(LOCAL_WORKSPACE_SLUG, NEW_GRAPH_ROUTE_ID));
 }

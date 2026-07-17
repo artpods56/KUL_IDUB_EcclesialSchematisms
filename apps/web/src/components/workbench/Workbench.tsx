@@ -157,7 +157,6 @@ type NodeSecretStatusesByNode = Readonly<
 interface WorkbenchProps {
   workspaceSlug: string;
   initialGraphId: string | null;
-  seedExample: boolean;
 }
 
 type GlobalIssueId = "registry" | "graph" | "run";
@@ -168,7 +167,6 @@ interface GlobalIssue {
   message: string;
 }
 
-const INITIAL_GRAPH_NAME = "Scalar arithmetic";
 const NEW_GRAPH_NAME = "Untitled workflow";
 const WORKBENCH_FIT_VIEW_OPTIONS = {
   padding: {
@@ -213,39 +211,6 @@ function nodeSecretStatusesWithState(
       ]),
   );
 }
-
-const ARITHMETIC_NODE_LAYOUT = [
-  {
-    id: "node-number-nine",
-    operatorId: "arithmetic.number",
-    position: { x: 40, y: 150 },
-    config: { value: 9 },
-  },
-  {
-    id: "node-number-four",
-    operatorId: "arithmetic.number",
-    position: { x: 40, y: 470 },
-    config: { value: 4 },
-  },
-  {
-    id: "node-add",
-    operatorId: "arithmetic.add",
-    position: { x: 470, y: 150 },
-    config: {},
-  },
-  {
-    id: "node-subtract",
-    operatorId: "arithmetic.subtract",
-    position: { x: 470, y: 470 },
-    config: {},
-  },
-  {
-    id: "node-multiply",
-    operatorId: "arithmetic.multiply",
-    position: { x: 900, y: 310 },
-    config: {},
-  },
-] as const;
 
 interface ConnectionEndpoint {
   nodeTitle: string;
@@ -577,27 +542,6 @@ function executionValidationIssue(
     nodeId: first.nodeId,
     message: `${first.nodeTitle}.${first.portName} is required but unconnected in this run.`,
   };
-}
-
-function workflowNodes(
-  specs: readonly NodeSpec[],
-): WorkflowNode[] {
-  const byOperator = new Map(specs.map((spec) => [spec.operator_id, spec]));
-  return ARITHMETIC_NODE_LAYOUT.flatMap((definition, index) => {
-    const spec = byOperator.get(definition.operatorId);
-    if (!spec) return [];
-    const data = createWorkflowNodeData(spec);
-    data.config = { ...data.config, ...definition.config };
-    return [
-      {
-        id: definition.id,
-        type: WORKFLOW_NODE_TYPE,
-        position: definition.position,
-        selected: index === 0,
-        data,
-      },
-    ];
-  });
 }
 
 const s = stylex.create({
@@ -1140,7 +1084,6 @@ function GlobalIssueToastList({
 export function Workbench({
   workspaceSlug,
   initialGraphId,
-  seedExample,
 }: WorkbenchProps) {
   const router = useRouter();
   const {
@@ -1160,9 +1103,7 @@ export function Workbench({
   const [edges, setEdges] = React.useState<WorkflowEdge[]>([]);
   const [nodeSecretStatuses, setNodeSecretStatuses] =
     React.useState<NodeSecretStatusesByNode>({});
-  const [graphName, setGraphName] = React.useState(
-    seedExample ? INITIAL_GRAPH_NAME : NEW_GRAPH_NAME,
-  );
+  const [graphName, setGraphName] = React.useState(NEW_GRAPH_NAME);
   const [activeGraph, setActiveGraph] =
     React.useState<ActiveSavedGraph | null>(null);
   const [savedFingerprint, setSavedFingerprint] =
@@ -1712,16 +1653,6 @@ export function Workbench({
     if (!registry) return;
     if (!initializedRef.current) {
       initializedRef.current = true;
-      if (initialGraphId || !seedExample) return;
-      const initialNodes = workflowNodes(registry.nodes).map((node) => ({
-        ...node,
-        data: attachNodeCallbacks(node.data),
-      }));
-      // Registry arrival is the one-time boundary that creates the mutable canvas draft.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setNodes(initialNodes);
-      setEdges([]);
-      setFitRevision((current) => current + 1);
       return;
     }
     const byOperator = new Map(
@@ -1740,7 +1671,7 @@ export function Workbench({
         data: attachNodeCallbacks({ ...node.data, spec }),
       };
     }));
-  }, [attachNodeCallbacks, initialGraphId, registry, seedExample]);
+  }, [attachNodeCallbacks, registry]);
 
   React.useEffect(() => {
     if (!flow || !nodes.length) return;
@@ -2518,7 +2449,7 @@ export function Workbench({
   ]);
 
   React.useEffect(() => {
-    if (seedExample || !registry) {
+    if (!registry) {
       return;
     }
 
@@ -2566,7 +2497,6 @@ export function Workbench({
     openSavedGraph,
     registry,
     router,
-    seedExample,
     showBlankGraph,
     workspaceSlug,
   ]);

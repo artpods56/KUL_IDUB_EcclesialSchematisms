@@ -28,7 +28,6 @@ export default function GraphsLayout({ children }: GraphsLayoutProps) {
       <Workbench
         workspaceSlug={workspaceSlug}
         initialGraphId={graphId === NEW_GRAPH_ROUTE_ID ? null : graphId}
-        seedExample={false}
       />
       {children}
     </>

@@ -4,13 +4,11 @@ A ComfyUI-like workbench for assembling typed artifact transformations over the
 Notarius runtime. It is built with Next.js 16, StyleX, Base UI
 primitives, React Flow, and SWR.
 
-The default slice is a buildable scalar arithmetic workflow. It opens with five
-disconnected nodes: Number 9, Number 4, Add integers, Subtract integers, and
-Multiply. Users wire each Number into both binary operations, then feed the Add
-and Subtract results into Multiply: six direct scalar edges produce `(9 + 4) ×
-(9 - 4) = 65`. The built-in catalog is limited to generic Image, Sequence,
-Arithmetic, Text, and Prompt families. OCR and table extraction appear as external
-nodes only when the OCR entry-point plugin is installed.
+The root route redirects to the canonical blank draft at
+`/workspaces/local/graphs/new`. Saved workflows open at their own canonical
+graph URLs. The built-in catalog is limited to generic Image, Sequence,
+Arithmetic, Text, and Prompt families. OCR and table extraction appear as
+external nodes only when the OCR entry-point plugin is installed.
 
 Node configuration is rendered directly inside each node from the live
 `config_schema`. Primitive JSON Schema fields use a compact preset: text,
@@ -103,7 +101,7 @@ sent to the browser.
 
 Saved graphs have canonical browser URLs at
 `/workspaces/local/graphs/{graph_uuid}`. A blank draft uses
-`/workspaces/local/graphs/new`; the root route retains the arithmetic example.
+`/workspaces/local/graphs/new`; the root route redirects there.
 `local` is intentionally the only accepted workspace slug today. It names the
 single active workbench in the URL, but it is not yet a tenant or authorization
 boundary. Reopening a saved graph also loads accessible materialized outputs for
@@ -115,14 +113,12 @@ graph's workflow structure and canvas layout.
 1. `GET /v1/nodes` returns the catalog with each plugin's host-assigned
    `builtin` or `external` origin, typed ports, JSON schemas, and artifact type
    definitions.
-2. The canvas opens with Number 9, Number 4, Add integers, Subtract integers,
-   and Multiply but no connections. The user manually creates the canonical six
-   direct edges: both Number outputs feed the corresponding left/right inputs of
-   Add and Subtract, then both `result` outputs feed Multiply.
-3. Add emits `13` and Subtract emits `5` as `scalar.integer@1`; Multiply emits
-   `65` using the same scalar contract.
-4. Every tutorial edge is direct. Number outputs fan out to both operations,
-   while the Add and Subtract result outputs remain independently connectable.
+2. A new graph opens as an empty `Untitled workflow`; the user adds registered
+   nodes from the catalog and connects their typed ports.
+3. Node outputs retain their declared artifact identities and remain
+   independently connectable to compatible downstream inputs.
+4. Connections explicitly select direct or mapped transport behavior where the
+   source and target cardinalities permit it.
 5. Structural field projection remains available for compound artifacts supplied
    by plugins. The picker is populated from explicit projections and nested
    `string`/`integer` leaves derived from the artifact's JSON Schema; automated
