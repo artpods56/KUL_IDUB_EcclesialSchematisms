@@ -10,10 +10,9 @@ from pydantic import BaseModel
 from notarius_core.artifacts import ArtifactRef, ArtifactRefSequence, ArtifactTypeKey
 from notarius_core.domain.invocation_cache import InvocationCacheEntry
 from notarius_core.nodes import Node, NodeExecutionContext
-from notarius_core.runtime.invocation import NodeInvocation
 
 
-INVOCATION_CACHE_FINGERPRINT_VERSION = 1
+INVOCATION_CACHE_FINGERPRINT_VERSION = 2
 
 
 class InvocationCachePort(Protocol):
@@ -57,7 +56,6 @@ def invocation_cache_key(
     context: NodeExecutionContext,
     inputs: Mapping[str, object],
     config: BaseModel,
-    invocation: NodeInvocation,
     artifact_type_bindings: Mapping[str, ArtifactTypeKey],
     opaque_secret_revisions: Mapping[str, str],
 ) -> str | None:
@@ -106,11 +104,7 @@ def invocation_cache_key(
                 "module_path": list(context.module_path),
             },
             "config": config.model_dump(mode="json", by_alias=True),
-            "invocation": {
-                "mode": invocation.mode.value,
-                "map_input": invocation.map_input,
-                "item_index": context.invocation_index,
-            },
+            "invocation_index": context.invocation_index,
             "artifact_type_bindings": canonical_bindings,
             "inputs": canonical_inputs,
             "opaque_secret_revisions": canonical_secret_revisions,

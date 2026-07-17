@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Annotated, cast, final, override
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictInt, StrictStr
 
@@ -30,9 +31,20 @@ from notarius_core.runtime.resolvers import InlineModelResolver
 from notarius_api.builtins import builtin_plugins
 from notarius_api.main import create_app
 from notarius_api.plugin_discovery import build_plugin_registry
-from notarius_api.services.workbench import WorkbenchService
+from notarius_api.services.composition import (
+    WorkbenchComponents,
+    build_workbench_components,
+)
 from notarius_api.settings import Settings
-from notarius_api.v1.routes.workbench import workbench_service
+from notarius_api.v1.routes.workbench import (
+    artifact_service,
+    graph_module_catalog,
+    image_upload_service,
+    materialization_service,
+    run_graph_service,
+    run_result_presenter,
+    workbench_plugin_registry,
+)
 
 
 class CompoundResultPayload(BaseModel):
@@ -272,6 +284,25 @@ async def _create_schema(database_url: str) -> None:
         await database.dispose()
 
 
+def install_workbench_dependency_overrides(
+    application: FastAPI,
+    components: WorkbenchComponents,
+) -> None:
+    """Route every workbench endpoint to one cohesive component graph."""
+
+    application.dependency_overrides.update(
+        {
+            workbench_plugin_registry: lambda: components.plugin_registry,
+            image_upload_service: lambda: components.uploads,
+            run_graph_service: lambda: components.run_graph,
+            materialization_service: lambda: components.materializations,
+            run_result_presenter: lambda: components.presenter,
+            artifact_service: lambda: components.artifacts,
+            graph_module_catalog: lambda: components.modules,
+        }
+    )
+
+
 @pytest.fixture
 def builtin_client(tmp_path: Path) -> Iterator[TestClient]:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'api.sqlite3'}"
@@ -280,17 +311,19 @@ def builtin_client(tmp_path: Path) -> Iterator[TestClient]:
         builtin_plugins(),
         external_plugins=(),
     )
-    service = WorkbenchService(
+    components = build_workbench_components(
         plugin_registry=registry,
+        execution_backend="inline",
         workspace=tmp_path / "workbench",
     )
     application = create_app(
         Settings(
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
+            execution_backend="inline",
         )
     )
-    application.dependency_overrides[workbench_service] = lambda: service
+    install_workbench_dependency_overrides(application, components)
     with TestClient(application) as client:
         yield client
 
@@ -306,18 +339,20 @@ def conversion_path_client(
         external_plugins=(),
     )
     uow = InMemoryUnitOfWork()
-    service = WorkbenchService(
+    components = build_workbench_components(
         plugin_registry=registry,
+        execution_backend="inline",
         workspace=tmp_path / "workbench",
-        uow=uow,
+        unit_of_work=uow,
     )
     application = create_app(
         Settings(
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
+            execution_backend="inline",
         )
     )
-    application.dependency_overrides[workbench_service] = lambda: service
+    install_workbench_dependency_overrides(application, components)
     with TestClient(application) as client:
         yield client, uow
 
@@ -330,16 +365,18 @@ def structural_projection_client(tmp_path: Path) -> Iterator[TestClient]:
         (*builtin_plugins(), STRUCTURAL_PROJECTION_PLUGIN),
         external_plugins=(),
     )
-    service = WorkbenchService(
+    components = build_workbench_components(
         plugin_registry=registry,
+        execution_backend="inline",
         workspace=tmp_path / "workbench",
     )
     application = create_app(
         Settings(
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
+            execution_backend="inline",
         )
     )
-    application.dependency_overrides[workbench_service] = lambda: service
+    install_workbench_dependency_overrides(application, components)
     with TestClient(application) as client:
         yield client

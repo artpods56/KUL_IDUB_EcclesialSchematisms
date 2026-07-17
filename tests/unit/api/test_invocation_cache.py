@@ -18,7 +18,7 @@ from notarius_api.services.invocation_cache import (
     InvocationCacheAccessError,
     PersistentInvocationCache,
 )
-from notarius_api.services.workbench import WorkbenchService
+from notarius_api.services.composition import build_workbench_components
 
 
 def _raise_storage_outage(bucket: str, path: str) -> bool:
@@ -174,7 +174,7 @@ async def test_storage_outage_preserves_the_cache_entry(
 
 
 @pytest.mark.asyncio
-async def test_sql_cache_survives_a_fresh_workbench_service(tmp_path: Path) -> None:
+async def test_sql_cache_survives_fresh_workbench_components(tmp_path: Path) -> None:
     database = create_database(
         f"sqlite+aiosqlite:///{tmp_path / 'persistent-cache.sqlite3'}"
     )
@@ -193,21 +193,27 @@ async def test_sql_cache_survives_a_fresh_workbench_service(tmp_path: Path) -> N
     )
 
     try:
-        first_service = WorkbenchService(
+        first_components = build_workbench_components(
             plugin_registry=registry,
+            execution_backend="inline",
             workspace=tmp_path / "workbench",
-            uow=SqlAlchemyUnitOfWork(database.sessions),
+            unit_of_work=SqlAlchemyUnitOfWork(database.sessions),
         )
-        first_response = await first_service.run_graph(request)
+        first_response = await first_components.presenter.run_response(
+            await first_components.run_graph.run(request)
+        )
         first_value = first_response.node_runs[0].outputs[0].value
         assert isinstance(first_value, ArtifactRef)
 
-        fresh_service = WorkbenchService(
+        fresh_components = build_workbench_components(
             plugin_registry=registry,
+            execution_backend="inline",
             workspace=tmp_path / "workbench",
-            uow=SqlAlchemyUnitOfWork(database.sessions),
+            unit_of_work=SqlAlchemyUnitOfWork(database.sessions),
         )
-        repeated_response = await fresh_service.run_graph(request)
+        repeated_response = await fresh_components.presenter.run_response(
+            await fresh_components.run_graph.run(request)
+        )
         repeated_value = repeated_response.node_runs[0].outputs[0].value
         assert isinstance(repeated_value, ArtifactRef)
 

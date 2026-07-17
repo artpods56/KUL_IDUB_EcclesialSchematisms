@@ -102,6 +102,7 @@ def durable_api(tmp_path: Path) -> tuple[Settings, str]:
         Settings(
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
+            execution_backend="inline",
         ),
         database_url,
     )

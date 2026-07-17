@@ -6,7 +6,6 @@ from pydantic import ValidationError
 
 from notarius_core.artifacts import (
     ArtifactRef,
-    ArtifactRefSequence,
     ArtifactTypeKey,
 )
 from notarius_core.domain.modules import (
@@ -39,7 +38,6 @@ from notarius_core.ports.modules import (
     GraphModuleExecutorPort,
 )
 from notarius_core.runtime.execution import NodeRuntime
-from notarius_core.runtime.invocation import InvocationMode, NodeInvocation
 from notarius_core.runtime.materialization import InputMaterializer
 from notarius_core.runtime.persistence import (
     ArtifactWriterRegistry,
@@ -513,31 +511,6 @@ async def test_graph_module_node_delegates_and_preserves_refs_through_runtime() 
     assert called_definition is definition
     assert called_context == context
     assert called_inputs == {"source": source}
-
-
-@pytest.mark.asyncio
-async def test_graph_module_node_uses_existing_map_runtime_for_many_inputs() -> None:
-    executor = EchoModuleExecutor()
-    node = GraphModuleNode(_definition(), executor)
-    refs = [ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE_TYPE) for _ in range(3)]
-    sequence = ArtifactRefSequence.from_key(key=VALUE_TYPE, item_refs=refs)
-
-    result = await _runtime().run_node(
-        node,
-        NodeExecutionContext(node_id="mapped-module"),
-        {"source": sequence},
-        invocation=NodeInvocation(
-            mode=InvocationMode.MAP,
-            map_input="source",
-        ),
-    )
-
-    assert isinstance(result, PersistedNodeOutput)
-    output = result["result"]
-    assert isinstance(output, ArtifactRefSequence)
-    assert output.item_refs == refs
-    assert [call[1].invocation_index for call in executor.calls] == [0, 1, 2]
-    assert [call[2]["source"] for call in executor.calls] == refs
 
 
 @pytest.mark.asyncio

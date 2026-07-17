@@ -194,6 +194,35 @@ independent; it must not be used to assemble or process one conversation message
 at a time. Revision-scoped materialized outputs are whole-node bindings, not
 per-item checkpoints.
 
+The host keeps graph execution responsibilities separate. `RunGraph` coordinates
+run preflight, compilation, pin resolution, execution, and successful
+materialization binding. Preflight checks saved-revision and secret bindings;
+compilation resolves topology, contracts, projections, conversion paths, and
+invocation policy into an immutable plan. A graph execution port receives that
+prepared plan. Its production adapter creates one local Prefect flow per graph
+run, one task per invoked logical node, and one nested task per scalar MAP item.
+The inline adapter follows the same coordinator contract without starting
+Prefect and exists for focused tests and operational diagnosis.
+
+The shared graph coordinator only propagates graph state, skips failed
+dependents, and assembles the run result. Node execution owns input assembly,
+opaque secret revisions, ONCE/MAP expansion, and ordered MAP aggregation. Edge
+value resolution applies the already compiled projection and conversion chain.
+`NodeRuntime` executes and persists exactly one scalar node invocation; it does
+not schedule graphs or implement collection mapping. Prefect result persistence
+and caching are disabled: Notarius remains the source of truth for artifacts,
+invocation caching, materialized outputs, and encrypted node secrets. Decrypted
+secrets and live runtime collaborators never become Prefect parameters or
+results.
+
+Local execution initially visits logical nodes and MAP items sequentially. This
+preserves first-failure, artifact, and unit-of-work semantics while still
+recording real Prefect flow and task runs. If execution later moves to a remote
+single worker, the transport boundary belongs above `RunGraph`: submit a
+serializable run request, then perform preflight and compilation inside that
+worker. The current design does not define multi-worker or per-node remote
+scheduling.
+
 ### Collect node
 
 The generic cardinality-changing operation `Collect<T>`. A Collect node instance

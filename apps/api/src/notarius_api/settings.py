@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     workspace: Path = Path(".notarius-artifacts/workbench")
     database_url: SecretStr | None = None
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    execution_backend: Literal["prefect", "inline"] = "prefect"
+    prefect_task_retries: int = Field(default=0, ge=0)
+    prefect_task_retry_delay_seconds: float = Field(default=0, ge=0)
     storage_backend: Literal["local", "s3"] = "local"
     storage_bucket: str = Field(default="workbench-artifacts", min_length=1)
     s3_endpoint_url: str | None = None

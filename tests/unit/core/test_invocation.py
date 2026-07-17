@@ -16,7 +16,6 @@ from notarius_core.artifacts import (
 )
 from notarius_core.domain.invocation_cache import InvocationCacheEntry
 from notarius_core.nodes import (
-    ArtifactTypeVariable,
     InPort,
     Node,
     NodeExecutionContext,
@@ -276,34 +275,6 @@ class PassthroughOutput(NodeOutput):
     value: Annotated[object, OutPort(OUTPUT_VALUE)]
 
 
-GENERIC_VALUE = ArtifactTypeVariable("T")
-
-
-class GenericPassthroughInput(NodeInput):
-    value: Annotated[ArtifactRef, InPort(GENERIC_VALUE)]
-
-
-class GenericPassthroughOutput(NodeOutput):
-    value: Annotated[ArtifactRef, OutPort(GENERIC_VALUE)]
-
-
-class GenericPassthroughNode(
-    Node[NoConfig, GenericPassthroughInput, GenericPassthroughOutput]
-):
-    operator_id: ClassVar[str] = "test.generic_passthrough"
-    operator_version: ClassVar[int] = 1
-
-    @override
-    async def run(
-        self,
-        _context: NodeExecutionContext,
-        _config: NoConfig,
-        inputs: GenericPassthroughInput,
-        /,
-    ) -> GenericPassthroughOutput:
-        return GenericPassthroughOutput(value=inputs.value)
-
-
 def runtime_with(
     resolver: IntResolver,
     writer: RecordingWriter,
@@ -347,86 +318,6 @@ async def test_once_invokes_collection_node_once_with_the_whole_sequence() -> No
     assert result["total"] == writer.refs[0]
 
 
-@pytest.mark.asyncio
-async def test_map_invokes_in_order_broadcasts_and_aggregates_outputs() -> None:
-    first_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=INPUT_VALUE.key)
-    second_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=INPUT_VALUE.key)
-    broadcast_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=INPUT_VALUE.key)
-    resolver = IntResolver(
-        {
-            first_ref.artifact_id: 2,
-            second_ref.artifact_id: 4,
-            broadcast_ref.artifact_id: 10,
-        }
-    )
-    node = ScalarNode()
-    writer = RecordingWriter(lambda: len(node.calls))
-    runtime = runtime_with(resolver, writer)
-    source_sequence = ArtifactRefSequence(
-        artifact_type=INPUT_VALUE.key.id,
-        schema_version=INPUT_VALUE.key.schema_version,
-        item_refs=[first_ref, second_ref],
-        ordered=False,
-        index_key="source_position",
-    )
-    invocation = NodeInvocation(mode=InvocationMode.MAP, map_input="item")
-
-    result = await runtime.run_node(
-        node,
-        NodeExecutionContext(node_id="scalar"),
-        {"item": source_sequence, "broadcast": broadcast_ref},
-        invocation=invocation,
-    )
-
-    assert node.calls == [(0, 2, 10), (1, 4, 10)]
-    assert writer.values == [12, 14]
-    assert writer.item_indexes == [0, 1]
-    assert writer.completed_counts == [1, 2]
-    assert isinstance(result, PersistedNodeOutput)
-    output_sequence = result["value"]
-    assert isinstance(output_sequence, ArtifactRefSequence)
-    assert output_sequence.item_refs == writer.refs
-    assert output_sequence.ordered is False
-    assert output_sequence.index_key == "source_position"
-    assert output_sequence.metadata == {
-        "invocation_mode": "map",
-        "map_input": "item",
-        "source_sequence_id": str(source_sequence.sequence_id),
-    }
-
-
-@pytest.mark.asyncio
-async def test_map_uses_resolved_generic_contract_for_validation_and_output() -> None:
-    first_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=INPUT_VALUE.key)
-    second_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=INPUT_VALUE.key)
-    source = ArtifactRefSequence.from_key(
-        key=INPUT_VALUE.key,
-        item_refs=[first_ref, second_ref],
-    )
-    runtime = NodeRuntime(
-        materializer=InputMaterializer(ResolverRegistry()),
-        persister=OutputPersister(ArtifactWriterRegistry()),
-    )
-
-    result = await runtime.run_node(
-        GenericPassthroughNode(),
-        NodeExecutionContext(node_id="generic"),
-        {"value": source},
-        invocation=NodeInvocation(
-            mode=InvocationMode.MAP,
-            map_input="value",
-        ),
-        artifact_type_bindings={"T": INPUT_VALUE.key},
-    )
-
-    assert isinstance(result, PersistedNodeOutput)
-    output = result["value"]
-    assert isinstance(output, ArtifactRefSequence)
-    assert output.item_refs == [first_ref, second_ref]
-    assert output.artifact_type == INPUT_VALUE.key.id
-    assert output.schema_version == INPUT_VALUE.key.schema_version
-
-
 def test_invocation_capabilities_and_effective_shapes() -> None:
     invocation = NodeInvocation(mode=InvocationMode.MAP, map_input="item")
 
@@ -461,65 +352,6 @@ def test_invalid_map_drivers_and_output_contracts_are_rejected(
             cast(type[ScalarNode], node),
             NodeInvocation(mode=InvocationMode.MAP, map_input=map_input),
         )
-
-
-@pytest.mark.asyncio
-async def test_map_rejects_empty_sequences_before_invocation() -> None:
-    broadcast_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=INPUT_VALUE.key)
-    resolver = IntResolver({broadcast_ref.artifact_id: 10})
-    writer = RecordingWriter()
-    runtime = runtime_with(resolver, writer)
-    node = ScalarNode()
-
-    with pytest.raises(InvocationError, match="MAP input 'item' must not be empty"):
-        await runtime.run_node(
-            node,
-            NodeExecutionContext(node_id="scalar"),
-            {
-                "item": ArtifactRefSequence.from_key(
-                    key=INPUT_VALUE.key,
-                    item_refs=[],
-                ),
-                "broadcast": broadcast_ref,
-            },
-            invocation=NodeInvocation(
-                mode=InvocationMode.MAP,
-                map_input="item",
-            ),
-        )
-
-    assert node.calls == []
-    assert writer.values == []
-
-
-@pytest.mark.asyncio
-async def test_map_error_preserves_item_context_and_original_cause() -> None:
-    missing_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=INPUT_VALUE.key)
-    broadcast_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=INPUT_VALUE.key)
-    resolver = IntResolver({broadcast_ref.artifact_id: 10})
-    runtime = runtime_with(resolver, RecordingWriter())
-
-    with pytest.raises(
-        InvocationError,
-        match=f"item 0 \\({missing_ref.artifact_id}\\)",
-    ) as raised:
-        await runtime.run_node(
-            ScalarNode(),
-            NodeExecutionContext(node_id="scalar"),
-            {
-                "item": ArtifactRefSequence.from_key(
-                    key=INPUT_VALUE.key,
-                    item_refs=[missing_ref],
-                ),
-                "broadcast": broadcast_ref,
-            },
-            invocation=NodeInvocation(
-                mode=InvocationMode.MAP,
-                map_input="item",
-            ),
-        )
-
-    assert isinstance(raised.value.__cause__, KeyError)
 
 
 @pytest.mark.asyncio
@@ -683,7 +515,6 @@ def test_invocation_cache_key_is_canonical_and_scoped_to_stable_context() -> Non
         context=first_context,
         inputs={"item": input_ref},
         config=FingerprintConfig.model_validate({}),
-        invocation=NodeInvocation(),
         artifact_type_bindings={
             "Z": OTHER_VALUE.key,
             "A": INPUT_VALUE.key,
@@ -695,7 +526,6 @@ def test_invocation_cache_key_is_canonical_and_scoped_to_stable_context() -> Non
         context=second_context,
         inputs={"item": input_ref},
         config=FingerprintConfig.model_validate({"offset": 7}),
-        invocation=NodeInvocation(),
         artifact_type_bindings={
             "A": INPUT_VALUE.key,
             "Z": OTHER_VALUE.key,
@@ -713,7 +543,6 @@ def test_invocation_cache_key_is_canonical_and_scoped_to_stable_context() -> Non
         ),
         inputs={"item": input_ref},
         config=FingerprintConfig.model_validate({}),
-        invocation=NodeInvocation(),
         artifact_type_bindings={"A": INPUT_VALUE.key, "Z": OTHER_VALUE.key},
         opaque_secret_revisions={"primary": "r1", "secondary": "r2"},
     )
@@ -722,9 +551,20 @@ def test_invocation_cache_key_is_canonical_and_scoped_to_stable_context() -> Non
         context=first_context,
         inputs={"item": input_ref},
         config=FingerprintConfig.model_validate({}),
-        invocation=NodeInvocation(),
         artifact_type_bindings={"A": INPUT_VALUE.key, "Z": OTHER_VALUE.key},
         opaque_secret_revisions={"primary": "changed", "secondary": "r2"},
+    )
+    assert first != invocation_cache_key(
+        node=node,
+        context=NodeExecutionContext(
+            node_id="stable-node",
+            invocation_index=0,
+            module_path=("graph.module.example@3",),
+        ),
+        inputs={"item": input_ref},
+        config=FingerprintConfig.model_validate({}),
+        artifact_type_bindings={"A": INPUT_VALUE.key, "Z": OTHER_VALUE.key},
+        opaque_secret_revisions={"primary": "r1", "secondary": "r2"},
     )
 
 
@@ -740,7 +580,6 @@ def test_invocation_cache_key_requires_input_content_hashes() -> None:
             context=NodeExecutionContext(node_id="scalar"),
             inputs={"item": input_ref},
             config=NoConfig(),
-            invocation=NodeInvocation(),
             artifact_type_bindings={},
             opaque_secret_revisions={},
         )
@@ -837,129 +676,3 @@ async def test_exact_cache_bypasses_inputs_without_content_hashes() -> None:
     assert node.calls == [(None, [3]), (None, [3])]
     assert writer.values == [3, 3]
     assert cache.entries == {}
-
-
-@pytest.mark.asyncio
-async def test_exact_map_cache_reuses_items_and_persists_each_miss_immediately() -> (
-    None
-):
-    first_ref = ArtifactRef.from_key(
-        artifact_id=uuid4(),
-        key=INPUT_VALUE.key,
-        content_hash="1" * 64,
-    )
-    second_ref = ArtifactRef.from_key(
-        artifact_id=uuid4(),
-        key=INPUT_VALUE.key,
-        content_hash="2" * 64,
-    )
-    broadcast_ref = ArtifactRef.from_key(
-        artifact_id=uuid4(),
-        key=INPUT_VALUE.key,
-        content_hash="3" * 64,
-    )
-    resolver = IntResolver(
-        {
-            first_ref.artifact_id: 2,
-            second_ref.artifact_id: 4,
-            broadcast_ref.artifact_id: 10,
-        }
-    )
-    cache = MemoryInvocationCache()
-    node = ScalarNode()
-    writer = RecordingWriter(lambda: len(node.calls))
-    runtime = runtime_with(resolver, writer, cache)
-    invocation = NodeInvocation(mode=InvocationMode.MAP, map_input="item")
-
-    first_run = await runtime.run_node(
-        node,
-        NodeExecutionContext(node_id="scalar"),
-        {
-            "item": ArtifactRefSequence.from_key(
-                key=INPUT_VALUE.key,
-                item_refs=[first_ref],
-            ),
-            "broadcast": broadcast_ref,
-        },
-        invocation=invocation,
-        cache_policy=NodeCachePolicy.EXACT,
-    )
-    second_source = ArtifactRefSequence.from_key(
-        key=INPUT_VALUE.key,
-        item_refs=[first_ref, second_ref],
-    )
-    second_run = await runtime.run_node(
-        node,
-        NodeExecutionContext(node_id="scalar"),
-        {"item": second_source, "broadcast": broadcast_ref},
-        invocation=invocation,
-        cache_policy=NodeCachePolicy.EXACT,
-    )
-
-    assert isinstance(first_run, PersistedNodeOutput)
-    assert isinstance(second_run, PersistedNodeOutput)
-    assert first_run.cache_hits == 0
-    assert first_run.cache_misses == 1
-    assert second_run.cache_hits == 1
-    assert second_run.cache_misses == 1
-    first_outputs = first_run["value"]
-    second_outputs = second_run["value"]
-    assert isinstance(first_outputs, ArtifactRefSequence)
-    assert isinstance(second_outputs, ArtifactRefSequence)
-    assert second_outputs.item_refs == [first_outputs.item_refs[0], writer.refs[1]]
-    assert second_outputs.metadata["source_sequence_id"] == str(
-        second_source.sequence_id
-    )
-    assert node.calls == [(0, 2, 10), (1, 4, 10)]
-    assert writer.values == [12, 14]
-    assert writer.completed_counts == [1, 2]
-    assert len(cache.entries) == 2
-
-
-@pytest.mark.asyncio
-async def test_map_persists_completed_misses_but_never_caches_failed_item() -> None:
-    first_ref = ArtifactRef.from_key(
-        artifact_id=uuid4(),
-        key=INPUT_VALUE.key,
-        content_hash="1" * 64,
-    )
-    missing_ref = ArtifactRef.from_key(
-        artifact_id=uuid4(),
-        key=INPUT_VALUE.key,
-        content_hash="2" * 64,
-    )
-    broadcast_ref = ArtifactRef.from_key(
-        artifact_id=uuid4(),
-        key=INPUT_VALUE.key,
-        content_hash="3" * 64,
-    )
-    resolver = IntResolver(
-        {
-            first_ref.artifact_id: 2,
-            broadcast_ref.artifact_id: 10,
-        }
-    )
-    writer = RecordingWriter()
-    cache = MemoryInvocationCache()
-    runtime = runtime_with(resolver, writer, cache)
-
-    with pytest.raises(InvocationError, match="failed at item 1"):
-        await runtime.run_node(
-            ScalarNode(),
-            NodeExecutionContext(node_id="scalar"),
-            {
-                "item": ArtifactRefSequence.from_key(
-                    key=INPUT_VALUE.key,
-                    item_refs=[first_ref, missing_ref],
-                ),
-                "broadcast": broadcast_ref,
-            },
-            invocation=NodeInvocation(
-                mode=InvocationMode.MAP,
-                map_input="item",
-            ),
-            cache_policy=NodeCachePolicy.EXACT,
-        )
-
-    assert writer.values == [12]
-    assert len(cache.entries) == 1

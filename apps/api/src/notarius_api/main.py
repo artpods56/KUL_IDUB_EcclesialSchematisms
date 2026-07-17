@@ -21,7 +21,7 @@ from notarius_storage import create_file_storage
 
 from notarius_api.builtins import builtin_plugins
 from notarius_api.plugin_discovery import build_plugin_registry
-from notarius_api.services.workbench import WorkbenchService
+from notarius_api.services.composition import build_workbench_components
 from notarius_api.services.node_secrets import NodeSecretService
 from notarius_api.settings import Settings, get_settings
 from notarius_api.v1.routes.saved_graphs import router as saved_graphs_router
@@ -94,16 +94,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             plugin_registry=registry,
             encryption_key=resolved_settings.credential_encryption_key,
         )
-        app.state.workbench = WorkbenchService(
+        components = build_workbench_components(
             plugin_registry=registry,
             workspace=resolved_settings.workspace,
-            uow=SqlAlchemyUnitOfWork(database.sessions),
+            unit_of_work=SqlAlchemyUnitOfWork(database.sessions),
             storage=storage,
+            execution_backend=resolved_settings.execution_backend,
+            prefect_task_retries=resolved_settings.prefect_task_retries,
+            prefect_task_retry_delay_seconds=(
+                resolved_settings.prefect_task_retry_delay_seconds
+            ),
             storage_backend=resolved_settings.storage_backend,
             bucket=resolved_settings.storage_bucket,
             saved_graphs=saved_graphs,
             node_secrets=node_secrets,
         )
+        app.state.workbench_plugin_registry = components.plugin_registry
+        app.state.image_uploads = components.uploads
+        app.state.graph_modules = components.modules
+        app.state.run_graph = components.run_graph
+        app.state.materializations = components.materializations
+        app.state.run_result_presenter = components.presenter
+        app.state.artifacts = components.artifacts
         app.state.saved_graphs = saved_graphs
         app.state.node_secrets = node_secrets
         try:
@@ -111,7 +123,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             del app.state.node_secrets
             del app.state.saved_graphs
-            del app.state.workbench
+            del app.state.artifacts
+            del app.state.run_result_presenter
+            del app.state.materializations
+            del app.state.run_graph
+            del app.state.graph_modules
+            del app.state.image_uploads
+            del app.state.workbench_plugin_registry
             await database.dispose()
 
     application = FastAPI(

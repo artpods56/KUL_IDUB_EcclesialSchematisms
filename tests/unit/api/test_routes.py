@@ -5,27 +5,34 @@ from typing import cast
 import pytest
 from fastapi.testclient import TestClient
 
-from notarius_api.builtins import builtin_plugins
 from notarius_api.main import create_app
-from notarius_api.plugin_discovery import build_plugin_registry
 from notarius_api.schemas.workbench import NodeRegistryResponse, RunResponse
-from notarius_api.services.workbench import WorkbenchService
+from notarius_api.services.uploads import ImageUploadService
 from notarius_core.plugins import PluginOrigin
 
 
-def test_application_lifespan_builds_and_releases_workbench_service() -> None:
+def test_application_lifespan_builds_and_releases_workbench_components() -> None:
     application = create_app()
-    assert not hasattr(application.state, "workbench")
+    leaf_state_names = (
+        "workbench_plugin_registry",
+        "image_uploads",
+        "graph_modules",
+        "run_graph",
+        "materializations",
+        "run_result_presenter",
+        "artifacts",
+    )
+    assert all(not hasattr(application.state, name) for name in leaf_state_names)
 
     with TestClient(application) as client:
         response = client.get("/health")
 
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
-        assert isinstance(application.state.workbench, WorkbenchService)
-        assert application.state.workbench.plugin_registry.plugins
+        assert all(hasattr(application.state, name) for name in leaf_state_names)
+        assert application.state.workbench_plugin_registry.plugins
 
-    assert not hasattr(application.state, "workbench")
+    assert all(not hasattr(application.state, name) for name in leaf_state_names)
 
 
 def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
@@ -195,13 +202,7 @@ async def test_upload_from_relative_workspace_returns_opaque_upload_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    service = WorkbenchService(
-        plugin_registry=build_plugin_registry(
-            builtin_plugins(),
-            external_plugins=(),
-        ),
-        workspace=Path("relative-workbench"),
-    )
+    service = ImageUploadService(Path("relative-workbench/uploads"))
 
     item = await service.save_image_upload(
         "page.png",

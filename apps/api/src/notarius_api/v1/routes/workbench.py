@@ -18,7 +18,8 @@ from notarius_core.nodes import (
     PortShape,
 )
 from notarius_core.operators.modules import GraphModuleNode
-from notarius_core.plugins import NodeRegistration, PluginOrigin
+from notarius_core.plugins import NodeRegistration, PluginOrigin, PluginRegistry
+from notarius_core.ports.modules import GraphModuleExecutorPort
 
 from notarius_api.schemas.workbench import (
     ArtifactConversionKeyResponse,
@@ -39,33 +40,119 @@ from notarius_api.schemas.workbench import (
     SampleRequest,
     UploadRequest,
 )
-from notarius_api.services.workbench import (
+from notarius_api.services.artifacts import ArtifactService
+from notarius_api.services.errors import WorkbenchOperationError
+from notarius_api.services.execution.run_graph import RunGraph
+from notarius_api.services.materializations import MaterializationService
+from notarius_api.services.modules import (
     GRAPH_MODULE_PLUGIN_SLUG,
+    GraphModuleCatalog,
     GraphModuleCatalogEntry,
-    WorkbenchGraphError,
-    WorkbenchService,
 )
+from notarius_api.services.run_presenter import RunResultPresenter
+from notarius_api.services.uploads import ImageUploadService
 
 router = APIRouter(tags=["workbench"])
 
 
-def workbench_service(request: Request) -> WorkbenchService:
-    service = getattr(request.app.state, "workbench", None)
-    if not isinstance(service, WorkbenchService):
-        raise RuntimeError("Workbench service is not initialized")
+def workbench_plugin_registry(request: Request) -> PluginRegistry:
+    registry = getattr(request.app.state, "workbench_plugin_registry", None)
+    if not isinstance(registry, PluginRegistry):
+        raise RuntimeError("Workbench plugin registry is not initialized")
+    return registry
+
+
+PluginRegistryDependency = Annotated[
+    PluginRegistry,
+    Depends(workbench_plugin_registry),
+]
+
+
+def image_upload_service(request: Request) -> ImageUploadService:
+    service = getattr(request.app.state, "image_uploads", None)
+    if not isinstance(service, ImageUploadService):
+        raise RuntimeError("Image upload service is not initialized")
     return service
 
 
-WorkbenchDependency = Annotated[
-    WorkbenchService,
-    Depends(workbench_service),
+ImageUploadDependency = Annotated[
+    ImageUploadService,
+    Depends(image_upload_service),
+]
+
+
+def run_graph_service(request: Request) -> RunGraph:
+    service = getattr(request.app.state, "run_graph", None)
+    if not isinstance(service, RunGraph):
+        raise RuntimeError("Run graph service is not initialized")
+    return service
+
+
+RunGraphDependency = Annotated[
+    RunGraph,
+    Depends(run_graph_service),
+]
+
+
+def materialization_service(request: Request) -> MaterializationService:
+    service = getattr(request.app.state, "materializations", None)
+    if not isinstance(service, MaterializationService):
+        raise RuntimeError("Materialization service is not initialized")
+    return service
+
+
+MaterializationDependency = Annotated[
+    MaterializationService,
+    Depends(materialization_service),
+]
+
+
+def run_result_presenter(request: Request) -> RunResultPresenter:
+    presenter = getattr(request.app.state, "run_result_presenter", None)
+    if not isinstance(presenter, RunResultPresenter):
+        raise RuntimeError("Run result presenter is not initialized")
+    return presenter
+
+
+RunResultPresenterDependency = Annotated[
+    RunResultPresenter,
+    Depends(run_result_presenter),
+]
+
+
+def artifact_service(request: Request) -> ArtifactService:
+    service = getattr(request.app.state, "artifacts", None)
+    if not isinstance(service, ArtifactService):
+        raise RuntimeError("Artifact service is not initialized")
+    return service
+
+
+ArtifactDependency = Annotated[
+    ArtifactService,
+    Depends(artifact_service),
+]
+
+
+def graph_module_catalog(request: Request) -> GraphModuleCatalog:
+    catalog = getattr(request.app.state, "graph_modules", None)
+    if not isinstance(catalog, GraphModuleCatalog):
+        raise RuntimeError("Graph module catalog is not initialized")
+    return catalog
+
+
+GraphModuleCatalogDependency = Annotated[
+    GraphModuleCatalog,
+    Depends(graph_module_catalog),
 ]
 
 
 @router.get("/nodes", response_model=NodeRegistryResponse)
-async def list_nodes(service: WorkbenchDependency) -> NodeRegistryResponse:
-    registry = service.plugin_registry
-    module_entries = await service.list_graph_modules()
+async def list_nodes(
+    registry: PluginRegistryDependency,
+    modules: GraphModuleCatalogDependency,
+    module_executor: RunGraphDependency,
+) -> NodeRegistryResponse:
+    module_entries = await modules.list()
     return NodeRegistryResponse(
         plugins=[
             PluginSpecResponse(
@@ -100,28 +187,28 @@ async def list_nodes(service: WorkbenchDependency) -> NodeRegistryResponse:
         nodes=[
             _node_registration_response(registration) for registration in registry.nodes
         ]
-        + [_graph_module_response(entry, service) for entry in module_entries],
+        + [_graph_module_response(entry, module_executor) for entry in module_entries],
     )
 
 
 @router.post("/uploads", response_model=ImageUploadItemResponse)
 async def upload_file(
     request: UploadRequest,
-    service: WorkbenchDependency,
+    service: ImageUploadDependency,
 ) -> ImageUploadItemResponse:
     try:
         return await service.save_image_upload(
             filename=request.filename,
             content_base64=request.content_base64,
         )
-    except WorkbenchGraphError as exc:
+    except WorkbenchOperationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/samples", response_model=list[ImageUploadItemResponse])
 async def create_samples(
     request: SampleRequest,
-    service: WorkbenchDependency,
+    service: ImageUploadDependency,
 ) -> list[ImageUploadItemResponse]:
     return await service.create_sample_images(request.count)
 
@@ -129,15 +216,17 @@ async def create_samples(
 @router.post("/runs", response_model=RunResponse)
 async def run_graph(
     request: RunRequest,
-    service: WorkbenchDependency,
+    service: RunGraphDependency,
+    presenter: RunResultPresenterDependency,
 ) -> RunResponse:
     try:
-        return await service.run_graph(request)
+        execution = await service.run(request)
+        return await presenter.run_response(execution)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SavedGraphRevisionConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except WorkbenchGraphError as exc:
+    except WorkbenchOperationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
@@ -148,32 +237,38 @@ async def run_graph(
 async def get_graph_materializations(
     graph_id: UUID,
     graph_revision: Annotated[int, Query(ge=1)],
-    service: WorkbenchDependency,
+    service: MaterializationDependency,
+    presenter: RunResultPresenterDependency,
 ) -> GraphMaterializationsResponse:
     try:
-        return await service.get_graph_materializations(
-            graph_id=graph_id,
-            graph_revision=graph_revision,
+        materializations = await service.list_for_graph(
+            graph_id,
+            graph_revision,
+        )
+        return await presenter.materializations_response(
+            graph_id,
+            graph_revision,
+            materializations,
         )
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SavedGraphRevisionConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except WorkbenchGraphError as exc:
+    except WorkbenchOperationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/artifacts/{artifact_id}/content")
 async def get_artifact_content(
     artifact_id: UUID,
-    service: WorkbenchDependency,
+    service: ArtifactDependency,
 ) -> Response:
-    artifact = await service.get_artifact(artifact_id)
+    artifact = await service.get(artifact_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     try:
-        content = await service.load_artifact_content(artifact)
-    except WorkbenchGraphError as exc:
+        content = await service.load_content(artifact)
+    except WorkbenchOperationError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     headers: dict[str, str] = {}
     download_name = artifact.metadata.get("download_name")
@@ -220,10 +315,10 @@ def _node_registration_response(
 
 def _graph_module_response(
     entry: GraphModuleCatalogEntry,
-    service: WorkbenchService,
+    module_executor: GraphModuleExecutorPort,
 ) -> NodeSpecResponse:
     definition = entry.definition
-    node = GraphModuleNode(definition, service)
+    node = GraphModuleNode(definition, module_executor)
     return NodeSpecResponse(
         operator_id=node.operator_id,
         operator_version=node.operator_version,

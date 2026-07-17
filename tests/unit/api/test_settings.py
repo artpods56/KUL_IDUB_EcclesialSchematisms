@@ -1,6 +1,43 @@
-from pydantic import SecretStr
+import pytest
+from pydantic import SecretStr, ValidationError
 
 from notarius_api.settings import Settings
+
+
+def test_execution_defaults_to_prefect_without_task_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NOTARIUS_EXECUTION_BACKEND", raising=False)
+    monkeypatch.delenv("NOTARIUS_PREFECT_TASK_RETRIES", raising=False)
+    monkeypatch.delenv(
+        "NOTARIUS_PREFECT_TASK_RETRY_DELAY_SECONDS",
+        raising=False,
+    )
+    settings = Settings()
+
+    assert settings.execution_backend == "prefect"
+    assert settings.prefect_task_retries == 0
+    assert settings.prefect_task_retry_delay_seconds == 0
+
+
+def test_execution_backend_can_be_selected_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NOTARIUS_EXECUTION_BACKEND", "inline")
+
+    assert Settings().execution_backend == "inline"
+
+
+def test_execution_backend_rejects_unknown_values() -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate({"execution_backend": "worker"})
+
+
+def test_prefect_task_retry_settings_must_not_be_negative() -> None:
+    with pytest.raises(ValidationError):
+        Settings(prefect_task_retries=-1)
+    with pytest.raises(ValidationError):
+        Settings(prefect_task_retry_delay_seconds=-0.1)
 
 
 def test_database_url_is_redacted_from_serialized_settings() -> None:

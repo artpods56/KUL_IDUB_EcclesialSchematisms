@@ -27,11 +27,14 @@ from notarius_api.builtins import builtin_plugins
 from notarius_api.main import create_app
 from notarius_api.plugin_discovery import build_plugin_registry
 from notarius_api.services.node_secrets import NodeSecretService
-from notarius_api.services.workbench import WorkbenchService
+from notarius_api.services.composition import (
+    build_workbench_components,
+)
 from notarius_api.settings import Settings
 from notarius_api.v1.routes.saved_graphs import saved_graph_service
 from notarius_api.v1.routes.node_secrets import node_secret_service
-from notarius_api.v1.routes.workbench import workbench_service
+
+from tests.unit.api.conftest import install_workbench_dependency_overrides
 
 
 SECRET_MODULE_PLUGIN = Plugin(
@@ -117,10 +120,11 @@ def module_client(tmp_path: Path) -> Iterator[TestClient]:
         plugin_registry=registry,
         encryption_key=SecretStr(base64.b64encode(b"m" * 32).decode("ascii")),
     )
-    workbench = WorkbenchService(
+    components = build_workbench_components(
         plugin_registry=registry,
+        execution_backend="inline",
         workspace=tmp_path / "workbench",
-        uow=InMemoryUnitOfWork(),
+        unit_of_work=InMemoryUnitOfWork(),
         saved_graphs=saved_graphs,
         node_secrets=node_secrets,
     )
@@ -128,9 +132,10 @@ def module_client(tmp_path: Path) -> Iterator[TestClient]:
         Settings(
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
+            execution_backend="inline",
         )
     )
-    application.dependency_overrides[workbench_service] = lambda: workbench
+    install_workbench_dependency_overrides(application, components)
     application.dependency_overrides[saved_graph_service] = lambda: saved_graphs
     application.dependency_overrides[node_secret_service] = lambda: node_secrets
     with TestClient(application) as client:

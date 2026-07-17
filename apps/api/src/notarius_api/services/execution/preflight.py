@@ -1,0 +1,249 @@
+"""Saved-revision and secret-binding preflight for graph runs."""
+
+from collections import Counter
+from dataclasses import dataclass
+from typing import cast
+from uuid import UUID
+
+from notarius_core.application.saved_graphs import SavedGraphService
+from notarius_core.domain.node_secrets import (
+    InvalidNodeSecretDependenciesError,
+    JsonValue,
+    canonical_node_secret_dependencies,
+)
+from notarius_core.domain.saved_graphs import SavedGraph, SavedGraphRevision
+from notarius_core.plugins import PluginRegistry
+
+from notarius_api.schemas.workbench import RunEdgeRequest, RunNodeRequest, RunRequest
+from notarius_api.services.execution.errors import GraphExecutionError
+
+
+@dataclass(frozen=True, slots=True)
+class GraphRunContext:
+    secret_node_ids: frozenset[str]
+
+
+class GraphRunPreflight:
+    """Authorize a submitted fragment against its saved graph contexts."""
+
+    def __init__(
+        self,
+        *,
+        plugin_registry: PluginRegistry,
+        saved_graphs: SavedGraphService | None,
+    ) -> None:
+        self._registrations = {
+            registration.key: registration for registration in plugin_registry.nodes
+        }
+        self._plugin_registry = plugin_registry
+        self._saved_graphs = saved_graphs
+
+    async def validate(self, request: RunRequest) -> GraphRunContext:
+        submitted_secret_nodes: set[str] = set()
+        for node in request.nodes:
+            registration = self._registrations.get(
+                (node.operator_id, node.operator_version)
+            )
+            if registration is not None and registration.secret_inputs:
+                submitted_secret_nodes.add(node.id)
+        if submitted_secret_nodes and request.secret_graph_id is None:
+            rendered_node_ids = ", ".join(
+                repr(node_id) for node_id in sorted(submitted_secret_nodes)
+            )
+            raise GraphExecutionError(
+                "A saved secret graph context is required to run secret-bearing "
+                f"nodes: {rendered_node_ids}"
+            )
+
+        saved_graph_context: SavedGraphRevision | None = None
+        if request.graph_id is not None and request.graph_revision is not None:
+            saved_graph_context = await self._saved_graph_revision(
+                request.graph_id,
+                request.graph_revision,
+            )
+            _validate_saved_graph_fragment(
+                saved_graph_context,
+                request.nodes,
+                request.edges,
+            )
+
+        secret_node_ids: set[str] = set()
+        if (
+            request.secret_graph_id is not None
+            and request.secret_graph_revision is not None
+        ):
+            secret_graph = saved_graph_context
+            if secret_graph is None:
+                secret_graph = await self._saved_graph_revision(
+                    request.secret_graph_id,
+                    request.secret_graph_revision,
+                )
+            secret_node_ids = _validate_secret_graph_bindings(
+                secret_graph,
+                request.nodes,
+                self._plugin_registry,
+            )
+        return GraphRunContext(secret_node_ids=frozenset(secret_node_ids))
+
+    async def _saved_graph_revision(
+        self,
+        graph_id: UUID,
+        graph_revision: int,
+    ) -> SavedGraphRevision:
+        if self._saved_graphs is None:
+            raise GraphExecutionError(
+                "Saved graph context is not configured for this workbench"
+            )
+        return await self._saved_graphs.get_revision(graph_id, graph_revision)
+
+
+def _validate_saved_graph_fragment(
+    graph: SavedGraph | SavedGraphRevision,
+    nodes: list[RunNodeRequest],
+    edges: list[RunEdgeRequest],
+) -> None:
+    saved_nodes = {node.id: node for node in graph.document.nodes}
+    for node in nodes:
+        saved_node = saved_nodes.get(node.id)
+        if saved_node is None:
+            raise GraphExecutionError(
+                f"Run node {node.id!r} does not belong to saved graph {graph.id} "
+                f"revision {graph.revision}"
+            )
+        if (
+            node.operator_id != saved_node.operator_id
+            or node.operator_version != saved_node.operator_version
+            or node.config != saved_node.config_dict()
+            or tuple((plug.id, plug.port) for plug in node.input_plugs)
+            != tuple((plug.id, plug.port) for plug in saved_node.input_plugs)
+            or {
+                binding.variable: binding.artifact_type.to_key()
+                for binding in node.artifact_type_bindings
+            }
+            != {
+                binding.variable: binding.artifact_type
+                for binding in saved_node.artifact_type_bindings
+            }
+        ):
+            raise GraphExecutionError(
+                f"Run node {node.id!r} does not match saved graph {graph.id} "
+                f"revision {graph.revision}"
+            )
+
+    executed_node_ids = {node.id for node in nodes}
+    saved_incoming_edges = Counter(
+        (
+            edge.from_node,
+            edge.from_port,
+            edge.to_node,
+            edge.to_port,
+            edge.to_plug,
+            edge.collection_mode,
+            tuple(edge.projection.path) if edge.projection is not None else None,
+            tuple(
+                (conversion.id, conversion.version)
+                for conversion in edge.conversion_path
+            ),
+        )
+        for edge in graph.document.edges
+        if edge.to_node in executed_node_ids
+    )
+    submitted_edges = Counter(
+        (
+            edge.from_node,
+            edge.from_port,
+            edge.to_node,
+            edge.to_port,
+            edge.to_plug,
+            edge.collection_mode,
+            tuple(edge.projection.path) if edge.projection is not None else None,
+            tuple(
+                (conversion.id, conversion.version)
+                for conversion in edge.conversion_path
+            ),
+        )
+        for edge in edges
+    )
+    if submitted_edges != saved_incoming_edges:
+        missing_count = sum((saved_incoming_edges - submitted_edges).values())
+        unexpected_count = sum((submitted_edges - saved_incoming_edges).values())
+        raise GraphExecutionError(
+            "Run edges do not match the saved incoming edges for the executed "
+            f"nodes in graph {graph.id} revision {graph.revision}: "
+            f"{missing_count} missing and {unexpected_count} unexpected or duplicated"
+        )
+
+
+def _validate_secret_graph_bindings(
+    graph: SavedGraph | SavedGraphRevision,
+    nodes: list[RunNodeRequest],
+    plugin_registry: PluginRegistry,
+) -> set[str]:
+    registrations = {
+        registration.key: registration for registration in plugin_registry.nodes
+    }
+    saved_nodes = {node.id: node for node in graph.document.nodes}
+    validated_node_ids: set[str] = set()
+
+    for node in nodes:
+        registration = registrations.get((node.operator_id, node.operator_version))
+        if registration is None or not registration.secret_inputs:
+            continue
+        saved_node = saved_nodes.get(node.id)
+        if saved_node is None:
+            raise GraphExecutionError(
+                f"Secret-bearing run node {node.id!r} does not belong to saved "
+                f"graph {graph.id} revision {graph.revision}"
+            )
+        if (
+            saved_node.operator_id != node.operator_id
+            or saved_node.operator_version != node.operator_version
+        ):
+            raise GraphExecutionError(
+                f"Secret-bearing run node {node.id!r} does not match the saved "
+                f"operator in graph {graph.id} revision {graph.revision}"
+            )
+
+        config_model = registration.node_class.config_contract.model
+        try:
+            submitted_config = config_model.model_validate(node.config).model_dump(
+                mode="json"
+            )
+            saved_config = config_model.model_validate(
+                saved_node.config_dict()
+            ).model_dump(mode="json")
+        except ValueError as exc:
+            raise GraphExecutionError(
+                f"Secret-bearing run node {node.id!r} has invalid configuration"
+            ) from exc
+
+        for declaration in registration.secret_inputs:
+            submitted_dependencies = {
+                dependency: cast(JsonValue, submitted_config[dependency])
+                for dependency in declaration.config_dependencies
+            }
+            saved_dependencies = {
+                dependency: cast(JsonValue, saved_config[dependency])
+                for dependency in declaration.config_dependencies
+            }
+            try:
+                dependencies_match = canonical_node_secret_dependencies(
+                    submitted_dependencies
+                ) == canonical_node_secret_dependencies(saved_dependencies)
+            except InvalidNodeSecretDependenciesError as exc:
+                raise GraphExecutionError(
+                    f"Secret-bearing run node {node.id!r} has invalid secret "
+                    "configuration dependencies"
+                ) from exc
+            if not dependencies_match:
+                raise GraphExecutionError(
+                    f"Secret-bearing run node {node.id!r} does not match the "
+                    f"saved configuration required by secret input "
+                    f"{declaration.name!r}"
+                )
+        validated_node_ids.add(node.id)
+
+    return validated_node_ids
+
+
+__all__ = ["GraphRunContext", "GraphRunPreflight"]

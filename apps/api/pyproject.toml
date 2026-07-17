@@ -13,8 +13,10 @@ dependencies = [
     "notarius-persistence",
     "notarius-storage",
     "pillow",
+    "prefect==3.6.21",
     "pydantic",
     "pydantic-settings>=2.12.0",
+    "starlette<1.0.0",
     "uvicorn>=0.38.0",
 ]
 

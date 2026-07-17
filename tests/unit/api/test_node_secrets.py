@@ -27,16 +27,21 @@ from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from notarius_api.main import create_app
 from notarius_api.schemas.workbench import RunNodeRequest, RunRequest
+from notarius_api.services.composition import (
+    WorkbenchComponents,
+    build_workbench_components,
+)
+from notarius_api.services.execution.errors import GraphExecutionError
 from notarius_api.services.node_secrets import (
     NodeSecretConfigurationError,
     NodeSecretDeclarationError,
     NodeSecretService,
     NodeSecretValueError,
 )
-from notarius_api.services.workbench import WorkbenchGraphError, WorkbenchService
 from notarius_api.settings import Settings
 from notarius_api.v1.routes.node_secrets import node_secret_service
-from notarius_api.v1.routes.workbench import workbench_service
+
+from tests.unit.api.conftest import install_workbench_dependency_overrides
 
 
 class SecretTestConfig(NodeConfig):
@@ -659,14 +664,15 @@ async def test_saved_run_passes_validated_graph_context_to_node(
 ) -> None:
     _, _, saved_graphs, registry = node_secret_setup
     graph = await _saved_secret_graph(saved_graphs)
-    workbench = WorkbenchService(
+    components = build_workbench_components(
         plugin_registry=registry,
+        execution_backend="inline",
         workspace=tmp_path / "context-workbench",
         saved_graphs=saved_graphs,
     )
     SecretTestNode.captured_contexts.clear()
 
-    response = await workbench.run_graph(
+    execution = await components.run_graph.run(
         RunRequest(
             graph_id=graph.id,
             graph_revision=graph.revision,
@@ -687,7 +693,7 @@ async def test_saved_run_passes_validated_graph_context_to_node(
         )
     )
 
-    assert response.status == "succeeded"
+    assert execution.status == "succeeded"
     assert len(SecretTestNode.captured_contexts) == 1
     context = SecretTestNode.captured_contexts[0]
     assert context.graph_id == graph.id
@@ -709,15 +715,16 @@ async def test_dirty_run_uses_saved_secret_binding_without_materialization_conte
 ) -> None:
     _, _, saved_graphs, registry = node_secret_setup
     graph = await _saved_secret_graph(saved_graphs)
-    workbench = WorkbenchService(
+    components = build_workbench_components(
         plugin_registry=registry,
+        execution_backend="inline",
         workspace=tmp_path / "dirty-context-workbench",
         saved_graphs=saved_graphs,
     )
     SecretTestNode.captured_contexts.clear()
     PlainTestNode.captured_contexts.clear()
 
-    response = await workbench.run_graph(
+    execution = await components.run_graph.run(
         RunRequest(
             secret_graph_id=graph.id,
             secret_graph_revision=graph.revision,
@@ -740,12 +747,16 @@ async def test_dirty_run_uses_saved_secret_binding_without_materialization_conte
             ],
         )
     )
-    materializations = await workbench.get_graph_materializations(
-        graph_id=graph.id,
-        graph_revision=graph.revision,
+    materializations = await components.presenter.materializations_response(
+        graph.id,
+        graph.revision,
+        await components.materializations.list_for_graph(
+            graph.id,
+            graph.revision,
+        ),
     )
 
-    assert response.status == "succeeded"
+    assert execution.status == "succeeded"
     secret_context = SecretTestNode.captured_contexts[0]
     assert secret_context.graph_id is None
     assert secret_context.graph_revision is None
@@ -770,16 +781,17 @@ async def test_secret_bearing_run_requires_explicit_secret_graph_context(
     tmp_path: Path,
 ) -> None:
     _, _, _, registry = node_secret_setup
-    workbench = WorkbenchService(
+    components = build_workbench_components(
         plugin_registry=registry,
+        execution_backend="inline",
         workspace=tmp_path / "missing-secret-context-workbench",
     )
 
     with pytest.raises(
-        WorkbenchGraphError,
+        GraphExecutionError,
         match="saved secret graph context.*'llm'",
     ):
-        await workbench.run_graph(
+        await components.run_graph.run(
             RunRequest(
                 nodes=[
                     RunNodeRequest(
@@ -837,14 +849,15 @@ async def test_dirty_run_rejects_invalid_saved_secret_binding(
         if binding_case == "dependency"
         else "https://llm.example/v1"
     )
-    workbench = WorkbenchService(
+    components = build_workbench_components(
         plugin_registry=registry,
+        execution_backend="inline",
         workspace=tmp_path / f"invalid-binding-{binding_case}",
         saved_graphs=saved_graphs,
     )
 
-    with pytest.raises(WorkbenchGraphError, match=message):
-        await workbench.run_graph(
+    with pytest.raises(GraphExecutionError, match=message):
+        await components.run_graph.run(
             RunRequest(
                 secret_graph_id=graph.id,
                 secret_graph_revision=graph.revision,
@@ -864,7 +877,7 @@ def test_node_secret_routes_never_return_secret_value(tmp_path: Path) -> None:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'routes.sqlite3'}"
     database = create_database(database_url)
 
-    async def prepare() -> tuple[NodeSecretService, WorkbenchService, str]:
+    async def prepare() -> tuple[NodeSecretService, WorkbenchComponents, str]:
         async with database.engine.begin() as connection:
             await connection.run_sync(metadata.create_all)
         registry = PluginRegistry()
@@ -880,23 +893,25 @@ def test_node_secret_routes_never_return_secret_value(tmp_path: Path) -> None:
             plugin_registry=registry,
             encryption_key=_encryption_key(),
         )
-        workbench = WorkbenchService(
+        components = build_workbench_components(
             plugin_registry=registry,
+            execution_backend="inline",
             workspace=tmp_path / "route-workbench",
             saved_graphs=saved_graphs,
             node_secrets=service,
         )
-        return service, workbench, str(graph.id)
+        return service, components, str(graph.id)
 
-    service, workbench, graph_id = asyncio.run(prepare())
+    service, components, graph_id = asyncio.run(prepare())
     application = create_app(
         Settings(
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
+            execution_backend="inline",
         )
     )
     application.dependency_overrides[node_secret_service] = lambda: service
-    application.dependency_overrides[workbench_service] = lambda: workbench
+    install_workbench_dependency_overrides(application, components)
     plaintext = "route-secret-value"
     try:
         with TestClient(application) as client:
