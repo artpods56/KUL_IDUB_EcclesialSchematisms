@@ -17,16 +17,16 @@ import {
   connectionRoutesFor,
   encodeHandleId,
   type ConnectionRoute,
-} from "@/components/canvas/handles";
-import { schemaFields, type SchemaField } from "@/components/canvas/config-schema";
-import { ARTIFACT_TYPE_COLOR } from "@/components/canvas/nodes.css";
+} from "../canvas/handles";
+import { schemaFields, type SchemaField } from "../canvas/config-schema";
+import { ARTIFACT_TYPE_COLOR } from "../canvas/nodes.css";
 import {
   acceptedPortShapes,
   portArtifactType,
   portArtifactTypeVariable,
   portHasInstancePlugs,
   portMetaForPort,
-} from "@/components/canvas/types";
+} from "../canvas/types";
 import {
   Dialog,
   DialogContent,
@@ -38,7 +38,7 @@ import { tokens } from "@/lib/stylex/tokens.stylex";
 import {
   catalogNodeSpecs,
   catalogPluginSections,
-} from "./node-catalog";
+} from "../model/node-catalog";
 
 interface NodeSelectorProps {
   open: boolean;

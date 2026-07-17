@@ -3,11 +3,13 @@
 import type { ReactNode } from "react";
 import { useParams } from "next/navigation";
 
-import { Workbench } from "@/components/workbench/Workbench";
+import {
+  Workbench,
+} from "@/features/workbench";
 import {
   NEW_GRAPH_ROUTE_ID,
   isSupportedWorkbenchGraphRoute,
-} from "@/components/workbench/routes";
+} from "@/features/workbench/routes";
 
 interface GraphsLayoutProps {
   children: ReactNode;

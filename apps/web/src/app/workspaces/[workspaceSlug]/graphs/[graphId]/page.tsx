@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 
-import { isSupportedWorkbenchGraphRoute } from "@/components/workbench/routes";
+import { isSupportedWorkbenchGraphRoute } from "@/features/workbench/routes";
 
 interface GraphPageProps {
   params: Promise<{
