@@ -113,6 +113,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.image_uploads = components.uploads
         app.state.graph_modules = components.modules
         app.state.run_graph = components.run_graph
+        app.state.execution_manager = components.execution_manager
         app.state.materializations = components.materializations
         app.state.run_result_presenter = components.presenter
         app.state.artifacts = components.artifacts
@@ -121,12 +122,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
+            await components.execution_manager.shutdown()
             del app.state.node_secrets
             del app.state.saved_graphs
             del app.state.artifacts
             del app.state.run_result_presenter
             del app.state.materializations
             del app.state.run_graph
+            del app.state.execution_manager
             del app.state.graph_modules
             del app.state.image_uploads
             del app.state.workbench_plugin_registry

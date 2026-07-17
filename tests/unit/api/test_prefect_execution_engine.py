@@ -22,6 +22,7 @@ from pydantic import Field, StrictInt, StrictStr
 from notarius_core.artifacts import (
     ArtifactRefSequence,
     InMemoryUnitOfWork,
+    NoConfig,
     NodeConfig,
     NodeInput,
     NodeOutput,
@@ -62,6 +63,14 @@ class ControlledIntegerInput(NodeInput):
 
 
 class ControlledIntegerOutput(NodeOutput):
+    result: Annotated[StrictInt, OutPort(INTEGER_VALUE)]
+
+
+class BlockingIntegerInput(NodeInput):
+    pass
+
+
+class BlockingIntegerOutput(NodeOutput):
     result: Annotated[StrictInt, OutPort(INTEGER_VALUE)]
 
 
@@ -115,6 +124,35 @@ class ControlledIntegerNode(
         return ControlledIntegerOutput(result=inputs.left + inputs.right)
 
 
+@PREFECT_BEHAVIOR_PLUGIN.node(
+    operator_id="test.prefect.blocking_integer",
+    version=1,
+    title="Blocking integer",
+)
+@final
+class BlockingIntegerNode(
+    Node[NoConfig, BlockingIntegerInput, BlockingIntegerOutput]
+):
+    started: ClassVar[asyncio.Event | None] = None
+    workflow_run_id: ClassVar[UUID | None] = None
+
+    @override
+    async def run(
+        self,
+        context: NodeExecutionContext,
+        _config: NoConfig,
+        _inputs: BlockingIntegerInput,
+        /,
+    ) -> BlockingIntegerOutput:
+        started = self.started
+        assert started is not None
+        assert context.workflow_run_id is not None
+        type(self).workflow_run_id = context.workflow_run_id
+        started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
 @pytest.fixture(scope="module", autouse=True)
 def prefect_harness(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     prefect_home = tmp_path_factory.mktemp("prefect-home")
@@ -133,9 +171,13 @@ def prefect_harness(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
 def reset_controlled_integer_node() -> Iterator[None]:
     ControlledIntegerNode.invocations.clear()
     ControlledIntegerNode.attempts.clear()
+    BlockingIntegerNode.started = None
+    BlockingIntegerNode.workflow_run_id = None
     yield
     ControlledIntegerNode.invocations.clear()
     ControlledIntegerNode.attempts.clear()
+    BlockingIntegerNode.started = None
+    BlockingIntegerNode.workflow_run_id = None
 
 
 def build_prefect_components(
@@ -470,3 +512,43 @@ async def test_prefect_task_retry_reuses_task_run_and_records_attempt_count(
     assert retried_task_run.state is not None
     assert retried_task_run.state.is_completed()
     assert retried_task_run.run_count == 2
+
+
+@pytest.mark.asyncio
+async def test_prefect_managed_execution_cancels_active_node(tmp_path: Path) -> None:
+    components, _unit_of_work = build_prefect_components(tmp_path / "workbench")
+    BlockingIntegerNode.started = asyncio.Event()
+    execution = await components.execution_manager.start(
+        RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="blocking",
+                    operator_id="test.prefect.blocking_integer",
+                    operator_version=1,
+                )
+            ]
+        )
+    )
+    await asyncio.wait_for(BlockingIntegerNode.started.wait(), timeout=10)
+    running = await components.execution_manager.get(execution.execution_id)
+    assert running.status == "running"
+    assert running.active_node_id == "blocking"
+
+    await components.execution_manager.cancel(execution.execution_id)
+    async with asyncio.timeout(10):
+        while True:
+            terminal = await components.execution_manager.get(execution.execution_id)
+            if terminal.status == "cancelled":
+                break
+            await asyncio.sleep(0.01)
+
+    assert terminal.active_node_id is None
+    assert terminal.result is None
+    assert terminal.error is None
+    workflow_run_id = BlockingIntegerNode.workflow_run_id
+    assert workflow_run_id is not None
+    async with get_client(sync_client=False) as client:
+        flow_run = await client.read_flow_run(workflow_run_id)
+    assert flow_run.state is not None
+    assert flow_run.state.is_cancelled()
+    await components.execution_manager.shutdown()

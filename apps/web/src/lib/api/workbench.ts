@@ -6,6 +6,7 @@ import type {
   CreateSavedGraphResponse,
   GraphNodeSecrets,
   GraphMaterializations,
+  RunExecution,
   RunRequest,
   RunResponse,
   SavedGraph,
@@ -126,6 +127,26 @@ export function runGraph(requestBody: RunRequest) {
   return request<RunResponse>("POST", "/v1/runs", {
     body: requestBody,
   });
+}
+
+export function startRunExecution(requestBody: RunRequest) {
+  return request<RunExecution>("POST", "/v1/executions", {
+    body: requestBody,
+  });
+}
+
+export function getRunExecution(executionId: string) {
+  return request<RunExecution>(
+    "GET",
+    `/v1/executions/${encodeURIComponent(executionId)}`,
+  );
+}
+
+export function cancelRunExecution(executionId: string) {
+  return request<RunExecution>(
+    "DELETE",
+    `/v1/executions/${encodeURIComponent(executionId)}`,
+  );
 }
 
 export function artifactContentUrl(

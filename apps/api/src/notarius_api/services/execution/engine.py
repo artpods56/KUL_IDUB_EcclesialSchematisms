@@ -12,6 +12,7 @@ from notarius_api.services.execution.models import (
     CompiledNode,
     GraphExecutionResult,
 )
+from notarius_api.services.execution.control import RunExecutionControl
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +28,7 @@ class PreparedGraphExecution:
     secret_node_ids: frozenset[str]
     module_path: tuple[str, ...]
     raise_node_errors: bool
+    control: RunExecutionControl | None = None
 
     def __post_init__(self) -> None:
         copied_outputs = {

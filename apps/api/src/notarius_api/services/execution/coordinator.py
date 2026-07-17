@@ -46,6 +46,8 @@ class GraphExecutionCoordinator:
         node_results: list[NodeExecutionResult] = []
 
         for compiled_node in plan.nodes:
+            if execution.control is not None:
+                execution.control.check_cancelled()
             node_request = compiled_node.request
             node_edges = incoming_edges[node_request.id]
             upstream_node_ids = {edge.request.from_node for edge in node_edges}
@@ -73,6 +75,10 @@ class GraphExecutionCoordinator:
                     node_run_id=node_run_id,
                 )
 
+            control = execution.control
+            tracks_outer_progress = not execution.module_path
+            if control is not None and tracks_outer_progress:
+                control.start_outer_node(node_request.id)
             try:
                 node_outputs = await task_runner.run_node(
                     compiled_node,
@@ -101,6 +107,9 @@ class GraphExecutionCoordinator:
                     )
                 )
                 continue
+            finally:
+                if control is not None and tracks_outer_progress:
+                    control.finish_outer_node(node_request.id)
 
             copied_node_outputs = dict(node_outputs)
             outputs[node_request.id] = copied_node_outputs

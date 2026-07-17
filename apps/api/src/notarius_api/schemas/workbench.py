@@ -290,6 +290,21 @@ class RunResponse(ApiResponse):
     node_runs: list[RunNodeResponse]
 
 
+class RunExecutionResponse(ApiResponse):
+    execution_id: UUID
+    status: Literal[
+        "queued",
+        "running",
+        "cancelling",
+        "cancelled",
+        "succeeded",
+        "failed",
+    ]
+    active_node_id: str | None
+    result: RunResponse | None
+    error: str | None
+
+
 class GraphMaterializationsResponse(ApiResponse):
     graph_id: UUID
     graph_revision: int

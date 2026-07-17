@@ -125,7 +125,10 @@ export type WorkflowNodeConfig = Record<string, unknown> & {
 export type NodeExecutionStatus =
   | "idle"
   | "uploading"
+  | "queued"
   | "running"
+  | "cancelling"
+  | "cancelled"
   | "succeeded"
   | "failed"
   | "skipped";

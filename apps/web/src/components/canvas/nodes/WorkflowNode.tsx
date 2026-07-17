@@ -90,6 +90,22 @@ const s = stylex.create({
   selected: {
     boxShadow: `0 2px 5px light-dark(rgba(107, 82, 212, 0.16), rgba(128, 103, 232, 0.22)), 0 12px 30px light-dark(rgba(20, 24, 32, 0.14), rgba(0, 0, 0, 0.46)), 0 0 0 2px ${tokens.colorAccentBorder}`,
   },
+  activeExecution: {
+    outlineWidth: "2px",
+    outlineStyle: "solid",
+    outlineColor: tokens.colorInfo,
+    outlineOffset: "3px",
+    animationName: {
+      default: "ns-node-active-pulse",
+      "@media (prefers-reduced-motion: reduce)": "none",
+    },
+    animationDuration: "1500ms",
+    animationIterationCount: "infinite",
+    animationTimingFunction: "ease-in-out",
+  },
+  cancellingExecution: {
+    outlineColor: tokens.colorWarning,
+  },
   header: {
     display: "grid",
     gap: "2px",
@@ -125,6 +141,7 @@ const s = stylex.create({
   },
   title: {
     minWidth: 0,
+    flex: 1,
     overflow: "hidden",
     marginLeft: "4px",
     color: tokens.colorText,
@@ -133,6 +150,38 @@ const s = stylex.create({
     letterSpacing: "-0.01em",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
+  },
+  executionBadge: {
+    height: "18px",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    flexShrink: 0,
+    paddingInline: "6px",
+    borderRadius: "9999px",
+    backgroundColor: tokens.colorSurfaceRaised,
+    color: tokens.colorMuted,
+    fontSize: "9px",
+    fontWeight: 750,
+    letterSpacing: "0.02em",
+    lineHeight: 1,
+    textTransform: "uppercase",
+  },
+  executionBadgeInfo: {
+    backgroundColor: "light-dark(rgba(74, 143, 212, 0.12), rgba(96, 165, 250, 0.16))",
+    color: tokens.colorInfo,
+  },
+  executionBadgeWarning: {
+    backgroundColor: "light-dark(rgba(201, 146, 15, 0.12), rgba(251, 191, 36, 0.15))",
+    color: tokens.colorWarning,
+  },
+  executionBadgeSuccess: {
+    backgroundColor: "light-dark(rgba(42, 157, 124, 0.11), rgba(67, 197, 158, 0.14))",
+    color: tokens.colorSuccess,
+  },
+  executionBadgeDanger: {
+    backgroundColor: tokens.colorDangerHover,
+    color: tokens.colorDanger,
   },
   operator: {
     overflow: "hidden",
@@ -2102,6 +2151,14 @@ function GenericBody({ id, data }: { id: string; data: WorkflowNodeData }) {
 }
 
 function NodeHeader({ id, data }: { id: string; data: WorkflowNodeData }) {
+  const executionLabel = data.execution.status === "idle"
+    ? null
+    : data.execution.status;
+  const executionIsBusy =
+    data.execution.status === "uploading" ||
+    data.execution.status === "running" ||
+    data.execution.status === "cancelling";
+
   return (
     <header {...stylex.props(s.header)}>
       <span {...stylex.props(s.titleRow)}>
@@ -2142,6 +2199,32 @@ function NodeHeader({ id, data }: { id: string; data: WorkflowNodeData }) {
         <span {...stylex.props(s.title)} title={data.spec.title}>
           {data.spec.title}
         </span>
+        {executionLabel ? (
+          <span
+            aria-label={`Execution ${executionLabel}`}
+            {...stylex.props(
+              s.executionBadge,
+              data.execution.status === "uploading" ||
+                  data.execution.status === "running"
+                ? s.executionBadgeInfo
+                : null,
+              data.execution.status === "cancelling"
+                ? s.executionBadgeWarning
+                : null,
+              data.execution.status === "succeeded"
+                ? s.executionBadgeSuccess
+                : null,
+              data.execution.status === "failed"
+                ? s.executionBadgeDanger
+                : null,
+            )}
+          >
+            {executionIsBusy ? (
+              <LoaderCircle size={9} {...stylex.props(s.spinner)} />
+            ) : null}
+            {executionLabel}
+          </span>
+        ) : null}
       </span>
       <span {...stylex.props(s.operator)} title={data.spec.description}>
         {typeof data.spec.module_graph_revision === "number"
@@ -2219,6 +2302,13 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
         {...stylex.props(
           s.shell,
           selected ? s.selected : null,
+          data.execution.status === "running" ||
+              data.execution.status === "cancelling"
+            ? s.activeExecution
+            : null,
+          data.execution.status === "cancelling"
+            ? s.cancellingExecution
+            : null,
         )}
       >
         <NodeHeader id={id} data={data} />

@@ -40,6 +40,7 @@ from notarius_core.runtime.resolvers import Resolver, ResolverRegistry
 
 from notarius_api.schemas.workbench import RunEdgeRequest, RunNodeRequest
 from notarius_api.services.execution.coordinator import GraphExecutionCoordinator
+from notarius_api.services.execution.control import RunExecutionControl
 from notarius_api.services.execution.edge_values import EdgeValueResolver
 from notarius_api.services.execution.engine import PreparedGraphExecution
 from notarius_api.services.execution.errors import GraphExecutionError
@@ -421,3 +422,62 @@ async def test_inline_map_failure_skips_dependents_and_preserves_cause() -> None
     assert isinstance(raised.value.__cause__, RuntimeError)
     assert raised.value.__cause__.__cause__ is not None
     assert isinstance(raised.value.__cause__.__cause__, KeyError)
+
+
+@pytest.mark.asyncio
+async def test_nested_execution_does_not_replace_outer_module_progress() -> None:
+    item_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE.key)
+    broadcast_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE.key)
+    resolver = IntegerResolver(
+        {
+            item_ref.artifact_id: 2,
+            broadcast_ref.artifact_id: 3,
+        }
+    )
+    writer = RecordingWriter()
+    compiled_node = _compiled_add(
+        node_id="nested-node",
+        node=AddNode(),
+        invocation=NodeInvocation(),
+    )
+    edge_values = StubEdgeValueResolver(
+        {
+            "nested-node": {
+                "item": item_ref,
+                "broadcast": broadcast_ref,
+            }
+        }
+    )
+    engine = InlineExecutionEngine(
+        coordinator=GraphExecutionCoordinator(
+            node_execution=NodeExecutionService(
+                runtime=_runtime(resolver, writer),
+                edge_values=cast(EdgeValueResolver, edge_values),
+                node_secrets=UnavailableNodeSecretResolver(),
+            )
+        )
+    )
+    control = RunExecutionControl()
+    control.start_outer_node("outer-module")
+
+    result = await engine.execute(
+        PreparedGraphExecution(
+            plan=CompiledGraph(
+                nodes=(compiled_node,),
+                edges=(),
+                pinned_outputs={},
+            ),
+            initial_outputs={},
+            graph_id=None,
+            graph_revision=None,
+            secret_graph_id=None,
+            secret_graph_revision=None,
+            secret_node_ids=frozenset(),
+            module_path=("nested-module@1",),
+            raise_node_errors=True,
+            control=control,
+        )
+    )
+
+    assert result.status == "succeeded"
+    assert control.active_node_id == "outer-module"

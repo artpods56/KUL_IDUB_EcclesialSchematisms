@@ -1,5 +1,6 @@
 """Local Prefect adapter for prepared graph execution."""
 
+import asyncio
 from collections.abc import Awaitable, Mapping
 from typing import cast, final
 from uuid import UUID
@@ -8,7 +9,7 @@ from prefect import flow, task
 from prefect.cache_policies import NO_CACHE
 from prefect.client.schemas.objects import State
 from prefect.context import FlowRunContext, TaskRunContext
-from prefect.states import Failed
+from prefect.states import Cancelled, Failed
 
 from notarius_core.domain.artifact_outputs import ArtifactOutputValue
 from notarius_core.runtime.invocation import InvocationMode
@@ -188,7 +189,16 @@ class PrefectExecutionEngine:
                 task_retries=self._task_retries,
                 task_retry_delay_seconds=self._task_retry_delay_seconds,
             )
-            result = await self._coordinator.execute(execution, task_runner)
+            try:
+                result = await self._coordinator.execute(execution, task_runner)
+            except asyncio.CancelledError:
+                control = execution.control
+                if control is None or not control.cancel_requested:
+                    raise
+                return cast(
+                    State[GraphExecutionResult],
+                    Cancelled(message="Notarius graph execution was cancelled"),
+                )
             if result.status == "failed":
                 return cast(
                     State[GraphExecutionResult],

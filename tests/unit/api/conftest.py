@@ -42,6 +42,7 @@ from notarius_api.v1.routes.workbench import (
     image_upload_service,
     materialization_service,
     run_graph_service,
+    run_execution_manager,
     run_result_presenter,
     workbench_plugin_registry,
 )
@@ -295,6 +296,7 @@ def install_workbench_dependency_overrides(
             workbench_plugin_registry: lambda: components.plugin_registry,
             image_upload_service: lambda: components.uploads,
             run_graph_service: lambda: components.run_graph,
+            run_execution_manager: lambda: components.execution_manager,
             materialization_service: lambda: components.materializations,
             run_result_presenter: lambda: components.presenter,
             artifact_service: lambda: components.artifacts,

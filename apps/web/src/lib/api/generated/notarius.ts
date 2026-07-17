@@ -21,6 +21,41 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/executions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Start Graph Execution */
+        readonly post: operations["start_graph_execution_v1_executions_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/executions/{execution_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Graph Execution */
+        readonly get: operations["get_graph_execution_v1_executions__execution_id__get"];
+        readonly put?: never;
+        readonly post?: never;
+        /** Cancel Graph Execution */
+        readonly delete: operations["cancel_graph_execution_v1_executions__execution_id__delete"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/graphs": {
         readonly parameters: {
             readonly query?: never;
@@ -529,6 +564,24 @@ export interface components {
             /** To Port */
             readonly to_port: string;
         };
+        /** RunExecutionResponse */
+        readonly RunExecutionResponse: {
+            /** Active Node Id */
+            readonly active_node_id: string | null;
+            /** Error */
+            readonly error: string | null;
+            /**
+             * Execution Id
+             * Format: uuid
+             */
+            readonly execution_id: string;
+            readonly result: components["schemas"]["RunResponse"] | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "queued" | "running" | "cancelling" | "cancelled" | "succeeded" | "failed";
+        };
         /** RunInputPlugRequest */
         readonly RunInputPlugRequest: {
             /** Id */
@@ -806,6 +859,101 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly start_graph_execution_v1_executions_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunExecutionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly get_graph_execution_v1_executions__execution_id__get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly execution_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunExecutionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly cancel_graph_execution_v1_executions__execution_id__delete: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly execution_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunExecutionResponse"];
                 };
             };
             /** @description Validation Error */

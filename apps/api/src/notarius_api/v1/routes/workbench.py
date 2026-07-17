@@ -36,6 +36,7 @@ from notarius_api.schemas.workbench import (
     PortDirection,
     PortResponse,
     RunRequest,
+    RunExecutionResponse,
     RunResponse,
     SampleRequest,
     UploadRequest,
@@ -43,6 +44,7 @@ from notarius_api.schemas.workbench import (
 from notarius_api.services.artifacts import ArtifactService
 from notarius_api.services.errors import WorkbenchOperationError
 from notarius_api.services.execution.run_graph import RunGraph
+from notarius_api.services.execution.manager import RunExecutionManager
 from notarius_api.services.materializations import MaterializationService
 from notarius_api.services.modules import (
     GRAPH_MODULE_PLUGIN_SLUG,
@@ -91,6 +93,19 @@ def run_graph_service(request: Request) -> RunGraph:
 RunGraphDependency = Annotated[
     RunGraph,
     Depends(run_graph_service),
+]
+
+
+def run_execution_manager(request: Request) -> RunExecutionManager:
+    manager = getattr(request.app.state, "execution_manager", None)
+    if not isinstance(manager, RunExecutionManager):
+        raise RuntimeError("Run execution manager is not initialized")
+    return manager
+
+
+RunExecutionManagerDependency = Annotated[
+    RunExecutionManager,
+    Depends(run_execution_manager),
 ]
 
 
@@ -228,6 +243,52 @@ async def run_graph(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except WorkbenchOperationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post(
+    "/executions",
+    response_model=RunExecutionResponse,
+    status_code=202,
+)
+async def start_graph_execution(
+    request: RunRequest,
+    manager: RunExecutionManagerDependency,
+    presenter: RunResultPresenterDependency,
+) -> RunExecutionResponse:
+    execution = await manager.start(request)
+    return await presenter.execution_response(execution)
+
+
+@router.get(
+    "/executions/{execution_id}",
+    response_model=RunExecutionResponse,
+)
+async def get_graph_execution(
+    execution_id: UUID,
+    manager: RunExecutionManagerDependency,
+    presenter: RunResultPresenterDependency,
+) -> RunExecutionResponse:
+    try:
+        execution = await manager.get(execution_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return await presenter.execution_response(execution)
+
+
+@router.delete(
+    "/executions/{execution_id}",
+    response_model=RunExecutionResponse,
+)
+async def cancel_graph_execution(
+    execution_id: UUID,
+    manager: RunExecutionManagerDependency,
+    presenter: RunResultPresenterDependency,
+) -> RunExecutionResponse:
+    try:
+        execution = await manager.cancel(execution_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return await presenter.execution_response(execution)
 
 
 @router.get(

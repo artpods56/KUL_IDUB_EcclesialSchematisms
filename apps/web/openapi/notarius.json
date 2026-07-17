@@ -932,6 +932,68 @@
         "title": "RunEdgeRequest",
         "type": "object"
       },
+      "RunExecutionResponse": {
+        "properties": {
+          "active_node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Node Id"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "execution_id": {
+            "format": "uuid",
+            "title": "Execution Id",
+            "type": "string"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "cancelling",
+              "cancelled",
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "execution_id",
+          "status",
+          "active_node_id",
+          "result",
+          "error"
+        ],
+        "title": "RunExecutionResponse",
+        "type": "object"
+      },
       "RunInputPlugRequest": {
         "properties": {
           "id": {
@@ -1709,6 +1771,131 @@
           }
         },
         "summary": "Get Artifact Content",
+        "tags": [
+          "workbench"
+        ]
+      }
+    },
+    "/v1/executions": {
+      "post": {
+        "operationId": "start_graph_execution_v1_executions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunExecutionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Graph Execution",
+        "tags": [
+          "workbench"
+        ]
+      }
+    },
+    "/v1/executions/{execution_id}": {
+      "delete": {
+        "operationId": "cancel_graph_execution_v1_executions__execution_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Execution Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunExecutionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Graph Execution",
+        "tags": [
+          "workbench"
+        ]
+      },
+      "get": {
+        "operationId": "get_graph_execution_v1_executions__execution_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Execution Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunExecutionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Graph Execution",
         "tags": [
           "workbench"
         ]

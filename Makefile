@@ -24,6 +24,9 @@ api-ocr: db-upgrade
 api-llm: db-upgrade
 	uv run --exact --no-dev --extra llm uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
 
+prefect:
+	.venv/bin/prefect server start
+
 web:
 	npm --prefix apps/web run dev
 

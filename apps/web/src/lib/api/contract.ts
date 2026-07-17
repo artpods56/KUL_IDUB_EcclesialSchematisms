@@ -36,6 +36,8 @@ export type RunPortOutput =
   Schemas["RunPortOutputResponse"];
 export type RunNodeResult =
   Schemas["RunNodeResponse"];
+export type RunExecution =
+  Schemas["RunExecutionResponse"];
 export type GraphMaterializations =
   Schemas["GraphMaterializationsResponse"];
 export type SavedGraphNode = Schemas["SavedGraphNodeModel-Output"];

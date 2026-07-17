@@ -34,6 +34,7 @@ from notarius_api.services.execution.compiler import GraphCompiler
 from notarius_api.services.execution.coordinator import GraphExecutionCoordinator
 from notarius_api.services.execution.edge_values import EdgeValueResolver
 from notarius_api.services.execution.inline import InlineExecutionEngine
+from notarius_api.services.execution.manager import RunExecutionManager
 from notarius_api.services.execution.node_execution import NodeExecutionService
 from notarius_api.services.execution.prefect import PrefectExecutionEngine
 from notarius_api.services.execution.preflight import GraphRunPreflight
@@ -54,6 +55,7 @@ class WorkbenchComponents:
     uploads: ImageUploadService
     modules: GraphModuleCatalog
     run_graph: RunGraph
+    execution_manager: RunExecutionManager
     materializations: MaterializationService
     presenter: RunResultPresenter
     artifacts: ArtifactService
@@ -165,11 +167,13 @@ def build_workbench_components(
         engine=engine,
         materializations=materializations,
     )
+    execution_manager = RunExecutionManager(run_graph)
     return WorkbenchComponents(
         plugin_registry=plugin_registry,
         uploads=uploads,
         modules=modules,
         run_graph=run_graph,
+        execution_manager=execution_manager,
         materializations=materializations,
         presenter=presenter,
         artifacts=artifacts,

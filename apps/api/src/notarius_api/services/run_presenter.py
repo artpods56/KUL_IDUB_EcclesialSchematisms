@@ -11,11 +11,13 @@ from notarius_api.schemas.workbench import (
     ArtifactSummaryResponse,
     GraphMaterializationsResponse,
     RunNodeResponse,
+    RunExecutionResponse,
     RunPortOutputResponse,
     RunResponse,
 )
 from notarius_api.services.artifacts import ArtifactService
 from notarius_api.services.execution.models import GraphExecutionResult
+from notarius_api.services.execution.manager import RunExecutionSnapshot
 
 
 class RunResultPresenter:
@@ -39,6 +41,21 @@ class RunResultPresenter:
                 )
                 for node_result in execution.node_results
             ],
+        )
+
+    async def execution_response(
+        self,
+        execution: RunExecutionSnapshot,
+    ) -> RunExecutionResponse:
+        result = None
+        if execution.result is not None:
+            result = await self.run_response(execution.result)
+        return RunExecutionResponse(
+            execution_id=execution.execution_id,
+            status=execution.status,
+            active_node_id=execution.active_node_id,
+            result=result,
+            error=execution.error,
         )
 
     async def materializations_response(

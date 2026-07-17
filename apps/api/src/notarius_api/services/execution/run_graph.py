@@ -1,6 +1,7 @@
 """Application use case for top-level and nested graph execution."""
 
 from collections.abc import Mapping
+from contextvars import ContextVar
 
 from notarius_core.artifacts import ArtifactRef
 from notarius_core.domain.modules import MODULE_BOUNDARY_PORT, GraphModuleDefinition
@@ -19,6 +20,7 @@ from notarius_api.schemas.workbench import (
     RunRequest,
 )
 from notarius_api.services.execution.compiler import GraphCompiler
+from notarius_api.services.execution.control import RunExecutionControl
 from notarius_api.services.execution.engine import (
     GraphExecutionEngine,
     PreparedGraphExecution,
@@ -27,6 +29,12 @@ from notarius_api.services.execution.errors import GraphExecutionError
 from notarius_api.services.execution.models import GraphExecutionResult
 from notarius_api.services.execution.preflight import GraphRunPreflight
 from notarius_api.services.materializations import MaterializationService
+
+
+_current_execution_control: ContextVar[RunExecutionControl | None] = ContextVar(
+    "notarius_current_execution_control",
+    default=None,
+)
 
 
 class RunGraph:
@@ -45,14 +53,23 @@ class RunGraph:
         self._engine = engine
         self._materializations = materializations
 
-    async def run(self, request: RunRequest) -> GraphExecutionResult:
-        return await self._execute(
-            request,
-            module_path=(),
-            persist_materializations=True,
-            validate_materialized_pins=True,
-            raise_node_errors=False,
-        )
+    async def run(
+        self,
+        request: RunRequest,
+        control: RunExecutionControl | None = None,
+    ) -> GraphExecutionResult:
+        token = _current_execution_control.set(control)
+        try:
+            return await self._execute(
+                request,
+                module_path=(),
+                persist_materializations=True,
+                validate_materialized_pins=True,
+                raise_node_errors=False,
+                control=control,
+            )
+        finally:
+            _current_execution_control.reset(token)
 
     async def execute_module(
         self,
@@ -145,6 +162,7 @@ class RunGraph:
             persist_materializations=False,
             validate_materialized_pins=False,
             raise_node_errors=True,
+            control=_current_execution_control.get(),
         )
 
         outputs: dict[str, ArtifactRef] = {}
@@ -178,7 +196,10 @@ class RunGraph:
         persist_materializations: bool,
         validate_materialized_pins: bool,
         raise_node_errors: bool,
+        control: RunExecutionControl | None,
     ) -> GraphExecutionResult:
+        if control is not None:
+            control.check_cancelled()
         run_context = await self._preflight.validate(request)
         plan = await self._compiler.compile(request, self)
         if (
@@ -205,8 +226,11 @@ class RunGraph:
                 secret_node_ids=frozenset(run_context.secret_node_ids),
                 module_path=module_path,
                 raise_node_errors=raise_node_errors,
+                control=control,
             )
         )
+        if control is not None:
+            control.check_cancelled()
         if (
             persist_materializations
             and request.graph_id is not None

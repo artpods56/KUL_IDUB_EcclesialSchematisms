@@ -81,6 +81,17 @@
   }
 }
 
+@keyframes ns-node-active-pulse {
+  0%,
+  100% {
+    outline-color: light-dark(rgba(74, 143, 212, 0.78), rgba(96, 165, 250, 0.82));
+  }
+
+  50% {
+    outline-color: light-dark(rgba(74, 143, 212, 0.3), rgba(96, 165, 250, 0.36));
+  }
+}
+
 .ns-node-detail {
   animation: ns-node-detail-in 150ms ease-out;
 }

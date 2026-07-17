@@ -26,6 +26,7 @@ import {
   Play,
   Plus,
   Save,
+  Square,
   Sun,
   Trash2,
   Workflow,
@@ -116,14 +117,16 @@ import {
 import { useNodeRegistry, useSavedGraphs } from "@/hooks/use-api";
 import {
   applyNodeSecret,
+  cancelRunExecution,
   createSavedGraph,
   deleteSavedGraph,
   fileToBase64,
   getGraphMaterializations,
   getGraphNodeSecrets,
+  getRunExecution,
   getSavedGraph,
   removeNodeSecret,
-  runGraph,
+  startRunExecution,
   updateSavedGraph,
   uploadImage,
   type ArtifactTypeKey,
@@ -134,6 +137,7 @@ import {
   type Port,
   type RunEdgeCollectionMode,
   type RunEdgeInput,
+  type RunExecution,
   type RunNodeResult,
   type SavedGraphNode,
   type SavedGraphSummary,
@@ -143,6 +147,23 @@ import { tokens } from "@/lib/stylex/tokens.stylex";
 
 type WorkflowNode = Node<WorkflowNodeData, typeof WORKFLOW_NODE_TYPE>;
 type RunScope = "all" | "selected" | "selected-with-dependencies";
+
+interface VisibleRunExecution {
+  generation: number;
+  executionId: string | null;
+  status: "preparing" | RunExecution["status"];
+  activeNodeId: string | null;
+  statusError: string | null;
+}
+
+interface RunExecutionGuard {
+  generation: number;
+  executionId: string | null;
+  cancellationRequested: boolean;
+  cancelInFlight: boolean;
+  lastServerStatus: RunExecution["status"];
+  activeNodeId: string | null;
+}
 
 interface ActiveSavedGraph {
   id: string;
@@ -907,6 +928,110 @@ const s = stylex.create({
     marginInline: "2px",
     backgroundColor: tokens.colorDivider,
   },
+  executionBar: {
+    position: "absolute",
+    zIndex: 30,
+    bottom: "18px",
+    left: "50%",
+    width: "min(460px, calc(100vw - 32px))",
+    minHeight: "52px",
+    display: "grid",
+    gridTemplateColumns: "28px minmax(0, 1fr) auto",
+    alignItems: "center",
+    gap: "10px",
+    padding: "8px 9px 8px 11px",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorBorderStrong,
+    borderRadius: "13px",
+    backgroundColor: tokens.colorChrome,
+    boxShadow: tokens.shadowNodeSelected,
+    transform: "translateX(-50%)",
+  },
+  executionIndicator: {
+    width: "28px",
+    height: "28px",
+    display: "grid",
+    placeItems: "center",
+    borderRadius: "9px",
+    backgroundColor: tokens.colorAccentSoft,
+    color: tokens.colorAccent,
+  },
+  executionIndicatorCancelling: {
+    backgroundColor: "light-dark(rgba(201, 146, 15, 0.12), rgba(251, 191, 36, 0.15))",
+    color: tokens.colorWarning,
+  },
+  executionCopy: {
+    minWidth: 0,
+    display: "grid",
+    gap: "2px",
+  },
+  executionEyebrow: {
+    color: tokens.colorSubtle,
+    fontSize: "9px",
+    fontWeight: 800,
+    letterSpacing: "0.12em",
+    lineHeight: 1,
+    textTransform: "uppercase",
+  },
+  executionTitle: {
+    overflow: "hidden",
+    color: tokens.colorTextEmphasis,
+    fontSize: tokens.fontSizeSm,
+    fontWeight: 720,
+    lineHeight: 1.25,
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  executionStatus: {
+    overflow: "hidden",
+    color: tokens.colorSubtle,
+    fontSize: "10px",
+    lineHeight: 1.2,
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  executionStatusError: { color: tokens.colorDanger },
+  visuallyHidden: {
+    position: "absolute",
+    width: "1px",
+    height: "1px",
+    padding: 0,
+    margin: "-1px",
+    overflow: "hidden",
+    borderWidth: 0,
+    clip: "rect(0, 0, 0, 0)",
+    whiteSpace: "nowrap",
+  },
+  cancelExecutionButton: {
+    height: "32px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "6px",
+    paddingInline: "10px",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: {
+      default: tokens.colorBorderStrong,
+      ":hover": tokens.colorDanger,
+      ":disabled": tokens.colorBorder,
+    },
+    borderRadius: "8px",
+    backgroundColor: {
+      default: "transparent",
+      ":hover": tokens.colorDangerHover,
+      ":disabled": "transparent",
+    },
+    color: {
+      default: tokens.colorMuted,
+      ":hover": tokens.colorDanger,
+      ":disabled": tokens.colorTextDisabled,
+    },
+    cursor: { default: "pointer", ":disabled": "not-allowed" },
+    fontSize: tokens.fontSizeXs,
+    fontWeight: 700,
+  },
   spinner: {
     animationName: "ns-spin",
     animationDuration: "900ms",
@@ -1115,6 +1240,10 @@ export function Workbench({
   const [graphBrowserOpen, setGraphBrowserOpen] = React.useState(false);
   const [runningScope, setRunningScope] = React.useState<RunScope | null>(null);
   const running = runningScope !== null;
+  const [visibleExecution, setVisibleExecution] =
+    React.useState<VisibleRunExecution | null>(null);
+  const [executionAnnouncement, setExecutionAnnouncement] =
+    React.useState("");
   const [runError, setRunError] = React.useState<string | null>(null);
   const [pendingConnectionRoute, setPendingConnectionRoute] =
     React.useState<PendingConnectionRoute | null>(null);
@@ -1128,6 +1257,9 @@ export function Workbench({
   const openRequestRef = React.useRef<AbortController | null>(null);
   const currentFingerprintRef = React.useRef("");
   const activeGraphRef = React.useRef<ActiveSavedGraph | null>(null);
+  const executionGenerationRef = React.useRef(0);
+  const executionGuardRef = React.useRef<RunExecutionGuard | null>(null);
+  const runRequestReservedRef = React.useRef(false);
   const pendingBoundEdgesRef = React.useRef<PendingBoundEdge[]>([]);
   const nodesByIdRef = React.useRef<ReadonlyMap<string, WorkflowNode>>(new Map());
 
@@ -1718,10 +1850,10 @@ export function Workbench({
     return () => window.removeEventListener("beforeunload", warnBeforeUnload);
   }, [isDirty]);
 
-  React.useEffect(
-    () => () => openRequestRef.current?.abort(),
-    [],
-  );
+  React.useEffect(() => () => {
+    openRequestRef.current?.abort();
+    executionGuardRef.current = null;
+  }, []);
 
   const imageUploadWithoutImages = nodes.some(
     (node) =>
@@ -2690,7 +2822,7 @@ export function Workbench({
     ],
   );
 
-  const runWorkflow = async (scope: RunScope) => {
+  const performRunWorkflow = async (scope: RunScope) => {
     if (!registry || running) return;
     const planningFingerprint = currentFingerprint;
     const planningActiveGraph = activeGraph;
@@ -2885,22 +3017,37 @@ export function Workbench({
       }
     }
 
+    executionGenerationRef.current += 1;
+    const executionGeneration = executionGenerationRef.current;
+    executionGuardRef.current = {
+      generation: executionGeneration,
+      executionId: null,
+      cancellationRequested: false,
+      cancelInFlight: false,
+      lastServerStatus: "queued",
+      activeNodeId: null,
+    };
     setRunningScope(scope);
+    setVisibleExecution({
+      generation: executionGeneration,
+      executionId: null,
+      status: "preparing",
+      activeNodeId: null,
+      statusError: null,
+    });
     setRunError(null);
-    setNodes((current) =>
-      current.map((node) =>
-        executionNodeIds.has(node.id)
-          ? {
-              ...node,
-              data: {
-                ...node.data,
-                run: null,
-                execution: { status: "running" },
-              },
-            }
-          : node,
-      ),
-    );
+    setNodes((current) => current.map((node) =>
+      executionNodeIds.has(node.id)
+        ? {
+            ...node,
+            data: {
+              ...node.data,
+              run: null,
+              execution: { status: "queued" },
+            },
+          }
+        : node
+    ));
     try {
       const runEdges = executionEdges.flatMap<RunEdgeInput>(
         (edge) => {
@@ -2934,63 +3081,278 @@ export function Workbench({
             secret_graph_revision: activeGraph.revision,
           }
         : {};
-      const response = await runGraph({
+      let response = await startRunExecution({
         nodes: runNodes,
         edges: runEdges,
         ...(scope === "selected" ? { pinned_outputs: pinnedOutputs } : {}),
         ...graphContext,
         ...secretGraphContext,
       });
-      const currentActiveGraph = activeGraphRef.current;
+      let guard = executionGuardRef.current;
       if (
-        currentFingerprintRef.current !== planningFingerprint ||
-        currentActiveGraph?.id !== planningActiveGraph?.id ||
-        currentActiveGraph?.revision !== planningActiveGraph?.revision
+        !guard ||
+        guard.generation !== executionGeneration
       ) {
-        setNodes((current) => current.map((node) =>
-          executionNodeIds.has(node.id) &&
-          node.data.execution.status === "running"
-            ? {
-                ...node,
-                data: {
-                  ...node.data,
-                  execution: { status: "idle" },
-                },
-              }
-            : node,
-        ));
-        setRunError(
-          materializesSavedGraph
-            ? "The graph changed while it was running. Results were recorded for the original saved revision and were not applied to this canvas."
-            : "The graph changed while it was running. The completed run was not applied to this canvas.",
-        );
         return;
       }
-      const byNode = new Map(response.node_runs.map((run) => [run.node_id, run]));
-      setNodes((current) => current.map((node) => {
-        if (!executionNodeIds.has(node.id)) return node;
-        const run = byNode.get(node.id);
-        return {
-          ...node,
-          data: {
-            ...node.data,
-            run: run ?? null,
-            execution: run
+      guard.executionId = response.execution_id;
+      let pollStatusError: string | null = null;
+
+      while (true) {
+        guard = executionGuardRef.current;
+        if (
+          !guard ||
+          guard.generation !== executionGeneration ||
+          guard.executionId !== response.execution_id
+        ) {
+          return;
+        }
+
+        const terminal =
+          response.status === "cancelled" ||
+          response.status === "succeeded" ||
+          response.status === "failed";
+        if (response.status === "cancelling") {
+          guard.cancellationRequested = true;
+        }
+        const visibleStatus = guard.cancellationRequested && !terminal
+          ? "cancelling"
+          : response.status;
+        const activeNodeId = response.active_node_id ??
+          (terminal ? guard.activeNodeId : null);
+        guard.lastServerStatus = response.status;
+        guard.activeNodeId = activeNodeId;
+        setVisibleExecution((current) =>
+          current?.generation === executionGeneration
+            ? {
+                generation: executionGeneration,
+                executionId: response.execution_id,
+                status: visibleStatus,
+                activeNodeId,
+                statusError: pollStatusError,
+              }
+            : current
+        );
+
+        if (!terminal) {
+          setNodes((current) => current.map((node) => {
+            if (!executionNodeIds.has(node.id)) return node;
+            const active = node.id === activeNodeId;
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                run: null,
+                execution: {
+                  status: active
+                    ? visibleStatus === "cancelling"
+                      ? "cancelling"
+                      : "running"
+                    : "queued",
+                },
+              },
+            };
+          }));
+
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, 500);
+          });
+          guard = executionGuardRef.current;
+          if (
+            !guard ||
+            guard.generation !== executionGeneration ||
+            guard.executionId !== response.execution_id
+          ) {
+            return;
+          }
+          try {
+            const polledResponse = await getRunExecution(response.execution_id);
+            if (polledResponse.execution_id !== guard.executionId) {
+              pollStatusError =
+                "Received status for another execution. Retrying…";
+              setVisibleExecution((current) =>
+                current?.generation === executionGeneration &&
+                    current.executionId === guard?.executionId
+                  ? {
+                      ...current,
+                      statusError: pollStatusError,
+                    }
+                  : current
+              );
+              continue;
+            }
+            pollStatusError = null;
+            response = polledResponse;
+          } catch (pollFailure) {
+            guard = executionGuardRef.current;
+            if (
+              !guard ||
+              guard.generation !== executionGeneration ||
+              !guard.executionId
+            ) {
+              return;
+            }
+            if (
+              pollFailure instanceof ApiError &&
+              (pollFailure.status === 404 || pollFailure.status === 410)
+            ) {
+              const unavailableMessage =
+                "Execution state is no longer available. The server may have restarted or expired this execution.";
+              setNodes((current) => current.map((node) =>
+                executionNodeIds.has(node.id) &&
+                    (node.data.execution.status === "queued" ||
+                      node.data.execution.status === "running" ||
+                      node.data.execution.status === "cancelling")
+                  ? {
+                      ...node,
+                      data: {
+                        ...node.data,
+                        execution: { status: "idle" },
+                      },
+                    }
+                  : node
+              ));
+              setRunError(unavailableMessage);
+              setExecutionAnnouncement(
+                "Execution failed because its status is no longer available.",
+              );
+              break;
+            }
+            const statusMessage = pollFailure instanceof Error
+              ? pollFailure.message
+              : "Execution status is unavailable.";
+            pollStatusError = `${statusMessage} Retrying…`;
+            setVisibleExecution((current) =>
+              current?.generation === executionGeneration &&
+                  current.executionId === guard?.executionId
+                ? {
+                    ...current,
+                    statusError: pollStatusError,
+                  }
+                : current
+            );
+            continue;
+          }
+          continue;
+        }
+
+        const currentActiveGraph = activeGraphRef.current;
+        if (
+          currentFingerprintRef.current !== planningFingerprint ||
+          currentActiveGraph?.id !== planningActiveGraph?.id ||
+          currentActiveGraph?.revision !== planningActiveGraph?.revision
+        ) {
+          setNodes((current) => current.map((node) =>
+            executionNodeIds.has(node.id) &&
+                (node.data.execution.status === "queued" ||
+                  node.data.execution.status === "running" ||
+                  node.data.execution.status === "cancelling")
               ? {
-                  status: run.status,
-                  error: run.error ?? (run.status === "failed"
-                    ? "This node failed without error details."
-                    : undefined),
+                  ...node,
+                  data: {
+                    ...node.data,
+                    execution: { status: "idle" },
+                  },
                 }
-              : { status: "skipped", error: "The server did not return a result for this node." },
-          },
-        };
-      }));
+              : node
+          ));
+          setRunError(
+            response.status === "cancelled"
+              ? "The graph changed while cancellation was in progress. Cancellation completed, but its node states were not applied to this canvas."
+              : materializesSavedGraph
+                ? "The graph changed while it was running. Results were recorded for the original saved revision and were not applied to this canvas."
+                : "The graph changed while it was running. The completed run was not applied to this canvas.",
+          );
+          setExecutionAnnouncement(
+            response.status === "cancelled"
+              ? "Execution cancelled, but graph changes prevented its node states from being applied."
+              : response.status === "failed" || response.result?.status === "failed"
+                ? "Execution failed, but graph changes prevented its node states from being applied."
+                : "Execution completed, but graph changes prevented its results from being applied.",
+          );
+          break;
+        }
+
+        if (response.status === "cancelled") {
+          setNodes((current) => current.map((node) =>
+            executionNodeIds.has(node.id)
+              ? {
+                  ...node,
+                  data: {
+                    ...node.data,
+                    run: null,
+                    execution: { status: "cancelled" },
+                  },
+                }
+              : node
+          ));
+          setExecutionAnnouncement("Execution cancelled.");
+          break;
+        }
+
+        if (response.result) {
+          const byNode = new Map(
+            response.result.node_runs.map((run) => [run.node_id, run]),
+          );
+          setNodes((current) => current.map((node) => {
+            if (!executionNodeIds.has(node.id)) return node;
+            const run = byNode.get(node.id);
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                run: run ?? null,
+                execution: run
+                  ? {
+                      status: run.status,
+                      error: run.error ?? (run.status === "failed"
+                        ? "This node failed without error details."
+                        : undefined),
+                    }
+                  : {
+                      status: "skipped",
+                      error: "The server did not return a result for this node.",
+                    },
+              },
+            };
+          }));
+          if (response.error) setRunError(response.error);
+          setExecutionAnnouncement(
+            response.result.status === "succeeded"
+              ? "Execution completed successfully."
+              : "Execution completed with errors.",
+          );
+          break;
+        }
+
+        const executionMessage = response.error ??
+          "The execution ended without a workflow result.";
+        const failedNodeId = guard.activeNodeId;
+        setNodes((current) => current.map((node) => {
+          if (!executionNodeIds.has(node.id)) return node;
+          const failed = failedNodeId === null || node.id === failedNodeId;
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              run: null,
+              execution: failed
+                ? { status: "failed", error: executionMessage }
+                : { status: "idle" },
+            },
+          };
+        }));
+        setRunError(executionMessage);
+        setExecutionAnnouncement("Execution failed.");
+        break;
+      }
     } catch (runFailure) {
       const currentActiveGraph = activeGraphRef.current;
       setNodes((current) => current.map((node) =>
         executionNodeIds.has(node.id) &&
-        node.data.execution.status === "running"
+          (node.data.execution.status === "queued" ||
+            node.data.execution.status === "running" ||
+            node.data.execution.status === "cancelling")
           ? {
               ...node,
               data: {
@@ -3008,6 +3370,9 @@ export function Workbench({
         setRunError(
           "The graph changed while it was running. The completed run was not applied to this canvas.",
         );
+        setExecutionAnnouncement(
+          "Execution failed, and graph changes prevented any terminal state from being applied.",
+        );
         return;
       }
       const missingPinnedArtifact =
@@ -3020,8 +3385,110 @@ export function Workbench({
           ? runFailure.message
           : "Workflow run failed";
       setRunError(message);
+      setExecutionAnnouncement("Execution failed.");
     } finally {
-      setRunningScope(null);
+      if (
+        executionGuardRef.current?.generation === executionGeneration
+      ) {
+        executionGuardRef.current = null;
+        setVisibleExecution((current) =>
+          current?.generation === executionGeneration ? null : current
+        );
+        setRunningScope(null);
+      }
+    }
+  };
+
+  const runWorkflow = async (scope: RunScope) => {
+    if (runRequestReservedRef.current) return;
+    runRequestReservedRef.current = true;
+    setExecutionAnnouncement("");
+    try {
+      await performRunWorkflow(scope);
+    } finally {
+      runRequestReservedRef.current = false;
+    }
+  };
+
+  const cancelCurrentExecution = async () => {
+    const guard = executionGuardRef.current;
+    if (
+      !guard ||
+      !guard.executionId ||
+      guard.cancellationRequested ||
+      guard.cancelInFlight
+    ) {
+      return;
+    }
+
+    const executionId = guard.executionId;
+    const executionGeneration = guard.generation;
+    guard.cancellationRequested = true;
+    guard.cancelInFlight = true;
+    setVisibleExecution((current) =>
+      current?.generation === executionGeneration &&
+          current.executionId === executionId
+        ? { ...current, status: "cancelling", statusError: null }
+        : current
+    );
+    setNodes((current) => current.map((node) =>
+      node.id === guard.activeNodeId &&
+          node.data.execution.status === "running"
+        ? {
+            ...node,
+            data: {
+              ...node.data,
+              execution: { status: "cancelling" },
+            },
+          }
+        : node
+    ));
+
+    try {
+      const response = await cancelRunExecution(executionId);
+      const currentGuard = executionGuardRef.current;
+      if (
+        !currentGuard ||
+        currentGuard.generation !== executionGeneration ||
+        currentGuard.executionId !== executionId ||
+        response.execution_id !== executionId
+      ) {
+        return;
+      }
+      currentGuard.activeNodeId = response.active_node_id ??
+        currentGuard.activeNodeId;
+    } catch (cancelFailure) {
+      const currentGuard = executionGuardRef.current;
+      if (
+        !currentGuard ||
+        currentGuard.generation !== executionGeneration ||
+        currentGuard.executionId !== executionId
+      ) {
+        return;
+      }
+      currentGuard.cancellationRequested =
+        currentGuard.lastServerStatus === "cancelling";
+      const message = cancelFailure instanceof Error
+        ? cancelFailure.message
+        : "The execution could not be cancelled.";
+      setVisibleExecution((current) =>
+        current?.generation === executionGeneration &&
+            current.executionId === executionId
+          ? {
+              ...current,
+              status: currentGuard.lastServerStatus,
+              statusError: `${message} You can try again.`,
+            }
+          : current
+      );
+    } finally {
+      const currentGuard = executionGuardRef.current;
+      if (
+        currentGuard?.generation === executionGeneration &&
+        currentGuard.executionId === executionId
+      ) {
+        currentGuard.cancelInFlight = false;
+      }
     }
   };
 
@@ -3030,9 +3497,31 @@ export function Workbench({
   const firefoxDynamicButtonProps: React.ButtonHTMLAttributes<HTMLButtonElement> & {
     autoComplete: "off";
   } = { autoComplete: "off" };
+  const visibleExecutionNodeTitle = visibleExecution?.activeNodeId
+    ? nodes.find((node) => node.id === visibleExecution.activeNodeId)?.data.spec.title
+    : null;
+  const executionCancelling = visibleExecution?.status === "cancelling";
+  const visibleExecutionTitle = visibleExecutionNodeTitle ??
+    (executionCancelling ? "Stopping execution…" : "Preparing…");
+  const visibleExecutionStatus = visibleExecution?.statusError ??
+    (executionCancelling
+      ? "Waiting for the current node to stop"
+      : visibleExecution?.status === "queued"
+        ? "Waiting for a worker"
+        : visibleExecution?.status === "running"
+          ? "Processing node"
+          : "Starting execution");
 
   return (
     <main {...stylex.props(s.shell)}>
+      <span
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        {...stylex.props(s.visuallyHidden)}
+      >
+        {executionAnnouncement}
+      </span>
       <section {...stylex.props(s.canvas)} aria-label="Workflow canvas">
         <WorkflowCanvas
           fitViewOptions={WORKBENCH_FIT_VIEW_OPTIONS}
@@ -3095,6 +3584,55 @@ export function Workbench({
           ) : null}
         </WorkflowCanvas>
       </section>
+
+      {visibleExecution ? (
+        <aside
+          aria-label={`Execution: ${visibleExecutionTitle}`}
+          {...stylex.props(s.executionBar)}
+        >
+          <span
+            aria-hidden="true"
+            {...stylex.props(
+              s.executionIndicator,
+              executionCancelling ? s.executionIndicatorCancelling : null,
+            )}
+          >
+            <LoaderCircle size={15} {...stylex.props(s.spinner)} />
+          </span>
+          <span
+            role="status"
+            aria-live="polite"
+            {...stylex.props(s.executionCopy)}
+          >
+            <span {...stylex.props(s.executionEyebrow)}>Execution</span>
+            <span {...stylex.props(s.executionTitle)}>
+              {visibleExecutionTitle}
+            </span>
+            <span
+              {...stylex.props(
+                s.executionStatus,
+                visibleExecution.statusError ? s.executionStatusError : null,
+              )}
+            >
+              {visibleExecutionStatus}
+            </span>
+          </span>
+          <button
+            type="button"
+            disabled={!visibleExecution.executionId || executionCancelling}
+            aria-label={executionCancelling ? "Cancelling execution" : "Cancel execution"}
+            {...stylex.props(s.cancelExecutionButton)}
+            onClick={() => void cancelCurrentExecution()}
+          >
+            {executionCancelling ? (
+              <LoaderCircle size={12} {...stylex.props(s.spinner)} />
+            ) : (
+              <Square size={11} fill="currentColor" />
+            )}
+            {executionCancelling ? "Cancelling" : "Cancel"}
+          </button>
+        </aside>
+      ) : null}
 
       <div {...stylex.props(s.topBar)}>
         <div {...stylex.props(s.chrome, s.identity)}>

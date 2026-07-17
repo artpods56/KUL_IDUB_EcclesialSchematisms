@@ -1,12 +1,17 @@
 import base64
 from pathlib import Path
 from typing import cast
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
 from notarius_api.main import create_app
-from notarius_api.schemas.workbench import NodeRegistryResponse, RunResponse
+from notarius_api.schemas.workbench import (
+    NodeRegistryResponse,
+    RunExecutionResponse,
+    RunResponse,
+)
 from notarius_api.services.uploads import ImageUploadService
 from notarius_core.plugins import PluginOrigin
 
@@ -18,6 +23,7 @@ def test_application_lifespan_builds_and_releases_workbench_components() -> None
         "image_uploads",
         "graph_modules",
         "run_graph",
+        "execution_manager",
         "materializations",
         "run_result_presenter",
         "artifacts",
@@ -196,6 +202,45 @@ def test_run_accepts_empty_graph(builtin_client: TestClient) -> None:
     result = RunResponse.model_validate(response.json())
     assert result.status == "succeeded"
     assert result.node_runs == []
+
+
+def test_async_execution_routes_return_pollable_typed_state(
+    builtin_client: TestClient,
+) -> None:
+    start_response = builtin_client.post(
+        "/v1/executions",
+        json={"nodes": [], "edges": []},
+    )
+
+    assert start_response.status_code == 202
+    started = RunExecutionResponse.model_validate(start_response.json())
+    assert started.status == "queued"
+    assert started.active_node_id is None
+    assert started.result is None
+    assert started.error is None
+
+    polled = started
+    for _ in range(20):
+        response = builtin_client.get(f"/v1/executions/{started.execution_id}")
+        assert response.status_code == 200
+        polled = RunExecutionResponse.model_validate(response.json())
+        if polled.status == "succeeded":
+            break
+    assert polled.status == "succeeded"
+    assert polled.result is not None
+    assert polled.result.status == "succeeded"
+
+    cancel_response = builtin_client.delete(
+        f"/v1/executions/{started.execution_id}"
+    )
+    assert cancel_response.status_code == 200
+    assert RunExecutionResponse.model_validate(cancel_response.json()).status == (
+        "succeeded"
+    )
+
+    missing_id = uuid4()
+    assert builtin_client.get(f"/v1/executions/{missing_id}").status_code == 404
+    assert builtin_client.delete(f"/v1/executions/{missing_id}").status_code == 404
 
 
 @pytest.mark.asyncio

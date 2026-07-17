@@ -20,6 +20,7 @@ from notarius_core.runtime.invocation import InvocationError, InvocationMode
 from notarius_core.runtime.persistence import PersistedNodeOutput
 
 from notarius_api.services.execution.edge_values import EdgeValueResolver
+from notarius_api.services.execution.control import RunExecutionControl
 from notarius_api.services.execution.engine import (
     ExecutionTaskRunner,
     PreparedGraphExecution,
@@ -116,6 +117,7 @@ class NodeExecutionService:
                 cache_policy=cache_policy,
                 opaque_secret_revisions=opaque_secret_revisions,
                 task_runner=task_runner,
+                control=execution.control,
             )
         else:
             result = await self._runtime.run_node(
@@ -145,6 +147,7 @@ class NodeExecutionService:
         cache_policy: NodeCachePolicy,
         opaque_secret_revisions: Mapping[str, str],
         task_runner: ExecutionTaskRunner,
+        control: RunExecutionControl | None,
     ) -> PersistedNodeOutput:
         node = compiled_node.node
         invocation = compiled_node.invocation
@@ -188,6 +191,8 @@ class NodeExecutionService:
         cache_hits = 0
         cache_misses = 0
         for index, ref in enumerate(raw_sequence.item_refs):
+            if control is not None:
+                control.check_cancelled()
             item_inputs = dict(inputs)
             item_inputs[map_input] = ref
 

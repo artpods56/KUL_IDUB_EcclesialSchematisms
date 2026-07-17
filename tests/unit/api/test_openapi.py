@@ -8,6 +8,8 @@ def test_openapi_contains_exact_public_routes() -> None:
 
     assert set(schema["paths"]) == {
         "/v1/artifacts/{artifact_id}/content",
+        "/v1/executions",
+        "/v1/executions/{execution_id}",
         "/v1/graphs",
         "/v1/graphs/{graph_id}",
         "/v1/graphs/{graph_id}/materializations",
@@ -19,6 +21,27 @@ def test_openapi_contains_exact_public_routes() -> None:
         "/v1/uploads",
     }
     assert set(schema["paths"]["/v1/graphs"]) == {"get", "post"}
+    assert set(schema["paths"]["/v1/executions"]) == {"post"}
+    assert set(schema["paths"]["/v1/executions/{execution_id}"]) == {
+        "delete",
+        "get",
+    }
+    execution_schema = schema["components"]["schemas"]["RunExecutionResponse"]
+    assert set(execution_schema["properties"]) == {
+        "execution_id",
+        "status",
+        "active_node_id",
+        "result",
+        "error",
+    }
+    assert execution_schema["properties"]["status"]["enum"] == [
+        "queued",
+        "running",
+        "cancelling",
+        "cancelled",
+        "succeeded",
+        "failed",
+    ]
     assert set(schema["paths"]["/v1/graphs/{graph_id}"]) == {
         "delete",
         "get",
