@@ -4,7 +4,11 @@ from fastapi.testclient import TestClient
 
 from notarius_api.schemas.workbench import NodeRegistryResponse, RunResponse
 from notarius_core.artifacts import ArtifactRefSequence
-from notarius_core.operators.text import TextInputConfig, TextValuePayload
+from notarius_core.operators.text import (
+    MarkdownValue,
+    TextInputConfig,
+    TextValuePayload,
+)
 
 
 def _collect_run_payload() -> dict[str, object]:
@@ -101,11 +105,27 @@ def test_registry_declares_text_artifact_and_operator_contracts(
         artifact_types["scalar.text"].payload_schema
         == TextValuePayload.model_json_schema()
     )
+    assert (
+        artifact_types["text.markdown"].payload_schema
+        == MarkdownValue.model_json_schema()
+    )
+    assert artifact_types["text.markdown"].field_projections[0].path == ["markdown"]
+    assert (
+        artifact_types["text.markdown"].field_projections[0].target_artifact_type.id
+        == "scalar.text"
+    )
 
     nodes = {node.operator_id: node for node in registry.nodes}
     assert nodes["text.input"].config_schema == TextInputConfig.model_json_schema()
     assert nodes["text.input"].outputs[0].name == "text"
     assert nodes["text.input"].outputs[0].shape == "one"
+
+    assert nodes["text.as_markdown"].inputs[0].name == "text"
+    assert nodes["text.as_markdown"].inputs[0].artifact_type is not None
+    assert nodes["text.as_markdown"].inputs[0].artifact_type.id == "scalar.text"
+    assert nodes["text.as_markdown"].outputs[0].name == "markdown"
+    assert nodes["text.as_markdown"].outputs[0].artifact_type is not None
+    assert nodes["text.as_markdown"].outputs[0].artifact_type.id == "text.markdown"
 
     assert nodes["text.split"].inputs[0].name == "text"
     assert nodes["text.split"].inputs[0].shape == "one"
@@ -122,6 +142,52 @@ def test_registry_declares_text_artifact_and_operator_contracts(
     assert collect_input.instance_plugs is True
     assert collect_input.artifact_type is None
     assert collect_input.artifact_type_variable == "T"
+
+
+def test_as_markdown_graph_persists_exact_source(
+    builtin_client: TestClient,
+) -> None:
+    source = "# Café\r\n\r\n- first\n- **second**\n\n"
+    response = builtin_client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "source",
+                    "operator_id": "text.input",
+                    "operator_version": 1,
+                    "config": {"text": source},
+                },
+                {
+                    "id": "markdown",
+                    "operator_id": "text.as_markdown",
+                    "operator_version": 1,
+                    "config": {},
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "source",
+                    "from_port": "text",
+                    "to_node": "markdown",
+                    "to_port": "text",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    result = RunResponse.model_validate(response.json())
+    assert result.status == "succeeded"
+    markdown_run = next(
+        node_run for node_run in result.node_runs if node_run.node_id == "markdown"
+    )
+    markdown_ref = markdown_run.outputs[0].artifacts[0]
+    assert markdown_ref.artifact_type == "text.markdown"
+    assert markdown_ref.text == source
+    assert builtin_client.get(
+        f"/v1/artifacts/{markdown_ref.artifact_id}/content"
+    ).json() == {"markdown": source}
 
 
 def test_text_graph_splits_maps_replacement_and_joins(

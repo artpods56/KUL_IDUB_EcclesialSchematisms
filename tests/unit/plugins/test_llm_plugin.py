@@ -8,13 +8,14 @@ from notarius_core.operators.prompts import PROMPTS
 from notarius_core.operators.schemas import SCHEMAS
 from notarius_core.operators.sequences import SEQUENCES
 from notarius_core.operators.images import IMAGES
-from notarius_core.operators.text import TEXT
+from notarius_core.operators.text import TEXT, TEXT_VALUE
 from notarius_core.plugins import PluginOrigin, PluginRegistry, PluginRuntimeContext
 from notarius_core.ports.storage import SaveFileCommand, StoredFile
 from notarius_core.runtime.persistence import InlineModelOutputWriter
 from notarius_core.runtime.resolvers import InlineModelResolver
 from notarius_plugin_llm import LLM
 from notarius_plugin_llm.artifacts import (
+    COMPLETION,
     STRUCTURED_RESPONSE,
     StructuredResponsePayload,
 )
@@ -77,6 +78,17 @@ def test_llm_plugin_declares_complete_runtime_contributions(tmp_path: Path) -> N
     assert STRUCTURED_RESPONSE.payload_schema == (
         StructuredResponsePayload.model_json_schema()
     )
+    completion = next(
+        artifact_type
+        for artifact_type in registry.artifact_types
+        if artifact_type.key == COMPLETION.key
+    )
+    content_projection = next(
+        projection
+        for projection in completion.field_projections
+        if projection.path == ("content",)
+    )
+    assert content_projection.target == TEXT_VALUE.key
     assert isinstance(
         registry.build_node("llm.mistral.structured", 2, context),
         MistralStructuredNode,

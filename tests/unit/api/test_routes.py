@@ -72,6 +72,7 @@ def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
         "arithmetic.multiply",
         "arithmetic.sum",
         "text.input",
+        "text.as_markdown",
         "text.split",
         "text.replace",
         "text.join",
@@ -85,6 +86,7 @@ def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
         ("image.raster", 1),
         ("scalar.integer", 1),
         ("scalar.text", 1),
+        ("text.markdown", 1),
         ("json.schema", 1),
         ("prompt.message", 2),
     }
