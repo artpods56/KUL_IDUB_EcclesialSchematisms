@@ -10,6 +10,7 @@ from notarius_core.artifacts import (
     ArtifactTypeKey,
     ArtifactTypeSpec,
     JsonObject,
+    NoConfig,
     NodeConfig,
     NodeInput,
     NodeOutput,
@@ -23,9 +24,11 @@ from notarius_core.plugins import NodeCachePolicy, Plugin
 from notarius_core.runtime.persistence import (
     ArtifactOutputWriter,
     ArtifactWriteContext,
+    InlineModelOutputWriter,
 )
 from notarius_core.runtime.resolvers import (
     ArtifactContractError,
+    InlineModelResolver,
     ResolutionError,
     Resolver,
 )
@@ -45,6 +48,19 @@ TEXT_VALUE = ArtifactTypeSpec(
     title="Text value",
     payload_schema=cast(JsonObject, TextValuePayload.model_json_schema()),
     materialized_json_type="string",
+)
+
+
+class MarkdownValue(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    markdown: StrictStr
+
+
+MARKDOWN = ArtifactTypeSpec(
+    key=ArtifactTypeKey("text.markdown", 1),
+    title="Markdown",
+    payload_schema=cast(JsonObject, MarkdownValue.model_json_schema()),
 )
 
 
@@ -68,6 +84,7 @@ TEXT = Plugin(
     title="Text",
 )
 TEXT.register_artifact_type(TEXT_VALUE)
+TEXT.register_artifact_type(MARKDOWN)
 TEXT.register_artifact_conversion(INTEGER_TO_TEXT)
 
 
@@ -109,6 +126,45 @@ class TextInputNode(Node[TextInputConfig, TextInputInput, TextInputOutput]):
         /,
     ) -> TextInputOutput:
         return TextInputOutput(text=config.text)
+
+
+class AsMarkdownInput(NodeInput):
+    text: Annotated[
+        StrictStr,
+        InPort(TEXT_VALUE),
+        Field(description="Markdown source text to preserve."),
+    ]
+
+
+class AsMarkdownOutput(NodeOutput):
+    markdown: Annotated[
+        MarkdownValue,
+        OutPort(MARKDOWN),
+        Field(description="The same source text marked as Markdown."),
+    ]
+
+
+@TEXT.node(
+    operator_id="text.as_markdown",
+    version=1,
+    title="As Markdown",
+    cache_policy=NodeCachePolicy.EXACT,
+)
+@final
+class AsMarkdownNode(Node[NoConfig, AsMarkdownInput, AsMarkdownOutput]):
+    """Marks text as Markdown without transforming its source."""
+
+    @override
+    async def run(
+        self,
+        _context: NodeExecutionContext,
+        _config: NoConfig,
+        inputs: AsMarkdownInput,
+        /,
+    ) -> AsMarkdownOutput:
+        return AsMarkdownOutput(
+            markdown=MarkdownValue(markdown=inputs.text),
+        )
 
 
 class SplitTextConfig(NodeConfig):
@@ -362,3 +418,22 @@ class TextValueResolver(Resolver[str]):
                 f"{self.source.id}@{self.source.schema_version} text value"
             )
             raise ResolutionError(message) from exc
+
+
+TEXT.register_resolver(
+    lambda context: cast(
+        Resolver[object],
+        InlineModelResolver(
+            source=MARKDOWN.key,
+            target=MarkdownValue,
+            uow=context.uow,
+        ),
+    )
+)
+TEXT.register_writer(
+    lambda context: InlineModelOutputWriter(
+        artifact_type=MARKDOWN.key,
+        model=MarkdownValue,
+        uow=context.uow,
+    )
+)

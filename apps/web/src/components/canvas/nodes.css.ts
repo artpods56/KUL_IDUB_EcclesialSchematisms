@@ -11,6 +11,7 @@ export const ARTIFACT_TYPE_COLOR: Record<string, string> = {
   "evaluation.metrics": "light-dark(#c9920f, #fbbf24)",
   "scalar.integer": "light-dark(#4590c7, #57a5ef)",
   "scalar.text": "light-dark(#b46735, #e88a50)",
+  "text.markdown": "light-dark(#b46735, #e88a50)",
   "table.fragment": "light-dark(#4590c7, #57a5ef)",
   "table.page": "light-dark(#3c9aa1, #4bc0c8)",
   "tabular.csv_bundle": "light-dark(#c08549, #f0a65a)",

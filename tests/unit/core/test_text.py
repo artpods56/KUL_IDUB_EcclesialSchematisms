@@ -1,3 +1,4 @@
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -6,16 +7,21 @@ from pydantic import ValidationError
 from notarius_core.artifacts import (
     ArtifactRef,
     InMemoryUnitOfWork,
+    NoConfig,
 )
 from notarius_core.nodes import NodeExecutionContext, PortShape
 from notarius_core.operators.arithmetic import ARITHMETIC, INTEGER_VALUE
 from notarius_core.operators.text import (
     INTEGER_TO_TEXT,
+    MARKDOWN,
     TEXT,
     TEXT_VALUE,
+    AsMarkdownInput,
+    AsMarkdownNode,
     JoinTextConfig,
     JoinTextInput,
     JoinTextNode,
+    MarkdownValue,
     ReplaceTextConfig,
     ReplaceTextInput,
     ReplaceTextNode,
@@ -30,7 +36,7 @@ from notarius_core.operators.text import (
     TextValuePayload,
     TextValueResolver,
 )
-from notarius_core.plugins import PluginRegistry
+from notarius_core.plugins import PluginRegistry, PluginRuntimeContext
 from notarius_core.runtime.invocation import (
     InvocationMode,
     map_input_candidates,
@@ -38,6 +44,7 @@ from notarius_core.runtime.invocation import (
 )
 from notarius_core.runtime.materialization import MaterializationProvenance
 from notarius_core.runtime.persistence import ArtifactWriteContext
+from notarius_storage import LocalFileObjectStore
 
 
 def test_text_payload_keeps_legacy_public_identity() -> None:
@@ -56,6 +63,20 @@ async def test_text_input_preserves_multiline_text() -> None:
     assert output.text == "first line\n\nthird line\n"
     text_schema = TextInputConfig.model_json_schema()["properties"]["text"]
     assert text_schema["format"] == "textarea"
+
+
+@pytest.mark.asyncio
+async def test_as_markdown_preserves_source_text_exactly() -> None:
+    source = "# Heading\r\n\r\n- café\n- `code`\n\n"
+
+    output = await AsMarkdownNode().run(
+        NodeExecutionContext(node_id="markdown"),
+        NoConfig(),
+        AsMarkdownInput(text=source),
+    )
+
+    assert output.markdown == MarkdownValue(markdown=source)
+    assert output.markdown.markdown == source
 
 
 @pytest.mark.asyncio
@@ -138,6 +159,71 @@ def test_builtin_integer_to_text_conversion_is_declared_and_nominal() -> None:
     assert INTEGER_TO_TEXT.convert(42) == "42"
     assert TEXT.artifact_conversions == (INTEGER_TO_TEXT,)
     assert registry.artifact_conversions == (INTEGER_TO_TEXT,)
+
+
+def test_markdown_artifact_and_node_are_nominally_registered() -> None:
+    registry = PluginRegistry()
+    registry.install(ARITHMETIC)
+    registry.install(TEXT)
+    registry.freeze()
+
+    markdown_spec = next(
+        artifact_type
+        for artifact_type in registry.artifact_types
+        if artifact_type.key == MARKDOWN.key
+    )
+
+    assert MARKDOWN.key.id == "text.markdown"
+    assert MARKDOWN.key.schema_version == 1
+    assert MARKDOWN.payload_schema == MarkdownValue.model_json_schema()
+    assert [projection.path for projection in markdown_spec.field_projections] == [
+        ("markdown",)
+    ]
+    assert [projection.target for projection in markdown_spec.field_projections] == [
+        TEXT_VALUE.key
+    ]
+    assert AsMarkdownNode.input_contract.ports["text"].accepts == TEXT_VALUE.key
+    assert AsMarkdownNode.output_contract.ports["markdown"].produces == MARKDOWN.key
+
+
+@pytest.mark.asyncio
+async def test_markdown_inline_factories_round_trip_typed_payload(
+    tmp_path: Path,
+) -> None:
+    uow = InMemoryUnitOfWork()
+    context = PluginRuntimeContext(
+        workspace=tmp_path,
+        uploads_dir=tmp_path / "uploads",
+        storage=LocalFileObjectStore(tmp_path / "objects"),
+        uow=uow,
+        bucket="artifacts",
+    )
+    registry = PluginRegistry()
+    registry.install(ARITHMETIC)
+    registry.install(TEXT)
+    registry.freeze()
+    writers = {
+        writer.artifact_type: writer for writer in registry.build_writers(context)
+    }
+    resolvers = {
+        resolver.source: resolver for resolver in registry.build_resolvers(context)
+    }
+    source = "## Exact source\n\n| A | B |\n| - | - |\n| 1 | 2 |\n"
+    payload = MarkdownValue(markdown=source)
+
+    ref = await writers[MARKDOWN.key].write(
+        payload,
+        ArtifactWriteContext(
+            node_context=NodeExecutionContext(node_id="markdown"),
+            provenance=MaterializationProvenance(refs_by_input={}),
+        ),
+    )
+
+    assert await resolvers[MARKDOWN.key].resolve(ref) == payload
+    async with uow as entered:
+        artifact = await entered.artifacts.get(ref.artifact_id)
+    assert artifact is not None
+    assert artifact.inline_payload == {"markdown": source}
 
 
 @pytest.mark.asyncio

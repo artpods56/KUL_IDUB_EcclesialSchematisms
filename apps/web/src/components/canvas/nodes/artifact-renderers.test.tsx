@@ -10,12 +10,20 @@ vi.mock("@stylexjs/stylex", () => ({
 import type { ArtifactSummary } from "@/lib/api";
 import {
   formatJsonSchemaPayload,
+  markdownPayload,
   rendererFor,
 } from "./artifact-renderers";
 
 const JSON_SCHEMA_ARTIFACT: ArtifactSummary = {
   artifact_id: "schema-artifact",
   artifact_type: "json.schema",
+  schema_version: 1,
+  content_type: "application/json",
+};
+
+const MARKDOWN_ARTIFACT: ArtifactSummary = {
+  artifact_id: "markdown-artifact",
+  artifact_type: "text.markdown",
   schema_version: 1,
   content_type: "application/json",
 };
@@ -86,5 +94,121 @@ describe("JSON Schema artifact rendering", () => {
 
     expect(markup).toContain("value");
     expect(markup).toContain("\\&quot;type\\&quot;");
+  });
+});
+
+describe("Markdown artifact rendering", () => {
+  it("selects the nominal renderer before generic JSON and renders GFM", () => {
+    const payload = {
+      markdown: [
+        "# Extracted content",
+        "",
+        "A **useful** result.",
+        "",
+        "- first",
+        "- second",
+        "",
+        "| Field | Value |",
+        "| --- | --- |",
+        "| title | Example |",
+      ].join("\n"),
+    };
+
+    expect(markdownPayload(payload)).toEqual(payload);
+    const renderer = rendererFor(MARKDOWN_ARTIFACT, payload);
+    expect(renderer.id).toBe("markdown");
+    expect(renderer.modes).toEqual(["preview", "raw"]);
+
+    const markup = renderToStaticMarkup(
+      createElement(renderer.Component, {
+        artifact: MARKDOWN_ARTIFACT,
+        payload,
+        mode: "preview",
+      }),
+    );
+
+    expect(markup).toContain("<h1");
+    expect(markup).toContain(">Extracted content</h1>");
+    expect(markup).toContain("<strong>useful</strong>");
+    expect(markup).toContain("<ul>");
+    expect(markup).toContain("<table>");
+    expect(markup).not.toContain("markdown<!-- -->");
+  });
+
+  it("shows the Markdown source itself in raw mode", () => {
+    const payload = { markdown: "# Source\n\n`inline`" };
+    const renderer = rendererFor(MARKDOWN_ARTIFACT, payload);
+    const markup = renderToStaticMarkup(
+      createElement(renderer.Component, {
+        artifact: MARKDOWN_ARTIFACT,
+        payload,
+        mode: "raw",
+      }),
+    );
+
+    expect(markup).toContain("# Source");
+    expect(markup).toContain("`inline`");
+    expect(markup).not.toContain("&quot;markdown&quot;");
+    expect(markup).not.toContain("<h1>");
+  });
+
+  it("does not interpret raw HTML or unsafe link protocols", () => {
+    const payload = {
+      markdown: [
+        "# Safe heading",
+        "",
+        '<script>alert("unsafe")</script>',
+        "",
+        '<img src="x" onerror="alert(1)">',
+        "",
+        "[unsafe link](javascript:alert(1))",
+        "",
+        "[unsafe data link](data:image/svg+xml;base64,PHN2Zy8+)",
+        "",
+        "[safe link](https://example.com)",
+        "",
+        "![tracking pixel](https://tracker.example/pixel.gif)",
+        "",
+        "![inline image](data:image/png;base64,iVBORw0KGgo=)",
+      ].join("\n"),
+    };
+    const renderer = rendererFor(MARKDOWN_ARTIFACT, payload);
+    const markup = renderToStaticMarkup(
+      createElement(renderer.Component, {
+        artifact: MARKDOWN_ARTIFACT,
+        payload,
+        mode: "preview",
+      }),
+    );
+
+    expect(markup).toContain("<h1");
+    expect(markup).toContain(">Safe heading</h1>");
+    expect(markup).not.toContain("<script");
+    expect(markup).toContain("&lt;script&gt;");
+    expect(markup).toContain("&lt;img src=&quot;x&quot; onerror=");
+    expect(markup).not.toContain("javascript:");
+    expect(markup).not.toContain("data:image");
+    expect(markup).toContain('href="https://example.com"');
+    expect(markup).toContain('rel="noreferrer noopener"');
+    expect(markup).not.toContain("<img");
+    expect(markup).toContain("Image: tracking pixel");
+    expect(markup).toContain('href="https://tracker.example/pixel.gif"');
+  });
+
+  it("falls back safely when the payload does not satisfy the contract", () => {
+    expect(markdownPayload(undefined)).toBeNull();
+    expect(markdownPayload({ markdown: 42 })).toBeNull();
+    expect(markdownPayload({ value: "# wrong envelope" })).toBeNull();
+
+    const renderer = rendererFor(MARKDOWN_ARTIFACT, { markdown: 42 });
+    expect(() =>
+      renderToStaticMarkup(
+        createElement(renderer.Component, {
+          artifact: MARKDOWN_ARTIFACT,
+          payload: { markdown: 42 },
+          mode: "preview",
+        }),
+      ),
+    ).not.toThrow();
   });
 });
