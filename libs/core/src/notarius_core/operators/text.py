@@ -7,11 +7,9 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
 from notarius_core.artifacts import (
     ArtifactObject,
     ArtifactRef,
-    ArtifactRefSequence,
     ArtifactTypeKey,
     ArtifactTypeSpec,
     JsonObject,
-    NoConfig,
     NodeConfig,
     NodeInput,
     NodeOutput,
@@ -21,7 +19,7 @@ from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
 from notarius_core.domain.errors import NotFoundError
 from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
 from notarius_core.operators.arithmetic import INTEGER_VALUE
-from notarius_core.plugins import Plugin
+from notarius_core.plugins import NodeCachePolicy, Plugin
 from notarius_core.runtime.persistence import (
     ArtifactOutputWriter,
     ArtifactWriteContext,
@@ -96,6 +94,7 @@ class TextInputOutput(NodeOutput):
     operator_id="text.input",
     version=1,
     title="Text input",
+    cache_policy=NodeCachePolicy.EXACT,
 )
 @final
 class TextInputNode(Node[TextInputConfig, TextInputInput, TextInputOutput]):
@@ -139,6 +138,7 @@ class SplitTextOutput(NodeOutput):
     operator_id="text.split",
     version=1,
     title="Split text",
+    cache_policy=NodeCachePolicy.EXACT,
 )
 @final
 class SplitTextNode(Node[SplitTextConfig, SplitTextInput, SplitTextOutput]):
@@ -186,6 +186,7 @@ class ReplaceTextOutput(NodeOutput):
     operator_id="text.replace",
     version=1,
     title="Replace text",
+    cache_policy=NodeCachePolicy.EXACT,
 )
 @final
 class ReplaceTextNode(Node[ReplaceTextConfig, ReplaceTextInput, ReplaceTextOutput]):
@@ -231,6 +232,7 @@ class JoinTextOutput(NodeOutput):
     operator_id="text.join",
     version=1,
     title="Join text",
+    cache_policy=NodeCachePolicy.EXACT,
 )
 @final
 class JoinTextNode(Node[JoinTextConfig, JoinTextInput, JoinTextOutput]):
@@ -245,82 +247,6 @@ class JoinTextNode(Node[JoinTextConfig, JoinTextInput, JoinTextOutput]):
         /,
     ) -> JoinTextOutput:
         return JoinTextOutput(text=config.separator.join(inputs.parts))
-
-
-class CollectTextInput(NodeInput):
-    items: Annotated[
-        list[ArtifactRef | ArtifactRefSequence],
-        InPort(
-            TEXT_VALUE,
-            variadic=True,
-            instance_plugs=True,
-        ),
-        Field(
-            min_length=1,
-            description="Text artifacts and sequences in connection order.",
-        ),
-    ]
-
-
-class CollectTextOutput(NodeOutput):
-    items: Annotated[
-        ArtifactRefSequence,
-        OutPort(TEXT_VALUE),
-        Field(description="One sequence containing every input text artifact."),
-    ]
-
-
-@TEXT.node(
-    operator_id="text.collect",
-    version=1,
-    title="Collect text",
-)
-@final
-class CollectTextNode(Node[NoConfig, CollectTextInput, CollectTextOutput]):
-    """Collects scalar and sequence text references without rewriting artifacts."""
-
-    @override
-    async def run(
-        self,
-        _context: NodeExecutionContext,
-        _config: NoConfig,
-        inputs: CollectTextInput,
-        /,
-    ) -> CollectTextOutput:
-        item_refs: list[ArtifactRef] = []
-        collect_segments: list[JsonObject] = []
-        ordered = True
-
-        for input_index, source in enumerate(inputs.items):
-            start_index = len(item_refs)
-            if isinstance(source, ArtifactRef):
-                item_refs.append(source)
-                item_count = 1
-                source_kind = "single"
-            else:
-                item_refs.extend(source.item_refs)
-                item_count = len(source.item_refs)
-                source_kind = "sequence"
-                if not source.ordered:
-                    ordered = False
-            collect_segments.append(
-                {
-                    "input_index": input_index,
-                    "start_index": start_index,
-                    "item_count": item_count,
-                    "source_kind": source_kind,
-                }
-            )
-
-        return CollectTextOutput(
-            items=ArtifactRefSequence(
-                artifact_type=TEXT_VALUE.key.id,
-                schema_version=TEXT_VALUE.key.schema_version,
-                item_refs=item_refs,
-                ordered=ordered,
-                metadata={"collect_segments": collect_segments},
-            )
-        )
 
 
 @final
@@ -424,8 +350,7 @@ class TextValueResolver(Resolver[str]):
             raise ArtifactContractError(message)
         if artifact.inline_payload is None:
             message = (
-                f"Text artifact {ref.artifact_id} does not have an inline "
-                "JSON payload"
+                f"Text artifact {ref.artifact_id} does not have an inline JSON payload"
             )
             raise ArtifactContractError(message)
 

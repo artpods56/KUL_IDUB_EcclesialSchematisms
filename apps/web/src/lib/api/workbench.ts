@@ -1,7 +1,10 @@
 import { API_BASE, request } from "./client";
 import type {
+  AppliedNodeSecret,
+  ApplyNodeSecretRequest,
   CreateSavedGraphRequest,
   CreateSavedGraphResponse,
+  GraphNodeSecrets,
   GraphMaterializations,
   RunRequest,
   RunResponse,
@@ -37,6 +40,45 @@ export function getGraphMaterializations(
   );
 }
 
+export function getGraphNodeSecrets(
+  graphId: string,
+  signal?: AbortSignal,
+) {
+  return request<GraphNodeSecrets>(
+    "GET",
+    `/v1/graphs/${encodeURIComponent(graphId)}/node-secrets`,
+    { signal },
+  );
+}
+
+export function applyNodeSecret(
+  graphId: string,
+  nodeId: string,
+  name: string,
+  requestBody: ApplyNodeSecretRequest,
+) {
+  return request<AppliedNodeSecret>(
+    "PUT",
+    `/v1/graphs/${encodeURIComponent(graphId)}/nodes/${encodeURIComponent(nodeId)}/secrets/${encodeURIComponent(name)}`,
+    { body: requestBody },
+  );
+}
+
+export function removeNodeSecret(
+  graphId: string,
+  nodeId: string,
+  name: string,
+  expectedGraphRevision: number,
+) {
+  const query = new URLSearchParams({
+    expected_graph_revision: String(expectedGraphRevision),
+  });
+  return request<undefined>(
+    "DELETE",
+    `/v1/graphs/${encodeURIComponent(graphId)}/nodes/${encodeURIComponent(nodeId)}/secrets/${encodeURIComponent(name)}?${query}`,
+  );
+}
+
 export function createSavedGraph(requestBody: CreateSavedGraphRequest) {
   return request<CreateSavedGraphResponse>("POST", "/v1/graphs", {
     body: requestBody,
@@ -67,7 +109,7 @@ export function deleteSavedGraph(
   );
 }
 
-export function uploadFile(
+export function uploadImage(
   filename: string,
   contentBase64: string,
 ) {

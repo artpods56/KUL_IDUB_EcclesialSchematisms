@@ -293,6 +293,28 @@
         "title": "ArtifactTypeSpecResponse",
         "type": "object"
       },
+      "ConfigureNodeSecretRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_graph_revision": {
+            "minimum": 1.0,
+            "title": "Expected Graph Revision",
+            "type": "integer"
+          },
+          "value": {
+            "format": "password",
+            "title": "Value",
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "value",
+          "expected_graph_revision"
+        ],
+        "title": "ConfigureNodeSecretRequest",
+        "type": "object"
+      },
       "CreateSavedGraphRequest": {
         "additionalProperties": false,
         "properties": {
@@ -392,6 +414,34 @@
         "title": "GraphMaterializationsResponse",
         "type": "object"
       },
+      "GraphNodeSecretsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "graph_id": {
+            "format": "uuid",
+            "title": "Graph Id",
+            "type": "string"
+          },
+          "graph_revision": {
+            "title": "Graph Revision",
+            "type": "integer"
+          },
+          "secrets": {
+            "items": {
+              "$ref": "#/components/schemas/NodeSecretStatusResponse"
+            },
+            "title": "Secrets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "graph_id",
+          "graph_revision",
+          "secrets"
+        ],
+        "title": "GraphNodeSecretsResponse",
+        "type": "object"
+      },
       "GraphPointModel": {
         "additionalProperties": false,
         "properties": {
@@ -422,6 +472,29 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "ImageUploadItemResponse": {
+        "properties": {
+          "byte_size": {
+            "title": "Byte Size",
+            "type": "integer"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "upload_key": {
+            "title": "Upload Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload_key",
+          "filename",
+          "byte_size"
+        ],
+        "title": "ImageUploadItemResponse",
         "type": "object"
       },
       "NodeRegistryResponse": {
@@ -464,8 +537,74 @@
         "title": "NodeRegistryResponse",
         "type": "object"
       },
+      "NodeSecretInputResponse": {
+        "properties": {
+          "config_dependencies": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Config Dependencies",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "config_dependencies",
+          "title"
+        ],
+        "title": "NodeSecretInputResponse",
+        "type": "object"
+      },
+      "NodeSecretStatusResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "name",
+          "configured"
+        ],
+        "title": "NodeSecretStatusResponse",
+        "type": "object"
+      },
       "NodeSpecResponse": {
         "properties": {
+          "catalog_visible": {
+            "default": true,
+            "title": "Catalog Visible",
+            "type": "boolean"
+          },
           "config_schema": {
             "additionalProperties": true,
             "title": "Config Schema",
@@ -486,6 +625,30 @@
             },
             "title": "Inputs",
             "type": "array"
+          },
+          "module_graph_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Module Graph Id"
+          },
+          "module_graph_revision": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Module Graph Revision"
           },
           "operator_id": {
             "title": "Operator Id",
@@ -510,6 +673,13 @@
           "plugin_slug": {
             "title": "Plugin Slug",
             "type": "string"
+          },
+          "secret_inputs": {
+            "items": {
+              "$ref": "#/components/schemas/NodeSecretInputResponse"
+            },
+            "title": "Secret Inputs",
+            "type": "array"
           },
           "title": {
             "title": "Title",
@@ -561,8 +731,20 @@
         "title": "PinnedOutputRequest",
         "type": "object"
       },
+      "PluginOrigin": {
+        "enum": [
+          "builtin",
+          "external",
+          "module"
+        ],
+        "title": "PluginOrigin",
+        "type": "string"
+      },
       "PluginSpecResponse": {
         "properties": {
+          "origin": {
+            "$ref": "#/components/schemas/PluginOrigin"
+          },
           "slug": {
             "title": "Slug",
             "type": "string"
@@ -574,7 +756,8 @@
         },
         "required": [
           "slug",
-          "title"
+          "title",
+          "origin"
         ],
         "title": "PluginSpecResponse",
         "type": "object"
@@ -944,6 +1127,30 @@
             },
             "title": "Pinned Outputs",
             "type": "array"
+          },
+          "secret_graph_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret Graph Id"
+          },
+          "secret_graph_revision": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret Graph Revision"
           }
         },
         "required": [
@@ -1364,34 +1571,6 @@
         "title": "SavedGraphSummaryResponse",
         "type": "object"
       },
-      "SelectionItemResponse": {
-        "properties": {
-          "connector_id": {
-            "title": "Connector Id",
-            "type": "string"
-          },
-          "display_name": {
-            "title": "Display Name",
-            "type": "string"
-          },
-          "external_uri": {
-            "title": "External Uri",
-            "type": "string"
-          },
-          "size_bytes": {
-            "title": "Size Bytes",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "connector_id",
-          "external_uri",
-          "display_name",
-          "size_bytes"
-        ],
-        "title": "SelectionItemResponse",
-        "type": "object"
-      },
       "UpdateSavedGraphRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1786,6 +1965,182 @@
         ]
       }
     },
+    "/v1/graphs/{graph_id}/node-secrets": {
+      "get": {
+        "operationId": "get_node_secret_status_v1_graphs__graph_id__node_secrets_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "graph_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Graph Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphNodeSecretsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Node Secret Status",
+        "tags": [
+          "node secrets"
+        ]
+      }
+    },
+    "/v1/graphs/{graph_id}/nodes/{node_id}/secrets/{name}": {
+      "delete": {
+        "operationId": "delete_node_secret_v1_graphs__graph_id__nodes__node_id__secrets__name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "graph_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Graph Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_graph_revision",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Graph Revision",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Node Secret",
+        "tags": [
+          "node secrets"
+        ]
+      },
+      "put": {
+        "operationId": "configure_node_secret_v1_graphs__graph_id__nodes__node_id__secrets__name__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "graph_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Graph Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigureNodeSecretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeSecretStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Configure Node Secret",
+        "tags": [
+          "node secrets"
+        ]
+      }
+    },
     "/v1/nodes": {
       "get": {
         "operationId": "list_nodes_v1_nodes_get",
@@ -1867,7 +2222,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "$ref": "#/components/schemas/SelectionItemResponse"
+                    "$ref": "#/components/schemas/ImageUploadItemResponse"
                   },
                   "title": "Response Create Samples V1 Samples Post",
                   "type": "array"
@@ -1911,7 +2266,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SelectionItemResponse"
+                  "$ref": "#/components/schemas/ImageUploadItemResponse"
                 }
               }
             },

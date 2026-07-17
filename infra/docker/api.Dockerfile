@@ -6,6 +6,7 @@ COPY pyproject.toml uv.lock alembic.ini ./
 COPY libs/core ./libs/core
 COPY libs/persistence ./libs/persistence
 COPY libs/storage ./libs/storage
+COPY plugins/llm ./plugins/llm
 COPY plugins/ocr ./plugins/ocr
 COPY apps/api ./apps/api
 COPY infra/db ./infra/db
@@ -17,6 +18,10 @@ CMD [".venv/bin/uvicorn", "notarius_api.main:app", "--host", "0.0.0.0", "--port"
 FROM source AS api-ocr
 
 RUN uv sync --locked --no-dev --extra ocr
+
+FROM source AS api-plugins
+
+RUN uv sync --locked --no-dev --extra llm --extra ocr
 
 FROM source AS api
 

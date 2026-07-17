@@ -4,13 +4,13 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from notarius_core.artifacts import (
-    SOURCE_PAGE_IMAGE,
     JsonObject,
     NodeConfig,
     NodeInput,
     NodeOutput,
 )
 from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
+from notarius_core.operators.images import RASTER_IMAGE
 
 from notarius_plugin_ocr.artifacts import MISTRAL_OCR_RESPONSE
 from notarius_plugin_ocr.declaration import OCR
@@ -90,8 +90,8 @@ class MistralOcrConfig(NodeConfig):
 class MistralOcrInput(NodeInput):
     pages: Annotated[
         list[EncodedPageImage],
-        InPort(SOURCE_PAGE_IMAGE),
-        Field(min_length=1, description="Ordered encoded page images to process."),
+        InPort(RASTER_IMAGE),
+        Field(min_length=1, description="Ordered encoded raster images to process."),
     ]
 
 
@@ -124,7 +124,7 @@ def build_mistral_ocr_node(_context: object) -> "MistralOcrNode":
 
 @OCR.node(
     operator_id="ocr.mistral.tables",
-    version=1,
+    version=2,
     title="Mistral OCR 4",
     factory=build_mistral_ocr_node,
 )

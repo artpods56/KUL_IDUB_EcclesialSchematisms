@@ -4,7 +4,6 @@ import pytest
 from pydantic import Field, ValidationError
 
 from notarius_core.artifacts import (
-    SOURCE_PAGE_IMAGE,
     ArtifactRef,
     ArtifactRefSequence,
     ArtifactTypeKey,
@@ -25,6 +24,7 @@ from notarius_core.nodes import (
     derive_input_contract,
     resolve_node_contracts,
 )
+from notarius_core.operators.images import RASTER_IMAGE
 
 
 class ExampleImage:
@@ -38,13 +38,13 @@ class ExampleConfig(NodeConfig):
 class ExampleInput(NodeInput):
     pages: Annotated[
         list[ExampleImage],
-        InPort(SOURCE_PAGE_IMAGE),
+        InPort(RASTER_IMAGE),
         Field(title="Source pages", description="Images to process in order."),
     ]
 
 
 class ExampleOutput(NodeOutput):
-    pages: Annotated[ArtifactRefSequence, OutPort(SOURCE_PAGE_IMAGE)]
+    pages: Annotated[ArtifactRefSequence, OutPort(RASTER_IMAGE)]
 
 
 class ExampleNode(Node[ExampleConfig, ExampleInput, ExampleOutput]):
@@ -65,33 +65,33 @@ class ExampleNode(Node[ExampleConfig, ExampleInput, ExampleOutput]):
 class AnnotationShapesInput(NodeInput):
     optional_page: Annotated[
         ExampleImage | None,
-        InPort(SOURCE_PAGE_IMAGE),
+        InPort(RASTER_IMAGE),
     ] = None
     page_batches: Annotated[
         list[list[ExampleImage]],
-        InPort(SOURCE_PAGE_IMAGE, variadic=True),
+        InPort(RASTER_IMAGE, variadic=True),
     ]
-    page_refs: Annotated[ArtifactRefSequence, InPort(SOURCE_PAGE_IMAGE)]
+    page_refs: Annotated[ArtifactRefSequence, InPort(RASTER_IMAGE)]
 
 
 class InstancePlugInput(NodeInput):
     items: Annotated[
         list[ArtifactRef | ArtifactRefSequence],
-        InPort(SOURCE_PAGE_IMAGE, variadic=True, instance_plugs=True),
+        InPort(RASTER_IMAGE, variadic=True, instance_plugs=True),
     ]
 
 
 class NonVariadicInstancePlugInput(NodeInput):
     items: Annotated[
         list[ArtifactRef | ArtifactRefSequence],
-        InPort(SOURCE_PAGE_IMAGE, instance_plugs=True),
+        InPort(RASTER_IMAGE, instance_plugs=True),
     ]
 
 
 class BroadInstancePlugInput(NodeInput):
     items: Annotated[
         list[ArtifactRef | object],
-        InPort(SOURCE_PAGE_IMAGE, variadic=True, instance_plugs=True),
+        InPort(RASTER_IMAGE, variadic=True, instance_plugs=True),
     ]
 
 
@@ -185,8 +185,7 @@ def test_input_contract_derives_mixed_instance_plug_shapes() -> None:
         ),
         (
             BroadInstancePlugInput,
-            "BroadInstancePlugInput.items.*list\\[ArtifactRef \\| "
-            "ArtifactRefSequence\\]",
+            "BroadInstancePlugInput.items.*must be a concrete Python type",
         ),
     ],
 )

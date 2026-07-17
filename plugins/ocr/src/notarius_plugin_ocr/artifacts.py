@@ -10,3 +10,8 @@ MISTRAL_OCR_RESPONSE = ArtifactTypeSpec(
     key=ArtifactTypeKey("ocr.mistral_response", 1),
     title="Mistral OCR response",
 )
+
+TABLE_FRAGMENT = ArtifactTypeSpec(
+    key=ArtifactTypeKey("table.fragment", 1),
+    title="OCR table fragment",
+)

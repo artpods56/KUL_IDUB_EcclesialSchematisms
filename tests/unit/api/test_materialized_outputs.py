@@ -75,7 +75,7 @@ async def _persist_partially_accessible_materialization(
                 MaterializedNodeOutputs(
                     graph_id=graph_id,
                     graph_revision=graph_revision,
-                    node_id="add-subtract",
+                    node_id="add",
                     workflow_run_id=UUID("00000000-0000-0000-0000-000000000998"),
                     outputs={
                         "accessible": accessible.ref(),
@@ -111,7 +111,7 @@ def _graph_payload() -> dict[str, object]:
     nodes: list[tuple[str, str, dict[str, object]]] = [
         ("nine", "arithmetic.number", {"value": 9}),
         ("four", "arithmetic.number", {"value": 4}),
-        ("add-subtract", "arithmetic.add_subtract", {}),
+        ("add", "arithmetic.add", {}),
         ("multiply", "arithmetic.multiply", {}),
     ]
     edges = _edges()
@@ -138,28 +138,26 @@ def _edges() -> list[dict[str, object]]:
         {
             "from_node": "nine",
             "from_port": "value",
-            "to_node": "add-subtract",
+            "to_node": "add",
             "to_port": "left",
         },
         {
             "from_node": "four",
             "from_port": "value",
-            "to_node": "add-subtract",
+            "to_node": "add",
             "to_port": "right",
         },
         {
-            "from_node": "add-subtract",
+            "from_node": "add",
             "from_port": "result",
             "to_node": "multiply",
             "to_port": "left",
-            "projection": {"path": ["addition"]},
         },
         {
-            "from_node": "add-subtract",
+            "from_node": "add",
             "from_port": "result",
             "to_node": "multiply",
             "to_port": "right",
-            "projection": {"path": ["subtraction"]},
         },
     ]
 
@@ -271,8 +269,8 @@ def _full_run_payload(graph_id: str, graph_revision: int) -> dict[str, object]:
                 "config": {"value": 4},
             },
             {
-                "id": "add-subtract",
-                "operator_id": "arithmetic.add_subtract",
+                "id": "add",
+                "operator_id": "arithmetic.add",
                 "operator_version": 1,
                 "config": {},
             },
@@ -311,7 +309,7 @@ def _downstream_run_payload(
     if pinned_value is not None:
         payload["pinned_outputs"] = [
             {
-                "from_node": "add-subtract",
+                "from_node": "add",
                 "from_port": "result",
                 "value": pinned_value,
             }
@@ -325,15 +323,30 @@ def _output(run: RunResponse, node_id: str) -> RunPortOutputResponse:
 
 
 @pytest.mark.parametrize(
-    "graph_context",
+    ("graph_context", "message"),
     [
-        {"graph_id": "00000000-0000-0000-0000-000000000001"},
-        {"graph_revision": 1},
+        (
+            {"graph_id": "00000000-0000-0000-0000-000000000001"},
+            "graph_id and graph_revision must be provided together",
+        ),
+        (
+            {"graph_revision": 1},
+            "graph_id and graph_revision must be provided together",
+        ),
+        (
+            {"secret_graph_id": "00000000-0000-0000-0000-000000000001"},
+            "secret_graph_id and secret_graph_revision must be provided together",
+        ),
+        (
+            {"secret_graph_revision": 1},
+            "secret_graph_id and secret_graph_revision must be provided together",
+        ),
     ],
 )
 def test_run_graph_context_requires_id_and_revision_together(
     durable_api: tuple[Settings, str],
     graph_context: dict[str, object],
+    message: str,
 ) -> None:
     settings, _ = durable_api
     with _client(settings) as client:
@@ -343,9 +356,28 @@ def test_run_graph_context_requires_id_and_revision_together(
         )
 
     assert response.status_code == 422
-    assert "graph_id and graph_revision must be provided together" in str(
-        response.json()
-    )
+    assert message in str(response.json())
+
+
+def test_run_graph_contexts_must_identify_same_saved_revision(
+    durable_api: tuple[Settings, str],
+) -> None:
+    settings, _ = durable_api
+    with _client(settings) as client:
+        response = client.post(
+            "/v1/runs",
+            json={
+                "nodes": [],
+                "edges": [],
+                "graph_id": "00000000-0000-0000-0000-000000000001",
+                "graph_revision": 1,
+                "secret_graph_id": "00000000-0000-0000-0000-000000000001",
+                "secret_graph_revision": 2,
+            },
+        )
+
+    assert response.status_code == 422
+    assert "must identify the same saved graph revision" in str(response.json())
 
 
 def test_materialization_context_validates_graph_revision_and_fragment(
@@ -361,7 +393,7 @@ def test_materialization_context_validates_graph_revision_and_fragment(
         graph = SavedGraphResponse.model_validate(
             client.post("/v1/graphs", json=_graph_payload()).json()
         )
-        stale = client.get(
+        missing_revision = client.get(
             f"/v1/graphs/{graph.id}/materializations",
             params={"graph_revision": graph.revision + 1},
         )
@@ -383,7 +415,7 @@ def test_materialization_context_validates_graph_revision_and_fragment(
         )
 
     assert missing.status_code == 404
-    assert stale.status_code == 409
+    assert missing_revision.status_code == 404
     assert rogue.status_code == 422
     assert "does not belong to saved graph" in rogue.json()["detail"]
 
@@ -606,7 +638,7 @@ def test_full_run_persists_outputs_and_fresh_app_reuses_them_for_downstream_run(
         assert {node_run.node_id for node_run in materialized.node_runs} == {
             "nine",
             "four",
-            "add-subtract",
+            "add",
             "multiply",
         }
 
@@ -618,12 +650,12 @@ def test_full_run_persists_outputs_and_fresh_app_reuses_them_for_downstream_run(
         assert reloaded.status_code == 200
         reloaded_result = GraphMaterializationsResponse.model_validate(reloaded.json())
         assert len(reloaded_result.node_runs) == 4
-        add_subtract_run = next(
+        add_run = next(
             node_run
             for node_run in reloaded_result.node_runs
-            if node_run.node_id == "add-subtract"
+            if node_run.node_id == "add"
         )
-        persisted_value = add_subtract_run.outputs[0].value
+        persisted_value = add_run.outputs[0].value
 
         downstream = fresh_client.post(
             "/v1/runs",
@@ -636,7 +668,7 @@ def test_full_run_persists_outputs_and_fresh_app_reuses_them_for_downstream_run(
         assert downstream.status_code == 200
         downstream_result = RunResponse.model_validate(downstream.json())
         assert downstream_result.status == "succeeded"
-        assert _output(downstream_result, "multiply").artifacts[0].text == "65"
+        assert _output(downstream_result, "multiply").artifacts[0].text == "169"
 
 
 def test_downstream_run_without_materialization_returns_dependency_guidance(
@@ -692,10 +724,10 @@ def test_inaccessible_artifact_is_filtered_and_blocks_downstream_reuse(
                 json=_full_run_payload(str(graph.id), graph.revision),
             ).json()
         )
-        add_subtract_value = _output(full_run, "add-subtract").value
-        assert isinstance(add_subtract_value, ArtifactRef)
-        artifact_id = add_subtract_value.artifact_id
-        pinned_value = add_subtract_value.model_dump(mode="json")
+        add_value = _output(full_run, "add").value
+        assert isinstance(add_value, ArtifactRef)
+        artifact_id = add_value.artifact_id
+        pinned_value = add_value.model_dump(mode="json")
 
     asyncio.run(_delete_artifact(database_url, artifact_id))
 
@@ -708,7 +740,7 @@ def test_inaccessible_artifact_is_filtered_and_blocks_downstream_reuse(
             materializations.json()
         )
         visible_nodes = {node_run.node_id for node_run in materialized.node_runs}
-        assert "add-subtract" not in visible_nodes
+        assert "add" not in visible_nodes
 
         downstream = client.post(
             "/v1/runs",
@@ -750,7 +782,7 @@ def test_materialization_response_keeps_accessible_sibling_ports(
     assert response.status_code == 200
     materializations = GraphMaterializationsResponse.model_validate(response.json())
     node_run = next(
-        item for item in materializations.node_runs if item.node_id == "add-subtract"
+        item for item in materializations.node_runs if item.node_id == "add"
     )
     assert [output.port for output in node_run.outputs] == ["accessible"]
 
@@ -786,8 +818,8 @@ def test_saved_run_rejects_pin_that_is_not_the_latest_materialization(
                         "config": {"value": 3},
                     },
                     {
-                        "id": "add-subtract",
-                        "operator_id": "arithmetic.add_subtract",
+                        "id": "add",
+                        "operator_id": "arithmetic.add",
                         "operator_version": 1,
                         "config": {},
                     },
@@ -796,13 +828,13 @@ def test_saved_run_rejects_pin_that_is_not_the_latest_materialization(
                     {
                         "from_node": "eight",
                         "from_port": "value",
-                        "to_node": "add-subtract",
+                        "to_node": "add",
                         "to_port": "left",
                     },
                     {
                         "from_node": "three",
                         "from_port": "value",
-                        "to_node": "add-subtract",
+                        "to_node": "add",
                         "to_port": "right",
                     },
                 ],
@@ -810,7 +842,7 @@ def test_saved_run_rejects_pin_that_is_not_the_latest_materialization(
         )
         assert alternate.status_code == 200
         alternate_result = RunResponse.model_validate(alternate.json())
-        pinned_value = _output(alternate_result, "add-subtract").value
+        pinned_value = _output(alternate_result, "add").value
         assert isinstance(pinned_value, ArtifactRef)
 
         downstream = client.post(

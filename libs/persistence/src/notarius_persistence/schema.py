@@ -7,6 +7,7 @@ from sqlalchemy import (
     Index,
     Integer,
     JSON,
+    LargeBinary,
     MetaData,
     String,
     Table,
@@ -15,9 +16,10 @@ from sqlalchemy import Uuid as SaUuid
 from sqlalchemy.engine import Dialect
 from sqlalchemy.types import TypeDecorator
 
-from notarius_core.domain.materialized_outputs import (
-    MaterializedNodeOutputs,
-    MaterializedOutputValue,
+from notarius_core.domain.artifact_outputs import (
+    ArtifactOutputValue,
+    artifact_outputs_from_storage,
+    artifact_outputs_to_storage,
 )
 from notarius_core.domain.saved_graphs import SavedGraphDocument
 
@@ -85,31 +87,31 @@ class UTCDateTime(TypeDecorator[datetime]):
         return value.replace(tzinfo=UTC)
 
 
-class MaterializedOutputsType(
-    TypeDecorator[dict[str, MaterializedOutputValue]],
+class ArtifactOutputsType(
+    TypeDecorator[dict[str, ArtifactOutputValue]],
 ):
     impl = JSON
     cache_ok = True
 
     def process_bind_param(
         self,
-        value: dict[str, MaterializedOutputValue] | None,
+        value: dict[str, ArtifactOutputValue] | None,
         dialect: Dialect,
     ) -> list[dict[str, object]] | None:
         del dialect
         if value is None:
             return None
-        return MaterializedNodeOutputs.outputs_to_storage(value)
+        return artifact_outputs_to_storage(value)
 
     def process_result_value(
         self,
         value: object | None,
         dialect: Dialect,
-    ) -> dict[str, MaterializedOutputValue] | None:
+    ) -> dict[str, ArtifactOutputValue] | None:
         del dialect
         if value is None:
             return None
-        return MaterializedNodeOutputs.outputs_from_storage(value)
+        return artifact_outputs_from_storage(value)
 
 
 saved_graphs = Table(
@@ -122,6 +124,22 @@ saved_graphs = Table(
     Column("created_at", UTCDateTime(), nullable=False),
     Column("updated_at", UTCDateTime(), nullable=False),
     Index("ix_saved_graphs_updated_at", "updated_at"),
+)
+
+
+saved_graph_revisions = Table(
+    "saved_graph_revisions",
+    metadata,
+    Column(
+        "graph_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("saved_graphs.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("revision", Integer, primary_key=True),
+    Column("name", String(160), nullable=False),
+    Column("document", SavedGraphDocumentType(), nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
 )
 
 
@@ -144,6 +162,16 @@ artifact_objects = Table(
 )
 
 
+invocation_cache_entries = Table(
+    "invocation_cache_entries",
+    metadata,
+    Column("key_sha256", String(64), primary_key=True),
+    Column("generation", SaUuid(as_uuid=True), nullable=False),
+    Column("outputs", ArtifactOutputsType(), nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+)
+
+
 materialized_node_outputs = Table(
     "materialized_node_outputs",
     metadata,
@@ -156,7 +184,7 @@ materialized_node_outputs = Table(
     Column("graph_revision", Integer, primary_key=True),
     Column("node_id", String(255), primary_key=True),
     Column("workflow_run_id", SaUuid(as_uuid=True), nullable=False),
-    Column("outputs", MaterializedOutputsType(), nullable=False),
+    Column("outputs", ArtifactOutputsType(), nullable=False),
     Column("materialized_at", UTCDateTime(), nullable=False),
     Index(
         "ix_materialized_node_outputs_graph_revision",
@@ -164,4 +192,27 @@ materialized_node_outputs = Table(
         "graph_revision",
         "materialized_at",
     ),
+)
+
+
+node_secrets = Table(
+    "node_secrets",
+    metadata,
+    Column(
+        "graph_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("saved_graphs.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("node_id", String(255), primary_key=True),
+    Column("name", String(255), primary_key=True),
+    Column("operator_id", String(255), nullable=False),
+    Column("operator_version", Integer, nullable=False),
+    Column("key_id", String(64), nullable=False),
+    Column("dependency_sha256", String(64), nullable=False),
+    Column("nonce", LargeBinary(12), nullable=False),
+    Column("ciphertext", LargeBinary(), nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
+    Index("ix_node_secrets_graph_id", "graph_id"),
 )

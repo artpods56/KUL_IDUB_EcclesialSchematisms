@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import type { RunNodeResult } from "@/lib/api";
+import type { NodeSpec, RunNodeResult } from "@/lib/api";
 import {
   collectContributionLabel,
+  initialInputPlugs,
+  reconcileSchemaFieldInputPlugs,
   reorderInputPlug,
   type WorkflowInputPlug,
 } from "./input-plugs";
+import {
+  createSchemaBuilderField,
+  withSchemaFieldKind,
+} from "./schema-builder";
 
 describe("ordered input plugs", () => {
   it("reorders one port by stable id without disturbing another port", () => {
@@ -30,6 +36,77 @@ describe("ordered input plugs", () => {
       { id: "b", portName: "items" },
     ]);
     expect(plugs.map((plug) => plug.id)).toEqual(["a", "b", "note", "c"]);
+  });
+
+  it("does not manufacture an unowned plug for an optional instance port", () => {
+    const optionalInstanceSpec: NodeSpec = {
+      operator_id: "schema.builder",
+      operator_version: 1,
+      plugin_slug: "builtin.schema",
+      title: "Schema Builder",
+      description: "Build a JSON Schema.",
+      catalog_visible: true,
+      config_schema: {},
+      input_schema: {},
+      output_schema: {},
+      inputs: [
+        {
+          name: "schemas",
+          title: "Nested schemas",
+          description: null,
+          direction: "input",
+          artifact_type: {
+            id: "json.schema",
+            schema_version: 1,
+          },
+          artifact_type_variable: null,
+          shape: "many",
+          accepted_shapes: ["one"],
+          required: false,
+          variadic: true,
+          instance_plugs: true,
+        },
+      ],
+      outputs: [],
+    };
+
+    expect(initialInputPlugs(optionalInstanceSpec)).toEqual([]);
+    expect(
+      initialInputPlugs({
+        ...optionalInstanceSpec,
+        inputs: [{ ...optionalInstanceSpec.inputs[0]!, required: true }],
+      }),
+    ).toEqual([{ id: expect.any(String), portName: "schemas" }]);
+  });
+
+  it("aligns nested-schema plugs to stable field ids and order", () => {
+    const stringField = createSchemaBuilderField(0, "title");
+    const objectField = withSchemaFieldKind(
+      createSchemaBuilderField(1, "customer"),
+      "schema",
+    );
+    const linesField = {
+      ...withSchemaFieldKind(createSchemaBuilderField(2, "lines"), "sequence"),
+      item_kind: "schema" as const,
+    };
+    const existing: WorkflowInputPlug[] = [
+      { id: "other-a", portName: "other" },
+      { id: "stale", portName: "schemas" },
+      { id: "other-b", portName: "other" },
+    ];
+
+    expect(
+      reconcileSchemaFieldInputPlugs(existing, [
+        linesField,
+        stringField,
+        objectField,
+      ]),
+    ).toEqual([
+      { id: "other-a", portName: "other" },
+      { id: "lines", portName: "schemas" },
+      { id: "customer", portName: "schemas" },
+      { id: "other-b", portName: "other" },
+    ]);
   });
 });
 

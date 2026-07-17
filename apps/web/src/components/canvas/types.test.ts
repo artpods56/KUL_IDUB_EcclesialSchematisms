@@ -8,6 +8,7 @@ import {
   invalidateWorkflowNodeRuns,
   portMetaForPort,
   resetArtifactTypeBinding,
+  serializeRunNode,
 } from "./types";
 
 const genericNodeSpec: NodeSpec = {
@@ -16,6 +17,7 @@ const genericNodeSpec: NodeSpec = {
   plugin_slug: "test",
   title: "Collect",
   description: "Collect ordered artifacts.",
+  catalog_visible: true,
   config_schema: {},
   input_schema: {},
   output_schema: {},
@@ -104,6 +106,68 @@ describe("generic artifact type reset", () => {
         direction: "output",
       },
     ]);
+  });
+
+  it("preserves instance-plug identity when T binds to a raster image", () => {
+    const input = genericNodeSpec.inputs[0]!;
+    const plugId = "image-input-1";
+    const genericHandle = decodeHandleId(
+      encodeHandleId(portMetaForPort(input, input.shape, plugId)),
+    );
+    const data = bindArtifactTypeVariable(
+      createWorkflowNodeData(genericNodeSpec),
+      "T",
+      { id: "image.raster", schema_version: 1 },
+    );
+    const concreteHandle = decodeHandleId(
+      encodeHandleId(
+        portMetaForPort(
+          input,
+          input.shape,
+          plugId,
+          data.artifactTypeBindings,
+        ),
+      ),
+    );
+
+    expect(genericHandle).toEqual({
+      portName: "items",
+      artifactTypeVariable: "T",
+      shape: "one",
+      direction: "input",
+      plugId,
+    });
+    expect(concreteHandle).toEqual({
+      portName: "items",
+      artifactTypeId: "image.raster",
+      schemaVersion: 1,
+      shape: "one",
+      direction: "input",
+      plugId,
+    });
+  });
+});
+
+describe("run node serialization", () => {
+  it("sends ordinary config while omitting all write-only secret UI state", () => {
+    const data = createWorkflowNodeData(genericNodeSpec);
+    data.config = {
+      base_url: "https://api.openai.com/v1",
+      model: "gpt-5-mini",
+    };
+    data.secretStatuses = { api_key: { state: "configured" } };
+    data.secretInputReadiness = { api_key: true };
+    data.secretInputScope = "graph-1:2";
+    data.onApplyNodeSecret = async () => true;
+
+    const request = serializeRunNode("llm-node", data);
+
+    expect(request.config).toEqual(data.config);
+    expect(request).not.toHaveProperty("secretStatuses");
+    expect(request).not.toHaveProperty("secretInputReadiness");
+    expect(request).not.toHaveProperty("secretInputScope");
+    expect(request).not.toHaveProperty("onApplyNodeSecret");
+    expect(JSON.stringify(request)).not.toContain("api_key");
   });
 });
 

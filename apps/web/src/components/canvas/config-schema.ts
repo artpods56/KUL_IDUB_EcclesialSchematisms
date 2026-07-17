@@ -50,8 +50,7 @@ export function schemaFields(rawSchema: unknown): SchemaField[] {
   return Object.entries(properties).flatMap(([name, rawProperty]) => {
     if (
       /api.?key|token|secret/i.test(name) ||
-      name === "connector_id" ||
-      name === "selection"
+      name === "uploads"
     ) {
       return [];
     }

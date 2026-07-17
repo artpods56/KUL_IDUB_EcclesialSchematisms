@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import * as stylex from "@stylexjs/stylex";
+import { Toast } from "@base-ui/react/toast";
 import { useRouter } from "next/navigation";
 import {
   NodeToolbar,
@@ -16,6 +17,7 @@ import {
 } from "@xyflow/react";
 import {
   ChevronDown,
+  CircleAlert,
   Copy,
   LoaderCircle,
   Maximize2,
@@ -27,6 +29,7 @@ import {
   Sun,
   Trash2,
   Workflow,
+  X,
 } from "lucide-react";
 
 import { NodeSelector } from "@/components/workbench/NodeSelector";
@@ -73,51 +76,66 @@ import {
   withMaterializedNodeRuns,
 } from "@/components/canvas/saved-graph";
 import {
+  nodeSecretBindingReady,
+  nodeSecretInputs,
+  reconciledNodeSecretStatuses,
+  type WorkflowNodeSecretInput,
+  type WorkflowNodeSecretStatus,
+  type WorkflowNodeSecretStatuses,
+} from "@/components/canvas/node-secrets";
+import {
   ARTIFACT_TYPE_COLOR,
 } from "@/components/canvas/nodes.css";
+import type { SchemaBuilderField } from "@/components/canvas/schema-builder";
 import { useTheme } from "@/components/theme";
 import {
-  LOCAL_UPLOAD_OPERATOR_ID,
+  IMAGE_UPLOAD_OPERATOR_ID,
   WORKFLOW_EDGE_TYPE,
   WORKFLOW_NODE_TYPE,
   acceptedPortShapes,
   bindArtifactTypeVariable,
   createWorkflowNodeData,
   effectivePortShape,
+  imageUploads,
   invalidateWorkflowNodeRuns,
   portHasInstancePlugs,
-  removeSelectionItem,
-  replaceSelection,
+  removeImageUpload,
+  replaceImageUploads,
   resetArtifactTypeBinding,
-  selectedSourceItems,
-  serializeArtifactTypeBindings,
-  serializeNodeConfig,
-  serializeInputPlugs,
+  serializeRunNode,
   serializeWorkflowEdgeTransport,
   type WorkflowEdge,
   type WorkflowEdgeRouteOption,
   type WorkflowEdgeRouteOffset,
   type WorkflowEdgeUpdate,
+  type WorkflowArtifactTypeBindings,
   type WorkflowNodeData,
   type WorkflowInputPlugBinding,
+  type WorkflowInputPlug,
 } from "@/components/canvas/types";
 import { useNodeRegistry, useSavedGraphs } from "@/hooks/use-api";
 import {
+  applyNodeSecret,
   createSavedGraph,
   deleteSavedGraph,
   fileToBase64,
   getGraphMaterializations,
+  getGraphNodeSecrets,
   getSavedGraph,
+  removeNodeSecret,
   runGraph,
   updateSavedGraph,
-  uploadFile,
+  uploadImage,
+  type ArtifactTypeKey,
   type NodeRegistry,
+  type NodeSecretStatus,
   type NodeSpec,
   type PinnedOutputInput,
   type Port,
   type RunEdgeCollectionMode,
   type RunEdgeInput,
   type RunNodeResult,
+  type SavedGraphNode,
   type SavedGraphSummary,
 } from "@/lib/api";
 import { ApiError } from "@/lib/api/client";
@@ -129,7 +147,12 @@ type RunScope = "all" | "selected" | "selected-with-dependencies";
 interface ActiveSavedGraph {
   id: string;
   revision: number;
+  nodes: readonly SavedGraphNode[];
 }
+
+type NodeSecretStatusesByNode = Readonly<
+  Record<string, WorkflowNodeSecretStatuses>
+>;
 
 interface WorkbenchProps {
   workspaceSlug: string;
@@ -137,7 +160,15 @@ interface WorkbenchProps {
   seedExample: boolean;
 }
 
-const INITIAL_GRAPH_NAME = "Arithmetic field projection";
+type GlobalIssueId = "registry" | "graph" | "run";
+
+interface GlobalIssue {
+  id: GlobalIssueId;
+  title: string;
+  message: string;
+}
+
+const INITIAL_GRAPH_NAME = "Scalar arithmetic";
 const NEW_GRAPH_NAME = "Untitled workflow";
 const WORKBENCH_FIT_VIEW_OPTIONS = {
   padding: {
@@ -148,6 +179,40 @@ const WORKBENCH_FIT_VIEW_OPTIONS = {
   },
   maxZoom: 0.88,
 } as const;
+
+function graphNodeSecretStatuses(
+  nodes: readonly WorkflowNode[],
+  remote: readonly NodeSecretStatus[],
+): NodeSecretStatusesByNode {
+  return Object.fromEntries(
+    nodes
+      .filter((node) => nodeSecretInputs(node.data.spec).length > 0)
+      .map((node) => [
+        node.id,
+        reconciledNodeSecretStatuses(node.data.spec, node.id, remote),
+      ]),
+  );
+}
+
+function nodeSecretStatusesWithState(
+  nodes: readonly WorkflowNode[],
+  state: WorkflowNodeSecretStatus["state"],
+  message?: string,
+): NodeSecretStatusesByNode {
+  return Object.fromEntries(
+    nodes
+      .filter((node) => nodeSecretInputs(node.data.spec).length > 0)
+      .map((node) => [
+        node.id,
+        Object.fromEntries(
+          nodeSecretInputs(node.data.spec).map((input) => [
+            input.name,
+            { state, message } satisfies WorkflowNodeSecretStatus,
+          ]),
+        ),
+      ]),
+  );
+}
 
 const ARITHMETIC_NODE_LAYOUT = [
   {
@@ -163,9 +228,15 @@ const ARITHMETIC_NODE_LAYOUT = [
     config: { value: 4 },
   },
   {
-    id: "node-add-subtract",
-    operatorId: "arithmetic.add_subtract",
-    position: { x: 470, y: 310 },
+    id: "node-add",
+    operatorId: "arithmetic.add",
+    position: { x: 470, y: 150 },
+    config: {},
+  },
+  {
+    id: "node-subtract",
+    operatorId: "arithmetic.subtract",
+    position: { x: 470, y: 470 },
     config: {},
   },
   {
@@ -188,6 +259,13 @@ interface PendingConnectionRoute {
   candidates: ConnectionRoute[];
   source: ConnectionEndpoint;
   target: ConnectionEndpoint;
+}
+
+interface PendingBoundEdge {
+  nodeId: string;
+  variable: string;
+  artifactType: ArtifactTypeKey;
+  edge: WorkflowEdge;
 }
 
 function connectionRouteTitle(route: ConnectionRoute): string {
@@ -405,6 +483,7 @@ function selectedNodeAndAncestorIds(
 }
 
 interface MissingRequiredInput {
+  nodeId: string;
   nodeTitle: string;
   portName: string;
 }
@@ -419,7 +498,11 @@ function missingRequiredInputsFor(
         const plugs = inputPlugsForPort(node.data.inputPlugs, port.name);
         if (!plugs.length) {
           return port.required
-            ? [{ nodeTitle: node.data.spec.title, portName: port.name }]
+            ? [{
+                nodeId: node.id,
+                nodeTitle: node.data.spec.title,
+                portName: port.name,
+              }]
             : [];
         }
         return plugs.flatMap((plug, index) =>
@@ -430,6 +513,7 @@ function missingRequiredInputsFor(
           )
             ? []
             : [{
+                nodeId: node.id,
                 nodeTitle: node.data.spec.title,
                 portName: `${port.name} input ${index + 1}`,
               }],
@@ -442,29 +526,44 @@ function missingRequiredInputsFor(
           decodeHandleId(edge.targetHandle)?.portName === port.name,
       )
         ? []
-        : [{ nodeTitle: node.data.spec.title, portName: port.name }];
+        : [{
+            nodeId: node.id,
+            nodeTitle: node.data.spec.title,
+            portName: port.name,
+          }];
     }),
   );
 }
 
-function executionValidationError(
+interface ExecutionValidationIssue {
+  nodeId: string | null;
+  message: string;
+}
+
+function executionValidationIssue(
   scope: RunScope,
   executionNodes: readonly WorkflowNode[],
   executionEdges: readonly WorkflowEdge[],
-): string | null {
+): ExecutionValidationIssue | null {
   if (!executionNodes.length) {
-    return scope !== "all"
-      ? "Select at least one node before running a selection."
-      : "Add at least one node before running the workflow.";
+    return {
+      nodeId: null,
+      message: scope !== "all"
+        ? "Select at least one node before running a selection."
+        : "Add at least one node before running the workflow.",
+    };
   }
 
-  const sourceWithoutFiles = executionNodes.find(
+  const imageUploadWithoutImages = executionNodes.find(
     (node) =>
-      node.data.spec.operator_id === LOCAL_UPLOAD_OPERATOR_ID &&
-      !selectedSourceItems(node.data).length,
+      node.data.spec.operator_id === IMAGE_UPLOAD_OPERATOR_ID &&
+      !imageUploads(node.data).length,
   );
-  if (sourceWithoutFiles) {
-    return `Choose source files for ${sourceWithoutFiles.data.spec.title} before running.`;
+  if (imageUploadWithoutImages) {
+    return {
+      nodeId: imageUploadWithoutImages.id,
+      message: `Choose images for ${imageUploadWithoutImages.data.spec.title} before running.`,
+    };
   }
 
   const missingInputs = missingRequiredInputsFor(
@@ -474,7 +573,10 @@ function executionValidationError(
   if (!missingInputs.length) return null;
 
   const first = missingInputs[0];
-  return `${first.nodeTitle}.${first.portName} is required but unconnected in this run.`;
+  return {
+    nodeId: first.nodeId,
+    message: `${first.nodeTitle}.${first.portName} is required but unconnected in this run.`,
+  };
 }
 
 function workflowNodes(
@@ -608,6 +710,42 @@ const s = stylex.create({
     },
     color: tokens.colorAccent,
   },
+  identityStats: {
+    minWidth: {
+      default: "116px",
+      "@media (max-width: 520px)": "52px",
+    },
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "5px",
+    flexShrink: 0,
+    color: tokens.colorSubtle,
+    fontSize: "10px",
+    fontVariantNumeric: "tabular-nums",
+    whiteSpace: "nowrap",
+  },
+  identityStatValue: {
+    color: tokens.colorTextEmphasis,
+    fontWeight: 750,
+  },
+  identityStatLabel: {
+    display: {
+      default: "inline",
+      "@media (max-width: 520px)": "none",
+    },
+  },
+  identityStatSeparator: { color: tokens.colorDivider },
+  graphStatusDot: {
+    width: "5px",
+    height: "5px",
+    flexShrink: 0,
+    borderRadius: "99px",
+    backgroundColor: tokens.colorSuccess,
+  },
+  graphStatusDotIncomplete: { backgroundColor: tokens.colorWarning },
+  graphStatusDotError: { backgroundColor: tokens.colorDanger },
+  graphStatusDotRunning: { backgroundColor: tokens.colorInfo },
   toolButton: {
     height: "31px",
     display: "inline-flex",
@@ -649,6 +787,90 @@ const s = stylex.create({
     borderRadius: "14px",
     backgroundColor: tokens.colorChrome,
     boxShadow: tokens.shadowNode,
+  },
+  toastViewport: {
+    position: "fixed",
+    zIndex: 80,
+    top: "70px",
+    right: "13px",
+    width: "min(380px, calc(100vw - 26px))",
+    maxHeight: "calc(100svh - 84px)",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "stretch",
+    gap: "8px",
+    outline: "none",
+    pointerEvents: "none",
+  },
+  toastRoot: {
+    width: "100%",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorBorder,
+    borderRadius: "12px",
+    backgroundColor: tokens.colorSurface,
+    boxShadow: tokens.shadowNode,
+    color: tokens.colorText,
+    pointerEvents: "auto",
+  },
+  toastContent: {
+    display: "grid",
+    gridTemplateColumns: "26px minmax(0, 1fr) 28px",
+    alignItems: "start",
+    gap: "10px",
+    padding: "11px",
+  },
+  toastIcon: {
+    width: "26px",
+    height: "26px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: "8px",
+    backgroundColor: tokens.colorDangerHover,
+    color: tokens.colorDanger,
+  },
+  toastCopy: {
+    minWidth: 0,
+    display: "grid",
+    gap: "3px",
+    paddingTop: "1px",
+  },
+  toastTitle: {
+    color: tokens.colorTextEmphasis,
+    fontSize: tokens.fontSizeSm,
+    fontWeight: 750,
+    lineHeight: 1.35,
+  },
+  toastDescription: {
+    margin: 0,
+    color: tokens.colorMuted,
+    fontSize: tokens.fontSizeXs,
+    lineHeight: 1.45,
+    overflowWrap: "anywhere",
+    userSelect: "text",
+    whiteSpace: "pre-wrap",
+  },
+  toastClose: {
+    width: "28px",
+    height: "28px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 0,
+    borderRadius: "7px",
+    outline: "none",
+    backgroundColor: {
+      default: "transparent",
+      ":hover": tokens.colorHover,
+      ":focus-visible": tokens.colorHoverStrong,
+    },
+    color: {
+      default: tokens.colorSubtle,
+      ":hover": tokens.colorText,
+      ":focus-visible": tokens.colorText,
+    },
+    cursor: "pointer",
   },
   railButton: {
     width: "100%",
@@ -747,22 +969,6 @@ const s = stylex.create({
     animationIterationCount: "infinite",
     animationTimingFunction: "linear",
   },
-  statusBar: {
-    position: "absolute",
-    zIndex: 15,
-    left: "13px",
-    bottom: "13px",
-    minHeight: "29px",
-    gap: "7px",
-    padding: "5px 8px",
-    color: tokens.colorSubtle,
-    fontSize: tokens.fontSizeXs,
-  },
-  statusDot: { width: "5px", height: "5px", borderRadius: "99px", backgroundColor: tokens.colorSuccess },
-  statusDotIncomplete: { backgroundColor: tokens.colorWarning },
-  statusDotError: { backgroundColor: tokens.colorDanger },
-  statusValue: { color: tokens.colorTextEmphasis, fontWeight: 700 },
-  statusDivider: { width: "1px", height: "12px", backgroundColor: tokens.colorDivider },
   projectionFlow: {
     display: "grid",
     gridTemplateColumns: "minmax(0,1fr) 24px minmax(0,1fr)",
@@ -865,13 +1071,83 @@ const s = stylex.create({
   },
 });
 
+function GlobalIssueToastList({
+  issues,
+  onDismiss,
+}: {
+  issues: readonly GlobalIssue[];
+  onDismiss: (issue: GlobalIssue) => void;
+}) {
+  const { toasts, add, close } = Toast.useToastManager();
+  const activeIssueIds = React.useRef<Set<string>>(new Set());
+
+  React.useEffect(() => {
+    const nextIssueIds = new Set<string>();
+    for (const issue of issues) {
+      const toastId = `workflow-${issue.id}`;
+      nextIssueIds.add(toastId);
+      add({
+        id: toastId,
+        title: issue.id === "run" ? "Workflow issue" : `${issue.title} issue`,
+        description: issue.message,
+        type: "error",
+        priority: "high",
+        timeout: issue.id === "registry" ? 0 : 8000,
+        onClose: () => onDismiss(issue),
+      });
+    }
+    for (const toastId of activeIssueIds.current) {
+      if (!nextIssueIds.has(toastId)) close(toastId);
+    }
+    activeIssueIds.current = nextIssueIds;
+  }, [add, close, issues, onDismiss]);
+
+  return (
+    <Toast.Portal>
+      <Toast.Viewport
+        aria-label="Workflow notifications"
+        {...stylex.props(s.toastViewport)}
+      >
+        {toasts.map((toast) => (
+          <Toast.Root
+            key={toast.id}
+            toast={toast}
+            swipeDirection="right"
+            className={`ns-workbench-toast ${stylex.props(s.toastRoot).className}`}
+          >
+            <Toast.Content {...stylex.props(s.toastContent)}>
+              <span aria-hidden="true" {...stylex.props(s.toastIcon)}>
+                <CircleAlert size={15} />
+              </span>
+              <span {...stylex.props(s.toastCopy)}>
+                <Toast.Title {...stylex.props(s.toastTitle)} />
+                <Toast.Description {...stylex.props(s.toastDescription)} />
+              </span>
+              <Toast.Close
+                aria-label="Dismiss workflow notification"
+                {...stylex.props(s.toastClose)}
+              >
+                <X size={14} />
+              </Toast.Close>
+            </Toast.Content>
+          </Toast.Root>
+        ))}
+      </Toast.Viewport>
+    </Toast.Portal>
+  );
+}
+
 export function Workbench({
   workspaceSlug,
   initialGraphId,
   seedExample,
 }: WorkbenchProps) {
   const router = useRouter();
-  const { data: registry, error: registryError } = useNodeRegistry();
+  const {
+    data: registry,
+    error: registryError,
+    mutate: refreshNodeRegistry,
+  } = useNodeRegistry();
   const {
     data: savedGraphList,
     error: savedGraphListError,
@@ -882,6 +1158,8 @@ export function Workbench({
   const { preference, cycleTheme } = useTheme();
   const [nodes, setNodes] = React.useState<WorkflowNode[]>([]);
   const [edges, setEdges] = React.useState<WorkflowEdge[]>([]);
+  const [nodeSecretStatuses, setNodeSecretStatuses] =
+    React.useState<NodeSecretStatusesByNode>({});
   const [graphName, setGraphName] = React.useState(
     seedExample ? INITIAL_GRAPH_NAME : NEW_GRAPH_NAME,
   );
@@ -909,6 +1187,43 @@ export function Workbench({
   const openRequestRef = React.useRef<AbortController | null>(null);
   const currentFingerprintRef = React.useRef("");
   const activeGraphRef = React.useRef<ActiveSavedGraph | null>(null);
+  const pendingBoundEdgesRef = React.useRef<PendingBoundEdge[]>([]);
+  const nodesByIdRef = React.useRef<ReadonlyMap<string, WorkflowNode>>(new Map());
+
+  React.useEffect(() => {
+    nodesByIdRef.current = new Map(
+      nodes.map((node) => [node.id, node]),
+    );
+  }, [nodes]);
+
+  const handleNodeHandlesMeasured = React.useCallback((
+    nodeId: string,
+    artifactTypeBindings: WorkflowArtifactTypeBindings,
+  ) => {
+    const ready: PendingBoundEdge[] = [];
+    const waiting: PendingBoundEdge[] = [];
+    for (const pending of pendingBoundEdgesRef.current) {
+      const measuredBinding = artifactTypeBindings[pending.variable];
+      if (
+        pending.nodeId === nodeId &&
+        measuredBinding?.id === pending.artifactType.id &&
+        measuredBinding.schema_version === pending.artifactType.schema_version
+      ) {
+        ready.push(pending);
+      } else {
+        waiting.push(pending);
+      }
+    }
+    if (!ready.length) return;
+
+    pendingBoundEdgesRef.current = waiting;
+    setEdges((current) =>
+      ready.reduce(
+        (next, pending) => addEdge(pending.edge, next),
+        current,
+      ),
+    );
+  }, []);
 
   const updateConfig = React.useCallback(
     (nodeId: string, name: string, value: unknown) => {
@@ -935,6 +1250,188 @@ export function Workbench({
     [edges],
   );
 
+  const refreshNodeSecretStatuses = React.useCallback(async (
+    graph: ActiveSavedGraph,
+    graphNodes: readonly WorkflowNode[],
+    signal?: AbortSignal,
+  ): Promise<boolean> => {
+    if (!graphNodes.some((node) => nodeSecretInputs(node.data.spec).length > 0)) {
+      setNodeSecretStatuses({});
+      return true;
+    }
+    setNodeSecretStatuses(
+      nodeSecretStatusesWithState(graphNodes, "loading"),
+    );
+    try {
+      const response = await getGraphNodeSecrets(graph.id, signal);
+      if (
+        response.graph_id !== graph.id ||
+        response.graph_revision !== graph.revision
+      ) {
+        throw new Error("Node secret status revision mismatch");
+      }
+      setNodeSecretStatuses(
+        graphNodeSecretStatuses(graphNodes, response.secrets),
+      );
+      return true;
+    } catch {
+      if (signal?.aborted) return false;
+      setNodeSecretStatuses(
+        nodeSecretStatusesWithState(
+          graphNodes,
+          "error",
+          "Secret status could not be loaded.",
+        ),
+      );
+      return false;
+    }
+  }, []);
+
+  const applyConfiguredNodeSecret = React.useCallback(async (
+    nodeId: string,
+    name: string,
+    value: string,
+  ): Promise<boolean> => {
+    const graph = activeGraphRef.current;
+    if (!graph) return false;
+    const node = nodesByIdRef.current.get(nodeId);
+    const input = node
+      ? nodeSecretInputs(node.data.spec).find((candidate) => candidate.name === name)
+      : undefined;
+    const savedNode = graph.nodes.find((candidate) => candidate.id === nodeId);
+    if (
+      !node ||
+      !input ||
+      !nodeSecretBindingReady(input, {
+        id: node.id,
+        operator_id: node.data.spec.operator_id,
+        operator_version: node.data.spec.operator_version,
+        config: node.data.config,
+      }, savedNode)
+    ) {
+      return false;
+    }
+
+    setNodeSecretStatuses((current) => ({
+      ...current,
+      [nodeId]: {
+        ...(current[nodeId] ?? {}),
+        [name]: { state: "applying" },
+      },
+    }));
+    try {
+      const response = await applyNodeSecret(graph.id, nodeId, name, {
+        value,
+        expected_graph_revision: graph.revision,
+      });
+      if (
+        response.node_id !== nodeId ||
+        response.name !== name ||
+        response.configured !== true
+      ) {
+        throw new Error("Node secret response mismatch");
+      }
+      if (
+        activeGraphRef.current?.id !== graph.id ||
+        activeGraphRef.current.revision !== graph.revision
+      ) {
+        return true;
+      }
+      setNodeSecretStatuses((current) => ({
+        ...current,
+        [nodeId]: {
+          ...(current[nodeId] ?? {}),
+          [name]: { state: "configured" },
+        },
+      }));
+      return true;
+    } catch {
+      if (
+        activeGraphRef.current?.id === graph.id &&
+        activeGraphRef.current.revision === graph.revision
+      ) {
+        setNodeSecretStatuses((current) => ({
+          ...current,
+          [nodeId]: {
+            ...(current[nodeId] ?? {}),
+            [name]: {
+              state: "error",
+              message: "The secret could not be applied.",
+            },
+          },
+        }));
+      }
+      return false;
+    }
+  }, []);
+
+  const removeConfiguredNodeSecret = React.useCallback(async (
+    nodeId: string,
+    name: string,
+  ): Promise<boolean> => {
+    const graph = activeGraphRef.current;
+    if (!graph) return false;
+    const node = nodesByIdRef.current.get(nodeId);
+    const input = node
+      ? nodeSecretInputs(node.data.spec).find((candidate) => candidate.name === name)
+      : undefined;
+    const savedNode = graph.nodes.find((candidate) => candidate.id === nodeId);
+    if (
+      !node ||
+      !input ||
+      !nodeSecretBindingReady(input, {
+        id: node.id,
+        operator_id: node.data.spec.operator_id,
+        operator_version: node.data.spec.operator_version,
+        config: node.data.config,
+      }, savedNode)
+    ) {
+      return false;
+    }
+
+    setNodeSecretStatuses((current) => ({
+      ...current,
+      [nodeId]: {
+        ...(current[nodeId] ?? {}),
+        [name]: { state: "removing" },
+      },
+    }));
+    try {
+      await removeNodeSecret(graph.id, nodeId, name, graph.revision);
+      if (
+        activeGraphRef.current?.id !== graph.id ||
+        activeGraphRef.current.revision !== graph.revision
+      ) {
+        return true;
+      }
+      setNodeSecretStatuses((current) => ({
+        ...current,
+        [nodeId]: {
+          ...(current[nodeId] ?? {}),
+          [name]: { state: "unconfigured" },
+        },
+      }));
+      return true;
+    } catch {
+      if (
+        activeGraphRef.current?.id === graph.id &&
+        activeGraphRef.current.revision === graph.revision
+      ) {
+        setNodeSecretStatuses((current) => ({
+          ...current,
+          [nodeId]: {
+            ...(current[nodeId] ?? {}),
+            [name]: {
+              state: "error",
+              message: "The stored secret could not be removed.",
+            },
+          },
+        }));
+      }
+      return false;
+    }
+  }, []);
+
   const removeNode = React.useCallback((nodeId: string) => {
     const changedTargetNodeIds = edges
       .filter((edge) => edge.source === nodeId)
@@ -951,11 +1448,16 @@ export function Workbench({
         (edge) => edge.source !== nodeId && edge.target !== nodeId,
       ),
     );
+    setNodeSecretStatuses((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([id]) => id !== nodeId),
+      ),
+    );
     setPendingConnectionRoute(null);
     setRunError(null);
   }, [edges]);
 
-  const removeSelection = React.useCallback(
+  const handleRemoveImageUpload = React.useCallback(
     (nodeId: string, index: number) => {
       const invalidatedNodeIds = nodeAndDescendantIds(nodeId, edges);
       setNodes((current) =>
@@ -965,7 +1467,7 @@ export function Workbench({
             ...node,
             data: {
               ...(node.id === nodeId
-                ? removeSelectionItem(node.data, index)
+                ? removeImageUpload(node.data, index)
                 : node.data),
               run: null,
               execution: { status: "idle" },
@@ -1071,7 +1573,47 @@ export function Workbench({
     [edges],
   );
 
-  const handleFilesSelected = React.useCallback(async (nodeId: string, files: File[]) => {
+  const updateSchemaBuilderFields = React.useCallback(
+    (
+      nodeId: string,
+      fields: readonly SchemaBuilderField[],
+      inputPlugs: readonly WorkflowInputPlug[],
+    ) => {
+      const invalidatedNodeIds = nodeAndDescendantIds(nodeId, edges);
+      const retainedPlugIds = new Set(inputPlugs.map((plug) => plug.id));
+      setNodes((current) =>
+        current.map((node) => {
+          if (!invalidatedNodeIds.has(node.id)) return node;
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              config:
+                node.id === nodeId
+                  ? { ...node.data.config, fields }
+                  : node.data.config,
+              inputPlugs:
+                node.id === nodeId ? inputPlugs : node.data.inputPlugs,
+              run: null,
+              execution: { status: "idle" },
+            },
+          };
+        }),
+      );
+      setEdges((current) =>
+        current.filter((edge) => {
+          if (edge.target !== nodeId) return true;
+          const plugId = decodeHandleId(edge.targetHandle)?.plugId;
+          return !plugId || retainedPlugIds.has(plugId);
+        }),
+      );
+      setPendingConnectionRoute(null);
+      setRunError(null);
+    },
+    [edges],
+  );
+
+  const handleImagesSelected = React.useCallback(async (nodeId: string, files: File[]) => {
     const invalidatedNodeIds = nodeAndDescendantIds(nodeId, edges);
     setNodes((current) => current.map((node) => {
       if (!invalidatedNodeIds.has(node.id)) return node;
@@ -1088,15 +1630,15 @@ export function Workbench({
     }));
     setRunError(null);
     try {
-      const selections = await Promise.all(files.map(async (file) =>
-        uploadFile(file.name, await fileToBase64(file)),
+      const uploads = await Promise.all(files.map(async (file) =>
+        uploadImage(file.name, await fileToBase64(file)),
       ));
       setNodes((current) => current.map((node) => ({
         ...node,
         data: invalidatedNodeIds.has(node.id)
           ? {
               ...(node.id === nodeId
-                ? replaceSelection(node.data, selections)
+                ? replaceImageUploads(node.data, uploads)
                 : node.data),
               execution: { status: "idle" },
               run: null,
@@ -1140,25 +1682,29 @@ export function Workbench({
       ...data,
       onConfigChange: updateConfig,
       onRemoveNode: removeNode,
-      onFilesSelected:
-        data.spec.operator_id === LOCAL_UPLOAD_OPERATOR_ID
-          ? handleFilesSelected
+      onImagesSelected:
+        data.spec.operator_id === IMAGE_UPLOAD_OPERATOR_ID
+          ? handleImagesSelected
           : undefined,
-      onRemoveSelection: removeSelection,
+      onRemoveImageUpload: handleRemoveImageUpload,
       onAddInputPlug: addNodeInputPlug,
       onRemoveInputPlug: removeNodeInputPlug,
       onReorderInputPlug: reorderNodeInputPlug,
+      onSchemaBuilderFieldsChange: updateSchemaBuilderFields,
       onResetArtifactTypeBinding: resetNodeArtifactTypeBinding,
+      onHandlesMeasured: handleNodeHandlesMeasured,
     }),
     [
       addNodeInputPlug,
-      handleFilesSelected,
+      handleImagesSelected,
+      handleNodeHandlesMeasured,
       removeNode,
       removeNodeInputPlug,
-      removeSelection,
+      handleRemoveImageUpload,
       reorderNodeInputPlug,
       resetNodeArtifactTypeBinding,
       updateConfig,
+      updateSchemaBuilderFields,
     ],
   );
 
@@ -1246,8 +1792,10 @@ export function Workbench({
     [],
   );
 
-  const sourceWithoutFiles = nodes.some(
-    (node) => node.data.spec.operator_id === LOCAL_UPLOAD_OPERATOR_ID && !selectedSourceItems(node.data).length,
+  const imageUploadWithoutImages = nodes.some(
+    (node) =>
+      node.data.spec.operator_id === IMAGE_UPLOAD_OPERATOR_ID &&
+      !imageUploads(node.data).length,
   );
   const selectedNodeIds = React.useMemo(
     () => nodes.flatMap((node) => (node.selected ? [node.id] : [])),
@@ -1264,38 +1812,66 @@ export function Workbench({
     : null;
   const runSelectedDisabled =
     !registry || running || selectedNodeCount === 0;
-  const statusMessage = runningScope === "selected"
+  const nodeErrorCount = nodes.filter(
+    (node) => Boolean(node.data.execution.error),
+  ).length;
+  const globalIssues = React.useMemo<GlobalIssue[]>(() => {
+    const issues: GlobalIssue[] = [];
+    if (registryError) {
+      issues.push({
+        id: "registry",
+        title: "Registry",
+        message: registryError instanceof Error
+          ? registryError.message
+          : "The live node registry is unavailable.",
+      });
+    }
+    if (persistenceError) {
+      issues.push({
+        id: "graph",
+        title: "Graph",
+        message: persistenceError,
+      });
+    }
+    if (runError) {
+      issues.push({
+        id: "run",
+        title: "Run",
+        message: runError,
+      });
+    }
+    return issues;
+  }, [persistenceError, registryError, runError]);
+  const dismissGlobalIssue = React.useCallback((issue: GlobalIssue) => {
+    if (issue.id === "graph") {
+      setPersistenceError((current) =>
+        current === issue.message ? null : current,
+      );
+    }
+    if (issue.id === "run") {
+      setRunError((current) => current === issue.message ? null : current);
+    }
+  }, []);
+  const graphHasErrors = globalIssues.length > 0 || nodeErrorCount > 0;
+  const graphNeedsAttention = imageUploadWithoutImages || missingRequiredInputs.length > 0;
+  const canvasStatusMessage = runningScope === "selected"
     ? "running selected nodes · latest upstream outputs are pinned"
     : runningScope === "selected-with-dependencies"
       ? "running selected nodes and all upstream dependencies"
-      : !registry
-        ? registryError
-          ? "registry unavailable · run disabled"
-          : "loading live registry…"
-        : persistenceError
-          ? persistenceError
-          : runError
-            ? runError
-            : sourceWithoutFiles
-              ? "choose source files before running"
+      : globalIssues.length
+        ? `${globalIssues.length} workflow issue${globalIssues.length === 1 ? "" : "s"}`
+        : nodeErrorCount
+          ? `${nodeErrorCount} node issue${nodeErrorCount === 1 ? "" : "s"}`
+          : !registry
+            ? "loading live registry…"
+            : imageUploadWithoutImages
+              ? "choose images before running"
               : connectionInstruction ?? "all required inputs connected · ready to run";
 
   const onNodesChange: OnNodesChange<WorkflowNode> = React.useCallback(
     (changes) => setNodes((current) => applyNodeChanges(changes, current)),
     [],
   );
-
-  const clearWorkflowResults = React.useCallback(() => {
-    setNodes((current) => current.map((node) => ({
-      ...node,
-      data: {
-        ...node.data,
-        run: null,
-        execution: { status: "idle" },
-      },
-    })));
-    setRunError(null);
-  }, []);
 
   const invalidateWorkflowResults = React.useCallback(
     (
@@ -1394,6 +1970,7 @@ export function Workbench({
     route: ConnectionRoute,
   ) => {
     let committedConnection = connection;
+    let newlyBoundNodeId: string | null = null;
     const binding = route.artifactTypeBinding;
     if (binding) {
       const handleId = binding.endpoint === "source"
@@ -1428,20 +2005,7 @@ export function Workbench({
       committedConnection = binding.endpoint === "source"
         ? { ...connection, sourceHandle: concreteHandleId }
         : { ...connection, targetHandle: concreteHandleId };
-      setNodes((current) =>
-        current.map((candidate) =>
-          candidate.id === nodeId
-            ? {
-                ...candidate,
-                data: bindArtifactTypeVariable(
-                  candidate.data,
-                  binding.variable,
-                  binding.artifactType,
-                ),
-              }
-            : candidate,
-        ),
-      );
+      if (!existingBinding) newlyBoundNodeId = nodeId;
     }
 
     const source = decodeHandleId(committedConnection.sourceHandle);
@@ -1473,7 +2037,36 @@ export function Workbench({
       },
       style: edgeStyle,
     };
-    setEdges((current) => addEdge(edge, current));
+    if (binding && newlyBoundNodeId) {
+      const bindingNodeId = newlyBoundNodeId;
+      // Binding replaces the generic handle ID. Keep the concrete edge pending
+      // until WorkflowNode confirms React Flow has measured the replacement.
+      pendingBoundEdgesRef.current = [
+        ...pendingBoundEdgesRef.current,
+        {
+          nodeId: bindingNodeId,
+          variable: binding.variable,
+          artifactType: binding.artifactType,
+          edge,
+        },
+      ];
+      setNodes((current) =>
+        current.map((candidate) =>
+          candidate.id === bindingNodeId
+            ? {
+                ...candidate,
+                data: bindArtifactTypeVariable(
+                  candidate.data,
+                  binding.variable,
+                  binding.artifactType,
+                ),
+              }
+            : candidate,
+        ),
+      );
+    } else {
+      setEdges((current) => addEdge(edge, current));
+    }
     invalidateWorkflowResults([edge.target], [...edges, edge]);
   }, [edges, invalidateWorkflowResults, nodes]);
 
@@ -1716,6 +2309,7 @@ export function Workbench({
     openRequestRef.current?.abort();
     setNodes([]);
     setEdges([]);
+    setNodeSecretStatuses({});
     setGraphName(NEW_GRAPH_NAME);
     activeGraphRef.current = null;
     setActiveGraph(null);
@@ -1764,6 +2358,7 @@ export function Workbench({
       const nextActiveGraph = {
         id: savedGraph.id,
         revision: savedGraph.revision,
+        nodes: savedGraph.nodes ?? [],
       };
       activeGraphRef.current = nextActiveGraph;
       setActiveGraph(nextActiveGraph);
@@ -1771,7 +2366,7 @@ export function Workbench({
       setGraphName((current) =>
         current.trim() === submittedDraft.name ? savedGraph.name : current,
       );
-      clearWorkflowResults();
+      await refreshNodeSecretStatuses(nextActiveGraph, nodes);
       if (!activeGraph) {
         approvedRouteGraphIdRef.current = savedGraph.id;
         router.replace(
@@ -1780,6 +2375,7 @@ export function Workbench({
         );
       }
       void refreshSavedGraphs();
+      void refreshNodeRegistry();
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
         setPersistenceError(
@@ -1795,14 +2391,16 @@ export function Workbench({
     }
   }, [
     activeGraph,
-    clearWorkflowResults,
     currentDraft,
     deletingGraphId,
     openingGraphId,
     refreshSavedGraphs,
+    refreshNodeRegistry,
+    refreshNodeSecretStatuses,
     router,
     running,
     saving,
+    nodes,
     workspaceSlug,
   ]);
 
@@ -1870,21 +2468,26 @@ export function Workbench({
         nodes: savedGraph.nodes ?? [],
         edges: savedGraph.edges ?? [],
       };
-      setNodes(
-        hydrated.nodes.map((node) => ({
+      const openedNodes = hydrated.nodes.map((node) => ({
           ...node,
           data: attachNodeCallbacks(node.data),
-        })),
-      );
+        }));
+      setNodes(openedNodes);
       setEdges(hydrated.edges);
       setGraphName(savedGraph.name);
       const nextActiveGraph = {
         id: savedGraph.id,
         revision: savedGraph.revision,
+        nodes: savedGraph.nodes ?? [],
       };
       activeGraphRef.current = nextActiveGraph;
       setActiveGraph(nextActiveGraph);
       setSavedFingerprint(savedGraphFingerprint(responseDraft));
+      await refreshNodeSecretStatuses(
+        nextActiveGraph,
+        openedNodes,
+        controller.signal,
+      );
       setPendingConnectionRoute(null);
       setRunError(null);
       setPersistenceError(materializationWarning);
@@ -1909,6 +2512,7 @@ export function Workbench({
     confirmDiscard,
     currentFingerprint,
     registry,
+    refreshNodeSecretStatuses,
     router,
     workspaceSlug,
   ]);
@@ -1955,7 +2559,6 @@ export function Workbench({
     }
 
     void openSavedGraph(initialGraphId, false, false);
-    return () => openRequestRef.current?.abort();
   }, [
     activeGraph?.id,
     confirmDiscard,
@@ -2008,6 +2611,7 @@ export function Workbench({
         }
       }
       void refreshSavedGraphs();
+      void refreshNodeRegistry();
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
         setPersistenceError(
@@ -2026,6 +2630,7 @@ export function Workbench({
     currentFingerprint,
     isDirty,
     refreshSavedGraphs,
+    refreshNodeRegistry,
     router,
     showBlankGraph,
     workspaceSlug,
@@ -2038,20 +2643,48 @@ export function Workbench({
 
   const canvasNodes = React.useMemo(
     () =>
-      nodes.map((node) => ({
-        ...node,
-        data: {
-          ...node.data,
-          mappedInputPort: mappedInputPortForNode(node.id, edges),
-          inputPlugBindings: inputPlugBindingsForNode(
-            node,
-            nodes,
-            edges,
-            registry,
-          ),
-        },
-      })),
-    [edges, nodes, registry],
+      nodes.map((node) => {
+        const savedNode = activeGraph?.nodes.find(
+          (candidate) => candidate.id === node.id,
+        );
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            secretStatuses: nodeSecretStatuses[node.id] ?? {},
+            secretInputReadiness: Object.fromEntries(
+              nodeSecretInputs(node.data.spec).map((input) => [
+                input.name,
+                nodeSecretBindingReady(input, {
+                  id: node.id,
+                  operator_id: node.data.spec.operator_id,
+                  operator_version: node.data.spec.operator_version,
+                  config: node.data.config,
+                }, savedNode),
+              ]),
+            ),
+            secretInputScope: `${activeGraph?.id ?? "unsaved"}:${activeGraph?.revision ?? "none"}`,
+            onApplyNodeSecret: applyConfiguredNodeSecret,
+            onRemoveNodeSecret: removeConfiguredNodeSecret,
+            mappedInputPort: mappedInputPortForNode(node.id, edges),
+            inputPlugBindings: inputPlugBindingsForNode(
+              node,
+              nodes,
+              edges,
+              registry,
+            ),
+          },
+        };
+      }),
+    [
+      activeGraph,
+      applyConfiguredNodeSecret,
+      edges,
+      nodeSecretStatuses,
+      nodes,
+      registry,
+      removeConfiguredNodeSecret,
+    ],
   );
 
   const canvasEdges = React.useMemo(
@@ -2190,13 +2823,82 @@ export function Workbench({
               executionNodeIds.has(edge.target),
           )
         : edges.filter((edge) => executionNodeIds.has(edge.target));
-    const validationError = executionValidationError(
+    const secretBackedNodes = executionNodes
+      .map((node) => ({ node, inputs: nodeSecretInputs(node.data.spec) }))
+      .filter(({ inputs }) => inputs.length > 0);
+    if (secretBackedNodes.length && !activeGraph) {
+      setRunError(
+        "Save the graph before running nodes that use stored secrets.",
+      );
+      return;
+    }
+    let changedSecretBinding: {
+      node: WorkflowNode;
+      input: WorkflowNodeSecretInput;
+    } | undefined;
+    if (activeGraph) {
+      for (const { node, inputs } of secretBackedNodes) {
+        const savedNode = activeGraph.nodes.find(
+          (candidate) => candidate.id === node.id,
+        );
+        const changedInput = inputs.find((input) =>
+          !nodeSecretBindingReady(input, {
+            id: node.id,
+            operator_id: node.data.spec.operator_id,
+            operator_version: node.data.spec.operator_version,
+            config: node.data.config,
+          }, savedNode)
+        );
+        if (changedInput) {
+          changedSecretBinding = { node, input: changedInput };
+          break;
+        }
+      }
+    }
+    if (changedSecretBinding) {
+      setRunError(
+        `Save the graph before running ${changedSecretBinding.node.data.spec.title}: its ${changedSecretBinding.input.title} binding is new or changed.`,
+      );
+      return;
+    }
+    const unavailableSecret = secretBackedNodes.find(({ node, inputs }) =>
+      inputs.some(
+        (input) =>
+          nodeSecretStatuses[node.id]?.[input.name]?.state !== "configured",
+      ),
+    );
+    if (unavailableSecret) {
+      setRunError(
+        `Configure every required secret for ${unavailableSecret.node.data.spec.title} before running.`,
+      );
+      return;
+    }
+    const validationIssue = executionValidationIssue(
       scope,
       executionNodes,
       executionEdges,
     );
-    if (validationError) {
-      setRunError(validationError);
+    if (validationIssue) {
+      if (validationIssue.nodeId) {
+        setRunError(null);
+        setNodes((current) => current.map((node) =>
+          node.id === validationIssue.nodeId
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  run: null,
+                  execution: {
+                    status: "failed",
+                    error: validationIssue.message,
+                  },
+                },
+              }
+            : node,
+        ));
+      } else {
+        setRunError(validationIssue.message);
+      }
       return;
     }
 
@@ -2286,18 +2988,20 @@ export function Workbench({
           return [runEdge];
         },
       );
-      const runNodes = executionNodes.map((node) => ({
-        id: node.id,
-        operator_id: node.data.spec.operator_id,
-        operator_version: node.data.spec.operator_version,
-        config: serializeNodeConfig(node.data),
-        input_plugs: serializeInputPlugs(node.data),
-        artifact_type_bindings: serializeArtifactTypeBindings(node.data),
-      }));
-      const graphContext = activeGraph && !isDirty
+      const runNodes = executionNodes.map((node) =>
+        serializeRunNode(node.id, node.data),
+      );
+      const materializesSavedGraph = Boolean(activeGraph && !isDirty);
+      const graphContext = materializesSavedGraph && activeGraph
         ? {
             graph_id: activeGraph.id,
             graph_revision: activeGraph.revision,
+          }
+        : {};
+      const secretGraphContext = secretBackedNodes.length && activeGraph
+        ? {
+            secret_graph_id: activeGraph.id,
+            secret_graph_revision: activeGraph.revision,
           }
         : {};
       const response = await runGraph({
@@ -2305,6 +3009,7 @@ export function Workbench({
         edges: runEdges,
         ...(scope === "selected" ? { pinned_outputs: pinnedOutputs } : {}),
         ...graphContext,
+        ...secretGraphContext,
       });
       const currentActiveGraph = activeGraphRef.current;
       if (
@@ -2312,8 +3017,22 @@ export function Workbench({
         currentActiveGraph?.id !== planningActiveGraph?.id ||
         currentActiveGraph?.revision !== planningActiveGraph?.revision
       ) {
+        setNodes((current) => current.map((node) =>
+          executionNodeIds.has(node.id) &&
+          node.data.execution.status === "running"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  execution: { status: "idle" },
+                },
+              }
+            : node,
+        ));
         setRunError(
-          "The graph changed while it was running. Results were recorded for the original saved revision and were not applied to this canvas.",
+          materializesSavedGraph
+            ? "The graph changed while it was running. Results were recorded for the original saved revision and were not applied to this canvas."
+            : "The graph changed while it was running. The completed run was not applied to this canvas.",
         );
         return;
       }
@@ -2327,16 +3046,30 @@ export function Workbench({
             ...node.data,
             run: run ?? null,
             execution: run
-              ? { status: run.status, error: run.error ?? undefined }
+              ? {
+                  status: run.status,
+                  error: run.error ?? (run.status === "failed"
+                    ? "This node failed without error details."
+                    : undefined),
+                }
               : { status: "skipped", error: "The server did not return a result for this node." },
           },
         };
       }));
-      if (response.status === "failed") {
-        setRunError("The workflow completed with node errors. Check the failed node for details.");
-      }
     } catch (runFailure) {
       const currentActiveGraph = activeGraphRef.current;
+      setNodes((current) => current.map((node) =>
+        executionNodeIds.has(node.id) &&
+        node.data.execution.status === "running"
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                execution: { status: "idle" },
+              },
+            }
+          : node,
+      ));
       if (
         currentFingerprintRef.current !== planningFingerprint ||
         currentActiveGraph?.id !== planningActiveGraph?.id ||
@@ -2357,21 +3090,16 @@ export function Workbench({
           ? runFailure.message
           : "Workflow run failed";
       setRunError(message);
-      setNodes((current) => current.map((node) =>
-        executionNodeIds.has(node.id)
-          ? {
-              ...node,
-              data: {
-                ...node.data,
-                execution: { status: "failed", error: message },
-              },
-            }
-          : node,
-      ));
     } finally {
       setRunningScope(null);
     }
   };
+
+  // Firefox uses autocomplete to control restored dynamic button state, but
+  // React's button typings omit that browser-specific attribute.
+  const firefoxDynamicButtonProps: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+    autoComplete: "off";
+  } = { autoComplete: "off" };
 
   return (
     <main {...stylex.props(s.shell)}>
@@ -2468,6 +3196,37 @@ export function Workbench({
             />
           </span>
           <span {...stylex.props(s.identityDivider)} />
+          <span
+            aria-label={`${nodes.length} node${nodes.length === 1 ? "" : "s"}, ${edges.length} connection${edges.length === 1 ? "" : "s"}. ${canvasStatusMessage}`}
+            title={canvasStatusMessage}
+            {...stylex.props(s.identityStats)}
+          >
+            <span
+              aria-hidden="true"
+              {...stylex.props(
+                s.graphStatusDot,
+                graphHasErrors ? s.graphStatusDotError : null,
+                !graphHasErrors && running ? s.graphStatusDotRunning : null,
+                !graphHasErrors && !running && graphNeedsAttention
+                  ? s.graphStatusDotIncomplete
+                  : null,
+              )}
+            />
+            <span>
+              <span {...stylex.props(s.identityStatValue)}>{nodes.length}</span>{" "}
+              <span {...stylex.props(s.identityStatLabel)}>
+                node{nodes.length === 1 ? "" : "s"}
+              </span>
+            </span>
+            <span aria-hidden="true" {...stylex.props(s.identityStatSeparator)}>·</span>
+            <span>
+              <span {...stylex.props(s.identityStatValue)}>{edges.length}</span>{" "}
+              <span {...stylex.props(s.identityStatLabel)}>
+                connection{edges.length === 1 ? "" : "s"}
+              </span>
+            </span>
+          </span>
+          <span {...stylex.props(s.identityDivider)} />
           <span {...stylex.props(s.identityActions)}>
             <button
               type="button"
@@ -2538,6 +3297,7 @@ export function Workbench({
       <aside aria-label="Canvas actions" {...stylex.props(s.actionRail)}>
         <button
           type="button"
+          {...firefoxDynamicButtonProps}
           aria-label="Add node"
           disabled={!registry || running}
           title="Add node"
@@ -2552,6 +3312,7 @@ export function Workbench({
         </button>
         <button
           type="button"
+          {...firefoxDynamicButtonProps}
           disabled={!flow}
           title="Fit workflow"
           {...stylex.props(s.railButton)}
@@ -2591,6 +3352,13 @@ export function Workbench({
         </button>
       </aside>
 
+      <Toast.Provider timeout={8000} limit={3}>
+        <GlobalIssueToastList
+          issues={globalIssues}
+          onDismiss={dismissGlobalIssue}
+        />
+      </Toast.Provider>
+
       {graphBrowserOpen ? (
         <SavedGraphBrowser
           graphs={savedGraphList?.graphs ?? []}
@@ -2619,6 +3387,7 @@ export function Workbench({
         <NodeSelector
           open={libraryOpen}
           registry={registry}
+          activeGraphId={activeGraph?.id ?? null}
           onOpenChange={setLibraryOpen}
           onAddNode={addCatalogNode}
         />
@@ -2707,27 +3476,6 @@ export function Workbench({
           </DialogBody>
         </DialogContent>
       </Dialog>
-
-      <div
-        role="status"
-        aria-live="polite"
-        {...stylex.props(s.chrome, s.statusBar)}
-        title={statusMessage}
-      >
-        <span {...stylex.props(
-          s.statusDot,
-          registryError || runError || persistenceError ? s.statusDotError : null,
-          !registryError && !runError && !persistenceError &&
-            (sourceWithoutFiles || missingRequiredInputs.length)
-            ? s.statusDotIncomplete
-            : null,
-        )} />
-        <span {...stylex.props(s.statusValue)}>{nodes.length}</span> nodes
-        <span {...stylex.props(s.statusDivider)} />
-        <span {...stylex.props(s.statusValue)}>{edges.length}</span> connections
-        <span {...stylex.props(s.statusDivider)} />
-        {statusMessage}
-      </div>
     </main>
   );
 }

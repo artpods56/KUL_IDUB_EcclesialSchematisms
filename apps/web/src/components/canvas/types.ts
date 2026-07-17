@@ -4,20 +4,22 @@ import type {
   ArtifactConversionInput,
   ArtifactConversionPathInput,
   ArtifactTypeKey,
+  ImageUploadItem,
   InputPlugInput,
   NodeSpec,
-  NodeConfigInput,
   Port,
   RunEdgeCollectionMode,
   RunEdgeProjectionInput,
+  RunNodeInput,
   RunNodeResult,
-  SelectionItem,
 } from "@/lib/api";
 import {
   initialInputPlugs,
   type WorkflowInputPlug,
   type WorkflowInputPlugBinding,
 } from "./input-plugs";
+import type { SchemaBuilderField } from "./schema-builder";
+import type { WorkflowNodeSecretStatuses } from "./node-secrets";
 
 export type { WorkflowInputPlug, WorkflowInputPlugBinding } from "./input-plugs";
 
@@ -117,8 +119,7 @@ export interface WorkflowArtifactTypeBindingInput {
 }
 
 export type WorkflowNodeConfig = Record<string, unknown> & {
-  connector_id?: string;
-  selection?: SelectionItem[];
+  uploads?: ImageUploadItem[];
 };
 
 export type NodeExecutionStatus =
@@ -144,13 +145,19 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   inputPlugBindings: Readonly<Record<string, WorkflowInputPlugBinding>>;
   /** Derived from incoming map edges; never persisted as node configuration. */
   mappedInputPort: string | null;
+  /** Server-reported write-only state; never persisted with the graph. */
+  secretStatuses: WorkflowNodeSecretStatuses;
+  /** Per-input match against its saved operator and declared config dependencies. */
+  secretInputReadiness: Readonly<Record<string, boolean>>;
+  /** Derived lifecycle scope for clearing unapplied write-only input values. */
+  secretInputScope: string;
   config: WorkflowNodeConfig;
   run: RunNodeResult | null;
   execution: NodeExecution;
-  onFilesSelected?: (nodeId: string, files: File[]) => void;
+  onImagesSelected?: (nodeId: string, files: File[]) => void;
   onConfigChange?: (nodeId: string, name: string, value: unknown) => void;
   onRemoveNode?: (nodeId: string) => void;
-  onRemoveSelection?: (nodeId: string, index: number) => void;
+  onRemoveImageUpload?: (nodeId: string, index: number) => void;
   onAddInputPlug?: (nodeId: string, portName: string) => void;
   onRemoveInputPlug?: (nodeId: string, plugId: string) => void;
   onReorderInputPlug?: (
@@ -159,12 +166,30 @@ export interface WorkflowNodeData extends Record<string, unknown> {
     plugId: string,
     toIndex: number,
   ) => void;
+  onSchemaBuilderFieldsChange?: (
+    nodeId: string,
+    fields: readonly SchemaBuilderField[],
+    inputPlugs: readonly WorkflowInputPlug[],
+  ) => void;
+  onApplyNodeSecret?: (
+    nodeId: string,
+    name: string,
+    value: string,
+  ) => Promise<boolean>;
+  onRemoveNodeSecret?: (
+    nodeId: string,
+    name: string,
+  ) => Promise<boolean>;
   onResetArtifactTypeBinding?: (nodeId: string, variable: string) => void;
+  onHandlesMeasured?: (
+    nodeId: string,
+    artifactTypeBindings: WorkflowArtifactTypeBindings,
+  ) => void;
 }
 
 export const WORKFLOW_NODE_TYPE = "notariusWorkflowNode";
 export const WORKFLOW_EDGE_TYPE = "notariusWorkflowEdge";
-export const LOCAL_UPLOAD_OPERATOR_ID = "source.local_upload.images";
+export const IMAGE_UPLOAD_OPERATOR_ID = "image.upload";
 
 function schemaRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -189,9 +214,8 @@ export function defaultNodeConfig(
     }
   }
 
-  if (spec.operator_id === LOCAL_UPLOAD_OPERATOR_ID) {
-    config.connector_id = "local_upload";
-    config.selection = [];
+  if (spec.operator_id === IMAGE_UPLOAD_OPERATOR_ID) {
+    config.uploads = [];
   }
   return config;
 }
@@ -211,9 +235,26 @@ export function createWorkflowNodeData(
       : initialInputPlugs(spec),
     inputPlugBindings: {},
     mappedInputPort: null,
+    secretStatuses: {},
+    secretInputReadiness: {},
+    secretInputScope: "unsaved:none",
     config: defaultNodeConfig(spec),
     run: null,
     execution: { status: "idle" },
+  };
+}
+
+export function serializeRunNode(
+  id: string,
+  data: WorkflowNodeData,
+): RunNodeInput {
+  return {
+    id,
+    operator_id: data.spec.operator_id,
+    operator_version: data.spec.operator_version,
+    config: data.config,
+    input_plugs: serializeInputPlugs(data),
+    artifact_type_bindings: serializeArtifactTypeBindings(data),
   };
 }
 
@@ -294,60 +335,24 @@ export function bindArtifactTypeVariable(
   };
 }
 
-export function selectedSourceItems(
-  data: WorkflowNodeData,
-): SelectionItem[] {
-  return Array.isArray(data.config.selection) ? data.config.selection : [];
+export function imageUploads(data: WorkflowNodeData): ImageUploadItem[] {
+  return Array.isArray(data.config.uploads) ? data.config.uploads : [];
 }
 
-export function isLocalUploadSource(data: WorkflowNodeData): boolean {
-  return data.spec.operator_id === LOCAL_UPLOAD_OPERATOR_ID;
-}
-
-export function serializeNodeConfig(
+export function replaceImageUploads(
   data: WorkflowNodeData,
-): NodeConfigInput {
-  if (!isLocalUploadSource(data)) return data.config;
-
-  return {
-    ...data.config,
-    connector_id: "local_upload",
-    selection: selectedSourceItems(data).map((item, index) => ({
-      ...item,
-      order_index: index,
-    })),
-  };
-}
-
-export function appendSelection(
-  data: WorkflowNodeData,
-  items: readonly SelectionItem[],
+  uploads: readonly ImageUploadItem[],
 ): WorkflowNodeData {
   return {
     ...data,
     config: {
       ...data.config,
-      connector_id: "local_upload",
-      selection: [...selectedSourceItems(data), ...items],
+      uploads: [...uploads],
     },
   };
 }
 
-export function replaceSelection(
-  data: WorkflowNodeData,
-  items: readonly SelectionItem[],
-): WorkflowNodeData {
-  return {
-    ...data,
-    config: {
-      ...data.config,
-      connector_id: "local_upload",
-      selection: [...items],
-    },
-  };
-}
-
-export function removeSelectionItem(
+export function removeImageUpload(
   data: WorkflowNodeData,
   index: number,
 ): WorkflowNodeData {
@@ -355,7 +360,7 @@ export function removeSelectionItem(
     ...data,
     config: {
       ...data.config,
-      selection: selectedSourceItems(data).filter(
+      uploads: imageUploads(data).filter(
         (_, itemIndex) => itemIndex !== index,
       ),
     },
@@ -518,7 +523,7 @@ export function groupLabel(group: string): string {
   return group.charAt(0).toUpperCase() + group.slice(1);
 }
 
-export function selectionSizeLabel(bytes: number): string {
+export function imageUploadSizeLabel(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} kB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;

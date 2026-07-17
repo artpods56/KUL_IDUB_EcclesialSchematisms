@@ -12,6 +12,7 @@ FORBIDDEN_CORE_IMPORTS = (
     "mistralai",
     "notarius_api",
     "notarius_persistence",
+    "notarius_plugin_llm",
     "notarius_plugin_ocr",
     "notarius_storage",
     "sqlalchemy",
@@ -20,71 +21,73 @@ FORBIDDEN_OCR_PLUGIN_IMPORTS = (
     "notarius_api",
     "notarius_storage",
 )
+FORBIDDEN_LLM_PLUGIN_IMPORTS = FORBIDDEN_OCR_PLUGIN_IMPORTS
 FORBIDDEN_API_PLUGIN_IMPORTS = (
     "mistralai",
+    "notarius_plugin_llm",
     "notarius_plugin_ocr",
 )
 LEGACY_NAMESPACE = "proto" + "type"
 
 
-def test_ocr_sdk_dependency_is_owned_by_the_optional_plugin() -> None:
+def test_mistral_sdk_dependency_is_owned_by_optional_plugins() -> None:
     root_document = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
-    api_document = tomllib.loads(
-        (REPO_ROOT / "apps/api/pyproject.toml").read_text()
-    )
-    core_document = tomllib.loads(
-        (REPO_ROOT / "libs/core/pyproject.toml").read_text()
-    )
+    api_document = tomllib.loads((REPO_ROOT / "apps/api/pyproject.toml").read_text())
+    core_document = tomllib.loads((REPO_ROOT / "libs/core/pyproject.toml").read_text())
     plugin_document = tomllib.loads(
         (REPO_ROOT / "plugins/ocr/pyproject.toml").read_text()
+    )
+    llm_plugin_document = tomllib.loads(
+        (REPO_ROOT / "plugins/llm/pyproject.toml").read_text()
     )
 
     root_project = cast(dict[str, object], root_document["project"])
     api_project = cast(dict[str, object], api_document["project"])
     core_project = cast(dict[str, object], core_document["project"])
     plugin_project = cast(dict[str, object], plugin_document["project"])
+    llm_plugin_project = cast(dict[str, object], llm_plugin_document["project"])
 
     root_dependencies = cast(list[str], root_project["dependencies"])
-    root_extras = cast(
-        dict[str, list[str]], root_project["optional-dependencies"]
-    )
+    root_extras = cast(dict[str, list[str]], root_project["optional-dependencies"])
     api_dependencies = cast(list[str], api_project["dependencies"])
     core_dependencies = cast(list[str], core_project["dependencies"])
     plugin_dependencies = cast(list[str], plugin_project["dependencies"])
+    llm_plugin_dependencies = cast(list[str], llm_plugin_project["dependencies"])
 
     assert not any(
         requirement.startswith("notarius-plugin-ocr")
         for requirement in root_dependencies
     )
     assert not any(
-        requirement.startswith("mistralai")
+        requirement.startswith("notarius-plugin-llm")
         for requirement in root_dependencies
     )
+    assert not any(
+        requirement.startswith("mistralai") for requirement in root_dependencies
+    )
     assert root_extras["ocr"] == ["notarius-plugin-ocr"]
+    assert root_extras["llm"] == ["notarius-plugin-llm"]
 
     for dependencies in (api_dependencies, core_dependencies):
         assert not any(
-            requirement.startswith("notarius-plugin-ocr")
+            requirement.startswith(("notarius-plugin-llm", "notarius-plugin-ocr"))
             for requirement in dependencies
         )
         assert not any(
-            requirement.startswith("mistralai")
-            for requirement in dependencies
+            requirement.startswith("mistralai") for requirement in dependencies
         )
 
     assert any(
-        requirement.startswith("mistralai")
-        for requirement in plugin_dependencies
+        requirement.startswith("mistralai") for requirement in plugin_dependencies
+    )
+    assert any(
+        requirement.startswith("mistralai") for requirement in llm_plugin_dependencies
     )
 
 
 def test_relational_dependencies_are_owned_by_persistence() -> None:
-    api_document = tomllib.loads(
-        (REPO_ROOT / "apps/api/pyproject.toml").read_text()
-    )
-    core_document = tomllib.loads(
-        (REPO_ROOT / "libs/core/pyproject.toml").read_text()
-    )
+    api_document = tomllib.loads((REPO_ROOT / "apps/api/pyproject.toml").read_text())
+    core_document = tomllib.loads((REPO_ROOT / "libs/core/pyproject.toml").read_text())
     persistence_document = tomllib.loads(
         (REPO_ROOT / "libs/persistence/pyproject.toml").read_text()
     )
@@ -128,7 +131,11 @@ def test_persistence_does_not_import_api_or_plugins() -> None:
 
     for path in persistence_root.rglob("*.py"):
         text = path.read_text()
-        for forbidden in ("notarius_api", "notarius_plugin_ocr"):
+        for forbidden in (
+            "notarius_api",
+            "notarius_plugin_llm",
+            "notarius_plugin_ocr",
+        ):
             if f"import {forbidden}" in text or f"from {forbidden}" in text:
                 offenders.append(f"{path.relative_to(REPO_ROOT)}: {forbidden}")
 
@@ -161,9 +168,23 @@ def test_ocr_plugin_depends_on_core_ports_not_outer_layers() -> None:
     assert offenders == []
 
 
+def test_llm_plugin_depends_on_core_ports_not_outer_layers() -> None:
+    plugin_root = REPO_ROOT / "plugins/llm/src/notarius_plugin_llm"
+    offenders: list[str] = []
+
+    for path in plugin_root.rglob("*.py"):
+        text = path.read_text()
+        for forbidden in FORBIDDEN_LLM_PLUGIN_IMPORTS:
+            if f"import {forbidden}" in text or f"from {forbidden}" in text:
+                offenders.append(f"{path.relative_to(REPO_ROOT)}: {forbidden}")
+
+    assert offenders == []
+
+
 def test_retained_python_sources_do_not_use_legacy_namespace() -> None:
     source_roots = (
         REPO_ROOT / "libs/core/src/notarius_core",
+        REPO_ROOT / "plugins/llm/src/notarius_plugin_llm",
         REPO_ROOT / "plugins/ocr/src/notarius_plugin_ocr",
         REPO_ROOT / "apps/api/src/notarius_api",
     )

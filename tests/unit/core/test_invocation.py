@@ -10,9 +10,11 @@ from notarius_core.artifacts import (
     ArtifactTypeKey,
     ArtifactTypeSpec,
     NoConfig,
+    NodeConfig,
     NodeInput,
     NodeOutput,
 )
+from notarius_core.domain.invocation_cache import InvocationCacheEntry
 from notarius_core.nodes import (
     ArtifactTypeVariable,
     InPort,
@@ -23,7 +25,12 @@ from notarius_core.nodes import (
     derive_input_contract,
     derive_output_contract,
 )
+from notarius_core.plugins import NodeCachePolicy
 from notarius_core.runtime.execution import NodeRuntime
+from notarius_core.runtime.invocation_cache import (
+    InvocationCachePort,
+    invocation_cache_key,
+)
 from notarius_core.runtime.invocation import (
     InvocationError,
     InvocationMode,
@@ -99,6 +106,31 @@ class RecordingWriter:
         )
         self.refs.append(ref)
         return ref
+
+
+class MemoryInvocationCache(InvocationCachePort):
+    def __init__(self) -> None:
+        self.entries: dict[str, InvocationCacheEntry] = {}
+
+    async def get(self, key_sha256: str) -> InvocationCacheEntry | None:
+        return self.entries.get(key_sha256)
+
+    async def put_if_absent(self, entry: InvocationCacheEntry) -> bool:
+        if entry.key_sha256 in self.entries:
+            return False
+        self.entries[entry.key_sha256] = entry
+        return True
+
+    async def remove_if_current(
+        self,
+        key_sha256: str,
+        generation: UUID,
+    ) -> bool:
+        entry = self.entries.get(key_sha256)
+        if entry is None or entry.generation != generation:
+            return False
+        del self.entries[key_sha256]
+        return True
 
 
 class CollectionInput(NodeInput):
@@ -275,6 +307,7 @@ class GenericPassthroughNode(
 def runtime_with(
     resolver: IntResolver,
     writer: RecordingWriter,
+    invocation_cache: InvocationCachePort | None = None,
 ) -> NodeRuntime:
     resolvers = ResolverRegistry()
     resolvers.register(cast(Resolver[object], resolver))
@@ -283,6 +316,7 @@ def runtime_with(
     return NodeRuntime(
         materializer=InputMaterializer(resolvers),
         persister=OutputPersister(writers),
+        invocation_cache=invocation_cache,
     )
 
 
@@ -347,7 +381,7 @@ async def test_map_invokes_in_order_broadcasts_and_aggregates_outputs() -> None:
     assert node.calls == [(0, 2, 10), (1, 4, 10)]
     assert writer.values == [12, 14]
     assert writer.item_indexes == [0, 1]
-    assert writer.completed_counts == [2, 2]
+    assert writer.completed_counts == [1, 2]
     assert isinstance(result, PersistedNodeOutput)
     output_sequence = result["value"]
     assert isinstance(output_sequence, ArtifactRefSequence)
@@ -615,3 +649,317 @@ async def test_output_persister_rejects_passthrough_key_and_shape_mismatches() -
             ),
             provenance,
         )
+
+
+class FingerprintConfig(NodeConfig):
+    offset: int = 7
+
+
+def test_invocation_cache_key_is_canonical_and_scoped_to_stable_context() -> None:
+    input_ref = ArtifactRef.from_key(
+        artifact_id=uuid4(),
+        key=INPUT_VALUE.key,
+        content_hash="a" * 64,
+    )
+    node = ScalarNode()
+    first_context = NodeExecutionContext(
+        workflow_run_id=uuid4(),
+        node_run_id=uuid4(),
+        graph_id=uuid4(),
+        graph_revision=1,
+        node_id="stable-node",
+        module_path=("graph.module.example@3",),
+    )
+    second_context = NodeExecutionContext(
+        workflow_run_id=uuid4(),
+        node_run_id=uuid4(),
+        graph_id=uuid4(),
+        graph_revision=99,
+        node_id="stable-node",
+        module_path=("graph.module.example@3",),
+    )
+    first = invocation_cache_key(
+        node=node,
+        context=first_context,
+        inputs={"item": input_ref},
+        config=FingerprintConfig.model_validate({}),
+        invocation=NodeInvocation(),
+        artifact_type_bindings={
+            "Z": OTHER_VALUE.key,
+            "A": INPUT_VALUE.key,
+        },
+        opaque_secret_revisions={"secondary": "r2", "primary": "r1"},
+    )
+    second = invocation_cache_key(
+        node=node,
+        context=second_context,
+        inputs={"item": input_ref},
+        config=FingerprintConfig.model_validate({"offset": 7}),
+        invocation=NodeInvocation(),
+        artifact_type_bindings={
+            "A": INPUT_VALUE.key,
+            "Z": OTHER_VALUE.key,
+        },
+        opaque_secret_revisions={"primary": "r1", "secondary": "r2"},
+    )
+
+    assert first is not None
+    assert first == second
+    assert first != invocation_cache_key(
+        node=node,
+        context=NodeExecutionContext(
+            node_id="other-node",
+            module_path=("graph.module.example@3",),
+        ),
+        inputs={"item": input_ref},
+        config=FingerprintConfig.model_validate({}),
+        invocation=NodeInvocation(),
+        artifact_type_bindings={"A": INPUT_VALUE.key, "Z": OTHER_VALUE.key},
+        opaque_secret_revisions={"primary": "r1", "secondary": "r2"},
+    )
+    assert first != invocation_cache_key(
+        node=node,
+        context=first_context,
+        inputs={"item": input_ref},
+        config=FingerprintConfig.model_validate({}),
+        invocation=NodeInvocation(),
+        artifact_type_bindings={"A": INPUT_VALUE.key, "Z": OTHER_VALUE.key},
+        opaque_secret_revisions={"primary": "changed", "secondary": "r2"},
+    )
+
+
+def test_invocation_cache_key_requires_input_content_hashes() -> None:
+    input_ref = ArtifactRef.from_key(
+        artifact_id=uuid4(),
+        key=INPUT_VALUE.key,
+    )
+
+    assert (
+        invocation_cache_key(
+            node=ScalarNode(),
+            context=NodeExecutionContext(node_id="scalar"),
+            inputs={"item": input_ref},
+            config=NoConfig(),
+            invocation=NodeInvocation(),
+            artifact_type_bindings={},
+            opaque_secret_revisions={},
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_exact_once_cache_hit_skips_node_and_writer() -> None:
+    first_ref = ArtifactRef.from_key(
+        artifact_id=uuid4(),
+        key=INPUT_VALUE.key,
+        content_hash="1" * 64,
+    )
+    second_ref = ArtifactRef.from_key(
+        artifact_id=uuid4(),
+        key=INPUT_VALUE.key,
+        content_hash="2" * 64,
+    )
+    source = ArtifactRefSequence.from_key(
+        key=INPUT_VALUE.key,
+        item_refs=[first_ref, second_ref],
+    )
+    resolver = IntResolver({first_ref.artifact_id: 2, second_ref.artifact_id: 4})
+    writer = RecordingWriter()
+    cache = MemoryInvocationCache()
+    runtime = runtime_with(resolver, writer, cache)
+    node = CollectionNode()
+
+    first = await runtime.run_node(
+        node,
+        NodeExecutionContext(
+            workflow_run_id=uuid4(),
+            node_run_id=uuid4(),
+            graph_revision=1,
+            node_id="collection",
+        ),
+        {"items": source},
+        cache_policy=NodeCachePolicy.EXACT,
+    )
+    second = await runtime.run_node(
+        node,
+        NodeExecutionContext(
+            workflow_run_id=uuid4(),
+            node_run_id=uuid4(),
+            graph_revision=2,
+            node_id="collection",
+        ),
+        {"items": source},
+        cache_policy=NodeCachePolicy.EXACT,
+    )
+
+    assert isinstance(first, PersistedNodeOutput)
+    assert isinstance(second, PersistedNodeOutput)
+    assert first.cache_hits == 0
+    assert first.cache_misses == 1
+    assert second.cache_hits == 1
+    assert second.cache_misses == 0
+    assert second["total"] == first["total"]
+    assert node.calls == [(None, [2, 4])]
+    assert writer.values == [6]
+    assert len(cache.entries) == 1
+
+
+@pytest.mark.asyncio
+async def test_exact_cache_bypasses_inputs_without_content_hashes() -> None:
+    input_ref = ArtifactRef.from_key(
+        artifact_id=uuid4(),
+        key=INPUT_VALUE.key,
+    )
+    resolver = IntResolver({input_ref.artifact_id: 3})
+    writer = RecordingWriter()
+    cache = MemoryInvocationCache()
+    runtime = runtime_with(resolver, writer, cache)
+    node = CollectionNode()
+    source = ArtifactRefSequence.from_key(
+        key=INPUT_VALUE.key,
+        item_refs=[input_ref],
+    )
+
+    results = [
+        await runtime.run_node(
+            node,
+            NodeExecutionContext(node_id="collection"),
+            {"items": source},
+            cache_policy=NodeCachePolicy.EXACT,
+        )
+        for _ in range(2)
+    ]
+
+    for result in results:
+        assert isinstance(result, PersistedNodeOutput)
+        assert result.cache_misses == 1
+    assert node.calls == [(None, [3]), (None, [3])]
+    assert writer.values == [3, 3]
+    assert cache.entries == {}
+
+
+@pytest.mark.asyncio
+async def test_exact_map_cache_reuses_items_and_persists_each_miss_immediately() -> (
+    None
+):
+    first_ref = ArtifactRef.from_key(
+        artifact_id=uuid4(),
+        key=INPUT_VALUE.key,
+        content_hash="1" * 64,
+    )
+    second_ref = ArtifactRef.from_key(
+        artifact_id=uuid4(),
+        key=INPUT_VALUE.key,
+        content_hash="2" * 64,
+    )
+    broadcast_ref = ArtifactRef.from_key(
+        artifact_id=uuid4(),
+        key=INPUT_VALUE.key,
+        content_hash="3" * 64,
+    )
+    resolver = IntResolver(
+        {
+            first_ref.artifact_id: 2,
+            second_ref.artifact_id: 4,
+            broadcast_ref.artifact_id: 10,
+        }
+    )
+    cache = MemoryInvocationCache()
+    node = ScalarNode()
+    writer = RecordingWriter(lambda: len(node.calls))
+    runtime = runtime_with(resolver, writer, cache)
+    invocation = NodeInvocation(mode=InvocationMode.MAP, map_input="item")
+
+    first_run = await runtime.run_node(
+        node,
+        NodeExecutionContext(node_id="scalar"),
+        {
+            "item": ArtifactRefSequence.from_key(
+                key=INPUT_VALUE.key,
+                item_refs=[first_ref],
+            ),
+            "broadcast": broadcast_ref,
+        },
+        invocation=invocation,
+        cache_policy=NodeCachePolicy.EXACT,
+    )
+    second_source = ArtifactRefSequence.from_key(
+        key=INPUT_VALUE.key,
+        item_refs=[first_ref, second_ref],
+    )
+    second_run = await runtime.run_node(
+        node,
+        NodeExecutionContext(node_id="scalar"),
+        {"item": second_source, "broadcast": broadcast_ref},
+        invocation=invocation,
+        cache_policy=NodeCachePolicy.EXACT,
+    )
+
+    assert isinstance(first_run, PersistedNodeOutput)
+    assert isinstance(second_run, PersistedNodeOutput)
+    assert first_run.cache_hits == 0
+    assert first_run.cache_misses == 1
+    assert second_run.cache_hits == 1
+    assert second_run.cache_misses == 1
+    first_outputs = first_run["value"]
+    second_outputs = second_run["value"]
+    assert isinstance(first_outputs, ArtifactRefSequence)
+    assert isinstance(second_outputs, ArtifactRefSequence)
+    assert second_outputs.item_refs == [first_outputs.item_refs[0], writer.refs[1]]
+    assert second_outputs.metadata["source_sequence_id"] == str(
+        second_source.sequence_id
+    )
+    assert node.calls == [(0, 2, 10), (1, 4, 10)]
+    assert writer.values == [12, 14]
+    assert writer.completed_counts == [1, 2]
+    assert len(cache.entries) == 2
+
+
+@pytest.mark.asyncio
+async def test_map_persists_completed_misses_but_never_caches_failed_item() -> None:
+    first_ref = ArtifactRef.from_key(
+        artifact_id=uuid4(),
+        key=INPUT_VALUE.key,
+        content_hash="1" * 64,
+    )
+    missing_ref = ArtifactRef.from_key(
+        artifact_id=uuid4(),
+        key=INPUT_VALUE.key,
+        content_hash="2" * 64,
+    )
+    broadcast_ref = ArtifactRef.from_key(
+        artifact_id=uuid4(),
+        key=INPUT_VALUE.key,
+        content_hash="3" * 64,
+    )
+    resolver = IntResolver(
+        {
+            first_ref.artifact_id: 2,
+            broadcast_ref.artifact_id: 10,
+        }
+    )
+    writer = RecordingWriter()
+    cache = MemoryInvocationCache()
+    runtime = runtime_with(resolver, writer, cache)
+
+    with pytest.raises(InvocationError, match="failed at item 1"):
+        await runtime.run_node(
+            ScalarNode(),
+            NodeExecutionContext(node_id="scalar"),
+            {
+                "item": ArtifactRefSequence.from_key(
+                    key=INPUT_VALUE.key,
+                    item_refs=[first_ref, missing_ref],
+                ),
+                "broadcast": broadcast_ref,
+            },
+            invocation=NodeInvocation(
+                mode=InvocationMode.MAP,
+                map_input="item",
+            ),
+            cache_policy=NodeCachePolicy.EXACT,
+        )
+
+    assert writer.values == [12]
+    assert len(cache.entries) == 1

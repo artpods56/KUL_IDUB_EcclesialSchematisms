@@ -1,21 +1,28 @@
 import re
 from collections.abc import Sequence
 from typing import Annotated, override
+from uuid import UUID
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from notarius_core.artifacts import (
-    TABLE_FRAGMENT,
     NoConfig,
     NodeInput,
     NodeOutput,
 )
 from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
-from notarius_core.operators.tables import TableFragment
 
-from notarius_plugin_ocr.artifacts import MISTRAL_OCR_RESPONSE
+from notarius_plugin_ocr.artifacts import MISTRAL_OCR_RESPONSE, TABLE_FRAGMENT
 from notarius_plugin_ocr.declaration import OCR
 from notarius_plugin_ocr.mistral import MistralOcrResponsePayload
+
+
+class TableFragment(BaseModel):
+    source_image_artifact_id: UUID
+    source_image: str
+    provider_page_index: int = Field(ge=0)
+    provider_table_index: int = Field(ge=1)
+    rows: list[list[str]] = Field(min_length=1)
 
 
 def split_markdown_row(line: str) -> list[str]:

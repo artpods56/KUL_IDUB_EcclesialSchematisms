@@ -4,6 +4,7 @@ from importlib.metadata import EntryPoint, entry_points
 from notarius_core.plugins import (
     PLUGIN_ENTRY_POINT_GROUP,
     Plugin,
+    PluginOrigin,
     PluginRegistry,
 )
 
@@ -32,10 +33,10 @@ def build_plugin_registry(
 ) -> PluginRegistry:
     registry = PluginRegistry()
     for plugin in builtin_plugins:
-        registry.install(plugin)
+        registry.install(plugin, origin=PluginOrigin.BUILTIN)
     plugins = discover_plugins() if external_plugins is None else external_plugins
     for plugin in plugins:
-        registry.install(plugin)
+        registry.install(plugin, origin=PluginOrigin.EXTERNAL)
     registry.freeze()
     return registry
 

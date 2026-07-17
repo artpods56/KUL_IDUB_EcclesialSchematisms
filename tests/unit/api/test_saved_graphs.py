@@ -28,7 +28,7 @@ def _graph_payload(name: str = "Draft graph") -> dict[str, object]:
                     {
                         "variable": "T",
                         "artifact_type": {
-                            "id": "source.page_image",
+                            "id": "image.raster",
                             "schema_version": 1,
                         },
                     }
@@ -73,7 +73,7 @@ def test_saved_graph_crud_round_trip(builtin_client: TestClient) -> None:
         {
             "variable": "T",
             "artifact_type": {
-                "id": "source.page_image",
+                "id": "image.raster",
                 "schema_version": 1,
             },
         }

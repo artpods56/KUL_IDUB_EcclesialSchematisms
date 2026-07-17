@@ -5,13 +5,13 @@ from PIL.Image import Image
 from pydantic import BaseModel, Field
 
 from notarius_core.artifacts import (
-    SOURCE_PAGE_IMAGE,
     JsonObject,
     NoConfig,
     NodeInput,
     NodeOutput,
 )
 from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
+from notarius_core.operators.images import RASTER_IMAGE
 
 from notarius_plugin_ocr.artifacts import OCR_PAGE_RESULT
 from notarius_plugin_ocr.declaration import OCR
@@ -51,8 +51,8 @@ class OcrPagePayload(BaseModel):
 class TesseractOcrInput(NodeInput):
     pages: Annotated[
         list[Image],
-        InPort(accepts=SOURCE_PAGE_IMAGE),
-        Field(description="Ordered page images to recognize."),
+        InPort(accepts=RASTER_IMAGE),
+        Field(description="Ordered raster images to recognize as pages."),
     ]
 
 
@@ -66,12 +66,12 @@ class TesseractOcrOutput(NodeOutput):
 
 @OCR.node(
     operator_id="ocr.tesseract.pages",
-    version=1,
+    version=2,
     title="Tesseract OCR",
     factory=lambda _context: TesseractOcrNode(FakeOcrEngine()),
 )
 class TesseractOcrNode(Node[NoConfig, TesseractOcrInput, TesseractOcrOutput]):
-    """Recognizes plain text from an ordered source page image sequence."""
+    """Recognizes plain text from an ordered raster image sequence."""
 
     def __init__(
         self,

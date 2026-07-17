@@ -147,7 +147,7 @@ def test_saved_graph_node_config_is_deeply_immutable_and_serializable() -> None:
 def test_saved_graph_node_serializes_validated_artifact_type_bindings() -> None:
     binding = SavedGraphArtifactTypeBinding(
         variable="T",
-        artifact_type=ArtifactTypeKey("source.page_image", 1),
+        artifact_type=ArtifactTypeKey("image.raster", 1),
     )
     node = _node("collect", artifact_type_bindings=(binding,))
 
@@ -157,14 +157,14 @@ def test_saved_graph_node_serializes_validated_artifact_type_bindings() -> None:
         {
             "variable": "T",
             "artifact_type": {
-                "id": "source.page_image",
+                "id": "image.raster",
                 "schema_version": 1,
             },
         }
     ]
     assert SavedGraphNode.model_validate(payload) == node
     assert node.artifact_type_binding_map() == {
-        "T": ArtifactTypeKey("source.page_image", 1)
+        "T": ArtifactTypeKey("image.raster", 1)
     }
 
 

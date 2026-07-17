@@ -5,9 +5,7 @@ from pydantic import ValidationError
 
 from notarius_core.artifacts import (
     ArtifactRef,
-    ArtifactRefSequence,
     InMemoryUnitOfWork,
-    NoConfig,
 )
 from notarius_core.nodes import NodeExecutionContext, PortShape
 from notarius_core.operators.arithmetic import ARITHMETIC, INTEGER_VALUE
@@ -15,8 +13,6 @@ from notarius_core.operators.text import (
     INTEGER_TO_TEXT,
     TEXT,
     TEXT_VALUE,
-    CollectTextInput,
-    CollectTextNode,
     JoinTextConfig,
     JoinTextInput,
     JoinTextNode,
@@ -100,92 +96,6 @@ async def test_text_join_preserves_order_and_accepts_empty_parts() -> None:
 
     assert output.text == "alpha||beta"
     assert JoinTextNode.input_contract.ports["parts"].shape is PortShape.MANY
-
-
-@pytest.mark.asyncio
-async def test_text_collect_flattens_one_level_and_records_source_segments() -> None:
-    first_ref = ArtifactRef.from_key(
-        artifact_id=UUID("00000000-0000-0000-0000-000000000001"),
-        key=TEXT_VALUE.key,
-    )
-    second_ref = ArtifactRef.from_key(
-        artifact_id=UUID("00000000-0000-0000-0000-000000000002"),
-        key=TEXT_VALUE.key,
-    )
-    third_ref = ArtifactRef.from_key(
-        artifact_id=UUID("00000000-0000-0000-0000-000000000003"),
-        key=TEXT_VALUE.key,
-    )
-    fourth_ref = ArtifactRef.from_key(
-        artifact_id=UUID("00000000-0000-0000-0000-000000000004"),
-        key=TEXT_VALUE.key,
-    )
-    sequence = ArtifactRefSequence(
-        artifact_type=TEXT_VALUE.key.id,
-        schema_version=TEXT_VALUE.key.schema_version,
-        item_refs=[second_ref, third_ref],
-        ordered=False,
-    )
-    empty_sequence = ArtifactRefSequence.from_key(
-        key=TEXT_VALUE.key,
-        item_refs=[],
-    )
-
-    output = await CollectTextNode().run(
-        NodeExecutionContext(node_id="collect"),
-        NoConfig(),
-        CollectTextInput(
-            items=[first_ref, sequence, empty_sequence, fourth_ref],
-        ),
-    )
-
-    assert output.items.item_refs == [first_ref, second_ref, third_ref, fourth_ref]
-    assert output.items.ordered is False
-    assert output.items.sequence_id not in {
-        sequence.sequence_id,
-        empty_sequence.sequence_id,
-    }
-    assert output.items.metadata == {
-        "collect_segments": [
-            {
-                "input_index": 0,
-                "start_index": 0,
-                "item_count": 1,
-                "source_kind": "single",
-            },
-            {
-                "input_index": 1,
-                "start_index": 1,
-                "item_count": 2,
-                "source_kind": "sequence",
-            },
-            {
-                "input_index": 2,
-                "start_index": 3,
-                "item_count": 0,
-                "source_kind": "sequence",
-            },
-            {
-                "input_index": 3,
-                "start_index": 3,
-                "item_count": 1,
-                "source_kind": "single",
-            },
-        ]
-    }
-
-
-def test_text_collect_declares_instance_plugs_and_runs_once() -> None:
-    items = CollectTextNode.input_contract.ports["items"]
-
-    assert items.shape is PortShape.ONE
-    assert items.accepted_shapes == (PortShape.ONE, PortShape.MANY)
-    assert items.variadic is True
-    assert items.instance_plugs is True
-    assert CollectTextNode.output_contract.ports["items"].shape is PortShape.MANY
-    assert map_input_candidates(CollectTextNode) == ()
-    assert supported_invocation_modes(CollectTextNode) == (InvocationMode.ONCE,)
-    assert any(registration.key == ("text.collect", 1) for registration in TEXT.nodes)
 
 
 @pytest.mark.parametrize(

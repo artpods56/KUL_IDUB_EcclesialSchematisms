@@ -5,27 +5,33 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 from notarius_core.artifacts import (
-    SOURCE_PAGE_IMAGE,
+    ArtifactRef,
     ArtifactRefSequence,
     InMemoryUnitOfWork,
 )
 from notarius_core.nodes import NodeExecutionContext
-from notarius_core.operators.sources import (
-    ImageSequenceMergeNode,
-    LocalUploadImageSourceNode,
+from notarius_core.operators.arithmetic import (
+    INTEGER_VALUE,
+    IntegerValueOutputWriter,
+    IntegerValuePayload,
 )
+from notarius_core.operators.images import IMAGES, RASTER_IMAGE
+from notarius_core.operators.sequences import (
+    CollectNode,
+    CountNode,
+    ItemAtNode,
+    SliceNode,
+)
+from notarius_core.plugins import PluginOrigin, PluginRegistry, PluginRuntimeContext
 from notarius_core.runtime.execution import NodeRuntime, PersistedNodeOutput
 from notarius_core.runtime.materialization import InputMaterializer
 from notarius_core.runtime.persistence import (
     ArtifactWriterRegistry,
     OutputPersister,
-    SourcePageImageOutputWriter,
 )
 from notarius_core.runtime.resolvers import ResolverRegistry
+from notarius_plugin_ocr import OCR
 from notarius_plugin_ocr.artifacts import OCR_PAGE_RESULT
-from notarius_plugin_ocr.persistence import OcrPageResultOutputWriter
-from notarius_plugin_ocr.resolvers import PilImageResolver
-from notarius_plugin_ocr.tesseract import FakeOcrEngine, TesseractOcrNode
 from notarius_storage import LocalFileObjectStore
 
 
@@ -40,87 +46,128 @@ async def main() -> None:
 
     uow = InMemoryUnitOfWork()
     storage = LocalFileObjectStore(OBJECT_STORE)
+    plugin_registry = PluginRegistry()
+    plugin_registry.install(IMAGES, origin=PluginOrigin.BUILTIN)
+    plugin_registry.install(OCR, origin=PluginOrigin.EXTERNAL)
+    plugin_registry.freeze()
+    plugin_context = PluginRuntimeContext(
+        workspace=WORKSPACE,
+        uploads_dir=UPLOADS,
+        storage=storage,
+        uow=uow,
+        bucket=BUCKET,
+    )
     resolver_registry = ResolverRegistry(
-        [
-            PilImageResolver(
-                uow=uow,
-                storage=storage,
-            )
-        ]
+        list(plugin_registry.build_resolvers(plugin_context))
     )
     runtime = NodeRuntime(
         materializer=InputMaterializer(resolver_registry),
         persister=OutputPersister(
             ArtifactWriterRegistry(
                 [
-                    SourcePageImageOutputWriter(
-                        storage=storage,
-                        uow=uow,
-                        bucket=BUCKET,
-                    ),
-                    OcrPageResultOutputWriter(uow=uow, engine="fake"),
+                    IntegerValueOutputWriter(uow=uow),
+                    *plugin_registry.build_writers(plugin_context),
                 ]
             )
         ),
     )
 
-    source_output = await runtime.bind(
-        LocalUploadImageSourceNode(staging_root=UPLOADS),
-        NodeExecutionContext(node_id="local_upload_1"),
+    upload_output = await runtime.bind(
+        plugin_registry.build_node("image.upload", 1, plugin_context),
+        NodeExecutionContext(node_id="image_upload_1"),
     )(
         {},
         config={
-            "connector_id": "local_upload",
-            "selection": [
+            "uploads": [
                 {
-                    "connector_id": "local_upload",
-                    "external_uri": path.as_uri(),
-                    "display_name": path.name,
-                    "size_bytes": path.stat().st_size,
-                    "order_index": index,
+                    "upload_key": path.name,
+                    "filename": path.name,
+                    "byte_size": path.stat().st_size,
                 }
-                for index, path in enumerate(image_paths)
+                for path in image_paths
             ],
         },
     )
-    source_pages = output_sequence(source_output, "pages")
+    uploaded_images = output_sequence(upload_output, "images")
 
-    merge_output = await runtime.bind(
-        ImageSequenceMergeNode(),
-        NodeExecutionContext(node_id="merge_1"),
-    )({"sequences": [source_pages]})
-    merged_pages = output_sequence(merge_output, "pages")
+    collect_output = await runtime.bind(
+        CollectNode(),
+        NodeExecutionContext(node_id="collect_1"),
+        artifact_type_bindings={"T": RASTER_IMAGE.key},
+    )({"items": [uploaded_images]})
+    collected_images = output_sequence(collect_output, "items")
 
+    count_output = await runtime.bind(
+        CountNode(),
+        NodeExecutionContext(node_id="count_1"),
+        artifact_type_bindings={"T": RASTER_IMAGE.key},
+    )({"items": collected_images})
+    count_ref = output_ref(count_output, "count")
+
+    slice_output = await runtime.bind(
+        SliceNode(),
+        NodeExecutionContext(node_id="slice_1"),
+        artifact_type_bindings={"T": RASTER_IMAGE.key},
+    )(
+        {"items": collected_images},
+        config={"start": 0, "count": 1},
+    )
+    selected_pages = output_sequence(slice_output, "items")
+
+    pick_output = await runtime.bind(
+        ItemAtNode(),
+        NodeExecutionContext(node_id="pick_1"),
+        artifact_type_bindings={"T": RASTER_IMAGE.key},
+    )(
+        {"items": collected_images},
+        config={"index": 0},
+    )
+    first_image_ref = output_ref(pick_output, "item")
     first_image = await resolver_registry.resolve(
-        merged_pages.item_refs[0],
+        first_image_ref,
         Image.Image,
     )
 
     ocr_output = await runtime.bind(
-        TesseractOcrNode(FakeOcrEngine()),
+        plugin_registry.build_node("ocr.tesseract.pages", 2, plugin_context),
         NodeExecutionContext(node_id="ocr_1"),
-    )({"pages": merged_pages})
+    )({"pages": selected_pages})
     ocr_pages = output_sequence(ocr_output, "results")
 
     async with uow as entered:
-        source_artifacts = await entered.artifacts.list_by_type(SOURCE_PAGE_IMAGE.key)
+        image_artifacts = await entered.artifacts.list_by_type(RASTER_IMAGE.key)
+        integer_artifacts = await entered.artifacts.list_by_type(INTEGER_VALUE.key)
         ocr_artifacts = await entered.artifacts.list_by_type(OCR_PAGE_RESULT.key)
 
-    if len(ocr_artifacts) == 0 or ocr_artifacts[0].inline_payload is None:
+    if len(integer_artifacts) != 1:
+        raise RuntimeError("Count did not persist exactly one integer artifact")
+    count_payload = integer_artifacts[0].inline_payload
+    if count_payload is None:
+        raise RuntimeError("Count did not persist an inline payload")
+    count_value = IntegerValuePayload.model_validate(count_payload).value
+    if count_value != len(collected_images.item_refs):
+        raise RuntimeError("Count did not persist the collected sequence length")
+    if len(ocr_artifacts) == 0:
+        raise RuntimeError("OCR writer did not persist an artifact")
+    ocr_payload = ocr_artifacts[0].inline_payload
+    if ocr_payload is None:
         raise RuntimeError("OCR writer did not persist an inline payload")
 
-    result = {
+    result: dict[str, object] = {
         "workspace": str(WORKSPACE),
-        "source_sequence_id": source_pages.sequence_id,
-        "merged_sequence_id": merged_pages.sequence_id,
+        "uploaded_sequence_id": uploaded_images.sequence_id,
+        "collected_sequence_id": collected_images.sequence_id,
+        "selected_sequence_id": selected_pages.sequence_id,
         "ocr_sequence_id": ocr_pages.sequence_id,
-        "source_artifact_count": len(source_artifacts),
+        "raster_image_count": len(image_artifacts),
+        "sequence_item_count": count_value,
         "ocr_artifact_count": len(ocr_artifacts),
-        "first_artifact_ref": merged_pages.item_refs[0].model_dump(mode="json"),
+        "count_artifact_ref": count_ref.model_dump(mode="json"),
+        "first_artifact_ref": first_image_ref.model_dump(mode="json"),
         "first_ocr_ref": ocr_pages.item_refs[0].model_dump(mode="json"),
         "first_image_size": list(first_image.size),
-        "first_ocr_text": ocr_artifacts[0].inline_payload["text"],
-        "segments": merged_pages.metadata["segments"],
+        "first_ocr_text": ocr_payload["text"],
+        "segments": collected_images.metadata["collect_segments"],
     }
     print(json.dumps(result, indent=2, default=str))
 
@@ -131,6 +178,15 @@ def output_sequence(output: object, name: str) -> ArtifactRefSequence:
     value = output[name]
     if not isinstance(value, ArtifactRefSequence):
         raise RuntimeError(f"Output {name!r} is not an ArtifactRefSequence")
+    return value
+
+
+def output_ref(output: object, name: str) -> ArtifactRef:
+    if not isinstance(output, PersistedNodeOutput):
+        raise RuntimeError(f"Node output is not persisted for {name!r}")
+    value = output[name]
+    if not isinstance(value, ArtifactRef):
+        raise RuntimeError(f"Output {name!r} is not an ArtifactRef")
     return value
 
 

@@ -123,8 +123,13 @@ class ResolvedNodeContracts:
 class NodeExecutionContext:
     workflow_run_id: UUID | None = None
     node_run_id: UUID | None = None
+    graph_id: UUID | None = None
+    graph_revision: int | None = None
+    secret_graph_id: UUID | None = None
+    secret_graph_revision: int | None = None
     node_id: str | None = None
     invocation_index: int | None = None
+    module_path: tuple[str, ...] = ()
 
 
 def _artifact_type_contract(
@@ -240,7 +245,8 @@ def _input_annotation_contract(
         if get_origin(annotation) is not list:
             message = (
                 f"{model.__name__}.{field_name} must use exactly "
-                "list[ArtifactRef | ArtifactRefSequence] for instance plugs"
+                "list[T] for typed instance plugs or "
+                "list[ArtifactRef | ArtifactRefSequence] to preserve refs"
             )
             raise NodeContractError(message)
         item_type = _sequence_item_type(
@@ -251,20 +257,22 @@ def _input_annotation_contract(
         )
         item_origin = get_origin(item_type)
         item_types = set(get_args(item_type))
-        if item_origin not in (UnionType, Union) or item_types != {
+        if item_origin in (UnionType, Union) and item_types == {
             ArtifactRef,
             ArtifactRefSequence,
         }:
-            message = (
-                f"{model.__name__}.{field_name} must use exactly "
-                "list[ArtifactRef | ArtifactRefSequence] for instance plugs"
+            return (
+                PortShape.ONE,
+                (PortShape.ONE, PortShape.MANY),
+                None,
+                True,
+                False,
             )
-            raise NodeContractError(message)
         return (
             PortShape.ONE,
-            (PortShape.ONE, PortShape.MANY),
-            None,
-            True,
+            (PortShape.ONE,),
+            _concrete_type(model, field_name, item_type),
+            False,
             False,
         )
 

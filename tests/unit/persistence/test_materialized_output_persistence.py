@@ -105,12 +105,12 @@ async def test_artifact_metadata_round_trips_in_a_fresh_session(
     )
     stored = ArtifactObject(
         id=UUID("00000000-0000-0000-0000-000000000102"),
-        artifact_type="source.page_image",
+        artifact_type="image.raster",
         schema_version=1,
         content_type="image/png",
         storage_backend="local",
         bucket="workbench-artifacts",
-        object_key="source.page_image/v1/page.png",
+        object_key="image.raster/v1/page.png",
         byte_size=4096,
         sha256="2" * 64,
         metadata={"original_filename": "page.png"},
@@ -135,7 +135,7 @@ async def test_artifact_metadata_round_trips_in_a_fresh_session(
     assert loaded_inline.metadata == {"producer_node_id": "addition"}
     assert loaded_stored is not None
     assert loaded_stored.bucket == "workbench-artifacts"
-    assert loaded_stored.object_key == "source.page_image/v1/page.png"
+    assert loaded_stored.object_key == "image.raster/v1/page.png"
     assert [artifact.id for artifact in integer_artifacts] == [inline.id]
 
 

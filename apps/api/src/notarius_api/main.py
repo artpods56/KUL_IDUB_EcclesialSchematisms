@@ -1,8 +1,13 @@
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Literal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exception_handlers import (
+    request_validation_exception_handler as default_validation_error_handler,
+)
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from notarius_core.application.saved_graphs import SavedGraphService
@@ -17,8 +22,10 @@ from notarius_storage import create_file_storage
 from notarius_api.builtins import builtin_plugins
 from notarius_api.plugin_discovery import build_plugin_registry
 from notarius_api.services.workbench import WorkbenchService
+from notarius_api.services.node_secrets import NodeSecretService
 from notarius_api.settings import Settings, get_settings
 from notarius_api.v1.routes.saved_graphs import router as saved_graphs_router
+from notarius_api.v1.routes.node_secrets import router as node_secrets_router
 from notarius_api.v1.routes.workbench import router as workbench_router
 
 
@@ -28,6 +35,21 @@ class HealthResponse(BaseModel):
 
 async def health() -> HealthResponse:
     return HealthResponse(status="ok")
+
+
+async def _request_validation_error_handler(
+    request: Request,
+    exception: Exception,
+) -> Response:
+    if not isinstance(exception, RequestValidationError):
+        raise exception
+    if request.method != "PUT" or "/secrets/" not in request.url.path:
+        return await default_validation_error_handler(request, exception)
+    redacted_errors = [
+        {key: value for key, value in error.items() if key not in {"input", "ctx"}}
+        for error in exception.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": redacted_errors})
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -64,7 +86,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             s3_force_path_style=resolved_settings.s3_force_path_style,
         )
         saved_graphs = SavedGraphService(
-            lambda: SqlAlchemySavedGraphUnitOfWork(database.sessions)
+            lambda: SqlAlchemySavedGraphUnitOfWork(database.sessions),
+            registry,
+        )
+        node_secrets = NodeSecretService(
+            unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
+            plugin_registry=registry,
+            encryption_key=resolved_settings.credential_encryption_key,
         )
         app.state.workbench = WorkbenchService(
             plugin_registry=registry,
@@ -74,11 +102,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             storage_backend=resolved_settings.storage_backend,
             bucket=resolved_settings.storage_bucket,
             saved_graphs=saved_graphs,
+            node_secrets=node_secrets,
         )
         app.state.saved_graphs = saved_graphs
+        app.state.node_secrets = node_secrets
         try:
             yield
         finally:
+            del app.state.node_secrets
             del app.state.saved_graphs
             del app.state.workbench
             await database.dispose()
@@ -95,6 +126,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    application.add_exception_handler(
+        RequestValidationError,
+        _request_validation_error_handler,
+    )
     application.add_api_route(
         "/health",
         health,
@@ -103,6 +138,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         include_in_schema=False,
     )
     application.include_router(saved_graphs_router, prefix="/v1")
+    application.include_router(node_secrets_router, prefix="/v1")
     application.include_router(workbench_router, prefix="/v1")
     return application
 

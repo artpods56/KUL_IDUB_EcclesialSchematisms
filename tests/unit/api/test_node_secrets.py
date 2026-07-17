@@ -1,0 +1,964 @@
+import asyncio
+import base64
+from collections.abc import AsyncIterator
+from pathlib import Path
+from typing import ClassVar, override
+
+import pytest
+from fastapi.testclient import TestClient
+from pydantic import SecretStr
+from sqlalchemy import text
+
+from notarius_core.application.saved_graphs import SavedGraphService
+from notarius_core.artifacts import NodeConfig, NodeInput, NodeOutput
+from notarius_core.domain.saved_graphs import (
+    GraphPoint,
+    SavedGraphDocument,
+    SavedGraphNode,
+)
+from notarius_core.domain.errors import SavedGraphRevisionConflictError
+from notarius_core.nodes import Node, NodeExecutionContext
+from notarius_core.plugins import NodeSecretInput, Plugin, PluginRegistry
+from notarius_core.ports.node_secrets import NodeSecretUnavailableError
+
+from notarius_persistence.database import Database, create_database
+from notarius_persistence.orm import metadata
+from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
+
+from notarius_api.main import create_app
+from notarius_api.schemas.workbench import RunNodeRequest, RunRequest
+from notarius_api.services.node_secrets import (
+    NodeSecretConfigurationError,
+    NodeSecretDeclarationError,
+    NodeSecretService,
+    NodeSecretValueError,
+)
+from notarius_api.services.workbench import WorkbenchGraphError, WorkbenchService
+from notarius_api.settings import Settings
+from notarius_api.v1.routes.node_secrets import node_secret_service
+from notarius_api.v1.routes.workbench import workbench_service
+
+
+class SecretTestConfig(NodeConfig):
+    base_url: str
+    model: str = "default-model"
+    temperature: float = 0.0
+
+
+class EmptyInput(NodeInput):
+    pass
+
+
+class EmptyOutput(NodeOutput):
+    pass
+
+
+SECRET_TEST_PLUGIN = Plugin(slug="test.node-secrets", title="Node secrets test")
+
+
+@SECRET_TEST_PLUGIN.node(
+    operator_id="test.secret-node",
+    version=1,
+    title="Secret node",
+    secret_inputs=(
+        NodeSecretInput(
+            name="api_key",
+            config_dependencies=("base_url",),
+            title="API key",
+        ),
+    ),
+)
+class SecretTestNode(Node[SecretTestConfig, EmptyInput, EmptyOutput]):
+    captured_contexts: ClassVar[list[NodeExecutionContext]] = []
+
+    @override
+    async def run(
+        self,
+        context: NodeExecutionContext,
+        _config: SecretTestConfig,
+        _inputs: EmptyInput,
+        /,
+    ) -> EmptyOutput:
+        self.captured_contexts.append(context)
+        return EmptyOutput()
+
+
+@SECRET_TEST_PLUGIN.node(
+    operator_id="test.plain-node",
+    version=1,
+    title="Plain node",
+)
+class PlainTestNode(Node[NodeConfig, EmptyInput, EmptyOutput]):
+    captured_contexts: ClassVar[list[NodeExecutionContext]] = []
+
+    @override
+    async def run(
+        self,
+        context: NodeExecutionContext,
+        _config: NodeConfig,
+        _inputs: EmptyInput,
+        /,
+    ) -> EmptyOutput:
+        self.captured_contexts.append(context)
+        return EmptyOutput()
+
+
+def _encryption_key(fill: bytes = b"k") -> SecretStr:
+    return SecretStr(base64.b64encode(fill * 32).decode("ascii"))
+
+
+@pytest.fixture
+async def node_secret_setup(
+    tmp_path: Path,
+) -> AsyncIterator[
+    tuple[Database, NodeSecretService, SavedGraphService, PluginRegistry]
+]:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'node-secrets.sqlite3'}"
+    database = create_database(database_url)
+    async with database.engine.begin() as connection:
+        await connection.run_sync(metadata.create_all)
+    registry = PluginRegistry()
+    registry.install(SECRET_TEST_PLUGIN)
+    registry.freeze()
+    saved_graphs = SavedGraphService(
+        lambda: SqlAlchemyUnitOfWork(database.sessions),
+        registry,
+    )
+    service = NodeSecretService(
+        unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
+        plugin_registry=registry,
+        encryption_key=_encryption_key(),
+    )
+    try:
+        yield database, service, saved_graphs, registry
+    finally:
+        await database.dispose()
+
+
+async def _saved_secret_graph(saved_graphs: SavedGraphService):
+    return await saved_graphs.create(
+        name="Shared extraction",
+        document=_secret_document(),
+    )
+
+
+def _secret_document(
+    *,
+    base_url: str = "https://llm.example/v1",
+    model: str = "default-model",
+    temperature: float = 0.0,
+    position: GraphPoint | None = None,
+) -> SavedGraphDocument:
+    return SavedGraphDocument(
+        nodes=(
+            SavedGraphNode(
+                id="llm",
+                operator_id="test.secret-node",
+                operator_version=1,
+                config={
+                    "base_url": base_url,
+                    "model": model,
+                    "temperature": temperature,
+                },
+                position=position or GraphPoint(x=0, y=0),
+            ),
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_configured_secret_is_encrypted_and_resolves_only_for_binding(
+    node_secret_setup: tuple[
+        Database,
+        NodeSecretService,
+        SavedGraphService,
+        PluginRegistry,
+    ],
+) -> None:
+    database, service, saved_graphs, registry = node_secret_setup
+    graph = await _saved_secret_graph(saved_graphs)
+    plaintext = "provider-key-that-must-never-be-returned"
+
+    configured = await service.configure(
+        graph_id=graph.id,
+        node_id="llm",
+        name="api_key",
+        value=SecretStr(plaintext),
+        expected_graph_revision=graph.revision,
+    )
+    status = await service.status(graph.id)
+    resolved = await service.resolve_secret(
+        graph_id=graph.id,
+        graph_revision=graph.revision,
+        node_id="llm",
+        name="api_key",
+        dependencies={"base_url": "https://llm.example/v1"},
+    )
+
+    assert configured.configured is True
+    assert status.secrets == (configured,)
+    assert resolved.get_secret_value() == plaintext
+    visitor_service = NodeSecretService(
+        unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
+        plugin_registry=registry,
+        encryption_key=_encryption_key(),
+    )
+    visitor_resolved = await visitor_service.resolve_secret(
+        graph_id=graph.id,
+        graph_revision=graph.revision,
+        node_id="llm",
+        name="api_key",
+        dependencies={"base_url": "https://llm.example/v1"},
+    )
+    assert visitor_resolved.get_secret_value() == plaintext
+    async with database.engine.connect() as connection:
+        raw = await connection.execute(
+            text(
+                "SELECT ciphertext, nonce, dependency_sha256 "
+                "FROM node_secrets WHERE graph_id = :graph_id"
+            ),
+            {"graph_id": graph.id.hex},
+        )
+        row = raw.one()
+    assert plaintext.encode("utf-8") not in bytes(row.ciphertext)
+    assert len(bytes(row.nonce)) == 12
+    assert len(str(row.dependency_sha256)) == 64
+
+    with pytest.raises(NodeSecretUnavailableError, match="does not match"):
+        await service.resolve_secret(
+            graph_id=graph.id,
+            graph_revision=graph.revision,
+            node_id="llm",
+            name="api_key",
+            dependencies={"base_url": "https://other.example/v1"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_secret_cache_revision_is_stable_and_changes_on_replacement(
+    node_secret_setup: tuple[
+        Database,
+        NodeSecretService,
+        SavedGraphService,
+        PluginRegistry,
+    ],
+) -> None:
+    _, service, saved_graphs, _ = node_secret_setup
+    graph = await _saved_secret_graph(saved_graphs)
+    await service.configure(
+        graph_id=graph.id,
+        node_id="llm",
+        name="api_key",
+        value=SecretStr("first-provider-key"),
+        expected_graph_revision=graph.revision,
+    )
+
+    first = await service.cache_revision(
+        graph_id=graph.id,
+        graph_revision=graph.revision,
+        node_id="llm",
+        name="api_key",
+        dependencies={"base_url": "https://llm.example/v1"},
+    )
+    repeated = await service.cache_revision(
+        graph_id=graph.id,
+        graph_revision=graph.revision,
+        node_id="llm",
+        name="api_key",
+        dependencies={"base_url": "https://llm.example/v1"},
+    )
+
+    await service.configure(
+        graph_id=graph.id,
+        node_id="llm",
+        name="api_key",
+        value=SecretStr("second-provider-key"),
+        expected_graph_revision=graph.revision,
+    )
+    replaced = await service.cache_revision(
+        graph_id=graph.id,
+        graph_revision=graph.revision,
+        node_id="llm",
+        name="api_key",
+        dependencies={"base_url": "https://llm.example/v1"},
+    )
+
+    assert len(first) == 64
+    assert repeated == first
+    assert replaced != first
+    assert "first-provider-key" not in first
+    assert "second-provider-key" not in replaced
+
+
+@pytest.mark.asyncio
+async def test_unrelated_graph_edits_retain_and_resolve_secret(
+    node_secret_setup: tuple[
+        Database,
+        NodeSecretService,
+        SavedGraphService,
+        PluginRegistry,
+    ],
+) -> None:
+    database, service, saved_graphs, _ = node_secret_setup
+    graph = await _saved_secret_graph(saved_graphs)
+    plaintext = "retained-across-unrelated-edits"
+    await service.configure(
+        graph_id=graph.id,
+        node_id="llm",
+        name="api_key",
+        value=SecretStr(plaintext),
+        expected_graph_revision=graph.revision,
+    )
+
+    updated = await saved_graphs.replace(
+        graph.id,
+        name="Renamed extraction",
+        document=_secret_document(
+            model="different-model",
+            temperature=0.8,
+            position=GraphPoint(x=120, y=240),
+        ),
+        expected_revision=1,
+    )
+
+    status = await service.status(updated.id)
+    resolved = await service.resolve_secret(
+        graph_id=updated.id,
+        graph_revision=updated.revision,
+        node_id="llm",
+        name="api_key",
+        dependencies={"base_url": "https://llm.example/v1"},
+    )
+    async with database.engine.connect() as connection:
+        stored_count = await connection.scalar(
+            text("SELECT COUNT(*) FROM node_secrets WHERE graph_id = :graph_id"),
+            {"graph_id": graph.id.hex},
+        )
+
+    assert status.graph_revision == 2
+    assert status.secrets[0].configured is True
+    assert resolved.get_secret_value() == plaintext
+    assert stored_count == 1
+
+
+@pytest.mark.asyncio
+async def test_secret_resolution_uses_the_pinned_saved_graph_revision(
+    node_secret_setup: tuple[
+        Database,
+        NodeSecretService,
+        SavedGraphService,
+        PluginRegistry,
+    ],
+) -> None:
+    _, service, saved_graphs, _ = node_secret_setup
+    graph = await _saved_secret_graph(saved_graphs)
+    original_revision = graph.revision
+    await service.configure(
+        graph_id=graph.id,
+        node_id="llm",
+        name="api_key",
+        value=SecretStr("revision-bound-secret"),
+        expected_graph_revision=original_revision,
+    )
+    updated = await saved_graphs.replace(
+        graph.id,
+        name=graph.name,
+        document=_secret_document(model="new-model"),
+        expected_revision=original_revision,
+    )
+
+    resolved = await service.resolve_secret(
+        graph_id=updated.id,
+        graph_revision=original_revision,
+        node_id="llm",
+        name="api_key",
+        dependencies={"base_url": "https://llm.example/v1"},
+    )
+
+    assert resolved.get_secret_value() == "revision-bound-secret"
+
+
+@pytest.mark.asyncio
+async def test_changing_dependency_deletes_secret_and_changing_back_does_not_revive(
+    node_secret_setup: tuple[
+        Database,
+        NodeSecretService,
+        SavedGraphService,
+        PluginRegistry,
+    ],
+) -> None:
+    database, service, saved_graphs, _ = node_secret_setup
+    graph = await _saved_secret_graph(saved_graphs)
+    await service.configure(
+        graph_id=graph.id,
+        node_id="llm",
+        name="api_key",
+        value=SecretStr("bound-to-original-endpoint"),
+        expected_graph_revision=graph.revision,
+    )
+    updated = await saved_graphs.replace(
+        graph.id,
+        name=graph.name,
+        document=_secret_document(base_url="https://changed.example/v1"),
+        expected_revision=1,
+    )
+
+    status = await service.status(updated.id)
+    async with database.engine.connect() as connection:
+        stored_count = await connection.scalar(
+            text("SELECT COUNT(*) FROM node_secrets WHERE graph_id = :graph_id"),
+            {"graph_id": graph.id.hex},
+        )
+
+    assert status.graph_revision == 2
+    assert status.secrets[0].configured is False
+    assert stored_count == 0
+    with pytest.raises(NodeSecretUnavailableError, match="not configured"):
+        await service.resolve_secret(
+            graph_id=updated.id,
+            graph_revision=updated.revision,
+            node_id="llm",
+            name="api_key",
+            dependencies={"base_url": "https://changed.example/v1"},
+        )
+
+    changed_back = await saved_graphs.replace(
+        graph.id,
+        name=graph.name,
+        document=_secret_document(),
+        expected_revision=2,
+    )
+    changed_back_status = await service.status(changed_back.id)
+
+    assert changed_back_status.graph_revision == 3
+    assert changed_back_status.secrets[0].configured is False
+    with pytest.raises(NodeSecretUnavailableError, match="not configured"):
+        await service.resolve_secret(
+            graph_id=changed_back.id,
+            graph_revision=changed_back.revision,
+            node_id="llm",
+            name="api_key",
+            dependencies={"base_url": "https://llm.example/v1"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_removing_and_readding_node_id_does_not_revive_secret(
+    node_secret_setup: tuple[
+        Database,
+        NodeSecretService,
+        SavedGraphService,
+        PluginRegistry,
+    ],
+) -> None:
+    database, service, saved_graphs, _ = node_secret_setup
+    graph = await _saved_secret_graph(saved_graphs)
+    await service.configure(
+        graph_id=graph.id,
+        node_id="llm",
+        name="api_key",
+        value=SecretStr("must-not-revive"),
+        expected_graph_revision=1,
+    )
+
+    await saved_graphs.replace(
+        graph.id,
+        name=graph.name,
+        document=SavedGraphDocument(),
+        expected_revision=1,
+    )
+    async with database.engine.connect() as connection:
+        stored_count = await connection.scalar(
+            text("SELECT COUNT(*) FROM node_secrets WHERE graph_id = :graph_id"),
+            {"graph_id": graph.id.hex},
+        )
+    readded = await saved_graphs.replace(
+        graph.id,
+        name=graph.name,
+        document=_secret_document(),
+        expected_revision=2,
+    )
+    status = await service.status(readded.id)
+
+    assert stored_count == 0
+    assert status.graph_revision == 3
+    assert status.secrets[0].configured is False
+    with pytest.raises(NodeSecretUnavailableError, match="not configured"):
+        await service.resolve_secret(
+            graph_id=readded.id,
+            graph_revision=readded.revision,
+            node_id="llm",
+            name="api_key",
+            dependencies={"base_url": "https://llm.example/v1"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_configure_rejects_stale_revision_and_undeclared_slot(
+    node_secret_setup: tuple[
+        Database,
+        NodeSecretService,
+        SavedGraphService,
+        PluginRegistry,
+    ],
+) -> None:
+    _, service, saved_graphs, _ = node_secret_setup
+    graph = await _saved_secret_graph(saved_graphs)
+
+    with pytest.raises(SavedGraphRevisionConflictError):
+        await service.configure(
+            graph_id=graph.id,
+            node_id="llm",
+            name="api_key",
+            value=SecretStr("secret"),
+            expected_graph_revision=2,
+        )
+    with pytest.raises(NodeSecretDeclarationError, match="does not declare"):
+        await service.configure(
+            graph_id=graph.id,
+            node_id="llm",
+            name="admin_token",
+            value=SecretStr("secret"),
+            expected_graph_revision=1,
+        )
+
+
+@pytest.mark.asyncio
+async def test_status_is_false_and_resolution_fails_with_different_server_key(
+    node_secret_setup: tuple[
+        Database,
+        NodeSecretService,
+        SavedGraphService,
+        PluginRegistry,
+    ],
+) -> None:
+    database, service, saved_graphs, registry = node_secret_setup
+    graph = await _saved_secret_graph(saved_graphs)
+    await service.configure(
+        graph_id=graph.id,
+        node_id="llm",
+        name="api_key",
+        value=SecretStr("secret"),
+        expected_graph_revision=graph.revision,
+    )
+    wrong_key_service = NodeSecretService(
+        unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
+        plugin_registry=registry,
+        encryption_key=_encryption_key(b"z"),
+    )
+
+    status = await wrong_key_service.status(graph.id)
+
+    assert status.secrets[0].configured is False
+    with pytest.raises(NodeSecretUnavailableError, match="cannot be decrypted"):
+        await wrong_key_service.resolve_secret(
+            graph_id=graph.id,
+            graph_revision=graph.revision,
+            node_id="llm",
+            name="api_key",
+            dependencies={"base_url": "https://llm.example/v1"},
+        )
+    with pytest.raises(NodeSecretUnavailableError, match="cannot be decrypted"):
+        await wrong_key_service.cache_revision(
+            graph_id=graph.id,
+            graph_revision=graph.revision,
+            node_id="llm",
+            name="api_key",
+            dependencies={"base_url": "https://llm.example/v1"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_operator_version_mismatch_cannot_reuse_stored_secret(
+    node_secret_setup: tuple[
+        Database,
+        NodeSecretService,
+        SavedGraphService,
+        PluginRegistry,
+    ],
+) -> None:
+    database, service, saved_graphs, _ = node_secret_setup
+    graph = await _saved_secret_graph(saved_graphs)
+    await service.configure(
+        graph_id=graph.id,
+        node_id="llm",
+        name="api_key",
+        value=SecretStr("version-bound"),
+        expected_graph_revision=1,
+    )
+    async with database.engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE node_secrets SET operator_version = 2 "
+                "WHERE graph_id = :graph_id"
+            ),
+            {"graph_id": graph.id.hex},
+        )
+
+    status = await service.status(graph.id)
+
+    assert status.secrets[0].configured is False
+    with pytest.raises(NodeSecretUnavailableError, match="does not match"):
+        await service.resolve_secret(
+            graph_id=graph.id,
+            graph_revision=graph.revision,
+            node_id="llm",
+            name="api_key",
+            dependencies={"base_url": "https://llm.example/v1"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_missing_encryption_key_fails_closed_and_secret_size_is_bounded(
+    node_secret_setup: tuple[
+        Database,
+        NodeSecretService,
+        SavedGraphService,
+        PluginRegistry,
+    ],
+) -> None:
+    database, _, saved_graphs, registry = node_secret_setup
+    graph = await _saved_secret_graph(saved_graphs)
+    missing_key_service = NodeSecretService(
+        unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
+        plugin_registry=registry,
+        encryption_key=None,
+    )
+
+    with pytest.raises(NodeSecretConfigurationError, match="required"):
+        await missing_key_service.configure(
+            graph_id=graph.id,
+            node_id="llm",
+            name="api_key",
+            value=SecretStr("secret"),
+            expected_graph_revision=graph.revision,
+        )
+    with pytest.raises(NodeSecretValueError, match="65536"):
+        await NodeSecretService(
+            unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
+            plugin_registry=registry,
+            encryption_key=_encryption_key(),
+        ).configure(
+            graph_id=graph.id,
+            node_id="llm",
+            name="api_key",
+            value=SecretStr("x" * 65_537),
+            expected_graph_revision=graph.revision,
+        )
+
+
+@pytest.mark.asyncio
+async def test_saved_run_passes_validated_graph_context_to_node(
+    node_secret_setup: tuple[
+        Database,
+        NodeSecretService,
+        SavedGraphService,
+        PluginRegistry,
+    ],
+    tmp_path: Path,
+) -> None:
+    _, _, saved_graphs, registry = node_secret_setup
+    graph = await _saved_secret_graph(saved_graphs)
+    workbench = WorkbenchService(
+        plugin_registry=registry,
+        workspace=tmp_path / "context-workbench",
+        saved_graphs=saved_graphs,
+    )
+    SecretTestNode.captured_contexts.clear()
+
+    response = await workbench.run_graph(
+        RunRequest(
+            graph_id=graph.id,
+            graph_revision=graph.revision,
+            secret_graph_id=graph.id,
+            secret_graph_revision=graph.revision,
+            nodes=[
+                RunNodeRequest(
+                    id="llm",
+                    operator_id="test.secret-node",
+                    operator_version=1,
+                    config={
+                        "base_url": "https://llm.example/v1",
+                        "model": "default-model",
+                        "temperature": 0.0,
+                    },
+                )
+            ],
+        )
+    )
+
+    assert response.status == "succeeded"
+    assert len(SecretTestNode.captured_contexts) == 1
+    context = SecretTestNode.captured_contexts[0]
+    assert context.graph_id == graph.id
+    assert context.graph_revision == graph.revision
+    assert context.secret_graph_id == graph.id
+    assert context.secret_graph_revision == graph.revision
+    assert context.node_id == "llm"
+
+
+@pytest.mark.asyncio
+async def test_dirty_run_uses_saved_secret_binding_without_materialization_context(
+    node_secret_setup: tuple[
+        Database,
+        NodeSecretService,
+        SavedGraphService,
+        PluginRegistry,
+    ],
+    tmp_path: Path,
+) -> None:
+    _, _, saved_graphs, registry = node_secret_setup
+    graph = await _saved_secret_graph(saved_graphs)
+    workbench = WorkbenchService(
+        plugin_registry=registry,
+        workspace=tmp_path / "dirty-context-workbench",
+        saved_graphs=saved_graphs,
+    )
+    SecretTestNode.captured_contexts.clear()
+    PlainTestNode.captured_contexts.clear()
+
+    response = await workbench.run_graph(
+        RunRequest(
+            secret_graph_id=graph.id,
+            secret_graph_revision=graph.revision,
+            nodes=[
+                RunNodeRequest(
+                    id="llm",
+                    operator_id="test.secret-node",
+                    operator_version=1,
+                    config={
+                        "base_url": "https://llm.example/v1",
+                        "model": "unsaved-model",
+                        "temperature": 1.25,
+                    },
+                ),
+                RunNodeRequest(
+                    id="unsaved-plain",
+                    operator_id="test.plain-node",
+                    operator_version=1,
+                ),
+            ],
+        )
+    )
+    materializations = await workbench.get_graph_materializations(
+        graph_id=graph.id,
+        graph_revision=graph.revision,
+    )
+
+    assert response.status == "succeeded"
+    secret_context = SecretTestNode.captured_contexts[0]
+    assert secret_context.graph_id is None
+    assert secret_context.graph_revision is None
+    assert secret_context.secret_graph_id == graph.id
+    assert secret_context.secret_graph_revision == graph.revision
+    plain_context = PlainTestNode.captured_contexts[0]
+    assert plain_context.graph_id is None
+    assert plain_context.graph_revision is None
+    assert plain_context.secret_graph_id is None
+    assert plain_context.secret_graph_revision is None
+    assert materializations.node_runs == []
+
+
+@pytest.mark.asyncio
+async def test_secret_bearing_run_requires_explicit_secret_graph_context(
+    node_secret_setup: tuple[
+        Database,
+        NodeSecretService,
+        SavedGraphService,
+        PluginRegistry,
+    ],
+    tmp_path: Path,
+) -> None:
+    _, _, _, registry = node_secret_setup
+    workbench = WorkbenchService(
+        plugin_registry=registry,
+        workspace=tmp_path / "missing-secret-context-workbench",
+    )
+
+    with pytest.raises(
+        WorkbenchGraphError,
+        match="saved secret graph context.*'llm'",
+    ):
+        await workbench.run_graph(
+            RunRequest(
+                nodes=[
+                    RunNodeRequest(
+                        id="llm",
+                        operator_id="test.secret-node",
+                        operator_version=1,
+                        config={"base_url": "https://llm.example/v1"},
+                    )
+                ]
+            )
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("binding_case", "message"),
+    [
+        ("dependency", "saved configuration required by secret input"),
+        ("operator", "does not match the saved operator"),
+        ("missing", "does not belong to saved graph"),
+    ],
+)
+async def test_dirty_run_rejects_invalid_saved_secret_binding(
+    node_secret_setup: tuple[
+        Database,
+        NodeSecretService,
+        SavedGraphService,
+        PluginRegistry,
+    ],
+    tmp_path: Path,
+    binding_case: str,
+    message: str,
+) -> None:
+    _, _, saved_graphs, registry = node_secret_setup
+    if binding_case == "operator":
+        graph = await saved_graphs.create(
+            name="Different operator",
+            document=SavedGraphDocument(
+                nodes=(
+                    SavedGraphNode(
+                        id="llm",
+                        operator_id="test.plain-node",
+                        operator_version=1,
+                        config={},
+                        position=GraphPoint(x=0, y=0),
+                    ),
+                )
+            ),
+        )
+    else:
+        graph = await _saved_secret_graph(saved_graphs)
+    submitted_node_id = "missing" if binding_case == "missing" else "llm"
+    base_url = (
+        "https://changed.example/v1"
+        if binding_case == "dependency"
+        else "https://llm.example/v1"
+    )
+    workbench = WorkbenchService(
+        plugin_registry=registry,
+        workspace=tmp_path / f"invalid-binding-{binding_case}",
+        saved_graphs=saved_graphs,
+    )
+
+    with pytest.raises(WorkbenchGraphError, match=message):
+        await workbench.run_graph(
+            RunRequest(
+                secret_graph_id=graph.id,
+                secret_graph_revision=graph.revision,
+                nodes=[
+                    RunNodeRequest(
+                        id=submitted_node_id,
+                        operator_id="test.secret-node",
+                        operator_version=1,
+                        config={"base_url": base_url},
+                    )
+                ],
+            )
+        )
+
+
+def test_node_secret_routes_never_return_secret_value(tmp_path: Path) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'routes.sqlite3'}"
+    database = create_database(database_url)
+
+    async def prepare() -> tuple[NodeSecretService, WorkbenchService, str]:
+        async with database.engine.begin() as connection:
+            await connection.run_sync(metadata.create_all)
+        registry = PluginRegistry()
+        registry.install(SECRET_TEST_PLUGIN)
+        registry.freeze()
+        saved_graphs = SavedGraphService(
+            lambda: SqlAlchemyUnitOfWork(database.sessions),
+            registry,
+        )
+        graph = await _saved_secret_graph(saved_graphs)
+        service = NodeSecretService(
+            unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
+            plugin_registry=registry,
+            encryption_key=_encryption_key(),
+        )
+        workbench = WorkbenchService(
+            plugin_registry=registry,
+            workspace=tmp_path / "route-workbench",
+            saved_graphs=saved_graphs,
+            node_secrets=service,
+        )
+        return service, workbench, str(graph.id)
+
+    service, workbench, graph_id = asyncio.run(prepare())
+    application = create_app(
+        Settings(
+            workspace=tmp_path / "workbench",
+            database_url=SecretStr(database_url),
+        )
+    )
+    application.dependency_overrides[node_secret_service] = lambda: service
+    application.dependency_overrides[workbench_service] = lambda: workbench
+    plaintext = "route-secret-value"
+    try:
+        with TestClient(application) as client:
+            catalog = client.get("/v1/nodes")
+            assert catalog.status_code == 200
+            secret_node = next(
+                node
+                for node in catalog.json()["nodes"]
+                if node["operator_id"] == "test.secret-node"
+            )
+            assert secret_node["secret_inputs"] == [
+                {
+                    "name": "api_key",
+                    "config_dependencies": ["base_url"],
+                    "title": "API key",
+                    "description": None,
+                }
+            ]
+
+            configured = client.put(
+                f"/v1/graphs/{graph_id}/nodes/llm/secrets/api_key",
+                json={"value": plaintext, "expected_graph_revision": 1},
+            )
+            assert configured.status_code == 200
+            assert configured.json() == {
+                "node_id": "llm",
+                "name": "api_key",
+                "configured": True,
+            }
+            assert plaintext not in configured.text
+
+            invalid = client.put(
+                f"/v1/graphs/{graph_id}/nodes/llm/secrets/api_key",
+                json={"value": plaintext},
+            )
+            assert invalid.status_code == 422
+            assert plaintext not in invalid.text
+
+            status = client.get(f"/v1/graphs/{graph_id}/node-secrets")
+            assert status.status_code == 200
+            assert status.json() == {
+                "graph_id": graph_id,
+                "graph_revision": 1,
+                "secrets": [
+                    {
+                        "node_id": "llm",
+                        "name": "api_key",
+                        "configured": True,
+                    }
+                ],
+            }
+            assert plaintext not in status.text
+
+            saved_graph = client.get(f"/v1/graphs/{graph_id}")
+            assert saved_graph.status_code == 200
+            assert plaintext not in saved_graph.text
+
+            deleted = client.delete(
+                f"/v1/graphs/{graph_id}/nodes/llm/secrets/api_key",
+                params={"expected_graph_revision": 1},
+            )
+            assert deleted.status_code == 204
+            assert deleted.content == b""
+    finally:
+        asyncio.run(database.dispose())

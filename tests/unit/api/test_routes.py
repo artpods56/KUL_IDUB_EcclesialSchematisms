@@ -10,6 +10,7 @@ from notarius_api.main import create_app
 from notarius_api.plugin_discovery import build_plugin_registry
 from notarius_api.schemas.workbench import NodeRegistryResponse, RunResponse
 from notarius_api.services.workbench import WorkbenchService
+from notarius_core.plugins import PluginOrigin
 
 
 def test_application_lifespan_builds_and_releases_workbench_service() -> None:
@@ -35,41 +36,50 @@ def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
     assert response.status_code == 200
     registry = NodeRegistryResponse.model_validate(response.json())
     assert [(plugin.slug, plugin.title) for plugin in registry.plugins] == [
-        ("builtin.sources", "Sources"),
+        ("builtin.image", "Image"),
+        ("builtin.module", "Module"),
         ("builtin.sequence", "Sequence"),
         ("builtin.arithmetic", "Arithmetic"),
         ("builtin.text", "Text"),
-        ("builtin.tables", "Tables"),
+        ("builtin.schema", "Schema"),
+        ("builtin.prompt", "Prompt"),
+        ("graph.module", "Modules"),
     ]
+    assert {plugin.origin for plugin in registry.plugins} == {
+        PluginOrigin.BUILTIN,
+        PluginOrigin.MODULE,
+    }
     nodes = {node.operator_id: node for node in registry.nodes}
     assert set(nodes) == {
-        "source.local_upload.images",
-        "source.image_sequence.merge",
+        "image.upload",
+        "module.input",
+        "module.output",
         "sequence.collect",
+        "sequence.count",
+        "sequence.item_at",
+        "sequence.slice",
         "arithmetic.number",
         "arithmetic.integer_sequence",
-        "arithmetic.add_subtract",
+        "arithmetic.add",
+        "arithmetic.subtract",
         "arithmetic.multiply",
         "arithmetic.sum",
         "text.input",
         "text.split",
         "text.replace",
         "text.join",
-        "text.collect",
-        "table.page.merge",
-        "table.csv.export",
+        "schema.builder",
+        "prompt.message.create",
     }
     assert {
         (artifact_type.key.id, artifact_type.key.schema_version)
         for artifact_type in registry.artifact_types
     } == {
-        ("source.page_image", 1),
+        ("image.raster", 1),
         ("scalar.integer", 1),
-        ("arithmetic.result", 1),
         ("scalar.text", 1),
-        ("table.fragment", 1),
-        ("table.page", 1),
-        ("tabular.csv_bundle", 1),
+        ("json.schema", 1),
+        ("prompt.message", 2),
     }
     assert [
         conversion.model_dump() for conversion in registry.artifact_conversions
@@ -91,38 +101,19 @@ def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
         }
     ]
 
-    source = nodes["source.local_upload.images"]
-    assert source.plugin_slug == "builtin.sources"
-    assert source.description == (
-        "Imports staged local images as an ordered artifact sequence."
+    upload = nodes["image.upload"]
+    assert upload.plugin_slug == "builtin.image"
+    assert upload.title == "Upload images"
+    assert upload.description == (
+        "Imports staged image uploads as an ordered raster image sequence."
     )
-    assert source.outputs[0].artifact_type is not None
-    assert source.outputs[0].artifact_type.id == "source.page_image"
-    assert source.outputs[0].shape == "many"
-    assert source.outputs[0].description == (
-        "Ordered images imported from the selected source."
+    assert upload.outputs[0].name == "images"
+    assert upload.outputs[0].artifact_type is not None
+    assert upload.outputs[0].artifact_type.id == "image.raster"
+    assert upload.outputs[0].shape == "many"
+    assert upload.outputs[0].description == (
+        "Ordered raster images imported from staged uploads."
     )
-
-    merge_tables = nodes["table.page.merge"]
-    assert merge_tables.plugin_slug == "builtin.tables"
-    assert merge_tables.inputs[0].artifact_type is not None
-    assert merge_tables.inputs[0].artifact_type.id == "table.fragment"
-    assert merge_tables.inputs[0].shape == "many"
-    assert merge_tables.outputs[0].artifact_type is not None
-    assert merge_tables.outputs[0].artifact_type.id == "table.page"
-    export_tables = nodes["table.csv.export"]
-    export_input_types = [
-        port.artifact_type
-        for port in export_tables.inputs
-        if port.artifact_type is not None
-    ]
-    assert len(export_input_types) == len(export_tables.inputs)
-    assert [artifact_type.id for artifact_type in export_input_types] == [
-        "table.fragment",
-        "table.page",
-    ]
-    assert export_tables.outputs[0].artifact_type is not None
-    assert export_tables.outputs[0].artifact_type.id == "tabular.csv_bundle"
 
     text_input_properties = cast(
         dict[str, object],
@@ -135,23 +126,58 @@ def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
         "type": "string",
     }
 
-    add_subtract = nodes["arithmetic.add_subtract"]
-    assert add_subtract.inputs[0].title == "Left"
-    assert add_subtract.inputs[0].description == "Left-hand integer operand."
+    schema_builder = nodes["schema.builder"]
+    assert schema_builder.plugin_slug == "builtin.schema"
+    assert schema_builder.title == "Schema Builder"
+    assert schema_builder.inputs[0].name == "schemas"
+    assert schema_builder.inputs[0].artifact_type is not None
+    assert schema_builder.inputs[0].artifact_type.id == "json.schema"
+    assert schema_builder.inputs[0].accepted_shapes == ["one"]
+    assert schema_builder.inputs[0].instance_plugs is True
+    assert schema_builder.inputs[0].required is False
+    assert schema_builder.outputs[0].artifact_type is not None
+    assert schema_builder.outputs[0].artifact_type.id == "json.schema"
+    assert schema_builder.outputs[0].name == "json_schema"
+    assert schema_builder.outputs[0].title == "JSON Schema"
 
-    collect = nodes["text.collect"]
+    schema_builder_properties = cast(
+        dict[str, object],
+        schema_builder.config_schema["properties"],
+    )
+    fields_schema = cast(dict[str, object], schema_builder_properties["fields"])
+    assert fields_schema["type"] == "array"
+
+    prompt_message = nodes["prompt.message.create"]
+    prompt_message_definitions = cast(
+        dict[str, object],
+        prompt_message.config_schema["$defs"],
+    )
+    role_definition = cast(
+        dict[str, object],
+        prompt_message_definitions["PromptMessageRole"],
+    )
+    assert role_definition["enum"] == ["system", "user"]
+    image_input = next(port for port in prompt_message.inputs if port.name == "images")
+    assert image_input.artifact_type is not None
+    assert image_input.artifact_type.id == "image.raster"
+    assert image_input.shape == "many"
+    assert image_input.required is False
+
+    add = nodes["arithmetic.add"]
+    assert add.inputs[0].title == "Left"
+    assert add.inputs[0].description == "Left-hand integer operand."
+
+    collect = nodes["sequence.collect"]
     assert collect.inputs[0].name == "items"
     assert collect.inputs[0].shape == "one"
     assert collect.inputs[0].accepted_shapes == ["one", "many"]
     assert collect.inputs[0].instance_plugs is True
     assert collect.outputs[0].accepted_shapes == ["many"]
     assert collect.outputs[0].instance_plugs is False
-
-    generic_collect = nodes["sequence.collect"]
-    assert generic_collect.inputs[0].artifact_type is None
-    assert generic_collect.inputs[0].artifact_type_variable == "T"
-    assert generic_collect.outputs[0].artifact_type is None
-    assert generic_collect.outputs[0].artifact_type_variable == "T"
+    assert collect.inputs[0].artifact_type is None
+    assert collect.inputs[0].artifact_type_variable == "T"
+    assert collect.outputs[0].artifact_type is None
+    assert collect.outputs[0].artifact_type_variable == "T"
 
 
 def test_run_accepts_empty_graph(builtin_client: TestClient) -> None:
@@ -164,7 +190,7 @@ def test_run_accepts_empty_graph(builtin_client: TestClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_upload_from_relative_workspace_returns_absolute_file_uri(
+async def test_upload_from_relative_workspace_returns_opaque_upload_key(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -177,71 +203,50 @@ async def test_upload_from_relative_workspace_returns_absolute_file_uri(
         workspace=Path("relative-workbench"),
     )
 
-    item = await service.save_upload(
+    item = await service.save_image_upload(
         "page.png",
         base64.b64encode(b"image-bytes").decode("ascii"),
     )
 
-    uploads_uri = (tmp_path / "relative-workbench" / "uploads").as_uri()
-    assert item.external_uri.startswith(f"{uploads_uri}/")
-    assert item.display_name == "page.png"
-    assert item.size_bytes == len(b"image-bytes")
+    assert "/" not in item.upload_key
+    assert "\\" not in item.upload_key
+    assert item.upload_key.endswith("-page.png")
+    assert item.filename == "page.png"
+    assert item.byte_size == len(b"image-bytes")
 
 
-def test_source_nodes_materialize_and_merge_sample_images(
+def test_image_upload_materializes_sample_images(
     builtin_client: TestClient,
 ) -> None:
     sample_response = builtin_client.post("/v1/samples", json={"count": 2})
     assert sample_response.status_code == 200
-    selection = [
-        {**item, "order_index": index}
-        for index, item in enumerate(sample_response.json())
-    ]
+    uploads = sample_response.json()
 
     run_response = builtin_client.post(
         "/v1/runs",
         json={
             "nodes": [
                 {
-                    "id": "source",
-                    "operator_id": "source.local_upload.images",
+                    "id": "upload",
+                    "operator_id": "image.upload",
                     "operator_version": 1,
-                    "config": {
-                        "connector_id": "local_upload",
-                        "selection": selection,
-                    },
-                },
-                {
-                    "id": "merge",
-                    "operator_id": "source.image_sequence.merge",
-                    "operator_version": 1,
-                    "config": {},
+                    "config": {"uploads": uploads},
                 },
             ],
-            "edges": [
-                {
-                    "from_node": "source",
-                    "from_port": "pages",
-                    "to_node": "merge",
-                    "to_port": "sequences",
-                }
-            ],
+            "edges": [],
         },
     )
 
     assert run_response.status_code == 200
     result = RunResponse.model_validate(run_response.json())
     assert result.status == "succeeded"
-    source_run, merge_run = result.node_runs
-    assert source_run.status == "succeeded"
-    assert merge_run.status == "succeeded"
-    assert len(source_run.outputs[0].artifacts) == 2
-    assert [artifact.artifact_id for artifact in merge_run.outputs[0].artifacts] == [
-        artifact.artifact_id for artifact in source_run.outputs[0].artifacts
-    ]
+    upload_run = result.node_runs[0]
+    assert upload_run.status == "succeeded"
+    assert upload_run.outputs[0].port == "images"
+    assert len(upload_run.outputs[0].artifacts) == 2
 
     content_response = builtin_client.get(
-        f"/v1/artifacts/{source_run.outputs[0].artifacts[0].artifact_id}/content"
+        f"/v1/artifacts/{upload_run.outputs[0].artifacts[0].artifact_id}/content"
     )
     assert content_response.status_code == 200
     assert content_response.headers["content-type"] == "image/png"

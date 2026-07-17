@@ -17,7 +17,8 @@ from notarius_core.nodes import (
     OutputPortSpec,
     PortShape,
 )
-from notarius_core.plugins import NodeRegistration
+from notarius_core.operators.modules import GraphModuleNode
+from notarius_core.plugins import NodeRegistration, PluginOrigin
 
 from notarius_api.schemas.workbench import (
     ArtifactConversionKeyResponse,
@@ -26,7 +27,9 @@ from notarius_api.schemas.workbench import (
     ArtifactTypeSpecResponse,
     FieldProjectionResponse,
     GraphMaterializationsResponse,
+    ImageUploadItemResponse,
     NodeRegistryResponse,
+    NodeSecretInputResponse,
     NodeSpecResponse,
     PluginSpecResponse,
     PortDirection,
@@ -34,10 +37,14 @@ from notarius_api.schemas.workbench import (
     RunRequest,
     RunResponse,
     SampleRequest,
-    SelectionItemResponse,
     UploadRequest,
 )
-from notarius_api.services.workbench import WorkbenchGraphError, WorkbenchService
+from notarius_api.services.workbench import (
+    GRAPH_MODULE_PLUGIN_SLUG,
+    GraphModuleCatalogEntry,
+    WorkbenchGraphError,
+    WorkbenchService,
+)
 
 router = APIRouter(tags=["workbench"])
 
@@ -58,10 +65,22 @@ WorkbenchDependency = Annotated[
 @router.get("/nodes", response_model=NodeRegistryResponse)
 async def list_nodes(service: WorkbenchDependency) -> NodeRegistryResponse:
     registry = service.plugin_registry
+    module_entries = await service.list_graph_modules()
     return NodeRegistryResponse(
         plugins=[
-            PluginSpecResponse(slug=plugin.slug, title=plugin.title)
+            PluginSpecResponse(
+                slug=plugin.slug,
+                title=plugin.title,
+                origin=plugin.origin,
+            )
             for plugin in registry.plugins
+        ]
+        + [
+            PluginSpecResponse(
+                slug=GRAPH_MODULE_PLUGIN_SLUG,
+                title="Modules",
+                origin=PluginOrigin.MODULE,
+            )
         ],
         artifact_types=[
             _artifact_type_spec_response(spec) for spec in registry.artifact_types
@@ -80,17 +99,18 @@ async def list_nodes(service: WorkbenchDependency) -> NodeRegistryResponse:
         ],
         nodes=[
             _node_registration_response(registration) for registration in registry.nodes
-        ],
+        ]
+        + [_graph_module_response(entry, service) for entry in module_entries],
     )
 
 
-@router.post("/uploads", response_model=SelectionItemResponse)
+@router.post("/uploads", response_model=ImageUploadItemResponse)
 async def upload_file(
     request: UploadRequest,
     service: WorkbenchDependency,
-) -> SelectionItemResponse:
+) -> ImageUploadItemResponse:
     try:
-        return await service.save_upload(
+        return await service.save_image_upload(
             filename=request.filename,
             content_base64=request.content_base64,
         )
@@ -98,12 +118,12 @@ async def upload_file(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.post("/samples", response_model=list[SelectionItemResponse])
+@router.post("/samples", response_model=list[ImageUploadItemResponse])
 async def create_samples(
     request: SampleRequest,
     service: WorkbenchDependency,
-) -> list[SelectionItemResponse]:
-    return await service.create_sample_pages(request.count)
+) -> list[ImageUploadItemResponse]:
+    return await service.create_sample_images(request.count)
 
 
 @router.post("/runs", response_model=RunResponse)
@@ -186,6 +206,42 @@ def _node_registration_response(
             _output_port_response(port)
             for port in registration.node_class.output_contract.ports.values()
         ],
+        secret_inputs=[
+            NodeSecretInputResponse(
+                name=secret_input.name,
+                config_dependencies=list(secret_input.config_dependencies),
+                title=secret_input.title,
+                description=secret_input.description,
+            )
+            for secret_input in registration.secret_inputs
+        ],
+    )
+
+
+def _graph_module_response(
+    entry: GraphModuleCatalogEntry,
+    service: WorkbenchService,
+) -> NodeSpecResponse:
+    definition = entry.definition
+    node = GraphModuleNode(definition, service)
+    return NodeSpecResponse(
+        operator_id=node.operator_id,
+        operator_version=node.operator_version,
+        plugin_slug=GRAPH_MODULE_PLUGIN_SLUG,
+        title=node.title,
+        description=node.description,
+        config_schema=_model_json_schema(node.config_contract.model),
+        input_schema=_model_json_schema(node.input_contract.model),
+        output_schema=_model_json_schema(node.output_contract.model),
+        inputs=[
+            _input_port_response(port) for port in node.input_contract.ports.values()
+        ],
+        outputs=[
+            _output_port_response(port) for port in node.output_contract.ports.values()
+        ],
+        module_graph_id=definition.reference.graph_id,
+        module_graph_revision=definition.reference.revision,
+        catalog_visible=entry.catalog_visible,
     )
 
 

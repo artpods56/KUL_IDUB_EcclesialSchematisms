@@ -10,6 +10,7 @@ from notarius_core.operators.text import TEXT
 from notarius_core.plugins import (
     PLUGIN_ENTRY_POINT_GROUP,
     Plugin,
+    PluginOrigin,
     PluginRegistrationError,
 )
 
@@ -86,15 +87,15 @@ def test_entry_point_load_failure_preserves_entry_point_context(
     assert isinstance(raised.value.__cause__, AttributeError)
 
 
-def test_explicit_external_plugins_are_installed_in_declared_order_and_frozen() -> None:
-    builtin = Plugin(slug="builtin.example", title="Builtin")
-    external = Plugin(slug="external.example", title="External")
+def test_plugin_origins_follow_installation_path_and_registry_is_frozen() -> None:
+    builtin = Plugin(slug="external.named-builtin", title="Builtin")
+    external = Plugin(slug="builtin.named-external", title="External")
 
     registry = build_plugin_registry((builtin,), external_plugins=(external,))
 
-    assert [plugin.slug for plugin in registry.plugins] == [
-        "builtin.example",
-        "external.example",
+    assert [(plugin.slug, plugin.origin) for plugin in registry.plugins] == [
+        ("external.named-builtin", PluginOrigin.BUILTIN),
+        ("builtin.named-external", PluginOrigin.EXTERNAL),
     ]
     with pytest.raises(PluginRegistrationError, match="Plugin registry is frozen"):
         registry.install(Plugin(slug="external.late", title="Late"))

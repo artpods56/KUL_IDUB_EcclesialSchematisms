@@ -14,8 +14,8 @@ export type FieldProjection =
   Schemas["FieldProjectionResponse"];
 export type Port = Schemas["PortResponse"];
 export type NodeSpec = Schemas["NodeSpecResponse"];
-export type SelectionItem =
-  Schemas["SelectionItemResponse"];
+export type ImageUploadItem =
+  Schemas["ImageUploadItemResponse"];
 export type InputPlugInput = Schemas["RunInputPlugRequest"];
 export type RunNodeInput = Schemas["RunNodeRequest"];
 export type NodeConfigInput = NonNullable<
@@ -42,6 +42,11 @@ export type SavedGraphNode = Schemas["SavedGraphNodeModel-Output"];
 export type SavedGraphEdge = Schemas["SavedGraphEdgeModel"];
 export type SavedGraphSummary =
   Schemas["SavedGraphSummaryResponse"];
+export type NodeSecretInput = Schemas["NodeSecretInputResponse"];
+export type NodeSecretStatus = Schemas["NodeSecretStatusResponse"];
+export type GraphNodeSecrets = Schemas["GraphNodeSecretsResponse"];
+export type ApplyNodeSecretRequest = Schemas["ConfigureNodeSecretRequest"];
+export type AppliedNodeSecret = NodeSecretStatus;
 
 export type NodeRegistry =
   paths["/v1/nodes"]["get"]["responses"][200]["content"]["application/json"];

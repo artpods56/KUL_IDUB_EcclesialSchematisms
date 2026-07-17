@@ -30,12 +30,21 @@ def _collect_run_payload() -> dict[str, object]:
             },
             {
                 "id": "collect",
-                "operator_id": "text.collect",
+                "operator_id": "sequence.collect",
                 "operator_version": 1,
                 "config": {},
                 "input_plugs": [
                     {"id": "sequence", "port": "items"},
                     {"id": "single", "port": "items"},
+                ],
+                "artifact_type_bindings": [
+                    {
+                        "variable": "T",
+                        "artifact_type": {
+                            "id": "scalar.text",
+                            "schema_version": 1,
+                        },
+                    }
                 ],
             },
         ],
@@ -106,11 +115,13 @@ def test_registry_declares_text_artifact_and_operator_contracts(
     assert nodes["text.join"].inputs[0].name == "parts"
     assert nodes["text.join"].inputs[0].shape == "many"
 
-    collect_input = nodes["text.collect"].inputs[0]
+    collect_input = nodes["sequence.collect"].inputs[0]
     assert collect_input.name == "items"
     assert collect_input.shape == "one"
     assert collect_input.accepted_shapes == ["one", "many"]
     assert collect_input.instance_plugs is True
+    assert collect_input.artifact_type is None
+    assert collect_input.artifact_type_variable == "T"
 
 
 def test_text_graph_splits_maps_replacement_and_joins(
@@ -192,7 +203,7 @@ def test_text_graph_splits_maps_replacement_and_joins(
     }
 
 
-def test_text_collect_accepts_mixed_shapes_in_declared_plug_order(
+def test_sequence_collect_accepts_text_shapes_in_declared_plug_order(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post("/v1/runs", json=_collect_run_payload())
@@ -227,7 +238,7 @@ def test_text_collect_accepts_mixed_shapes_in_declared_plug_order(
     }
 
 
-def test_text_collect_rejects_invalid_executable_plug_structures(
+def test_sequence_collect_rejects_invalid_executable_plug_structures(
     builtin_client: TestClient,
 ) -> None:
     invalid_payloads: list[tuple[dict[str, object], str]] = []

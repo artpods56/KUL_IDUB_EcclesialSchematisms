@@ -75,6 +75,41 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/graphs/{graph_id}/node-secrets": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Node Secret Status */
+        readonly get: operations["get_node_secret_status_v1_graphs__graph_id__node_secrets_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/graphs/{graph_id}/nodes/{node_id}/secrets/{name}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /** Configure Node Secret */
+        readonly put: operations["configure_node_secret_v1_graphs__graph_id__nodes__node_id__secrets__name__put"];
+        readonly post?: never;
+        /** Delete Node Secret */
+        readonly delete: operations["delete_node_secret_v1_graphs__graph_id__nodes__node_id__secrets__name__delete"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/nodes": {
         readonly parameters: {
             readonly query?: never;
@@ -262,6 +297,16 @@ export interface components {
             /** Title */
             readonly title: string;
         };
+        /** ConfigureNodeSecretRequest */
+        readonly ConfigureNodeSecretRequest: {
+            /** Expected Graph Revision */
+            readonly expected_graph_revision: number;
+            /**
+             * Value
+             * Format: password
+             */
+            readonly value: string;
+        };
         /** CreateSavedGraphRequest */
         readonly CreateSavedGraphRequest: {
             /** Edges */
@@ -296,6 +341,18 @@ export interface components {
             /** Node Runs */
             readonly node_runs: readonly components["schemas"]["RunNodeResponse"][];
         };
+        /** GraphNodeSecretsResponse */
+        readonly GraphNodeSecretsResponse: {
+            /**
+             * Graph Id
+             * Format: uuid
+             */
+            readonly graph_id: string;
+            /** Graph Revision */
+            readonly graph_revision: number;
+            /** Secrets */
+            readonly secrets: readonly components["schemas"]["NodeSecretStatusResponse"][];
+        };
         /** GraphPointModel */
         readonly GraphPointModel: {
             /** X */
@@ -308,6 +365,15 @@ export interface components {
             /** Detail */
             readonly detail?: readonly components["schemas"]["ValidationError"][];
         };
+        /** ImageUploadItemResponse */
+        readonly ImageUploadItemResponse: {
+            /** Byte Size */
+            readonly byte_size: number;
+            /** Filename */
+            readonly filename: string;
+            /** Upload Key */
+            readonly upload_key: string;
+        };
         /** NodeRegistryResponse */
         readonly NodeRegistryResponse: {
             /** Artifact Conversions */
@@ -319,8 +385,33 @@ export interface components {
             /** Plugins */
             readonly plugins: readonly components["schemas"]["PluginSpecResponse"][];
         };
+        /** NodeSecretInputResponse */
+        readonly NodeSecretInputResponse: {
+            /** Config Dependencies */
+            readonly config_dependencies: readonly string[];
+            /** Description */
+            readonly description?: string | null;
+            /** Name */
+            readonly name: string;
+            /** Title */
+            readonly title: string;
+        };
+        /** NodeSecretStatusResponse */
+        readonly NodeSecretStatusResponse: {
+            /** Configured */
+            readonly configured: boolean;
+            /** Name */
+            readonly name: string;
+            /** Node Id */
+            readonly node_id: string;
+        };
         /** NodeSpecResponse */
         readonly NodeSpecResponse: {
+            /**
+             * Catalog Visible
+             * @default true
+             */
+            readonly catalog_visible: boolean;
             /** Config Schema */
             readonly config_schema: {
                 readonly [key: string]: unknown;
@@ -333,6 +424,10 @@ export interface components {
             };
             /** Inputs */
             readonly inputs: readonly components["schemas"]["PortResponse"][];
+            /** Module Graph Id */
+            readonly module_graph_id?: string | null;
+            /** Module Graph Revision */
+            readonly module_graph_revision?: number | null;
             /** Operator Id */
             readonly operator_id: string;
             /** Operator Version */
@@ -345,6 +440,8 @@ export interface components {
             readonly outputs: readonly components["schemas"]["PortResponse"][];
             /** Plugin Slug */
             readonly plugin_slug: string;
+            /** Secret Inputs */
+            readonly secret_inputs?: readonly components["schemas"]["NodeSecretInputResponse"][];
             /** Title */
             readonly title: string;
         };
@@ -357,8 +454,14 @@ export interface components {
             /** Value */
             readonly value: components["schemas"]["ArtifactRef"] | components["schemas"]["ArtifactRefSequence"];
         };
+        /**
+         * PluginOrigin
+         * @enum {string}
+         */
+        readonly PluginOrigin: "builtin" | "external" | "module";
         /** PluginSpecResponse */
         readonly PluginSpecResponse: {
+            readonly origin: components["schemas"]["PluginOrigin"];
             /** Slug */
             readonly slug: string;
             /** Title */
@@ -490,6 +593,10 @@ export interface components {
             readonly nodes: readonly components["schemas"]["RunNodeRequest"][];
             /** Pinned Outputs */
             readonly pinned_outputs?: readonly components["schemas"]["PinnedOutputRequest"][];
+            /** Secret Graph Id */
+            readonly secret_graph_id?: string | null;
+            /** Secret Graph Revision */
+            readonly secret_graph_revision?: number | null;
         };
         /** RunResponse */
         readonly RunResponse: {
@@ -640,17 +747,6 @@ export interface components {
              * Format: date-time
              */
             readonly updated_at: string;
-        };
-        /** SelectionItemResponse */
-        readonly SelectionItemResponse: {
-            /** Connector Id */
-            readonly connector_id: string;
-            /** Display Name */
-            readonly display_name: string;
-            /** External Uri */
-            readonly external_uri: string;
-            /** Size Bytes */
-            readonly size_bytes: number;
         };
         /** UpdateSavedGraphRequest */
         readonly UpdateSavedGraphRequest: {
@@ -906,6 +1002,107 @@ export interface operations {
             };
         };
     };
+    readonly get_node_secret_status_v1_graphs__graph_id__node_secrets_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly graph_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GraphNodeSecretsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly configure_node_secret_v1_graphs__graph_id__nodes__node_id__secrets__name__put: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly graph_id: string;
+                readonly name: string;
+                readonly node_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ConfigureNodeSecretRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["NodeSecretStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly delete_node_secret_v1_graphs__graph_id__nodes__node_id__secrets__name__delete: {
+        readonly parameters: {
+            readonly query: {
+                readonly expected_graph_revision: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly graph_id: string;
+                readonly name: string;
+                readonly node_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     readonly list_nodes_v1_nodes_get: {
         readonly parameters: {
             readonly query?: never;
@@ -978,7 +1175,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["SelectionItemResponse"][];
+                    readonly "application/json": readonly components["schemas"]["ImageUploadItemResponse"][];
                 };
             };
             /** @description Validation Error */
@@ -1011,7 +1208,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["SelectionItemResponse"];
+                    readonly "application/json": components["schemas"]["ImageUploadItemResponse"];
                 };
             };
             /** @description Validation Error */

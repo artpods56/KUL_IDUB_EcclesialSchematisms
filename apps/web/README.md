@@ -4,28 +4,30 @@ A ComfyUI-like workbench for assembling typed artifact transformations over the
 Notarius runtime. It is built with Next.js 16, StyleX, Base UI
 primitives, React Flow, and SWR.
 
-The default slice is a buildable arithmetic field-projection workflow. It opens
-with four disconnected arithmetic nodes so the connection behavior can be
-tested directly; **Wire example** installs the canonical four-edge graph in one
-click. Two integer nodes feed an Add & subtract node whose single `result`
-artifact contains `addition` and `subtraction`. Each nested field is routed over
-a labeled edge into Multiply, without adding adapter nodes or
-operation-specific integer artifact types. The OCR and table operators are
-available in the node library when the OCR extra is installed.
+The default slice is a buildable scalar arithmetic workflow. It opens with five
+disconnected nodes: Number 9, Number 4, Add integers, Subtract integers, and
+Multiply. Users wire each Number into both binary operations, then feed the Add
+and Subtract results into Multiply: six direct scalar edges produce `(9 + 4) ×
+(9 - 4) = 65`. The built-in catalog is limited to generic Image, Sequence,
+Arithmetic, Text, and Prompt families. OCR and table extraction appear as external
+nodes only when the OCR entry-point plugin is installed.
 
 Node configuration is rendered directly inside each node from the live
 `config_schema`. Primitive JSON Schema fields use a compact preset: text,
-number/integer (including bounds), boolean, or enum selection. Source files and
+number/integer (including bounds), boolean, or enum selection. Uploaded images and
 run artifacts are also managed from the node, so the canvas does not depend on
 a separate inspector sidebar. The node header keeps only two local controls:
 help from the registered description and removal from the canvas.
 
-The node catalog groups registered operators by installed plugin. Selecting an
-operator previews its description, compatible upstream and downstream nodes,
-typed input and output ports, and editable configuration fields before the user
-adds it to the canvas. Compatibility is derived from the same artifact types,
-field projections, bounded conversion paths, and collection shapes used for
-live wiring.
+The node catalog separates host-assigned built-in families from registered
+external plugins and marks external entries. A plugin cannot choose its own
+origin. Selecting an operator previews its description, compatible upstream and
+downstream nodes, typed input and output ports, and editable configuration
+fields before the user adds it to the canvas. Compatibility is derived from the
+same artifact types, field projections, bounded conversion paths, and collection
+shapes used for live wiring. The Sequence family provides generic `Collect<T>`,
+Count, Slice, and Pick item operations; there are no image- or text-specific
+collector entries.
 
 Connections own transport behavior. Every edge has an inline control for
 choosing the whole output or a schema-derived/explicit nested-field projection,
@@ -110,18 +112,22 @@ graph's workflow structure and canvas layout.
 
 ## Current flow
 
-1. `GET /v1/nodes` returns the catalog, typed ports, JSON schemas, and
-   artifact type definitions.
-2. The canvas opens with Number 9, Number 4, Add & subtract, and Multiply but no
-   connections. The user may wire the ports manually or choose **Wire example**.
-3. Add & subtract emits one `arithmetic.result@1` artifact containing
-   `{addition: 13, subtraction: 5}`.
-4. Two independent edges select `result.addition` and `result.subtraction`; the server
-   materializes each as `scalar.integer@1` for Multiply, which produces `65`.
-5. Dragging the compound result to a compatible input opens a picker populated
-   from explicit projections and structural `string`/`integer` leaves derived
-   from the artifact's JSON Schema. The created edge remains editable and owns
-   that exact path.
+1. `GET /v1/nodes` returns the catalog with each plugin's host-assigned
+   `builtin` or `external` origin, typed ports, JSON schemas, and artifact type
+   definitions.
+2. The canvas opens with Number 9, Number 4, Add integers, Subtract integers,
+   and Multiply but no connections. The user manually creates the canonical six
+   direct edges: both Number outputs feed the corresponding left/right inputs of
+   Add and Subtract, then both `result` outputs feed Multiply.
+3. Add emits `13` and Subtract emits `5` as `scalar.integer@1`; Multiply emits
+   `65` using the same scalar contract.
+4. Every tutorial edge is direct. Number outputs fan out to both operations,
+   while the Add and Subtract result outputs remain independently connectable.
+5. Structural field projection remains available for compound artifacts supplied
+   by plugins. The picker is populated from explicit projections and nested
+   `string`/`integer` leaves derived from the artifact's JSON Schema; automated
+   coverage uses a test/plugin compound type rather than a production tutorial
+   node.
 6. List-valued edges expose whether the target receives the whole list directly
    or maps the target operation over each item. Mapping is edge state, not node
    invocation configuration.

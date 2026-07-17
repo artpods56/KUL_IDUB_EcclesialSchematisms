@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 from notarius_core.artifacts import ArtifactRef, ArtifactRefSequence, ArtifactTypeKey
 from notarius_core.conversions import MAX_ARTIFACT_CONVERSION_HOPS
 from notarius_core.nodes import PortShape
+from notarius_core.plugins import PluginOrigin
 
 
 PortDirection = Literal["input", "output"]
@@ -68,6 +69,7 @@ class ArtifactConversionSpecResponse(ApiResponse):
 class PluginSpecResponse(ApiResponse):
     slug: str
     title: str
+    origin: PluginOrigin
 
 
 class PortResponse(ApiResponse):
@@ -93,6 +95,13 @@ class PortResponse(ApiResponse):
         return self
 
 
+class NodeSecretInputResponse(ApiResponse):
+    name: str
+    config_dependencies: list[str]
+    title: str
+    description: str | None = None
+
+
 class NodeSpecResponse(ApiResponse):
     operator_id: str
     operator_version: int
@@ -104,6 +113,18 @@ class NodeSpecResponse(ApiResponse):
     output_schema: dict[str, object]
     inputs: list[PortResponse]
     outputs: list[PortResponse]
+    secret_inputs: list[NodeSecretInputResponse] = Field(default_factory=list)
+    module_graph_id: UUID | None = None
+    module_graph_revision: int | None = Field(default=None, ge=1)
+    catalog_visible: bool = True
+
+    @model_validator(mode="after")
+    def validate_module_identity(self) -> Self:
+        if (self.module_graph_id is None) != (self.module_graph_revision is None):
+            raise ValueError(
+                "module_graph_id and module_graph_revision must be provided together"
+            )
+        return self
 
 
 class NodeRegistryResponse(ApiResponse):
@@ -122,11 +143,10 @@ class SampleRequest(BaseModel):
     count: int = Field(default=2, ge=1, le=8)
 
 
-class SelectionItemResponse(ApiResponse):
-    connector_id: str
-    external_uri: str
-    display_name: str
-    size_bytes: int
+class ImageUploadItemResponse(ApiResponse):
+    upload_key: str
+    filename: str
+    byte_size: int
 
 
 InputPlugIdentifier = Annotated[
@@ -213,11 +233,29 @@ class RunRequest(BaseModel):
     pinned_outputs: list[PinnedOutputRequest] = Field(default_factory=list)
     graph_id: UUID | None = None
     graph_revision: int | None = Field(default=None, ge=1)
+    secret_graph_id: UUID | None = None
+    secret_graph_revision: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def validate_graph_context(self) -> Self:
         if (self.graph_id is None) != (self.graph_revision is None):
             raise ValueError("graph_id and graph_revision must be provided together")
+        if (self.secret_graph_id is None) != (self.secret_graph_revision is None):
+            raise ValueError(
+                "secret_graph_id and secret_graph_revision must be provided together"
+            )
+        if (
+            self.graph_id is not None
+            and self.secret_graph_id is not None
+            and (
+                self.graph_id != self.secret_graph_id
+                or self.graph_revision != self.secret_graph_revision
+            )
+        ):
+            raise ValueError(
+                "graph and secret graph contexts must identify the same saved "
+                "graph revision when both are provided"
+            )
         return self
 
 

@@ -59,8 +59,9 @@ rewrite:
 | Nominal artifact types, schema versions, and declared projections | Done | Compatibility is deterministic and can be validated before execution. |
 | Declared, versioned artifact conversions | Done | Canonical representation changes such as integer to text remain explicit without requiring boilerplate nodes. |
 | Plugin discovery through `notarius.plugins` entry points | Done | External plugins can depend on their own optional packages without adding those dependencies to the Notarius host. |
-| OCR as an external plugin package | Done | It proves the host/plugin dependency boundary while keeping Mistral optional. |
-| Basic arithmetic, source, text, and table operators | Done | They provide a dependency-light vocabulary for exercising graph behavior. |
+| Host-assigned catalog origin | Done | The registry and node catalog expose and visually separate built-in families from registered external plugins; plugins cannot self-label their origin. |
+| Generic Image, Sequence, Arithmetic, Text, Schema, and Prompt built-ins | Done | The base catalog admits only producer-neutral artifacts and broadly reusable, deterministic, dependency-light nodes; Schema is one recursive builder rather than a canvas-level algebra of schema tokens. |
+| OCR and table extraction as an external plugin package | Done | Current table semantics are OCR-specific, so the optional entry-point plugin owns OCR and table artifacts, nodes, and dependencies. |
 
 ## Current implementation tasks
 
@@ -101,8 +102,8 @@ an editor for those values and provides a visible remove action. Output ports no
 longer store an "emit as" draft.
 
 **Justification.** A setting must be edited where its effect is visible. This
-also lets `result.addition` and `result.subtraction` leave the same output port on
-two different edges without overwriting one another.
+also lets two nested fields leave the same compound output port on different
+edges without overwriting one another.
 
 **Acceptance criteria.**
 
@@ -357,9 +358,10 @@ weakening nominal artifact compatibility or adding implicit runtime coercion.
   resulting artifact content. Registry tests cover local references, explicit
   overrides, invalid canonical targets, cycles, depth/count limits, and strict
   runtime-type composability. [R43: Tests Are Behavioral Contracts]
-- A real browser pointer drag from `arithmetic.result@1` to a text input offered
-  `Addition -> As text` and `Subtraction -> As text`; choosing Addition created
-  the visible `result.addition -> As text` edge with no browser-console errors.
+- Browser and runtime verification covered two nested integer fields flowing
+  from one compound output through independently selected projection routes.
+  Ongoing automated coverage uses `test.compound_result@1`; production
+  arithmetic nodes now expose `scalar.integer@1` results directly.
 
 ### T11. Collect any homogeneous artifact type — Done
 
@@ -398,10 +400,115 @@ to remain the one representation-change boundary. [R01: Direct Ownership]
 - The binding can be reset only when the node has no incident edges.
 - A selected Collect-only run can reuse accessible materialized scalar and
   sequence outputs from its unselected upstream nodes.
-- Legacy text and image-specific collection nodes remain registered until a
-  separate persisted-graph migration and retirement decision is made.
+- Image-sequence merge and text-specific collection nodes are retired; generic
+  `Collect<T>` is the single built-in collection operation.
+- Count, Slice, and Pick item work over the same bound homogeneous sequence
+  contract without introducing artifact-specific variants.
+- The Image family owns the producer-neutral `image.raster@1` contract and
+  `image.upload@1`; legacy Sources operator and artifact identities are rejected
+  explicitly rather than silently rewritten.
+
+**Completed browser verification (2026-07-15).**
+
+- Connecting an image-sequence edge bound a generic Collect instance to
+  `image.raster@1`; save and reload retained that binding and its
+  materialized previews.
+- Running only Collect reused the persisted upstream image output. Adding a
+  second ordered input preserved the upstream run and flattened both inputs to
+  two output images.
+- Removing an input edge retained the concrete binding. Reset remained disabled
+  until the final incident edge was removed, then explicitly returned the node
+  to `Any artifact`.
+- Automated verification passed: 277 Python tests, 35 web tests, Ruff, ESLint,
+  basedpyright, TypeScript, OpenAPI contract drift, and the Next.js production
+  build.
+
+**Extended built-in and Image-contract verification (2026-07-16).**
+
+- Runtime and API tests cover Count on empty and populated sequences, Slice
+  reference and index-key preservation, Pick item identity, strict configuration
+  validation, and contextual unordered/out-of-range errors.
+- The live catalog exposed 21 nodes: 17 built-ins grouped as Image 1, Sequence 4,
+  Arithmetic 6, Text 4, Schema 1, and Prompt 1, plus one registered LLM node and three OCR
+  nodes in the separate External group. External nodes were marked explicitly in
+  both the group navigation and node list.
+- A saved Image upload retained exactly two ordered
+  `{upload_key, filename, byte_size}` records, with no connector identity,
+  absolute URI, selection wrapper, or duplicate order index. Reload restored the
+  Upload images and Collect previews in `page-002.png`, `page-001.png` order.
+- A continuous real pointer drag from Upload images to a second unbound Collect
+  created a second edge and bound `T` from `Any artifact` to `image.raster@1`.
+  React Flow handle measurement completed before the concrete edge was
+  published; the fresh browser console contained no errors or warnings.
+- The seeded scalar-arithmetic canvas opened with five disconnected nodes. A real
+  pointer drag from Number 9 to the Left input of Add integers created the visible
+  edge and changed the canvas status from zero to one connection; the browser
+  console contained no errors or warnings.
+- Clean-break API tests reject the retired `source.local_upload.images@1`
+  operator and `source.page_image@1` artifact binding instead of silently
+  rewriting saved graphs.
+- Automated verification passed: 342 Python tests, 36 web tests, Ruff, ESLint,
+  basedpyright, TypeScript, OpenAPI contract drift, the Next.js production build,
+  and the OCR-backed workbench smoke workflow. [R20: Verify After Signature Changes]
+  [R43: Tests Are Behavioral Contracts]
+
+### T12. Reuse exact node invocations — Done
+
+**Description.** Add a global invocation cache that is separate from
+revision-scoped materialized output bindings. Node declarations default to
+`never`; deterministic built-ins opt into `exact`. The versioned fingerprint
+includes validated config defaults, operator identity, stable node/module
+identity, invocation mode and mapped item index, artifact-type bindings, exact
+ordered input refs with SHA-256 values, and opaque secret revisions. Mapping
+looks up and publishes each item independently and persists each miss before
+continuing.
+
+**Justification.** Materialized bindings answer “what did this saved graph node
+last produce?” They cannot safely answer “has this exact computation already
+been performed?” A separate digest-keyed record permits reuse across restarts
+and unrelated graph revisions without weakening graph output identity. External
+and provider nodes remain fail-closed until their declaration can account for
+every mutable dependency and credential revision. [R01: Direct Ownership]
+[R44: Sensitive Serializable State]
+
+**Acceptance criteria.**
+
+- Pure Arithmetic, Text, Sequence, Schema, Prompt, and module-output built-ins
+  explicitly use exact caching; uploads, module wrappers, OCR, and LLM nodes do
+  not cache by default.
+- A config, operator version, stable node/module identity, mapped index, type
+  binding, input ref/container, content hash, or opaque secret revision change
+  creates a miss.
+- Successful ONCE invocations reuse their persisted artifact refs. MAP reuses
+  completed items in order, persists new items immediately, and never caches a
+  failed item.
+- Cache rows publish first-writer-wins and stale deletion is conditional on the
+  observed generation.
+- A hit validates every referenced artifact row and stored object. Missing or
+  mismatched artifacts evict the entry; a storage outage preserves it and
+  reports contextual failure.
+- SQLite/PostgreSQL persistence is created by Alembic migration
+  `0005_invocation_cache` and survives a fresh workbench service.
+
+**Completed verification (2026-07-16).**
+
+- The full Python suite passed 465 tests. Focused contracts cover canonical
+  fingerprints, policy inventory, ONCE reuse, mixed MAP hits/misses, partial
+  failure resume, SQL first-writer-wins publication, generation-safe deletion,
+  stale artifact eviction, storage-outage preservation, service restart, module
+  execution, and migration/schema drift. [R43: Tests Are Behavioral Contracts]
+- Ruff, basedpyright, and diff checks passed for the implementation. [R20: Verify After Signature Changes]
 
 ## Deliberately deferred
+
+### Concurrent cold-miss coalescing — Deferred
+
+Cache publication is atomic and first-writer-wins, but simultaneous cold misses
+may both execute before either result is published. A lease or single-flight
+coordinator belongs in a separate change when provider nodes have an explicit
+exact-cache policy and production measurements justify the added failure and
+timeout states. The current cache avoids duplicate work on subsequent runs and
+resumes completed mapped items after partial failure. [R41: No Speculative Extension Points]
 
 ### Zip, Cartesian, and multi-driver mapping — Deferred
 

@@ -4,8 +4,9 @@ from typing import final, override
 from PIL import Image as ImageModule
 from PIL.Image import Image
 
-from notarius_core.artifacts import SOURCE_PAGE_IMAGE, ArtifactRef, UnitOfWorkPort
+from notarius_core.artifacts import ArtifactRef, UnitOfWorkPort
 from notarius_core.domain.errors import NotFoundError
+from notarius_core.operators.images import RASTER_IMAGE
 from notarius_core.ports.storage import FileStoragePort
 from notarius_core.runtime.resolvers import (
     ArtifactContractError,
@@ -18,7 +19,7 @@ from notarius_plugin_ocr.mistral import EncodedPageImage
 
 @final
 class EncodedPageImageResolver(Resolver[EncodedPageImage]):
-    source = SOURCE_PAGE_IMAGE.key
+    source = RASTER_IMAGE.key
     target = EncodedPageImage
 
     def __init__(self, uow: UnitOfWorkPort, storage: FileStoragePort) -> None:
@@ -81,7 +82,7 @@ class EncodedPageImageResolver(Resolver[EncodedPageImage]):
 
 @final
 class PilImageResolver(Resolver[Image]):
-    source = SOURCE_PAGE_IMAGE.key
+    source = RASTER_IMAGE.key
     target = Image
 
     def __init__(self, uow: UnitOfWorkPort, storage: FileStoragePort) -> None:

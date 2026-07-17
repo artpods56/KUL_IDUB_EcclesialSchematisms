@@ -15,10 +15,11 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/api.Dockerfile
-      target: api-ocr
+      target: api-plugins
     environment:
       MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
       NOTARIUS_CORS_ORIGINS: ${NOTARIUS_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      NOTARIUS_CREDENTIAL_ENCRYPTION_KEY: ${NOTARIUS_CREDENTIAL_ENCRYPTION_KEY:-}
       NOTARIUS_DATABASE_URL: ${NOTARIUS_DATABASE_URL:-sqlite+aiosqlite:////data/workbench/notarius.sqlite3}
       NOTARIUS_WORKSPACE: /data/workbench
       NOTARIUS_STORAGE_BACKEND: ${NOTARIUS_STORAGE_BACKEND:-local}

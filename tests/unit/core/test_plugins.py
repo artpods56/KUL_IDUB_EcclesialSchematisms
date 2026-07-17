@@ -12,6 +12,7 @@ from notarius_core.artifacts import (
     InMemoryUnitOfWork,
     JsonObject,
     NoConfig,
+    NodeConfig,
     NodeInput,
     NodeOutput,
 )
@@ -22,11 +23,15 @@ from notarius_core.conversions import (
 )
 from notarius_core.nodes import InPort, Node, NodeExecutionContext
 from notarius_core.plugins import (
+    NodeCachePolicy,
+    NodeSecretInput,
     Plugin,
     PluginRegistrationError,
     PluginRegistry,
     PluginRuntimeContext,
+    UnknownOperatorError,
 )
+from notarius_core.ports.node_secrets import NodeSecretUnavailableError
 from notarius_storage import LocalFileObjectStore
 
 
@@ -102,6 +107,22 @@ class ContextNode(Node[NoConfig, EmptyInput, EmptyOutput]):
         return EmptyOutput()
 
 
+class SecretConfig(NodeConfig):
+    base_url: str = "https://example.test/v1"
+
+
+class SecretNode(Node[SecretConfig, EmptyInput, EmptyOutput]):
+    @override
+    async def run(
+        self,
+        _context: NodeExecutionContext,
+        _config: SecretConfig,
+        _inputs: EmptyInput,
+        /,
+    ) -> EmptyOutput:
+        return EmptyOutput()
+
+
 UNREGISTERED_VALUE = ArtifactTypeSpec(
     key=ArtifactTypeKey("example.unregistered", 1),
     title="Unregistered value",
@@ -170,6 +191,90 @@ def test_node_decorator_records_plugin_metadata_and_docstring() -> None:
         "Returns an empty output without runtime dependencies."
     )
     assert registration.key == ("example.default", 2)
+    assert registration.secret_inputs == ()
+    assert registration.cache_policy is NodeCachePolicy.NEVER
+
+
+def test_node_decorator_records_exact_cache_policy() -> None:
+    plugin = Plugin(slug="example.cacheable", title="Cacheable examples")
+
+    plugin.node(
+        operator_id="example.cacheable",
+        version=1,
+        title="Cacheable example",
+        cache_policy=NodeCachePolicy.EXACT,
+    )(DefaultNode)
+
+    assert plugin.nodes[0].cache_policy is NodeCachePolicy.EXACT
+
+
+def test_node_decorator_records_declared_secret_config_dependencies() -> None:
+    plugin = Plugin(slug="example.secrets", title="Example secrets")
+    declared = NodeSecretInput(
+        name="api_key",
+        config_dependencies=("base_url",),
+        title="API key",
+    )
+
+    plugin.node(
+        operator_id="example.secret",
+        version=1,
+        title="Secret example",
+        secret_inputs=(declared,),
+    )(SecretNode)
+
+    assert plugin.nodes[0].secret_inputs == (declared,)
+
+
+@pytest.mark.parametrize(
+    ("name", "title", "message"),
+    [
+        ("ApiKey", "API key", "must start with a lowercase letter"),
+        ("api-key", "API key", "must start with a lowercase letter"),
+        ("api_key", "   ", "title must not be blank"),
+    ],
+)
+def test_node_secret_input_requires_route_safe_name_and_nonblank_title(
+    name: str,
+    title: str,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        NodeSecretInput(name=name, title=title)
+
+
+def test_node_decorator_rejects_missing_secret_config_dependency() -> None:
+    plugin = Plugin(slug="example.secrets", title="Example secrets")
+
+    with pytest.raises(PluginRegistrationError, match="missing config fields: model"):
+        plugin.node(
+            operator_id="example.secret",
+            version=1,
+            title="Secret example",
+            secret_inputs=(
+                NodeSecretInput(
+                    name="api_key",
+                    title="API key",
+                    config_dependencies=("model",),
+                ),
+            ),
+        )(SecretNode)
+
+
+@pytest.mark.asyncio
+async def test_default_runtime_node_secret_resolver_fails_closed(
+    tmp_path: Path,
+) -> None:
+    context = runtime_context(tmp_path)
+
+    with pytest.raises(NodeSecretUnavailableError, match="unavailable"):
+        await context.node_secrets.resolve_secret(
+            graph_id=None,
+            graph_revision=None,
+            node_id=None,
+            name="api_key",
+            dependencies={},
+        )
 
 
 def test_registry_reports_operator_and_artifact_collisions() -> None:
@@ -446,6 +551,28 @@ def test_registry_builds_default_and_context_factory_nodes(tmp_path: Path) -> No
     assert isinstance(default_node, DefaultNode)
     assert isinstance(context_node, ContextNode)
     assert context_node.workspace == tmp_path
+
+
+def test_registry_looks_up_exact_node_registration() -> None:
+    plugin = Plugin(slug="example.lookup", title="Lookup")
+    plugin.node(
+        operator_id="example.lookup",
+        version=3,
+        title="Lookup",
+        cache_policy=NodeCachePolicy.EXACT,
+    )(DefaultNode)
+    registry = PluginRegistry()
+    registry.install(plugin)
+
+    registration = registry.node_registration("example.lookup", 3)
+
+    assert registration is plugin.nodes[0]
+    assert registration.cache_policy is NodeCachePolicy.EXACT
+    with pytest.raises(
+        UnknownOperatorError,
+        match="Unknown operator 'example.lookup' at version 4",
+    ):
+        registry.node_registration("example.lookup", 4)
 
 
 def test_missing_factory_error_preserves_plugin_and_operator_context(

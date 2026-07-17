@@ -5,6 +5,7 @@ import binascii
 import json
 import os
 import re
+from collections.abc import Mapping
 from collections import Counter, deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,8 +19,6 @@ from PIL import ImageDraw
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from notarius_core.artifacts import (
-    TABLE_FRAGMENT,
-    TABLE_PAGE,
     ArtifactFieldProjection,
     ArtifactObject,
     ArtifactRef,
@@ -36,7 +35,19 @@ from notarius_core.conversions import (
     conversion_runtime_types_are_compatible,
 )
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
-from notarius_core.domain.saved_graphs import SavedGraph
+from notarius_core.domain.modules import (
+    MODULE_BOUNDARY_PORT,
+    GraphModuleDefinition,
+    GraphModuleDefinitionError,
+    GraphModuleReference,
+    GraphModuleReferenceError,
+)
+from notarius_core.domain.node_secrets import (
+    InvalidNodeSecretDependenciesError,
+    JsonValue,
+    canonical_node_secret_dependencies,
+)
+from notarius_core.domain.saved_graphs import SavedGraph, SavedGraphRevision
 from notarius_core.nodes import (
     Node,
     NodeContractResolutionError,
@@ -46,22 +57,24 @@ from notarius_core.nodes import (
     resolve_node_contracts,
 )
 from notarius_core.operators.arithmetic import (
-    ARITHMETIC_RESULT,
-    ArithmeticResult,
     IntegerValueOutputWriter,
     IntegerValueResolver,
 )
-from notarius_core.operators.tables import (
-    TableFragment,
-    TablePage,
-)
+from notarius_core.operators.modules import GraphModuleNode
 from notarius_core.operators.text import TextValueOutputWriter, TextValueResolver
 from notarius_core.plugins import (
+    NodeCachePolicy,
+    NodeRegistration,
     PluginRegistry,
     PluginRuntimeContext,
     UnknownOperatorError,
 )
 from notarius_core.ports.materialized_outputs import WorkbenchUnitOfWorkPort
+from notarius_core.ports.modules import GraphModuleExecutionResult
+from notarius_core.ports.node_secrets import (
+    NodeSecretResolverPort,
+    UnavailableNodeSecretResolver,
+)
 from notarius_core.ports.storage import FileStoragePort
 from notarius_core.runtime.execution import NodeRuntime
 from notarius_core.runtime.invocation import (
@@ -80,33 +93,36 @@ from notarius_core.runtime.persistence import (
     ArtifactOutputWriter,
     ArtifactWriteContext,
     ArtifactWriterRegistry,
-    InlineModelOutputWriter,
     OutputPersister,
     PersistedNodeOutput,
-    SourcePageImageOutputWriter,
-    TableCsvBundleOutputWriter,
 )
 from notarius_core.runtime.resolvers import (
-    InlineModelResolver,
     Resolver,
     ResolverRegistry,
 )
 from notarius_storage import LocalFileObjectStore
 
 from notarius_api.schemas.workbench import (
+    ArtifactConversionRequest,
     ArtifactSummaryResponse,
+    ArtifactTypeBindingModel,
+    ArtifactTypeKeyResponse,
+    FieldProjectionRequest,
     GraphMaterializationsResponse,
     PinnedOutputRequest,
     RunEdgeRequest,
+    RunInputPlugRequest,
     RunNodeRequest,
     RunNodeResponse,
     RunPortOutputResponse,
     RunRequest,
     RunResponse,
-    SelectionItemResponse,
+    ImageUploadItemResponse,
 )
+from notarius_api.services.invocation_cache import PersistentInvocationCache
 
 _WORKBENCH_BUCKET = "workbench-artifacts"
+GRAPH_MODULE_PLUGIN_SLUG = "graph.module"
 _SAMPLE_PAGE_TEXTS = (
     "PAGE {index}\nParochia Sancti Floriani\nAnno Domini 1846",
     "PAGE {index}\nBaptisatorum liber\nVilla Nova, folio {index}",
@@ -116,6 +132,20 @@ _SAMPLE_PAGE_TEXTS = (
 
 class WorkbenchGraphError(RuntimeError):
     pass
+
+
+def _render_exception_chain(exception: BaseException) -> str:
+    rendered: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = exception
+    while current is not None and id(current) not in seen and len(rendered) < 12:
+        seen.add(id(current))
+        rendered.append(f"{type(current).__name__}: {current}")
+        if current.__cause__ is not None:
+            current = current.__cause__
+            continue
+        current = None if current.__suppress_context__ else current.__context__
+    return " <- caused by ".join(rendered)
 
 
 def _default_workspace() -> Path:
@@ -133,6 +163,18 @@ class _RunValue:
     value: ArtifactRef | ArtifactRefSequence
 
 
+@dataclass(slots=True)
+class _GraphExecution:
+    response: RunResponse
+    outputs: dict[str, dict[str, _RunValue]]
+
+
+@dataclass(frozen=True, slots=True)
+class GraphModuleCatalogEntry:
+    definition: GraphModuleDefinition
+    catalog_visible: bool
+
+
 class WorkbenchService:
     def __init__(
         self,
@@ -144,6 +186,7 @@ class WorkbenchService:
         storage_backend: str = "local",
         bucket: str = _WORKBENCH_BUCKET,
         saved_graphs: SavedGraphService | None = None,
+        node_secrets: NodeSecretResolverPort | None = None,
     ) -> None:
         self._plugin_registry = plugin_registry
         self._workspace = (workspace or _default_workspace()).expanduser().resolve()
@@ -154,6 +197,7 @@ class WorkbenchService:
         self._bucket = bucket
         self._uow = uow or InMemoryUnitOfWork()
         self._saved_graphs = saved_graphs
+        self._node_secrets = node_secrets or UnavailableNodeSecretResolver()
         self._plugin_context = PluginRuntimeContext(
             workspace=self._workspace,
             uploads_dir=self._uploads_dir,
@@ -161,36 +205,13 @@ class WorkbenchService:
             uow=self._uow,
             bucket=self._bucket,
             storage_backend=self._storage_backend,
+            node_secrets=self._node_secrets,
         )
         resolvers = [
             cast(Resolver[object], IntegerValueResolver(uow=self._uow)),
             cast(
                 Resolver[object],
-                InlineModelResolver(
-                    source=ARITHMETIC_RESULT.key,
-                    target=ArithmeticResult,
-                    uow=self._uow,
-                ),
-            ),
-            cast(
-                Resolver[object],
                 TextValueResolver(uow=self._uow),
-            ),
-            cast(
-                Resolver[object],
-                InlineModelResolver(
-                    source=TABLE_FRAGMENT.key,
-                    target=TableFragment,
-                    uow=self._uow,
-                ),
-            ),
-            cast(
-                Resolver[object],
-                InlineModelResolver(
-                    source=TABLE_PAGE.key,
-                    target=TablePage,
-                    uow=self._uow,
-                ),
             ),
         ]
         resolvers.extend(plugin_registry.build_resolvers(self._plugin_context))
@@ -198,34 +219,7 @@ class WorkbenchService:
 
         writers: list[ArtifactOutputWriter] = [
             IntegerValueOutputWriter(uow=self._uow),
-            SourcePageImageOutputWriter(
-                storage=self._storage,
-                uow=self._uow,
-                bucket=self._bucket,
-                storage_backend=self._storage_backend,
-            ),
-            InlineModelOutputWriter(
-                artifact_type=ARITHMETIC_RESULT.key,
-                model=ArithmeticResult,
-                uow=self._uow,
-            ),
             TextValueOutputWriter(uow=self._uow),
-            InlineModelOutputWriter(
-                artifact_type=TABLE_FRAGMENT.key,
-                model=TableFragment,
-                uow=self._uow,
-            ),
-            InlineModelOutputWriter(
-                artifact_type=TABLE_PAGE.key,
-                model=TablePage,
-                uow=self._uow,
-            ),
-            TableCsvBundleOutputWriter(
-                storage=self._storage,
-                uow=self._uow,
-                bucket=self._bucket,
-                storage_backend=self._storage_backend,
-            ),
         ]
         writers.extend(plugin_registry.build_writers(self._plugin_context))
         self._writers = ArtifactWriterRegistry(writers)
@@ -244,17 +238,71 @@ class WorkbenchService:
         self._runtime = NodeRuntime(
             materializer=InputMaterializer(self._resolvers),
             persister=OutputPersister(self._writers),
+            invocation_cache=PersistentInvocationCache(
+                unit_of_work=self._uow,
+                storage=self._storage,
+            ),
         )
 
     @property
     def plugin_registry(self) -> PluginRegistry:
         return self._plugin_registry
 
-    def _build_node(
+    async def list_graph_modules(self) -> list[GraphModuleCatalogEntry]:
+        if self._saved_graphs is None:
+            return []
+        entries: list[GraphModuleCatalogEntry] = []
+        for graph in await self._saved_graphs.list():
+            for revision in await self._saved_graphs.list_revisions(graph.id):
+                try:
+                    definition = GraphModuleDefinition.from_saved_graph_revision(
+                        revision
+                    )
+                except GraphModuleDefinitionError:
+                    continue
+                entries.append(
+                    GraphModuleCatalogEntry(
+                        definition=definition,
+                        catalog_visible=revision.revision == graph.revision,
+                    )
+                )
+        return entries
+
+    async def _graph_module_definition(
+        self,
+        reference: GraphModuleReference,
+    ) -> GraphModuleDefinition:
+        if self._saved_graphs is None:
+            raise WorkbenchGraphError(
+                "Saved graph modules are not configured for this workbench"
+            )
+        revision = await self._saved_graphs.get_revision(
+            reference.graph_id,
+            reference.revision,
+        )
+        try:
+            return GraphModuleDefinition.from_saved_graph_revision(revision)
+        except GraphModuleDefinitionError as exc:
+            raise WorkbenchGraphError(
+                f"Saved graph {reference.graph_id} revision {reference.revision} "
+                f"is not a valid module: {exc}"
+            ) from exc
+
+    async def _build_node(
         self,
         operator_id: str,
         operator_version: int,
     ) -> Node[Any, Any, Any]:
+        try:
+            module_reference = GraphModuleReference.try_from_operator_identity(
+                operator_id,
+                operator_version,
+            )
+        except GraphModuleReferenceError as exc:
+            raise WorkbenchGraphError(str(exc)) from exc
+        if module_reference is not None:
+            definition = await self._graph_module_definition(module_reference)
+            return GraphModuleNode(definition, self)
         try:
             return self._plugin_registry.build_node(
                 operator_id,
@@ -264,11 +312,11 @@ class WorkbenchService:
         except UnknownOperatorError as exc:
             raise WorkbenchGraphError(str(exc)) from exc
 
-    async def save_upload(
+    async def save_image_upload(
         self,
         filename: str,
         content_base64: str,
-    ) -> SelectionItemResponse:
+    ) -> ImageUploadItemResponse:
         try:
             content = base64.b64decode(content_base64, validate=True)
         except (binascii.Error, ValueError) as exc:
@@ -277,13 +325,13 @@ class WorkbenchService:
         safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", filename).strip("-") or "upload"
         path = self._uploads_dir / f"{uuid4().hex[:8]}-{safe_name}"
         path.write_bytes(content)
-        return self._selection_item(path, display_name=filename)
+        return self._image_upload_item(path, filename=filename)
 
-    async def create_sample_pages(
+    async def create_sample_images(
         self,
         count: int,
-    ) -> list[SelectionItemResponse]:
-        items: list[SelectionItemResponse] = []
+    ) -> list[ImageUploadItemResponse]:
+        items: list[ImageUploadItemResponse] = []
         for index in range(count):
             text = _SAMPLE_PAGE_TEXTS[index % len(_SAMPLE_PAGE_TEXTS)].format(
                 index=index + 1
@@ -297,32 +345,205 @@ class WorkbenchService:
             path = self._uploads_dir / f"{uuid4().hex[:8]}-sample-page.png"
             path.write_bytes(buffer.getvalue())
             items.append(
-                self._selection_item(path, display_name=f"sample-page-{index + 1}.png")
+                self._image_upload_item(
+                    path,
+                    filename=f"sample-page-{index + 1}.png",
+                )
             )
         return items
 
-    def _selection_item(
+    def _image_upload_item(
         self,
         path: Path,
-        display_name: str,
-    ) -> SelectionItemResponse:
-        return SelectionItemResponse(
-            connector_id="local_upload",
-            external_uri=path.as_uri(),
-            display_name=display_name,
-            size_bytes=path.stat().st_size,
+        filename: str,
+    ) -> ImageUploadItemResponse:
+        return ImageUploadItemResponse(
+            upload_key=path.name,
+            filename=filename,
+            byte_size=path.stat().st_size,
         )
 
     async def run_graph(self, request: RunRequest) -> RunResponse:
+        execution = await self._execute_graph(
+            request,
+            module_path=(),
+            persist_materializations=True,
+            validate_materialized_pins=True,
+            raise_node_errors=False,
+        )
+        return execution.response
+
+    async def execute_module(
+        self,
+        definition: GraphModuleDefinition,
+        context: NodeExecutionContext,
+        inputs: Mapping[str, ArtifactRef],
+        /,
+    ) -> GraphModuleExecutionResult:
+        graph_id = definition.reference.graph_id
+        graph_revision = definition.reference.revision
+        graph_path_item = definition.reference.module_path_item
+        if graph_path_item in context.module_path:
+            rendered_path = " -> ".join((*context.module_path, graph_path_item))
+            raise WorkbenchGraphError(
+                f"Graph module cycle detected while entering {definition.name!r} "
+                f"at revision {graph_revision}: {rendered_path}"
+            )
+
+        input_boundary_ids = {port.boundary_node_id for port in definition.input_ports}
+        executed_nodes = [
+            node
+            for node in definition.document.nodes
+            if node.id not in input_boundary_ids
+        ]
+        executed_node_ids = {node.id for node in executed_nodes}
+        run_nodes = [
+            RunNodeRequest(
+                id=node.id,
+                operator_id=node.operator_id,
+                operator_version=node.operator_version,
+                config=node.config_dict(),
+                input_plugs=[
+                    RunInputPlugRequest(id=plug.id, port=plug.port)
+                    for plug in node.input_plugs
+                ],
+                artifact_type_bindings=[
+                    ArtifactTypeBindingModel(
+                        variable=binding.variable,
+                        artifact_type=ArtifactTypeKeyResponse(
+                            id=binding.artifact_type.id,
+                            schema_version=binding.artifact_type.schema_version,
+                        ),
+                    )
+                    for binding in node.artifact_type_bindings
+                ],
+            )
+            for node in executed_nodes
+        ]
+        run_edges = [
+            RunEdgeRequest(
+                from_node=edge.from_node,
+                from_port=edge.from_port,
+                to_node=edge.to_node,
+                to_port=edge.to_port,
+                to_plug=edge.to_plug,
+                projection=(
+                    FieldProjectionRequest(path=list(edge.projection.path))
+                    if edge.projection is not None
+                    else None
+                ),
+                conversion_path=[
+                    ArtifactConversionRequest(
+                        id=conversion.id,
+                        version=conversion.version,
+                    )
+                    for conversion in edge.conversion_path
+                ],
+                collection_mode=edge.collection_mode,
+            )
+            for edge in definition.document.edges
+            if edge.to_node in executed_node_ids
+        ]
+        pinned_outputs = [
+            PinnedOutputRequest(
+                from_node=port.boundary_node_id,
+                from_port=MODULE_BOUNDARY_PORT,
+                value=inputs[port.name],
+            )
+            for port in definition.input_ports
+        ]
+        request = RunRequest(
+            nodes=run_nodes,
+            edges=run_edges,
+            pinned_outputs=pinned_outputs,
+            graph_id=graph_id,
+            graph_revision=graph_revision,
+            secret_graph_id=graph_id,
+            secret_graph_revision=graph_revision,
+        )
+        execution = await self._execute_graph(
+            request,
+            module_path=(*context.module_path, graph_path_item),
+            persist_materializations=False,
+            validate_materialized_pins=False,
+            raise_node_errors=True,
+        )
+
+        outputs: dict[str, ArtifactRef] = {}
+        for port in definition.output_ports:
+            boundary_outputs = execution.outputs.get(port.boundary_node_id)
+            run_value = (
+                boundary_outputs.get(MODULE_BOUNDARY_PORT)
+                if boundary_outputs is not None
+                else None
+            )
+            if run_value is None:
+                raise WorkbenchGraphError(
+                    f"Graph module {definition.name!r} revision {graph_revision} "
+                    f"did not produce public output {port.name!r} at boundary "
+                    f"node {port.boundary_node_id!r}"
+                )
+            if not isinstance(run_value.value, ArtifactRef):
+                raise WorkbenchGraphError(
+                    f"Graph module {definition.name!r} revision {graph_revision} "
+                    f"public output {port.name!r} produced a sequence; module "
+                    "boundary ports must be scalar"
+                )
+            outputs[port.name] = run_value.value
+        return GraphModuleExecutionResult(outputs=outputs)
+
+    async def _execute_graph(
+        self,
+        request: RunRequest,
+        *,
+        module_path: tuple[str, ...],
+        persist_materializations: bool,
+        validate_materialized_pins: bool,
+        raise_node_errors: bool,
+    ) -> _GraphExecution:
+        submitted_secret_nodes = {
+            node.id
+            for node in request.nodes
+            if any(
+                registration.key == (node.operator_id, node.operator_version)
+                and registration.secret_inputs
+                for registration in self._plugin_registry.nodes
+            )
+        }
+        if submitted_secret_nodes and request.secret_graph_id is None:
+            rendered_node_ids = ", ".join(
+                repr(node_id) for node_id in sorted(submitted_secret_nodes)
+            )
+            raise WorkbenchGraphError(
+                "A saved secret graph context is required to run secret-bearing "
+                f"nodes: {rendered_node_ids}"
+            )
+        materialization_graph: SavedGraph | SavedGraphRevision | None = None
         if request.graph_id is not None and request.graph_revision is not None:
-            saved_graph = await self._saved_graph_for_context(
+            materialization_graph = await self._saved_graph_for_context(
                 request.graph_id,
                 request.graph_revision,
             )
             _validate_saved_graph_fragment(
-                saved_graph,
+                materialization_graph,
                 request.nodes,
                 request.edges,
+            )
+        secret_node_ids: set[str] = set()
+        if (
+            request.secret_graph_id is not None
+            and request.secret_graph_revision is not None
+        ):
+            secret_graph = materialization_graph
+            if secret_graph is None:
+                secret_graph = await self._saved_graph_for_context(
+                    request.secret_graph_id,
+                    request.secret_graph_revision,
+                )
+            secret_node_ids = _validate_secret_graph_bindings(
+                secret_graph,
+                request.nodes,
+                self._plugin_registry,
             )
         order = _topological_order(request.nodes, request.edges)
         pinned_outputs = _pinned_outputs_by_endpoint(
@@ -330,20 +551,33 @@ class WorkbenchService:
             request.edges,
             request.pinned_outputs,
         )
-        if request.graph_id is not None and request.graph_revision is not None:
+        if (
+            validate_materialized_pins
+            and request.graph_id is not None
+            and request.graph_revision is not None
+        ):
             await self._validate_materialized_pins(
                 request.graph_id,
                 request.graph_revision,
                 pinned_outputs,
             )
         outputs = await self._resolve_pinned_outputs(pinned_outputs)
-        nodes_by_id = {
-            node_request.id: self._build_node(
+        nodes_by_id: dict[str, Node[Any, Any, Any]] = {}
+        registrations_by_id: dict[str, NodeRegistration | None] = {}
+        for node_request in order:
+            nodes_by_id[node_request.id] = await self._build_node(
                 node_request.operator_id,
                 node_request.operator_version,
             )
-            for node_request in order
-        }
+            try:
+                registrations_by_id[node_request.id] = (
+                    self._plugin_registry.node_registration(
+                        node_request.operator_id,
+                        node_request.operator_version,
+                    )
+                )
+            except UnknownOperatorError:
+                registrations_by_id[node_request.id] = None
         artifact_type_bindings_by_node: dict[
             str,
             dict[str, ArtifactTypeKey],
@@ -423,27 +657,85 @@ class WorkbenchService:
                     outputs,
                     run_id,
                 )
+                node_context = NodeExecutionContext(
+                    workflow_run_id=run_id,
+                    node_run_id=uuid4(),
+                    graph_id=request.graph_id,
+                    graph_revision=request.graph_revision,
+                    secret_graph_id=(
+                        request.secret_graph_id
+                        if node_request.id in secret_node_ids
+                        else None
+                    ),
+                    secret_graph_revision=(
+                        request.secret_graph_revision
+                        if node_request.id in secret_node_ids
+                        else None
+                    ),
+                    node_id=node_request.id,
+                    module_path=module_path,
+                )
+                registration = registrations_by_id[node_request.id]
+                cache_policy = (
+                    registration.cache_policy
+                    if registration is not None
+                    else NodeCachePolicy.NEVER
+                )
+                opaque_secret_revisions: dict[str, str] = {}
+                if (
+                    cache_policy is NodeCachePolicy.EXACT
+                    and registration is not None
+                    and registration.secret_inputs
+                ):
+                    validated_config = (
+                        registration.node_class.config_contract.model.model_validate(
+                            node_request.config
+                        ).model_dump(mode="json")
+                    )
+                    for secret_input in registration.secret_inputs:
+                        secret_dependencies = {
+                            dependency: cast(JsonValue, validated_config[dependency])
+                            for dependency in secret_input.config_dependencies
+                        }
+                        opaque_secret_revisions[
+                            secret_input.name
+                        ] = await self._node_secrets.cache_revision(
+                            graph_id=node_context.secret_graph_id,
+                            graph_revision=node_context.secret_graph_revision,
+                            node_id=node_context.node_id,
+                            name=secret_input.name,
+                            dependencies=secret_dependencies,
+                        )
                 result = await self._runtime.run_node(
                     node,
-                    NodeExecutionContext(
-                        workflow_run_id=run_id,
-                        node_run_id=uuid4(),
-                        node_id=node_request.id,
-                    ),
+                    node_context,
                     inputs,
                     config=node_request.config,
                     invocation=invocations_by_id[node_request.id],
                     artifact_type_bindings=artifact_type_bindings_by_node[
                         node_request.id
                     ],
+                    cache_policy=cache_policy,
+                    opaque_secret_revisions=opaque_secret_revisions,
                 )
             except Exception as exc:
+                if raise_node_errors:
+                    graph_context = "nested graph"
+                    if request.graph_id is not None:
+                        graph_context = (
+                            f"graph {request.graph_id}@{request.graph_revision}"
+                        )
+                    raise WorkbenchGraphError(
+                        f"{graph_context} node {node_request.id!r} "
+                        f"({node_request.operator_id}@"
+                        f"{node_request.operator_version}) failed"
+                    ) from exc
                 failed.add(node_request.id)
                 node_runs.append(
                     RunNodeResponse(
                         node_id=node_request.id,
                         status="failed",
-                        error=f"{type(exc).__name__}: {exc}",
+                        error=_render_exception_chain(exc),
                         outputs=[],
                     )
                 )
@@ -460,7 +752,11 @@ class WorkbenchService:
                     for name, run_value in port_values.items()
                 ],
             )
-            if request.graph_id is not None and request.graph_revision is not None:
+            if (
+                persist_materializations
+                and request.graph_id is not None
+                and request.graph_revision is not None
+            ):
                 async with self._uow as uow:
                     await uow.materialized_outputs.upsert(
                         MaterializedNodeOutputs(
@@ -479,7 +775,10 @@ class WorkbenchService:
             node_runs.append(node_run)
 
         status: Literal["succeeded", "failed"] = "failed" if failed else "succeeded"
-        return RunResponse(status=status, node_runs=node_runs)
+        return _GraphExecution(
+            response=RunResponse(status=status, node_runs=node_runs),
+            outputs=outputs,
+        )
 
     async def get_graph_materializations(
         self,
@@ -527,14 +826,12 @@ class WorkbenchService:
         self,
         graph_id: UUID,
         graph_revision: int,
-    ) -> SavedGraph:
+    ) -> SavedGraphRevision:
         if self._saved_graphs is None:
             raise WorkbenchGraphError(
                 "Saved graph context is not configured for this workbench"
             )
-        graph = await self._saved_graphs.get(graph_id)
-        graph.ensure_revision(graph_revision)
-        return graph
+        return await self._saved_graphs.get_revision(graph_id, graph_revision)
 
     async def _validate_materialized_pins(
         self,
@@ -1086,7 +1383,7 @@ class WorkbenchService:
 
 
 def _validate_saved_graph_fragment(
-    graph: SavedGraph,
+    graph: SavedGraph | SavedGraphRevision,
     nodes: list[RunNodeRequest],
     edges: list[RunEdgeRequest],
 ) -> None:
@@ -1160,6 +1457,78 @@ def _validate_saved_graph_fragment(
             f"nodes in graph {graph.id} revision {graph.revision}: "
             f"{missing_count} missing and {unexpected_count} unexpected or duplicated"
         )
+
+
+def _validate_secret_graph_bindings(
+    graph: SavedGraph | SavedGraphRevision,
+    nodes: list[RunNodeRequest],
+    plugin_registry: PluginRegistry,
+) -> set[str]:
+    registrations = {
+        registration.key: registration for registration in plugin_registry.nodes
+    }
+    saved_nodes = {node.id: node for node in graph.document.nodes}
+    validated_node_ids: set[str] = set()
+
+    for node in nodes:
+        registration = registrations.get((node.operator_id, node.operator_version))
+        if registration is None or not registration.secret_inputs:
+            continue
+        saved_node = saved_nodes.get(node.id)
+        if saved_node is None:
+            raise WorkbenchGraphError(
+                f"Secret-bearing run node {node.id!r} does not belong to saved "
+                f"graph {graph.id} revision {graph.revision}"
+            )
+        if (
+            saved_node.operator_id != node.operator_id
+            or saved_node.operator_version != node.operator_version
+        ):
+            raise WorkbenchGraphError(
+                f"Secret-bearing run node {node.id!r} does not match the saved "
+                f"operator in graph {graph.id} revision {graph.revision}"
+            )
+
+        config_model = registration.node_class.config_contract.model
+        try:
+            submitted_config = config_model.model_validate(node.config).model_dump(
+                mode="json"
+            )
+            saved_config = config_model.model_validate(
+                saved_node.config_dict()
+            ).model_dump(mode="json")
+        except ValueError as exc:
+            raise WorkbenchGraphError(
+                f"Secret-bearing run node {node.id!r} has invalid configuration"
+            ) from exc
+
+        for declaration in registration.secret_inputs:
+            submitted_dependencies = {
+                dependency: cast(JsonValue, submitted_config[dependency])
+                for dependency in declaration.config_dependencies
+            }
+            saved_dependencies = {
+                dependency: cast(JsonValue, saved_config[dependency])
+                for dependency in declaration.config_dependencies
+            }
+            try:
+                dependencies_match = canonical_node_secret_dependencies(
+                    submitted_dependencies
+                ) == canonical_node_secret_dependencies(saved_dependencies)
+            except InvalidNodeSecretDependenciesError as exc:
+                raise WorkbenchGraphError(
+                    f"Secret-bearing run node {node.id!r} has invalid secret "
+                    "configuration dependencies"
+                ) from exc
+            if not dependencies_match:
+                raise WorkbenchGraphError(
+                    f"Secret-bearing run node {node.id!r} does not match the "
+                    f"saved configuration required by secret input "
+                    f"{declaration.name!r}"
+                )
+        validated_node_ids.add(node.id)
+
+    return validated_node_ids
 
 
 def _topological_order(
@@ -1356,9 +1725,9 @@ def _validate_edges(
     incoming_counts: dict[tuple[str, str], int] = {}
     for edge in edges:
         target_node = nodes_by_id[edge.to_node]
-        target_port = resolved_contracts_by_node[
-            edge.to_node
-        ].input_contract.ports.get(edge.to_port)
+        target_port = resolved_contracts_by_node[edge.to_node].input_contract.ports.get(
+            edge.to_port
+        )
         if target_port is None:
             raise WorkbenchGraphError(
                 f"Edge {edge.from_node!r}.{edge.from_port!r} -> "

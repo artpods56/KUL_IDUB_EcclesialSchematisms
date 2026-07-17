@@ -297,6 +297,15 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def _validated_graph_name(value: str) -> str:
+    name = value.strip()
+    if name == "":
+        raise ValueError("Saved graph name must not be blank")
+    if len(name) > 160:
+        raise ValueError("Saved graph name must be at most 160 characters")
+    return name
+
+
 @dataclass
 class SavedGraph:
     name: str
@@ -307,7 +316,7 @@ class SavedGraph:
     updated_at: datetime = field(default_factory=_utc_now)
 
     def __post_init__(self) -> None:
-        self.name = self._validated_name(self.name)
+        self.name = _validated_graph_name(self.name)
         if self.revision < 1:
             raise ValueError("Saved graph revision must be at least 1")
         if self.created_at.tzinfo is None or self.updated_at.tzinfo is None:
@@ -322,7 +331,7 @@ class SavedGraph:
         updated_at: datetime | None = None,
     ) -> None:
         self.ensure_revision(expected_revision)
-        validated_name = self._validated_name(name)
+        validated_name = _validated_graph_name(name)
         replacement_time = updated_at or _utc_now()
         if replacement_time.tzinfo is None:
             raise ValueError("Saved graph timestamps must be timezone-aware")
@@ -332,6 +341,15 @@ class SavedGraph:
         self.revision += 1
         self.updated_at = replacement_time
 
+    def snapshot(self) -> "SavedGraphRevision":
+        return SavedGraphRevision(
+            graph_id=self.id,
+            revision=self.revision,
+            name=self.name,
+            document=self.document,
+            created_at=self.updated_at,
+        )
+
     def ensure_revision(self, expected_revision: int) -> None:
         if expected_revision != self.revision:
             raise SavedGraphRevisionConflictError(
@@ -340,11 +358,22 @@ class SavedGraph:
                 actual_revision=self.revision,
             )
 
-    @staticmethod
-    def _validated_name(value: str) -> str:
-        name = value.strip()
-        if name == "":
-            raise ValueError("Saved graph name must not be blank")
-        if len(name) > 160:
-            raise ValueError("Saved graph name must be at most 160 characters")
-        return name
+
+@dataclass(frozen=True, slots=True)
+class SavedGraphRevision:
+    graph_id: UUID
+    revision: int
+    name: str
+    document: SavedGraphDocument
+    created_at: datetime
+
+    @property
+    def id(self) -> UUID:
+        return self.graph_id
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "name", _validated_graph_name(self.name))
+        if self.revision < 1:
+            raise ValueError("Saved graph snapshot revision must be at least 1")
+        if self.created_at.tzinfo is None:
+            raise ValueError("Saved graph snapshot timestamp must be timezone-aware")

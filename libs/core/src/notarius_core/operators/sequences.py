@@ -1,6 +1,6 @@
 from typing import Annotated, final, override
 
-from pydantic import Field
+from pydantic import Field, StrictInt
 
 from notarius_core.artifacts import (
     ArtifactRef,
@@ -8,6 +8,7 @@ from notarius_core.artifacts import (
     ArtifactTypeKey,
     JsonObject,
     NoConfig,
+    NodeConfig,
     NodeInput,
     NodeOutput,
 )
@@ -18,7 +19,8 @@ from notarius_core.nodes import (
     NodeExecutionContext,
     OutPort,
 )
-from notarius_core.plugins import Plugin
+from notarius_core.operators.arithmetic import INTEGER_VALUE
+from notarius_core.plugins import NodeCachePolicy, Plugin
 
 
 SEQUENCES = Plugin(
@@ -27,14 +29,14 @@ SEQUENCES = Plugin(
 )
 
 
-COLLECTED_ARTIFACT_TYPE = ArtifactTypeVariable("T")
+SEQUENCE_ARTIFACT_TYPE = ArtifactTypeVariable("T")
 
 
 class CollectInput(NodeInput):
     items: Annotated[
         list[ArtifactRef | ArtifactRefSequence],
         InPort(
-            COLLECTED_ARTIFACT_TYPE,
+            SEQUENCE_ARTIFACT_TYPE,
             variadic=True,
             instance_plugs=True,
         ),
@@ -48,7 +50,7 @@ class CollectInput(NodeInput):
 class CollectOutput(NodeOutput):
     items: Annotated[
         ArtifactRefSequence,
-        OutPort(COLLECTED_ARTIFACT_TYPE),
+        OutPort(SEQUENCE_ARTIFACT_TYPE),
         Field(description="One sequence containing every input artifact."),
     ]
 
@@ -57,6 +59,7 @@ class CollectOutput(NodeOutput):
     operator_id="sequence.collect",
     version=1,
     title="Collect",
+    cache_policy=NodeCachePolicy.EXACT,
 )
 @final
 class CollectNode(Node[NoConfig, CollectInput, CollectOutput]):
@@ -127,3 +130,165 @@ class CollectNode(Node[NoConfig, CollectInput, CollectOutput]):
                 metadata={"collect_segments": collect_segments},
             )
         )
+
+
+class CountInput(NodeInput):
+    items: Annotated[
+        ArtifactRefSequence,
+        InPort(SEQUENCE_ARTIFACT_TYPE),
+        Field(description="Sequence whose items are counted."),
+    ]
+
+
+class CountOutput(NodeOutput):
+    count: Annotated[
+        StrictInt,
+        OutPort(INTEGER_VALUE),
+        Field(description="Number of items in the sequence."),
+    ]
+
+
+@SEQUENCES.node(
+    operator_id="sequence.count",
+    version=1,
+    title="Count",
+    cache_policy=NodeCachePolicy.EXACT,
+)
+@final
+class CountNode(Node[NoConfig, CountInput, CountOutput]):
+    """Counts the refs in an artifact sequence."""
+
+    @override
+    async def run(
+        self,
+        _context: NodeExecutionContext,
+        _config: NoConfig,
+        inputs: CountInput,
+        /,
+    ) -> CountOutput:
+        return CountOutput(count=len(inputs.items.item_refs))
+
+
+class SliceConfig(NodeConfig):
+    start: StrictInt = Field(
+        default=0,
+        ge=0,
+        description="Zero-based index of the first item to include.",
+    )
+    count: StrictInt | None = Field(
+        default=None,
+        ge=0,
+        description="Maximum number of items to include.",
+    )
+
+
+class SliceInput(NodeInput):
+    items: Annotated[
+        ArtifactRefSequence,
+        InPort(SEQUENCE_ARTIFACT_TYPE),
+        Field(description="Ordered sequence to slice."),
+    ]
+
+
+class SliceOutput(NodeOutput):
+    items: Annotated[
+        ArtifactRefSequence,
+        OutPort(SEQUENCE_ARTIFACT_TYPE),
+        Field(description="Selected contiguous items."),
+    ]
+
+
+@SEQUENCES.node(
+    operator_id="sequence.slice",
+    version=1,
+    title="Slice",
+    cache_policy=NodeCachePolicy.EXACT,
+)
+@final
+class SliceNode(Node[SliceConfig, SliceInput, SliceOutput]):
+    """Selects a contiguous range from an ordered artifact sequence."""
+
+    @override
+    async def run(
+        self,
+        _context: NodeExecutionContext,
+        config: SliceConfig,
+        inputs: SliceInput,
+        /,
+    ) -> SliceOutput:
+        source = inputs.items
+        if not source.ordered:
+            raise ValueError(f"Cannot slice unordered sequence {source.sequence_id}")
+
+        stop = None if config.count is None else config.start + config.count
+        return SliceOutput(
+            items=ArtifactRefSequence(
+                artifact_type=source.artifact_type,
+                schema_version=source.schema_version,
+                item_refs=source.item_refs[config.start : stop],
+                ordered=True,
+                index_key=source.index_key,
+                metadata={
+                    "source_sequence_id": str(source.sequence_id),
+                    "start": config.start,
+                    "count": config.count,
+                },
+            )
+        )
+
+
+class ItemAtConfig(NodeConfig):
+    index: StrictInt = Field(
+        default=0,
+        ge=0,
+        description="Zero-based index of the item to pick.",
+    )
+
+
+class ItemAtInput(NodeInput):
+    items: Annotated[
+        ArtifactRefSequence,
+        InPort(SEQUENCE_ARTIFACT_TYPE),
+        Field(description="Ordered sequence containing the item."),
+    ]
+
+
+class ItemAtOutput(NodeOutput):
+    item: Annotated[
+        ArtifactRef,
+        OutPort(SEQUENCE_ARTIFACT_TYPE),
+        Field(description="Artifact ref at the configured index."),
+    ]
+
+
+@SEQUENCES.node(
+    operator_id="sequence.item_at",
+    version=1,
+    title="Pick item",
+    cache_policy=NodeCachePolicy.EXACT,
+)
+@final
+class ItemAtNode(Node[ItemAtConfig, ItemAtInput, ItemAtOutput]):
+    """Picks one artifact ref from an ordered artifact sequence."""
+
+    @override
+    async def run(
+        self,
+        _context: NodeExecutionContext,
+        config: ItemAtConfig,
+        inputs: ItemAtInput,
+        /,
+    ) -> ItemAtOutput:
+        source = inputs.items
+        if not source.ordered:
+            raise ValueError(
+                f"Cannot pick an item from unordered sequence {source.sequence_id}"
+            )
+
+        length = len(source.item_refs)
+        if config.index >= length:
+            raise ValueError(
+                f"Cannot pick index {config.index} from sequence "
+                f"{source.sequence_id} with length {length}"
+            )
+        return ItemAtOutput(item=source.item_refs[config.index])

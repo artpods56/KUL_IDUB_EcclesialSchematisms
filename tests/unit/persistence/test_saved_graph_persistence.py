@@ -19,6 +19,7 @@ from notarius_core.domain.saved_graphs import (
     SavedGraphInputPlug,
     SavedGraphNode,
     SavedGraphProjection,
+    SavedGraphRevision,
 )
 
 from notarius_persistence.database import Database, create_database
@@ -266,10 +267,63 @@ async def test_update_persists_new_document_and_revision(database: Database) -> 
 
 
 @pytest.mark.asyncio
+async def test_revision_snapshots_round_trip_and_preserve_old_documents(
+    database: Database,
+) -> None:
+    original_document = _document("original")
+    graph = SavedGraph(
+        name="Original",
+        document=original_document,
+        created_at=datetime(2026, 7, 14, 8, 0, tzinfo=UTC),
+        updated_at=datetime(2026, 7, 14, 8, 0, tzinfo=UTC),
+    )
+    async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
+        await unit_of_work.graphs.add(graph)
+        await unit_of_work.graphs.add_revision(graph.snapshot())
+        await unit_of_work.commit()
+
+    replacement_document = _document("replacement")
+    replacement_time = datetime(2026, 7, 14, 9, 0, tzinfo=UTC)
+    async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
+        loaded = await unit_of_work.graphs.get(graph.id)
+        assert loaded is not None
+        loaded.replace(
+            name="Replacement",
+            document=replacement_document,
+            expected_revision=1,
+            updated_at=replacement_time,
+        )
+        await unit_of_work.graphs.add_revision(loaded.snapshot())
+        await unit_of_work.commit()
+
+    async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
+        first = await unit_of_work.graphs.get_revision(graph.id, 1)
+        second = await unit_of_work.graphs.get_revision(graph.id, 2)
+        listed = await unit_of_work.graphs.list_revisions(graph.id)
+
+    assert first == SavedGraphRevision(
+        graph_id=graph.id,
+        revision=1,
+        name="Original",
+        document=original_document,
+        created_at=datetime(2026, 7, 14, 8, 0, tzinfo=UTC),
+    )
+    assert second == SavedGraphRevision(
+        graph_id=graph.id,
+        revision=2,
+        name="Replacement",
+        document=replacement_document,
+        created_at=replacement_time,
+    )
+    assert listed == [second, first]
+
+
+@pytest.mark.asyncio
 async def test_delete_removes_saved_graph(database: Database) -> None:
     graph = SavedGraph(name="Disposable", document=SavedGraphDocument())
     async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
         await unit_of_work.graphs.add(graph)
+        await unit_of_work.graphs.add_revision(graph.snapshot())
         await unit_of_work.commit()
 
     async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
@@ -280,6 +334,7 @@ async def test_delete_removes_saved_graph(database: Database) -> None:
 
     async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
         assert await unit_of_work.graphs.get(graph.id) is None
+        assert await unit_of_work.graphs.get_revision(graph.id, 1) is None
 
 
 @pytest.mark.asyncio

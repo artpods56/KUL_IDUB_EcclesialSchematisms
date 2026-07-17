@@ -1,4 +1,5 @@
 from copy import deepcopy
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from types import TracebackType
 from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeAlias, final, override
@@ -7,7 +8,9 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 if TYPE_CHECKING:
+    from notarius_core.domain.invocation_cache import InvocationCacheEntry
     from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
+    from notarius_core.ports.invocation_cache import InvocationCacheRepositoryPort
     from notarius_core.ports.materialized_outputs import (
         MaterializedNodeOutputsRepositoryPort,
     )
@@ -64,26 +67,6 @@ class ArtifactTypeSpec:
     payload_schema: JsonObject = field(default_factory=dict)
     field_projections: tuple[ArtifactFieldProjection, ...] = ()
     materialized_json_type: MaterializedJsonType | None = None
-
-SOURCE_PAGE_IMAGE = ArtifactTypeSpec(
-    key=ArtifactTypeKey("source.page_image", 1),
-    title="Source page image",
-)
-
-TABLE_FRAGMENT = ArtifactTypeSpec(
-    key=ArtifactTypeKey("table.fragment", 1),
-    title="Extracted table fragment",
-)
-
-TABLE_PAGE = ArtifactTypeSpec(
-    key=ArtifactTypeKey("table.page", 1),
-    title="Merged page table",
-)
-
-TABLE_CSV_BUNDLE = ArtifactTypeSpec(
-    key=ArtifactTypeKey("tabular.csv_bundle", 1),
-    title="CSV export bundle",
-)
 
 
 class ArtifactRef(BaseModel):
@@ -180,6 +163,11 @@ class ArtifactRepositoryPort(Protocol):
 
     async def get(self, artifact_id: UUID) -> ArtifactObject | None: ...
 
+    async def get_many(
+        self,
+        artifact_ids: Collection[UUID],
+    ) -> dict[UUID, ArtifactObject]: ...
+
     async def remove(self, artifact: ArtifactObject) -> None: ...
 
     async def list_by_type(self, key: ArtifactTypeKey) -> list[ArtifactObject]: ...
@@ -192,6 +180,7 @@ class InMemoryDataStore:
         tuple[UUID, int, str],
         "MaterializedNodeOutputs",
     ] = field(default_factory=dict)
+    invocation_cache: dict[str, "InvocationCacheEntry"] = field(default_factory=dict)
 
     def clone(self) -> Self:
         return _clone(self)
@@ -199,6 +188,7 @@ class InMemoryDataStore:
     def replace_with(self, other: Self) -> None:
         self.artifacts = _clone(other.artifacts)
         self.materialized_outputs = _clone(other.materialized_outputs)
+        self.invocation_cache = _clone(other.invocation_cache)
 
 
 class UnitOfWorkPort(Protocol):
@@ -231,6 +221,17 @@ class InMemoryArtifactRepository(ArtifactRepositoryPort):
     @override
     async def get(self, artifact_id: UUID) -> ArtifactObject | None:
         return self._store.artifacts.get(artifact_id)
+
+    @override
+    async def get_many(
+        self,
+        artifact_ids: Collection[UUID],
+    ) -> dict[UUID, ArtifactObject]:
+        return {
+            artifact_id: artifact
+            for artifact_id in artifact_ids
+            if (artifact := self._store.artifacts.get(artifact_id)) is not None
+        }
 
     @override
     async def remove(self, artifact: ArtifactObject) -> None:
@@ -281,14 +282,42 @@ class InMemoryMaterializedNodeOutputsRepository:
         return _clone(sorted(values, key=lambda value: value.node_id))
 
 
+@final
+class InMemoryInvocationCacheRepository:
+    def __init__(self, store: InMemoryDataStore) -> None:
+        self._store = store
+
+    async def get(self, key_sha256: str) -> "InvocationCacheEntry | None":
+        entry = self._store.invocation_cache.get(key_sha256)
+        return _clone(entry) if entry is not None else None
+
+    async def put_if_absent(self, entry: "InvocationCacheEntry") -> bool:
+        if entry.key_sha256 in self._store.invocation_cache:
+            return False
+        self._store.invocation_cache[entry.key_sha256] = _clone(entry)
+        return True
+
+    async def remove_if_current(
+        self,
+        key_sha256: str,
+        generation: UUID,
+    ) -> bool:
+        entry = self._store.invocation_cache.get(key_sha256)
+        if entry is None or entry.generation != generation:
+            return False
+        del self._store.invocation_cache[key_sha256]
+        return True
+
+
 class InMemoryUnitOfWork(UnitOfWorkPort):
     def __init__(self, store: InMemoryDataStore | None = None) -> None:
         self._store = store or InMemoryDataStore()
         self._working_store: InMemoryDataStore | None = None
         self._artifacts: ArtifactRepositoryPort | None = None
-        self._materialized_outputs: (
-            "MaterializedNodeOutputsRepositoryPort | None"
-        ) = None
+        self._materialized_outputs: "MaterializedNodeOutputsRepositoryPort | None" = (
+            None
+        )
+        self._invocation_cache: "InvocationCacheRepositoryPort | None" = None
         self.commit_count = 0
         self.rollback_count = 0
 
@@ -305,6 +334,12 @@ class InMemoryUnitOfWork(UnitOfWorkPort):
             raise RuntimeError("Unit of work is not entered")
         return self._materialized_outputs
 
+    @property
+    def invocation_cache(self) -> "InvocationCacheRepositoryPort":
+        if self._invocation_cache is None:
+            raise RuntimeError("Unit of work is not entered")
+        return self._invocation_cache
+
     @override
     async def __aenter__(self) -> Self:
         if self._working_store is not None:
@@ -316,6 +351,7 @@ class InMemoryUnitOfWork(UnitOfWorkPort):
         self._materialized_outputs = InMemoryMaterializedNodeOutputsRepository(
             working_store
         )
+        self._invocation_cache = InMemoryInvocationCacheRepository(working_store)
         return self
 
     @override
@@ -331,6 +367,7 @@ class InMemoryUnitOfWork(UnitOfWorkPort):
         self._working_store = None
         self._artifacts = None
         self._materialized_outputs = None
+        self._invocation_cache = None
 
     @override
     async def commit(self) -> None:

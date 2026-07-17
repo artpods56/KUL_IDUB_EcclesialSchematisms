@@ -1,4 +1,4 @@
-.PHONY: install install-ocr api api-ocr web test lint typecheck contract build check smoke db-upgrade db-downgrade db-current db-history db-revision docker-up docker-down
+.PHONY: install install-llm install-ocr api api-llm api-ocr web test lint typecheck contract build check smoke db-upgrade db-downgrade db-current db-history db-revision docker-up docker-down
 
 -include .env
 export
@@ -11,25 +11,32 @@ install-ocr:
 	uv sync --extra ocr
 	npm --prefix apps/web ci
 
+install-llm:
+	uv sync --extra llm
+	npm --prefix apps/web ci
+
 api: db-upgrade
 	uv run --exact --no-dev --package notarius-api uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
 
 api-ocr: db-upgrade
 	uv run --exact --no-dev --extra ocr uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
 
+api-llm: db-upgrade
+	uv run --exact --no-dev --extra llm uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
+
 web:
 	npm --prefix apps/web run dev
 
 test:
-	uv run --extra ocr pytest
+	uv run --extra llm --extra ocr pytest
 	npm --prefix apps/web test
 
 lint:
-	uv run ruff check apps/api/src libs/core/src libs/persistence/src libs/storage/src plugins/ocr/src infra/db/migrations scripts tests
+	uv run ruff check apps/api/src libs/core/src libs/persistence/src libs/storage/src plugins/llm/src plugins/ocr/src infra/db/migrations scripts tests
 	npm --prefix apps/web run lint
 
 typecheck:
-	uv run --extra ocr basedpyright
+	uv run --extra llm --extra ocr basedpyright
 	npm --prefix apps/web run typecheck
 
 contract:

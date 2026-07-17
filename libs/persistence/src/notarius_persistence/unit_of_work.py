@@ -8,9 +8,14 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from notarius_core.artifacts import ArtifactRepositoryPort
 from notarius_core.domain.errors import ConcurrentWriteError
+from notarius_core.ports.invocation_cache import InvocationCacheRepositoryPort
 from notarius_core.ports.materialized_outputs import (
     MaterializedNodeOutputsRepositoryPort,
     WorkbenchUnitOfWorkPort,
+)
+from notarius_core.ports.node_secrets import (
+    NodeSecretRepositoryPort,
+    NodeSecretUnitOfWorkPort,
 )
 from notarius_core.ports.saved_graphs import (
     SavedGraphRepositoryPort,
@@ -19,7 +24,9 @@ from notarius_core.ports.saved_graphs import (
 
 from notarius_persistence.adapters.repositories import (
     SqlArtifactRepository,
+    SqlInvocationCacheRepository,
     SqlMaterializedNodeOutputsRepository,
+    SqlNodeSecretRepository,
     SqlSavedGraphRepository,
 )
 
@@ -29,12 +36,15 @@ class _SqlAlchemyUnitOfWorkState:
     session: AsyncSession
     graphs: SavedGraphRepositoryPort
     artifacts: ArtifactRepositoryPort
+    invocation_cache: InvocationCacheRepositoryPort
     materialized_outputs: MaterializedNodeOutputsRepositoryPort
+    node_secrets: NodeSecretRepositoryPort
 
 
 class SqlAlchemyUnitOfWork(
     WorkbenchUnitOfWorkPort,
     SavedGraphUnitOfWorkPort,
+    NodeSecretUnitOfWorkPort,
 ):
     """Reusable task-local SQLAlchemy transaction boundary.
 
@@ -65,8 +75,18 @@ class SqlAlchemyUnitOfWork(
 
     @property
     @override
+    def invocation_cache(self) -> InvocationCacheRepositoryPort:
+        return self._entered_state().invocation_cache
+
+    @property
+    @override
     def materialized_outputs(self) -> MaterializedNodeOutputsRepositoryPort:
         return self._entered_state().materialized_outputs
+
+    @property
+    @override
+    def node_secrets(self) -> NodeSecretRepositoryPort:
+        return self._entered_state().node_secrets
 
     @override
     async def __aenter__(self) -> "SqlAlchemyUnitOfWork":
@@ -78,7 +98,9 @@ class SqlAlchemyUnitOfWork(
                 session=session,
                 graphs=SqlSavedGraphRepository(session),
                 artifacts=SqlArtifactRepository(session),
+                invocation_cache=SqlInvocationCacheRepository(session),
                 materialized_outputs=SqlMaterializedNodeOutputsRepository(session),
+                node_secrets=SqlNodeSecretRepository(session),
             )
         )
         return self

@@ -35,17 +35,17 @@ import {
 } from "@/components/ui/dialog";
 import type { NodeRegistry, NodeSpec, Port } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
+import {
+  catalogNodeSpecs,
+  catalogPluginSections,
+} from "./node-catalog";
 
 interface NodeSelectorProps {
   open: boolean;
   registry: NodeRegistry;
+  activeGraphId: string | null;
   onOpenChange: (open: boolean) => void;
   onAddNode: (spec: NodeSpec) => void;
-}
-
-interface PluginOption {
-  slug: string;
-  title: string;
 }
 
 interface CompatibleNode {
@@ -65,13 +65,20 @@ function nodeKey(spec: NodeSpec): string {
   return `${spec.operator_id}@${spec.operator_version}`;
 }
 
-function pluginTitleFor(registry: NodeRegistry, slug: string): string {
-  return registry.plugins.find((plugin) => plugin.slug === slug)?.title ?? slug;
+function pluginFor(
+  registry: NodeRegistry,
+  slug: string,
+): NodeRegistry["plugins"][number] {
+  const plugin = registry.plugins.find((candidate) => candidate.slug === slug);
+  if (!plugin) {
+    throw new Error(`Node registry is missing owner plugin "${slug}".`);
+  }
+  return plugin;
 }
 
 function nodeSearchText(
   spec: NodeSpec,
-  pluginTitle: string,
+  plugin: NodeRegistry["plugins"][number],
 ): string {
   const fields = schemaFields(spec.config_schema);
   return [
@@ -79,7 +86,8 @@ function nodeSearchText(
     spec.operator_id,
     spec.description,
     spec.plugin_slug,
-    pluginTitle,
+    plugin.title,
+    plugin.origin,
     ...spec.inputs.flatMap((port) => [
       port.name,
       port.title ?? "",
@@ -339,6 +347,10 @@ const s = stylex.create({
       "@media (max-width: 720px)": "row",
     },
     gap: "2px",
+    alignItems: {
+      default: "stretch",
+      "@media (max-width: 720px)": "center",
+    },
     padding: {
       default: "0 8px 12px",
       "@media (max-width: 720px)": "0 10px 10px",
@@ -351,6 +363,65 @@ const s = stylex.create({
       default: "auto",
       "@media (max-width: 720px)": "hidden",
     },
+  },
+  pluginSection: {
+    minWidth: 0,
+    display: "flex",
+    flexDirection: {
+      default: "column",
+      "@media (max-width: 720px)": "row",
+    },
+    alignItems: {
+      default: "stretch",
+      "@media (max-width: 720px)": "center",
+    },
+    flexShrink: 0,
+    gap: "2px",
+    marginTop: {
+      default: "5px",
+      "@media (max-width: 720px)": 0,
+    },
+    paddingTop: {
+      default: "5px",
+      "@media (max-width: 720px)": 0,
+    },
+    paddingLeft: {
+      default: 0,
+      "@media (max-width: 720px)": "7px",
+    },
+    borderTopWidth: {
+      default: 1,
+      "@media (max-width: 720px)": 0,
+    },
+    borderTopStyle: "solid",
+    borderTopColor: tokens.colorDivider,
+    borderLeftWidth: {
+      default: 0,
+      "@media (max-width: 720px)": 1,
+    },
+    borderLeftStyle: "solid",
+    borderLeftColor: tokens.colorDivider,
+  },
+  pluginSectionLabel: {
+    padding: {
+      default: "5px 8px 3px",
+      "@media (max-width: 720px)": "0 5px 0 0",
+    },
+    color: tokens.colorSubtle,
+    fontSize: "9px",
+    fontWeight: 820,
+    letterSpacing: "0.1em",
+    textTransform: "uppercase",
+    whiteSpace: "nowrap",
+  },
+  pluginSectionEmpty: {
+    padding: {
+      default: "5px 8px 7px",
+      "@media (max-width: 720px)": "0 8px 0 0",
+    },
+    color: tokens.colorSubtle,
+    fontSize: "10px",
+    whiteSpace: "nowrap",
   },
   pluginButton: {
     position: "relative",
@@ -366,6 +437,7 @@ const s = stylex.create({
     backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
     color: tokens.colorMuted,
     cursor: "pointer",
+    flexShrink: 0,
     textAlign: "left",
     whiteSpace: "nowrap",
     transitionProperty: "background-color, color",
@@ -383,10 +455,40 @@ const s = stylex.create({
     fontWeight: 680,
     textOverflow: "ellipsis",
   },
+  pluginMeta: {
+    display: "flex",
+    alignItems: "center",
+    gap: "5px",
+  },
   pluginCount: {
     color: tokens.colorSubtle,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
     fontSize: "10px",
+  },
+  originBadge: {
+    minHeight: "17px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    paddingInline: "5px",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorBorderStrong,
+    borderRadius: "99px",
+    backgroundColor: tokens.colorSurfaceSunken,
+    color: tokens.colorMuted,
+    fontSize: "8px",
+    fontWeight: 840,
+    letterSpacing: "0.06em",
+    lineHeight: 1,
+    textTransform: "uppercase",
+    whiteSpace: "nowrap",
+  },
+  originBadgeExternal: {
+    borderColor: tokens.colorInfo,
+    backgroundColor: "light-dark(rgba(74, 143, 212, 0.1), rgba(96, 165, 250, 0.1))",
+    color: tokens.colorInfo,
   },
   nodePane: {
     minWidth: 0,
@@ -458,7 +560,20 @@ const s = stylex.create({
     backgroundColor: tokens.colorAccentSoft,
   },
   nodeCopy: { minWidth: 0, display: "grid", gap: "4px" },
-  nodeTitle: { fontSize: tokens.fontSizeSm, fontWeight: 730 },
+  nodeTitleRow: {
+    minWidth: 0,
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+  },
+  nodeTitle: {
+    minWidth: 0,
+    overflow: "hidden",
+    fontSize: tokens.fontSizeSm,
+    fontWeight: 730,
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
   nodeDescription: {
     display: "-webkit-box",
     overflow: "hidden",
@@ -513,6 +628,11 @@ const s = stylex.create({
     borderBottomWidth: 1,
     borderBottomStyle: "solid",
     borderBottomColor: tokens.colorBorder,
+  },
+  inspectorProvenance: {
+    display: "flex",
+    alignItems: "center",
+    gap: "7px",
   },
   eyebrow: {
     color: tokens.colorAccent,
@@ -777,7 +897,7 @@ function CompatibilityList({
                 {match.spec.title}
               </span>
               <span {...stylex.props(s.compatibilityMeta)}>
-                {pluginTitleFor(registry, match.spec.plugin_slug)} · {match.routeSummary}
+                {pluginFor(registry, match.spec.plugin_slug).title} · {match.routeSummary}
                 {match.additionalRouteCount > 0
                   ? ` · +${match.additionalRouteCount} route${match.additionalRouteCount === 1 ? "" : "s"}`
                   : ""}
@@ -868,6 +988,7 @@ function PortList({ direction, ports, registry }: PortListProps) {
 export function NodeSelector({
   open,
   registry,
+  activeGraphId,
   onOpenChange,
   onAddNode,
 }: NodeSelectorProps) {
@@ -875,28 +996,25 @@ export function NodeSelector({
   const [pluginFilter, setPluginFilter] = React.useState<string | null>(null);
   const [selectedNodeKey, setSelectedNodeKey] = React.useState<string | null>(null);
 
-  const pluginOptions = React.useMemo<PluginOption[]>(() => {
-    const options = registry.plugins.map((plugin) => ({ ...plugin }));
-    const knownSlugs = new Set(options.map((plugin) => plugin.slug));
-    for (const spec of registry.nodes) {
-      if (knownSlugs.has(spec.plugin_slug)) continue;
-      options.push({ slug: spec.plugin_slug, title: spec.plugin_slug });
-      knownSlugs.add(spec.plugin_slug);
-    }
-    return options;
-  }, [registry]);
+  const pluginSections = catalogPluginSections(registry);
+  const catalogNodes = React.useMemo(
+    () => catalogNodeSpecs(registry, activeGraphId),
+    [activeGraphId, registry],
+  );
+  const catalogRegistry = React.useMemo(
+    () => ({ ...registry, nodes: catalogNodes }),
+    [catalogNodes, registry],
+  );
 
   const normalizedQuery = query.trim().toLowerCase();
   const filteredNodes = React.useMemo(
-    () => registry.nodes.filter((spec) => {
+    () => catalogNodes.filter((spec) => {
       if (pluginFilter && spec.plugin_slug !== pluginFilter) return false;
       if (!normalizedQuery) return true;
-      return nodeSearchText(
-        spec,
-        pluginTitleFor(registry, spec.plugin_slug),
-      ).includes(normalizedQuery);
+      return nodeSearchText(spec, pluginFor(registry, spec.plugin_slug))
+        .includes(normalizedQuery);
     }),
-    [normalizedQuery, pluginFilter, registry],
+    [catalogNodes, normalizedQuery, pluginFilter, registry],
   );
   const selectedSpec = filteredNodes.find(
     (spec) => nodeKey(spec) === selectedNodeKey,
@@ -906,18 +1024,21 @@ export function NodeSelector({
     : [];
   const upstreamMatches = React.useMemo(
     () => selectedSpec
-      ? compatibleNodes(selectedSpec, "upstream", registry)
+      ? compatibleNodes(selectedSpec, "upstream", catalogRegistry)
       : [],
-    [registry, selectedSpec],
+    [catalogRegistry, selectedSpec],
   );
   const downstreamMatches = React.useMemo(
     () => selectedSpec
-      ? compatibleNodes(selectedSpec, "downstream", registry)
+      ? compatibleNodes(selectedSpec, "downstream", catalogRegistry)
       : [],
-    [registry, selectedSpec],
+    [catalogRegistry, selectedSpec],
   );
+  const selectedPlugin = selectedSpec
+    ? pluginFor(registry, selectedSpec.plugin_slug)
+    : null;
   const activePluginTitle = pluginFilter
-    ? pluginTitleFor(registry, pluginFilter)
+    ? pluginFor(registry, pluginFilter).title
     : "All nodes";
 
   return (
@@ -940,7 +1061,8 @@ export function NodeSelector({
               <DialogTitle {...stylex.props(s.title)}>Node catalog</DialogTitle>
             </div>
             <DialogDescription {...stylex.props(s.description)}>
-              Browse installed plugins and inspect contracts before adding a node.
+              Browse built-in nodes, saved graph modules, and registered external
+              plugins, then inspect contracts before adding a node.
             </DialogDescription>
           </div>
           <div {...stylex.props(s.searchWrap)}>
@@ -957,8 +1079,8 @@ export function NodeSelector({
         </div>
 
         <div {...stylex.props(s.layout)}>
-          <nav aria-label="Installed plugins" {...stylex.props(s.pluginPane)}>
-            <div {...stylex.props(s.paneLabel)}>Plugins</div>
+          <nav aria-label="Node catalog groups" {...stylex.props(s.pluginPane)}>
+            <div {...stylex.props(s.paneLabel)}>Catalog</div>
             <div {...stylex.props(s.pluginList)}>
               <button
                 type="button"
@@ -977,36 +1099,70 @@ export function NodeSelector({
                   )}
                 />
                 <span {...stylex.props(s.pluginName)}>All nodes</span>
-                <span {...stylex.props(s.pluginCount)}>{registry.nodes.length}</span>
+                <span {...stylex.props(s.pluginCount)}>{catalogNodes.length}</span>
               </button>
-              {pluginOptions.map((plugin) => {
-                const active = pluginFilter === plugin.slug;
-                const count = registry.nodes.filter(
-                  (spec) => spec.plugin_slug === plugin.slug,
-                ).length;
-                return (
-                  <button
-                    key={plugin.slug}
-                    type="button"
-                    aria-pressed={active}
-                    {...stylex.props(
-                      s.pluginButton,
-                      active ? s.pluginButtonActive : null,
-                    )}
-                    onClick={() => setPluginFilter(plugin.slug)}
+              {pluginSections.map((section) => (
+                <section
+                  key={section.origin}
+                  aria-labelledby={`node-catalog-${section.origin}`}
+                  {...stylex.props(s.pluginSection)}
+                >
+                  <h3
+                    id={`node-catalog-${section.origin}`}
+                    {...stylex.props(s.pluginSectionLabel)}
                   >
-                    <Package
-                      size={14}
-                      {...stylex.props(
-                        s.pluginIcon,
-                        active ? s.pluginIconActive : null,
-                      )}
-                    />
-                    <span {...stylex.props(s.pluginName)}>{plugin.title}</span>
-                    <span {...stylex.props(s.pluginCount)}>{count}</span>
-                  </button>
-                );
-              })}
+                    {section.title}
+                  </h3>
+                  {section.plugins.length ? section.plugins.map((plugin) => {
+                    const active = pluginFilter === plugin.slug;
+                    const count = catalogNodes.filter(
+                      (spec) => spec.plugin_slug === plugin.slug,
+                    ).length;
+                    return (
+                      <button
+                        key={plugin.slug}
+                        type="button"
+                        aria-pressed={active}
+                        {...stylex.props(
+                          s.pluginButton,
+                          active ? s.pluginButtonActive : null,
+                        )}
+                        onClick={() => setPluginFilter(plugin.slug)}
+                      >
+                        <Package
+                          size={14}
+                          {...stylex.props(
+                            s.pluginIcon,
+                            active ? s.pluginIconActive : null,
+                          )}
+                        />
+                        <span {...stylex.props(s.pluginName)}>{plugin.title}</span>
+                        <span {...stylex.props(s.pluginMeta)}>
+                          {plugin.origin === "external" ? (
+                            <span
+                              {...stylex.props(
+                                s.originBadge,
+                                s.originBadgeExternal,
+                              )}
+                            >
+                              External
+                            </span>
+                          ) : plugin.origin === "module" ? (
+                            <span {...stylex.props(s.originBadge)}>
+                              Module
+                            </span>
+                          ) : null}
+                          <span {...stylex.props(s.pluginCount)}>{count}</span>
+                        </span>
+                      </button>
+                    );
+                  }) : (
+                    <span {...stylex.props(s.pluginSectionEmpty)}>
+                      None registered
+                    </span>
+                  )}
+                </section>
+              ))}
             </div>
           </nav>
 
@@ -1019,6 +1175,7 @@ export function NodeSelector({
             </header>
             <div {...stylex.props(s.nodeList)}>
               {filteredNodes.length ? filteredNodes.map((spec) => {
+                const owner = pluginFor(registry, spec.plugin_slug);
                 const active = selectedSpec
                   ? nodeKey(spec) === nodeKey(selectedSpec)
                   : false;
@@ -1034,7 +1191,23 @@ export function NodeSelector({
                     onClick={() => setSelectedNodeKey(nodeKey(spec))}
                   >
                     <span {...stylex.props(s.nodeCopy)}>
-                      <span {...stylex.props(s.nodeTitle)}>{spec.title}</span>
+                      <span {...stylex.props(s.nodeTitleRow)}>
+                        <span {...stylex.props(s.nodeTitle)}>{spec.title}</span>
+                        {owner.origin === "external" ? (
+                          <span
+                            {...stylex.props(
+                              s.originBadge,
+                              s.originBadgeExternal,
+                            )}
+                          >
+                            External
+                          </span>
+                        ) : owner.origin === "module" ? (
+                          <span {...stylex.props(s.originBadge)}>
+                            Module · r{spec.module_graph_revision}
+                          </span>
+                        ) : null}
+                      </span>
                       <span {...stylex.props(s.nodeDescription)}>
                         {spec.description || "No description is available."}
                       </span>
@@ -1046,7 +1219,7 @@ export function NodeSelector({
                 );
               }) : (
                 <div {...stylex.props(s.empty)}>
-                  <span>No nodes match the current plugin and search.</span>
+                  <span>No nodes match the current category and search.</span>
                   <button
                     type="button"
                     {...stylex.props(s.resetButton)}
@@ -1063,19 +1236,37 @@ export function NodeSelector({
           </section>
 
           <aside aria-label="Node information" {...stylex.props(s.inspector)}>
-            {selectedSpec ? (
+            {selectedSpec && selectedPlugin ? (
               <>
                 <div
                   key={nodeKey(selectedSpec)}
                   className={`${stylex.props(s.inspectorScroll).className} ns-node-detail`}
                 >
                   <header {...stylex.props(s.inspectorHeader)}>
-                    <div {...stylex.props(s.eyebrow)}>
-                      {pluginTitleFor(registry, selectedSpec.plugin_slug)}
+                    <div {...stylex.props(s.inspectorProvenance)}>
+                      <div {...stylex.props(s.eyebrow)}>
+                        {selectedPlugin.title}
+                      </div>
+                      <span
+                        {...stylex.props(
+                          s.originBadge,
+                          selectedPlugin.origin === "external"
+                            ? s.originBadgeExternal
+                            : null,
+                        )}
+                      >
+                        {selectedPlugin.origin === "external"
+                          ? "External"
+                          : selectedPlugin.origin === "module"
+                            ? `Module · r${selectedSpec.module_graph_revision}`
+                            : "Built-in"}
+                      </span>
                     </div>
                     <h3 {...stylex.props(s.inspectorTitle)}>{selectedSpec.title}</h3>
                     <div {...stylex.props(s.operatorId)}>
-                      {selectedSpec.operator_id}@{selectedSpec.operator_version}
+                      {typeof selectedSpec.module_graph_revision === "number"
+                        ? `Saved graph module · revision ${selectedSpec.module_graph_revision}`
+                        : `${selectedSpec.operator_id}@${selectedSpec.operator_version}`}
                     </div>
                     <p {...stylex.props(s.inspectorDescription)}>
                       {selectedSpec.description || "No description is available for this node."}
@@ -1165,7 +1356,7 @@ export function NodeSelector({
                       </div>
                     ) : (
                       <p {...stylex.props(s.compatibilityEmpty)}>
-                        No editable scalar settings are declared. Source selection or custom controls, when available, appear on the node after it is added.
+                        No editable scalar settings are declared. Upload or custom controls, when available, appear on the node after it is added.
                       </p>
                     )}
                   </section>

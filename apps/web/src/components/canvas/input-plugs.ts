@@ -1,4 +1,9 @@
 import type { NodeSpec, RunNodeResult } from "@/lib/api";
+import {
+  SCHEMA_BUILDER_INPUT_PORT,
+  schemaFieldConsumesInput,
+  type SchemaBuilderField,
+} from "./schema-builder";
 
 export interface WorkflowInputPlug {
   id: string;
@@ -32,7 +37,7 @@ export function createWorkflowInputPlug(portName: string): WorkflowInputPlug {
 
 export function initialInputPlugs(spec: NodeSpec): WorkflowInputPlug[] {
   return spec.inputs
-    .filter((port) => port.instance_plugs === true)
+    .filter((port) => port.instance_plugs === true && port.required)
     .map((port) => createWorkflowInputPlug(port.name));
 }
 
@@ -88,6 +93,36 @@ export function reorderInputPlug(
       ? reorderedPortPlugs[nextPortIndex++]
       : plug,
   );
+}
+
+/**
+ * Aligns nested-schema plugs with their owning field ids and field order.
+ * Plugs for unrelated ports retain their relative order.
+ */
+export function reconcileSchemaFieldInputPlugs(
+  inputPlugs: readonly WorkflowInputPlug[],
+  fields: readonly SchemaBuilderField[],
+  portName: string = SCHEMA_BUILDER_INPUT_PORT,
+): WorkflowInputPlug[] {
+  const desiredPlugs = fields
+    .filter(schemaFieldConsumesInput)
+    .map((field) => ({ id: field.id, portName }));
+  const firstPortIndex = inputPlugs.findIndex(
+    (plug) => plug.portName === portName,
+  );
+  const withoutPort = inputPlugs.filter((plug) => plug.portName !== portName);
+  const insertionIndex =
+    firstPortIndex === -1
+      ? withoutPort.length
+      : inputPlugs
+          .slice(0, firstPortIndex)
+          .filter((plug) => plug.portName !== portName).length;
+
+  return [
+    ...withoutPort.slice(0, insertionIndex),
+    ...desiredPlugs,
+    ...withoutPort.slice(insertionIndex),
+  ];
 }
 
 function collectSegments(run: RunNodeResult | null): CollectSegment[] {

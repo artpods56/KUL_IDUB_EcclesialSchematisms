@@ -45,6 +45,24 @@ artifact with a matching type or producer. A binding is reusable only when all
 of its artifact references are accessible through the active runtime.
 Inaccessible references are not advertised as available outputs.
 
+### Invocation cache entry
+
+A global, content-addressed reuse record for one node invocation. It is not a
+saved-graph output binding and is not keyed by graph revision. Its versioned
+digest covers the operator id/version, validated configuration, stable node and
+module identity, invocation mode and mapped item index, resolved artifact-type
+bindings, exact ordered input containers and artifact SHA-256 values, and opaque
+secret revisions. The digest preimage and secret material are never persisted.
+
+Node registrations are fail-closed: the default policy is `never`, while a
+deterministic node may declare `exact`. Current pure built-ins use `exact`;
+uploads, graph-module wrappers, and external OCR/LLM/provider nodes remain
+uncached. Mapping caches scalar item invocations independently and builds the
+current aggregate sequence from those item outputs. A hit is valid only while
+every referenced artifact row and stored object remains accessible; stale cache
+entries are removed generation-safely. Cache entries are artifact-retention
+roots, so future artifact garbage collection must include them.
+
 ### Field projection
 
 A path from one compound artifact payload to a value that can be materialized as
@@ -86,10 +104,31 @@ the registry again. It validates and replays the stored keys in order, composes
 their pure callables in memory, and materializes only the final target-typed
 artifact.
 
+### Prompt message
+
+A provider-neutral conversation message containing a `system` or `user` role,
+text, and optional ordered image artifact references. It never embeds or copies
+image bytes. System messages cannot carry images.
+
+### JSON Schema
+
+A provider-neutral Draft 2020-12 object schema stored as serialized JSON text in
+the nominal `json.schema@1` artifact type. The Schema Builder owns an ordered
+field list: primitive and primitive-sequence fields are configured inline, while
+an object field or object-sequence item consumes another JSON Schema through a
+stable field-owned input plug. The builder inserts connected child schemas into
+the parent, so canvas composition occurs at reusable object boundaries rather
+than exposing every JSON Schema token as a node. A runtime schema does not create
+a new artifact type or dynamic output ports; provider results remain fixed typed
+envelopes containing schema-governed JSON objects.
+
 ### Node
 
 A typed operation with a configuration model, input model, output model, and a
 single execution method. Port contracts are derived from its model annotations.
+Changing the artifact key or value shape of a fixed port requires a new operator
+version or an explicit saved-graph migration; the host does not silently rewrite
+older contracts.
 
 ### Input plug
 
@@ -103,10 +142,32 @@ to own its projection and artifact conversion path.
 
 An installable declaration that groups nodes, artifact types, artifact
 conversions, and the runtime resolver/writer factories they require under one
-stable slug. Built-in plugins are installed explicitly by the host; external
-plugins are discovered from the `notarius.plugins` Python entry-point group.
-Plugins depend inward on core contracts and ports, never on the API host or
-concrete storage adapters.
+stable slug. The host assigns every installed plugin a catalog origin. Built-in
+plugins are installed explicitly with `builtin` origin; external plugins are
+discovered from the `notarius.plugins` Python entry-point group and installed
+with `external` origin. A plugin does not declare its own origin. Plugins depend
+inward on core contracts and ports, never on the API host or concrete storage
+adapters.
+
+### Node catalog
+
+The host's built-in catalog contains only broadly reusable operation families:
+Image, Sequence, Arithmetic, Text, Schema, and Prompt. A built-in artifact type
+must have precise, producer-neutral meaning and be independently reusable. A
+built-in node must be broadly reusable, deterministic, dependency-light, and
+must not duplicate projection, conversion, mapping, or other edge/runtime behavior.
+Image owns the producer-neutral `image.raster@1` artifact, its storage writer,
+and deterministic import of staged image uploads.
+
+Sequence provides `Collect<T>`, Count, Slice, and Pick item; image- and
+text-specific collectors are not separate built-ins. Schema provides one
+recursive JSON Schema Builder, and Prompt provides deterministic prompt-message
+construction; provider-backed execution remains an optional external plugin.
+Tables are not a built-in family because the current table artifacts and
+extraction semantics belong to OCR. Installing optional entry-point plugins
+contributes remote or domain-specific nodes as external catalog entries. The
+catalog exposes the host-assigned origin and visually separates built-in
+families from registered external plugins.
 
 ### Port
 
@@ -126,6 +187,12 @@ item, broadcasts its other inputs, and aggregates required item outputs into
 ordered sequences. The runtime derives its internal invocation policy from
 incoming edges. A target has at most one map driver; zip, Cartesian, and
 implicit flattening semantics are not part of the contract.
+
+Ordered sequence consumers that need cross-item context receive a `direct` MANY
+input and execute once. `map` is reserved for invocations whose items are
+independent; it must not be used to assemble or process one conversation message
+at a time. Revision-scoped materialized outputs are whole-node bindings, not
+per-item checkpoints.
 
 ### Collect node
 
@@ -169,8 +236,10 @@ overwriting one another.
 
 ### Workbench
 
-The user-facing graph editor and its execution interface. Node configuration is
-rendered on the node from JSON Schema. Nested artifact fields and collection
+The user-facing graph editor and its execution interface. Ordinary node
+configuration is rendered on the node from JSON Schema; interactions that own
+dynamic graph structure, such as Schema Builder fields and their input plugs,
+use a dedicated node body. Nested artifact fields and collection
 mapping are selected on each edge. Compatible declared conversion paths are also
 stored and displayed on the edge; a unique route may be selected automatically
 when the user connects otherwise-incompatible ports. The complete

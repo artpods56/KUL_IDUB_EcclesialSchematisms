@@ -8,7 +8,13 @@ import type {
 } from "@/lib/api";
 import { decodeHandleId } from "./handles";
 import { hydrateSavedGraph, savedGraphDraft } from "./saved-graph";
-import { serializeWorkflowEdgeTransport } from "./types";
+import {
+  IMAGE_UPLOAD_OPERATOR_ID,
+  WORKFLOW_NODE_TYPE,
+  createWorkflowNodeData,
+  effectivePortShape,
+  serializeWorkflowEdgeTransport,
+} from "./types";
 
 function conversion(
   id: string,
@@ -48,6 +54,7 @@ function nodeSpec(
     plugin_slug: "test",
     title: operatorId,
     description: operatorId,
+    catalog_visible: true,
     config_schema: {},
     input_schema: {},
     output_schema: {},
@@ -318,11 +325,12 @@ describe("saved collection modes", () => {
 function collectRegistry(): NodeRegistry {
   const source = nodeSpec("source", "output", "text");
   const collector: NodeSpec = {
-    operator_id: "text.collect",
+    operator_id: "test.collect",
     operator_version: 1,
     plugin_slug: "test",
     title: "Collect text",
     description: "Collect ordered text inputs.",
+    catalog_visible: true,
     config_schema: {},
     input_schema: {},
     output_schema: {},
@@ -375,7 +383,7 @@ function graphWithCollectPlugs(): SavedGraph {
       },
       {
         id: "collect-node",
-        operator_id: "text.collect",
+        operator_id: "test.collect",
         operator_version: 1,
         config: {},
         input_plugs: [
@@ -444,6 +452,111 @@ describe("saved instance plugs", () => {
   });
 });
 
+describe("saved image upload config", () => {
+  it("preserves the exact ordered uploads payload used by run requests", () => {
+    const imageUploadSpec = nodeSpec(
+      IMAGE_UPLOAD_OPERATOR_ID,
+      "output",
+      "image.raster",
+      "many",
+    );
+    const data = createWorkflowNodeData(imageUploadSpec);
+    data.config.uploads = [
+      {
+        upload_key: "second.png",
+        filename: "second.png",
+        byte_size: 22,
+      },
+      {
+        upload_key: "first.png",
+        filename: "first.png",
+        byte_size: 11,
+      },
+    ];
+    const draft = savedGraphDraft(
+      "Upload order",
+      [
+        {
+          id: "image-upload-node",
+          type: WORKFLOW_NODE_TYPE,
+          position: { x: 0, y: 0 },
+          data,
+        },
+      ],
+      [],
+    );
+    const savedGraph: SavedGraph = {
+      id: "00000000-0000-4000-8000-000000000004",
+      revision: 1,
+      name: draft.name,
+      created_at: "2026-07-15T12:00:00Z",
+      updated_at: "2026-07-15T12:00:00Z",
+      nodes: draft.nodes,
+      edges: draft.edges,
+    };
+    const hydrated = hydrateSavedGraph(savedGraph, {
+      plugins: [],
+      artifact_types: [],
+      artifact_conversions: [],
+      nodes: [imageUploadSpec],
+    });
+    const savedConfig = draft.nodes?.[0]?.config;
+
+    expect(savedConfig).toEqual({
+      uploads: [
+        {
+          upload_key: "second.png",
+          filename: "second.png",
+          byte_size: 22,
+        },
+        {
+          upload_key: "first.png",
+          filename: "first.png",
+          byte_size: 11,
+        },
+      ],
+    });
+    expect(hydrated.nodes[0]!.data.config).toEqual(savedConfig);
+  });
+});
+
+describe("saved write-only node state", () => {
+  it("persists ordinary config without secret status or callbacks", () => {
+    const spec = nodeSpec(
+      "llm.openai.completion",
+      "output",
+      "llm.completion",
+    );
+    const data = createWorkflowNodeData(spec);
+    data.config = {
+      base_url: "https://api.openai.com/v1",
+      model: "gpt-5-mini",
+    };
+    data.secretStatuses = { api_key: { state: "configured" } };
+    data.secretInputReadiness = { api_key: true };
+    data.secretInputScope = "graph-1:2";
+    data.onApplyNodeSecret = async () => true;
+
+    const draft = savedGraphDraft(
+      "Write-only node",
+      [{
+        id: "llm-node",
+        type: WORKFLOW_NODE_TYPE,
+        position: { x: 0, y: 0 },
+        data,
+      }],
+      [],
+    );
+
+    expect(draft.nodes?.[0]?.config).toEqual(data.config);
+    expect(draft.nodes?.[0]).not.toHaveProperty("secretStatuses");
+    expect(draft.nodes?.[0]).not.toHaveProperty("secretInputReadiness");
+    expect(draft.nodes?.[0]).not.toHaveProperty("secretInputScope");
+    expect(draft.nodes?.[0]).not.toHaveProperty("onApplyNodeSecret");
+    expect(JSON.stringify(draft)).not.toContain("api_key");
+  });
+});
+
 function genericCollectRegistry(): NodeRegistry {
   const collector: NodeSpec = {
     operator_id: "sequence.collect",
@@ -451,6 +564,7 @@ function genericCollectRegistry(): NodeRegistry {
     plugin_slug: "test",
     title: "Collect",
     description: "Collect ordered artifacts.",
+    catalog_visible: true,
     config_schema: {},
     input_schema: {},
     output_schema: {},
@@ -631,5 +745,137 @@ describe("saved generic artifact type bindings", () => {
     expect(() => hydrateSavedGraph(invalid, genericCollectRegistry())).toThrow(
       "binds unavailable artifact type artifact.missing@9",
     );
+  });
+});
+
+describe("saved graph module nodes", () => {
+  const moduleGraphId = "00000000-0000-4000-8000-000000000008";
+  const moduleOperatorId = `module.graph.${moduleGraphId}`;
+  const imageType = { id: "image.raster", schema_version: 1 } as const;
+  const completionType = { id: "llm.completion", schema_version: 1 } as const;
+  const moduleInput = {
+    name: "image",
+    title: "Image",
+    description: null,
+    direction: "input" as const,
+    artifact_type: imageType,
+    shape: "one" as const,
+    accepted_shapes: ["one" as const],
+    instance_plugs: false,
+    variadic: false,
+    required: true,
+  };
+  const moduleOutput = {
+    name: "completion",
+    title: "Completion",
+    description: null,
+    direction: "output" as const,
+    artifact_type: completionType,
+    shape: "one" as const,
+    accepted_shapes: ["one" as const],
+    instance_plugs: false,
+    variadic: false,
+    required: true,
+  };
+
+  function moduleSpec(revision: number, catalogVisible: boolean): NodeSpec {
+    return {
+      operator_id: moduleOperatorId,
+      operator_version: revision,
+      plugin_slug: "saved-graph-modules",
+      title: `Extract image r${revision}`,
+      description: "Hidden structured extraction graph",
+      config_schema: {},
+      input_schema: {},
+      output_schema: {},
+      inputs: [moduleInput],
+      outputs: [moduleOutput],
+      module_graph_id: moduleGraphId,
+      module_graph_revision: revision,
+      catalog_visible: catalogVisible,
+    };
+  }
+
+  it("hydrates the pinned historical revision and exposes mapped outputs as a sequence", () => {
+    const sourceSpec = nodeSpec(
+      IMAGE_UPLOAD_OPERATOR_ID,
+      "output",
+      "image.raster",
+      "many",
+    );
+    const savedGraph: SavedGraph = {
+      id: "00000000-0000-4000-8000-000000000009",
+      revision: 1,
+      name: "Map extraction module",
+      created_at: "2026-07-16T12:00:00Z",
+      updated_at: "2026-07-16T12:00:00Z",
+      nodes: [
+        {
+          id: "images",
+          operator_id: IMAGE_UPLOAD_OPERATOR_ID,
+          operator_version: 1,
+          config: {},
+          input_plugs: [],
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "extract",
+          operator_id: moduleOperatorId,
+          operator_version: 1,
+          config: {},
+          input_plugs: [],
+          position: { x: 300, y: 0 },
+        },
+      ],
+      edges: [{
+        id: "map-images",
+        from_node: "images",
+        from_port: "output",
+        to_node: "extract",
+        to_port: "image",
+        to_plug: null,
+        collection_mode: "map",
+        projection: null,
+        conversion_path: [],
+        route_offset: null,
+      }],
+    };
+    const moduleV1 = moduleSpec(1, false);
+    const hydrated = hydrateSavedGraph(savedGraph, {
+      plugins: [{
+        slug: "saved-graph-modules",
+        title: "Modules",
+        origin: "module",
+      }],
+      artifact_types: [
+        {
+          key: imageType,
+          title: "Image",
+          payload_schema: {},
+          field_projections: [],
+        },
+        {
+          key: completionType,
+          title: "Completion",
+          payload_schema: {},
+          field_projections: [],
+        },
+      ],
+      artifact_conversions: [],
+      nodes: [sourceSpec, moduleV1, moduleSpec(2, true)],
+    });
+    const moduleNode = hydrated.nodes.find((node) => node.id === "extract");
+
+    expect(moduleNode?.data.spec).toBe(moduleV1);
+    expect(moduleNode?.data.spec.module_graph_revision).toBe(1);
+    expect(hydrated.edges[0]?.data?.collectionMode).toBe("map");
+    expect(
+      moduleNode
+        ? effectivePortShape(
+            { ...moduleNode.data, mappedInputPort: "image" },
+            moduleNode.data.spec.outputs[0]!,
+          )
+        : null,
+    ).toBe("many");
   });
 });

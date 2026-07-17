@@ -23,7 +23,7 @@ from notarius_core.nodes import (
     NodeExecutionContext,
     OutPort,
 )
-from notarius_core.plugins import Plugin
+from notarius_core.plugins import NodeCachePolicy, Plugin
 from notarius_core.runtime.persistence import (
     ArtifactOutputWriter,
     ArtifactWriteContext,
@@ -41,13 +41,6 @@ class IntegerValuePayload(BaseModel):
     value: StrictInt
 
 
-class ArithmeticResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    addition: StrictInt
-    subtraction: StrictInt
-
-
 INTEGER_VALUE = ArtifactTypeSpec(
     key=ArtifactTypeKey("scalar.integer", 1),
     title="Integer value",
@@ -55,18 +48,11 @@ INTEGER_VALUE = ArtifactTypeSpec(
     materialized_json_type="integer",
 )
 
-ARITHMETIC_RESULT = ArtifactTypeSpec(
-    key=ArtifactTypeKey("arithmetic.result", 1),
-    title="Arithmetic result",
-    payload_schema=cast(JsonObject, ArithmeticResult.model_json_schema()),
-)
-
 ARITHMETIC = Plugin(
     slug="builtin.arithmetic",
     title="Arithmetic",
 )
 ARITHMETIC.register_artifact_type(INTEGER_VALUE)
-ARITHMETIC.register_artifact_type(ARITHMETIC_RESULT)
 
 
 class NumberConfig(NodeConfig):
@@ -89,6 +75,7 @@ class NumberOutput(NodeOutput):
     operator_id="arithmetic.number",
     version=1,
     title="Number",
+    cache_policy=NodeCachePolicy.EXACT,
 )
 @final
 class NumberNode(Node[NumberConfig, NumberInput, NumberOutput]):
@@ -132,6 +119,7 @@ class IntegerSequenceOutput(NodeOutput):
     operator_id="arithmetic.integer_sequence",
     version=1,
     title="Integer sequence",
+    cache_policy=NodeCachePolicy.EXACT,
 )
 @final
 class IntegerSequenceNode(
@@ -152,7 +140,7 @@ class IntegerSequenceNode(
         )
 
 
-class AddSubtractInput(NodeInput):
+class BinaryIntegerInput(NodeInput):
     left: Annotated[
         StrictInt,
         InPort(INTEGER_VALUE),
@@ -165,67 +153,64 @@ class AddSubtractInput(NodeInput):
     ]
 
 
-class AddSubtractOutput(NodeOutput):
+class IntegerResultOutput(NodeOutput):
     result: Annotated[
-        ArithmeticResult,
-        OutPort(ARITHMETIC_RESULT),
-        Field(description="Compound addition and subtraction result."),
+        StrictInt,
+        OutPort(INTEGER_VALUE),
+        Field(description="Resulting integer value."),
     ]
 
 
 @ARITHMETIC.node(
-    operator_id="arithmetic.add_subtract",
+    operator_id="arithmetic.add",
     version=1,
-    title="Add & subtract",
+    title="Add integers",
+    cache_policy=NodeCachePolicy.EXACT,
 )
 @final
-class AddSubtractNode(Node[NoConfig, AddSubtractInput, AddSubtractOutput]):
-    """Produces addition and subtraction fields from two integer inputs."""
+class AddNode(Node[NoConfig, BinaryIntegerInput, IntegerResultOutput]):
+    """Adds two integer inputs."""
 
     @override
     async def run(
         self,
         _context: NodeExecutionContext,
         _config: NoConfig,
-        inputs: AddSubtractInput,
+        inputs: BinaryIntegerInput,
         /,
-    ) -> AddSubtractOutput:
-        return AddSubtractOutput(
-            result=ArithmeticResult(
-                addition=inputs.left + inputs.right,
-                subtraction=inputs.left - inputs.right,
-            )
-        )
+    ) -> IntegerResultOutput:
+        return IntegerResultOutput(result=inputs.left + inputs.right)
 
 
-class MultiplyInput(NodeInput):
-    left: Annotated[
-        StrictInt,
-        InPort(INTEGER_VALUE),
-        Field(title="Left", description="Left-hand integer factor."),
-    ]
-    right: Annotated[
-        StrictInt,
-        InPort(INTEGER_VALUE),
-        Field(title="Right", description="Right-hand integer factor."),
-    ]
+@ARITHMETIC.node(
+    operator_id="arithmetic.subtract",
+    version=1,
+    title="Subtract integers",
+    cache_policy=NodeCachePolicy.EXACT,
+)
+@final
+class SubtractNode(Node[NoConfig, BinaryIntegerInput, IntegerResultOutput]):
+    """Subtracts the right integer input from the left input."""
 
-
-class MultiplyOutput(NodeOutput):
-    result: Annotated[
-        StrictInt,
-        OutPort(INTEGER_VALUE),
-        Field(description="Product of the two input integers."),
-    ]
+    @override
+    async def run(
+        self,
+        _context: NodeExecutionContext,
+        _config: NoConfig,
+        inputs: BinaryIntegerInput,
+        /,
+    ) -> IntegerResultOutput:
+        return IntegerResultOutput(result=inputs.left - inputs.right)
 
 
 @ARITHMETIC.node(
     operator_id="arithmetic.multiply",
     version=1,
     title="Multiply",
+    cache_policy=NodeCachePolicy.EXACT,
 )
 @final
-class MultiplyNode(Node[NoConfig, MultiplyInput, MultiplyOutput]):
+class MultiplyNode(Node[NoConfig, BinaryIntegerInput, IntegerResultOutput]):
     """Multiplies two integer inputs."""
 
     @override
@@ -233,10 +218,10 @@ class MultiplyNode(Node[NoConfig, MultiplyInput, MultiplyOutput]):
         self,
         _context: NodeExecutionContext,
         _config: NoConfig,
-        inputs: MultiplyInput,
+        inputs: BinaryIntegerInput,
         /,
-    ) -> MultiplyOutput:
-        return MultiplyOutput(result=inputs.left * inputs.right)
+    ) -> IntegerResultOutput:
+        return IntegerResultOutput(result=inputs.left * inputs.right)
 
 
 class SumIntegersInput(NodeInput):
@@ -263,6 +248,7 @@ class SumIntegersOutput(NodeOutput):
     operator_id="arithmetic.sum",
     version=1,
     title="Sum integers",
+    cache_policy=NodeCachePolicy.EXACT,
 )
 @final
 class SumIntegersNode(Node[NoConfig, SumIntegersInput, SumIntegersOutput]):

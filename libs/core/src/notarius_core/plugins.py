@@ -1,7 +1,9 @@
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from enum import StrEnum
 from inspect import getdoc
 from pathlib import Path
+import re
 from typing import TYPE_CHECKING, Any, Final, TypeAlias, cast
 
 from notarius_core.artifacts import (
@@ -18,6 +20,10 @@ from notarius_core.conversions import (
     conversion_runtime_types_are_compatible,
 )
 from notarius_core.nodes import ArtifactTypeVariable, Node
+from notarius_core.ports.node_secrets import (
+    NodeSecretResolverPort,
+    UnavailableNodeSecretResolver,
+)
 from notarius_core.ports.storage import FileStoragePort
 
 if TYPE_CHECKING:
@@ -30,6 +36,17 @@ _MAX_PROJECTION_SCHEMA_DEPTH: Final = 32
 _MAX_FIELD_PROJECTIONS: Final = 1024
 
 
+class PluginOrigin(StrEnum):
+    BUILTIN = "builtin"
+    EXTERNAL = "external"
+    MODULE = "module"
+
+
+class NodeCachePolicy(StrEnum):
+    NEVER = "never"
+    EXACT = "exact"
+
+
 @dataclass(frozen=True, slots=True)
 class PluginRuntimeContext:
     workspace: Path
@@ -38,6 +55,38 @@ class PluginRuntimeContext:
     uow: UnitOfWorkPort
     bucket: str
     storage_backend: str = "local"
+    node_secrets: NodeSecretResolverPort = field(
+        default_factory=UnavailableNodeSecretResolver
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class NodeSecretInput:
+    name: str
+    title: str
+    config_dependencies: tuple[str, ...] = ()
+    description: str | None = None
+
+    def __post_init__(self) -> None:
+        if re.fullmatch(r"[a-z][a-z0-9_]*", self.name) is None:
+            raise ValueError(
+                "Node secret input name must start with a lowercase letter and "
+                "contain only lowercase letters, digits, and underscores"
+            )
+        if len(self.name) > 255:
+            raise ValueError("Node secret input name must be at most 255 characters")
+        if self.title.strip() == "":
+            raise ValueError("Node secret input title must not be blank")
+        if len(self.config_dependencies) != len(set(self.config_dependencies)):
+            raise ValueError(
+                f"Node secret input {self.name!r} dependencies must be unique"
+            )
+        for dependency in self.config_dependencies:
+            if dependency.strip() == "" or dependency != dependency.strip():
+                raise ValueError(
+                    f"Node secret input {self.name!r} dependency names must be "
+                    "non-empty without surrounding whitespace"
+                )
 
 
 NodeFactory: TypeAlias = Callable[
@@ -58,6 +107,8 @@ WriterFactory: TypeAlias = Callable[
 class NodeRegistration:
     node_class: type[Node[Any, Any, Any]]
     factory: NodeFactory | None
+    secret_inputs: tuple[NodeSecretInput, ...] = ()
+    cache_policy: NodeCachePolicy = NodeCachePolicy.NEVER
 
     @property
     def plugin_slug(self) -> str:
@@ -111,6 +162,8 @@ class Plugin:
         version: int,
         title: str,
         factory: NodeFactory | None = None,
+        secret_inputs: tuple[NodeSecretInput, ...] = (),
+        cache_policy: NodeCachePolicy = NodeCachePolicy.NEVER,
     ) -> Callable[[type[NodeT]], type[NodeT]]:
         if operator_id.strip() == "":
             raise PluginRegistrationError(
@@ -137,10 +190,31 @@ class Plugin:
             node_class.plugin_slug = self.slug
             node_class.title = title
             node_class.description = getdoc(node_class) or ""
+            secret_names = [secret_input.name for secret_input in secret_inputs]
+            if len(secret_names) != len(set(secret_names)):
+                raise PluginRegistrationError(
+                    f"Plugin {self.slug!r} node {operator_id!r} declares duplicate "
+                    "secret input names"
+                )
+            config_fields = node_class.config_contract.model.model_fields
+            for secret_input in secret_inputs:
+                missing_dependencies = sorted(
+                    set(secret_input.config_dependencies) - set(config_fields)
+                )
+                if not missing_dependencies:
+                    continue
+                rendered = ", ".join(missing_dependencies)
+                raise PluginRegistrationError(
+                    f"Plugin {self.slug!r} node {operator_id!r} secret input "
+                    f"{secret_input.name!r} references missing config fields: "
+                    f"{rendered}"
+                )
             registered_class: type[Node[Any, Any, Any]] = node_class
             registration = NodeRegistration(
                 node_class=registered_class,
                 factory=factory,
+                secret_inputs=secret_inputs,
+                cache_policy=cache_policy,
             )
             self._nodes[key] = registration
             return node_class
@@ -196,9 +270,16 @@ class Plugin:
         return tuple(self._writer_factories)
 
 
+@dataclass(frozen=True, slots=True)
+class InstalledPlugin:
+    slug: str
+    title: str
+    origin: PluginOrigin
+
+
 class PluginRegistry:
     def __init__(self) -> None:
-        self._plugins: dict[str, Plugin] = {}
+        self._plugins: dict[str, InstalledPlugin] = {}
         self._nodes: dict[tuple[str, int], NodeRegistration] = {}
         self._artifact_types: dict[tuple[str, int], ArtifactTypeSpec] = {}
         self._artifact_conversions: dict[
@@ -209,7 +290,12 @@ class PluginRegistry:
         self._writer_factories: list[WriterFactory] = []
         self._frozen = False
 
-    def install(self, plugin: Plugin) -> None:
+    def install(
+        self,
+        plugin: Plugin,
+        *,
+        origin: PluginOrigin = PluginOrigin.EXTERNAL,
+    ) -> None:
         if self._frozen:
             raise PluginRegistrationError("Plugin registry is frozen")
         if plugin.slug in self._plugins:
@@ -258,7 +344,11 @@ class PluginRegistry:
                 f"{conversion_key.id}@{conversion_key.version} is already installed"
             )
 
-        self._plugins[plugin.slug] = plugin
+        self._plugins[plugin.slug] = InstalledPlugin(
+            slug=plugin.slug,
+            title=plugin.title,
+            origin=origin,
+        )
         for registration in plugin.nodes:
             self._nodes[registration.key] = registration
         for artifact_type in plugin.artifact_types:
@@ -397,7 +487,7 @@ class PluginRegistry:
         self._frozen = True
 
     @property
-    def plugins(self) -> tuple[Plugin, ...]:
+    def plugins(self) -> tuple[InstalledPlugin, ...]:
         return tuple(self._plugins.values())
 
     @property
@@ -412,17 +502,25 @@ class PluginRegistry:
     def artifact_conversions(self) -> tuple[ArtifactConversion[Any, Any], ...]:
         return tuple(self._artifact_conversions.values())
 
+    def node_registration(
+        self,
+        operator_id: str,
+        operator_version: int,
+    ) -> NodeRegistration:
+        registration = self._nodes.get((operator_id, operator_version))
+        if registration is None:
+            raise UnknownOperatorError(
+                f"Unknown operator {operator_id!r} at version {operator_version}"
+            )
+        return registration
+
     def build_node(
         self,
         operator_id: str,
         operator_version: int,
         context: PluginRuntimeContext,
     ) -> Node[Any, Any, Any]:
-        registration = self._nodes.get((operator_id, operator_version))
-        if registration is None:
-            raise UnknownOperatorError(
-                f"Unknown operator {operator_id!r} at version {operator_version}"
-            )
+        registration = self.node_registration(operator_id, operator_version)
         if registration.factory is not None:
             return registration.factory(context)
         node_class = registration.node_class

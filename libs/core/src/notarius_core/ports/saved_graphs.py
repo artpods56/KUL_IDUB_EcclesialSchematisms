@@ -1,14 +1,29 @@
 from types import TracebackType
-from typing import Protocol, Self
+from typing import TYPE_CHECKING, Protocol, Self
 from uuid import UUID
 
-from notarius_core.domain.saved_graphs import SavedGraph
+from notarius_core.domain.saved_graphs import SavedGraph, SavedGraphRevision
+
+if TYPE_CHECKING:
+    from notarius_core.ports.node_secrets import NodeSecretRepositoryPort
 
 
 class SavedGraphRepositoryPort(Protocol):
     async def add(self, graph: SavedGraph) -> None: ...
 
+    async def add_revision(self, revision: SavedGraphRevision) -> None: ...
+
+    async def lock_revision(self, graph_id: UUID, expected_revision: int) -> None: ...
+
     async def get(self, graph_id: UUID) -> SavedGraph | None: ...
+
+    async def get_revision(
+        self,
+        graph_id: UUID,
+        revision: int,
+    ) -> SavedGraphRevision | None: ...
+
+    async def list_revisions(self, graph_id: UUID) -> list[SavedGraphRevision]: ...
 
     async def list(self) -> list[SavedGraph]: ...
 
@@ -18,6 +33,9 @@ class SavedGraphRepositoryPort(Protocol):
 class SavedGraphUnitOfWorkPort(Protocol):
     @property
     def graphs(self) -> SavedGraphRepositoryPort: ...
+
+    @property
+    def node_secrets(self) -> "NodeSecretRepositoryPort": ...
 
     async def __aenter__(self) -> Self: ...
 

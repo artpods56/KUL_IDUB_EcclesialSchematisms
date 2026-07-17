@@ -4,11 +4,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from notarius_core.artifacts import (
-    SOURCE_PAGE_IMAGE,
     ArtifactObject,
+    ArtifactRef,
     ArtifactRefSequence,
     InMemoryUnitOfWork,
 )
+from notarius_core.operators.images import RASTER_IMAGE
+from notarius_core.operators.sequences import ItemAtConfig, SliceConfig
 
 from notarius_api.schemas.workbench import NodeRegistryResponse, RunResponse
 
@@ -35,16 +37,15 @@ def _binding(artifact_type: str, schema_version: int = 1) -> list[dict[str, obje
     ]
 
 
-def test_registry_declares_generic_collect_contract(
+def test_registry_declares_sequence_node_contracts(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.get("/v1/nodes")
 
     assert response.status_code == 200
     registry = NodeRegistryResponse.model_validate(response.json())
-    collect = next(
-        node for node in registry.nodes if node.operator_id == "sequence.collect"
-    )
+    nodes = {node.operator_id: node for node in registry.nodes}
+    collect = nodes["sequence.collect"]
     assert collect.plugin_slug == "builtin.sequence"
     assert collect.title == "Collect"
     assert collect.inputs[0].artifact_type is None
@@ -55,6 +56,121 @@ def test_registry_declares_generic_collect_contract(
     assert collect.outputs[0].artifact_type_variable == "T"
     assert collect.outputs[0].shape == "many"
 
+    count = nodes["sequence.count"]
+    assert count.title == "Count"
+    assert count.inputs[0].name == "items"
+    assert count.inputs[0].artifact_type_variable == "T"
+    assert count.inputs[0].shape == "many"
+    assert count.outputs[0].name == "count"
+    assert count.outputs[0].artifact_type is not None
+    assert count.outputs[0].artifact_type.id == "scalar.integer"
+    assert count.outputs[0].shape == "one"
+
+    slice_node = nodes["sequence.slice"]
+    assert slice_node.title == "Slice"
+    assert slice_node.config_schema == SliceConfig.model_json_schema()
+    assert slice_node.inputs[0].artifact_type_variable == "T"
+    assert slice_node.inputs[0].shape == "many"
+    assert slice_node.outputs[0].artifact_type_variable == "T"
+    assert slice_node.outputs[0].shape == "many"
+
+    item_at = nodes["sequence.item_at"]
+    assert item_at.title == "Pick item"
+    assert item_at.config_schema == ItemAtConfig.model_json_schema()
+    assert item_at.inputs[0].artifact_type_variable == "T"
+    assert item_at.inputs[0].shape == "many"
+    assert item_at.outputs[0].artifact_type_variable == "T"
+    assert item_at.outputs[0].shape == "one"
+
+
+def test_count_slice_and_item_at_preserve_refs_and_artifact_content(
+    builtin_client: TestClient,
+) -> None:
+    response = builtin_client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "numbers",
+                    "operator_id": "arithmetic.integer_sequence",
+                    "operator_version": 1,
+                    "config": {"start": 10, "count": 4, "step": 10},
+                },
+                {
+                    "id": "count",
+                    "operator_id": "sequence.count",
+                    "operator_version": 1,
+                    "config": {},
+                    "artifact_type_bindings": _binding("scalar.integer"),
+                },
+                {
+                    "id": "slice",
+                    "operator_id": "sequence.slice",
+                    "operator_version": 1,
+                    "config": {"start": 1, "count": 2},
+                    "artifact_type_bindings": _binding("scalar.integer"),
+                },
+                {
+                    "id": "pick",
+                    "operator_id": "sequence.item_at",
+                    "operator_version": 1,
+                    "config": {"index": 1},
+                    "artifact_type_bindings": _binding("scalar.integer"),
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "numbers",
+                    "from_port": "values",
+                    "to_node": "count",
+                    "to_port": "items",
+                },
+                {
+                    "from_node": "numbers",
+                    "from_port": "values",
+                    "to_node": "slice",
+                    "to_port": "items",
+                },
+                {
+                    "from_node": "slice",
+                    "from_port": "items",
+                    "to_node": "pick",
+                    "to_port": "items",
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    result = RunResponse.model_validate(response.json())
+    assert result.status == "succeeded"
+    runs = {run.node_id: run for run in result.node_runs}
+    numbers = runs["numbers"].outputs[0]
+    counted = runs["count"].outputs[0]
+    sliced = runs["slice"].outputs[0]
+    picked = runs["pick"].outputs[0]
+    assert isinstance(numbers.value, ArtifactRefSequence)
+    assert isinstance(counted.value, ArtifactRef)
+    assert isinstance(sliced.value, ArtifactRefSequence)
+    assert isinstance(picked.value, ArtifactRef)
+
+    assert sliced.value.item_refs == numbers.value.item_refs[1:3]
+    assert sliced.value.sequence_id != numbers.value.sequence_id
+    assert sliced.value.index_key == numbers.value.index_key
+    assert sliced.value.metadata == {
+        "source_sequence_id": str(numbers.value.sequence_id),
+        "start": 1,
+        "count": 2,
+    }
+    assert picked.value == numbers.value.item_refs[2]
+    assert counted.artifacts[0].text == "4"
+    assert builtin_client.get(
+        f"/v1/artifacts/{counted.value.artifact_id}/content"
+    ).json() == {"value": 4}
+    assert builtin_client.get(
+        f"/v1/artifacts/{picked.value.artifact_id}/content"
+    ).json() == {"value": 30}
+
 
 def test_collect_flattens_image_scalar_and_sequence_in_plug_order(
     conversion_path_client: tuple[TestClient, InMemoryUnitOfWork],
@@ -62,8 +178,8 @@ def test_collect_flattens_image_scalar_and_sequence_in_plug_order(
     client, uow = conversion_path_client
     images = [
         ArtifactObject(
-            artifact_type=SOURCE_PAGE_IMAGE.key.id,
-            schema_version=SOURCE_PAGE_IMAGE.key.schema_version,
+            artifact_type=RASTER_IMAGE.key.id,
+            schema_version=RASTER_IMAGE.key.schema_version,
             content_type="image/png",
             inline_payload={"index": index},
         )
@@ -71,7 +187,7 @@ def test_collect_flattens_image_scalar_and_sequence_in_plug_order(
     ]
     asyncio.run(_store_artifacts(uow, images))
     image_sequence = ArtifactRefSequence.from_key(
-        key=SOURCE_PAGE_IMAGE.key,
+        key=RASTER_IMAGE.key,
         item_refs=[image.ref() for image in images[1:]],
     )
 
@@ -88,7 +204,7 @@ def test_collect_flattens_image_scalar_and_sequence_in_plug_order(
                         {"id": "sequence", "port": "items"},
                         {"id": "single", "port": "items"},
                     ],
-                    "artifact_type_bindings": _binding("source.page_image"),
+                    "artifact_type_bindings": _binding("image.raster"),
                 }
             ],
             "edges": [
@@ -126,7 +242,7 @@ def test_collect_flattens_image_scalar_and_sequence_in_plug_order(
     result = RunResponse.model_validate(response.json())
     output = result.node_runs[0].outputs[0]
     assert isinstance(output.value, ArtifactRefSequence)
-    assert output.value.artifact_type == "source.page_image"
+    assert output.value.artifact_type == "image.raster"
     assert [ref.artifact_id for ref in output.value.item_refs] == [
         images[1].id,
         images[2].id,
@@ -224,13 +340,13 @@ def test_collect_converts_each_input_to_its_bound_text_type(
     ("bindings", "error_fragment"),
     [
         ([], "missing artifact type bindings: T"),
-        (_binding("source.page_image", schema_version=99), "unavailable artifact type"),
+        (_binding("image.raster", schema_version=99), "unavailable artifact type"),
         (
             [
                 {
                     "variable": "U",
                     "artifact_type": {
-                        "id": "source.page_image",
+                        "id": "image.raster",
                         "schema_version": 1,
                     },
                 }
@@ -274,6 +390,54 @@ def test_collect_rejects_invalid_type_bindings(
 
     assert response.status_code == 422
     assert error_fragment in response.json()["detail"]
+
+
+def test_run_rejects_removed_local_upload_operator(
+    builtin_client: TestClient,
+) -> None:
+    response = builtin_client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "legacy-upload",
+                    "operator_id": "source.local_upload.images",
+                    "operator_version": 1,
+                    "config": {},
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Unknown operator 'source.local_upload.images' at version 1"
+    )
+
+
+def test_collect_rejects_removed_page_image_artifact_type(
+    builtin_client: TestClient,
+) -> None:
+    response = builtin_client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "collect",
+                    "operator_id": "sequence.collect",
+                    "operator_version": 1,
+                    "config": {},
+                    "input_plugs": [{"id": "image", "port": "items"}],
+                    "artifact_type_bindings": _binding("source.page_image"),
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+    assert "unavailable artifact type source.page_image@1" in response.json()[
+        "detail"
+    ]
 
 
 @pytest.mark.parametrize("schema_version", [True, 1.5])
@@ -328,7 +492,7 @@ def test_collect_rejects_an_input_with_a_different_artifact_type(
                     "operator_version": 1,
                     "config": {},
                     "input_plugs": [{"id": "number", "port": "items"}],
-                    "artifact_type_bindings": _binding("source.page_image"),
+                    "artifact_type_bindings": _binding("image.raster"),
                 },
             ],
             "edges": [
@@ -344,6 +508,6 @@ def test_collect_rejects_an_input_with_a_different_artifact_type(
     )
 
     assert response.status_code == 422
-    assert "cannot connect scalar.integer@1 to source.page_image@1" in response.json()[
+    assert "cannot connect scalar.integer@1 to image.raster@1" in response.json()[
         "detail"
     ]

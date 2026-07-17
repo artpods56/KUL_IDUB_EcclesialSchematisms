@@ -11,6 +11,8 @@ def test_openapi_contains_exact_public_routes() -> None:
         "/v1/graphs",
         "/v1/graphs/{graph_id}",
         "/v1/graphs/{graph_id}/materializations",
+        "/v1/graphs/{graph_id}/node-secrets",
+        "/v1/graphs/{graph_id}/nodes/{node_id}/secrets/{name}",
         "/v1/nodes",
         "/v1/runs",
         "/v1/samples",
@@ -23,10 +25,51 @@ def test_openapi_contains_exact_public_routes() -> None:
         "put",
     }
     assert set(schema["paths"]["/v1/graphs/{graph_id}/materializations"]) == {"get"}
+    assert set(schema["paths"]["/v1/graphs/{graph_id}/node-secrets"]) == {"get"}
+    assert set(
+        schema["paths"]["/v1/graphs/{graph_id}/nodes/{node_id}/secrets/{name}"]
+    ) == {"delete", "put"}
     node_schema = schema["components"]["schemas"]["NodeSpecResponse"]
     assert "config_schema" in node_schema["properties"]
     assert "supported_invocation_modes" not in node_schema["properties"]
     assert "map_inputs" not in node_schema["properties"]
+
+    plugin_schema = schema["components"]["schemas"]["PluginSpecResponse"]
+    assert plugin_schema["properties"]["origin"] == {
+        "$ref": "#/components/schemas/PluginOrigin"
+    }
+    assert set(plugin_schema["required"]) == {"slug", "title", "origin"}
+    assert schema["components"]["schemas"]["PluginOrigin"] == {
+        "enum": ["builtin", "external", "module"],
+        "title": "PluginOrigin",
+        "type": "string",
+    }
+    assert "module_graph_id" in node_schema["properties"]
+    assert "module_graph_revision" in node_schema["properties"]
+    assert node_schema["properties"]["catalog_visible"] == {
+        "default": True,
+        "title": "Catalog Visible",
+        "type": "boolean",
+    }
+    assert schema["components"]["schemas"]["ImageUploadItemResponse"] == {
+        "properties": {
+            "upload_key": {
+                "title": "Upload Key",
+                "type": "string",
+            },
+            "filename": {
+                "title": "Filename",
+                "type": "string",
+            },
+            "byte_size": {
+                "title": "Byte Size",
+                "type": "integer",
+            },
+        },
+        "required": ["upload_key", "filename", "byte_size"],
+        "title": "ImageUploadItemResponse",
+        "type": "object",
+    }
 
     port_schema = schema["components"]["schemas"]["PortResponse"]
     assert "title" in port_schema["properties"]
@@ -77,9 +120,9 @@ def test_openapi_contains_exact_public_routes() -> None:
         assert saved_node_schema["properties"]["input_plugs"]["items"] == {
             "$ref": "#/components/schemas/SavedGraphInputPlugModel"
         }
-        assert saved_node_schema["properties"]["artifact_type_bindings"][
-            "items"
-        ] == {"$ref": "#/components/schemas/ArtifactTypeBindingModel"}
+        assert saved_node_schema["properties"]["artifact_type_bindings"]["items"] == {
+            "$ref": "#/components/schemas/ArtifactTypeBindingModel"
+        }
     saved_edge_schema = schema["components"]["schemas"]["SavedGraphEdgeModel"]
     assert "to_plug" in saved_edge_schema["properties"]
 

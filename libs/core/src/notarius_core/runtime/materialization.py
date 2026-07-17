@@ -76,10 +76,15 @@ class InputMaterializer:
             edges: list[list[ArtifactRef]]
             if spec.instance_plugs:
                 if not isinstance(value, list):
+                    expected = (
+                        "ArtifactRef or ArtifactRefSequence"
+                        if spec.preserves_ref_container
+                        else "ArtifactRef"
+                    )
                     raise MaterializationError(
                         name,
-                        "expected a list with one ArtifactRef or "
-                        "ArtifactRefSequence per incoming plug, got "
+                        f"expected a list with one {expected} per incoming "
+                        "plug, got "
                         f"{type(value).__name__}",
                     )
                 edges = []
@@ -87,14 +92,21 @@ class InputMaterializer:
                     if isinstance(item, ArtifactRef):
                         edges.append([item])
                         continue
-                    if isinstance(item, ArtifactRefSequence):
+                    if isinstance(item, ArtifactRefSequence) and (
+                        spec.preserves_ref_container
+                    ):
                         _validate_sequence_key(name, item, spec.accepts)
                         edges.append(list(item.item_refs))
                         continue
+                    expected = (
+                        "an ArtifactRef or ArtifactRefSequence"
+                        if spec.preserves_ref_container
+                        else "an ArtifactRef"
+                    )
                     raise MaterializationError(
                         name,
-                        "expected an ArtifactRef or ArtifactRefSequence per "
-                        f"incoming plug, got {type(item).__name__}",
+                        f"expected {expected} per incoming plug, got "
+                        f"{type(item).__name__}",
                     )
             else:
                 match spec.variadic, spec.shape, value:

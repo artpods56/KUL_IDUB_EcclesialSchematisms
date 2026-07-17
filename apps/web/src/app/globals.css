@@ -106,10 +106,36 @@
   transform: translate(-50%, -48%) scale(0.985);
 }
 
+.ns-workbench-toast {
+  transform: translateX(var(--toast-swipe-movement-x));
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+
+.ns-workbench-toast[data-starting-style] {
+  opacity: 0;
+  transform: translateX(14px);
+}
+
+.ns-workbench-toast[data-ending-style] {
+  opacity: 0;
+  transform: translateX(calc(var(--toast-swipe-movement-x) + 18px));
+}
+
+.ns-workbench-toast[data-swiping] {
+  transition: none;
+}
+
+.ns-workbench-toast[data-limited] {
+  display: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ns-dialog-backdrop,
   .ns-dialog-popup,
-  .ns-node-detail {
+  .ns-node-detail,
+  .ns-workbench-toast {
     transition: none;
     animation: none;
   }

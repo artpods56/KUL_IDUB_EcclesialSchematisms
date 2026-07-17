@@ -3,6 +3,7 @@ from uuid import UUID
 
 from notarius_core.artifacts import UnitOfWorkPort
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
+from notarius_core.ports.invocation_cache import InvocationCacheRepositoryPort
 
 
 class MaterializedNodeOutputsRepositoryPort(Protocol):
@@ -25,3 +26,6 @@ class MaterializedNodeOutputsRepositoryPort(Protocol):
 class WorkbenchUnitOfWorkPort(UnitOfWorkPort, Protocol):
     @property
     def materialized_outputs(self) -> MaterializedNodeOutputsRepositoryPort: ...
+
+    @property
+    def invocation_cache(self) -> InvocationCacheRepositoryPort: ...

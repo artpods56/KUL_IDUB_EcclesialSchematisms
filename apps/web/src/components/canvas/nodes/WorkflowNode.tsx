@@ -28,19 +28,42 @@ import type { Port } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import { schemaFields, type SchemaField } from "../config-schema";
 import { encodeHandleId, handleStyle } from "../handles";
-import { inputPlugsForPort } from "../input-plugs";
+import {
+  inputPlugsForPort,
+  reconcileSchemaFieldInputPlugs,
+} from "../input-plugs";
 import { ARTIFACT_TYPE_COLOR } from "../nodes.css";
 import {
-  LOCAL_UPLOAD_OPERATOR_ID,
+  nodeSecretDependencyRevision,
+  nodeSecretInputs,
+  type WorkflowNodeSecretInput,
+  type WorkflowNodeSecretState,
+} from "../node-secrets";
+import {
+  SCHEMA_BUILDER_INPUT_PORT,
+  SCHEMA_BUILDER_OPERATOR_ID,
+  SCHEMA_FIELD_KINDS,
+  SCHEMA_SEQUENCE_ITEM_KINDS,
+  createSchemaBuilderField,
+  moveSchemaBuilderField,
+  schemaBuilderFields,
+  schemaFieldConsumesInput,
+  withSchemaFieldKind,
+  type SchemaBuilderField,
+  type SchemaFieldKind,
+  type SchemaSequenceItemKind,
+} from "../schema-builder";
+import {
+  IMAGE_UPLOAD_OPERATOR_ID,
   WORKFLOW_NODE_TYPE,
   acceptedPortShapes,
   declaredArtifactTypeVariables,
   effectivePortShape,
+  imageUploadSizeLabel,
+  imageUploads,
   portHasInstancePlugs,
   portMetaForPort,
   resolvedPortArtifactType,
-  selectionSizeLabel,
-  selectedSourceItems,
   type WorkflowNodeData,
 } from "../types";
 import { ArtifactsAppendix } from "./ArtifactsAppendix";
@@ -512,13 +535,373 @@ const s = stylex.create({
   },
   check: { accentColor: tokens.colorAccent },
   required: { color: tokens.colorWarning, fontSize: tokens.fontSizeSm },
-  error: {
-    overflow: "hidden",
-    color: tokens.colorDanger,
+  secretList: {
+    display: "grid",
+    gap: "10px",
+    paddingTop: "10px",
+    borderTopWidth: "1px",
+    borderTopStyle: "solid",
+    borderTopColor: tokens.colorDivider,
+  },
+  secretField: { display: "grid", gap: "5px" },
+  secretHeader: {
+    minWidth: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+  },
+  secretStatus: {
+    flexShrink: 0,
+    color: tokens.colorSubtle,
+    fontSize: "10px",
+    fontWeight: 750,
+  },
+  secretStatusConfigured: { color: tokens.colorSuccess },
+  secretStatusStale: { color: tokens.colorWarning },
+  secretStatusError: { color: tokens.colorDanger },
+  secretControl: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) auto",
+    gap: "5px",
+  },
+  secretInput: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
+  secretButton: {
+    minWidth: "54px",
+    height: "31px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "5px",
+    paddingInline: "9px",
+    borderWidth: 0,
+    borderRadius: "8px",
+    backgroundColor: {
+      default: tokens.colorAccentSoft,
+      ":hover": tokens.colorHoverStrong,
+    },
+    color: tokens.colorTextEmphasis,
+    cursor: "pointer",
+    fontSize: "10px",
+    fontWeight: 750,
+  },
+  secretButtonDisabled: {
+    backgroundColor: tokens.colorSurfaceMuted,
+    color: tokens.colorTextDisabled,
+    cursor: "not-allowed",
+  },
+  secretFooter: {
+    minHeight: "18px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+  },
+  secretHint: {
+    margin: 0,
+    color: tokens.colorSubtle,
+    fontSize: "10px",
+    lineHeight: 1.35,
+  },
+  secretRemove: {
+    flexShrink: 0,
+    padding: 0,
+    borderWidth: 0,
+    backgroundColor: "transparent",
+    color: {
+      default: tokens.colorSubtle,
+      ":hover": tokens.colorDanger,
+    },
+    cursor: "pointer",
+    fontSize: "10px",
+    fontWeight: 650,
+  },
+  secretRemoveDisabled: {
+    color: tokens.colorTextDisabled,
+    cursor: "not-allowed",
+  },
+  schemaBody: {
+    display: "grid",
+    gap: "10px",
+    padding: "0 8px 12px",
+  },
+  schemaMetadata: {
+    display: "grid",
+    gap: "6px",
+    paddingInline: "4px",
+  },
+  schemaMetadataRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) auto",
+    alignItems: "end",
+    gap: "6px",
+  },
+  schemaMetadataField: { display: "grid", gap: "3px" },
+  schemaMetadataLabel: {
+    color: tokens.colorMuted,
+    fontSize: "10px",
+    fontWeight: 700,
+  },
+  schemaCompactInput: {
+    width: "100%",
+    minWidth: 0,
+    height: "28px",
+    paddingInline: "8px",
+    borderWidth: 0,
+    borderRadius: "7px",
+    outline: {
+      default: "none",
+      ":focus": `2px solid ${tokens.colorAccentBorder}`,
+    },
+    backgroundColor: tokens.colorSurfaceMuted,
+    color: tokens.colorText,
     fontSize: tokens.fontSizeXs,
-    lineHeight: 1.4,
+  },
+  schemaToggle: {
+    height: "28px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingInline: "8px",
+    borderWidth: 0,
+    borderRadius: "7px",
+    backgroundColor: {
+      default: tokens.colorSurfaceMuted,
+      ":hover": tokens.colorHoverStrong,
+    },
+    color: tokens.colorMuted,
+    cursor: "pointer",
+    fontSize: "10px",
+    fontWeight: 700,
+    whiteSpace: "nowrap",
+  },
+  schemaToggleActive: {
+    backgroundColor: tokens.colorAccentSoft,
+    color: tokens.colorTextEmphasis,
+    boxShadow: `inset 0 0 0 1px ${tokens.colorAccentBorder}`,
+  },
+  schemaFieldsSection: { display: "grid", gap: "5px" },
+  schemaFieldsHeader: {
+    minHeight: "24px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+    paddingInline: "5px",
+  },
+  schemaFieldsTitle: {
+    color: tokens.colorTextEmphasis,
+    fontSize: tokens.fontSizeXs,
+    fontWeight: 750,
+  },
+  schemaFieldsCount: { color: tokens.colorSubtle, fontSize: "10px" },
+  schemaFieldList: {
+    display: "grid",
+    gap: "5px",
+  },
+  schemaEmpty: {
+    margin: 0,
+    padding: "12px 10px",
+    borderRadius: "8px",
+    backgroundColor: tokens.colorSurfaceMuted,
+    color: tokens.colorSubtle,
+    fontSize: tokens.fontSizeXs,
+    lineHeight: 1.45,
+    textAlign: "center",
+  },
+  schemaFieldRow: {
+    position: "relative",
+    minWidth: 0,
+    display: "grid",
+    gap: "5px",
+    padding: "6px 6px 6px 28px",
+    borderRadius: "9px",
+    backgroundColor: tokens.colorSurfaceMuted,
+  },
+  schemaFieldRowDragging: {
+    backgroundColor: tokens.colorAccentSoft,
+    boxShadow: `inset 0 0 0 1px ${tokens.colorAccentBorder}`,
+  },
+  schemaFieldTop: {
+    minWidth: 0,
+    display: "grid",
+    gridTemplateColumns: "18px 18px minmax(0, 1fr) 92px",
+    alignItems: "center",
+    gap: "4px",
+  },
+  schemaFieldGrip: {
+    width: "18px",
+    height: "26px",
+    display: "grid",
+    placeItems: "center",
+    padding: 0,
+    borderWidth: 0,
+    borderRadius: "5px",
+    backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
+    color: tokens.colorSubtle,
+    cursor: "grab",
+    touchAction: "none",
+  },
+  schemaFieldIndex: {
+    color: tokens.colorSubtle,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontSize: "10px",
+    textAlign: "center",
+  },
+  schemaSelect: {
+    width: "100%",
+    minWidth: 0,
+    height: "28px",
+    paddingInline: "7px",
+    borderWidth: 0,
+    borderRadius: "7px",
+    outline: {
+      default: "none",
+      ":focus": `2px solid ${tokens.colorAccentBorder}`,
+    },
+    backgroundColor: tokens.colorSurface,
+    color: tokens.colorTextEmphasis,
+    fontSize: "10px",
+    fontWeight: 650,
+  },
+  schemaFieldDetail: {
+    minWidth: 0,
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) auto auto",
+    alignItems: "center",
+    gap: "4px",
+    marginLeft: "40px",
+  },
+  schemaRequired: {
+    height: "24px",
+    paddingInline: "7px",
+    borderWidth: 0,
+    borderRadius: "6px",
+    backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
+    color: tokens.colorSubtle,
+    cursor: "pointer",
+    fontSize: "10px",
+    fontWeight: 700,
+  },
+  schemaRequiredActive: {
+    backgroundColor: tokens.colorAccentSoft,
+    color: tokens.colorWarning,
+  },
+  schemaFieldActions: { display: "flex", alignItems: "center", gap: "1px" },
+  schemaFieldAction: {
+    width: "18px",
+    height: "22px",
+    display: "grid",
+    placeItems: "center",
+    padding: 0,
+    borderWidth: 0,
+    borderRadius: "5px",
+    backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
+    color: { default: tokens.colorSubtle, ":hover": tokens.colorText },
+    cursor: "pointer",
+  },
+  schemaFieldActionDisabled: {
+    color: tokens.colorTextDisabled,
+    cursor: "default",
+    opacity: 0.45,
+  },
+  schemaFieldRemove: {
+    backgroundColor: {
+      default: "transparent",
+      ":hover": tokens.colorDangerHover,
+    },
+    color: { default: tokens.colorSubtle, ":hover": tokens.colorDanger },
+  },
+  schemaItemRow: {
+    minWidth: 0,
+    minHeight: "26px",
+    display: "grid",
+    gridTemplateColumns: "40px 92px minmax(0, 1fr)",
+    alignItems: "center",
+    gap: "4px",
+    marginLeft: "40px",
+  },
+  schemaItemLabel: {
+    color: tokens.colorSubtle,
+    fontSize: "10px",
+    fontWeight: 700,
+  },
+  schemaConnection: {
+    overflow: "hidden",
+    color: tokens.colorMuted,
+    fontSize: "10px",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
+  },
+  schemaConnectionBound: { color: tokens.colorTextEmphasis, fontWeight: 650 },
+  schemaAddField: {
+    minHeight: "28px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "5px",
+    borderWidth: 0,
+    borderRadius: "8px",
+    backgroundColor: {
+      default: tokens.colorSurfaceMuted,
+      ":hover": tokens.colorHoverStrong,
+    },
+    color: tokens.colorMuted,
+    cursor: "pointer",
+    fontSize: tokens.fontSizeXs,
+    fontWeight: 700,
+  },
+  errorAppendix: {
+    width: "300px",
+    display: "grid",
+    gridTemplateColumns: "3px minmax(0, 1fr)",
+    marginTop: "6px",
+    overflow: "hidden",
+    borderRadius: tokens.radiusLg,
+    backgroundColor: tokens.colorSurface,
+    boxShadow: tokens.shadowNode,
+    color: tokens.colorText,
+    boxSizing: "border-box",
+  },
+  errorAccent: { backgroundColor: tokens.colorDanger },
+  errorContent: {
+    minWidth: 0,
+    display: "grid",
+    gap: "6px",
+    padding: "10px 12px 11px",
+  },
+  errorHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: "7px",
+  },
+  errorScope: {
+    padding: "1px 6px",
+    borderRadius: "9999px",
+    backgroundColor: tokens.colorSurfaceMuted,
+    color: tokens.colorTextEmphasis,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontSize: "10px",
+    fontWeight: 800,
+    letterSpacing: "0.06em",
+  },
+  errorTitle: {
+    color: tokens.colorMuted,
+    fontSize: "10px",
+    fontWeight: 750,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+  },
+  errorMessage: {
+    maxHeight: "144px",
+    overflowY: "auto",
+    margin: 0,
+    color: tokens.colorTextEmphasis,
+    fontSize: tokens.fontSizeXs,
+    lineHeight: 1.5,
+    userSelect: "text",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
   },
   emptyBody: {
     padding: "0 16px 14px",
@@ -1034,8 +1417,134 @@ function ConfigField({
   );
 }
 
-function SourceBody({ id, data }: { id: string; data: WorkflowNodeData }) {
-  const items = selectedSourceItems(data);
+const SECRET_STATUS_LABEL: Record<WorkflowNodeSecretState, string> = {
+  unknown: "Status unavailable",
+  loading: "Checking…",
+  unconfigured: "Not configured",
+  configured: "Configured",
+  stale: "Stale",
+  applying: "Applying…",
+  removing: "Removing…",
+  error: "Action failed",
+};
+
+function SecretInputField({
+  id,
+  data,
+  input,
+}: {
+  id: string;
+  data: WorkflowNodeData;
+  input: WorkflowNodeSecretInput;
+}) {
+  const [value, setValue] = React.useState("");
+  const storedStatus = data.secretStatuses[input.name] ?? { state: "unknown" };
+  const ready = data.secretInputReadiness[input.name] ?? false;
+  const status = !ready && storedStatus.state === "configured"
+    ? { state: "stale" as const }
+    : storedStatus;
+  const busy = status.state === "applying" || status.state === "removing";
+  const canApply =
+    ready && !busy && value.length > 0 &&
+    Boolean(data.onApplyNodeSecret);
+  const canRemove =
+    ready && !busy && status.state === "configured" &&
+    Boolean(data.onRemoveNodeSecret);
+  const hint = !ready
+    ? status.state === "stale"
+      ? "Save the changed secret settings, then apply a new secret."
+      : "Save this node before configuring this secret."
+    : status.state === "stale"
+      ? "Apply a key for the current endpoint."
+      : status.state === "error"
+        ? status.message ?? "The secret action could not be completed."
+        : input.description ?? "Write-only · the stored value cannot be read back.";
+
+  return (
+    <form
+      {...nodeInteractionProps(stylex.props(s.secretField))}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!canApply) return;
+        void data.onApplyNodeSecret?.(id, input.name, value).then((applied) => {
+          if (applied) setValue("");
+        });
+      }}
+    >
+      <div {...stylex.props(s.secretHeader)}>
+        <span {...stylex.props(s.fieldLabel)}>{input.title}</span>
+        <span
+          role="status"
+          {...stylex.props(
+            s.secretStatus,
+            status.state === "configured" ? s.secretStatusConfigured : null,
+            status.state === "stale" ? s.secretStatusStale : null,
+            status.state === "error" ? s.secretStatusError : null,
+          )}
+        >
+          {SECRET_STATUS_LABEL[status.state]}
+        </span>
+      </div>
+      <div {...stylex.props(s.secretControl)}>
+        <input
+          type="password"
+          name={`${id}-${input.name}`}
+          value={value}
+          autoComplete="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          data-1p-ignore
+          data-lpignore="true"
+          data-bwignore
+          aria-label={input.title}
+          placeholder={status.state === "configured" ? "Replace secret" : "Enter secret"}
+          disabled={!ready || busy}
+          {...nodeInteractionProps(stylex.props(s.input, s.secretInput))}
+          onChange={(event) => setValue(event.currentTarget.value)}
+        />
+        <button
+          type="submit"
+          disabled={!canApply}
+          {...nodeInteractionProps(
+            stylex.props(
+              s.secretButton,
+              canApply ? null : s.secretButtonDisabled,
+            ),
+          )}
+        >
+          {status.state === "applying" ? (
+            <LoaderCircle size={11} {...stylex.props(s.spinner)} />
+          ) : null}
+          Apply
+        </button>
+      </div>
+      <div {...stylex.props(s.secretFooter)}>
+        <p {...stylex.props(s.secretHint)}>{hint}</p>
+        <button
+          type="button"
+          disabled={!canRemove}
+          {...nodeInteractionProps(
+            stylex.props(
+              s.secretRemove,
+              canRemove ? null : s.secretRemoveDisabled,
+            ),
+          )}
+          onClick={() => {
+            if (!canRemove) return;
+            void data.onRemoveNodeSecret?.(id, input.name).then((removed) => {
+              if (removed) setValue("");
+            });
+          }}
+        >
+          Remove
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function ImageUploadBody({ id, data }: { id: string; data: WorkflowNodeData }) {
+  const uploads = imageUploads(data);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   return (
@@ -1049,7 +1558,7 @@ function SourceBody({ id, data }: { id: string; data: WorkflowNodeData }) {
         onChange={(event) => {
           const files = Array.from(event.currentTarget.files ?? []);
           event.currentTarget.value = "";
-          if (files.length) data.onFilesSelected?.(id, files);
+          if (files.length) data.onImagesSelected?.(id, files);
         }}
       />
       <button
@@ -1064,30 +1573,30 @@ function SourceBody({ id, data }: { id: string; data: WorkflowNodeData }) {
         )}
         {data.execution.status === "uploading"
           ? "Uploading…"
-          : items.length
+          : uploads.length
             ? "Replace images"
             : "Choose images"}
       </button>
-      {items.length ? (
+      {uploads.length ? (
         <div {...nodeInteractionProps(stylex.props(s.fileList))}>
-          {items.map((item, index) => (
+          {uploads.map((upload, index) => (
             <div
-              key={`${item.external_uri}-${index}`}
+              key={`${upload.upload_key}-${index}`}
               {...stylex.props(s.fileRow)}
             >
               <span {...stylex.props(s.fileIndex)}>
                 {String(index + 1).padStart(2, "0")}
               </span>
-              <span {...stylex.props(s.fileName)}>{item.display_name}</span>
+              <span {...stylex.props(s.fileName)}>{upload.filename}</span>
               <span {...stylex.props(s.fileSize)}>
-                {selectionSizeLabel(item.size_bytes)}
+                {imageUploadSizeLabel(upload.byte_size)}
               </span>
               <button
                 type="button"
-                aria-label={`Remove ${item.display_name}`}
-                title={`Remove ${item.display_name}`}
+                aria-label={`Remove ${upload.filename}`}
+                title={`Remove ${upload.filename}`}
                 {...nodeInteractionProps(stylex.props(s.fileRemove))}
-                onClick={() => data.onRemoveSelection?.(id, index)}
+                onClick={() => data.onRemoveImageUpload?.(id, index)}
               >
                 <Trash2 size={10} />
               </button>
@@ -1099,40 +1608,495 @@ function SourceBody({ id, data }: { id: string; data: WorkflowNodeData }) {
           PNG, JPEG, WebP, TIFF or BMP · ordered as selected
         </p>
       )}
-      {data.execution.error ? (
-        <div {...stylex.props(s.error)} title={data.execution.error}>
-          {data.execution.error}
+    </div>
+  );
+}
+
+const SCHEMA_FIELD_KIND_LABELS: Record<SchemaFieldKind, string> = {
+  string: "Text",
+  integer: "Integer",
+  number: "Number",
+  boolean: "Boolean",
+  sequence: "Sequence",
+  schema: "Schema",
+};
+
+const SCHEMA_ITEM_KIND_LABELS: Record<SchemaSequenceItemKind, string> = {
+  string: "Text",
+  integer: "Integer",
+  number: "Number",
+  boolean: "Boolean",
+  schema: "Schema",
+};
+
+function SchemaBuilderBody({
+  id,
+  data,
+}: {
+  id: string;
+  data: WorkflowNodeData;
+}) {
+  const fields = schemaBuilderFields(data.config.fields);
+  const inputPort = data.spec.inputs.find(
+    (port) => port.name === SCHEMA_BUILDER_INPUT_PORT,
+  );
+  const artifactType = inputPort
+    ? resolvedPortArtifactType(inputPort, data.artifactTypeBindings)
+    : null;
+  const handleColor = artifactType
+    ? ARTIFACT_TYPE_COLOR[artifactType.id] ?? tokens.colorAccent
+    : tokens.colorAccent;
+  const [draggedFieldId, setDraggedFieldId] = React.useState<string | null>(
+    null,
+  );
+  const draggedFieldIdRef = React.useRef<string | null>(null);
+  const lastPointerTargetRef = React.useRef<string | null>(null);
+
+  const commitFields = (nextFields: readonly SchemaBuilderField[]) => {
+    const nextInputPlugs = reconcileSchemaFieldInputPlugs(
+      data.inputPlugs,
+      nextFields,
+      SCHEMA_BUILDER_INPUT_PORT,
+    );
+    if (data.onSchemaBuilderFieldsChange) {
+      data.onSchemaBuilderFieldsChange(id, nextFields, nextInputPlugs);
+    } else {
+      data.onConfigChange?.(id, "fields", nextFields);
+    }
+  };
+
+  const replaceField = (fieldId: string, nextField: SchemaBuilderField) => {
+    commitFields(
+      fields.map((field) => (field.id === fieldId ? nextField : field)),
+    );
+  };
+
+  const finishPointerDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    draggedFieldIdRef.current = null;
+    lastPointerTargetRef.current = null;
+    setDraggedFieldId(null);
+  };
+
+  return (
+    <div {...stylex.props(s.schemaBody)}>
+      <div {...stylex.props(s.schemaMetadata)}>
+        <div {...stylex.props(s.schemaMetadataRow)}>
+          <label {...stylex.props(s.schemaMetadataField)}>
+            <span {...stylex.props(s.schemaMetadataLabel)}>
+              Schema title · optional
+            </span>
+            <input
+              type="text"
+              value={
+                typeof data.config.title === "string" ? data.config.title : ""
+              }
+              placeholder="Response"
+              {...nodeInteractionProps(stylex.props(s.schemaCompactInput))}
+              onChange={(event) =>
+                data.onConfigChange?.(id, "title", event.currentTarget.value)
+              }
+            />
+          </label>
+          <button
+            type="button"
+            aria-pressed={data.config.additional_properties === true}
+            title="Allow properties not declared below"
+            {...nodeInteractionProps(
+              stylex.props(
+                s.schemaToggle,
+                data.config.additional_properties === true
+                  ? s.schemaToggleActive
+                  : null,
+              ),
+            )}
+            onClick={() =>
+              data.onConfigChange?.(
+                id,
+                "additional_properties",
+                data.config.additional_properties !== true,
+              )
+            }
+          >
+            Extra fields
+          </button>
         </div>
-      ) : null}
+        <label {...stylex.props(s.schemaMetadataField)}>
+          <span {...stylex.props(s.schemaMetadataLabel)}>
+            Description · optional
+          </span>
+          <input
+            type="text"
+            value={
+              typeof data.config.description === "string"
+                ? data.config.description
+                : ""
+            }
+            placeholder="What this response contains"
+            {...nodeInteractionProps(stylex.props(s.schemaCompactInput))}
+            onChange={(event) =>
+              data.onConfigChange?.(
+                id,
+                "description",
+                event.currentTarget.value,
+              )
+            }
+          />
+        </label>
+      </div>
+
+      <section {...stylex.props(s.schemaFieldsSection)} aria-label="Schema fields">
+        <div {...stylex.props(s.schemaFieldsHeader)}>
+          <span {...stylex.props(s.schemaFieldsTitle)}>Fields</span>
+          <span {...stylex.props(s.schemaFieldsCount)}>
+            {fields.length} {fields.length === 1 ? "field" : "fields"} · ordered
+          </span>
+        </div>
+
+        {fields.length ? (
+          <div
+            {...nodeInteractionProps(stylex.props(s.schemaFieldList))}
+          >
+            {fields.map((field, index) => {
+              const consumesInput = schemaFieldConsumesInput(field);
+              const binding = data.inputPlugBindings[field.id];
+              const connectionLabel = binding?.sourceLabel ?? "Connect schema";
+              return (
+                <div
+                  key={field.id}
+                  data-schema-field-id={field.id}
+                  {...stylex.props(
+                    s.schemaFieldRow,
+                    draggedFieldId === field.id
+                      ? s.schemaFieldRowDragging
+                      : null,
+                  )}
+                >
+                  {consumesInput && inputPort ? (
+                    <Handle
+                      className="nodrag nowheel"
+                      type="target"
+                      position={Position.Left}
+                      id={encodeHandleId(
+                        portMetaForPort(
+                          inputPort,
+                          inputPort.shape,
+                          field.id,
+                          data.artifactTypeBindings,
+                        ),
+                      )}
+                      aria-label={`Nested schema for ${field.name || `field ${index + 1}`}`}
+                      title="Connect one JSON Schema output here."
+                      style={handleStyle("19px", handleColor, true)}
+                    />
+                  ) : null}
+
+                  <div {...stylex.props(s.schemaFieldTop)}>
+                    <button
+                      type="button"
+                      aria-label={`Drag to reorder field ${index + 1}`}
+                      title="Drag to reorder; arrow buttons also move this field"
+                      {...nodeInteractionProps(
+                        stylex.props(s.schemaFieldGrip),
+                      )}
+                      onPointerDown={(event) => {
+                        if (event.button !== 0) return;
+                        event.stopPropagation();
+                        event.currentTarget.setPointerCapture(event.pointerId);
+                        draggedFieldIdRef.current = field.id;
+                        lastPointerTargetRef.current = field.id;
+                        setDraggedFieldId(field.id);
+                      }}
+                      onPointerMove={(event) => {
+                        const activeFieldId = draggedFieldIdRef.current;
+                        if (!activeFieldId) return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const target = document
+                          .elementFromPoint(event.clientX, event.clientY)
+                          ?.closest<HTMLElement>("[data-schema-field-id]");
+                        const targetFieldId = target?.dataset.schemaFieldId;
+                        if (targetFieldId === activeFieldId) {
+                          lastPointerTargetRef.current = null;
+                          return;
+                        }
+                        if (
+                          !targetFieldId ||
+                          targetFieldId === lastPointerTargetRef.current
+                        ) {
+                          return;
+                        }
+                        const targetIndex = fields.findIndex(
+                          (candidate) => candidate.id === targetFieldId,
+                        );
+                        if (targetIndex === -1) return;
+                        lastPointerTargetRef.current = targetFieldId;
+                        commitFields(
+                          moveSchemaBuilderField(
+                            fields,
+                            activeFieldId,
+                            targetIndex,
+                          ),
+                        );
+                      }}
+                      onPointerUp={finishPointerDrag}
+                      onPointerCancel={finishPointerDrag}
+                    >
+                      <GripVertical size={12} />
+                    </button>
+                    <span {...stylex.props(s.schemaFieldIndex)}>
+                      {index + 1}
+                    </span>
+                    <input
+                      type="text"
+                      value={field.name}
+                      placeholder="field_name"
+                      aria-label={`Field ${index + 1} name`}
+                      {...nodeInteractionProps(
+                        stylex.props(s.schemaCompactInput),
+                      )}
+                      onChange={(event) =>
+                        replaceField(field.id, {
+                          ...field,
+                          name: event.currentTarget.value,
+                        })
+                      }
+                    />
+                    <select
+                      value={field.kind}
+                      aria-label={`Field ${index + 1} type`}
+                      {...nodeInteractionProps(stylex.props(s.schemaSelect))}
+                      onChange={(event) =>
+                        replaceField(
+                          field.id,
+                          withSchemaFieldKind(
+                            field,
+                            event.currentTarget.value as SchemaFieldKind,
+                          ),
+                        )
+                      }
+                    >
+                      {SCHEMA_FIELD_KINDS.map((kind) => (
+                        <option key={kind} value={kind}>
+                          {SCHEMA_FIELD_KIND_LABELS[kind]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div {...stylex.props(s.schemaFieldDetail)}>
+                    <input
+                      type="text"
+                      value={field.description}
+                      placeholder="Description (optional)"
+                      aria-label={`Field ${index + 1} description`}
+                      {...nodeInteractionProps(
+                        stylex.props(s.schemaCompactInput),
+                      )}
+                      onChange={(event) =>
+                        replaceField(field.id, {
+                          ...field,
+                          description: event.currentTarget.value,
+                        })
+                      }
+                    />
+                    <button
+                      type="button"
+                      aria-pressed={field.required}
+                      aria-label={`${field.required ? "Make" : "Mark"} field ${index + 1} ${field.required ? "optional" : "required"}`}
+                      {...nodeInteractionProps(
+                        stylex.props(
+                          s.schemaRequired,
+                          field.required ? s.schemaRequiredActive : null,
+                        ),
+                      )}
+                      onClick={() =>
+                        replaceField(field.id, {
+                          ...field,
+                          required: !field.required,
+                        })
+                      }
+                    >
+                      Required
+                    </button>
+                    <span {...stylex.props(s.schemaFieldActions)}>
+                      <button
+                        type="button"
+                        disabled={index === 0}
+                        aria-label={`Move field ${index + 1} up`}
+                        title="Move field up"
+                        {...nodeInteractionProps(
+                          stylex.props(
+                            s.schemaFieldAction,
+                            index === 0
+                              ? s.schemaFieldActionDisabled
+                              : null,
+                          ),
+                        )}
+                        onClick={() =>
+                          commitFields(
+                            moveSchemaBuilderField(fields, field.id, index - 1),
+                          )
+                        }
+                      >
+                        <ArrowUp size={10} />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={index === fields.length - 1}
+                        aria-label={`Move field ${index + 1} down`}
+                        title="Move field down"
+                        {...nodeInteractionProps(
+                          stylex.props(
+                            s.schemaFieldAction,
+                            index === fields.length - 1
+                              ? s.schemaFieldActionDisabled
+                              : null,
+                          ),
+                        )}
+                        onClick={() =>
+                          commitFields(
+                            moveSchemaBuilderField(fields, field.id, index + 1),
+                          )
+                        }
+                      >
+                        <ArrowDown size={10} />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Remove field ${index + 1}`}
+                        title="Remove field and its connection"
+                        {...nodeInteractionProps(
+                          stylex.props(
+                            s.schemaFieldAction,
+                            s.schemaFieldRemove,
+                          ),
+                        )}
+                        onClick={() =>
+                          commitFields(
+                            fields.filter(
+                              (candidate) => candidate.id !== field.id,
+                            ),
+                          )
+                        }
+                      >
+                        <Trash2 size={10} />
+                      </button>
+                    </span>
+                  </div>
+
+                  {field.kind === "sequence" ? (
+                    <div {...stylex.props(s.schemaItemRow)}>
+                      <span {...stylex.props(s.schemaItemLabel)}>Items</span>
+                      <select
+                        value={field.item_kind}
+                        aria-label={`Field ${index + 1} item type`}
+                        {...nodeInteractionProps(stylex.props(s.schemaSelect))}
+                        onChange={(event) =>
+                          replaceField(field.id, {
+                            ...field,
+                            item_kind: event.currentTarget
+                              .value as SchemaSequenceItemKind,
+                          })
+                        }
+                      >
+                        {SCHEMA_SEQUENCE_ITEM_KINDS.map((kind) => (
+                          <option key={kind} value={kind}>
+                            {SCHEMA_ITEM_KIND_LABELS[kind]}
+                          </option>
+                        ))}
+                      </select>
+                      {field.item_kind === "schema" ? (
+                        <span
+                          title={connectionLabel}
+                          {...stylex.props(
+                            s.schemaConnection,
+                            binding ? s.schemaConnectionBound : null,
+                          )}
+                        >
+                          {connectionLabel}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : field.kind === "schema" ? (
+                    <div {...stylex.props(s.schemaItemRow)}>
+                      <span {...stylex.props(s.schemaItemLabel)}>Value</span>
+                      <span
+                        title={connectionLabel}
+                        {...stylex.props(
+                          s.schemaConnection,
+                          binding ? s.schemaConnectionBound : null,
+                        )}
+                        style={{ gridColumn: "2 / -1" }}
+                      >
+                        {connectionLabel}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p {...stylex.props(s.schemaEmpty)}>
+            Add a field to define this object schema.
+          </p>
+        )}
+
+        <button
+          type="button"
+          {...nodeInteractionProps(stylex.props(s.schemaAddField))}
+          onClick={() => {
+            const names = new Set(fields.map((field) => field.name));
+            let fieldNumber = fields.length + 1;
+            while (names.has(`field_${fieldNumber}`)) fieldNumber += 1;
+            commitFields([
+              ...fields,
+              createSchemaBuilderField(fieldNumber - 1),
+            ]);
+          }}
+        >
+          <Plus size={11} />
+          Add field
+        </button>
+      </section>
     </div>
   );
 }
 
 function GenericBody({ id, data }: { id: string; data: WorkflowNodeData }) {
   const fields = schemaFields(data.spec.config_schema);
-  if (!fields.length && !data.execution.error) return null;
+  const secretInputs = nodeSecretInputs(data.spec);
+  if (!fields.length && !secretInputs.length) return null;
 
   return (
     <div {...stylex.props(s.body)}>
-      {fields.length ? (
-        <div {...stylex.props(s.configList)}>
-          {fields.map((field) => (
-            <ConfigField
-              key={field.name}
-              field={field}
-              value={data.config[field.name]}
-              onChange={(value) =>
-                data.onConfigChange?.(id, field.name, value)
-              }
-            />
-          ))}
-        </div>
-      ) : null}
-      {data.execution.error ? (
-        <div {...stylex.props(s.error)} title={data.execution.error}>
-          {data.execution.error}
-        </div>
-      ) : null}
+      <div {...stylex.props(s.configList)}>
+        {fields.map((field) => (
+          <ConfigField
+            key={field.name}
+            field={field}
+            value={data.config[field.name]}
+            onChange={(value) =>
+              data.onConfigChange?.(id, field.name, value)
+            }
+          />
+        ))}
+        {secretInputs.length ? (
+          <div {...stylex.props(s.secretList)}>
+            {secretInputs.map((input) => (
+              <SecretInputField
+                key={`${data.secretInputScope}:${input.name}:${nodeSecretDependencyRevision(input, data.config)}`}
+                id={id}
+                data={data}
+                input={input}
+              />
+            ))}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -1180,7 +2144,9 @@ function NodeHeader({ id, data }: { id: string; data: WorkflowNodeData }) {
         </span>
       </span>
       <span {...stylex.props(s.operator)} title={data.spec.description}>
-        {data.spec.operator_id}@{data.spec.operator_version}
+        {typeof data.spec.module_graph_revision === "number"
+          ? `Module · r${data.spec.module_graph_revision}`
+          : `${data.spec.operator_id}@${data.spec.operator_version}`}
       </span>
     </header>
   );
@@ -1188,8 +2154,17 @@ function NodeHeader({ id, data }: { id: string; data: WorkflowNodeData }) {
 
 function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
   const fields = schemaFields(data.spec.config_schema);
-  const isUpload = data.spec.operator_id === LOCAL_UPLOAD_OPERATOR_ID;
-  const hasConfig = fields.length > 0;
+  const secretInputs = nodeSecretInputs(data.spec);
+  const isImageUpload = data.spec.operator_id === IMAGE_UPLOAD_OPERATOR_ID;
+  const isSchemaBuilder =
+    data.spec.operator_id === SCHEMA_BUILDER_OPERATOR_ID;
+  const visibleInputPorts = isSchemaBuilder
+    ? data.spec.inputs.filter(
+        (port) => port.name !== SCHEMA_BUILDER_INPUT_PORT,
+      )
+    : data.spec.inputs;
+  const hasConfig = fields.length > 0 || secretInputs.length > 0;
+  const hasExecutionError = Boolean(data.execution.error);
   const producedArtifactCount = (data.run?.outputs ?? []).reduce(
     (count, output) => count + output.artifacts.length,
     0,
@@ -1197,6 +2172,9 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
   const inputPlugRevision = data.inputPlugs
     .map((plug) => `${plug.portName}:${plug.id}`)
     .join("|");
+  const schemaBuilderRevision = isSchemaBuilder
+    ? JSON.stringify(data.config.fields ?? [])
+    : "";
   const artifactTypeBindingRevision = Object.entries(data.artifactTypeBindings)
     .map(
       ([variable, artifactType]) =>
@@ -1206,34 +2184,52 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
     .join("|");
   const incidentConnections = useNodeConnections({ id });
   const updateNodeInternals = useUpdateNodeInternals();
+  const measuredArtifactTypeBindings = data.artifactTypeBindings;
+  const onHandlesMeasured = data.onHandlesMeasured;
 
   React.useEffect(() => {
-    const frame = window.requestAnimationFrame(() => updateNodeInternals(id));
+    // React Flow measures handles in the animation frame queued here. Queue the
+    // readiness callback afterward so a concrete generic handle is registered
+    // before Workbench publishes an edge that targets it.
+    updateNodeInternals(id);
+    const frame = window.requestAnimationFrame(() =>
+      onHandlesMeasured?.(id, measuredArtifactTypeBindings),
+    );
     return () => window.cancelAnimationFrame(frame);
   }, [
+    measuredArtifactTypeBindings,
     data.mappedInputPort,
     artifactTypeBindingRevision,
     inputPlugRevision,
+    schemaBuilderRevision,
     data.spec.inputs.length,
     data.spec.outputs.length,
     fields.length,
+    secretInputs.length,
+    hasExecutionError,
     producedArtifactCount,
+    onHandlesMeasured,
     id,
     updateNodeInternals,
   ]);
 
   return (
     <>
-      <article {...stylex.props(s.shell, selected ? s.selected : null)}>
+      <article
+        {...stylex.props(
+          s.shell,
+          selected ? s.selected : null,
+        )}
+      >
         <NodeHeader id={id} data={data} />
         <GenericArtifactTypeState
           id={id}
           data={data}
           resettable={incidentConnections.length === 0}
         />
-        {data.spec.inputs.length ? (
+        {visibleInputPorts.length ? (
           <div {...stylex.props(s.tabs)}>
-            {data.spec.inputs.map((port) => (
+            {visibleInputPorts.map((port) => (
               portHasInstancePlugs(port) ? (
                 <InstancePlugPort
                   key={`in-${port.name}`}
@@ -1252,9 +2248,11 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
             ))}
           </div>
         ) : null}
-        {isUpload ? (
-          <SourceBody id={id} data={data} />
-        ) : hasConfig || data.execution.error ? (
+        {isSchemaBuilder ? (
+          <SchemaBuilderBody id={id} data={data} />
+        ) : isImageUpload ? (
+          <ImageUploadBody id={id} data={data} />
+        ) : hasConfig ? (
           <GenericBody id={id} data={data} />
         ) : (
           <div {...stylex.props(s.spacer)} aria-hidden />
@@ -1271,9 +2269,10 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
             ))}
           </div>
         ) : null}
-        {!isUpload &&
+        {!isImageUpload &&
+        !isSchemaBuilder &&
         !hasConfig &&
-        !data.execution.error &&
+        !hasExecutionError &&
         !data.spec.inputs.length &&
         !data.spec.outputs.length ? (
           <p {...stylex.props(s.emptyBody)}>
@@ -1281,6 +2280,22 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
           </p>
         ) : null}
       </article>
+      {data.execution.error ? (
+        <aside
+          role="alert"
+          aria-label="Node issue"
+          {...nodeInteractionProps(stylex.props(s.errorAppendix))}
+        >
+          <span aria-hidden="true" {...stylex.props(s.errorAccent)} />
+          <div {...stylex.props(s.errorContent)}>
+            <div {...stylex.props(s.errorHeader)}>
+              <span {...stylex.props(s.errorScope)}>NODE</span>
+              <span {...stylex.props(s.errorTitle)}>Node issue</span>
+            </div>
+            <p {...stylex.props(s.errorMessage)}>{data.execution.error}</p>
+          </div>
+        </aside>
+      ) : null}
       <ArtifactsAppendix data={data} />
     </>
   );

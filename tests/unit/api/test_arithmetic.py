@@ -22,14 +22,11 @@ from notarius_core.artifacts import (
 )
 from notarius_core.conversions import MAX_ARTIFACT_CONVERSION_HOPS
 from notarius_core.operators.arithmetic import (
-    ARITHMETIC_RESULT,
-    AddSubtractInput,
-    ArithmeticResult,
+    BinaryIntegerInput,
     IntegerSequenceConfig,
     IntegerSequenceOutput,
+    IntegerResultOutput,
     IntegerValuePayload,
-    MultiplyInput,
-    MultiplyOutput,
     NumberConfig,
     NumberOutput,
     SumIntegersInput,
@@ -38,7 +35,10 @@ from notarius_core.operators.arithmetic import (
 from notarius_core.operators.text import TEXT_VALUE
 
 
-def _arithmetic_run_request(
+TEST_COMPOUND_RESULT_KEY = ArtifactTypeKey("test.compound_result", 1)
+
+
+def _compound_run_request(
     *,
     left_projection: dict[str, list[str]] | None,
     right_projection: dict[str, list[str]] | None,
@@ -59,8 +59,8 @@ def _arithmetic_run_request(
                 "config": {"value": number_values[1]},
             },
             {
-                "id": "add-subtract",
-                "operator_id": "arithmetic.add_subtract",
+                "id": "compound",
+                "operator_id": "test.compound_producer",
                 "operator_version": 1,
                 "config": {},
             },
@@ -75,24 +75,24 @@ def _arithmetic_run_request(
             {
                 "from_node": "nine",
                 "from_port": "value",
-                "to_node": "add-subtract",
+                "to_node": "compound",
                 "to_port": "left",
             },
             {
                 "from_node": "four",
                 "from_port": "value",
-                "to_node": "add-subtract",
+                "to_node": "compound",
                 "to_port": "right",
             },
             {
-                "from_node": "add-subtract",
+                "from_node": "compound",
                 "from_port": "result",
                 "to_node": "multiply",
                 "to_port": "left",
                 "projection": left_projection,
             },
             {
-                "from_node": "add-subtract",
+                "from_node": "compound",
                 "from_port": "result",
                 "to_node": "multiply",
                 "to_port": "right",
@@ -174,22 +174,21 @@ async def _stored_artifacts(
         return await entered.artifacts.list_by_type(key)
 
 
-def test_registry_declares_generic_integer_and_arithmetic_result_projections(
-    builtin_client: TestClient,
+def test_registry_declares_scalar_arithmetic_nodes_and_test_compound_projections(
+    conversion_path_client: tuple[TestClient, InMemoryUnitOfWork],
 ) -> None:
-    response = builtin_client.get("/v1/nodes")
+    client, _uow = conversion_path_client
+    response = client.get("/v1/nodes")
 
     assert response.status_code == 200
     registry = NodeRegistryResponse.model_validate(response.json())
     artifact_types = {
         artifact_type.key.id: artifact_type for artifact_type in registry.artifact_types
     }
-    assert "arithmetic.addition" not in artifact_types
-    assert "arithmetic.subtraction" not in artifact_types
+    assert "arithmetic.result" not in artifact_types
     assert artifact_types["scalar.integer"].field_projections == []
 
-    result_type = artifact_types["arithmetic.result"]
-    assert result_type.payload_schema == ArithmeticResult.model_json_schema()
+    result_type = artifact_types["test.compound_result"]
     assert [
         projection.model_dump() for projection in result_type.field_projections
     ] == [
@@ -216,12 +215,14 @@ def test_registry_declares_generic_integer_and_arithmetic_result_projections(
         (nodes[operator_id].title, nodes[operator_id].plugin_slug)
         for operator_id in (
             "arithmetic.number",
-            "arithmetic.add_subtract",
+            "arithmetic.add",
+            "arithmetic.subtract",
             "arithmetic.multiply",
         )
     ] == [
         ("Number", "builtin.arithmetic"),
-        ("Add & subtract", "builtin.arithmetic"),
+        ("Add integers", "builtin.arithmetic"),
+        ("Subtract integers", "builtin.arithmetic"),
         ("Multiply", "builtin.arithmetic"),
     ]
 
@@ -289,9 +290,10 @@ def test_integer_output_converts_to_text_before_text_node_execution(
 
 
 def test_projection_runs_before_declared_integer_to_text_conversion(
-    builtin_client: TestClient,
+    conversion_path_client: tuple[TestClient, InMemoryUnitOfWork],
 ) -> None:
-    response = builtin_client.post(
+    client, _uow = conversion_path_client
+    response = client.post(
         "/v1/runs",
         json={
             "nodes": [
@@ -308,8 +310,8 @@ def test_projection_runs_before_declared_integer_to_text_conversion(
                     "config": {"value": 4},
                 },
                 {
-                    "id": "add-subtract",
-                    "operator_id": "arithmetic.add_subtract",
+                    "id": "compound",
+                    "operator_id": "test.compound_producer",
                     "operator_version": 1,
                     "config": {},
                 },
@@ -324,17 +326,17 @@ def test_projection_runs_before_declared_integer_to_text_conversion(
                 {
                     "from_node": "nine",
                     "from_port": "value",
-                    "to_node": "add-subtract",
+                    "to_node": "compound",
                     "to_port": "left",
                 },
                 {
                     "from_node": "four",
                     "from_port": "value",
-                    "to_node": "add-subtract",
+                    "to_node": "compound",
                     "to_port": "right",
                 },
                 {
-                    "from_node": "add-subtract",
+                    "from_node": "compound",
                     "from_port": "result",
                     "to_node": "replace",
                     "to_port": "text",
@@ -351,7 +353,7 @@ def test_projection_runs_before_declared_integer_to_text_conversion(
     assert response.status_code == 200
     result = RunResponse.model_validate(response.json())
     replaced = _run_output(result, "replace", "text")
-    replaced_content = builtin_client.get(
+    replaced_content = client.get(
         f"/v1/artifacts/{replaced.artifacts[0].artifact_id}/content"
     )
     assert replaced_content.status_code == 200
@@ -440,7 +442,7 @@ def test_transitive_conversion_path_composes_in_memory_and_writes_final_only(
                 },
                 {
                     "id": "consumer",
-                    "operator_id": "test.arithmetic_result_consumer",
+                    "operator_id": "test.compound_result_consumer",
                     "operator_version": 1,
                     "config": {},
                 },
@@ -457,7 +459,7 @@ def test_transitive_conversion_path_composes_in_memory_and_writes_final_only(
                             "version": 1,
                         },
                         {
-                            "id": "test.scalar.text_to_arithmetic_result",
+                            "id": "test.scalar.text_to_compound_result",
                             "version": 1,
                         },
                     ],
@@ -471,12 +473,12 @@ def test_transitive_conversion_path_composes_in_memory_and_writes_final_only(
     assert result.status == "succeeded"
     assert _run_output(result, "consumer", "value").artifacts[0].text == "80"
     assert asyncio.run(_stored_artifacts(uow, TEXT_VALUE.key)) == []
-    final_artifacts = asyncio.run(_stored_artifacts(uow, ARITHMETIC_RESULT.key))
+    final_artifacts = asyncio.run(_stored_artifacts(uow, TEST_COMPOUND_RESULT_KEY))
     assert len(final_artifacts) == 1
     assert final_artifacts[0].inline_payload == {"addition": 10, "subtraction": 8}
     assert final_artifacts[0].metadata["conversion_path"] == [
         {"id": "builtin.scalar.integer_to_text", "version": 1},
-        {"id": "test.scalar.text_to_arithmetic_result", "version": 1},
+        {"id": "test.scalar.text_to_compound_result", "version": 1},
     ]
 
 
@@ -501,14 +503,14 @@ def test_projection_runs_before_every_step_in_a_transitive_conversion_path(
                     "config": {"value": 4},
                 },
                 {
-                    "id": "add-subtract",
-                    "operator_id": "arithmetic.add_subtract",
+                    "id": "compound",
+                    "operator_id": "test.compound_producer",
                     "operator_version": 1,
                     "config": {},
                 },
                 {
                     "id": "consumer",
-                    "operator_id": "test.arithmetic_result_consumer",
+                    "operator_id": "test.compound_result_consumer",
                     "operator_version": 1,
                     "config": {},
                 },
@@ -517,17 +519,17 @@ def test_projection_runs_before_every_step_in_a_transitive_conversion_path(
                 {
                     "from_node": "nine",
                     "from_port": "value",
-                    "to_node": "add-subtract",
+                    "to_node": "compound",
                     "to_port": "left",
                 },
                 {
                     "from_node": "four",
                     "from_port": "value",
-                    "to_node": "add-subtract",
+                    "to_node": "compound",
                     "to_port": "right",
                 },
                 {
-                    "from_node": "add-subtract",
+                    "from_node": "compound",
                     "from_port": "result",
                     "to_node": "consumer",
                     "to_port": "result",
@@ -538,7 +540,7 @@ def test_projection_runs_before_every_step_in_a_transitive_conversion_path(
                             "version": 1,
                         },
                         {
-                            "id": "test.scalar.text_to_arithmetic_result",
+                            "id": "test.scalar.text_to_compound_result",
                             "version": 1,
                         },
                     ],
@@ -552,7 +554,7 @@ def test_projection_runs_before_every_step_in_a_transitive_conversion_path(
     assert result.status == "succeeded"
     assert _run_output(result, "consumer", "value").artifacts[0].text == "168"
     assert asyncio.run(_stored_artifacts(uow, TEXT_VALUE.key)) == []
-    final_artifacts = asyncio.run(_stored_artifacts(uow, ARITHMETIC_RESULT.key))
+    final_artifacts = asyncio.run(_stored_artifacts(uow, TEST_COMPOUND_RESULT_KEY))
     assert len(final_artifacts) == 2
     converted = next(
         artifact
@@ -578,7 +580,7 @@ def test_sequence_items_each_traverse_the_full_conversion_path_before_mapping(
                 },
                 {
                     "id": "consumer",
-                    "operator_id": "test.arithmetic_result_consumer",
+                    "operator_id": "test.compound_result_consumer",
                     "operator_version": 1,
                     "config": {},
                 },
@@ -596,7 +598,7 @@ def test_sequence_items_each_traverse_the_full_conversion_path_before_mapping(
                             "version": 1,
                         },
                         {
-                            "id": "test.scalar.text_to_arithmetic_result",
+                            "id": "test.scalar.text_to_compound_result",
                             "version": 1,
                         },
                     ],
@@ -612,7 +614,7 @@ def test_sequence_items_each_traverse_the_full_conversion_path_before_mapping(
     assert output.kind == "sequence"
     assert [artifact.text for artifact in output.artifacts] == ["0", "3", "8"]
     assert asyncio.run(_stored_artifacts(uow, TEXT_VALUE.key)) == []
-    assert len(asyncio.run(_stored_artifacts(uow, ARITHMETIC_RESULT.key))) == 3
+    assert len(asyncio.run(_stored_artifacts(uow, TEST_COMPOUND_RESULT_KEY))) == 3
 
 
 @pytest.mark.parametrize(
@@ -634,7 +636,7 @@ def test_sequence_items_each_traverse_the_full_conversion_path_before_mapping(
         ),
         (
             [{"id": "builtin.scalar.integer_to_text", "version": 1}],
-            "as scalar.text@1, but target expects arithmetic.result@1",
+            "as scalar.text@1, but target expects test.compound_result@1",
         ),
         (
             [
@@ -663,7 +665,7 @@ def test_invalid_conversion_paths_are_rejected_before_node_execution(
                 },
                 {
                     "id": "consumer",
-                    "operator_id": "test.arithmetic_result_consumer",
+                    "operator_id": "test.compound_result_consumer",
                     "operator_version": 1,
                     "config": {},
                 },
@@ -687,8 +689,8 @@ def test_invalid_conversion_paths_are_rejected_before_node_execution(
 @pytest.mark.parametrize(
     "failing_conversion",
     [
-        "test.scalar.text_to_arithmetic_result_failure",
-        "test.scalar.text_to_invalid_arithmetic_result",
+        "test.scalar.text_to_compound_result_failure",
+        "test.scalar.text_to_invalid_compound_result",
     ],
 )
 def test_conversion_path_errors_identify_the_exact_failing_step(
@@ -708,7 +710,7 @@ def test_conversion_path_errors_identify_the_exact_failing_step(
                 },
                 {
                     "id": "consumer",
-                    "operator_id": "test.arithmetic_result_consumer",
+                    "operator_id": "test.compound_result_consumer",
                     "operator_version": 1,
                     "config": {},
                 },
@@ -739,7 +741,7 @@ def test_conversion_path_errors_identify_the_exact_failing_step(
     assert "Failed conversion step 2/2" in consumer_run.error
     assert f"{failing_conversion!r}@1" in consumer_run.error
     assert asyncio.run(_stored_artifacts(uow, TEXT_VALUE.key)) == []
-    assert asyncio.run(_stored_artifacts(uow, ARITHMETIC_RESULT.key)) == []
+    assert asyncio.run(_stored_artifacts(uow, TEST_COMPOUND_RESULT_KEY)) == []
 
 
 @pytest.mark.parametrize(
@@ -846,12 +848,99 @@ def test_invalid_conversion_is_422_before_node_execution(
     assert error_fragment in response.json()["detail"]
 
 
-def test_arithmetic_graph_projects_both_result_fields_into_multiply(
+def test_add_and_subtract_nodes_feed_scalar_results_into_multiply(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
         "/v1/runs",
-        json=_arithmetic_run_request(
+        json={
+            "nodes": [
+                {
+                    "id": "nine",
+                    "operator_id": "arithmetic.number",
+                    "operator_version": 1,
+                    "config": {"value": 9},
+                },
+                {
+                    "id": "four",
+                    "operator_id": "arithmetic.number",
+                    "operator_version": 1,
+                    "config": {"value": 4},
+                },
+                {
+                    "id": "add",
+                    "operator_id": "arithmetic.add",
+                    "operator_version": 1,
+                    "config": {},
+                },
+                {
+                    "id": "subtract",
+                    "operator_id": "arithmetic.subtract",
+                    "operator_version": 1,
+                    "config": {},
+                },
+                {
+                    "id": "multiply",
+                    "operator_id": "arithmetic.multiply",
+                    "operator_version": 1,
+                    "config": {},
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "nine",
+                    "from_port": "value",
+                    "to_node": "add",
+                    "to_port": "left",
+                },
+                {
+                    "from_node": "four",
+                    "from_port": "value",
+                    "to_node": "add",
+                    "to_port": "right",
+                },
+                {
+                    "from_node": "nine",
+                    "from_port": "value",
+                    "to_node": "subtract",
+                    "to_port": "left",
+                },
+                {
+                    "from_node": "four",
+                    "from_port": "value",
+                    "to_node": "subtract",
+                    "to_port": "right",
+                },
+                {
+                    "from_node": "add",
+                    "from_port": "result",
+                    "to_node": "multiply",
+                    "to_port": "left",
+                },
+                {
+                    "from_node": "subtract",
+                    "from_port": "result",
+                    "to_node": "multiply",
+                    "to_port": "right",
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    result = RunResponse.model_validate(response.json())
+    assert _run_output(result, "add", "result").artifacts[0].text == "13"
+    assert _run_output(result, "subtract", "result").artifacts[0].text == "5"
+    assert _run_output(result, "multiply", "result").artifacts[0].text == "65"
+
+
+def test_test_compound_graph_projects_both_result_fields_into_multiply(
+    conversion_path_client: tuple[TestClient, InMemoryUnitOfWork],
+) -> None:
+    client, _uow = conversion_path_client
+    response = client.post(
+        "/v1/runs",
+        json=_compound_run_request(
             left_projection={"path": ["addition"]},
             right_projection={"path": ["subtraction"]},
         ),
@@ -865,13 +954,13 @@ def test_arithmetic_graph_projects_both_result_fields_into_multiply(
     assert runs["nine"].outputs[0].artifacts[0].text == "9"
     assert runs["four"].outputs[0].artifacts[0].text == "4"
 
-    compound = runs["add-subtract"].outputs[0].artifacts[0]
-    assert compound.artifact_type == "arithmetic.result"
+    compound = runs["compound"].outputs[0].artifacts[0]
+    assert compound.artifact_type == "test.compound_result"
     assert json.loads(compound.text or "") == {
         "addition": 13,
         "subtraction": 5,
     }
-    compound_content = builtin_client.get(
+    compound_content = client.get(
         f"/v1/artifacts/{compound.artifact_id}/content"
     )
     assert compound_content.status_code == 200
@@ -880,29 +969,30 @@ def test_arithmetic_graph_projects_both_result_fields_into_multiply(
     product = runs["multiply"].outputs[0].artifacts[0]
     assert product.artifact_type == "scalar.integer"
     assert product.text == "65"
-    product_content = builtin_client.get(f"/v1/artifacts/{product.artifact_id}/content")
+    product_content = client.get(f"/v1/artifacts/{product.artifact_id}/content")
     assert product_content.status_code == 200
     assert product_content.json() == {"value": 65}
 
 
 def test_selected_target_projects_two_edges_from_one_pinned_compound_output(
-    builtin_client: TestClient,
+    conversion_path_client: tuple[TestClient, InMemoryUnitOfWork],
 ) -> None:
-    upstream_response = builtin_client.post(
+    client, _uow = conversion_path_client
+    upstream_response = client.post(
         "/v1/runs",
-        json=_arithmetic_run_request(
+        json=_compound_run_request(
             left_projection={"path": ["addition"]},
             right_projection={"path": ["subtraction"]},
         ),
     )
     assert upstream_response.status_code == 200
     upstream_result = RunResponse.model_validate(upstream_response.json())
-    compound_output = _run_output(upstream_result, "add-subtract", "result")
+    compound_output = _run_output(upstream_result, "compound", "result")
     assert isinstance(compound_output.value, ArtifactRef)
     assert compound_output.value.artifact_id == compound_output.artifacts[0].artifact_id
     assert compound_output.value.content_hash == compound_output.artifacts[0].sha256
 
-    selected_response = builtin_client.post(
+    selected_response = client.post(
         "/v1/runs",
         json={
             "nodes": [
@@ -915,14 +1005,14 @@ def test_selected_target_projects_two_edges_from_one_pinned_compound_output(
             ],
             "edges": [
                 {
-                    "from_node": "add-subtract",
+                    "from_node": "compound",
                     "from_port": "result",
                     "to_node": "multiply",
                     "to_port": "left",
                     "projection": {"path": ["addition"]},
                 },
                 {
-                    "from_node": "add-subtract",
+                    "from_node": "compound",
                     "from_port": "result",
                     "to_node": "multiply",
                     "to_port": "right",
@@ -931,7 +1021,7 @@ def test_selected_target_projects_two_edges_from_one_pinned_compound_output(
             ],
             "pinned_outputs": [
                 {
-                    "from_node": "add-subtract",
+                    "from_node": "compound",
                     "from_port": "result",
                     "value": compound_output.value.model_dump(mode="json"),
                 }
@@ -1146,18 +1236,19 @@ def test_selected_run_uses_submitted_older_or_newer_pin_without_latest_lookup(
         ("unused-pin", "is not used by any incoming edge"),
         (
             "wrong-artifact-type",
-            "cannot connect arithmetic.result@1 to scalar.integer@1",
+            "cannot connect test.compound_result@1 to scalar.integer@1",
         ),
     ],
 )
 def test_invalid_selected_run_pins_are_rejected_before_target_execution(
-    builtin_client: TestClient,
+    conversion_path_client: tuple[TestClient, InMemoryUnitOfWork],
     case: str,
     error_fragment: str,
 ) -> None:
-    upstream_response = builtin_client.post(
+    client, _uow = conversion_path_client
+    upstream_response = client.post(
         "/v1/runs",
-        json=_arithmetic_run_request(
+        json=_compound_run_request(
             left_projection={"path": ["addition"]},
             right_projection={"path": ["subtraction"]},
         ),
@@ -1165,7 +1256,7 @@ def test_invalid_selected_run_pins_are_rejected_before_target_execution(
     assert upstream_response.status_code == 200
     upstream_result = RunResponse.model_validate(upstream_response.json())
     integer_value = _run_output(upstream_result, "nine", "value").value
-    compound_value = _run_output(upstream_result, "add-subtract", "result").value
+    compound_value = _run_output(upstream_result, "compound", "result").value
     assert isinstance(integer_value, ArtifactRef)
     assert isinstance(compound_value, ArtifactRef)
 
@@ -1235,7 +1326,7 @@ def test_invalid_selected_run_pins_are_rejected_before_target_execution(
             }
         ]
 
-    response = builtin_client.post(
+    response = client.post(
         "/v1/runs",
         json={
             "nodes": [
@@ -1481,14 +1572,15 @@ def test_unknown_operator_version_is_rejected_before_execution(
         ({"path": ["missing"]}, "requests undeclared projection 'missing'"),
     ],
 )
-def test_invalid_arithmetic_projection_is_422_before_node_execution(
-    builtin_client: TestClient,
+def test_invalid_test_compound_projection_is_422_before_node_execution(
+    conversion_path_client: tuple[TestClient, InMemoryUnitOfWork],
     projection: dict[str, list[str]] | None,
     error_fragment: str,
 ) -> None:
-    response = builtin_client.post(
+    client, _uow = conversion_path_client
+    response = client.post(
         "/v1/runs",
-        json=_arithmetic_run_request(
+        json=_compound_run_request(
             left_projection=projection,
             right_projection={"path": ["subtraction"]},
             number_values=("not-an-integer", "also-not-an-integer"),
@@ -1513,8 +1605,8 @@ def test_missing_required_arithmetic_input_is_422_before_node_execution(
                     "config": {"value": "not-an-integer"},
                 },
                 {
-                    "id": "add-subtract",
-                    "operator_id": "arithmetic.add_subtract",
+                    "id": "add",
+                    "operator_id": "arithmetic.add",
                     "operator_version": 1,
                     "config": {},
                 },
@@ -1523,7 +1615,7 @@ def test_missing_required_arithmetic_input_is_422_before_node_execution(
                 {
                     "from_node": "invalid-number",
                     "from_port": "value",
-                    "to_node": "add-subtract",
+                    "to_node": "add",
                     "to_port": "left",
                 }
             ],
@@ -1532,7 +1624,7 @@ def test_missing_required_arithmetic_input_is_422_before_node_execution(
 
     assert response.status_code == 422
     assert response.json()["detail"] == (
-        "Node 'add-subtract' (arithmetic.add_subtract@1) required input "
+        "Node 'add' (arithmetic.add@1) required input "
         "'right' has no incoming edge"
     )
 
@@ -1577,14 +1669,10 @@ def test_number_node_config_does_not_coerce_non_integer_values(
         (NumberOutput, {"value": "9"}),
         (IntegerValuePayload, {"value": True}),
         (IntegerValuePayload, {"value": "9"}),
-        (ArithmeticResult, {"addition": "13", "subtraction": 5}),
-        (ArithmeticResult, {"addition": 13, "subtraction": False}),
-        (AddSubtractInput, {"left": True, "right": 4}),
-        (AddSubtractInput, {"left": 9, "right": "4"}),
-        (MultiplyInput, {"left": True, "right": 4}),
-        (MultiplyInput, {"left": 9, "right": "4"}),
-        (MultiplyOutput, {"result": True}),
-        (MultiplyOutput, {"result": "36"}),
+        (BinaryIntegerInput, {"left": True, "right": 4}),
+        (BinaryIntegerInput, {"left": 9, "right": "4"}),
+        (IntegerResultOutput, {"result": True}),
+        (IntegerResultOutput, {"result": "36"}),
         (IntegerSequenceConfig, {"start": True, "count": 3, "step": 1}),
         (IntegerSequenceConfig, {"start": 0, "count": "3", "step": 1}),
         (IntegerSequenceConfig, {"start": 0, "count": 3, "step": False}),

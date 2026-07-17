@@ -28,3 +28,13 @@ def test_s3_credentials_are_redacted_from_serialized_settings() -> None:
     assert secret_key not in repr(settings)
     assert access_key not in str(settings.model_dump())
     assert secret_key not in str(settings.model_dump())
+
+
+def test_credential_encryption_key_is_redacted_from_serialized_settings() -> None:
+    encryption_key = "sensitive-node-secret-encryption-key"
+    settings = Settings(
+        credential_encryption_key=SecretStr(encryption_key),
+    )
+
+    assert encryption_key not in repr(settings)
+    assert encryption_key not in str(settings.model_dump())

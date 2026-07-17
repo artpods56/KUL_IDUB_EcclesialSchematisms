@@ -24,6 +24,7 @@ apps/web/output/
 
 .notarius-artifacts/
 .playwright-cli/
+.playwright-mcp/
 output/
 *.db
 *.db-shm

@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     s3_access_key_id: SecretStr | None = None
     s3_secret_access_key: SecretStr | None = None
     s3_force_path_style: bool = False
+    credential_encryption_key: SecretStr | None = None
 
     @property
     def resolved_database_url(self) -> str:

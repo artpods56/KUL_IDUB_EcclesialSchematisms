@@ -21,14 +21,11 @@ from notarius_core.artifacts import (
 )
 from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
 from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
-from notarius_core.operators.arithmetic import (
-    ARITHMETIC_RESULT,
-    INTEGER_VALUE,
-    ArithmeticResult,
-)
+from notarius_core.operators.arithmetic import INTEGER_VALUE
 from notarius_core.operators.text import TEXT_VALUE
 from notarius_core.plugins import Plugin
 from notarius_core.runtime.persistence import InlineModelOutputWriter
+from notarius_core.runtime.resolvers import InlineModelResolver
 
 from notarius_api.builtins import builtin_plugins
 from notarius_api.main import create_app
@@ -38,19 +35,33 @@ from notarius_api.settings import Settings
 from notarius_api.v1.routes.workbench import workbench_service
 
 
-def _text_to_arithmetic_result(value: str) -> ArithmeticResult:
+class CompoundResultPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    addition: StrictInt
+    subtraction: StrictInt
+
+
+TEST_COMPOUND_RESULT = ArtifactTypeSpec(
+    key=ArtifactTypeKey("test.compound_result", 1),
+    title="Test compound result",
+    payload_schema=cast(JsonObject, CompoundResultPayload.model_json_schema()),
+)
+
+
+def _text_to_compound_result(value: str) -> CompoundResultPayload:
     integer = int(value)
-    return ArithmeticResult(addition=integer + 1, subtraction=integer - 1)
+    return CompoundResultPayload(addition=integer + 1, subtraction=integer - 1)
 
 
-def _failing_text_to_arithmetic_result(value: str) -> ArithmeticResult:
+def _failing_text_to_compound_result(value: str) -> CompoundResultPayload:
     raise ValueError(f"Cannot convert {value!r}")
 
 
-def _invalid_text_to_arithmetic_result(value: str) -> ArithmeticResult:
+def _invalid_text_to_compound_result(value: str) -> CompoundResultPayload:
     integer = int(value)
     return cast(
-        ArithmeticResult,
+        CompoundResultPayload,
         {
             "addition": integer + 1,
             "subtraction": integer - 1,
@@ -62,32 +73,32 @@ def _text_to_integer(value: str) -> int:
     return int(value)
 
 
-TEXT_TO_ARITHMETIC_RESULT = ArtifactConversion(
-    key=ArtifactConversionKey("test.scalar.text_to_arithmetic_result", 1),
+TEXT_TO_COMPOUND_RESULT = ArtifactConversion(
+    key=ArtifactConversionKey("test.scalar.text_to_compound_result", 1),
     source=TEXT_VALUE.key,
-    target=ARITHMETIC_RESULT.key,
+    target=TEST_COMPOUND_RESULT.key,
     source_type=str,
-    target_type=ArithmeticResult,
-    title="As arithmetic result",
-    convert=_text_to_arithmetic_result,
+    target_type=CompoundResultPayload,
+    title="As compound result",
+    convert=_text_to_compound_result,
 )
-FAILING_TEXT_TO_ARITHMETIC_RESULT = ArtifactConversion(
-    key=ArtifactConversionKey("test.scalar.text_to_arithmetic_result_failure", 1),
+FAILING_TEXT_TO_COMPOUND_RESULT = ArtifactConversion(
+    key=ArtifactConversionKey("test.scalar.text_to_compound_result_failure", 1),
     source=TEXT_VALUE.key,
-    target=ARITHMETIC_RESULT.key,
+    target=TEST_COMPOUND_RESULT.key,
     source_type=str,
-    target_type=ArithmeticResult,
-    title="Fail as arithmetic result",
-    convert=_failing_text_to_arithmetic_result,
+    target_type=CompoundResultPayload,
+    title="Fail as compound result",
+    convert=_failing_text_to_compound_result,
 )
-INVALID_TEXT_TO_ARITHMETIC_RESULT = ArtifactConversion(
-    key=ArtifactConversionKey("test.scalar.text_to_invalid_arithmetic_result", 1),
+INVALID_TEXT_TO_COMPOUND_RESULT = ArtifactConversion(
+    key=ArtifactConversionKey("test.scalar.text_to_invalid_compound_result", 1),
     source=TEXT_VALUE.key,
-    target=ARITHMETIC_RESULT.key,
+    target=TEST_COMPOUND_RESULT.key,
     source_type=str,
-    target_type=ArithmeticResult,
-    title="As invalid arithmetic result",
-    convert=_invalid_text_to_arithmetic_result,
+    target_type=CompoundResultPayload,
+    title="As invalid compound result",
+    convert=_invalid_text_to_compound_result,
 )
 TEXT_TO_INTEGER = ArtifactConversion(
     key=ArtifactConversionKey("test.scalar.text_to_integer", 1),
@@ -102,38 +113,87 @@ CONVERSION_PATH_PLUGIN = Plugin(
     slug="test.conversion-path",
     title="Conversion path test plugin",
 )
-CONVERSION_PATH_PLUGIN.register_artifact_conversion(TEXT_TO_ARITHMETIC_RESULT)
-CONVERSION_PATH_PLUGIN.register_artifact_conversion(FAILING_TEXT_TO_ARITHMETIC_RESULT)
-CONVERSION_PATH_PLUGIN.register_artifact_conversion(INVALID_TEXT_TO_ARITHMETIC_RESULT)
+CONVERSION_PATH_PLUGIN.register_artifact_type(TEST_COMPOUND_RESULT)
+CONVERSION_PATH_PLUGIN.register_artifact_conversion(TEXT_TO_COMPOUND_RESULT)
+CONVERSION_PATH_PLUGIN.register_artifact_conversion(FAILING_TEXT_TO_COMPOUND_RESULT)
+CONVERSION_PATH_PLUGIN.register_artifact_conversion(INVALID_TEXT_TO_COMPOUND_RESULT)
 CONVERSION_PATH_PLUGIN.register_artifact_conversion(TEXT_TO_INTEGER)
+CONVERSION_PATH_PLUGIN.register_resolver(
+    lambda context: InlineModelResolver(
+        source=TEST_COMPOUND_RESULT.key,
+        target=CompoundResultPayload,
+        uow=context.uow,
+    )
+)
+CONVERSION_PATH_PLUGIN.register_writer(
+    lambda context: InlineModelOutputWriter(
+        artifact_type=TEST_COMPOUND_RESULT.key,
+        model=CompoundResultPayload,
+        uow=context.uow,
+    )
+)
 
 
-class ArithmeticResultConsumerInput(NodeInput):
-    result: Annotated[ArithmeticResult, InPort(ARITHMETIC_RESULT)]
+class CompoundProducerInput(NodeInput):
+    left: Annotated[StrictInt, InPort(INTEGER_VALUE)]
+    right: Annotated[StrictInt, InPort(INTEGER_VALUE)]
 
 
-class ArithmeticResultConsumerOutput(NodeOutput):
-    value: Annotated[StrictInt, OutPort(INTEGER_VALUE)]
+class CompoundProducerOutput(NodeOutput):
+    result: Annotated[CompoundResultPayload, OutPort(TEST_COMPOUND_RESULT)]
 
 
 @CONVERSION_PATH_PLUGIN.node(
-    operator_id="test.arithmetic_result_consumer",
+    operator_id="test.compound_producer",
     version=1,
-    title="Arithmetic result consumer",
+    title="Compound producer",
 )
 @final
-class ArithmeticResultConsumerNode(
-    Node[NoConfig, ArithmeticResultConsumerInput, ArithmeticResultConsumerOutput]
+class CompoundProducerNode(
+    Node[NoConfig, CompoundProducerInput, CompoundProducerOutput]
 ):
     @override
     async def run(
         self,
         _context: NodeExecutionContext,
         _config: NoConfig,
-        inputs: ArithmeticResultConsumerInput,
+        inputs: CompoundProducerInput,
         /,
-    ) -> ArithmeticResultConsumerOutput:
-        return ArithmeticResultConsumerOutput(
+    ) -> CompoundProducerOutput:
+        return CompoundProducerOutput(
+            result=CompoundResultPayload(
+                addition=inputs.left + inputs.right,
+                subtraction=inputs.left - inputs.right,
+            )
+        )
+
+
+class CompoundResultConsumerInput(NodeInput):
+    result: Annotated[CompoundResultPayload, InPort(TEST_COMPOUND_RESULT)]
+
+
+class CompoundResultConsumerOutput(NodeOutput):
+    value: Annotated[StrictInt, OutPort(INTEGER_VALUE)]
+
+
+@CONVERSION_PATH_PLUGIN.node(
+    operator_id="test.compound_result_consumer",
+    version=1,
+    title="Compound result consumer",
+)
+@final
+class CompoundResultConsumerNode(
+    Node[NoConfig, CompoundResultConsumerInput, CompoundResultConsumerOutput]
+):
+    @override
+    async def run(
+        self,
+        _context: NodeExecutionContext,
+        _config: NoConfig,
+        inputs: CompoundResultConsumerInput,
+        /,
+    ) -> CompoundResultConsumerOutput:
+        return CompoundResultConsumerOutput(
             value=inputs.result.addition * inputs.result.subtraction
         )
 
