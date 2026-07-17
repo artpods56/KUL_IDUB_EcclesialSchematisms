@@ -14,6 +14,7 @@ from notarius_core.domain.modules import (
     GraphModuleReference,
     GraphModuleReferenceError,
     ModuleBoundaryConfig,
+    ModuleInputConfig,
 )
 from notarius_core.domain.saved_graphs import (
     GraphPoint,
@@ -69,12 +70,15 @@ def _boundary(
     public_name: str,
     *,
     description: str | None = None,
+    required: bool | None = None,
     version: int = 1,
     bindings: tuple[SavedGraphArtifactTypeBinding, ...] | None = None,
 ) -> SavedGraphNode:
     config: dict[str, object] = {"public_name": public_name}
     if description is not None:
         config["description"] = description
+    if required is not None:
+        config["required"] = required
     return SavedGraphNode(
         id=node_id,
         operator_id=operator_id,
@@ -91,6 +95,7 @@ def _edge(
     to_node: str,
     *,
     collection_mode: str = "direct",
+    enabled: bool = True,
 ) -> SavedGraphEdge:
     return SavedGraphEdge.model_validate(
         {
@@ -100,6 +105,7 @@ def _edge(
             "to_node": to_node,
             "to_port": "value",
             "collection_mode": collection_mode,
+            "enabled": enabled,
         }
     )
 
@@ -125,6 +131,43 @@ def _definition() -> GraphModuleDefinition:
             revision=3,
             name="Example module",
             document=_document(),
+        )
+    )
+
+
+def _optional_definition() -> GraphModuleDefinition:
+    return GraphModuleDefinition.from_saved_graph(
+        SavedGraph(
+            id=GRAPH_ID,
+            revision=4,
+            name="Optional input module",
+            document=SavedGraphDocument(
+                nodes=(
+                    _boundary(
+                        "required-input",
+                        "module.input",
+                        "required_source",
+                    ),
+                    _boundary(
+                        "optional-input",
+                        "module.input",
+                        "optional_context",
+                        required=False,
+                    ),
+                    SavedGraphNode(
+                        id="optional-consumer",
+                        operator_id="example.optional-consumer",
+                        operator_version=1,
+                        config={},
+                        position=GraphPoint(x=100, y=0),
+                    ),
+                    _boundary("output", "module.output", "result"),
+                ),
+                edges=(
+                    _edge("required", "required-input", "output"),
+                    _edge("optional", "optional-input", "optional-consumer"),
+                ),
+            ),
         )
     )
 
@@ -166,6 +209,21 @@ class FailingModuleExecutor(GraphModuleExecutorPort):
         raise RuntimeError("inner graph failed")
 
 
+class OptionalModuleExecutor(GraphModuleExecutorPort):
+    def __init__(self) -> None:
+        self.calls: list[Mapping[str, ArtifactRef]] = []
+
+    async def execute_module(
+        self,
+        _definition: GraphModuleDefinition,
+        _context: NodeExecutionContext,
+        inputs: Mapping[str, ArtifactRef],
+        /,
+    ) -> GraphModuleExecutionResult:
+        self.calls.append(dict(inputs))
+        return GraphModuleExecutionResult(outputs={"result": inputs["required_source"]})
+
+
 def test_module_boundary_nodes_are_generic_scalar_contracts() -> None:
     module_input = ModuleInputNode.output_contract.ports["value"]
     module_output_input = ModuleOutputNode.input_contract.ports["value"]
@@ -179,6 +237,23 @@ def test_module_boundary_nodes_are_generic_scalar_contracts() -> None:
     assert module_output_input.shape is PortShape.ONE
     assert module_output.produces is module_input.produces
     assert module_output.shape is PortShape.ONE
+
+
+def test_module_input_has_required_config_without_changing_module_output() -> None:
+    input_config = ModuleInputConfig.model_validate({"public_name": "source"})
+    output_config = ModuleBoundaryConfig.model_validate({"public_name": "result"})
+
+    assert ModuleInputNode.config_contract.model is ModuleInputConfig
+    assert input_config.required is True
+    assert ModuleOutputNode.config_contract.model is ModuleBoundaryConfig
+    assert output_config.model_dump() == {
+        "public_name": "result",
+        "description": None,
+    }
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        ModuleBoundaryConfig.model_validate(
+            {"public_name": "result", "required": False}
+        )
 
 
 def test_module_plugin_registers_only_boundary_nodes() -> None:
@@ -283,6 +358,7 @@ def test_graph_module_definition_derives_ordered_typed_public_ports() -> None:
     ]
     assert definition.input_port("primary").artifact_type == VALUE_TYPE
     assert definition.input_port("primary").description == "Primary value"
+    assert definition.input_port("primary").required is True
     assert definition.output_port("secondary_result").boundary_node_id == (
         "second-output"
     )
@@ -413,6 +489,26 @@ def test_graph_module_definition_requires_connected_boundaries() -> None:
         )
 
 
+def test_graph_module_definition_does_not_treat_disabled_edges_as_connections() -> None:
+    document = SavedGraphDocument(
+        nodes=(
+            _boundary("input", "module.input", "source"),
+            _boundary("output", "module.output", "result"),
+        ),
+        edges=(_edge("disabled", "input", "output", enabled=False),),
+    )
+
+    with pytest.raises(
+        GraphModuleDefinitionError,
+        match="boundary node 'input'.*must connect its 'value' output",
+    ):
+        GraphModuleDefinition(
+            reference=GraphModuleReference(GRAPH_ID, 1),
+            name="Disabled pass-through",
+            document=document,
+        )
+
+
 def test_graph_module_definition_requires_scalar_direct_outputs() -> None:
     document = SavedGraphDocument(
         nodes=(
@@ -453,7 +549,7 @@ async def test_module_input_cannot_execute_outside_a_graph_module() -> None:
     ):
         await ModuleInputNode().run(
             NodeExecutionContext(node_id="module-input"),
-            ModuleBoundaryConfig(public_name="source"),
+            ModuleInputConfig(public_name="source"),
             ModuleInputNode.input_contract.model(),
         )
 
@@ -487,6 +583,18 @@ def test_dynamic_graph_module_node_exposes_concrete_scalar_contracts() -> None:
     assert result.shape is PortShape.ONE
 
 
+def test_dynamic_graph_module_node_exposes_optional_inputs_as_nullable_defaults() -> None:
+    node = GraphModuleNode(_optional_definition(), OptionalModuleExecutor())
+
+    required_source = node.input_contract.ports["required_source"]
+    optional_context = node.input_contract.ports["optional_context"]
+    assert required_source.required is True
+    assert required_source.allows_none is False
+    assert optional_context.required is False
+    assert optional_context.allows_none is True
+    assert node.definition.input_port("optional_context").required is False
+
+
 @pytest.mark.asyncio
 async def test_graph_module_node_delegates_and_preserves_refs_through_runtime() -> None:
     executor = EchoModuleExecutor()
@@ -511,6 +619,40 @@ async def test_graph_module_node_delegates_and_preserves_refs_through_runtime() 
     assert called_definition is definition
     assert called_context == context
     assert called_inputs == {"source": source}
+
+
+@pytest.mark.asyncio
+async def test_graph_module_node_omits_absent_optional_inputs_from_execution() -> None:
+    executor = OptionalModuleExecutor()
+    node = GraphModuleNode(_optional_definition(), executor)
+    source = ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE_TYPE)
+
+    result = await _runtime().run_node(
+        node,
+        NodeExecutionContext(node_id="optional-module-instance"),
+        {"required_source": source},
+    )
+
+    assert isinstance(result, PersistedNodeOutput)
+    assert result["result"] == source
+    assert executor.calls == [{"required_source": source}]
+
+
+@pytest.mark.asyncio
+async def test_graph_module_node_rejects_absent_required_input_with_context() -> None:
+    node = GraphModuleNode(_optional_definition(), OptionalModuleExecutor())
+    input_model = node.input_contract.model
+    inputs = input_model.model_construct(required_source=None)
+
+    with pytest.raises(
+        GraphModuleExecutionError,
+        match="graph.module.*required input 'required_source' was absent",
+    ):
+        await node.run(
+            NodeExecutionContext(node_id="optional-module-instance"),
+            node.config_contract.model(),
+            inputs,
+        )
 
 
 @pytest.mark.asyncio

@@ -440,7 +440,14 @@ class Node[
         config: ConfigT,
         inputs: InputT,
         /,
-    ) -> OutputT: ...
+    ) -> OutputT:
+        """Execute one scalar invocation.
+
+        MAP execution may call this method concurrently on the same node instance.
+        Keep invocation-local mutable state inside this call rather than on ``self``.
+        Let task cancellation propagate after any required cleanup.
+        """
+        ...
 
 
 def resolve_node_contracts(

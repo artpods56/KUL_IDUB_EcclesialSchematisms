@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     database_url: SecretStr | None = None
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     execution_backend: Literal["prefect", "inline"] = "prefect"
+    map_max_concurrency: int = Field(default=4, ge=1)
     prefect_task_retries: int = Field(default=0, ge=0)
     prefect_task_retry_delay_seconds: float = Field(default=0, ge=0)
     storage_backend: Literal["local", "s3"] = "local"

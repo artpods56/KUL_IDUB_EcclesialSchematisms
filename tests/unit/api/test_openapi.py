@@ -127,6 +127,7 @@ def test_openapi_contains_exact_public_routes() -> None:
         "$ref": "#/components/schemas/ArtifactTypeBindingModel"
     }
     run_edge_schema = schema["components"]["schemas"]["RunEdgeRequest"]
+    assert "enabled" not in run_edge_schema["properties"]
     assert run_edge_schema["properties"]["collection_mode"] == {
         "default": "direct",
         "enum": ["direct", "map"],
@@ -148,6 +149,7 @@ def test_openapi_contains_exact_public_routes() -> None:
         }
     saved_edge_schema = schema["components"]["schemas"]["SavedGraphEdgeModel"]
     assert "to_plug" in saved_edge_schema["properties"]
+    assert saved_edge_schema["properties"]["enabled"]["default"] is True
 
 
 def test_app_health_is_ok() -> None:

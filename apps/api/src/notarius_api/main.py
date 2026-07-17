@@ -100,6 +100,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             unit_of_work=SqlAlchemyUnitOfWork(database.sessions),
             storage=storage,
             execution_backend=resolved_settings.execution_backend,
+            map_max_concurrency=resolved_settings.map_max_concurrency,
             prefect_task_retries=resolved_settings.prefect_task_retries,
             prefect_task_retry_delay_seconds=(
                 resolved_settings.prefect_task_retry_delay_seconds

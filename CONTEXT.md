@@ -178,21 +178,46 @@ carry one artifact, an ordered artifact sequence, or variadic incoming edges whe
 explicitly declared. Port cardinality describes the value seen by one operator
 invocation; it does not decide how many times the operator runs.
 
+### Optional input and connection state
+
+Requiredness belongs to an input port's contract. A required input must receive
+an active connection before its node can run; an optional input may be omitted
+and lets its input model apply the declared default. Omission and explicit
+nullability remain separate contract properties. A missing optional artifact is
+never represented by inventing a null artifact.
+
+Enabled state belongs to the edge that connects two ports. A disabled edge stays
+in the saved graph, retains its route, projection, conversion path, collection
+mode, and target-slot reservation, and remains structurally validated so it can
+be enabled again safely. It does not participate in execution ancestry, mapping,
+required-input satisfaction, pin resolution, or compiled input values. Runtime
+edge requests therefore contain active edges only. Existing saved edges default
+to enabled when the field is absent.
+
 ### Edge collection mode
 
 The transport policy stored on an edge. `direct` passes the produced value to
 the target with its collection shape unchanged. `map` connects a produced
 sequence to one required item input, calls the target operator once for each
 item, broadcasts its other inputs, and aggregates required item outputs into
-ordered sequences. The runtime derives its internal invocation policy from
-incoming edges. A target has at most one map driver; zip, Cartesian, and
-implicit flattening semantics are not part of the contract.
+source-position-aligned sequences. The runtime derives its internal invocation
+policy from incoming edges. A target has at most one map driver; zip, Cartesian,
+and implicit flattening semantics are not part of the contract.
 
 Ordered sequence consumers that need cross-item context receive a `direct` MANY
 input and execute once. `map` is reserved for invocations whose items are
 independent; it must not be used to assemble or process one conversation message
 at a time. Revision-scoped materialized outputs are whole-node bindings, not
 per-item checkpoints.
+
+A node instance participating in concurrent MAP execution must be task-reentrant.
+Its `run` calls may overlap on the same event loop, so implementations must keep
+invocation-local state in the call and must not mutate that state on the shared
+node instance. Implementations may clean up after task cancellation but must not
+suppress it, so failed or cancelled MAP invocations can drain their active items.
+Reusable runtime collaborators follow the same concurrency boundary: production
+SQL unit-of-work sessions are task-local, while the in-memory adapter serializes
+its transactions to preserve deterministic commits.
 
 The host keeps graph execution responsibilities separate. `RunGraph` coordinates
 run preflight, compilation, pin resolution, execution, and successful
@@ -201,13 +226,19 @@ compilation resolves topology, contracts, projections, conversion paths, and
 invocation policy into an immutable plan. A graph execution port receives that
 prepared plan. Its production adapter creates one local Prefect flow per graph
 run, one task per invoked logical node, and one nested task per scalar MAP item.
-The inline adapter follows the same coordinator contract without starting
-Prefect and exists for focused tests and operational diagnosis.
+Production MAP items may run concurrently, bounded by
+`NOTARIUS_MAP_MAX_CONCURRENCY` (default `4`). Their completion order is not
+observable: aggregation remains aligned to source position. When one item
+fails, unfinished sibling items are cancelled on a best-effort basis. The
+inline adapter follows the same coordinator contract without starting Prefect,
+forces MAP concurrency to one, and exists for focused tests and operational
+diagnosis.
 
 The shared graph coordinator only propagates graph state, skips failed
 dependents, and assembles the run result. Node execution owns input assembly,
-opaque secret revisions, ONCE/MAP expansion, and ordered MAP aggregation. Edge
-value resolution applies the already compiled projection and conversion chain.
+opaque secret revisions, ONCE/MAP expansion, and source-position-aligned MAP
+aggregation. Edge value resolution applies the already compiled projection and
+conversion chain.
 `NodeRuntime` executes and persists exactly one scalar node invocation; it does
 not schedule graphs or implement collection mapping. Prefect result persistence
 and caching are disabled: Notarius remains the source of truth for artifacts,
@@ -215,13 +246,12 @@ invocation caching, materialized outputs, and encrypted node secrets. Decrypted
 secrets and live runtime collaborators never become Prefect parameters or
 results.
 
-Local execution initially visits logical nodes and MAP items sequentially. This
-preserves first-failure, artifact, and unit-of-work semantics while still
-recording real Prefect flow and task runs. If execution later moves to a remote
-single worker, the transport boundary belongs above `RunGraph`: submit a
-serializable run request, then perform preflight and compilation inside that
-worker. The current design does not define multi-worker or per-node remote
-scheduling.
+Local execution visits logical nodes sequentially. Only the scalar items within
+one MAP invocation may overlap, and only with the Prefect backend; inline MAP
+execution remains sequential. If execution later moves to a remote single
+worker, the transport boundary belongs above `RunGraph`: submit a serializable
+run request, then perform preflight and compilation inside that worker. The
+current design does not define multi-worker or per-node remote scheduling.
 
 ### Collect node
 

@@ -57,7 +57,10 @@ type MapItemExecutionOperation = Callable[[UUID], Awaitable[PersistedNodeOutput]
 
 
 class ExecutionTaskRunner(Protocol):
-    """Per-execution adapter for logical-node and scalar MAP-item tasks."""
+    """Per-execution adapter for logical-node and scalar MAP-item tasks.
+
+    ``run_map_item`` calls for one logical node may overlap on the same event loop.
+    """
 
     @property
     def workflow_run_id(self) -> UUID: ...

@@ -95,6 +95,16 @@ def test_saved_graph_document_migrates_v1_singular_conversion_in_memory() -> Non
     assert "conversion" not in document.model_dump(mode="json")["edges"][0]
 
 
+def test_saved_graph_edge_defaults_enabled_for_legacy_payloads() -> None:
+    payload = _edge("legacy").model_dump(mode="json")
+    payload.pop("enabled")
+
+    edge = SavedGraphEdge.model_validate(payload)
+
+    assert edge.enabled is True
+    assert edge.model_dump(mode="json")["enabled"] is True
+
+
 def test_saved_graph_document_migrates_v2_bindings_to_v3() -> None:
     document = SavedGraphDocument.model_validate(
         {
@@ -286,6 +296,37 @@ def test_saved_graph_document_allows_at_most_one_edge_per_input_plug() -> None:
                 plugged_edge,
                 plugged_edge.model_copy(update={"id": "second"}),
             ),
+        )
+
+
+def test_disabled_edge_still_reserves_its_target_input_plug() -> None:
+    target = _node(
+        "target",
+        input_plugs=(SavedGraphInputPlug(id="item", port="items"),),
+    )
+    disabled_edge = _edge("disabled").model_copy(
+        update={"enabled": False, "to_port": "items", "to_plug": "item"}
+    )
+    replacement_edge = _edge("replacement", from_node="other-source").model_copy(
+        update={"to_port": "items", "to_plug": "item"}
+    )
+
+    with pytest.raises(ValidationError, match="accepts at most one edge"):
+        SavedGraphDocument(
+            nodes=(_node("source"), _node("other-source"), target),
+            edges=(disabled_edge, replacement_edge),
+        )
+
+
+def test_disabled_edge_still_requires_structurally_valid_endpoints() -> None:
+    disabled_edge = _edge("disabled", to_node="absent").model_copy(
+        update={"enabled": False}
+    )
+
+    with pytest.raises(ValidationError, match="missing target node absent"):
+        SavedGraphDocument(
+            nodes=(_node("source"),),
+            edges=(disabled_edge,),
         )
 
 

@@ -11,6 +11,11 @@ from notarius_core.domain.node_secrets import (
     JsonValue,
     canonical_node_secret_dependencies,
 )
+from notarius_core.domain.modules import (
+    MODULE_BOUNDARY_PORT,
+    MODULE_INPUT_OPERATOR_ID,
+    ModuleInputConfig,
+)
 from notarius_core.domain.saved_graphs import SavedGraph, SavedGraphRevision
 from notarius_core.plugins import PluginRegistry
 
@@ -65,6 +70,10 @@ class GraphRunPreflight:
                 saved_graph_context,
                 request.nodes,
                 request.edges,
+                {
+                    (pinned_output.from_node, pinned_output.from_port)
+                    for pinned_output in request.pinned_outputs
+                },
             )
 
         secret_node_ids: set[str] = set()
@@ -101,8 +110,47 @@ def _validate_saved_graph_fragment(
     graph: SavedGraph | SavedGraphRevision,
     nodes: list[RunNodeRequest],
     edges: list[RunEdgeRequest],
+    pinned_output_endpoints: set[tuple[str, str]],
 ) -> None:
     saved_nodes = {node.id: node for node in graph.document.nodes}
+    executed_node_ids = {node.id for node in nodes}
+    optional_unpinned_boundary_endpoints: set[tuple[str, str]] = set()
+    relevant_boundary_node_ids = {
+        edge.from_node
+        for edge in graph.document.edges
+        if edge.enabled
+        and edge.to_node in executed_node_ids
+        and edge.from_port == MODULE_BOUNDARY_PORT
+        and saved_nodes[edge.from_node].operator_id == MODULE_INPUT_OPERATOR_ID
+    }
+    for boundary_node_id in relevant_boundary_node_ids:
+        boundary_node = saved_nodes[boundary_node_id]
+        try:
+            boundary_config = ModuleInputConfig.model_validate(
+                boundary_node.config_dict()
+            )
+        except ValueError as exc:
+            raise GraphExecutionError(
+                f"Saved graph {graph.id} revision {graph.revision} module input "
+                f"boundary {boundary_node_id!r} has invalid configuration"
+            ) from exc
+        endpoint = (boundary_node_id, MODULE_BOUNDARY_PORT)
+        if not boundary_config.required and endpoint not in pinned_output_endpoints:
+            optional_unpinned_boundary_endpoints.add(endpoint)
+
+    expected_saved_incoming_edges = tuple(
+        edge
+        for edge in graph.document.edges
+        if edge.enabled
+        and edge.to_node in executed_node_ids
+        and (edge.from_node, edge.from_port) not in optional_unpinned_boundary_endpoints
+    )
+    active_saved_plug_ids_by_node: dict[str, set[str]] = {}
+    for edge in expected_saved_incoming_edges:
+        if edge.to_plug is None:
+            continue
+        active_saved_plug_ids_by_node.setdefault(edge.to_node, set()).add(edge.to_plug)
+
     for node in nodes:
         saved_node = saved_nodes.get(node.id)
         if saved_node is None:
@@ -110,12 +158,17 @@ def _validate_saved_graph_fragment(
                 f"Run node {node.id!r} does not belong to saved graph {graph.id} "
                 f"revision {graph.revision}"
             )
+        active_saved_plug_ids = active_saved_plug_ids_by_node.get(node.id, set())
         if (
             node.operator_id != saved_node.operator_id
             or node.operator_version != saved_node.operator_version
             or node.config != saved_node.config_dict()
             or tuple((plug.id, plug.port) for plug in node.input_plugs)
-            != tuple((plug.id, plug.port) for plug in saved_node.input_plugs)
+            != tuple(
+                (plug.id, plug.port)
+                for plug in saved_node.input_plugs
+                if plug.id in active_saved_plug_ids
+            )
             or {
                 binding.variable: binding.artifact_type.to_key()
                 for binding in node.artifact_type_bindings
@@ -130,7 +183,6 @@ def _validate_saved_graph_fragment(
                 f"revision {graph.revision}"
             )
 
-    executed_node_ids = {node.id for node in nodes}
     saved_incoming_edges = Counter(
         (
             edge.from_node,
@@ -145,8 +197,7 @@ def _validate_saved_graph_fragment(
                 for conversion in edge.conversion_path
             ),
         )
-        for edge in graph.document.edges
-        if edge.to_node in executed_node_ids
+        for edge in expected_saved_incoming_edges
     )
     submitted_edges = Counter(
         (

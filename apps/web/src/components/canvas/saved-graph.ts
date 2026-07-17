@@ -125,6 +125,7 @@ export function savedGraphDraft(
         to_node: edge.target,
         to_port: target.portName,
         to_plug: target.plugId ?? null,
+        enabled: edge.data?.enabled ?? true,
         ...serializeWorkflowEdgeTransport(edge.data),
         route_offset: edge.data?.routeOffset
           ? {
@@ -185,9 +186,12 @@ export function savedGraphFingerprint(
     nodes: [...(graph.nodes ?? [])].sort((left, right) =>
       left.id.localeCompare(right.id),
     ),
-    edges: [...(graph.edges ?? [])].sort((left, right) =>
-      left.id.localeCompare(right.id),
-    ),
+    edges: [...(graph.edges ?? [])]
+      .map((edge) => ({
+        ...edge,
+        enabled: edge.enabled ?? true,
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
   };
   return JSON.stringify(sortedRecord(normalized));
 }
@@ -446,6 +450,7 @@ export function hydrateSavedGraph(
     const color = sourceArtifactType
       ? ARTIFACT_TYPE_COLOR[sourceArtifactType.id] ?? tokens.colorAccent
       : tokens.colorAccent;
+    const enabled = savedEdge.enabled ?? true;
     return {
       id: savedEdge.id,
       source: savedEdge.from_node,
@@ -469,6 +474,7 @@ export function hydrateSavedGraph(
       type: WORKFLOW_EDGE_TYPE,
       animated: false,
       data: {
+        enabled,
         collectionMode: savedEdge.collection_mode,
         ...(savedEdge.projection
           ? { projection: { path: [...savedEdge.projection.path] } }

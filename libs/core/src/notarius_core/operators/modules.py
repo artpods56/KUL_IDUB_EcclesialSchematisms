@@ -15,6 +15,7 @@ from notarius_core.domain.modules import (
     MODULE_OUTPUT_OPERATOR_ID,
     GraphModuleDefinition,
     ModuleBoundaryConfig,
+    ModuleInputConfig,
 )
 from notarius_core.nodes import (
     ArtifactTypeVariable,
@@ -96,14 +97,14 @@ class GraphModuleExecutionError(RuntimeError):
     title="Module input",
 )
 @final
-class ModuleInputNode(Node[ModuleBoundaryConfig, ModuleInputInput, ModuleInputOutput]):
+class ModuleInputNode(Node[ModuleInputConfig, ModuleInputInput, ModuleInputOutput]):
     """Declares one generic scalar input on a saved graph module."""
 
     @override
     async def run(
         self,
         context: NodeExecutionContext,
-        config: ModuleBoundaryConfig,
+        config: ModuleInputConfig,
         _inputs: ModuleInputInput,
         /,
     ) -> ModuleInputOutput:
@@ -188,6 +189,14 @@ class GraphModuleNode(Node[NoConfig, GraphModuleInput, GraphModuleOutput]):
         public_inputs: dict[str, ArtifactRef] = {}
         for port in self._definition.input_ports:
             value = getattr(inputs, port.name)
+            if value is None:
+                if port.required:
+                    raise GraphModuleExecutionError(
+                        f"Graph module {self.operator_id!r}@"
+                        f"{self.operator_version} required input {port.name!r} "
+                        "was absent"
+                    )
+                continue
             if not isinstance(value, ArtifactRef):
                 raise GraphModuleExecutionError(
                     f"Graph module {self.operator_id!r}@{self.operator_version} "
@@ -244,15 +253,24 @@ class GraphModuleNode(Node[NoConfig, GraphModuleInput, GraphModuleOutput]):
 def _input_model_for(definition: GraphModuleDefinition) -> type[GraphModuleInput]:
     fields: dict[str, tuple[object, object]] = {}
     for port in definition.input_ports:
-        annotation = Annotated[
-            ArtifactRef,
+        field = Field(
+            title=port.name.replace("_", " ").title(),
+            description=port.description,
+        )
+        if port.required:
+            annotation = Annotated[
+                ArtifactRef,
+                InPort(port.artifact_type),
+                field,
+            ]
+            fields[port.name] = (annotation, ...)
+            continue
+        optional_annotation = Annotated[
+            ArtifactRef | None,
             InPort(port.artifact_type),
-            Field(
-                title=port.name.replace("_", " ").title(),
-                description=port.description,
-            ),
+            field,
         ]
-        fields[port.name] = (annotation, ...)
+        fields[port.name] = (optional_annotation, None)
     model_name = (
         f"GraphModule_{definition.reference.graph_id.hex}_"
         f"r{definition.reference.revision}_Input"
@@ -302,6 +320,7 @@ __all__ = [
     "GraphModuleOutput",
     "ModuleBoundaryConfig",
     "ModuleBoundaryExecutionError",
+    "ModuleInputConfig",
     "ModuleInputInput",
     "ModuleInputNode",
     "ModuleInputOutput",

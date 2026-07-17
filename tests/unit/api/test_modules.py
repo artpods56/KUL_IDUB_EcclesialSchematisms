@@ -93,6 +93,34 @@ class SecretGateNode(Node[SecretGateConfig, SecretGateInput, SecretGateOutput]):
         return SecretGateOutput(text=f"{inputs.text} authorized")
 
 
+class OptionalSuffixInput(NodeInput):
+    text: Annotated[StrictStr, InPort(TEXT_VALUE)]
+    suffix: Annotated[str | None, InPort(TEXT_VALUE)] = None
+
+
+class OptionalSuffixOutput(NodeOutput):
+    text: Annotated[StrictStr, OutPort(TEXT_VALUE)]
+
+
+@SECRET_MODULE_PLUGIN.node(
+    operator_id="test.module_optional_suffix",
+    version=1,
+    title="Optional module suffix",
+)
+@final
+class OptionalSuffixNode(Node[NodeConfig, OptionalSuffixInput, OptionalSuffixOutput]):
+    @override
+    async def run(
+        self,
+        _context: NodeExecutionContext,
+        _config: NodeConfig,
+        inputs: OptionalSuffixInput,
+        /,
+    ) -> OptionalSuffixOutput:
+        suffix = inputs.suffix if inputs.suffix is not None else ""
+        return OptionalSuffixOutput(text=f"{inputs.text}{suffix}")
+
+
 async def _create_schema(database_url: str) -> None:
     database = create_database(database_url)
     try:
@@ -159,6 +187,7 @@ def _text_module_payload(
     *,
     name: str = "Capitalize A",
     replacement: str = "A",
+    input_required: bool = True,
 ) -> dict[str, object]:
     return {
         "name": name,
@@ -170,6 +199,7 @@ def _text_module_payload(
                 "config": {
                     "public_name": "text",
                     "description": "Text to transform",
+                    "required": input_required,
                 },
                 "position": {"x": 0, "y": 0},
                 "artifact_type_bindings": _artifact_binding(),
@@ -251,6 +281,112 @@ def _secret_module_payload() -> dict[str, object]:
             {
                 "id": "gate-to-output",
                 "from_node": "secret-gate",
+                "from_port": "text",
+                "to_node": "module-output",
+                "to_port": "value",
+            },
+        ],
+    }
+
+
+def _optional_input_module_payload() -> dict[str, object]:
+    return {
+        "name": "Optional suffix module",
+        "nodes": [
+            {
+                "id": "text-input",
+                "operator_id": "module.input",
+                "operator_version": 1,
+                "config": {"public_name": "text"},
+                "position": {"x": 0, "y": 0},
+                "artifact_type_bindings": _artifact_binding(),
+            },
+            {
+                "id": "suffix-input",
+                "operator_id": "module.input",
+                "operator_version": 1,
+                "config": {"public_name": "suffix", "required": False},
+                "position": {"x": 0, "y": 120},
+                "artifact_type_bindings": _artifact_binding(),
+            },
+            {
+                "id": "append",
+                "operator_id": "test.module_optional_suffix",
+                "operator_version": 1,
+                "config": {},
+                "position": {"x": 240, "y": 0},
+            },
+            {
+                "id": "collect",
+                "operator_id": "sequence.collect",
+                "operator_version": 1,
+                "config": {},
+                "position": {"x": 240, "y": 160},
+                "input_plugs": [
+                    {"id": "active-copy", "port": "items"},
+                    {"id": "disabled-copy", "port": "items"},
+                ],
+                "artifact_type_bindings": _artifact_binding(),
+            },
+            {
+                "id": "pick",
+                "operator_id": "sequence.item_at",
+                "operator_version": 1,
+                "config": {"index": 0},
+                "position": {"x": 480, "y": 160},
+                "artifact_type_bindings": _artifact_binding(),
+            },
+            {
+                "id": "module-output",
+                "operator_id": "module.output",
+                "operator_version": 1,
+                "config": {"public_name": "result"},
+                "position": {"x": 480, "y": 0},
+                "artifact_type_bindings": _artifact_binding(),
+            },
+        ],
+        "edges": [
+            {
+                "id": "text-to-append",
+                "from_node": "text-input",
+                "from_port": "value",
+                "to_node": "append",
+                "to_port": "text",
+            },
+            {
+                "id": "suffix-to-append",
+                "from_node": "suffix-input",
+                "from_port": "value",
+                "to_node": "append",
+                "to_port": "suffix",
+            },
+            {
+                "id": "text-to-collect",
+                "from_node": "text-input",
+                "from_port": "value",
+                "to_node": "collect",
+                "to_port": "items",
+                "to_plug": "active-copy",
+            },
+            {
+                "id": "disabled-text-to-collect",
+                "enabled": False,
+                "from_node": "text-input",
+                "from_port": "value",
+                "to_node": "collect",
+                "to_port": "items",
+                "to_plug": "disabled-copy",
+            },
+            {
+                "id": "collect-to-pick",
+                "from_node": "collect",
+                "from_port": "items",
+                "to_node": "pick",
+                "to_port": "items",
+            },
+            {
+                "id": "append-to-output",
+                "from_node": "append",
                 "from_port": "text",
                 "to_node": "module-output",
                 "to_port": "value",
@@ -493,6 +629,180 @@ def test_module_uses_existing_map_semantics_and_keeps_revision_pinned(
     )[0]
     pinned_artifacts = cast(list[dict[str, object]], pinned_output["artifacts"])
     assert pinned_artifacts[0]["text"] == '"A"'
+
+
+def test_nested_module_omits_absent_optional_input_and_disabled_edges(
+    module_client: TestClient,
+) -> None:
+    created = module_client.post(
+        "/v1/graphs",
+        json=_optional_input_module_payload(),
+    ).json()
+    graph_id = created["id"]
+    registry = module_client.get("/v1/nodes").json()
+    module_spec = next(
+        node for node in registry["nodes"] if node["module_graph_id"] == graph_id
+    )
+    assert [(port["name"], port["required"]) for port in module_spec["inputs"]] == [
+        ("text", True),
+        ("suffix", False),
+    ]
+
+    response = module_client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "source",
+                    "operator_id": "text.input",
+                    "operator_version": 1,
+                    "config": {"text": "hello"},
+                },
+                {
+                    "id": "module",
+                    "operator_id": module_spec["operator_id"],
+                    "operator_version": module_spec["operator_version"],
+                    "config": {},
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "source",
+                    "from_port": "text",
+                    "to_node": "module",
+                    "to_port": "text",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["status"] == "succeeded"
+    output = cast(list[dict[str, object]], _module_node_run(result)["outputs"])[0]
+    artifacts = cast(list[dict[str, object]], output["artifacts"])
+    assert artifacts[0]["text"] == '"hello"'
+
+    supplied_response = module_client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "text-source",
+                    "operator_id": "text.input",
+                    "operator_version": 1,
+                    "config": {"text": "hello"},
+                },
+                {
+                    "id": "suffix-source",
+                    "operator_id": "text.input",
+                    "operator_version": 1,
+                    "config": {"text": "!"},
+                },
+                {
+                    "id": "module",
+                    "operator_id": module_spec["operator_id"],
+                    "operator_version": module_spec["operator_version"],
+                    "config": {},
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "text-source",
+                    "from_port": "text",
+                    "to_node": "module",
+                    "to_port": "text",
+                },
+                {
+                    "from_node": "suffix-source",
+                    "from_port": "text",
+                    "to_node": "module",
+                    "to_port": "suffix",
+                },
+            ],
+        },
+    )
+
+    assert supplied_response.status_code == 200
+    supplied_result = supplied_response.json()
+    assert supplied_result["status"] == "succeeded"
+    supplied_output = cast(
+        list[dict[str, object]],
+        _module_node_run(supplied_result)["outputs"],
+    )[0]
+    supplied_artifacts = cast(list[dict[str, object]], supplied_output["artifacts"])
+    assert supplied_artifacts[0]["text"] == '"hello!"'
+
+
+def test_module_catalog_rejects_optional_input_targeting_required_input(
+    module_client: TestClient,
+) -> None:
+    created = module_client.post(
+        "/v1/graphs",
+        json=_text_module_payload(
+            name="Invalid optional input",
+            input_required=False,
+        ),
+    ).json()
+    graph_id = created["id"]
+
+    registry = module_client.get("/v1/nodes").json()
+    assert all(
+        node["module_graph_id"] != graph_id
+        for node in registry["nodes"]
+        if node["plugin_slug"] == "graph.module"
+    )
+
+    response = module_client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "module",
+                    "operator_id": f"graph.module.{graph_id}",
+                    "operator_version": 1,
+                    "config": {},
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        f"Saved graph {graph_id} revision 1 is not a valid module: Graph module "
+        f"{graph_id} revision 1 optional public input 'text' edge "
+        "'input-to-replace' targets required input 'replace'.'text' "
+        "(text.replace@1)"
+    )
+
+
+def test_graph_module_required_input_is_rejected_by_compiler(
+    module_client: TestClient,
+) -> None:
+    created = module_client.post(
+        "/v1/graphs",
+        json=_optional_input_module_payload(),
+    ).json()
+
+    response = module_client.post(
+        "/v1/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "module",
+                    "operator_id": f"graph.module.{created['id']}",
+                    "operator_version": created["revision"],
+                    "config": {},
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        f"Node 'module' (graph.module.{created['id']}@1) required input "
+        "'text' has no incoming edge"
+    )
 
 
 def test_nested_module_resolves_secret_from_its_own_pinned_graph(

@@ -238,6 +238,51 @@ def _secret_revision() -> SavedGraphRevision:
     ).snapshot()
 
 
+def _module_input_fragment(*, required: bool) -> tuple[SavedGraphRevision, RunRequest]:
+    graph = SavedGraph(
+        name="Module input fragment",
+        document=SavedGraphDocument(
+            nodes=(
+                SavedGraphNode(
+                    id="module-input",
+                    operator_id="module.input",
+                    operator_version=1,
+                    config={"public_name": "value", "required": required},
+                    position=GraphPoint(x=0, y=0),
+                ),
+                SavedGraphNode(
+                    id="target",
+                    operator_id="test.graph-preflight.plain",
+                    operator_version=1,
+                    config={},
+                    position=GraphPoint(x=100, y=0),
+                ),
+            ),
+            edges=(
+                SavedGraphEdge(
+                    id="input-to-target",
+                    from_node="module-input",
+                    from_port="value",
+                    to_node="target",
+                    to_port="value",
+                ),
+            ),
+        ),
+    ).snapshot()
+    request = RunRequest(
+        graph_id=graph.id,
+        graph_revision=graph.revision,
+        nodes=[
+            RunNodeRequest(
+                id="target",
+                operator_id="test.graph-preflight.plain",
+                operator_version=1,
+            )
+        ],
+    )
+    return graph, request
+
+
 @pytest.mark.asyncio
 async def test_saved_fragment_matches_exact_node_and_incoming_edge_state() -> None:
     graph, request = _fragment_case()
@@ -273,6 +318,70 @@ async def test_saved_fragment_rejects_node_and_edge_drift() -> None:
         match="1 missing and 1 unexpected or duplicated",
     ):
         await preflight.validate(matching.model_copy(update={"edges": [changed_edge]}))
+
+
+@pytest.mark.asyncio
+async def test_saved_fragment_ignores_disabled_incoming_edges() -> None:
+    graph, submitted = _fragment_case()
+    disabled_document = graph.document.model_copy(
+        update={
+            "edges": (
+                graph.document.edges[0].model_copy(update={"enabled": False}),
+                graph.document.edges[1],
+            )
+        }
+    )
+    disabled_graph = SavedGraphRevision(
+        graph_id=graph.graph_id,
+        revision=graph.revision,
+        name=graph.name,
+        document=disabled_document,
+        created_at=graph.created_at,
+    )
+    preflight = GraphRunPreflight(
+        plugin_registry=PLUGIN_REGISTRY,
+        saved_graphs=_RecordingSavedGraphs(disabled_graph),
+    )
+    active_node = submitted.nodes[0].model_copy(update={"input_plugs": []})
+    active_request = submitted.model_copy(update={"nodes": [active_node], "edges": []})
+
+    await preflight.validate(active_request)
+
+    with pytest.raises(
+        GraphExecutionError,
+        match="0 missing and 1 unexpected or duplicated",
+    ):
+        await preflight.validate(
+            active_request.model_copy(update={"edges": submitted.edges})
+        )
+
+
+@pytest.mark.asyncio
+async def test_optional_unpinned_module_input_edge_may_be_omitted() -> None:
+    graph, request = _module_input_fragment(required=False)
+    preflight = GraphRunPreflight(
+        plugin_registry=PLUGIN_REGISTRY,
+        saved_graphs=_RecordingSavedGraphs(graph),
+    )
+
+    context = await preflight.validate(request)
+
+    assert context.secret_node_ids == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_required_unpinned_module_input_edge_must_not_be_omitted() -> None:
+    graph, request = _module_input_fragment(required=True)
+    preflight = GraphRunPreflight(
+        plugin_registry=PLUGIN_REGISTRY,
+        saved_graphs=_RecordingSavedGraphs(graph),
+    )
+
+    with pytest.raises(
+        GraphExecutionError,
+        match="1 missing and 0 unexpected or duplicated",
+    ):
+        await preflight.validate(request)
 
 
 @pytest.mark.asyncio

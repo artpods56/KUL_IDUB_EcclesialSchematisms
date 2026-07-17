@@ -686,6 +686,11 @@ export interface components {
             readonly collection_mode: "direct" | "map";
             /** Conversion Path */
             readonly conversion_path?: readonly components["schemas"]["SavedGraphConversionModel"][];
+            /**
+             * Enabled
+             * @default true
+             */
+            readonly enabled: boolean;
             /** From Node */
             readonly from_node: string;
             /** From Port */

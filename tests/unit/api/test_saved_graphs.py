@@ -79,6 +79,7 @@ def test_saved_graph_crud_round_trip(builtin_client: TestClient) -> None:
         }
     ]
     assert created["edges"][0]["to_plug"] == "primary-value"
+    assert created["edges"][0]["enabled"] is True
     assert created["edges"][0]["projection"] == {"path": ["payload", "text"]}
     assert created["edges"][0]["conversion_path"] == [
         {
@@ -203,6 +204,21 @@ def test_saved_graph_preserves_conversion_path_order(
     loaded = builtin_client.get(f"/v1/graphs/{created['id']}")
     assert loaded.status_code == 200
     assert loaded.json()["edges"][0]["conversion_path"] == edge["conversion_path"]
+
+
+def test_saved_graph_preserves_disabled_edges(builtin_client: TestClient) -> None:
+    payload = _graph_payload("Disabled edge")
+    edge = cast(list[dict[str, object]], payload["edges"])[0]
+    edge["enabled"] = False
+
+    create_response = builtin_client.post("/v1/graphs", json=payload)
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["edges"][0]["enabled"] is False
+    loaded = builtin_client.get(f"/v1/graphs/{created['id']}")
+    assert loaded.status_code == 200
+    assert loaded.json()["edges"][0]["enabled"] is False
 
 
 def test_update_requires_positive_expected_revision(builtin_client: TestClient) -> None:

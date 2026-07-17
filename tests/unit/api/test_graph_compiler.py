@@ -59,7 +59,7 @@ def _compiler(tmp_path: Path) -> GraphCompiler:
     return GraphCompiler(
         plugin_registry=registry,
         plugin_context=plugin_context,
-        module_catalog=GraphModuleCatalog(saved_graphs),
+        module_catalog=GraphModuleCatalog(saved_graphs, registry),
     )
 
 

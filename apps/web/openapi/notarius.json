@@ -1301,6 +1301,11 @@
             "title": "Conversion Path",
             "type": "array"
           },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
           "from_node": {
             "maxLength": 255,
             "minLength": 1,

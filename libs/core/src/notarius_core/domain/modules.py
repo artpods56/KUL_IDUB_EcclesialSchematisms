@@ -64,6 +64,13 @@ class ModuleBoundaryConfig(NodeConfig):
         return value
 
 
+class ModuleInputConfig(ModuleBoundaryConfig):
+    required: bool = Field(
+        default=True,
+        description="Whether callers must supply this public module input.",
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class GraphModuleReference:
     graph_id: UUID
@@ -142,6 +149,7 @@ class GraphModulePort:
     artifact_type: ArtifactTypeKey
     boundary_node_id: str
     description: str | None = None
+    required: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,13 +251,15 @@ class GraphModuleDefinition:
         incoming_edges: dict[str, list[SavedGraphEdge]] = {}
         outgoing_edges: dict[str, list[SavedGraphEdge]] = {}
         for edge in self.document.edges:
+            if not edge.enabled:
+                continue
             incoming_edges.setdefault(edge.to_node, []).append(edge)
             outgoing_edges.setdefault(edge.from_node, []).append(edge)
 
         for node in self.document.nodes:
             if node.operator_id == MODULE_INPUT_OPERATOR_ID:
                 self._validate_boundary_version(node)
-                config = self._validated_boundary_config(node)
+                config = self._validated_boundary_config(node, ModuleInputConfig)
                 artifact_type = self._bound_artifact_type(node)
                 node_incoming = incoming_edges.get(node.id, [])
                 node_outgoing = outgoing_edges.get(node.id, [])
@@ -282,6 +292,7 @@ class GraphModuleDefinition:
                         artifact_type=artifact_type,
                         boundary_node_id=node.id,
                         description=config.description,
+                        required=config.required,
                     )
                 )
                 continue
@@ -289,7 +300,7 @@ class GraphModuleDefinition:
             if node.operator_id != MODULE_OUTPUT_OPERATOR_ID:
                 continue
             self._validate_boundary_version(node)
-            config = self._validated_boundary_config(node)
+            config = self._validated_boundary_config(node, ModuleBoundaryConfig)
             artifact_type = self._bound_artifact_type(node)
             node_incoming = incoming_edges.get(node.id, [])
             node_outgoing = outgoing_edges.get(node.id, [])
@@ -349,12 +360,13 @@ class GraphModuleDefinition:
                 "boundary operators cannot declare instance input plugs",
             )
 
-    def _validated_boundary_config(
+    def _validated_boundary_config[ConfigT: ModuleBoundaryConfig](
         self,
         node: SavedGraphNode,
-    ) -> ModuleBoundaryConfig:
+        config_model: type[ConfigT],
+    ) -> ConfigT:
         try:
-            return ModuleBoundaryConfig.model_validate(node.config_dict())
+            return config_model.model_validate(node.config_dict())
         except ValueError as exc:
             raise self._node_error(node, "has invalid boundary configuration") from exc
 
@@ -418,4 +430,5 @@ __all__ = [
     "MODULE_INPUT_OPERATOR_ID",
     "MODULE_OUTPUT_OPERATOR_ID",
     "ModuleBoundaryConfig",
+    "ModuleInputConfig",
 ]

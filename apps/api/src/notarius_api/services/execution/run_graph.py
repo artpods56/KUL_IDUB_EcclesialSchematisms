@@ -88,13 +88,31 @@ class RunGraph:
                 f"at revision {graph_revision}: {rendered_path}"
             )
 
-        input_boundary_ids = {port.boundary_node_id for port in definition.input_ports}
+        input_names_by_boundary_id = {
+            port.boundary_node_id: port.name for port in definition.input_ports
+        }
+        input_boundary_ids = set(input_names_by_boundary_id)
         executed_nodes = [
             node
             for node in definition.document.nodes
             if node.id not in input_boundary_ids
         ]
         executed_node_ids = {node.id for node in executed_nodes}
+        active_edges = [
+            edge
+            for edge in definition.document.edges
+            if edge.enabled
+            and edge.to_node in executed_node_ids
+            and (
+                edge.from_node not in input_names_by_boundary_id
+                or input_names_by_boundary_id[edge.from_node] in inputs
+            )
+        ]
+        active_input_plug_ids_by_node = {node.id: set[str]() for node in executed_nodes}
+        for edge in active_edges:
+            if edge.to_plug is not None:
+                active_input_plug_ids_by_node[edge.to_node].add(edge.to_plug)
+
         request = RunRequest(
             nodes=[
                 RunNodeRequest(
@@ -105,6 +123,7 @@ class RunGraph:
                     input_plugs=[
                         RunInputPlugRequest(id=plug.id, port=plug.port)
                         for plug in node.input_plugs
+                        if plug.id in active_input_plug_ids_by_node[node.id]
                     ],
                     artifact_type_bindings=[
                         ArtifactTypeBindingModel(
@@ -140,8 +159,7 @@ class RunGraph:
                     ],
                     collection_mode=edge.collection_mode,
                 )
-                for edge in definition.document.edges
-                if edge.to_node in executed_node_ids
+                for edge in active_edges
             ],
             pinned_outputs=[
                 PinnedOutputRequest(
@@ -150,6 +168,7 @@ class RunGraph:
                     value=inputs[port.name],
                 )
                 for port in definition.input_ports
+                if port.name in inputs
             ],
             graph_id=graph_id,
             graph_revision=graph_revision,

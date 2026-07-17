@@ -65,6 +65,7 @@ def build_workbench_components(
     *,
     plugin_registry: PluginRegistry,
     execution_backend: Literal["prefect", "inline"],
+    map_max_concurrency: int = 4,
     prefect_task_retries: int = 0,
     prefect_task_retry_delay_seconds: float = 0,
     workspace: Path | None = None,
@@ -118,7 +119,7 @@ def build_workbench_components(
     writer_registry = ArtifactWriterRegistry(writers)
 
     artifacts = ArtifactService(resolved_unit_of_work, resolved_storage)
-    modules = GraphModuleCatalog(saved_graphs)
+    modules = GraphModuleCatalog(saved_graphs, plugin_registry)
     materializations = MaterializationService(
         resolved_unit_of_work,
         artifacts,
@@ -143,10 +144,14 @@ def build_workbench_components(
             storage=resolved_storage,
         ),
     )
+    effective_map_max_concurrency = 1
+    if execution_backend == "prefect":
+        effective_map_max_concurrency = map_max_concurrency
     node_execution = NodeExecutionService(
         runtime=runtime,
         edge_values=edge_values,
         node_secrets=resolved_node_secrets,
+        max_map_concurrency=effective_map_max_concurrency,
     )
     coordinator = GraphExecutionCoordinator(node_execution=node_execution)
     if execution_backend == "prefect":

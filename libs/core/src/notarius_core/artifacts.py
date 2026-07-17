@@ -1,5 +1,7 @@
-from copy import deepcopy
+from asyncio import Lock
 from collections.abc import Collection
+from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass, field
 from types import TracebackType
 from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeAlias, final, override
@@ -309,49 +311,59 @@ class InMemoryInvocationCacheRepository:
         return True
 
 
+@dataclass(frozen=True, slots=True)
+class _InMemoryUnitOfWorkState:
+    working_store: InMemoryDataStore
+    artifacts: ArtifactRepositoryPort
+    materialized_outputs: "MaterializedNodeOutputsRepositoryPort"
+    invocation_cache: "InvocationCacheRepositoryPort"
+
+
 class InMemoryUnitOfWork(UnitOfWorkPort):
     def __init__(self, store: InMemoryDataStore | None = None) -> None:
         self._store = store or InMemoryDataStore()
-        self._working_store: InMemoryDataStore | None = None
-        self._artifacts: ArtifactRepositoryPort | None = None
-        self._materialized_outputs: "MaterializedNodeOutputsRepositoryPort | None" = (
-            None
+        self._transaction_lock = Lock()
+        self._state: ContextVar[_InMemoryUnitOfWorkState | None] = ContextVar(
+            "notarius_in_memory_unit_of_work_state",
+            default=None,
         )
-        self._invocation_cache: "InvocationCacheRepositoryPort | None" = None
         self.commit_count = 0
         self.rollback_count = 0
 
     @property
     @override
     def artifacts(self) -> ArtifactRepositoryPort:
-        if self._artifacts is None:
-            raise RuntimeError("Unit of work is not entered")
-        return self._artifacts
+        return self._entered_state().artifacts
 
     @property
     def materialized_outputs(self) -> "MaterializedNodeOutputsRepositoryPort":
-        if self._materialized_outputs is None:
-            raise RuntimeError("Unit of work is not entered")
-        return self._materialized_outputs
+        return self._entered_state().materialized_outputs
 
     @property
     def invocation_cache(self) -> "InvocationCacheRepositoryPort":
-        if self._invocation_cache is None:
-            raise RuntimeError("Unit of work is not entered")
-        return self._invocation_cache
+        return self._entered_state().invocation_cache
 
     @override
     async def __aenter__(self) -> Self:
-        if self._working_store is not None:
-            raise RuntimeError("Unit of work is already entered")
+        if self._state.get() is not None:
+            raise RuntimeError("Unit of work is already entered in this task")
 
-        working_store = self._store.clone()
-        self._working_store = working_store
-        self._artifacts = InMemoryArtifactRepository(working_store)
-        self._materialized_outputs = InMemoryMaterializedNodeOutputsRepository(
-            working_store
-        )
-        self._invocation_cache = InMemoryInvocationCacheRepository(working_store)
+        await self._transaction_lock.acquire()
+        try:
+            working_store = self._store.clone()
+            self._state.set(
+                _InMemoryUnitOfWorkState(
+                    working_store=working_store,
+                    artifacts=InMemoryArtifactRepository(working_store),
+                    materialized_outputs=InMemoryMaterializedNodeOutputsRepository(
+                        working_store
+                    ),
+                    invocation_cache=InMemoryInvocationCacheRepository(working_store),
+                )
+            )
+        except BaseException:
+            self._transaction_lock.release()
+            raise
         return self
 
     @override
@@ -362,23 +374,30 @@ class InMemoryUnitOfWork(UnitOfWorkPort):
         traceback: TracebackType | None,
     ) -> None:
         del exc, traceback
-        if exc_type is not None and self._working_store is not None:
-            await self.rollback()
-        self._working_store = None
-        self._artifacts = None
-        self._materialized_outputs = None
-        self._invocation_cache = None
+        state = self._state.get()
+        if state is None:
+            return
+        try:
+            if exc_type is not None:
+                await self.rollback()
+        finally:
+            self._state.set(None)
+            self._transaction_lock.release()
 
     @override
     async def commit(self) -> None:
-        if self._working_store is None:
-            raise RuntimeError("Unit of work is not entered")
-        self._store.replace_with(self._working_store)
+        state = self._entered_state()
+        self._store.replace_with(state.working_store)
         self.commit_count += 1
 
     @override
     async def rollback(self) -> None:
-        if self._working_store is None:
-            raise RuntimeError("Unit of work is not entered")
-        self._working_store.replace_with(self._store)
+        state = self._entered_state()
+        state.working_store.replace_with(self._store)
         self.rollback_count += 1
+
+    def _entered_state(self) -> _InMemoryUnitOfWorkState:
+        state = self._state.get()
+        if state is None:
+            raise RuntimeError("Unit of work is not entered")
+        return state

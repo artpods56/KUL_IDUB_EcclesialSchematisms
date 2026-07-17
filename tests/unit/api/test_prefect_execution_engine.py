@@ -74,6 +74,15 @@ class BlockingIntegerOutput(NodeOutput):
     result: Annotated[StrictInt, OutPort(INTEGER_VALUE)]
 
 
+class ConcurrentIntegerInput(NodeInput):
+    left: Annotated[StrictInt, InPort(INTEGER_VALUE)]
+    right: Annotated[StrictInt, InPort(INTEGER_VALUE)]
+
+
+class ConcurrentIntegerOutput(NodeOutput):
+    result: Annotated[StrictInt, OutPort(INTEGER_VALUE)]
+
+
 PREFECT_BEHAVIOR_PLUGIN = Plugin(
     slug="test.prefect-behavior",
     title="Prefect behavior test plugin",
@@ -153,6 +162,48 @@ class BlockingIntegerNode(
         raise AssertionError("unreachable")
 
 
+@PREFECT_BEHAVIOR_PLUGIN.node(
+    operator_id="test.prefect.concurrent_integer",
+    version=1,
+    title="Concurrent integer",
+)
+@final
+class ConcurrentIntegerNode(
+    Node[NoConfig, ConcurrentIntegerInput, ConcurrentIntegerOutput]
+):
+    release_gates: ClassVar[tuple[asyncio.Event, ...]] = ()
+    started: ClassVar[tuple[asyncio.Event, ...]] = ()
+    completed: ClassVar[tuple[asyncio.Event, ...]] = ()
+    completed_indexes: ClassVar[list[int]] = []
+    active_count: ClassVar[int] = 0
+    max_active_count: ClassVar[int] = 0
+
+    @override
+    async def run(
+        self,
+        context: NodeExecutionContext,
+        _config: NoConfig,
+        inputs: ConcurrentIntegerInput,
+        /,
+    ) -> ConcurrentIntegerOutput:
+        index = context.invocation_index
+        assert index is not None
+        node_type = type(self)
+        node_type.active_count += 1
+        node_type.max_active_count = max(
+            node_type.max_active_count,
+            node_type.active_count,
+        )
+        node_type.started[index].set()
+        try:
+            await node_type.release_gates[index].wait()
+            node_type.completed_indexes.append(index)
+            node_type.completed[index].set()
+            return ConcurrentIntegerOutput(result=inputs.left + inputs.right)
+        finally:
+            node_type.active_count -= 1
+
+
 @pytest.fixture(scope="module", autouse=True)
 def prefect_harness(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     prefect_home = tmp_path_factory.mktemp("prefect-home")
@@ -173,16 +224,29 @@ def reset_controlled_integer_node() -> Iterator[None]:
     ControlledIntegerNode.attempts.clear()
     BlockingIntegerNode.started = None
     BlockingIntegerNode.workflow_run_id = None
+    ConcurrentIntegerNode.release_gates = ()
+    ConcurrentIntegerNode.started = ()
+    ConcurrentIntegerNode.completed = ()
+    ConcurrentIntegerNode.completed_indexes.clear()
+    ConcurrentIntegerNode.active_count = 0
+    ConcurrentIntegerNode.max_active_count = 0
     yield
     ControlledIntegerNode.invocations.clear()
     ControlledIntegerNode.attempts.clear()
     BlockingIntegerNode.started = None
     BlockingIntegerNode.workflow_run_id = None
+    ConcurrentIntegerNode.release_gates = ()
+    ConcurrentIntegerNode.started = ()
+    ConcurrentIntegerNode.completed = ()
+    ConcurrentIntegerNode.completed_indexes.clear()
+    ConcurrentIntegerNode.active_count = 0
+    ConcurrentIntegerNode.max_active_count = 0
 
 
 def build_prefect_components(
     workspace: Path,
     *,
+    map_max_concurrency: int = 4,
     task_retries: int = 0,
 ) -> tuple[WorkbenchComponents, InMemoryUnitOfWork]:
     unit_of_work = InMemoryUnitOfWork()
@@ -193,6 +257,7 @@ def build_prefect_components(
     components = build_workbench_components(
         plugin_registry=registry,
         execution_backend="prefect",
+        map_max_concurrency=map_max_concurrency,
         prefect_task_retries=task_retries,
         prefect_task_retry_delay_seconds=0,
         workspace=workspace,
@@ -222,6 +287,87 @@ async def read_settled_task_runs(
                 return task_runs
             await asyncio.sleep(0.05)
     return task_runs
+
+
+@pytest.mark.asyncio
+async def test_prefect_map_items_overlap_and_reduce_in_source_order(
+    tmp_path: Path,
+) -> None:
+    release_gates = (asyncio.Event(), asyncio.Event())
+    ConcurrentIntegerNode.release_gates = release_gates
+    ConcurrentIntegerNode.started = (asyncio.Event(), asyncio.Event())
+    ConcurrentIntegerNode.completed = (asyncio.Event(), asyncio.Event())
+    components, unit_of_work = build_prefect_components(
+        tmp_path / "workbench",
+        map_max_concurrency=2,
+    )
+    run_task = asyncio.create_task(
+        components.run_graph.run(
+            RunRequest(
+                nodes=[
+                    RunNodeRequest(
+                        id="sequence",
+                        operator_id="arithmetic.integer_sequence",
+                        operator_version=1,
+                        config={"start": 1, "count": 2, "step": 1},
+                    ),
+                    RunNodeRequest(
+                        id="ten",
+                        operator_id="arithmetic.number",
+                        operator_version=1,
+                        config={"value": 10},
+                    ),
+                    RunNodeRequest(
+                        id="mapped",
+                        operator_id="test.prefect.concurrent_integer",
+                        operator_version=1,
+                    ),
+                ],
+                edges=[
+                    RunEdgeRequest(
+                        from_node="sequence",
+                        from_port="values",
+                        to_node="mapped",
+                        to_port="left",
+                        collection_mode="map",
+                    ),
+                    RunEdgeRequest(
+                        from_node="ten",
+                        from_port="value",
+                        to_node="mapped",
+                        to_port="right",
+                    ),
+                ],
+            )
+        )
+    )
+    try:
+        async with asyncio.timeout(10):
+            await ConcurrentIntegerNode.started[0].wait()
+            await ConcurrentIntegerNode.started[1].wait()
+        assert ConcurrentIntegerNode.active_count == 2
+
+        release_gates[1].set()
+        async with asyncio.timeout(10):
+            await ConcurrentIntegerNode.completed[1].wait()
+        release_gates[0].set()
+        result = await run_task
+    finally:
+        for gate in release_gates:
+            gate.set()
+        if not run_task.done():
+            run_task.cancel()
+        await asyncio.gather(run_task, return_exceptions=True)
+
+    assert result.status == "succeeded"
+    assert ConcurrentIntegerNode.max_active_count == 2
+    assert ConcurrentIntegerNode.completed_indexes == [1, 0]
+    mapped_output = result.outputs["mapped"]["result"]
+    assert isinstance(mapped_output, ArtifactRefSequence)
+    resolver = IntegerValueResolver(uow=unit_of_work)
+    assert [
+        await resolver.resolve(item_ref) for item_ref in mapped_output.item_refs
+    ] == [11, 12]
 
 
 @pytest.mark.asyncio

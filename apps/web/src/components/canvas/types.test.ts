@@ -169,6 +169,25 @@ describe("run node serialization", () => {
     expect(request).not.toHaveProperty("onApplyNodeSecret");
     expect(JSON.stringify(request)).not.toContain("api_key");
   });
+
+  it("omits authoring input plugs that have no active execution edge", () => {
+    const data = createWorkflowNodeData(genericNodeSpec);
+    data.inputPlugs = [
+      { id: "active", portName: "items" },
+      { id: "disabled", portName: "items" },
+    ];
+
+    const request = serializeRunNode(
+      "collect-node",
+      data,
+      new Set(["active"]),
+    );
+
+    expect(request.input_plugs).toEqual([
+      { id: "active", port: "items" },
+    ]);
+    expect(data.inputPlugs).toHaveLength(2);
+  });
 });
 
 function nodeWithRun(id: string) {
@@ -207,5 +226,41 @@ describe("workflow result invalidation", () => {
     expect(next[1]?.data.execution).toEqual({ status: "idle" });
     expect(next[2]?.data.run).toBeNull();
     expect(next[2]?.data.execution).toEqual({ status: "idle" });
+  });
+
+  it("clears only descendants reached through enabled edges", () => {
+    const target = nodeWithRun("target");
+    const activeDescendant = nodeWithRun("active-descendant");
+    const disabledDescendant = nodeWithRun("disabled-descendant");
+    const disabledGrandchild = nodeWithRun("disabled-grandchild");
+
+    const next = invalidateWorkflowNodeRuns(
+      [target, activeDescendant, disabledDescendant, disabledGrandchild],
+      [
+        {
+          source: "target",
+          target: "active-descendant",
+          data: { enabled: true },
+        },
+        {
+          source: "target",
+          target: "disabled-descendant",
+          data: { enabled: false },
+        },
+        {
+          source: "disabled-descendant",
+          target: "disabled-grandchild",
+          data: { enabled: true },
+        },
+      ],
+      ["target"],
+    );
+
+    expect(next[0]?.data.run).toBeNull();
+    expect(next[1]?.data.run).toBeNull();
+    expect(next[2]).toBe(disabledDescendant);
+    expect(next[2]?.data.run).toBe(disabledDescendant.data.run);
+    expect(next[3]).toBe(disabledGrandchild);
+    expect(next[3]?.data.run).toBe(disabledGrandchild.data.run);
   });
 });

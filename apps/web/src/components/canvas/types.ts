@@ -43,11 +43,13 @@ export interface WorkflowEdgeRouteOffset {
 }
 
 export interface WorkflowEdgeUpdate {
+  enabled?: boolean;
   collectionMode?: RunEdgeCollectionMode;
   route?: WorkflowEdgeRoute;
 }
 
 export interface WorkflowEdgeData extends Record<string, unknown> {
+  enabled: boolean;
   collectionMode: RunEdgeCollectionMode;
   projection?: WorkflowEdgeProjection;
   conversionPath?: WorkflowEdgeConversionPath;
@@ -57,6 +59,8 @@ export interface WorkflowEdgeData extends Record<string, unknown> {
   conversionTitles?: readonly string[];
   routeOptions?: readonly WorkflowEdgeRouteOption[];
   allowedCollectionModes?: readonly RunEdgeCollectionMode[];
+  /** Whether the target port permits this connection to be disabled. */
+  canDisable?: boolean;
   onUpdate?: (edgeId: string, update: WorkflowEdgeUpdate) => void;
   onRouteOffsetChange?: (
     edgeId: string,
@@ -250,13 +254,17 @@ export function createWorkflowNodeData(
 export function serializeRunNode(
   id: string,
   data: WorkflowNodeData,
+  activeInputPlugIds?: ReadonlySet<string>,
 ): RunNodeInput {
+  const inputPlugs = serializeInputPlugs(data);
   return {
     id,
     operator_id: data.spec.operator_id,
     operator_version: data.spec.operator_version,
     config: data.config,
-    input_plugs: serializeInputPlugs(data),
+    input_plugs: activeInputPlugIds
+      ? inputPlugs.filter((plug) => activeInputPlugIds.has(plug.id))
+      : inputPlugs,
     artifact_type_bindings: serializeArtifactTypeBindings(data),
   };
 }
@@ -391,6 +399,9 @@ interface WorkflowNodeState {
 interface WorkflowConnectionState {
   source: string;
   target: string;
+  data?: {
+    enabled?: boolean;
+  };
 }
 
 export function invalidateWorkflowNodeRuns<NodeType extends WorkflowNodeState>(
@@ -406,6 +417,7 @@ export function invalidateWorkflowNodeRuns<NodeType extends WorkflowNodeState>(
     if (sourceNodeId === undefined) continue;
     for (const edge of edges) {
       if (
+        edge.data?.enabled === false ||
         edge.source !== sourceNodeId ||
         invalidatedNodeIds.has(edge.target)
       ) {

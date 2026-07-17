@@ -7,7 +7,11 @@ import type {
   SavedGraph,
 } from "@/lib/api";
 import { decodeHandleId } from "./handles";
-import { hydrateSavedGraph, savedGraphDraft } from "./saved-graph";
+import {
+  hydrateSavedGraph,
+  savedGraphDraft,
+  savedGraphFingerprint,
+} from "./saved-graph";
 import {
   IMAGE_UPLOAD_OPERATOR_ID,
   WORKFLOW_NODE_TYPE,
@@ -130,7 +134,7 @@ function graphWithEdge(
       },
     ],
     edges: [
-      {
+      ({
         id: "edge",
         from_node: "source-node",
         from_port: "output",
@@ -141,7 +145,7 @@ function graphWithEdge(
         projection: null,
         route_offset: null,
         ...edgeConversion,
-      },
+      }) as unknown as NonNullable<SavedGraph["edges"]>[number],
     ],
   };
 }
@@ -175,6 +179,78 @@ describe("saved conversion paths", () => {
       savedGraphDraft("Conversion path", hydrated.nodes, hydrated.edges).edges?.[0]
         ?.conversion_path,
     ).toEqual(conversionPath);
+  });
+});
+
+describe("saved edge enablement", () => {
+  it("hydrates a legacy edge as enabled and keeps enablement out of run transport", () => {
+    const hydrated = hydrateSavedGraph(
+      graphWithEdge({ conversion_path: conversionPath }),
+      registry(),
+    );
+    const edge = hydrated.edges[0];
+
+    expect(edge?.data?.enabled).toBe(true);
+    expect(serializeWorkflowEdgeTransport(edge?.data)).not.toHaveProperty(
+      "enabled",
+    );
+    expect(
+      savedGraphDraft("Legacy edge", hydrated.nodes, hydrated.edges).edges?.[0],
+    ).toMatchObject({ enabled: true });
+  });
+
+  it("persists disabled state and includes it in the dirty fingerprint", () => {
+    const legacyGraph = graphWithEdge({ conversion_path: conversionPath });
+    const disabledGraph: SavedGraph = {
+      ...legacyGraph,
+      edges: (legacyGraph.edges ?? []).map((edge) => ({
+        ...edge,
+        enabled: false,
+      })),
+    };
+    const enabled = hydrateSavedGraph(legacyGraph, registry());
+    const disabled = hydrateSavedGraph(disabledGraph, registry());
+    const enabledDraft = savedGraphDraft(
+      "Edge state",
+      enabled.nodes,
+      enabled.edges,
+    );
+    const disabledDraft = savedGraphDraft(
+      "Edge state",
+      disabled.nodes,
+      disabled.edges,
+    );
+
+    expect(disabled.edges[0]?.data?.enabled).toBe(false);
+    expect(disabledDraft.edges?.[0]).toMatchObject({ enabled: false });
+    expect(savedGraphFingerprint(disabledDraft)).not.toBe(
+      savedGraphFingerprint(enabledDraft),
+    );
+  });
+
+  it("normalizes a missing legacy flag to enabled in the fingerprint", () => {
+    const hydrated = hydrateSavedGraph(
+      graphWithEdge({ conversion_path: conversionPath }),
+      registry(),
+    );
+    const enabledDraft = savedGraphDraft(
+      "Legacy fingerprint",
+      hydrated.nodes,
+      hydrated.edges,
+    );
+    const enabledEdge = enabledDraft.edges?.[0];
+    if (!enabledEdge) throw new Error("enabled-edge fixture is incomplete");
+    const legacyEdge = { ...enabledEdge } as
+      Omit<typeof enabledEdge, "enabled"> & { enabled?: boolean };
+    delete legacyEdge.enabled;
+    const legacyDraft = {
+      ...enabledDraft,
+      edges: [legacyEdge],
+    } as unknown as typeof enabledDraft;
+
+    expect(
+      savedGraphFingerprint(legacyDraft),
+    ).toBe(savedGraphFingerprint(enabledDraft));
   });
 });
 
@@ -401,6 +477,7 @@ function graphWithCollectPlugs(): SavedGraph {
         to_node: "collect-node",
         to_port: "items",
         to_plug: "plug-second",
+        enabled: true,
         collection_mode: "direct",
         projection: null,
         conversion_path: [],
@@ -654,6 +731,7 @@ function graphWithGenericCollectBinding(): SavedGraph {
         to_node: "collect-node",
         to_port: "items",
         to_plug: "plug-1",
+        enabled: true,
         collection_mode: "direct",
         projection: null,
         conversion_path: [],
@@ -834,6 +912,7 @@ describe("saved graph module nodes", () => {
         to_node: "extract",
         to_port: "image",
         to_plug: null,
+        enabled: true,
         collection_mode: "map",
         projection: null,
         conversion_path: [],

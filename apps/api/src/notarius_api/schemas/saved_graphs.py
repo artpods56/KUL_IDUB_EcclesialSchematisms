@@ -84,6 +84,7 @@ class SavedGraphConversionModel(SavedGraphApiModel):
 
 class SavedGraphEdgeModel(SavedGraphApiModel):
     id: Identifier
+    enabled: bool = True
     from_node: Identifier
     from_port: Identifier
     to_node: Identifier
@@ -164,6 +165,7 @@ class SavedGraphWriteModel(SavedGraphApiModel):
             edges=tuple(
                 SavedGraphEdge(
                     id=edge.id,
+                    enabled=edge.enabled,
                     from_node=edge.from_node,
                     from_port=edge.from_port,
                     to_node=edge.to_node,
@@ -240,9 +242,7 @@ class SavedGraphResponse(SavedGraphWriteModel):
                             variable=binding.variable,
                             artifact_type=ArtifactTypeKeyResponse(
                                 id=binding.artifact_type.id,
-                                schema_version=(
-                                    binding.artifact_type.schema_version
-                                ),
+                                schema_version=(binding.artifact_type.schema_version),
                             ),
                         )
                         for binding in node.artifact_type_bindings
@@ -253,6 +253,7 @@ class SavedGraphResponse(SavedGraphWriteModel):
             edges=[
                 SavedGraphEdgeModel(
                     id=edge.id,
+                    enabled=edge.enabled,
                     from_node=edge.from_node,
                     from_port=edge.from_port,
                     to_node=edge.to_node,

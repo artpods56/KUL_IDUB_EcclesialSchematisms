@@ -1,5 +1,6 @@
 """Behavioral contracts for direct in-process graph execution."""
 
+import asyncio
 from collections.abc import Mapping, Sequence
 from typing import Annotated, ClassVar, cast, override
 from uuid import UUID, uuid4
@@ -121,6 +122,55 @@ class AddNode(Node[NoConfig, AddInput, AddOutput]):
     ) -> AddOutput:
         self.calls.append((context.invocation_index, inputs.item, inputs.broadcast))
         return AddOutput(value=inputs.item + inputs.broadcast)
+
+
+class SynchronizedAddNode(AddNode):
+    def __init__(
+        self,
+        release_gates: Sequence[asyncio.Event],
+        *,
+        fail_index: int | None = None,
+    ) -> None:
+        super().__init__()
+        self._release_gates = tuple(release_gates)
+        self._fail_index = fail_index
+        self.started = tuple(asyncio.Event() for _ in release_gates)
+        self.started_totals = tuple(asyncio.Event() for _ in release_gates)
+        self.completed = tuple(asyncio.Event() for _ in release_gates)
+        self.started_indexes: list[int] = []
+        self.completed_indexes: list[int] = []
+        self.cancelled_indexes: list[int] = []
+        self.active_count = 0
+        self.max_active_count = 0
+
+    @override
+    async def run(
+        self,
+        context: NodeExecutionContext,
+        _config: NoConfig,
+        inputs: AddInput,
+        /,
+    ) -> AddOutput:
+        index = context.invocation_index
+        assert index is not None
+        self.calls.append((index, inputs.item, inputs.broadcast))
+        self.started_indexes.append(index)
+        self.active_count += 1
+        self.max_active_count = max(self.max_active_count, self.active_count)
+        self.started[index].set()
+        self.started_totals[len(self.started_indexes) - 1].set()
+        try:
+            await self._release_gates[index].wait()
+            if index == self._fail_index:
+                raise RuntimeError("controlled MAP item failure")
+            self.completed_indexes.append(index)
+            self.completed[index].set()
+            return AddOutput(value=inputs.item + inputs.broadcast)
+        except asyncio.CancelledError:
+            self.cancelled_indexes.append(index)
+            raise
+        finally:
+            self.active_count -= 1
 
 
 class MemoryInvocationCache(InvocationCachePort):
@@ -314,6 +364,267 @@ async def test_inline_map_reuses_cache_and_preserves_sequence_envelope() -> None
     assert node.calls == [(0, 2, 10), (1, 4, 10)]
     assert writer.values == [12, 14]
     assert writer.item_indexes == [0, 1]
+
+
+@pytest.mark.asyncio
+async def test_map_execution_overlaps_items_and_aggregates_in_source_order() -> None:
+    item_refs = [
+        ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE.key) for _ in range(2)
+    ]
+    broadcast_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE.key)
+    resolver = IntegerResolver(
+        {
+            item_refs[0].artifact_id: 1,
+            item_refs[1].artifact_id: 2,
+            broadcast_ref.artifact_id: 10,
+        }
+    )
+    writer = RecordingWriter()
+    release_gates = [asyncio.Event(), asyncio.Event()]
+    node = SynchronizedAddNode(release_gates)
+    compiled_node = _compiled_add(
+        node_id="mapped",
+        node=node,
+        invocation=NodeInvocation(mode=InvocationMode.MAP, map_input="item"),
+    )
+    edge_values = StubEdgeValueResolver(
+        {
+            "mapped": {
+                "item": ArtifactRefSequence.from_key(
+                    key=VALUE.key,
+                    item_refs=item_refs,
+                ),
+                "broadcast": broadcast_ref,
+            }
+        }
+    )
+    engine = InlineExecutionEngine(
+        coordinator=GraphExecutionCoordinator(
+            node_execution=NodeExecutionService(
+                runtime=_runtime(resolver, writer),
+                edge_values=cast(EdgeValueResolver, edge_values),
+                node_secrets=UnavailableNodeSecretResolver(),
+                max_map_concurrency=2,
+            )
+        )
+    )
+    execution = PreparedGraphExecution(
+        plan=CompiledGraph(nodes=(compiled_node,), edges=(), pinned_outputs={}),
+        initial_outputs={},
+        graph_id=None,
+        graph_revision=None,
+        secret_graph_id=None,
+        secret_graph_revision=None,
+        secret_node_ids=frozenset(),
+        module_path=(),
+        raise_node_errors=False,
+    )
+
+    run_task = asyncio.create_task(engine.execute(execution))
+    try:
+        async with asyncio.timeout(3):
+            await node.started[0].wait()
+            await node.started[1].wait()
+        assert node.active_count == 2
+
+        release_gates[1].set()
+        async with asyncio.timeout(3):
+            await node.completed[1].wait()
+        release_gates[0].set()
+        result = await run_task
+    finally:
+        for gate in release_gates:
+            gate.set()
+        if not run_task.done():
+            run_task.cancel()
+        await asyncio.gather(run_task, return_exceptions=True)
+
+    assert result.status == "succeeded"
+    output = result.node_results[0].outputs["value"]
+    assert isinstance(output, ArtifactRefSequence)
+    assert node.max_active_count == 2
+    assert node.completed_indexes == [1, 0]
+    assert writer.values == [12, 11]
+    assert [ref.content_hash for ref in output.item_refs] == [
+        f"{11:064x}",
+        f"{12:064x}",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_map_execution_never_exceeds_configured_concurrency() -> None:
+    item_refs = [
+        ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE.key) for _ in range(7)
+    ]
+    broadcast_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE.key)
+    resolver = IntegerResolver(
+        {
+            **{ref.artifact_id: index for index, ref in enumerate(item_refs, start=1)},
+            broadcast_ref.artifact_id: 10,
+        }
+    )
+    writer = RecordingWriter()
+    release_gate = asyncio.Event()
+    node = SynchronizedAddNode([release_gate] * len(item_refs))
+    compiled_node = _compiled_add(
+        node_id="mapped",
+        node=node,
+        invocation=NodeInvocation(mode=InvocationMode.MAP, map_input="item"),
+    )
+    edge_values = StubEdgeValueResolver(
+        {
+            "mapped": {
+                "item": ArtifactRefSequence.from_key(
+                    key=VALUE.key,
+                    item_refs=item_refs,
+                ),
+                "broadcast": broadcast_ref,
+            }
+        }
+    )
+    engine = InlineExecutionEngine(
+        coordinator=GraphExecutionCoordinator(
+            node_execution=NodeExecutionService(
+                runtime=_runtime(resolver, writer),
+                edge_values=cast(EdgeValueResolver, edge_values),
+                node_secrets=UnavailableNodeSecretResolver(),
+                max_map_concurrency=3,
+            )
+        )
+    )
+    execution = PreparedGraphExecution(
+        plan=CompiledGraph(nodes=(compiled_node,), edges=(), pinned_outputs={}),
+        initial_outputs={},
+        graph_id=None,
+        graph_revision=None,
+        secret_graph_id=None,
+        secret_graph_revision=None,
+        secret_node_ids=frozenset(),
+        module_path=(),
+        raise_node_errors=False,
+    )
+
+    run_task = asyncio.create_task(engine.execute(execution))
+    try:
+        async with asyncio.timeout(3):
+            await node.started_totals[2].wait()
+        assert node.active_count == 3
+        release_gate.set()
+        result = await run_task
+    finally:
+        release_gate.set()
+        if not run_task.done():
+            run_task.cancel()
+        await asyncio.gather(run_task, return_exceptions=True)
+
+    assert result.status == "succeeded"
+    assert len(node.started_indexes) == len(item_refs)
+    assert node.max_active_count == 3
+
+
+@pytest.mark.asyncio
+async def test_map_execution_failure_cancels_items_and_skips_dependents() -> None:
+    item_refs = [
+        ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE.key) for _ in range(3)
+    ]
+    broadcast_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE.key)
+    resolver = IntegerResolver(
+        {
+            **{ref.artifact_id: index for index, ref in enumerate(item_refs, start=1)},
+            broadcast_ref.artifact_id: 10,
+        }
+    )
+    writer = RecordingWriter()
+    release_gates = [asyncio.Event() for _ in item_refs]
+    node = SynchronizedAddNode(release_gates, fail_index=1)
+    failed_node = _compiled_add(
+        node_id="failed",
+        node=node,
+        invocation=NodeInvocation(mode=InvocationMode.MAP, map_input="item"),
+    )
+    downstream_node = _compiled_add(
+        node_id="downstream",
+        node=AddNode(),
+        invocation=NodeInvocation(),
+    )
+    dependency = CompiledEdge(
+        request=RunEdgeRequest(
+            from_node="failed",
+            from_port="value",
+            to_node="downstream",
+            to_port="item",
+        ),
+        projection=None,
+        conversion_path=(),
+    )
+    edge_values = StubEdgeValueResolver(
+        {
+            "failed": {
+                "item": ArtifactRefSequence.from_key(
+                    key=VALUE.key,
+                    item_refs=item_refs,
+                ),
+                "broadcast": broadcast_ref,
+            },
+            "downstream": {
+                "item": broadcast_ref,
+                "broadcast": broadcast_ref,
+            },
+        }
+    )
+    engine = InlineExecutionEngine(
+        coordinator=GraphExecutionCoordinator(
+            node_execution=NodeExecutionService(
+                runtime=_runtime(resolver, writer),
+                edge_values=cast(EdgeValueResolver, edge_values),
+                node_secrets=UnavailableNodeSecretResolver(),
+                max_map_concurrency=3,
+            )
+        )
+    )
+    execution = PreparedGraphExecution(
+        plan=CompiledGraph(
+            nodes=(failed_node, downstream_node),
+            edges=(dependency,),
+            pinned_outputs={},
+        ),
+        initial_outputs={},
+        graph_id=None,
+        graph_revision=None,
+        secret_graph_id=None,
+        secret_graph_revision=None,
+        secret_node_ids=frozenset(),
+        module_path=(),
+        raise_node_errors=False,
+    )
+
+    run_task = asyncio.create_task(engine.execute(execution))
+    try:
+        async with asyncio.timeout(3):
+            await node.started_totals[2].wait()
+        release_gates[1].set()
+        async with asyncio.timeout(3):
+            result = await run_task
+    finally:
+        for gate in release_gates:
+            gate.set()
+        if not run_task.done():
+            run_task.cancel()
+        await asyncio.gather(run_task, return_exceptions=True)
+
+    assert result.status == "failed"
+    assert [node_result.status for node_result in result.node_results] == [
+        "failed",
+        "skipped",
+    ]
+    assert node.active_count == 0
+    assert set(node.cancelled_indexes) == {0, 2}
+    assert writer.values == []
+    error = result.node_results[0].error
+    assert error is not None
+    assert f"MAP input 'item' failed at item 1 ({item_refs[1].artifact_id})" in error
+    assert "RuntimeError: controlled MAP item failure" in error
+    assert edge_values.calls == ["failed"]
 
 
 @pytest.mark.asyncio

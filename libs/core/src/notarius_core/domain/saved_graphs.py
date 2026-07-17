@@ -190,6 +190,7 @@ class SavedGraphConversion(SavedGraphValue):
 
 class SavedGraphEdge(SavedGraphValue):
     id: GraphIdentifier
+    enabled: bool = True
     from_node: GraphIdentifier
     from_port: GraphIdentifier
     to_node: GraphIdentifier

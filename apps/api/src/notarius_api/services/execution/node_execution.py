@@ -1,5 +1,6 @@
 """Execution semantics for one compiled logical node."""
 
+import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import cast
@@ -28,6 +29,22 @@ from notarius_api.services.execution.engine import (
 from notarius_api.services.execution.models import CompiledEdge, CompiledNode
 
 
+class _MappedItemExecutionError(InvocationError):
+    def __init__(
+        self,
+        *,
+        operator_id: str,
+        map_input: str,
+        index: int,
+        ref: ArtifactRef,
+    ) -> None:
+        self.index = index
+        super().__init__(
+            f"Node {operator_id!r} MAP input {map_input!r} failed at "
+            f"item {index} ({ref.artifact_id})"
+        )
+
+
 class NodeExecutionService:
     """Resolve inputs and execute the ONCE or MAP semantics of one node."""
 
@@ -37,10 +54,14 @@ class NodeExecutionService:
         runtime: NodeRuntime,
         edge_values: EdgeValueResolver,
         node_secrets: NodeSecretResolverPort,
+        max_map_concurrency: int = 1,
     ) -> None:
+        if max_map_concurrency < 1:
+            raise ValueError("MAP max concurrency must be at least one")
         self._runtime = runtime
         self._edge_values = edge_values
         self._node_secrets = node_secrets
+        self._max_map_concurrency = max_map_concurrency
 
     async def execute(
         self,
@@ -188,44 +209,44 @@ class NodeExecutionService:
         refs_by_output: dict[str, list[ArtifactRef]] = {
             name: [] for name in output_contract.ports
         }
+        limiter = asyncio.Semaphore(self._max_map_concurrency)
+        item_tasks: list[asyncio.Task[PersistedNodeOutput]] = []
+        try:
+            async with asyncio.TaskGroup() as task_group:
+                for index, ref in enumerate(raw_sequence.item_refs):
+                    item_tasks.append(
+                        task_group.create_task(
+                            self._run_mapped_item(
+                                compiled_node=compiled_node,
+                                context=context,
+                                inputs=inputs,
+                                map_input=map_input,
+                                index=index,
+                                ref=ref,
+                                cache_policy=cache_policy,
+                                opaque_secret_revisions=opaque_secret_revisions,
+                                task_runner=task_runner,
+                                control=control,
+                                limiter=limiter,
+                            ),
+                            name=f"notarius-map-{compiled_node.request.id}-{index}",
+                        )
+                    )
+        except* _MappedItemExecutionError as errors:
+            failures = [
+                error
+                for error in errors.exceptions
+                if isinstance(error, _MappedItemExecutionError)
+            ]
+            if not failures:
+                raise
+            failure = min(failures, key=lambda error: error.index)
+            raise InvocationError(str(failure)) from failure.__cause__
+
         cache_hits = 0
         cache_misses = 0
-        for index, ref in enumerate(raw_sequence.item_refs):
-            if control is not None:
-                control.check_cancelled()
-            item_inputs = dict(inputs)
-            item_inputs[map_input] = ref
-
-            async def execute_item(item_node_run_id: UUID) -> PersistedNodeOutput:
-                item_context = replace(
-                    context,
-                    node_run_id=item_node_run_id,
-                    invocation_index=index,
-                )
-                return cast(
-                    PersistedNodeOutput,
-                    await self._runtime.run_node(
-                        node,
-                        item_context,
-                        item_inputs,
-                        config=compiled_node.request.config,
-                        artifact_type_bindings=compiled_node.artifact_type_bindings,
-                        cache_policy=cache_policy,
-                        opaque_secret_revisions=opaque_secret_revisions,
-                    ),
-                )
-
-            try:
-                item_result = await task_runner.run_map_item(
-                    compiled_node,
-                    index,
-                    execute_item,
-                )
-            except Exception as exc:
-                raise InvocationError(
-                    f"Node {node.operator_id!r} MAP input {map_input!r} failed at "
-                    f"item {index} ({ref.artifact_id})"
-                ) from exc
+        for index, item_task in enumerate(item_tasks):
+            item_result = item_task.result()
             cache_hits += item_result.cache_hits
             cache_misses += item_result.cache_misses
             for name in output_contract.ports:
@@ -262,6 +283,60 @@ class NodeExecutionService:
             cache_hits=cache_hits,
             cache_misses=cache_misses,
         )
+
+    async def _run_mapped_item(
+        self,
+        *,
+        compiled_node: CompiledNode,
+        context: NodeExecutionContext,
+        inputs: Mapping[str, object],
+        map_input: str,
+        index: int,
+        ref: ArtifactRef,
+        cache_policy: NodeCachePolicy,
+        opaque_secret_revisions: Mapping[str, str],
+        task_runner: ExecutionTaskRunner,
+        control: RunExecutionControl | None,
+        limiter: asyncio.Semaphore,
+    ) -> PersistedNodeOutput:
+        async with limiter:
+            if control is not None:
+                control.check_cancelled()
+            item_inputs = dict(inputs)
+            item_inputs[map_input] = ref
+
+            async def execute_item(item_node_run_id: UUID) -> PersistedNodeOutput:
+                item_context = replace(
+                    context,
+                    node_run_id=item_node_run_id,
+                    invocation_index=index,
+                )
+                return cast(
+                    PersistedNodeOutput,
+                    await self._runtime.run_node(
+                        compiled_node.node,
+                        item_context,
+                        item_inputs,
+                        config=compiled_node.request.config,
+                        artifact_type_bindings=compiled_node.artifact_type_bindings,
+                        cache_policy=cache_policy,
+                        opaque_secret_revisions=opaque_secret_revisions,
+                    ),
+                )
+
+            try:
+                return await task_runner.run_map_item(
+                    compiled_node,
+                    index,
+                    execute_item,
+                )
+            except Exception as exc:
+                raise _MappedItemExecutionError(
+                    operator_id=compiled_node.node.operator_id,
+                    map_input=map_input,
+                    index=index,
+                    ref=ref,
+                ) from exc
 
 
 __all__ = ["NodeExecutionService"]

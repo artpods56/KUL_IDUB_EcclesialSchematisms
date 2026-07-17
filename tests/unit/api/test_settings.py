@@ -4,10 +4,11 @@ from pydantic import SecretStr, ValidationError
 from notarius_api.settings import Settings
 
 
-def test_execution_defaults_to_prefect_without_task_retries(
+def test_execution_defaults_to_prefect_with_bounded_map_concurrency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("NOTARIUS_EXECUTION_BACKEND", raising=False)
+    monkeypatch.delenv("NOTARIUS_MAP_MAX_CONCURRENCY", raising=False)
     monkeypatch.delenv("NOTARIUS_PREFECT_TASK_RETRIES", raising=False)
     monkeypatch.delenv(
         "NOTARIUS_PREFECT_TASK_RETRY_DELAY_SECONDS",
@@ -16,6 +17,7 @@ def test_execution_defaults_to_prefect_without_task_retries(
     settings = Settings()
 
     assert settings.execution_backend == "prefect"
+    assert settings.map_max_concurrency == 4
     assert settings.prefect_task_retries == 0
     assert settings.prefect_task_retry_delay_seconds == 0
 
@@ -31,6 +33,19 @@ def test_execution_backend_can_be_selected_from_the_environment(
 def test_execution_backend_rejects_unknown_values() -> None:
     with pytest.raises(ValidationError):
         Settings.model_validate({"execution_backend": "worker"})
+
+
+def test_map_max_concurrency_can_be_selected_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NOTARIUS_MAP_MAX_CONCURRENCY", "7")
+
+    assert Settings().map_max_concurrency == 7
+
+
+def test_map_max_concurrency_must_be_positive() -> None:
+    with pytest.raises(ValidationError):
+        Settings(map_max_concurrency=0)
 
 
 def test_prefect_task_retry_settings_must_not_be_negative() -> None:

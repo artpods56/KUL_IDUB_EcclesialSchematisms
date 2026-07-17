@@ -311,10 +311,13 @@ function workflowEdgeRouteOption(
 function mappedInputPortForNode(
   nodeId: string,
   edges: readonly WorkflowEdge[],
+  includeDisabledEdges = false,
 ): string | null {
   const edge = edges.find(
     (candidate) =>
-      candidate.target === nodeId && candidate.data?.collectionMode === "map",
+      candidate.target === nodeId &&
+      (includeDisabledEdges || candidate.data?.enabled !== false) &&
+      candidate.data?.collectionMode === "map",
   );
   return decodeHandleId(edge?.targetHandle)?.portName ?? null;
 }
@@ -323,11 +326,16 @@ function effectiveShapeForPort(
   node: WorkflowNode,
   port: Port,
   edges: readonly WorkflowEdge[],
+  includeDisabledEdges = false,
 ): Port["shape"] {
   return effectivePortShape(
     {
       ...node.data,
-      mappedInputPort: mappedInputPortForNode(node.id, edges),
+      mappedInputPort: mappedInputPortForNode(
+        node.id,
+        edges,
+        includeDisabledEdges,
+      ),
     },
     port,
   );
@@ -350,11 +358,21 @@ function collectionModeForConnection(
   );
   if (!sourceNode || !targetNode || !sourcePort || !targetPort) return null;
 
-  const sourceShape = effectiveShapeForPort(sourceNode, sourcePort, edges);
+  const sourceShape = effectiveShapeForPort(
+    sourceNode,
+    sourcePort,
+    edges,
+    true,
+  );
   if (acceptedPortShapes(targetPort).includes(sourceShape)) return "direct";
   if (portHasInstancePlugs(targetPort)) return null;
 
-  const targetShape = effectiveShapeForPort(targetNode, targetPort, edges);
+  const targetShape = effectiveShapeForPort(
+    targetNode,
+    targetPort,
+    edges,
+    true,
+  );
   if (sourceShape === targetShape) return "direct";
   if (sourceShape === "many" && targetShape === "one") return "map";
   return null;
@@ -372,6 +390,7 @@ function inputPlugBindingsForNode(
     portPlugs.forEach((plug, inputIndex) => {
       const edge = edges.find(
         (candidate) =>
+          candidate.data?.enabled !== false &&
           candidate.target === node.id &&
           decodeHandleId(candidate.targetHandle)?.plugId === plug.id,
       );
@@ -425,6 +444,7 @@ function nodeAndDescendantIds(
 
     for (const edge of edges) {
       if (
+        edge.data?.enabled === false ||
         edge.source !== sourceNodeId ||
         invalidatedNodeIds.has(edge.target)
       ) {
@@ -454,6 +474,7 @@ function selectedNodeAndAncestorIds(
 
     for (const edge of edges) {
       if (
+        edge.data?.enabled === false ||
         edge.target !== targetNodeId ||
         !knownNodeIds.has(edge.source) ||
         executionNodeIds.has(edge.source)
@@ -481,19 +502,19 @@ function missingRequiredInputsFor(
   return nodes.flatMap((node) =>
     node.data.spec.inputs.flatMap((port) => {
       if (portHasInstancePlugs(port)) {
+        if (!port.required) return [];
         const plugs = inputPlugsForPort(node.data.inputPlugs, port.name);
         if (!plugs.length) {
-          return port.required
-            ? [{
-                nodeId: node.id,
-                nodeTitle: node.data.spec.title,
-                portName: port.name,
-              }]
-            : [];
+          return [{
+            nodeId: node.id,
+            nodeTitle: node.data.spec.title,
+            portName: port.name,
+          }];
         }
         return plugs.flatMap((plug, index) =>
           edges.some(
             (edge) =>
+              edge.data?.enabled !== false &&
               edge.target === node.id &&
               decodeHandleId(edge.targetHandle)?.plugId === plug.id,
           )
@@ -508,6 +529,7 @@ function missingRequiredInputsFor(
       if (!port.required) return [];
       return edges.some(
         (edge) =>
+          edge.data?.enabled !== false &&
           edge.target === node.id &&
           decodeHandleId(edge.targetHandle)?.portName === port.name,
       )
@@ -1507,7 +1529,10 @@ export function Workbench({
 
   const removeNode = React.useCallback((nodeId: string) => {
     const changedTargetNodeIds = edges
-      .filter((edge) => edge.source === nodeId)
+      .filter(
+        (edge) =>
+          edge.data?.enabled !== false && edge.source === nodeId,
+      )
       .map((edge) => edge.target);
     setNodes((current) =>
       invalidateWorkflowNodeRuns(
@@ -1960,10 +1985,14 @@ export function Workbench({
       for (const change of changes) {
         if (change.type === "remove" || change.type === "replace") {
           const previousEdge = edges.find((edge) => edge.id === change.id);
-          if (previousEdge) changedTargetNodeIds.add(previousEdge.target);
+          if (previousEdge && previousEdge.data?.enabled !== false) {
+            changedTargetNodeIds.add(previousEdge.target);
+          }
         }
         if (change.type === "add" || change.type === "replace") {
-          changedTargetNodeIds.add(change.item.target);
+          if (change.item.data?.enabled !== false) {
+            changedTargetNodeIds.add(change.item.target);
+          }
         }
       }
       setEdges((current) => applyEdgeChanges(changes, current));
@@ -1976,33 +2005,33 @@ export function Workbench({
     (edgeId: string, update: WorkflowEdgeUpdate) => {
       const changedEdge = edges.find((edge) => edge.id === edgeId);
       if (!changedEdge) return;
-      setEdges((current) =>
-        current.map((edge) => {
-          if (edge.id !== edgeId) return edge;
-          const projection = update.route
-            ? update.route.projection
-            : edge.data?.projection;
-          const conversionPath = update.route
-            ? update.route.conversionPath.map((conversion) => ({
-                id: conversion.id,
-                version: conversion.version,
-              }))
-            : (edge.data?.conversionPath ?? []);
-          return {
-            ...edge,
-            data: {
-              ...edge.data,
-              collectionMode:
-                update.collectionMode ??
-                edge.data?.collectionMode ??
-                "direct",
-              projection,
-              conversionPath,
-            },
-          };
-        }),
-      );
-      invalidateWorkflowResults([changedEdge.target], edges);
+      const updatedEdges = edges.map((edge) => {
+        if (edge.id !== edgeId) return edge;
+        const projection = update.route
+          ? update.route.projection
+          : edge.data?.projection;
+        const conversionPath = update.route
+          ? update.route.conversionPath.map((conversion) => ({
+              id: conversion.id,
+              version: conversion.version,
+            }))
+          : (edge.data?.conversionPath ?? []);
+        return {
+          ...edge,
+          data: {
+            ...edge.data,
+            enabled: update.enabled ?? edge.data?.enabled ?? true,
+            collectionMode:
+              update.collectionMode ??
+              edge.data?.collectionMode ??
+              "direct",
+            projection,
+            conversionPath,
+          },
+        };
+      });
+      setEdges(updatedEdges);
+      invalidateWorkflowResults([changedEdge.target], updatedEdges);
     },
     [edges, invalidateWorkflowResults],
   );
@@ -2016,6 +2045,7 @@ export function Workbench({
                 ...edge,
                 data: {
                   ...edge.data,
+                  enabled: edge.data?.enabled ?? true,
                   collectionMode: edge.data?.collectionMode ?? "direct",
                   routeOffset,
                 },
@@ -2089,6 +2119,7 @@ export function Workbench({
       type: WORKFLOW_EDGE_TYPE,
       animated: false,
       data: {
+        enabled: true,
         collectionMode,
         projection: selection.projection
           ? { path: [...selection.projection.path] }
@@ -2759,6 +2790,11 @@ export function Workbench({
           targetHandle: edge.targetHandle ?? null,
         };
         const source = decodeHandleId(edge.sourceHandle);
+        const target = decodeHandleId(edge.targetHandle);
+        const targetNode = nodes.find((node) => node.id === edge.target);
+        const targetPort = targetNode?.data.spec.inputs.find(
+          (port) => port.name === target?.portName,
+        );
         const activeSelection = {
           projection: edge.data?.projection,
           conversionPath: edge.data?.conversionPath ?? [],
@@ -2802,11 +2838,13 @@ export function Workbench({
           type: WORKFLOW_EDGE_TYPE,
           data: {
             ...edge.data,
+            enabled: edge.data?.enabled ?? true,
             collectionMode: edge.data?.collectionMode ?? "direct",
             sourcePortName: source?.portName,
             conversionTitles,
             routeOptions,
             allowedCollectionModes: validMode ? [validMode] : [],
+            canDisable: targetPort?.required === false,
             onUpdate: updateEdge,
             onRouteOffsetChange: updateEdgeRoute,
           },
@@ -2864,10 +2902,11 @@ export function Workbench({
       }
     }
 
+    const activeEdges = edges.filter((edge) => edge.data?.enabled !== false);
     const executionNodeIds = scope === "all"
       ? new Set(planningNodes.map((node) => node.id))
       : scope === "selected-with-dependencies"
-        ? selectedNodeAndAncestorIds(planningNodes, edges)
+        ? selectedNodeAndAncestorIds(planningNodes, activeEdges)
         : new Set(
             planningNodes
               .filter((node) => node.selected)
@@ -2877,14 +2916,14 @@ export function Workbench({
       executionNodeIds.has(node.id),
     );
     const executionEdges = scope === "all"
-      ? edges
+      ? activeEdges
       : scope === "selected-with-dependencies"
-        ? edges.filter(
+        ? activeEdges.filter(
             (edge) =>
               executionNodeIds.has(edge.source) &&
               executionNodeIds.has(edge.target),
           )
-        : edges.filter((edge) => executionNodeIds.has(edge.target));
+        : activeEdges.filter((edge) => executionNodeIds.has(edge.target));
     const secretBackedNodes = executionNodes
       .map((node) => ({ node, inputs: nodeSecretInputs(node.data.spec) }))
       .filter(({ inputs }) => inputs.length > 0);
@@ -3065,9 +3104,19 @@ export function Workbench({
           return [runEdge];
         },
       );
-      const runNodes = executionNodes.map((node) =>
-        serializeRunNode(node.id, node.data),
-      );
+      const activeInputPlugIdsByNode = new Map<string, Set<string>>();
+      for (const edge of executionEdges) {
+        const target = decodeHandleId(edge.targetHandle);
+        if (!target?.plugId) continue;
+        const plugIds = activeInputPlugIdsByNode.get(edge.target) ?? new Set();
+        plugIds.add(target.plugId);
+        activeInputPlugIdsByNode.set(edge.target, plugIds);
+      }
+      const runNodes = executionNodes.map((node) => {
+        const activeInputPlugIds =
+          activeInputPlugIdsByNode.get(node.id) ?? new Set<string>();
+        return serializeRunNode(node.id, node.data, activeInputPlugIds);
+      });
       const materializesSavedGraph = Boolean(activeGraph && !isDirty);
       const graphContext = materializesSavedGraph && activeGraph
         ? {
