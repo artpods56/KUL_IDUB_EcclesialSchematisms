@@ -10,7 +10,6 @@ import {
   getGraphMaterializations,
   getSavedGraph,
   updateSavedGraph,
-  type CreateSavedGraphRequest,
   type NodeRegistry,
   type RunNodeResult,
   type SavedGraphNode,
@@ -135,6 +134,8 @@ export function useSavedGraphLifecycle({
   const [graphBrowserOpen, setGraphBrowserOpen] = React.useState(false);
   const approvedRouteGraphIdRef = React.useRef<string | null>(null);
   const openRequestRef = React.useRef<AbortController | null>(null);
+  const documentGenerationRef = React.useRef(0);
+  const mountedRef = React.useRef(true);
   const currentFingerprintRef = React.useRef("");
   const activeGraphRef = React.useRef<ActiveSavedGraph | null>(null);
 
@@ -175,8 +176,13 @@ export function useSavedGraphLifecycle({
     return () => window.removeEventListener("beforeunload", warnBeforeUnload);
   }, [isDirty]);
 
-  React.useEffect(() => () => {
-    openRequestRef.current?.abort();
+  React.useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      documentGenerationRef.current += 1;
+      openRequestRef.current?.abort();
+    };
   }, []);
 
   const confirmDiscard = React.useCallback(
@@ -189,6 +195,7 @@ export function useSavedGraphLifecycle({
   );
 
   const showBlankGraph = React.useCallback(() => {
+    documentGenerationRef.current += 1;
     openRequestRef.current?.abort();
     replaceCanvas([], []);
     clearGraphSecretStatuses();
@@ -218,6 +225,8 @@ export function useSavedGraphLifecycle({
       showBlankGraph();
       return;
     }
+    documentGenerationRef.current += 1;
+    openRequestRef.current?.abort();
     approvedRouteGraphIdRef.current = NEW_GRAPH_ROUTE_ID;
     router.push(path, { scroll: false });
   }, [confirmDiscard, router, showBlankGraph, workspaceSlug]);
@@ -235,6 +244,7 @@ export function useSavedGraphLifecycle({
     }
 
     const submittedDraft = currentDraft;
+    const documentGeneration = documentGenerationRef.current;
     setSaving(true);
     setPersistenceError(null);
     try {
@@ -244,6 +254,14 @@ export function useSavedGraphLifecycle({
             expected_revision: activeGraph.revision,
           })
         : await createSavedGraph(submittedDraft);
+      if (!mountedRef.current) return;
+      void mutateSavedGraphs();
+      void refreshNodeRegistry();
+      if (
+        documentGenerationRef.current !== documentGeneration
+      ) {
+        return;
+      }
       const responseDraft = {
         name: savedGraph.name,
         nodes: savedGraph.nodes ?? [],
@@ -261,6 +279,12 @@ export function useSavedGraphLifecycle({
         current.trim() === submittedDraft.name ? savedGraph.name : current,
       );
       await refreshNodeSecretStatuses(nextActiveGraph, nodes);
+      if (
+        !mountedRef.current ||
+        documentGenerationRef.current !== documentGeneration
+      ) {
+        return;
+      }
       if (!activeGraph) {
         approvedRouteGraphIdRef.current = savedGraph.id;
         router.replace(
@@ -268,9 +292,13 @@ export function useSavedGraphLifecycle({
           { scroll: false },
         );
       }
-      void mutateSavedGraphs();
-      void refreshNodeRegistry();
     } catch (error) {
+      if (
+        !mountedRef.current ||
+        documentGenerationRef.current !== documentGeneration
+      ) {
+        return;
+      }
       if (error instanceof ApiError && error.status === 409) {
         setPersistenceError(
           "This graph changed in another session. Your canvas is unchanged; refresh the list before deciding whether to reopen it.",
@@ -281,7 +309,7 @@ export function useSavedGraphLifecycle({
         );
       }
     } finally {
-      setSaving(false);
+      if (mountedRef.current) setSaving(false);
     }
   }, [
     activeGraph,
@@ -311,6 +339,8 @@ export function useSavedGraphLifecycle({
     if (updateAddress) {
       setGraphBrowserOpen(false);
       if (activeGraph?.id !== graphId) {
+        documentGenerationRef.current += 1;
+        openRequestRef.current?.abort();
         approvedRouteGraphIdRef.current = graphId;
         router.push(
           workbenchGraphPath(workspaceSlug, graphId),
@@ -322,12 +352,21 @@ export function useSavedGraphLifecycle({
 
     const openingFingerprint = currentFingerprint;
     openRequestRef.current?.abort();
+    documentGenerationRef.current += 1;
+    const documentGeneration = documentGenerationRef.current;
     const controller = new AbortController();
     openRequestRef.current = controller;
     setOpeningGraphId(graphId);
     setPersistenceError(null);
     try {
       const savedGraph = await getSavedGraph(graphId, controller.signal);
+      if (
+        controller.signal.aborted ||
+        !mountedRef.current ||
+        documentGenerationRef.current !== documentGeneration
+      ) {
+        return;
+      }
       let materializationWarning: string | null = null;
       let materializedNodeRuns: RunNodeResult[] = [];
       try {
@@ -351,6 +390,12 @@ export function useSavedGraphLifecycle({
         materializedNodeRuns,
       );
       if (controller.signal.aborted) return;
+      if (
+        !mountedRef.current ||
+        documentGenerationRef.current !== documentGeneration
+      ) {
+        return;
+      }
       if (currentFingerprintRef.current !== openingFingerprint) {
         setPersistenceError(
           "The canvas changed while the graph was loading. Your newer edits were kept; open the graph again when you are ready to replace them.",
@@ -382,6 +427,13 @@ export function useSavedGraphLifecycle({
         openedNodes,
         controller.signal,
       );
+      if (
+        controller.signal.aborted ||
+        !mountedRef.current ||
+        documentGenerationRef.current !== documentGeneration
+      ) {
+        return;
+      }
       clearPendingConnectionRoute();
       clearRunError();
       setPersistenceError(materializationWarning);
@@ -389,7 +441,11 @@ export function useSavedGraphLifecycle({
       setGraphBrowserOpen(false);
       requestCanvasRefit();
     } catch (error) {
-      if (!controller.signal.aborted) {
+      if (
+        !controller.signal.aborted &&
+        mountedRef.current &&
+        documentGenerationRef.current === documentGeneration
+      ) {
         setPersistenceError(
           error instanceof Error ? error.message : "The graph could not be opened.",
         );
@@ -397,7 +453,7 @@ export function useSavedGraphLifecycle({
     } finally {
       if (openRequestRef.current === controller) {
         openRequestRef.current = null;
-        setOpeningGraphId(null);
+        if (mountedRef.current) setOpeningGraphId(null);
       }
     }
   }, [
@@ -480,10 +536,19 @@ export function useSavedGraphLifecycle({
       ? activeGraph.revision
       : graph.revision;
     const deletingFingerprint = currentFingerprint;
+    const documentGeneration = documentGenerationRef.current;
     setDeletingGraphId(graph.id);
     setPersistenceError(null);
     try {
       await deleteSavedGraph(graph.id, expectedRevision);
+      if (!mountedRef.current) return;
+      void mutateSavedGraphs();
+      void refreshNodeRegistry();
+      if (
+        documentGenerationRef.current !== documentGeneration
+      ) {
+        return;
+      }
       if (deletingActiveGraph) {
         if (currentFingerprintRef.current === deletingFingerprint) {
           showBlankGraph();
@@ -507,9 +572,13 @@ export function useSavedGraphLifecycle({
           );
         }
       }
-      void mutateSavedGraphs();
-      void refreshNodeRegistry();
     } catch (error) {
+      if (
+        !mountedRef.current ||
+        documentGenerationRef.current !== documentGeneration
+      ) {
+        return;
+      }
       if (error instanceof ApiError && error.status === 409) {
         setPersistenceError(
           "This graph changed before it could be deleted. Refresh the saved graph list and try again.",
@@ -520,7 +589,7 @@ export function useSavedGraphLifecycle({
         );
       }
     } finally {
-      setDeletingGraphId(null);
+      if (mountedRef.current) setDeletingGraphId(null);
     }
   }, [
     activeGraph,

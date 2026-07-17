@@ -82,6 +82,86 @@ function nodeSecretStatusesWithState(
   );
 }
 
+type NodeSecretWriteVersions = Map<string, Map<string, number>>;
+
+function nodeSecretWriteVersion(
+  versions: ReadonlyMap<string, ReadonlyMap<string, number>>,
+  nodeId: string,
+  name: string,
+): number {
+  return versions.get(nodeId)?.get(name) ?? 0;
+}
+
+function advanceNodeSecretWriteVersion(
+  versions: NodeSecretWriteVersions,
+  nodeId: string,
+  name: string,
+): number {
+  let nodeVersions = versions.get(nodeId);
+  if (!nodeVersions) {
+    nodeVersions = new Map();
+    versions.set(nodeId, nodeVersions);
+  }
+  const nextVersion = (nodeVersions.get(name) ?? 0) + 1;
+  nodeVersions.set(name, nextVersion);
+  return nextVersion;
+}
+
+function snapshotNodeSecretWriteVersions(
+  versions: NodeSecretWriteVersions,
+): NodeSecretWriteVersions {
+  return new Map(
+    [...versions].map(([nodeId, nodeVersions]) => [
+      nodeId,
+      new Map(nodeVersions),
+    ]),
+  );
+}
+
+function invalidateNodeSecretWrites(
+  versions: NodeSecretWriteVersions,
+  nodeId?: string,
+): void {
+  for (const [versionNodeId, nodeVersions] of versions) {
+    if (nodeId !== undefined && versionNodeId !== nodeId) continue;
+    for (const [name, version] of nodeVersions) {
+      nodeVersions.set(name, version + 1);
+    }
+  }
+}
+
+function mergeRefreshStatuses(
+  next: NodeSecretStatusesByNode,
+  current: NodeSecretStatusesByNode,
+  preserveExistingWrites: boolean,
+  refreshWriteVersions: ReadonlyMap<string, ReadonlyMap<string, number>>,
+  currentWriteVersions: ReadonlyMap<string, ReadonlyMap<string, number>>,
+): NodeSecretStatusesByNode {
+  return Object.fromEntries(
+    Object.entries(next).map(([nodeId, nextNodeStatuses]) => [
+      nodeId,
+      Object.fromEntries(
+        Object.entries(nextNodeStatuses).map(([name, nextStatus]) => {
+          const currentStatus = current[nodeId]?.[name];
+          const writeChanged =
+            nodeSecretWriteVersion(currentWriteVersions, nodeId, name) !==
+            nodeSecretWriteVersion(refreshWriteVersions, nodeId, name);
+          const writeInProgress = preserveExistingWrites && (
+            currentStatus?.state === "applying" ||
+            currentStatus?.state === "removing"
+          );
+          return [
+            name,
+            currentStatus && (writeChanged || writeInProgress)
+              ? currentStatus
+              : nextStatus,
+          ];
+        }),
+      ),
+    ]),
+  );
+}
+
 /** Keeps secret values write-only: only status metadata enters React state. */
 export function useNodeSecrets(
   nodes: readonly WorkflowNode[],
@@ -89,6 +169,8 @@ export function useNodeSecrets(
   const [nodeSecretStatuses, setNodeSecretStatuses] =
     React.useState<NodeSecretStatusesByNode>({});
   const activeGraphRef = React.useRef<NodeSecretGraph | null>(null);
+  const refreshGenerationRef = React.useRef(0);
+  const writeVersionsRef = React.useRef<NodeSecretWriteVersions>(new Map());
   const nodesByIdRef = React.useRef<ReadonlyMap<string, WorkflowNode>>(
     new Map(nodes.map((node) => [node.id, node])),
   );
@@ -104,9 +186,21 @@ export function useNodeSecrets(
     graphNodes: readonly WorkflowNode[],
     signal?: AbortSignal,
   ): Promise<boolean> => {
+    const refreshGeneration = refreshGenerationRef.current + 1;
+    refreshGenerationRef.current = refreshGeneration;
+    const previousGraph = activeGraphRef.current;
+    const continuesActiveGraph =
+      previousGraph?.id === graph.id &&
+      previousGraph.revision === graph.revision;
+    if (!continuesActiveGraph) {
+      invalidateNodeSecretWrites(writeVersionsRef.current);
+    }
     activeGraphRef.current = graph;
     nodesByIdRef.current = new Map(
       graphNodes.map((node) => [node.id, node]),
+    );
+    const refreshWriteVersions = snapshotNodeSecretWriteVersions(
+      writeVersionsRef.current,
     );
 
     if (!graphNodes.some(
@@ -116,28 +210,69 @@ export function useNodeSecrets(
       return true;
     }
 
-    setNodeSecretStatuses(
-      nodeSecretStatusesWithState(graphNodes, "loading"),
+    const loadingStatuses = nodeSecretStatusesWithState(
+      graphNodes,
+      "loading",
+    );
+    setNodeSecretStatuses((current) =>
+      mergeRefreshStatuses(
+        loadingStatuses,
+        current,
+        continuesActiveGraph,
+        refreshWriteVersions,
+        writeVersionsRef.current,
+      ),
     );
     try {
       const response = await getGraphNodeSecrets(graph.id, signal);
+      if (
+        refreshGenerationRef.current !== refreshGeneration ||
+        activeGraphRef.current?.id !== graph.id ||
+        activeGraphRef.current.revision !== graph.revision
+      ) {
+        return false;
+      }
       if (
         response.graph_id !== graph.id ||
         response.graph_revision !== graph.revision
       ) {
         throw new Error("Node secret status revision mismatch");
       }
-      setNodeSecretStatuses(
-        graphNodeSecretStatuses(graphNodes, response.secrets),
+      const refreshedStatuses = graphNodeSecretStatuses(
+        [...nodesByIdRef.current.values()],
+        response.secrets,
+      );
+      setNodeSecretStatuses((current) =>
+        mergeRefreshStatuses(
+          refreshedStatuses,
+          current,
+          continuesActiveGraph,
+          refreshWriteVersions,
+          writeVersionsRef.current,
+        ),
       );
       return true;
     } catch {
-      if (signal?.aborted) return false;
-      setNodeSecretStatuses(
-        nodeSecretStatusesWithState(
-          graphNodes,
-          "error",
-          "Secret status could not be loaded.",
+      if (
+        signal?.aborted ||
+        refreshGenerationRef.current !== refreshGeneration ||
+        activeGraphRef.current?.id !== graph.id ||
+        activeGraphRef.current.revision !== graph.revision
+      ) {
+        return false;
+      }
+      const errorStatuses = nodeSecretStatusesWithState(
+        [...nodesByIdRef.current.values()],
+        "error",
+        "Secret status could not be loaded.",
+      );
+      setNodeSecretStatuses((current) =>
+        mergeRefreshStatuses(
+          errorStatuses,
+          current,
+          continuesActiveGraph,
+          refreshWriteVersions,
+          writeVersionsRef.current,
         ),
       );
       return false;
@@ -175,6 +310,11 @@ export function useNodeSecrets(
       return false;
     }
 
+    const writeVersion = advanceNodeSecretWriteVersion(
+      writeVersionsRef.current,
+      nodeId,
+      name,
+    );
     setNodeSecretStatuses((current) => ({
       ...current,
       [nodeId]: {
@@ -196,10 +336,13 @@ export function useNodeSecrets(
       }
       if (
         activeGraphRef.current?.id !== graph.id ||
-        activeGraphRef.current.revision !== graph.revision
+        activeGraphRef.current.revision !== graph.revision ||
+        nodeSecretWriteVersion(writeVersionsRef.current, nodeId, name) !==
+          writeVersion
       ) {
         return true;
       }
+      advanceNodeSecretWriteVersion(writeVersionsRef.current, nodeId, name);
       setNodeSecretStatuses((current) => ({
         ...current,
         [nodeId]: {
@@ -211,8 +354,11 @@ export function useNodeSecrets(
     } catch {
       if (
         activeGraphRef.current?.id === graph.id &&
-        activeGraphRef.current.revision === graph.revision
+        activeGraphRef.current.revision === graph.revision &&
+        nodeSecretWriteVersion(writeVersionsRef.current, nodeId, name) ===
+          writeVersion
       ) {
+        advanceNodeSecretWriteVersion(writeVersionsRef.current, nodeId, name);
         setNodeSecretStatuses((current) => ({
           ...current,
           [nodeId]: {
@@ -258,6 +404,11 @@ export function useNodeSecrets(
       return false;
     }
 
+    const writeVersion = advanceNodeSecretWriteVersion(
+      writeVersionsRef.current,
+      nodeId,
+      name,
+    );
     setNodeSecretStatuses((current) => ({
       ...current,
       [nodeId]: {
@@ -269,10 +420,13 @@ export function useNodeSecrets(
       await removeNodeSecret(graph.id, nodeId, name, graph.revision);
       if (
         activeGraphRef.current?.id !== graph.id ||
-        activeGraphRef.current.revision !== graph.revision
+        activeGraphRef.current.revision !== graph.revision ||
+        nodeSecretWriteVersion(writeVersionsRef.current, nodeId, name) !==
+          writeVersion
       ) {
         return true;
       }
+      advanceNodeSecretWriteVersion(writeVersionsRef.current, nodeId, name);
       setNodeSecretStatuses((current) => ({
         ...current,
         [nodeId]: {
@@ -284,8 +438,11 @@ export function useNodeSecrets(
     } catch {
       if (
         activeGraphRef.current?.id === graph.id &&
-        activeGraphRef.current.revision === graph.revision
+        activeGraphRef.current.revision === graph.revision &&
+        nodeSecretWriteVersion(writeVersionsRef.current, nodeId, name) ===
+          writeVersion
       ) {
+        advanceNodeSecretWriteVersion(writeVersionsRef.current, nodeId, name);
         setNodeSecretStatuses((current) => ({
           ...current,
           [nodeId]: {
@@ -302,11 +459,17 @@ export function useNodeSecrets(
   }, []);
 
   const clearGraphSecretStatuses = React.useCallback(() => {
+    refreshGenerationRef.current += 1;
+    invalidateNodeSecretWrites(writeVersionsRef.current);
     activeGraphRef.current = null;
     setNodeSecretStatuses({});
   }, []);
 
   const forgetNodeSecretStatuses = React.useCallback((nodeId: string) => {
+    invalidateNodeSecretWrites(writeVersionsRef.current, nodeId);
+    const remainingNodes = new Map(nodesByIdRef.current);
+    remainingNodes.delete(nodeId);
+    nodesByIdRef.current = remainingNodes;
     setNodeSecretStatuses((current) =>
       Object.fromEntries(
         Object.entries(current).filter(([id]) => id !== nodeId),

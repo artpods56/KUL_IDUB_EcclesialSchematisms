@@ -645,9 +645,39 @@ export function useRunExecution({
       if (
         !currentGuard ||
         currentGuard.generation !== executionGeneration ||
-        currentGuard.executionId !== executionId ||
-        response.execution_id !== executionId
+        currentGuard.executionId !== executionId
       ) {
+        return;
+      }
+      if (response.execution_id !== executionId) {
+        currentGuard.cancellationRequested = false;
+        setVisibleExecution((current) =>
+          current?.generation === executionGeneration &&
+              current.executionId === executionId
+            ? {
+                ...current,
+                status: currentGuard.lastServerStatus,
+                statusError:
+                  "Received cancellation status for another execution. You can try again.",
+              }
+            : current
+        );
+        setNodes((current) => current.map((node) =>
+          node.id === currentGuard.activeNodeId &&
+              node.data.execution.status === "cancelling"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  execution: {
+                    status: currentGuard.lastServerStatus === "cancelling"
+                      ? "cancelling"
+                      : "running",
+                  },
+                },
+              }
+            : node
+        ));
         return;
       }
       currentGuard.activeNodeId = response.active_node_id ??
@@ -676,6 +706,22 @@ export function useRunExecution({
             }
           : current
       );
+      setNodes((current) => current.map((node) =>
+        node.id === currentGuard.activeNodeId &&
+            node.data.execution.status === "cancelling"
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                execution: {
+                  status: currentGuard.lastServerStatus === "cancelling"
+                    ? "cancelling"
+                    : "running",
+                },
+              },
+            }
+          : node
+      ));
     } finally {
       const currentGuard = executionGuardRef.current;
       if (

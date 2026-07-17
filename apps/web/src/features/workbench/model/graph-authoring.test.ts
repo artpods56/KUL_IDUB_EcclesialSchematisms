@@ -14,6 +14,7 @@ import {
   connectionRouteDescription,
   connectionRouteTitle,
   inputPlugBindingsForNode,
+  isConnectionAccepted,
   mappedInputPortForNode,
   nodeAndDescendantIds,
   workflowEdgeRouteOption,
@@ -68,10 +69,11 @@ function handle(
   direction: "input" | "output",
   shape: "one" | "many",
   plugId?: string,
+  artifactTypeId = "scalar.text",
 ): string {
   return encodeHandleId({
     portName,
-    artifactTypeId: "scalar.text",
+    artifactTypeId,
     schemaVersion: 1,
     shape,
     direction,
@@ -263,6 +265,371 @@ describe("connection collection policy", () => {
         [],
       ),
     ).toBeNull();
+  });
+});
+
+describe("connection acceptance policy", () => {
+  it("requires a compatible route before accepting an otherwise free input", () => {
+    const source = node(
+      "source",
+      [],
+      [port("output", "output", "one")],
+    );
+    const target = node(
+      "target",
+      [port("input", "input", "one")],
+      [],
+    );
+    const incompatibleTarget = node(
+      "incompatible",
+      [
+        port("input", "input", "one", {
+          artifact_type: { id: "scalar.integer", schema_version: 1 },
+        }),
+      ],
+      [],
+    );
+
+    expect(
+      isConnectionAccepted(
+        {
+          source: source.id,
+          sourceHandle: handle("output", "output", "one"),
+          target: target.id,
+          targetHandle: handle("input", "input", "one"),
+        },
+        [source, target],
+        [],
+        [],
+        [],
+      ),
+    ).toBe(true);
+    expect(
+      isConnectionAccepted(
+        {
+          source: source.id,
+          sourceHandle: handle("output", "output", "one"),
+          target: incompatibleTarget.id,
+          targetHandle: handle(
+            "input",
+            "input",
+            "one",
+            undefined,
+            "scalar.integer",
+          ),
+        },
+        [source, incompatibleTarget],
+        [],
+        [],
+        [],
+      ),
+    ).toBe(false);
+  });
+
+  it("accepts only declared instance plugs and rejects plugs on ordinary ports", () => {
+    const source = node(
+      "source",
+      [],
+      [port("output", "output", "one")],
+    );
+    const collect = node(
+      "collect",
+      [port("items", "input", "one", { instance_plugs: true })],
+      [],
+    );
+    collect.data.inputPlugs = [{ id: "item-1", portName: "items" }];
+    const ordinary = node(
+      "ordinary",
+      [port("input", "input", "one")],
+      [],
+    );
+    const sourceHandle = handle("output", "output", "one");
+
+    for (const targetHandle of [
+      handle("items", "input", "one"),
+      handle("items", "input", "one", "missing"),
+    ]) {
+      expect(
+        isConnectionAccepted(
+          {
+            source: source.id,
+            sourceHandle,
+            target: collect.id,
+            targetHandle,
+          },
+          [source, collect],
+          [],
+          [],
+          [],
+        ),
+      ).toBe(false);
+    }
+
+    expect(
+      isConnectionAccepted(
+        {
+          source: source.id,
+          sourceHandle,
+          target: collect.id,
+          targetHandle: handle("items", "input", "one", "item-1"),
+        },
+        [source, collect],
+        [],
+        [],
+        [],
+      ),
+    ).toBe(true);
+    expect(
+      isConnectionAccepted(
+        {
+          source: source.id,
+          sourceHandle,
+          target: ordinary.id,
+          targetHandle: handle("input", "input", "one", "item-1"),
+        },
+        [source, ordinary],
+        [],
+        [],
+        [],
+      ),
+    ).toBe(false);
+  });
+
+  it("allows only one map driver for a node", () => {
+    const source = node(
+      "source",
+      [],
+      [port("output", "output", "many")],
+    );
+    const target = node(
+      "target",
+      [
+        port("driver", "input", "one"),
+        port("candidate", "input", "one", { variadic: true }),
+      ],
+      [],
+    );
+    const existingMapDriver = edge({
+      id: "existing-map",
+      source: "other-source",
+      target: target.id,
+      sourceShape: "many",
+      targetPort: "driver",
+      collectionMode: "map",
+      enabled: false,
+    });
+
+    expect(
+      isConnectionAccepted(
+        {
+          source: source.id,
+          sourceHandle: handle("output", "output", "many"),
+          target: target.id,
+          targetHandle: handle("candidate", "input", "one"),
+        },
+        [source, target],
+        [existingMapDriver],
+        [],
+        [],
+      ),
+    ).toBe(false);
+  });
+
+  it("prevents cycles through existing edges, including disabled edges", () => {
+    const source = node(
+      "leaf",
+      [],
+      [port("output", "output", "one")],
+    );
+    const target = node(
+      "root",
+      [port("input", "input", "one")],
+      [port("output", "output", "one")],
+    );
+    const descendantEdge = edge({
+      id: "root-to-leaf",
+      source: target.id,
+      target: source.id,
+      enabled: false,
+    });
+
+    expect(
+      isConnectionAccepted(
+        {
+          source: source.id,
+          sourceHandle: handle("output", "output", "one"),
+          target: target.id,
+          targetHandle: handle("input", "input", "one"),
+        },
+        [source, target],
+        [descendantEdge],
+        [],
+        [],
+      ),
+    ).toBe(false);
+  });
+
+  it("enforces port and plug occupancy while leaving variadic ports open", () => {
+    const source = node(
+      "source",
+      [],
+      [port("output", "output", "one")],
+    );
+    const ordinary = node(
+      "ordinary",
+      [port("input", "input", "one")],
+      [],
+    );
+    const variadic = node(
+      "variadic",
+      [port("input", "input", "one", { variadic: true })],
+      [],
+    );
+    const collect = node(
+      "collect",
+      [port("items", "input", "one", { instance_plugs: true })],
+      [],
+    );
+    collect.data.inputPlugs = [
+      { id: "item-1", portName: "items" },
+      { id: "item-2", portName: "items" },
+    ];
+    const ordinaryEdge = edge({
+      id: "ordinary-edge",
+      source: "other",
+      target: ordinary.id,
+    });
+    const variadicEdge = edge({
+      id: "variadic-edge",
+      source: "other",
+      target: variadic.id,
+    });
+    const plugEdge = edge({
+      id: "plug-edge",
+      source: "other",
+      target: collect.id,
+      targetPort: "items",
+      targetPlugId: "item-1",
+    });
+    const sourceHandle = handle("output", "output", "one");
+
+    expect(
+      isConnectionAccepted(
+        {
+          source: source.id,
+          sourceHandle,
+          target: ordinary.id,
+          targetHandle: handle("input", "input", "one"),
+        },
+        [source, ordinary],
+        [ordinaryEdge],
+        [],
+        [],
+      ),
+    ).toBe(false);
+    expect(
+      isConnectionAccepted(
+        {
+          source: source.id,
+          sourceHandle,
+          target: variadic.id,
+          targetHandle: handle("input", "input", "one"),
+        },
+        [source, variadic],
+        [variadicEdge],
+        [],
+        [],
+      ),
+    ).toBe(true);
+
+    for (const [plugId, accepted] of [
+      ["item-1", false],
+      ["item-2", true],
+    ] as const) {
+      expect(
+        isConnectionAccepted(
+          {
+            source: source.id,
+            sourceHandle,
+            target: collect.id,
+            targetHandle: handle("items", "input", "one", plugId),
+          },
+          [source, collect],
+          [plugEdge],
+          [],
+          [],
+        ),
+      ).toBe(accepted);
+    }
+  });
+
+  it("excludes the edge being reconnected from cycle and occupancy checks", () => {
+    const source = node(
+      "source",
+      [],
+      [port("output", "output", "one")],
+    );
+    const target = node(
+      "target",
+      [port("input", "input", "one")],
+      [],
+    );
+    const currentEdge = edge({
+      id: "current-edge",
+      source: source.id,
+      target: target.id,
+    });
+    const connection = {
+      source: source.id,
+      sourceHandle: handle("output", "output", "one"),
+      target: target.id,
+      targetHandle: handle("input", "input", "one"),
+    };
+
+    expect(
+      isConnectionAccepted(
+        connection,
+        [source, target],
+        [currentEdge],
+        [],
+        [],
+      ),
+    ).toBe(false);
+    expect(
+      isConnectionAccepted(
+        connection,
+        [source, target],
+        [currentEdge],
+        [],
+        [],
+        currentEdge.id,
+      ),
+    ).toBe(true);
+
+    const previousReverseEdge = edge({
+      id: "previous-reverse",
+      source: target.id,
+      target: source.id,
+    });
+    expect(
+      isConnectionAccepted(
+        connection,
+        [source, target],
+        [previousReverseEdge],
+        [],
+        [],
+      ),
+    ).toBe(false);
+    expect(
+      isConnectionAccepted(
+        connection,
+        [source, target],
+        [previousReverseEdge],
+        [],
+        [],
+        previousReverseEdge.id,
+      ),
+    ).toBe(true);
   });
 });
 

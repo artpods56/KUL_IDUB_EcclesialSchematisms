@@ -79,7 +79,6 @@ import {
   createWorkflowNodeData,
   imageUploads,
   invalidateWorkflowNodeRuns,
-  portHasInstancePlugs,
   removeImageUpload,
   replaceImageUploads,
   resetArtifactTypeBinding,
@@ -93,6 +92,7 @@ import {
 import {
   collectionModeForConnection,
   inputPlugBindingsForNode,
+  isConnectionAccepted,
   mappedInputPortForNode,
   nodeAndDescendantIds,
   workflowEdgeRouteOption,
@@ -919,79 +919,13 @@ export function Workbench({
       target: connection.target,
       targetHandle: connection.targetHandle ?? null,
     };
-    const collectionMode = collectionModeForConnection(
+    return isConnectionAccepted(
       candidate,
       nodes,
       edges,
-    );
-    if (
-      !collectionMode ||
-      !connectionRoutesFor(
-        candidate,
-        registry?.artifact_types ?? [],
-        registry?.artifact_conversions ?? [],
-      ).length
-    ) return false;
-
-    const target = decodeHandleId(candidate.targetHandle);
-    const targetNode = nodes.find((node) => node.id === candidate.target);
-    const input = targetNode?.data.spec.inputs.find(
-      (port) => port.name === target?.portName,
-    );
-    if (!target || !input) return false;
-    if (portHasInstancePlugs(input)) {
-      if (
-        !target.plugId ||
-        !targetNode?.data.inputPlugs.some(
-          (plug) =>
-            plug.id === target.plugId && plug.portName === input.name,
-        )
-      ) {
-        return false;
-      }
-    } else if (target.plugId) {
-      return false;
-    }
-
-    if (
-      collectionMode === "map" &&
-      edges.some(
-        (edge) =>
-          edge.target === connection.target &&
-          edge.data?.collectionMode === "map",
-      )
-    ) {
-      return false;
-    }
-
-    const connectionEdgeId = "id" in connection ? connection.id : null;
-    const pendingNodeIds = [candidate.target];
-    const visitedNodeIds = new Set<string>();
-    while (pendingNodeIds.length) {
-      const nodeId = pendingNodeIds.pop();
-      if (!nodeId || visitedNodeIds.has(nodeId)) continue;
-      if (nodeId === candidate.source) return false;
-      visitedNodeIds.add(nodeId);
-      for (const edge of edges) {
-        if (edge.id !== connectionEdgeId && edge.source === nodeId) {
-          pendingNodeIds.push(edge.target);
-        }
-      }
-    }
-
-    if (portHasInstancePlugs(input)) {
-      return !edges.some(
-        (edge) =>
-          edge.id !== connectionEdgeId &&
-          edge.target === candidate.target &&
-          decodeHandleId(edge.targetHandle)?.plugId === target.plugId,
-      );
-    }
-    if (input.variadic) return true;
-    return !edges.some((edge) =>
-      edge.id !== connectionEdgeId &&
-      edge.target === candidate.target &&
-      decodeHandleId(edge.targetHandle)?.portName === target.portName,
+      registry?.artifact_types ?? [],
+      registry?.artifact_conversions ?? [],
+      "id" in connection ? connection.id : null,
     );
   }, [
     edges,

@@ -1,4 +1,10 @@
+import type {
+  ArtifactConversionSpec,
+  ArtifactTypeSpec,
+} from "@/lib/api";
+
 import {
+  connectionRoutesFor,
   connectionRouteSelection,
   decodeHandleId,
   type ConnectionRoute,
@@ -162,6 +168,93 @@ export function collectionModeForConnection(
   if (sourceShape === targetShape) return "direct";
   if (sourceShape === "many" && targetShape === "one") return "map";
   return null;
+}
+
+export function isConnectionAccepted(
+  connection: GraphAuthoringConnection,
+  nodes: readonly GraphAuthoringNode[],
+  edges: readonly WorkflowEdge[],
+  artifactTypes: readonly ArtifactTypeSpec[],
+  artifactConversions: readonly ArtifactConversionSpec[],
+  existingEdgeId: string | null = null,
+): boolean {
+  const collectionMode = collectionModeForConnection(
+    connection,
+    nodes,
+    edges,
+  );
+  if (
+    !collectionMode ||
+    !connectionRoutesFor(
+      connection,
+      artifactTypes,
+      artifactConversions,
+    ).length
+  ) {
+    return false;
+  }
+
+  const target = decodeHandleId(connection.targetHandle);
+  const targetNode = nodes.find((node) => node.id === connection.target);
+  const input = targetNode?.data.spec.inputs.find(
+    (port) => port.name === target?.portName,
+  );
+  if (!target || !targetNode || !input) return false;
+
+  if (portHasInstancePlugs(input)) {
+    if (
+      !target.plugId ||
+      !targetNode.data.inputPlugs.some(
+        (plug) =>
+          plug.id === target.plugId && plug.portName === input.name,
+      )
+    ) {
+      return false;
+    }
+  } else if (target.plugId) {
+    return false;
+  }
+
+  if (
+    collectionMode === "map" &&
+    edges.some(
+      (edge) =>
+        edge.target === connection.target &&
+        edge.data?.collectionMode === "map",
+    )
+  ) {
+    return false;
+  }
+
+  const pendingNodeIds = [connection.target];
+  const visitedNodeIds = new Set<string>();
+  while (pendingNodeIds.length) {
+    const nodeId = pendingNodeIds.pop();
+    if (!nodeId || visitedNodeIds.has(nodeId)) continue;
+    if (nodeId === connection.source) return false;
+    visitedNodeIds.add(nodeId);
+    for (const edge of edges) {
+      if (edge.id !== existingEdgeId && edge.source === nodeId) {
+        pendingNodeIds.push(edge.target);
+      }
+    }
+  }
+
+  if (portHasInstancePlugs(input)) {
+    return !edges.some(
+      (edge) =>
+        edge.id !== existingEdgeId &&
+        edge.target === connection.target &&
+        decodeHandleId(edge.targetHandle)?.plugId === target.plugId,
+    );
+  }
+  if (input.variadic) return true;
+  return !edges.some(
+    (edge) =>
+      edge.id !== existingEdgeId &&
+      edge.target === connection.target &&
+      decodeHandleId(edge.targetHandle)?.portName === target.portName,
+  );
 }
 
 export function inputPlugBindingsForNode(

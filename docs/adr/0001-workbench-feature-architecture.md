@@ -93,6 +93,20 @@ Imports follow these rules:
 7. Feature-internal code imports sibling modules directly rather than importing
    its own public index, which avoids circular dependencies.
 
+### Async lifecycle ownership
+
+Long-running Workbench actions must distinguish draft changes from document
+identity changes. A graph fingerprint detects edits within the same document;
+it is not sufficient to decide whether a late save, open, or delete response
+still owns the active document.
+
+The saved-graph lifecycle therefore owns a monotonic document generation, while
+individual open requests also own an `AbortController`. Code that resumes after
+an asynchronous boundary rechecks the relevant generation or request identity
+before mutating document state, navigation, errors, or UI. Server-backed lists
+and registries may still refresh after a successful stale response because the
+remote mutation happened even when the current document no longer accepts it.
+
 ### HTTP boundary
 
 `lib/api` remains the concrete, typed HTTP adapter. There is one production
@@ -104,6 +118,12 @@ cannot be expressed by the existing module API.
 Tests should exercise pure model behavior directly and mock at the existing
 module or network boundary when an API dependency is involved. Test convenience
 alone does not justify another production abstraction.
+
+Hook lifecycle tests opt into jsdom per test file and use the feature-local,
+test-only renderer under `ui/test`. They control promises and timers explicitly,
+mock the concrete API and router module boundaries, and exercise the hook's
+public callbacks and observable state. Production hooks do not gain injection
+parameters or interfaces solely for tests.
 
 ### Naming and ownership
 
