@@ -2,7 +2,6 @@ from typing import Annotated, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import Response
 from pydantic import BaseModel
 from pydantic.errors import PydanticInvalidForJsonSchema
 
@@ -42,8 +41,10 @@ from notarius_api.schemas.workbench import (
     UnavailableGraphModuleResponse,
     UploadRequest,
 )
-from notarius_api.services.artifacts import ArtifactService
-from notarius_api.services.errors import WorkbenchOperationError
+from notarius_api.services.errors import (
+    ArtifactContentUnavailableError,
+    WorkbenchOperationError,
+)
 from notarius_api.services.execution.run_graph import RunGraph
 from notarius_api.services.execution.manager import RunExecutionManager
 from notarius_api.services.materializations import MaterializationService
@@ -54,8 +55,13 @@ from notarius_api.services.modules import (
 )
 from notarius_api.services.run_presenter import RunResultPresenter
 from notarius_api.services.uploads import ImageUploadService
+from notarius_api.v1.routes.artifacts import artifact_service
+from notarius_api.v1.routes.artifacts import router as artifacts_router
 
 router = APIRouter(tags=["workbench"])
+
+# Kept as a compatibility export for existing route-test dependency overrides.
+__all__ = ["artifact_service", "router"]
 
 
 def workbench_plugin_registry(request: Request) -> PluginRegistry:
@@ -133,19 +139,6 @@ def run_result_presenter(request: Request) -> RunResultPresenter:
 RunResultPresenterDependency = Annotated[
     RunResultPresenter,
     Depends(run_result_presenter),
-]
-
-
-def artifact_service(request: Request) -> ArtifactService:
-    service = getattr(request.app.state, "artifacts", None)
-    if not isinstance(service, ArtifactService):
-        raise RuntimeError("Artifact service is not initialized")
-    return service
-
-
-ArtifactDependency = Annotated[
-    ArtifactService,
-    Depends(artifact_service),
 ]
 
 
@@ -229,6 +222,8 @@ async def upload_file(
             filename=request.filename,
             content_base64=request.content_base64,
         )
+    except ArtifactContentUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     except WorkbenchOperationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -254,6 +249,8 @@ async def run_graph(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SavedGraphRevisionConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ArtifactContentUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     except WorkbenchOperationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -339,27 +336,7 @@ async def get_graph_materializations(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.get("/artifacts/{artifact_id}/content")
-async def get_artifact_content(
-    artifact_id: UUID,
-    service: ArtifactDependency,
-) -> Response:
-    artifact = await service.get(artifact_id)
-    if artifact is None:
-        raise HTTPException(status_code=404, detail="Artifact not found")
-    try:
-        content = await service.load_content(artifact)
-    except WorkbenchOperationError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    headers: dict[str, str] = {}
-    download_name = artifact.metadata.get("download_name")
-    if isinstance(download_name, str) and download_name != "":
-        headers["Content-Disposition"] = f'attachment; filename="{download_name}"'
-    return Response(
-        content=content,
-        media_type=artifact.content_type,
-        headers=headers,
-    )
+router.include_router(artifacts_router)
 
 
 def _node_registration_response(
