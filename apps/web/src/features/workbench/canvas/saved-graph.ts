@@ -14,6 +14,10 @@ import {
   decodeHandleId,
   encodeHandleId,
 } from "./handles";
+import {
+  hydrateNodeLayout,
+  serializeNodeLayout,
+} from "./node-layout";
 import { ARTIFACT_TYPE_COLOR } from "./nodes.css";
 import {
   WORKFLOW_EDGE_TYPE,
@@ -108,6 +112,7 @@ export function savedGraphDraft(
       x: node.position.x,
       y: node.position.y,
     },
+    layout: serializeNodeLayout(node.data.layout),
   }));
   return {
     name: name.trim(),
@@ -333,6 +338,7 @@ export function hydrateSavedGraph(
       registry,
     );
     data.config = structuredClone(savedNode.config ?? {});
+    data.layout = hydrateNodeLayout(savedNode.layout);
     return {
       id: savedNode.id,
       type: WORKFLOW_NODE_TYPE,

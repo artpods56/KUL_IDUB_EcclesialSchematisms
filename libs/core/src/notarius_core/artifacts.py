@@ -2,7 +2,8 @@ from asyncio import Lock
 from collections.abc import Collection
 from contextvars import ContextVar
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 from types import TracebackType
 from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeAlias, final, override
 from uuid import UUID, uuid4
@@ -11,8 +12,19 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 if TYPE_CHECKING:
     from notarius_core.domain.invocation_cache import InvocationCacheEntry
+    from notarius_core.domain.execution_history import (
+        GraphExecution,
+        GraphExecutionCursor,
+        GraphExecutionDetail,
+        GraphExecutionNodeResult,
+        GraphExecutionPage,
+        GraphExecutionStatus,
+    )
     from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
     from notarius_core.ports.invocation_cache import InvocationCacheRepositoryPort
+    from notarius_core.ports.execution_history import (
+        GraphExecutionHistoryRepositoryPort,
+    )
     from notarius_core.ports.materialized_outputs import (
         MaterializedNodeOutputsRepositoryPort,
     )
@@ -183,6 +195,11 @@ class InMemoryDataStore:
         "MaterializedNodeOutputs",
     ] = field(default_factory=dict)
     invocation_cache: dict[str, "InvocationCacheEntry"] = field(default_factory=dict)
+    graph_executions: dict[UUID, "GraphExecution"] = field(default_factory=dict)
+    graph_execution_node_results: dict[
+        tuple[UUID, str],
+        "GraphExecutionNodeResult",
+    ] = field(default_factory=dict)
 
     def clone(self) -> Self:
         return _clone(self)
@@ -191,6 +208,10 @@ class InMemoryDataStore:
         self.artifacts = _clone(other.artifacts)
         self.materialized_outputs = _clone(other.materialized_outputs)
         self.invocation_cache = _clone(other.invocation_cache)
+        self.graph_executions = _clone(other.graph_executions)
+        self.graph_execution_node_results = _clone(
+            other.graph_execution_node_results
+        )
 
 
 class UnitOfWorkPort(Protocol):
@@ -311,12 +332,196 @@ class InMemoryInvocationCacheRepository:
         return True
 
 
+@final
+class InMemoryGraphExecutionHistoryRepository:
+    def __init__(self, store: InMemoryDataStore) -> None:
+        self._store = store
+
+    async def add(self, execution: "GraphExecution") -> None:
+        from notarius_core.domain.errors import ObjectAlreadyExistsError
+
+        if execution.execution_id in self._store.graph_executions:
+            raise ObjectAlreadyExistsError(
+                f"Graph execution already exists: {execution.execution_id}"
+            )
+        self._store.graph_executions[execution.execution_id] = _clone(execution)
+
+    async def update(self, execution: "GraphExecution") -> None:
+        from notarius_core.domain.errors import NotFoundError
+
+        current = self._store.graph_executions.get(execution.execution_id)
+        if current is None:
+            raise NotFoundError("Graph execution", str(execution.execution_id))
+        if (
+            current.graph_id != execution.graph_id
+            or current.graph_revision != execution.graph_revision
+            or current.scope != execution.scope
+            or current.requested_node_ids != execution.requested_node_ids
+            or current.created_at != execution.created_at
+        ):
+            raise ValueError(
+                f"Graph execution {execution.execution_id} identity and request "
+                "fields are immutable"
+            )
+        self._store.graph_executions[execution.execution_id] = _clone(execution)
+
+    async def add_node_result(self, result: "GraphExecutionNodeResult") -> None:
+        from notarius_core.domain.errors import NotFoundError, ObjectAlreadyExistsError
+
+        execution = self._store.graph_executions.get(result.execution_id)
+        if execution is None:
+            raise NotFoundError("Graph execution", str(result.execution_id))
+        if result.node_id not in execution.requested_node_ids:
+            raise ValueError(
+                f"Graph execution {result.execution_id} did not request node "
+                f"{result.node_id!r}"
+            )
+        key = (result.execution_id, result.node_id)
+        if key in self._store.graph_execution_node_results:
+            raise ObjectAlreadyExistsError(
+                "Graph execution node result already exists: "
+                f"{result.execution_id}/{result.node_id}"
+            )
+        if any(
+            stored.execution_id == result.execution_id
+            and stored.position == result.position
+            for stored in self._store.graph_execution_node_results.values()
+        ):
+            raise ObjectAlreadyExistsError(
+                "Graph execution node result position already exists: "
+                f"{result.execution_id}/{result.position}"
+            )
+        self._store.graph_execution_node_results[key] = _clone(result)
+
+    async def get(self, execution_id: UUID) -> "GraphExecutionDetail | None":
+        from notarius_core.domain.execution_history import GraphExecutionDetail
+
+        execution = self._store.graph_executions.get(execution_id)
+        if execution is None:
+            return None
+        node_results = sorted(
+            (
+                result
+                for result in self._store.graph_execution_node_results.values()
+                if result.execution_id == execution_id
+            ),
+            key=lambda result: (result.position, result.node_id),
+        )
+        return GraphExecutionDetail(
+            execution=_clone(execution),
+            node_results=tuple(_clone(node_results)),
+        )
+
+    async def list_for_graph(
+        self,
+        graph_id: UUID,
+        *,
+        limit: int,
+        cursor: "GraphExecutionCursor | None" = None,
+        graph_revision: int | None = None,
+        status: "GraphExecutionStatus | None" = None,
+        node_id: str | None = None,
+    ) -> "GraphExecutionPage":
+        from notarius_core.domain.execution_history import (
+            GraphExecutionCursor,
+            GraphExecutionListItem,
+            GraphExecutionPage,
+        )
+
+        if limit < 1:
+            raise ValueError("Graph execution page limit must be at least 1")
+        if graph_revision is not None and graph_revision < 1:
+            raise ValueError("Graph execution revision filter must be at least 1")
+        normalized_node_id = None
+        if node_id is not None:
+            normalized_node_id = node_id.strip()
+            if normalized_node_id == "":
+                raise ValueError("Graph execution node filter must not be blank")
+
+        values = [
+            execution
+            for execution in self._store.graph_executions.values()
+            if execution.graph_id == graph_id
+            and (
+                graph_revision is None
+                or execution.graph_revision == graph_revision
+            )
+            and (status is None or execution.status == status)
+            and (
+                normalized_node_id is None
+                or normalized_node_id in execution.requested_node_ids
+            )
+        ]
+        if cursor is not None:
+            values = [
+                execution
+                for execution in values
+                if (execution.created_at, execution.execution_id.int)
+                < (cursor.created_at, cursor.execution_id.int)
+            ]
+        values.sort(
+            key=lambda execution: (
+                execution.created_at,
+                execution.execution_id.int,
+            ),
+            reverse=True,
+        )
+        has_more = len(values) > limit
+        page_values = values[:limit]
+        items: list[GraphExecutionListItem] = []
+        for execution in page_values:
+            results = [
+                result
+                for result in self._store.graph_execution_node_results.values()
+                if result.execution_id == execution.execution_id
+            ]
+            items.append(
+                GraphExecutionListItem(
+                    execution=_clone(execution),
+                    node_count=len(results),
+                    artifact_count=sum(result.artifact_count for result in results),
+                )
+            )
+        next_cursor = None
+        if has_more and page_values:
+            last = page_values[-1]
+            next_cursor = GraphExecutionCursor(
+                created_at=last.created_at,
+                execution_id=last.execution_id,
+            )
+        return GraphExecutionPage(items=tuple(items), next_cursor=next_cursor)
+
+    async def interrupt_active(
+        self,
+        *,
+        finished_at: datetime,
+        error: str,
+    ) -> int:
+        if finished_at.tzinfo is None:
+            raise ValueError(
+                "Graph execution interruption timestamp must be timezone-aware"
+            )
+        interrupted = 0
+        for execution_id, execution in list(self._store.graph_executions.items()):
+            if execution.status not in {"queued", "running", "cancelling"}:
+                continue
+            self._store.graph_executions[execution_id] = replace(
+                execution,
+                status="failed",
+                finished_at=finished_at,
+                error=error,
+            )
+            interrupted += 1
+        return interrupted
+
+
 @dataclass(frozen=True, slots=True)
 class _InMemoryUnitOfWorkState:
     working_store: InMemoryDataStore
     artifacts: ArtifactRepositoryPort
     materialized_outputs: "MaterializedNodeOutputsRepositoryPort"
     invocation_cache: "InvocationCacheRepositoryPort"
+    execution_history: "GraphExecutionHistoryRepositoryPort"
 
 
 class InMemoryUnitOfWork(UnitOfWorkPort):
@@ -343,6 +548,10 @@ class InMemoryUnitOfWork(UnitOfWorkPort):
     def invocation_cache(self) -> "InvocationCacheRepositoryPort":
         return self._entered_state().invocation_cache
 
+    @property
+    def execution_history(self) -> "GraphExecutionHistoryRepositoryPort":
+        return self._entered_state().execution_history
+
     @override
     async def __aenter__(self) -> Self:
         if self._state.get() is not None:
@@ -359,6 +568,9 @@ class InMemoryUnitOfWork(UnitOfWorkPort):
                         working_store
                     ),
                     invocation_cache=InMemoryInvocationCacheRepository(working_store),
+                    execution_history=InMemoryGraphExecutionHistoryRepository(
+                        working_store
+                    ),
                 )
             )
         except BaseException:

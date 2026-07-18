@@ -387,7 +387,6 @@ export default function WorkflowEdgeControl({
   };
   const onUpdate = edgeData.onUpdate;
   const enabled = edgeData.enabled !== false;
-  const canToggleEnabled = Boolean(onUpdate && (!enabled || edgeData.canDisable));
   const savedRouteOffset = edgeData.routeOffset ?? { x: 0, y: 0 };
   const [draftRouteOffset, setDraftRouteOffset] =
     React.useState<WorkflowEdgeRouteOffset | null>(null);
@@ -482,13 +481,6 @@ export default function WorkflowEdgeControl({
     edgeData.collectionMode === "map" ? " · each" : ""
   }`;
   const label = enabled ? routeLabel : `${routeLabel} · disabled`;
-  const statusDescription = enabled
-    ? edgeData.canDisable
-      ? "Included in dependency planning and workflow runs."
-      : "Only connections to optional inputs can be disabled."
-    : edgeData.canDisable
-      ? "Saved on the canvas but omitted from dependency planning and runs."
-      : "This required input is disconnected until the connection is enabled."
 
   return (
     <>
@@ -670,41 +662,6 @@ export default function WorkflowEdgeControl({
                         This edge owns the value passed between the two ports.
                       </span>
                     </header>
-
-                    <section {...stylex.props(s.section)}>
-                      <span {...stylex.props(s.sectionTitle)}>Status</span>
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={enabled}
-                        aria-label={`Connection ${routeLabel} enabled`}
-                        disabled={!canToggleEnabled}
-                        title={
-                          canToggleEnabled
-                            ? enabled
-                              ? "Disable connection"
-                              : "Enable connection"
-                            : "Required input connections must remain enabled"
-                        }
-                        {...stylex.props(
-                          s.option,
-                          enabled ? s.optionActive : null,
-                        )}
-                        onClick={() => onUpdate?.(id, { enabled: !enabled })}
-                      >
-                        <span {...stylex.props(s.optionCopy)}>
-                          <span {...stylex.props(s.optionTitle)}>
-                            {enabled ? "Enabled" : "Disabled"}
-                          </span>
-                          <span {...stylex.props(s.optionDescription)}>
-                            {statusDescription}
-                          </span>
-                        </span>
-                        {enabled ? (
-                          <Check size={12} {...stylex.props(s.check)} />
-                        ) : null}
-                      </button>
-                    </section>
 
                     <section {...stylex.props(s.section)}>
                       <span {...stylex.props(s.sectionTitle)}>Value</span>

@@ -196,6 +196,68 @@ describe("useRunExecution", () => {
     expect(harness.nodes()[0].data.execution.status).toBe("succeeded");
   });
 
+  it("records the user scope on the submitted execution", async () => {
+    apiMocks.startRunExecution.mockResolvedValue(succeededExecution());
+    const selectedNode = { ...workflowNode(), selected: true };
+    const harness = hookHarness({ nodes: [selectedNode] });
+    const hook = await renderHook(useRunExecution, harness.hookOptions);
+
+    await React.act(async () => {
+      await hook.result.current.runWorkflow("selected-with-dependencies");
+    });
+
+    expect(apiMocks.startRunExecution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: "selected-with-dependencies",
+      }),
+    );
+  });
+
+  it("records clean saved executions against the saved graph revision", async () => {
+    apiMocks.startRunExecution.mockResolvedValue(succeededExecution());
+    const harness = hookHarness({
+      activeGraph: {
+        id: "graph-1",
+        revision: 7,
+        nodes: [],
+      },
+      isDirty: false,
+    });
+    const hook = await renderHook(useRunExecution, harness.hookOptions);
+
+    await React.act(async () => {
+      await hook.result.current.runWorkflow("all");
+    });
+
+    expect(apiMocks.startRunExecution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        graph_id: "graph-1",
+        graph_revision: 7,
+      }),
+    );
+  });
+
+  it("keeps dirty saved executions temporary by omitting graph provenance", async () => {
+    apiMocks.startRunExecution.mockResolvedValue(succeededExecution());
+    const harness = hookHarness({
+      activeGraph: {
+        id: "graph-1",
+        revision: 7,
+        nodes: [],
+      },
+      isDirty: true,
+    });
+    const hook = await renderHook(useRunExecution, harness.hookOptions);
+
+    await React.act(async () => {
+      await hook.result.current.runWorkflow("all");
+    });
+
+    const request = apiMocks.startRunExecution.mock.calls[0]?.[0];
+    expect(request).not.toHaveProperty("graph_id");
+    expect(request).not.toHaveProperty("graph_revision");
+  });
+
   it("suppresses terminal results when the graph snapshot changed", async () => {
     const started = deferred<RunExecution>();
     let snapshotCurrent = true;

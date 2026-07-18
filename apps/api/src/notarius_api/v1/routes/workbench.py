@@ -39,6 +39,7 @@ from notarius_api.schemas.workbench import (
     RunExecutionResponse,
     RunResponse,
     SampleRequest,
+    UnavailableGraphModuleResponse,
     UploadRequest,
 )
 from notarius_api.services.artifacts import ArtifactService
@@ -167,7 +168,7 @@ async def list_nodes(
     modules: GraphModuleCatalogDependency,
     module_executor: RunGraphDependency,
 ) -> NodeRegistryResponse:
-    module_entries = await modules.list()
+    module_listing = await modules.list()
     return NodeRegistryResponse(
         plugins=[
             PluginSpecResponse(
@@ -202,7 +203,19 @@ async def list_nodes(
         nodes=[
             _node_registration_response(registration) for registration in registry.nodes
         ]
-        + [_graph_module_response(entry, module_executor) for entry in module_entries],
+        + [
+            _graph_module_response(entry, module_executor)
+            for entry in module_listing.entries
+        ],
+        unavailable_modules=[
+            UnavailableGraphModuleResponse(
+                graph_id=module.graph_id,
+                revision=module.revision,
+                name=module.name,
+                reason=module.reason,
+            )
+            for module in module_listing.unavailable
+        ],
     )
 
 
@@ -255,8 +268,15 @@ async def start_graph_execution(
     manager: RunExecutionManagerDependency,
     presenter: RunResultPresenterDependency,
 ) -> RunExecutionResponse:
-    execution = await manager.start(request)
-    return await presenter.execution_response(execution)
+    try:
+        execution = await manager.start(request)
+        return await presenter.execution_response(execution)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SavedGraphRevisionConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except WorkbenchOperationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get(

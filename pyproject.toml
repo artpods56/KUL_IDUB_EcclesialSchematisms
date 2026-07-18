@@ -12,6 +12,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+gis = ["notarius-plugin-gis"]
 llm = ["notarius-plugin-llm"]
 ocr = ["notarius-plugin-ocr"]
 
@@ -25,6 +26,7 @@ members = [
     "libs/storage",
     "plugins/llm",
     "plugins/ocr",
+    "plugins/gis",
     "apps/api",
 ]
 
@@ -34,6 +36,7 @@ notarius-core = { workspace = true }
 notarius-persistence = { workspace = true }
 notarius-plugin-llm = { workspace = true }
 notarius-plugin-ocr = { workspace = true }
+notarius-plugin-gis = { workspace = true }
 notarius-storage = { workspace = true }
 
 [dependency-groups]
@@ -55,6 +58,7 @@ include = [
     "libs/core/src/notarius_core/conversions.py",
     "libs/core/src/notarius_core/application",
     "libs/core/src/notarius_core/domain/materialized_outputs.py",
+    "libs/core/src/notarius_core/domain/execution_history.py",
     "libs/core/src/notarius_core/domain/modules.py",
     "libs/core/src/notarius_core/domain/node_secrets.py",
     "libs/core/src/notarius_core/domain/saved_graphs.py",
@@ -63,6 +67,7 @@ include = [
     "libs/core/src/notarius_core/operators",
     "libs/core/src/notarius_core/plugins.py",
     "libs/core/src/notarius_core/ports/storage.py",
+    "libs/core/src/notarius_core/ports/execution_history.py",
     "libs/core/src/notarius_core/ports/materialized_outputs.py",
     "libs/core/src/notarius_core/ports/modules.py",
     "libs/core/src/notarius_core/ports/node_secrets.py",
@@ -77,15 +82,19 @@ include = [
     "apps/api/src/notarius_api/plugin_discovery.py",
     "apps/api/src/notarius_api/schemas/saved_graphs.py",
     "apps/api/src/notarius_api/schemas/node_secrets.py",
+    "apps/api/src/notarius_api/schemas/execution_history.py",
     "apps/api/src/notarius_api/schemas/workbench.py",
     "apps/api/src/notarius_api/settings.py",
     "apps/api/src/notarius_api/services",
     "apps/api/src/notarius_api/v1/routes/saved_graphs.py",
     "apps/api/src/notarius_api/v1/routes/node_secrets.py",
+    "apps/api/src/notarius_api/v1/routes/execution_history.py",
     "apps/api/src/notarius_api/v1/routes/workbench.py",
     "plugins/llm/src/notarius_plugin_llm",
     "plugins/ocr/src/notarius_plugin_ocr",
+    "plugins/gis/src/notarius_plugin_gis",
     "tests/unit/core/test_invocation.py",
+    "tests/unit/core/test_execution_history.py",
     "tests/unit/core/test_modules.py",
     "tests/unit/core/test_mistral_ocr.py",
     "tests/unit/core/test_node_contracts.py",
@@ -97,6 +106,7 @@ include = [
     "tests/unit/application/test_saved_graphs.py",
     "tests/unit/persistence/test_saved_graph_persistence.py",
     "tests/unit/persistence/test_materialized_output_persistence.py",
+    "tests/unit/persistence/test_execution_history_persistence.py",
     "tests/unit/persistence/test_node_secret_persistence.py",
     "tests/unit/persistence/test_migrations.py",
     "tests/unit/storage",
@@ -107,6 +117,7 @@ include = [
     "tests/unit/api/test_arithmetic.py",
     "tests/unit/api/test_composition.py",
     "tests/unit/api/test_edge_values.py",
+    "tests/unit/api/test_execution_history.py",
     "tests/unit/api/test_graph_compiler.py",
     "tests/unit/api/test_graph_preflight.py",
     "tests/unit/api/test_inline_execution_engine.py",

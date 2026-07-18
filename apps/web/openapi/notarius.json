@@ -387,6 +387,333 @@
         "title": "FieldProjectionResponse",
         "type": "object"
       },
+      "GraphExecutionDetailResponse": {
+        "properties": {
+          "artifact_count": {
+            "title": "Artifact Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "execution_id": {
+            "format": "uuid",
+            "title": "Execution Id",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "graph_id": {
+            "format": "uuid",
+            "title": "Graph Id",
+            "type": "string"
+          },
+          "graph_revision": {
+            "title": "Graph Revision",
+            "type": "integer"
+          },
+          "node_count": {
+            "title": "Node Count",
+            "type": "integer"
+          },
+          "node_results": {
+            "items": {
+              "$ref": "#/components/schemas/GraphExecutionNodeResultResponse"
+            },
+            "title": "Node Results",
+            "type": "array"
+          },
+          "requested_node_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Requested Node Ids",
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/GraphExecutionScope"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/GraphExecutionStatus"
+          },
+          "workflow_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Run Id"
+          }
+        },
+        "required": [
+          "execution_id",
+          "graph_id",
+          "graph_revision",
+          "scope",
+          "status",
+          "requested_node_ids",
+          "node_count",
+          "artifact_count",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "workflow_run_id",
+          "error",
+          "node_results"
+        ],
+        "title": "GraphExecutionDetailResponse",
+        "type": "object"
+      },
+      "GraphExecutionListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GraphExecutionSummaryResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "GraphExecutionListResponse",
+        "type": "object"
+      },
+      "GraphExecutionNodeResultResponse": {
+        "properties": {
+          "completed_at": {
+            "format": "date-time",
+            "title": "Completed At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "outputs": {
+            "items": {
+              "$ref": "#/components/schemas/RunPortOutputResponse"
+            },
+            "title": "Outputs",
+            "type": "array"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/GraphExecutionNodeStatus"
+          }
+        },
+        "required": [
+          "node_id",
+          "position",
+          "status",
+          "error",
+          "completed_at",
+          "outputs"
+        ],
+        "title": "GraphExecutionNodeResultResponse",
+        "type": "object"
+      },
+      "GraphExecutionNodeStatus": {
+        "enum": [
+          "succeeded",
+          "failed",
+          "skipped"
+        ],
+        "type": "string"
+      },
+      "GraphExecutionScope": {
+        "enum": [
+          "all",
+          "selected",
+          "selected-with-dependencies"
+        ],
+        "type": "string"
+      },
+      "GraphExecutionStatus": {
+        "enum": [
+          "queued",
+          "running",
+          "cancelling",
+          "cancelled",
+          "succeeded",
+          "failed"
+        ],
+        "type": "string"
+      },
+      "GraphExecutionSummaryResponse": {
+        "properties": {
+          "artifact_count": {
+            "title": "Artifact Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "execution_id": {
+            "format": "uuid",
+            "title": "Execution Id",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "graph_id": {
+            "format": "uuid",
+            "title": "Graph Id",
+            "type": "string"
+          },
+          "graph_revision": {
+            "title": "Graph Revision",
+            "type": "integer"
+          },
+          "node_count": {
+            "title": "Node Count",
+            "type": "integer"
+          },
+          "requested_node_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Requested Node Ids",
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/GraphExecutionScope"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/GraphExecutionStatus"
+          },
+          "workflow_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Run Id"
+          }
+        },
+        "required": [
+          "execution_id",
+          "graph_id",
+          "graph_revision",
+          "scope",
+          "status",
+          "requested_node_ids",
+          "node_count",
+          "artifact_count",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "workflow_run_id",
+          "error"
+        ],
+        "title": "GraphExecutionSummaryResponse",
+        "type": "object"
+      },
       "GraphMaterializationsResponse": {
         "properties": {
           "graph_id": {
@@ -525,6 +852,13 @@
               "$ref": "#/components/schemas/PluginSpecResponse"
             },
             "title": "Plugins",
+            "type": "array"
+          },
+          "unavailable_modules": {
+            "items": {
+              "$ref": "#/components/schemas/UnavailableGraphModuleResponse"
+            },
+            "title": "Unavailable Modules",
             "type": "array"
           }
         },
@@ -1190,6 +1524,10 @@
             "title": "Pinned Outputs",
             "type": "array"
           },
+          "scope": {
+            "$ref": "#/components/schemas/GraphExecutionScope",
+            "default": "all"
+          },
           "secret_graph_id": {
             "anyOf": [
               {
@@ -1420,6 +1758,52 @@
         "title": "SavedGraphListResponse",
         "type": "object"
       },
+      "SavedGraphNodeLayoutModel": {
+        "additionalProperties": false,
+        "properties": {
+          "appendix_height": {
+            "anyOf": [
+              {
+                "maximum": 16384.0,
+                "minimum": 120.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Appendix Height"
+          },
+          "body_height": {
+            "anyOf": [
+              {
+                "maximum": 16384.0,
+                "minimum": 96.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body Height"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "maximum": 16384.0,
+                "minimum": 260.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
+          }
+        },
+        "title": "SavedGraphNodeLayoutModel",
+        "type": "object"
+      },
       "SavedGraphNodeModel-Input": {
         "additionalProperties": false,
         "properties": {
@@ -1447,6 +1831,16 @@
             },
             "title": "Input Plugs",
             "type": "array"
+          },
+          "layout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SavedGraphNodeLayoutModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "operator_id": {
             "maxLength": 255,
@@ -1499,6 +1893,16 @@
             },
             "title": "Input Plugs",
             "type": "array"
+          },
+          "layout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SavedGraphNodeLayoutModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "operator_id": {
             "maxLength": 255,
@@ -1636,6 +2040,36 @@
           "updated_at"
         ],
         "title": "SavedGraphSummaryResponse",
+        "type": "object"
+      },
+      "UnavailableGraphModuleResponse": {
+        "properties": {
+          "graph_id": {
+            "format": "uuid",
+            "title": "Graph Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "graph_id",
+          "revision",
+          "name",
+          "reason"
+        ],
+        "title": "UnavailableGraphModuleResponse",
         "type": "object"
       },
       "UpdateSavedGraphRequest": {
@@ -2101,6 +2535,181 @@
         "summary": "Update Saved Graph",
         "tags": [
           "saved graphs"
+        ]
+      }
+    },
+    "/v1/graphs/{graph_id}/executions": {
+      "get": {
+        "operationId": "list_graph_executions_v1_graphs__graph_id__executions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "graph_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Graph Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "graph_revision",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Graph Revision"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/GraphExecutionStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "node_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphExecutionListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Graph Executions",
+        "tags": [
+          "executions"
+        ]
+      }
+    },
+    "/v1/graphs/{graph_id}/executions/{execution_id}": {
+      "get": {
+        "operationId": "get_graph_execution_history_v1_graphs__graph_id__executions__execution_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "graph_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Graph Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Execution Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphExecutionDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Graph Execution History",
+        "tags": [
+          "executions"
         ]
       }
     },

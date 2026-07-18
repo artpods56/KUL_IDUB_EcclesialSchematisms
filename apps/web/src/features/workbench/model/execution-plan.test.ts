@@ -439,6 +439,7 @@ describe("execution request planning", () => {
 
     expect(plan.status).toBe("ready");
     if (plan.status !== "ready") return;
+    expect(plan.request.scope).toBe("selected");
     expect(plan.request.pinned_outputs).toEqual([
       {
         from_node: "source",
@@ -573,6 +574,7 @@ describe("execution request planning", () => {
 
     expect(plan.status).toBe("ready");
     if (plan.status !== "ready") return;
+    expect(plan.request.scope).toBe("all");
     expect(plan.request).not.toHaveProperty("pinned_outputs");
     expect(plan.request.edges).toEqual([]);
     expect(plan.request.nodes[1]?.input_plugs).toEqual([

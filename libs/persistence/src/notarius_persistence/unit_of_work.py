@@ -8,6 +8,10 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from notarius_core.artifacts import ArtifactRepositoryPort
 from notarius_core.domain.errors import ConcurrentWriteError
+from notarius_core.ports.execution_history import (
+    ExecutionHistoryUnitOfWorkPort,
+    GraphExecutionHistoryRepositoryPort,
+)
 from notarius_core.ports.invocation_cache import InvocationCacheRepositoryPort
 from notarius_core.ports.materialized_outputs import (
     MaterializedNodeOutputsRepositoryPort,
@@ -24,6 +28,7 @@ from notarius_core.ports.saved_graphs import (
 
 from notarius_persistence.adapters.repositories import (
     SqlArtifactRepository,
+    SqlGraphExecutionHistoryRepository,
     SqlInvocationCacheRepository,
     SqlMaterializedNodeOutputsRepository,
     SqlNodeSecretRepository,
@@ -39,12 +44,14 @@ class _SqlAlchemyUnitOfWorkState:
     invocation_cache: InvocationCacheRepositoryPort
     materialized_outputs: MaterializedNodeOutputsRepositoryPort
     node_secrets: NodeSecretRepositoryPort
+    execution_history: GraphExecutionHistoryRepositoryPort
 
 
 class SqlAlchemyUnitOfWork(
     WorkbenchUnitOfWorkPort,
     SavedGraphUnitOfWorkPort,
     NodeSecretUnitOfWorkPort,
+    ExecutionHistoryUnitOfWorkPort,
 ):
     """Reusable task-local SQLAlchemy transaction boundary.
 
@@ -88,6 +95,11 @@ class SqlAlchemyUnitOfWork(
     def node_secrets(self) -> NodeSecretRepositoryPort:
         return self._entered_state().node_secrets
 
+    @property
+    @override
+    def execution_history(self) -> GraphExecutionHistoryRepositoryPort:
+        return self._entered_state().execution_history
+
     @override
     async def __aenter__(self) -> "SqlAlchemyUnitOfWork":
         if self._state.get() is not None:
@@ -101,6 +113,7 @@ class SqlAlchemyUnitOfWork(
                 invocation_cache=SqlInvocationCacheRepository(session),
                 materialized_outputs=SqlMaterializedNodeOutputsRepository(session),
                 node_secrets=SqlNodeSecretRepository(session),
+                execution_history=SqlGraphExecutionHistoryRepository(session),
             )
         )
         return self

@@ -39,6 +39,7 @@ from notarius_api.services.execution.node_execution import NodeExecutionService
 from notarius_api.services.execution.prefect import PrefectExecutionEngine
 from notarius_api.services.execution.preflight import GraphRunPreflight
 from notarius_api.services.execution.run_graph import RunGraph
+from notarius_api.services.execution_history import ExecutionHistoryService
 from notarius_api.services.invocation_cache import PersistentInvocationCache
 from notarius_api.services.materializations import MaterializationService
 from notarius_api.services.modules import GraphModuleCatalog
@@ -56,6 +57,7 @@ class WorkbenchComponents:
     modules: GraphModuleCatalog
     run_graph: RunGraph
     execution_manager: RunExecutionManager
+    execution_history: ExecutionHistoryService
     materializations: MaterializationService
     presenter: RunResultPresenter
     artifacts: ArtifactService
@@ -172,13 +174,18 @@ def build_workbench_components(
         engine=engine,
         materializations=materializations,
     )
-    execution_manager = RunExecutionManager(run_graph)
+    execution_history = ExecutionHistoryService(resolved_unit_of_work, saved_graphs)
+    execution_manager = RunExecutionManager(
+        run_graph,
+        execution_history=execution_history,
+    )
     return WorkbenchComponents(
         plugin_registry=plugin_registry,
         uploads=uploads,
         modules=modules,
         run_graph=run_graph,
         execution_manager=execution_manager,
+        execution_history=execution_history,
         materializations=materializations,
         presenter=presenter,
         artifacts=artifacts,

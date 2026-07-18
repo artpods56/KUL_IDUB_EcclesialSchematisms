@@ -14,6 +14,10 @@ def _graph_payload(name: str = "Draft graph") -> dict[str, object]:
                 "operator_version": 1,
                 "config": {"text": "draft"},
                 "position": {"x": 10.0, "y": 20.0},
+                "layout": {
+                    "width": 420.0,
+                    "body_height": 180.0,
+                },
             },
             {
                 "id": "target",
@@ -21,6 +25,9 @@ def _graph_payload(name: str = "Draft graph") -> dict[str, object]:
                 "operator_version": 1,
                 "config": {},
                 "position": {"x": 300.0, "y": 20.0},
+                "layout": {
+                    "appendix_height": 320.0,
+                },
                 "input_plugs": [
                     {"id": "primary-value", "port": "value"},
                 ],
@@ -66,9 +73,19 @@ def test_saved_graph_crud_round_trip(builtin_client: TestClient) -> None:
     assert len(created["nodes"]) == 2
     assert len(created["edges"]) == 1
     assert created["nodes"][0]["input_plugs"] == []
+    assert created["nodes"][0]["layout"] == {
+        "width": 420.0,
+        "body_height": 180.0,
+        "appendix_height": None,
+    }
     assert created["nodes"][1]["input_plugs"] == [
         {"id": "primary-value", "port": "value"}
     ]
+    assert created["nodes"][1]["layout"] == {
+        "width": None,
+        "body_height": None,
+        "appendix_height": 320.0,
+    }
     assert created["nodes"][1]["artifact_type_bindings"] == [
         {
             "variable": "T",

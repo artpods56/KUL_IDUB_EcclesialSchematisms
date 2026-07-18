@@ -31,6 +31,9 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
         assert set(inspect(connection).get_table_names()) == {
             "alembic_version",
             "artifact_objects",
+            "graph_execution_node_results",
+            "graph_execution_requested_nodes",
+            "graph_executions",
             "invocation_cache_entries",
             "materialized_node_outputs",
             "node_secrets",
@@ -48,6 +51,9 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
         assert set(inspect(connection).get_table_names()) == {
             "alembic_version",
             "artifact_objects",
+            "graph_execution_node_results",
+            "graph_execution_requested_nodes",
+            "graph_executions",
             "invocation_cache_entries",
             "materialized_node_outputs",
             "node_secrets",

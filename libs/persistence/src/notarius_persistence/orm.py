@@ -6,6 +6,12 @@ from sqlalchemy.orm import registry
 
 from notarius_core.artifacts import ArtifactObject
 from notarius_core.domain.invocation_cache import InvocationCacheEntry
+from notarius_core.domain.execution_history import (
+    GraphExecution,
+    GraphExecutionNodeResult,
+    GraphExecutionScope,
+    GraphExecutionStatus,
+)
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
 from notarius_core.domain.node_secrets import EncryptedNodeSecret
 from notarius_core.domain.saved_graphs import SavedGraph, SavedGraphDocument
@@ -24,6 +30,35 @@ class SavedGraphRevisionRecord:
     name: str
     document: SavedGraphDocument
     created_at: datetime
+
+
+@dataclass
+class GraphExecutionRecord:
+    execution_id: UUID
+    graph_id: UUID
+    graph_revision: int
+    status: GraphExecutionStatus
+    scope: GraphExecutionScope
+    workflow_run_id: UUID | None
+    error: str | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+
+    def to_domain(self, requested_node_ids: tuple[str, ...]) -> GraphExecution:
+        return GraphExecution(
+            execution_id=self.execution_id,
+            graph_id=self.graph_id,
+            graph_revision=self.graph_revision,
+            status=self.status,
+            scope=self.scope,
+            requested_node_ids=requested_node_ids,
+            workflow_run_id=self.workflow_run_id,
+            error=self.error,
+            created_at=self.created_at,
+            started_at=self.started_at,
+            finished_at=self.finished_at,
+        )
 
 
 def start_mappers() -> None:
@@ -51,6 +86,14 @@ def start_mappers() -> None:
     mapper_registry.map_imperatively(
         MaterializedNodeOutputs,
         schema.materialized_node_outputs,
+    )
+    mapper_registry.map_imperatively(
+        GraphExecutionRecord,
+        schema.graph_executions,
+    )
+    mapper_registry.map_imperatively(
+        GraphExecutionNodeResult,
+        schema.graph_execution_node_results,
     )
     mapper_registry.map_imperatively(
         EncryptedNodeSecret,

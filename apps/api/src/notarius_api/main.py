@@ -25,6 +25,9 @@ from notarius_api.services.composition import build_workbench_components
 from notarius_api.services.node_secrets import NodeSecretService
 from notarius_api.settings import Settings, get_settings
 from notarius_api.v1.routes.saved_graphs import router as saved_graphs_router
+from notarius_api.v1.routes.execution_history import (
+    router as execution_history_router,
+)
 from notarius_api.v1.routes.node_secrets import router as node_secrets_router
 from notarius_api.v1.routes.workbench import router as workbench_router
 
@@ -110,11 +113,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             saved_graphs=saved_graphs,
             node_secrets=node_secrets,
         )
+        await components.execution_history.interrupt_active()
         app.state.workbench_plugin_registry = components.plugin_registry
         app.state.image_uploads = components.uploads
         app.state.graph_modules = components.modules
         app.state.run_graph = components.run_graph
         app.state.execution_manager = components.execution_manager
+        app.state.execution_history = components.execution_history
         app.state.materializations = components.materializations
         app.state.run_result_presenter = components.presenter
         app.state.artifacts = components.artifacts
@@ -131,6 +136,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             del app.state.materializations
             del app.state.run_graph
             del app.state.execution_manager
+            del app.state.execution_history
             del app.state.graph_modules
             del app.state.image_uploads
             del app.state.workbench_plugin_registry
@@ -160,6 +166,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         include_in_schema=False,
     )
     application.include_router(saved_graphs_router, prefix="/v1")
+    application.include_router(execution_history_router, prefix="/v1")
     application.include_router(node_secrets_router, prefix="/v1")
     application.include_router(workbench_router, prefix="/v1")
     return application

@@ -15,6 +15,7 @@ import {
 } from "@xyflow/react";
 import {
   Copy,
+  History,
   LoaderCircle,
   Maximize2,
   Play,
@@ -24,6 +25,7 @@ import {
   Workflow,
 } from "lucide-react";
 
+import { ExecutionHistoryDrawer } from "./ExecutionHistoryDrawer";
 import {
   GlobalIssueToastList,
   type GlobalIssue,
@@ -72,7 +74,7 @@ import {
 import type { SchemaBuilderField } from "../canvas/schema-builder";
 import { useTheme } from "@/components/theme";
 import {
-  IMAGE_UPLOAD_OPERATOR_ID,
+  isFileUploadOperator,
   WORKFLOW_EDGE_TYPE,
   WORKFLOW_NODE_TYPE,
   bindArtifactTypeVariable,
@@ -102,6 +104,7 @@ import {
   selectedNodeAndAncestorIds,
   type WorkflowNode,
 } from "../model/execution-plan";
+import { workbenchGraphPath } from "../routes";
 import { useNodeRegistry } from "@/hooks/use-api";
 import {
   fileToBase64,
@@ -159,6 +162,9 @@ export function Workbench({
     ReactFlowInstance<WorkflowNode, WorkflowEdge>
   >();
   const [libraryOpen, setLibraryOpen] = React.useState(false);
+  const [executionHistoryTarget, setExecutionHistoryTarget] = React.useState<{
+    nodeId: string | null;
+  } | null>(null);
   const [runError, setRunError] = React.useState<string | null>(null);
   const clearRunError = React.useCallback(() => setRunError(null), []);
   const dismissRunError = React.useCallback((message: string) => {
@@ -227,6 +233,25 @@ export function Workbench({
       setRunError(null);
     },
     [edges],
+  );
+
+  const updateLayout = React.useCallback(
+    (nodeId: string, layout: WorkflowNodeData["layout"]) => {
+      setNodes((current) =>
+        current.map((node) =>
+          node.id === nodeId
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  layout,
+                },
+              }
+            : node,
+        ),
+      );
+    },
+    [],
   );
 
   const removeNode = React.useCallback((nodeId: string) => {
@@ -442,7 +467,7 @@ export function Workbench({
           : node.data,
       })));
     } catch (uploadError) {
-      const message = uploadError instanceof Error ? uploadError.message : "Image upload failed";
+      const message = uploadError instanceof Error ? uploadError.message : "File upload failed";
       setNodes((current) => current.map((node) => node.id === nodeId ? {
         ...node,
         data: { ...node.data, execution: { status: "failed", error: message } },
@@ -473,13 +498,30 @@ export function Workbench({
     [edges],
   );
 
+  const openGraphInNewTab = React.useCallback(
+    (graphId: string) => {
+      window.open(
+        workbenchGraphPath(workspaceSlug, graphId),
+        "_blank",
+        "noopener,noreferrer",
+      );
+    },
+    [workspaceSlug],
+  );
+
+  const openNodeExecutionHistory = React.useCallback((nodeId: string) => {
+    setLibraryOpen(false);
+    setExecutionHistoryTarget({ nodeId });
+  }, []);
+
   const attachNodeCallbacks = React.useCallback(
     (data: WorkflowNodeData): WorkflowNodeData => ({
       ...data,
       onConfigChange: updateConfig,
+      onLayoutChange: updateLayout,
       onRemoveNode: removeNode,
       onImagesSelected:
-        data.spec.operator_id === IMAGE_UPLOAD_OPERATOR_ID
+        isFileUploadOperator(data.spec.operator_id)
           ? handleImagesSelected
           : undefined,
       onRemoveImageUpload: handleRemoveImageUpload,
@@ -489,17 +531,24 @@ export function Workbench({
       onSchemaBuilderFieldsChange: updateSchemaBuilderFields,
       onResetArtifactTypeBinding: resetNodeArtifactTypeBinding,
       onHandlesMeasured: handleNodeHandlesMeasured,
+      onOpenModuleSource: data.spec.module_graph_id
+        ? openGraphInNewTab
+        : undefined,
+      onOpenExecutionHistory: openNodeExecutionHistory,
     }),
     [
       addNodeInputPlug,
       handleImagesSelected,
       handleNodeHandlesMeasured,
+      openGraphInNewTab,
+      openNodeExecutionHistory,
       removeNode,
       removeNodeInputPlug,
       handleRemoveImageUpload,
       reorderNodeInputPlug,
       resetNodeArtifactTypeBinding,
       updateConfig,
+      updateLayout,
       updateSchemaBuilderFields,
     ],
   );
@@ -597,6 +646,10 @@ export function Workbench({
   const graphOperationBusy = persistenceOperationBusy || running;
 
   React.useEffect(() => {
+    if (executionHistoryTarget) closeGraphBrowser();
+  }, [closeGraphBrowser, executionHistoryTarget]);
+
+  React.useEffect(() => {
     if (!registry) return;
     if (!initializedRef.current) {
       initializedRef.current = true;
@@ -630,7 +683,7 @@ export function Workbench({
 
   const imageUploadWithoutImages = nodes.some(
     (node) =>
-      node.data.spec.operator_id === IMAGE_UPLOAD_OPERATOR_ID &&
+      isFileUploadOperator(node.data.spec.operator_id) &&
       !imageUploads(node.data).length,
   );
   const selectedNodeIds = React.useMemo(
@@ -638,6 +691,12 @@ export function Workbench({
     [nodes],
   );
   const selectedNodeCount = selectedNodeIds.length;
+  const nodeTitles = React.useMemo(
+    () => Object.fromEntries(
+      nodes.map((node) => [node.id, node.data.spec.title]),
+    ),
+    [nodes],
+  );
   const selectedWithDependenciesCount = selectedNodeAndAncestorIds(
     nodes,
     edges,
@@ -1127,11 +1186,6 @@ export function Workbench({
           targetHandle: edge.targetHandle ?? null,
         };
         const source = decodeHandleId(edge.sourceHandle);
-        const target = decodeHandleId(edge.targetHandle);
-        const targetNode = nodes.find((node) => node.id === edge.target);
-        const targetPort = targetNode?.data.spec.inputs.find(
-          (port) => port.name === target?.portName,
-        );
         const activeSelection = {
           projection: edge.data?.projection,
           conversionPath: edge.data?.conversionPath ?? [],
@@ -1181,7 +1235,6 @@ export function Workbench({
             conversionTitles,
             routeOptions,
             allowedCollectionModes: validMode ? [validMode] : [],
-            canDisable: targetPort?.required === false,
             onUpdate: updateEdge,
             onRouteOffsetChange: updateEdgeRoute,
           },
@@ -1366,7 +1419,10 @@ export function Workbench({
         }
         canvasStatusMessage={canvasStatusMessage}
         themePreference={preference}
-        onToggleGraphBrowser={toggleGraphBrowser}
+        onToggleGraphBrowser={() => {
+          setExecutionHistoryTarget(null);
+          toggleGraphBrowser();
+        }}
         onGraphNameChange={setGraphName}
         onSaveGraph={() => void saveCurrentGraph()}
         onCycleTheme={cycleTheme}
@@ -1398,6 +1454,23 @@ export function Workbench({
         >
           <Maximize2 size={14} />
           <span {...stylex.props(s.railLabel)}>Fit</span>
+        </button>
+        <span {...stylex.props(s.railDivider)} />
+        <button
+          type="button"
+          disabled={!activeGraph}
+          title={activeGraph
+            ? "Browse previous executions"
+            : "Save the graph to browse executions"}
+          {...stylex.props(s.railButton)}
+          onClick={() => {
+            closeGraphBrowser();
+            setLibraryOpen(false);
+            setExecutionHistoryTarget({ nodeId: null });
+          }}
+        >
+          <History size={14} />
+          <span {...stylex.props(s.railLabel)}>Runs</span>
         </button>
         <span {...stylex.props(s.railDivider)} />
         <button
@@ -1455,6 +1528,19 @@ export function Workbench({
         />
       ) : null}
 
+      {executionHistoryTarget ? (
+        <ExecutionHistoryDrawer
+          key={`${activeGraph?.id ?? "unsaved"}:${executionHistoryTarget.nodeId ?? "all"}`}
+          graphId={activeGraph?.id ?? null}
+          graphName={graphName}
+          nodeId={executionHistoryTarget.nodeId}
+          nodeTitles={nodeTitles}
+          executionRunning={running}
+          isDirty={isDirty}
+          onClose={() => setExecutionHistoryTarget(null)}
+        />
+      ) : null}
+
       {registry ? (
         <NodeSelector
           open={libraryOpen}
@@ -1462,6 +1548,7 @@ export function Workbench({
           activeGraphId={activeGraph?.id ?? null}
           onOpenChange={setLibraryOpen}
           onAddNode={addCatalogNode}
+          onOpenGraph={openGraphInNewTab}
         />
       ) : null}
 

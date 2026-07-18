@@ -40,6 +40,36 @@ class GraphPoint(SavedGraphValue):
     y: float
 
 
+# Shared ceiling for layout axes: common browser/GPU max texture dimension.
+# Larger DOM layers can fail to composite. Floors keep node chrome usable.
+_LAYOUT_DIMENSION_MAX = 16_384
+
+
+class SavedGraphNodeLayout(SavedGraphValue):
+    """Canvas chrome sizes for a node shell and its artifact appendix."""
+
+    width: float | None = Field(default=None, ge=260, le=_LAYOUT_DIMENSION_MAX)
+    body_height: float | None = Field(
+        default=None, ge=96, le=_LAYOUT_DIMENSION_MAX
+    )
+    appendix_height: float | None = Field(
+        default=None, ge=120, le=_LAYOUT_DIMENSION_MAX
+    )
+
+    @model_validator(mode="after")
+    def require_at_least_one_dimension(self) -> Self:
+        if (
+            self.width is None
+            and self.body_height is None
+            and self.appendix_height is None
+        ):
+            raise ValueError(
+                "Saved graph node layout must set at least one of width, "
+                "body_height, or appendix_height"
+            )
+        return self
+
+
 def _freeze_json(value: object) -> object:
     if value is None or isinstance(value, (str, bool, int)):
         return value
@@ -136,6 +166,7 @@ class SavedGraphNode(SavedGraphValue):
     operator_version: int = Field(ge=1)
     config: Mapping[str, object] = Field(default_factory=dict)
     position: GraphPoint
+    layout: SavedGraphNodeLayout | None = None
     input_plugs: tuple[SavedGraphInputPlug, ...] = ()
     artifact_type_bindings: tuple[SavedGraphArtifactTypeBinding, ...] = ()
 

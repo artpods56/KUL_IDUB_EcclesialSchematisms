@@ -28,6 +28,65 @@ const MARKDOWN_ARTIFACT: ArtifactSummary = {
   content_type: "application/json",
 };
 
+const MAP_ARTIFACT: ArtifactSummary = {
+  artifact_id: "map-artifact",
+  artifact_type: "geo.map_document",
+  schema_version: 1,
+  content_type: "application/geo+json",
+};
+
+describe("GIS map artifact rendering", () => {
+  it("selects the map renderer and exposes ordered layer toggles", () => {
+    const payload = {
+      layers: [
+        {
+          id: "layer-1",
+          title: "cities.geojson",
+          color: "#2563eb",
+          visible: true,
+          feature_collection: { type: "FeatureCollection", features: [] },
+        },
+        {
+          id: "layer-2",
+          title: "offices.geojson",
+          color: "#dc2626",
+          visible: true,
+          feature_collection: { type: "FeatureCollection", features: [] },
+        },
+      ],
+      bounds: [-0.12, 48.85, 13.4, 52.52],
+    };
+    const renderer = rendererFor(MAP_ARTIFACT, payload);
+    expect(renderer.id).toBe("geo-map");
+    expect(renderer.modes).toEqual(["map", "raw"]);
+
+    const markup = renderToStaticMarkup(
+      createElement(renderer.Component, {
+        artifact: MAP_ARTIFACT,
+        payload,
+        mode: "map",
+      }),
+    );
+    expect(markup.indexOf("cities.geojson")).toBeLessThan(
+      markup.indexOf("offices.geojson"),
+    );
+    expect(markup).toContain('aria-label="Interactive map"');
+    expect(markup).toContain('type="checkbox"');
+  });
+
+  it("falls back to raw JSON for an invalid map payload", () => {
+    const renderer = rendererFor(MAP_ARTIFACT, { layers: [] });
+    const markup = renderToStaticMarkup(
+      createElement(renderer.Component, {
+        artifact: MAP_ARTIFACT,
+        payload: { layers: [] },
+        mode: "map",
+      }),
+    );
+    expect(markup).toContain("layers");
+  });
+});
+
 describe("JSON Schema artifact rendering", () => {
   it("unwraps and indents the schema value for the pretty view", () => {
     const payload = {

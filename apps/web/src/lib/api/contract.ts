@@ -38,6 +38,15 @@ export type RunNodeResult =
   Schemas["RunNodeResponse"];
 export type RunExecution =
   Schemas["RunExecutionResponse"];
+export type GraphExecutionStatus = Schemas["GraphExecutionStatus"];
+export type GraphExecutionSummary =
+  Schemas["GraphExecutionSummaryResponse"];
+export type GraphExecutionNodeResult =
+  Schemas["GraphExecutionNodeResultResponse"];
+export type GraphExecutionDetail =
+  paths["/v1/graphs/{graph_id}/executions/{execution_id}"]["get"]["responses"][200]["content"]["application/json"];
+export type GraphExecutionList =
+  paths["/v1/graphs/{graph_id}/executions"]["get"]["responses"][200]["content"]["application/json"];
 export type GraphMaterializations =
   Schemas["GraphMaterializationsResponse"];
 export type SavedGraphNode = Schemas["SavedGraphNodeModel-Output"];
@@ -52,10 +61,13 @@ export type AppliedNodeSecret = NodeSecretStatus;
 
 export type NodeRegistry =
   paths["/v1/nodes"]["get"]["responses"][200]["content"]["application/json"];
+export type UnavailableGraphModule =
+  Schemas["UnavailableGraphModuleResponse"];
 export type UploadRequest =
   paths["/v1/uploads"]["post"]["requestBody"]["content"]["application/json"];
 export type UploadResponse =
   paths["/v1/uploads"]["post"]["responses"][200]["content"]["application/json"];
+export type RunScopeInput = Schemas["GraphExecutionScope"];
 export type RunRequest =
   paths["/v1/runs"]["post"]["requestBody"]["content"]["application/json"];
 export type RunResponse =

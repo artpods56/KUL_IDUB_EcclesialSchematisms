@@ -1,13 +1,17 @@
 from dataclasses import dataclass
+from uuid import UUID
 
 from notarius_core.application.saved_graphs import SavedGraphService
 from notarius_core.domain.modules import (
+    MODULE_INPUT_OPERATOR_ID,
+    MODULE_OUTPUT_OPERATOR_ID,
     GraphModuleDefinition,
     GraphModuleDefinitionError,
     GraphModuleReference,
     GraphModuleReferenceError,
 )
 from notarius_core.domain.errors import NotFoundError
+from notarius_core.domain.saved_graphs import SavedGraphDocument
 from notarius_core.plugins import PluginRegistry, UnknownOperatorError
 
 from notarius_api.services.execution.errors import GraphExecutionError
@@ -15,11 +19,38 @@ from notarius_api.services.execution.errors import GraphExecutionError
 
 GRAPH_MODULE_PLUGIN_SLUG = "graph.module"
 
+_MODULE_BOUNDARY_OPERATOR_IDS = frozenset(
+    {
+        MODULE_INPUT_OPERATOR_ID,
+        MODULE_OUTPUT_OPERATOR_ID,
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class GraphModuleCatalogEntry:
     definition: GraphModuleDefinition
     catalog_visible: bool
+
+
+@dataclass(frozen=True, slots=True)
+class UnavailableGraphModule:
+    graph_id: UUID
+    revision: int
+    name: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class GraphModuleCatalogListing:
+    entries: list[GraphModuleCatalogEntry]
+    unavailable: list[UnavailableGraphModule]
+
+
+def document_has_module_boundary(document: SavedGraphDocument) -> bool:
+    return any(
+        node.operator_id in _MODULE_BOUNDARY_OPERATOR_IDS for node in document.nodes
+    )
 
 
 class GraphModuleCatalog:
@@ -33,26 +64,37 @@ class GraphModuleCatalog:
         self._saved_graphs = saved_graphs
         self._plugin_registry = plugin_registry
 
-    async def list(self) -> list[GraphModuleCatalogEntry]:
+    async def list(self) -> GraphModuleCatalogListing:
         if self._saved_graphs is None:
-            return []
+            return GraphModuleCatalogListing(entries=[], unavailable=[])
         entries: list[GraphModuleCatalogEntry] = []
+        unavailable: list[UnavailableGraphModule] = []
         for graph in await self._saved_graphs.list():
             for revision in await self._saved_graphs.list_revisions(graph.id):
+                is_tip = revision.revision == graph.revision
                 try:
                     definition = GraphModuleDefinition.from_saved_graph_revision(
                         revision
                     )
                     await self._validate_optional_input_targets(definition)
-                except GraphModuleDefinitionError:
+                except GraphModuleDefinitionError as exc:
+                    if is_tip and document_has_module_boundary(revision.document):
+                        unavailable.append(
+                            UnavailableGraphModule(
+                                graph_id=revision.graph_id,
+                                revision=revision.revision,
+                                name=revision.name,
+                                reason=str(exc),
+                            )
+                        )
                     continue
                 entries.append(
                     GraphModuleCatalogEntry(
                         definition=definition,
-                        catalog_visible=revision.revision == graph.revision,
+                        catalog_visible=is_tip,
                     )
                 )
-        return entries
+        return GraphModuleCatalogListing(entries=entries, unavailable=unavailable)
 
     async def get_definition(
         self,
@@ -174,4 +216,7 @@ __all__ = [
     "GRAPH_MODULE_PLUGIN_SLUG",
     "GraphModuleCatalog",
     "GraphModuleCatalogEntry",
+    "GraphModuleCatalogListing",
+    "UnavailableGraphModule",
+    "document_has_module_boundary",
 ]

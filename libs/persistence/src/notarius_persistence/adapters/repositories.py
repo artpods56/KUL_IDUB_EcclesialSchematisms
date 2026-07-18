@@ -1,11 +1,13 @@
 from collections.abc import Collection
+from datetime import datetime
 from typing import cast, override
 from uuid import UUID
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import CursorResult
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from notarius_core.artifacts import (
@@ -14,10 +16,23 @@ from notarius_core.artifacts import (
     ArtifactTypeKey,
 )
 from notarius_core.domain.invocation_cache import InvocationCacheEntry
+from notarius_core.domain.errors import NotFoundError, ObjectAlreadyExistsError
+from notarius_core.domain.execution_history import (
+    GraphExecution,
+    GraphExecutionCursor,
+    GraphExecutionDetail,
+    GraphExecutionListItem,
+    GraphExecutionNodeResult,
+    GraphExecutionPage,
+    GraphExecutionStatus,
+)
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
 from notarius_core.domain.node_secrets import EncryptedNodeSecret
 from notarius_core.domain.saved_graphs import SavedGraph, SavedGraphRevision
 from notarius_core.ports.invocation_cache import InvocationCacheRepositoryPort
+from notarius_core.ports.execution_history import (
+    GraphExecutionHistoryRepositoryPort,
+)
 from notarius_core.ports.materialized_outputs import (
     MaterializedNodeOutputsRepositoryPort,
 )
@@ -25,7 +40,7 @@ from notarius_core.ports.node_secrets import NodeSecretRepositoryPort
 from notarius_core.ports.saved_graphs import SavedGraphRepositoryPort
 
 from notarius_persistence import schema
-from notarius_persistence.orm import SavedGraphRevisionRecord
+from notarius_persistence.orm import GraphExecutionRecord, SavedGraphRevisionRecord
 
 
 class SqlSavedGraphRepository(SavedGraphRepositoryPort):
@@ -286,6 +301,321 @@ class SqlMaterializedNodeOutputsRepository(
             .order_by(schema.materialized_node_outputs.c.node_id.asc())
         )
         return list(result)
+
+
+class SqlGraphExecutionHistoryRepository(
+    GraphExecutionHistoryRepositoryPort,
+):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    @override
+    async def add(self, execution: GraphExecution) -> None:
+        table = schema.graph_executions
+        revision_exists = await self._session.scalar(
+            select(schema.saved_graph_revisions.c.graph_id).where(
+                schema.saved_graph_revisions.c.graph_id == execution.graph_id,
+                schema.saved_graph_revisions.c.revision == execution.graph_revision,
+            )
+        )
+        if revision_exists is None:
+            raise NotFoundError(
+                "Saved graph revision",
+                f"{execution.graph_id}/r{execution.graph_revision}",
+            )
+        try:
+            await self._session.execute(
+                insert(table).values(
+                    execution_id=execution.execution_id,
+                    graph_id=execution.graph_id,
+                    graph_revision=execution.graph_revision,
+                    status=execution.status,
+                    scope=execution.scope,
+                    workflow_run_id=execution.workflow_run_id,
+                    error=execution.error,
+                    created_at=execution.created_at,
+                    started_at=execution.started_at,
+                    finished_at=execution.finished_at,
+                )
+            )
+        except IntegrityError as exc:
+            raise ObjectAlreadyExistsError(
+                f"Graph execution already exists: {execution.execution_id}"
+            ) from exc
+        if execution.requested_node_ids:
+            await self._session.execute(
+                insert(schema.graph_execution_requested_nodes),
+                [
+                    {
+                        "execution_id": execution.execution_id,
+                        "node_id": node_id,
+                        "position": position,
+                    }
+                    for position, node_id in enumerate(execution.requested_node_ids)
+                ],
+            )
+
+    @override
+    async def update(self, execution: GraphExecution) -> None:
+        current_record = await self._session.get(
+            GraphExecutionRecord,
+            execution.execution_id,
+        )
+        if current_record is None:
+            raise NotFoundError("Graph execution", str(execution.execution_id))
+        requested_node_ids = await self._requested_node_ids(execution.execution_id)
+        current = current_record.to_domain(requested_node_ids)
+        if (
+            current.graph_id != execution.graph_id
+            or current.graph_revision != execution.graph_revision
+            or current.scope != execution.scope
+            or current.requested_node_ids != execution.requested_node_ids
+            or current.created_at != execution.created_at
+        ):
+            raise ValueError(
+                f"Graph execution {execution.execution_id} identity and request "
+                "fields are immutable"
+            )
+
+        await self._session.execute(
+            update(schema.graph_executions)
+            .where(
+                schema.graph_executions.c.execution_id == execution.execution_id
+            )
+            .values(
+                status=execution.status,
+                workflow_run_id=execution.workflow_run_id,
+                error=execution.error,
+                started_at=execution.started_at,
+                finished_at=execution.finished_at,
+            )
+        )
+
+    @override
+    async def add_node_result(self, result: GraphExecutionNodeResult) -> None:
+        execution_exists = await self._session.scalar(
+            select(schema.graph_executions.c.execution_id).where(
+                schema.graph_executions.c.execution_id == result.execution_id
+            )
+        )
+        if execution_exists is None:
+            raise NotFoundError("Graph execution", str(result.execution_id))
+        requested_node_exists = await self._session.scalar(
+            select(schema.graph_execution_requested_nodes.c.execution_id).where(
+                schema.graph_execution_requested_nodes.c.execution_id
+                == result.execution_id,
+                schema.graph_execution_requested_nodes.c.node_id == result.node_id,
+            )
+        )
+        if requested_node_exists is None:
+            raise ValueError(
+                f"Graph execution {result.execution_id} did not request node "
+                f"{result.node_id!r}"
+            )
+
+        table = schema.graph_execution_node_results
+        try:
+            await self._session.execute(
+                insert(table).values(
+                    execution_id=result.execution_id,
+                    node_id=result.node_id,
+                    position=result.position,
+                    status=result.status,
+                    outputs=result.outputs,
+                    artifact_count=result.artifact_count,
+                    error=result.error,
+                    completed_at=result.completed_at,
+                )
+            )
+        except IntegrityError as exc:
+            raise ObjectAlreadyExistsError(
+                "Graph execution node result already exists: "
+                f"{result.execution_id}/{result.node_id}"
+            ) from exc
+
+    @override
+    async def get(self, execution_id: UUID) -> GraphExecutionDetail | None:
+        record = await self._session.get(GraphExecutionRecord, execution_id)
+        if record is None:
+            return None
+        execution = record.to_domain(await self._requested_node_ids(execution_id))
+        results = await self._session.scalars(
+            select(GraphExecutionNodeResult)
+            .where(
+                schema.graph_execution_node_results.c.execution_id == execution_id
+            )
+            .order_by(
+                schema.graph_execution_node_results.c.position.asc(),
+                schema.graph_execution_node_results.c.node_id.asc(),
+            )
+        )
+        return GraphExecutionDetail(
+            execution=execution,
+            node_results=tuple(results),
+        )
+
+    @override
+    async def list_for_graph(
+        self,
+        graph_id: UUID,
+        *,
+        limit: int,
+        cursor: GraphExecutionCursor | None = None,
+        graph_revision: int | None = None,
+        status: GraphExecutionStatus | None = None,
+        node_id: str | None = None,
+    ) -> GraphExecutionPage:
+        if limit < 1:
+            raise ValueError("Graph execution page limit must be at least 1")
+        if graph_revision is not None and graph_revision < 1:
+            raise ValueError("Graph execution revision filter must be at least 1")
+        normalized_node_id = None
+        if node_id is not None:
+            normalized_node_id = node_id.strip()
+            if normalized_node_id == "":
+                raise ValueError("Graph execution node filter must not be blank")
+
+        executions = schema.graph_executions
+        requested_nodes = schema.graph_execution_requested_nodes
+        node_results = schema.graph_execution_node_results
+        counts = (
+            select(
+                node_results.c.execution_id,
+                func.count(node_results.c.node_id).label("node_count"),
+                func.coalesce(func.sum(node_results.c.artifact_count), 0).label(
+                    "artifact_count"
+                ),
+            )
+            .group_by(node_results.c.execution_id)
+            .subquery()
+        )
+        statement = (
+            select(
+                GraphExecutionRecord,
+                func.coalesce(counts.c.node_count, 0),
+                func.coalesce(counts.c.artifact_count, 0),
+            )
+            .outerjoin(
+                counts,
+                counts.c.execution_id == executions.c.execution_id,
+            )
+            .where(executions.c.graph_id == graph_id)
+        )
+        if graph_revision is not None:
+            statement = statement.where(
+                executions.c.graph_revision == graph_revision
+            )
+        if status is not None:
+            statement = statement.where(executions.c.status == status)
+        if normalized_node_id is not None:
+            statement = statement.where(
+                select(1)
+                .where(
+                    requested_nodes.c.execution_id == executions.c.execution_id,
+                    requested_nodes.c.node_id == normalized_node_id,
+                )
+                .exists()
+            )
+        if cursor is not None:
+            statement = statement.where(
+                or_(
+                    executions.c.created_at < cursor.created_at,
+                    (
+                        (executions.c.created_at == cursor.created_at)
+                        & (executions.c.execution_id < cursor.execution_id)
+                    ),
+                )
+            )
+        statement = statement.order_by(
+            executions.c.created_at.desc(),
+            executions.c.execution_id.desc(),
+        ).limit(limit + 1)
+        rows = list((await self._session.execute(statement)).all())
+        has_more = len(rows) > limit
+        page_rows = rows[:limit]
+        requested_by_execution: dict[UUID, list[tuple[int, str]]] = {}
+        execution_ids = [row[0].execution_id for row in page_rows]
+        if execution_ids:
+            requested_rows = (
+                await self._session.execute(
+                    select(
+                        requested_nodes.c.execution_id,
+                        requested_nodes.c.position,
+                        requested_nodes.c.node_id,
+                    )
+                    .where(requested_nodes.c.execution_id.in_(execution_ids))
+                    .order_by(
+                        requested_nodes.c.execution_id.asc(),
+                        requested_nodes.c.position.asc(),
+                    )
+                )
+            ).all()
+            for requested_execution_id, position, requested_node_id in requested_rows:
+                requested_by_execution.setdefault(requested_execution_id, []).append(
+                    (position, requested_node_id)
+                )
+        items = tuple(
+            GraphExecutionListItem(
+                execution=row[0].to_domain(
+                    tuple(
+                        node_id
+                        for _, node_id in requested_by_execution.get(
+                            row[0].execution_id,
+                            [],
+                        )
+                    )
+                ),
+                node_count=int(row[1]),
+                artifact_count=int(row[2]),
+            )
+            for row in page_rows
+        )
+        next_cursor = None
+        if has_more and items:
+            last = items[-1].execution
+            next_cursor = GraphExecutionCursor(
+                created_at=last.created_at,
+                execution_id=last.execution_id,
+            )
+        return GraphExecutionPage(items=items, next_cursor=next_cursor)
+
+    @override
+    async def interrupt_active(
+        self,
+        *,
+        finished_at: datetime,
+        error: str,
+    ) -> int:
+        if finished_at.tzinfo is None:
+            raise ValueError(
+                "Graph execution interruption timestamp must be timezone-aware"
+            )
+        result = cast(
+            CursorResult[tuple[object, ...]],
+            await self._session.execute(
+                update(schema.graph_executions)
+                .where(
+                    schema.graph_executions.c.status.in_(
+                        ("queued", "running", "cancelling")
+                    )
+                )
+                .values(
+                    status="failed",
+                    finished_at=finished_at,
+                    error=error,
+                )
+            ),
+        )
+        return result.rowcount
+
+    async def _requested_node_ids(self, execution_id: UUID) -> tuple[str, ...]:
+        requested_nodes = schema.graph_execution_requested_nodes
+        result = await self._session.scalars(
+            select(requested_nodes.c.node_id)
+            .where(requested_nodes.c.execution_id == execution_id)
+            .order_by(requested_nodes.c.position.asc())
+        )
+        return tuple(result)
 
 
 class SqlNodeSecretRepository(NodeSecretRepositoryPort):

@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, final, override
 from uuid import UUID, uuid4
@@ -6,7 +7,12 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import StrictInt
 
-from notarius_core.artifacts import NoConfig, NodeInput, NodeOutput
+from notarius_core.artifacts import InMemoryUnitOfWork, NoConfig, NodeInput, NodeOutput
+from notarius_core.domain.execution_history import (
+    GraphExecution,
+    GraphExecutionScope,
+    GraphExecutionStatus,
+)
 from notarius_core.domain.errors import NotFoundError
 from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
 from notarius_core.operators.arithmetic import INTEGER_VALUE
@@ -20,6 +26,7 @@ from notarius_api.schemas.workbench import (
     RunRequest,
 )
 from notarius_api.services.composition import build_workbench_components
+from notarius_api.services.execution_history import ExecutionHistoryService
 from notarius_api.services.execution.control import RunExecutionControl
 from notarius_api.services.execution.manager import (
     RunExecutionManager,
@@ -170,6 +177,96 @@ class CancellationWrappingRunGraph(RunGraph):
         except asyncio.CancelledError as exc:
             raise RuntimeError("wrapped execution cancellation") from exc
         raise AssertionError("unreachable")
+
+
+class ControlledRunGraph(RunGraph):
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    @override
+    async def run(
+        self,
+        request: RunRequest,
+        control: RunExecutionControl | None = None,
+    ) -> GraphExecutionResult:
+        del request, control
+        self.started.set()
+        await self.release.wait()
+        return GraphExecutionResult(
+            workflow_run_id=uuid4(),
+            status="succeeded",
+            node_results=(),
+            outputs={},
+        )
+
+
+class ControlledExecutionHistory(ExecutionHistoryService):
+    def __init__(self) -> None:
+        super().__init__(InMemoryUnitOfWork(), None)
+        self.transitions: list[str] = []
+        self.cancelling_entered = asyncio.Event()
+        self.allow_cancelling = asyncio.Event()
+        self.allow_cancelling.set()
+        self.complete_entered = asyncio.Event()
+        self.allow_complete = asyncio.Event()
+        self.allow_complete.set()
+        self.complete_failures_remaining = 0
+        self.complete_calls = 0
+
+    @override
+    async def create_queued(
+        self,
+        *,
+        execution_id: UUID,
+        graph_id: UUID,
+        graph_revision: int,
+        scope: GraphExecutionScope,
+        requested_node_ids: tuple[str, ...],
+    ) -> GraphExecution:
+        self.transitions.append("queued")
+        return GraphExecution(
+            execution_id=execution_id,
+            graph_id=graph_id,
+            graph_revision=graph_revision,
+            scope=scope,
+            status="queued",
+            requested_node_ids=requested_node_ids,
+        )
+
+    @override
+    async def mark_running(self, execution: GraphExecution) -> None:
+        execution.status = "running"
+        execution.started_at = datetime.now(UTC)
+        self.transitions.append("running")
+
+    @override
+    async def mark_cancelling(self, execution: GraphExecution) -> None:
+        self.cancelling_entered.set()
+        await self.allow_cancelling.wait()
+        execution.status = "cancelling"
+        self.transitions.append("cancelling")
+
+    @override
+    async def complete(
+        self,
+        execution: GraphExecution,
+        *,
+        status: GraphExecutionStatus,
+        result: GraphExecutionResult | None,
+        error: str | None,
+    ) -> None:
+        del result
+        self.complete_calls += 1
+        self.complete_entered.set()
+        await self.allow_complete.wait()
+        if self.complete_failures_remaining > 0:
+            self.complete_failures_remaining -= 1
+            raise RuntimeError("transient execution history failure")
+        execution.status = status
+        execution.finished_at = datetime.now(UTC)
+        execution.error = error
+        self.transitions.append(status)
 
 
 def _manager(
@@ -430,4 +527,87 @@ async def test_manager_bounds_terminal_execution_retention(tmp_path: Path) -> No
         await manager.get(execution_ids[0])
     assert (await manager.get(execution_ids[1])).status == "succeeded"
     assert (await manager.get(execution_ids[2])).status == "succeeded"
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_natural_completion_wins_cancel_race_without_durable_downgrade() -> None:
+    run_graph = ControlledRunGraph()
+    history = ControlledExecutionHistory()
+    history.allow_complete.clear()
+    manager = RunExecutionManager(run_graph, execution_history=history)
+    execution = await manager.start(
+        RunRequest(
+            nodes=[],
+            graph_id=uuid4(),
+            graph_revision=1,
+        )
+    )
+    await run_graph.started.wait()
+    run_graph.release.set()
+    await history.complete_entered.wait()
+
+    cancelling = asyncio.create_task(manager.cancel(execution.execution_id))
+    await asyncio.sleep(0)
+    assert not cancelling.done()
+    history.allow_complete.set()
+
+    cancel_result = await cancelling
+    terminal = await _terminal(manager, execution.execution_id)
+    assert cancel_result.status == "succeeded"
+    assert terminal.status == "succeeded"
+    assert history.transitions == ["queued", "running", "succeeded"]
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_cancel_transition_wins_race_and_persists_one_terminal_result() -> None:
+    run_graph = ControlledRunGraph()
+    history = ControlledExecutionHistory()
+    history.allow_cancelling.clear()
+    manager = RunExecutionManager(run_graph, execution_history=history)
+    execution = await manager.start(
+        RunRequest(
+            nodes=[],
+            graph_id=uuid4(),
+            graph_revision=1,
+        )
+    )
+    await run_graph.started.wait()
+
+    cancelling = asyncio.create_task(manager.cancel(execution.execution_id))
+    await history.cancelling_entered.wait()
+    run_graph.release.set()
+    await asyncio.sleep(0)
+    history.allow_cancelling.set()
+
+    assert (await cancelling).status == "cancelling"
+    terminal = await _terminal(manager, execution.execution_id)
+    assert terminal.status == "cancelled"
+    assert history.transitions == ["queued", "running", "cancelling", "cancelled"]
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_terminal_history_write_retries_before_exposing_terminal() -> None:
+    run_graph = ControlledRunGraph()
+    history = ControlledExecutionHistory()
+    history.complete_failures_remaining = 1
+    manager = RunExecutionManager(run_graph, execution_history=history)
+    execution = await manager.start(
+        RunRequest(
+            nodes=[],
+            graph_id=uuid4(),
+            graph_revision=1,
+        )
+    )
+    await run_graph.started.wait()
+
+    run_graph.release.set()
+    terminal = await _terminal(manager, execution.execution_id)
+
+    assert terminal.status == "succeeded"
+    assert terminal.error is None
+    assert history.complete_calls == 2
+    assert history.transitions == ["queued", "running", "succeeded"]
     await manager.shutdown()

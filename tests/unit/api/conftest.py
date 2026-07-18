@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictInt, StrictS
 
 from notarius_persistence.database import create_database
 from notarius_persistence.orm import metadata
+from notarius_persistence.unit_of_work import SqlAlchemySavedGraphUnitOfWork
 
 from notarius_core.artifacts import (
     ArtifactTypeKey,
@@ -20,6 +21,7 @@ from notarius_core.artifacts import (
     NodeInput,
     NodeOutput,
 )
+from notarius_core.application.saved_graphs import SavedGraphService
 from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
 from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
 from notarius_core.operators.arithmetic import INTEGER_VALUE
@@ -36,6 +38,7 @@ from notarius_api.services.composition import (
     build_workbench_components,
 )
 from notarius_api.settings import Settings
+from notarius_api.v1.routes.execution_history import execution_history_service
 from notarius_api.v1.routes.workbench import (
     artifact_service,
     graph_module_catalog,
@@ -297,6 +300,7 @@ def install_workbench_dependency_overrides(
             image_upload_service: lambda: components.uploads,
             run_graph_service: lambda: components.run_graph,
             run_execution_manager: lambda: components.execution_manager,
+            execution_history_service: lambda: components.execution_history,
             materialization_service: lambda: components.materializations,
             run_result_presenter: lambda: components.presenter,
             artifact_service: lambda: components.artifacts,
@@ -313,10 +317,16 @@ def builtin_client(tmp_path: Path) -> Iterator[TestClient]:
         builtin_plugins(),
         external_plugins=(),
     )
+    saved_graph_database = create_database(database_url)
+    saved_graphs = SavedGraphService(
+        lambda: SqlAlchemySavedGraphUnitOfWork(saved_graph_database.sessions),
+        registry,
+    )
     components = build_workbench_components(
         plugin_registry=registry,
         execution_backend="inline",
         workspace=tmp_path / "workbench",
+        saved_graphs=saved_graphs,
     )
     application = create_app(
         Settings(
@@ -326,8 +336,11 @@ def builtin_client(tmp_path: Path) -> Iterator[TestClient]:
         )
     )
     install_workbench_dependency_overrides(application, components)
-    with TestClient(application) as client:
-        yield client
+    try:
+        with TestClient(application) as client:
+            yield client
+    finally:
+        asyncio.run(saved_graph_database.dispose())
 
 
 @pytest.fixture

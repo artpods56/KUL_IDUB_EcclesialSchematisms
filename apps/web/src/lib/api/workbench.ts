@@ -5,6 +5,9 @@ import type {
   CreateSavedGraphRequest,
   CreateSavedGraphResponse,
   GraphNodeSecrets,
+  GraphExecutionDetail,
+  GraphExecutionList,
+  GraphExecutionStatus,
   GraphMaterializations,
   RunExecution,
   RunRequest,
@@ -14,6 +17,14 @@ import type {
   UploadResponse,
   UpdateSavedGraphRequest,
 } from "./contract";
+
+export interface ListGraphExecutionsOptions {
+  limit?: number;
+  cursor?: string;
+  graphRevision?: number;
+  status?: GraphExecutionStatus;
+  nodeId?: string;
+}
 
 export function getSavedGraph(
   graphId: string,
@@ -37,6 +48,38 @@ export function getGraphMaterializations(
   return request<GraphMaterializations>(
     "GET",
     `/v1/graphs/${encodeURIComponent(graphId)}/materializations?${query}`,
+    { signal },
+  );
+}
+
+export function listGraphExecutions(
+  graphId: string,
+  options: ListGraphExecutionsOptions = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  query.set("limit", String(options.limit ?? 20));
+  if (options.cursor) query.set("cursor", options.cursor);
+  if (options.graphRevision !== undefined) {
+    query.set("graph_revision", String(options.graphRevision));
+  }
+  if (options.status) query.set("status", options.status);
+  if (options.nodeId) query.set("node_id", options.nodeId);
+  return request<GraphExecutionList>(
+    "GET",
+    `/v1/graphs/${encodeURIComponent(graphId)}/executions?${query}`,
+    { signal },
+  );
+}
+
+export function getGraphExecution(
+  graphId: string,
+  executionId: string,
+  signal?: AbortSignal,
+) {
+  return request<GraphExecutionDetail>(
+    "GET",
+    `/v1/graphs/${encodeURIComponent(graphId)}/executions/${encodeURIComponent(executionId)}`,
     { signal },
   );
 }

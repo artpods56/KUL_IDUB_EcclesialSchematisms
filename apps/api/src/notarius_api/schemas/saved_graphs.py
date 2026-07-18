@@ -22,6 +22,7 @@ from notarius_core.domain.saved_graphs import (
     SavedGraphEdge,
     SavedGraphInputPlug,
     SavedGraphNode,
+    SavedGraphNodeLayout,
     SavedGraphProjection,
 )
 
@@ -54,12 +55,40 @@ class SavedGraphInputPlugModel(SavedGraphApiModel):
     port: Identifier
 
 
+# Keep in sync with notarius_core.domain.saved_graphs._LAYOUT_DIMENSION_MAX.
+_LAYOUT_DIMENSION_MAX = 16_384
+
+
+class SavedGraphNodeLayoutModel(SavedGraphApiModel):
+    width: float | None = Field(default=None, ge=260, le=_LAYOUT_DIMENSION_MAX)
+    body_height: float | None = Field(
+        default=None, ge=96, le=_LAYOUT_DIMENSION_MAX
+    )
+    appendix_height: float | None = Field(
+        default=None, ge=120, le=_LAYOUT_DIMENSION_MAX
+    )
+
+    @model_validator(mode="after")
+    def require_at_least_one_dimension(self) -> Self:
+        if (
+            self.width is None
+            and self.body_height is None
+            and self.appendix_height is None
+        ):
+            raise ValueError(
+                "Saved graph node layout must set at least one of width, "
+                "body_height, or appendix_height"
+            )
+        return self
+
+
 class SavedGraphNodeModel(SavedGraphApiModel):
     id: Identifier
     operator_id: Identifier
     operator_version: int = Field(ge=1)
     config: dict[str, object] = Field(default_factory=dict)
     position: GraphPointModel
+    layout: SavedGraphNodeLayoutModel | None = None
     input_plugs: list[SavedGraphInputPlugModel] = Field(default_factory=list)
     artifact_type_bindings: list[ArtifactTypeBindingModel] = Field(
         default_factory=list,
@@ -145,6 +174,15 @@ class SavedGraphWriteModel(SavedGraphApiModel):
                         x=node.position.x,
                         y=node.position.y,
                     ),
+                    layout=(
+                        SavedGraphNodeLayout(
+                            width=node.layout.width,
+                            body_height=node.layout.body_height,
+                            appendix_height=node.layout.appendix_height,
+                        )
+                        if node.layout is not None
+                        else None
+                    ),
                     input_plugs=tuple(
                         SavedGraphInputPlug(
                             id=plug.id,
@@ -229,6 +267,15 @@ class SavedGraphResponse(SavedGraphWriteModel):
                     position=GraphPointModel(
                         x=node.position.x,
                         y=node.position.y,
+                    ),
+                    layout=(
+                        SavedGraphNodeLayoutModel(
+                            width=node.layout.width,
+                            body_height=node.layout.body_height,
+                            appendix_height=node.layout.appendix_height,
+                        )
+                        if node.layout is not None
+                        else None
                     ),
                     input_plugs=[
                         SavedGraphInputPlugModel(

@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 
 from notarius_core.artifacts import ArtifactRef, ArtifactRefSequence, ArtifactTypeKey
 from notarius_core.conversions import MAX_ARTIFACT_CONVERSION_HOPS
+from notarius_core.domain.execution_history import GraphExecutionScope
 from notarius_core.nodes import PortShape
 from notarius_core.plugins import PluginOrigin
 
@@ -127,11 +128,21 @@ class NodeSpecResponse(ApiResponse):
         return self
 
 
+class UnavailableGraphModuleResponse(ApiResponse):
+    graph_id: UUID
+    revision: int = Field(ge=1, strict=True)
+    name: str
+    reason: str
+
+
 class NodeRegistryResponse(ApiResponse):
     plugins: list[PluginSpecResponse]
     artifact_types: list[ArtifactTypeSpecResponse]
     artifact_conversions: list[ArtifactConversionSpecResponse]
     nodes: list[NodeSpecResponse]
+    unavailable_modules: list[UnavailableGraphModuleResponse] = Field(
+        default_factory=list
+    )
 
 
 class UploadRequest(BaseModel):
@@ -231,6 +242,7 @@ class RunRequest(BaseModel):
     nodes: list[RunNodeRequest]
     edges: list[RunEdgeRequest] = Field(default_factory=list)
     pinned_outputs: list[PinnedOutputRequest] = Field(default_factory=list)
+    scope: GraphExecutionScope = "all"
     graph_id: UUID | None = None
     graph_revision: int | None = Field(default=None, ge=1)
     secret_graph_id: UUID | None = None

@@ -182,6 +182,81 @@ describe("saved conversion paths", () => {
   });
 });
 
+describe("saved node layout", () => {
+  it("hydrates and persists node chrome sizes", () => {
+    const base = graphWithEdge({ conversion_path: conversionPath });
+    const withLayout: SavedGraph = {
+      ...base,
+      nodes: (base.nodes ?? []).map((node, index) =>
+        index === 0
+          ? {
+              ...node,
+              layout: {
+                width: 420,
+                body_height: 180,
+                appendix_height: 320,
+              },
+            }
+          : node,
+      ),
+    };
+    const hydrated = hydrateSavedGraph(withLayout, registry());
+    expect(hydrated.nodes[0]?.data.layout).toEqual({
+      width: 420,
+      bodyHeight: 180,
+      appendixHeight: 320,
+    });
+    expect(hydrated.nodes[1]?.data.layout).toBeNull();
+    expect(
+      savedGraphDraft("Layout", hydrated.nodes, hydrated.edges).nodes?.[0]
+        ?.layout,
+    ).toEqual({
+      width: 420,
+      body_height: 180,
+      appendix_height: 320,
+    });
+  });
+
+  it("keeps an API partial-layout response fingerprint stable after hydration", () => {
+    const base = graphWithEdge({ conversion_path: conversionPath });
+    const hydratedBase = hydrateSavedGraph(base, registry());
+    const responseDraft = savedGraphDraft(
+      "Partial layout",
+      hydratedBase.nodes,
+      hydratedBase.edges,
+    );
+    const responseNodes = (responseDraft.nodes ?? []).map((node, index) =>
+      index === 0
+        ? {
+            ...node,
+            layout: {
+              width: 420,
+              body_height: null,
+              appendix_height: null,
+            },
+          }
+        : node,
+    );
+    const apiResponse: SavedGraph = {
+      ...base,
+      name: responseDraft.name,
+      nodes: responseNodes,
+      edges: responseDraft.edges ?? [],
+    };
+
+    const hydrated = hydrateSavedGraph(apiResponse, registry());
+    const reserialized = savedGraphDraft(
+      apiResponse.name,
+      hydrated.nodes,
+      hydrated.edges,
+    );
+
+    expect(savedGraphFingerprint(reserialized)).toBe(
+      savedGraphFingerprint({ ...responseDraft, nodes: responseNodes }),
+    );
+  });
+});
+
 describe("saved edge enablement", () => {
   it("hydrates a legacy edge as enabled and keeps enablement out of run transport", () => {
     const hydrated = hydrateSavedGraph(

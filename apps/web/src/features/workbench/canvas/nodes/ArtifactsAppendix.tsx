@@ -11,18 +11,25 @@ import {
   type RunPortOutput,
 } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
+import {
+  resolvedAppendixHeight,
+  resolvedNodeWidth,
+  type WorkflowNodeLayout,
+} from "../node-layout";
 import type { WorkflowNodeData } from "../types";
 import {
   META_ARTIFACT_RENDERER,
   PrettyValue,
   rendererFor,
 } from "./artifact-renderers";
+import { LayoutResizeHandle } from "./LayoutResizeHandle";
 import { schemaTypeLabel } from "./type-inspector";
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 
 const s = stylex.create({
   appendix: {
+    position: "relative",
     display: "grid",
     gap: "12px",
     width: "300px",
@@ -149,6 +156,7 @@ const s = stylex.create({
   body: {
     maxHeight: "230px",
     overflowY: "auto",
+    overflowX: "auto",
     padding: "9px 10px",
     borderRadius: "10px",
     backgroundColor: tokens.colorSurfaceMuted,
@@ -408,12 +416,14 @@ function SequencePager({
   );
 }
 
-function PortArtifacts({
+export function ArtifactPortPreview({
   output,
   artifactTypes,
+  previewHeight,
 }: {
   output: RunPortOutput;
   artifactTypes: readonly ArtifactTypeSpec[];
+  previewHeight: number;
 }) {
   const artifacts = output.artifacts;
   const sequence = output.kind === "sequence";
@@ -563,7 +573,10 @@ function PortArtifacts({
           <span {...stylex.props(s.projectionType)}>
             list[{selectedField.type}] · {artifacts.length} items
           </span>
-          <div {...nodeInteractionProps(stylex.props(s.body))}>
+          <div
+            {...nodeInteractionProps(stylex.props(s.body))}
+            style={{ maxHeight: previewHeight }}
+          >
             {projectionLoading ? (
               <span {...stylex.props(s.notice)}>Loading projected values…</span>
             ) : projectionError || projectionMissingContent ? (
@@ -612,7 +625,10 @@ function PortArtifacts({
               onChange={setIndex}
             />
           ) : null}
-          <div {...nodeInteractionProps(stylex.props(s.body))}>
+          <div
+            {...nodeInteractionProps(stylex.props(s.body))}
+            style={{ maxHeight: previewHeight }}
+          >
             {activePayloadLoading ? (
               <p {...stylex.props(s.notice)}>Loading JSON preview…</p>
             ) : activePayloadError || jsonPayloadMissing ? (
@@ -641,25 +657,46 @@ function PortArtifacts({
   );
 }
 
-export function ArtifactsAppendix({ data }: { data: WorkflowNodeData }) {
+export function ArtifactsAppendix({
+  data,
+  layout,
+  onLayoutDraft,
+  onLayoutCommit,
+}: {
+  data: WorkflowNodeData;
+  layout: WorkflowNodeLayout | null;
+  onLayoutDraft: (layout: WorkflowNodeLayout | null) => void;
+  onLayoutCommit: (layout: WorkflowNodeLayout | null) => void;
+}) {
   const { data: registry } = useNodeRegistry();
   const outputs = (data.run?.outputs ?? []).filter(
     (output) => output.artifacts.length > 0,
   );
   if (!outputs.length) return null;
+  const width = resolvedNodeWidth(layout);
+  const previewHeight = resolvedAppendixHeight(layout);
 
   return (
     <aside
       aria-label="Produced artifacts"
       {...nodeInteractionProps(stylex.props(s.appendix))}
+      style={{ width }}
     >
       {outputs.map((output) => (
-        <PortArtifacts
+        <ArtifactPortPreview
           key={output.port}
           output={output}
           artifactTypes={registry?.artifact_types ?? []}
+          previewHeight={previewHeight}
         />
       ))}
+      <LayoutResizeHandle
+        layout={layout}
+        axes={["width", "appendixHeight"]}
+        ariaLabel="Resize artifact preview"
+        onDraft={onLayoutDraft}
+        onCommit={onLayoutCommit}
+      />
     </aside>
   );
 }

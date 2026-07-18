@@ -45,6 +45,29 @@ artifact with a matching type or producer. A binding is reusable only when all
 of its artifact references are accessible through the active runtime.
 Inaccessible references are not advertised as available outputs.
 
+### Graph execution history
+
+The durable, revision-scoped provenance record for one accepted asynchronous
+execution of a saved graph. It records the application execution id, exact graph
+revision, requested scope, ordered node closure, lifecycle timestamps and status,
+provider workflow id, terminal error, and ordered per-node results with their exact
+artifact output envelopes. Executions of unsaved or dirty graph documents remain
+ephemeral because they do not identify a durable graph revision.
+
+Execution identities, requested-node membership, and node-result rows are
+append-only. Lifecycle fields on the execution row advance from queued/running (or
+cancelling) to one terminal state. History is not the source used for incremental
+execution: `materialized_node_outputs` remains the mutable latest-successful-output
+projection used for pins, while history preserves every accepted execution across
+repeated runs and graph revisions. Historical inspection must never hydrate the
+canvas's current run state or make an old artifact eligible as a latest pin.
+
+Artifacts referenced by execution history are retention roots alongside current
+materializations and invocation-cache entries. Startup recovery currently marks
+unfinished executions as failed and assumes one owning API process; horizontal
+workers require an execution lease or heartbeat before they can safely share that
+recovery policy.
+
 ### Invocation cache entry
 
 A global, content-addressed reuse record for one node invocation. It is not a

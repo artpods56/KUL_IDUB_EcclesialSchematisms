@@ -1,3 +1,4 @@
+import asyncio
 import base64
 from pathlib import Path
 from typing import cast
@@ -5,6 +6,10 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
+
+from notarius_persistence.database import create_database
+from notarius_persistence.orm import metadata
 
 from notarius_api.main import create_app
 from notarius_api.schemas.workbench import (
@@ -13,17 +18,38 @@ from notarius_api.schemas.workbench import (
     RunResponse,
 )
 from notarius_api.services.uploads import ImageUploadService
+from notarius_api.settings import Settings
 from notarius_core.plugins import PluginOrigin
 
 
-def test_application_lifespan_builds_and_releases_workbench_components() -> None:
-    application = create_app()
+async def _prepare_database(database_url: str) -> None:
+    database = create_database(database_url)
+    try:
+        async with database.engine.begin() as connection:
+            await connection.run_sync(metadata.create_all)
+    finally:
+        await database.dispose()
+
+
+def test_application_lifespan_builds_and_releases_workbench_components(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'lifespan.sqlite3'}"
+    asyncio.run(_prepare_database(database_url))
+    application = create_app(
+        Settings(
+            workspace=tmp_path / "workbench",
+            database_url=SecretStr(database_url),
+            execution_backend="inline",
+        )
+    )
     leaf_state_names = (
         "workbench_plugin_registry",
         "image_uploads",
         "graph_modules",
         "run_graph",
         "execution_manager",
+        "execution_history",
         "materializations",
         "run_result_presenter",
         "artifacts",

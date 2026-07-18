@@ -477,6 +477,9 @@ def test_saved_graph_module_is_discoverable_and_executes_once(
     assert module_spec["catalog_visible"] is True
     assert [port["name"] for port in module_spec["inputs"]] == ["text"]
     assert [port["name"] for port in module_spec["outputs"]] == ["result"]
+    assert all(
+        module["graph_id"] != graph_id for module in registry["unavailable_modules"]
+    )
 
     response = module_client.post(
         "/v1/runs",
@@ -745,6 +748,11 @@ def test_module_catalog_rejects_optional_input_targeting_required_input(
         ),
     ).json()
     graph_id = created["id"]
+    reason = (
+        f"Graph module {graph_id} revision 1 optional public input 'text' edge "
+        "'input-to-replace' targets required input 'replace'.'text' "
+        "(text.replace@1)"
+    )
 
     registry = module_client.get("/v1/nodes").json()
     assert all(
@@ -752,6 +760,14 @@ def test_module_catalog_rejects_optional_input_targeting_required_input(
         for node in registry["nodes"]
         if node["plugin_slug"] == "graph.module"
     )
+    assert registry["unavailable_modules"] == [
+        {
+            "graph_id": graph_id,
+            "revision": 1,
+            "name": "Invalid optional input",
+            "reason": reason,
+        }
+    ]
 
     response = module_client.post(
         "/v1/runs",
@@ -769,10 +785,80 @@ def test_module_catalog_rejects_optional_input_targeting_required_input(
 
     assert response.status_code == 422
     assert response.json()["detail"] == (
-        f"Saved graph {graph_id} revision 1 is not a valid module: Graph module "
-        f"{graph_id} revision 1 optional public input 'text' edge "
-        "'input-to-replace' targets required input 'replace'.'text' "
-        "(text.replace@1)"
+        f"Saved graph {graph_id} revision 1 is not a valid module: {reason}"
+    )
+
+
+def test_module_catalog_reports_invalid_boundary_wiring(
+    module_client: TestClient,
+) -> None:
+    created = module_client.post(
+        "/v1/graphs",
+        json={
+            "name": "Input without output",
+            "nodes": [
+                {
+                    "id": "module-input",
+                    "operator_id": "module.input",
+                    "operator_version": 1,
+                    "config": {"public_name": "text"},
+                    "position": {"x": 0, "y": 0},
+                    "artifact_type_bindings": _artifact_binding(),
+                }
+            ],
+            "edges": [],
+        },
+    ).json()
+    graph_id = created["id"]
+
+    registry = module_client.get("/v1/nodes").json()
+    unavailable = [
+        module
+        for module in registry["unavailable_modules"]
+        if module["graph_id"] == graph_id
+    ]
+    assert len(unavailable) == 1
+    assert unavailable[0]["revision"] == 1
+    assert unavailable[0]["name"] == "Input without output"
+    assert "Module Input boundary must connect its 'value' output" in unavailable[0][
+        "reason"
+    ]
+    assert all(
+        node["module_graph_id"] != graph_id
+        for node in registry["nodes"]
+        if node["plugin_slug"] == "graph.module"
+    )
+
+
+def test_module_catalog_ignores_graphs_without_module_boundaries(
+    module_client: TestClient,
+) -> None:
+    created = module_client.post(
+        "/v1/graphs",
+        json={
+            "name": "Ordinary workflow",
+            "nodes": [
+                {
+                    "id": "source",
+                    "operator_id": "text.input",
+                    "operator_version": 1,
+                    "config": {"text": "hello"},
+                    "position": {"x": 0, "y": 0},
+                }
+            ],
+            "edges": [],
+        },
+    ).json()
+    graph_id = created["id"]
+
+    registry = module_client.get("/v1/nodes").json()
+    assert all(
+        node["module_graph_id"] != graph_id
+        for node in registry["nodes"]
+        if node["plugin_slug"] == "graph.module"
+    )
+    assert all(
+        module["graph_id"] != graph_id for module in registry["unavailable_modules"]
     )
 
 

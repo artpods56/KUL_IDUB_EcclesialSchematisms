@@ -2,13 +2,15 @@
 
 import asyncio
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 from uuid import UUID, uuid4
 
+from notarius_core.domain.execution_history import GraphExecution
 from notarius_core.domain.errors import NotFoundError
 
 from notarius_api.schemas.workbench import RunRequest
+from notarius_api.services.execution_history import ExecutionHistoryService
 from notarius_api.services.execution.control import RunExecutionControl
 from notarius_api.services.execution.models import GraphExecutionResult
 from notarius_api.services.execution.run_graph import RunGraph
@@ -39,6 +41,8 @@ class RunExecutionSnapshot:
 class _RunExecutionRecord:
     execution_id: UUID
     control: RunExecutionControl
+    history_execution: GraphExecution | None = None
+    transition_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     status: RunExecutionStatus = "queued"
     task: asyncio.Task[None] | None = None
     result: GraphExecutionResult | None = None
@@ -62,11 +66,13 @@ class RunExecutionManager:
         self,
         run_graph: RunGraph,
         *,
+        execution_history: ExecutionHistoryService | None = None,
         terminal_retention: int = 100,
     ) -> None:
         if terminal_retention < 1:
             raise ValueError("Execution terminal retention must be at least one")
         self._run_graph = run_graph
+        self._execution_history = execution_history
         self._terminal_retention = terminal_retention
         self._executions: dict[UUID, _RunExecutionRecord] = {}
         self._terminal_order: deque[UUID] = deque()
@@ -78,9 +84,30 @@ class RunExecutionManager:
             if self._shutting_down:
                 raise RuntimeError("Run execution manager is shutting down")
             execution_id = uuid4()
+            history_execution: GraphExecution | None = None
+            if request.graph_id is not None and request.graph_revision is not None:
+                if self._execution_history is None:
+                    raise RuntimeError(
+                        "Saved graph execution history is not configured"
+                    )
+                requested_node_ids: list[str] = []
+                seen_node_ids: set[str] = set()
+                for node in request.nodes:
+                    if node.id in seen_node_ids:
+                        continue
+                    seen_node_ids.add(node.id)
+                    requested_node_ids.append(node.id)
+                history_execution = await self._execution_history.create_queued(
+                    execution_id=execution_id,
+                    graph_id=request.graph_id,
+                    graph_revision=request.graph_revision,
+                    scope=request.scope,
+                    requested_node_ids=tuple(requested_node_ids),
+                )
             record = _RunExecutionRecord(
                 execution_id=execution_id,
                 control=RunExecutionControl(),
+                history_execution=history_execution,
             )
             self._executions[execution_id] = record
             task = asyncio.create_task(
@@ -111,10 +138,28 @@ class RunExecutionManager:
             if record.status in _TERMINAL_STATUSES:
                 return record.snapshot()
             record.control.request_cancel()
-            record.status = "cancelling"
-            if record.task is not None:
-                record.task.cancel()
-            return record.snapshot()
+            async with record.transition_lock:
+                if record.status in _TERMINAL_STATUSES:
+                    return record.snapshot()
+                if (
+                    record.history_execution is not None
+                    and self._execution_history is not None
+                ):
+                    try:
+                        await self._execution_history.mark_cancelling(
+                            record.history_execution
+                        )
+                    except Exception as exc:
+                        record.error = (
+                            "Execution history could not record cancellation: "
+                            f"{_render_exception_chain(exc)}"
+                        )
+                record.status = "cancelling"
+                task = record.task
+                snapshot = record.snapshot()
+            if task is not None:
+                task.cancel()
+            return snapshot
 
     async def shutdown(self) -> None:
         async with self._lock:
@@ -129,7 +174,6 @@ class RunExecutionManager:
             ]
             for record in active_records:
                 record.control.request_cancel()
-                record.status = "cancelling"
             for task in tasks:
                 task.cancel()
 
@@ -137,55 +181,68 @@ class RunExecutionManager:
             await asyncio.gather(*tasks, return_exceptions=True)
         for record in active_records:
             if record.status not in _TERMINAL_STATUSES:
-                self._complete(record, status="cancelled")
+                await self._complete(record, status="cancelled")
 
     async def _run(self, execution_id: UUID, request: RunRequest) -> None:
         record = self._executions[execution_id]
         try:
             record.control.check_cancelled()
-            record.status = "running"
+            async with record.transition_lock:
+                record.control.check_cancelled()
+                record.status = "running"
+                if (
+                    record.history_execution is not None
+                    and self._execution_history is not None
+                ):
+                    await self._execution_history.mark_running(
+                        record.history_execution
+                    )
             result = await self._run_graph.run(request, control=record.control)
         except asyncio.CancelledError:
-            self._complete(record, status="cancelled")
+            await self._complete(record, status="cancelled")
         except Exception as exc:
             if record.control.cancel_requested or _contains_cancellation(exc):
-                self._complete(record, status="cancelled")
+                await self._complete(record, status="cancelled")
             else:
-                self._complete(
+                await self._complete(
                     record,
                     status="failed",
                     error=_render_exception_chain(exc),
                 )
         else:
             if record.control.cancel_requested:
-                self._complete(record, status="cancelled")
+                await self._complete(record, status="cancelled", result=result)
             elif result.status == "failed":
-                self._complete(record, status="failed", result=result)
+                await self._complete(record, status="failed", result=result)
             else:
-                self._complete(record, status="succeeded", result=result)
+                await self._complete(record, status="succeeded", result=result)
 
     def _task_done(self, execution_id: UUID, task: asyncio.Task[None]) -> None:
         record = self._executions.get(execution_id)
         if record is None or record.status in _TERMINAL_STATUSES:
             return
         if record.control.cancel_requested or task.cancelled():
-            self._complete(record, status="cancelled")
+            asyncio.create_task(self._complete(record, status="cancelled"))
             return
         exception = task.exception()
         if exception is None:
+            asyncio.create_task(
+                self._complete(
+                    record,
+                    status="failed",
+                    error="Run execution ended without a terminal result",
+                )
+            )
+            return
+        asyncio.create_task(
             self._complete(
                 record,
                 status="failed",
-                error="Run execution ended without a terminal result",
+                error=_render_exception_chain(exception),
             )
-            return
-        self._complete(
-            record,
-            status="failed",
-            error=_render_exception_chain(exception),
         )
 
-    def _complete(
+    async def _complete(
         self,
         record: _RunExecutionRecord,
         *,
@@ -193,22 +250,74 @@ class RunExecutionManager:
         result: GraphExecutionResult | None = None,
         error: str | None = None,
     ) -> None:
-        if record.status in _TERMINAL_STATUSES:
-            return
-        active_node_id = record.control.active_node_id
-        if active_node_id is not None:
-            record.control.finish_outer_node(active_node_id)
-        record.status = status
-        record.task = None
-        record.result = result
-        record.error = error
-        if record.retained_terminal:
-            return
-        record.retained_terminal = True
-        self._terminal_order.append(record.execution_id)
-        while len(self._terminal_order) > self._terminal_retention:
-            expired_id = self._terminal_order.popleft()
-            self._executions.pop(expired_id, None)
+        async with record.transition_lock:
+            if record.status in _TERMINAL_STATUSES:
+                return
+            history_error: str | None = None
+            if (
+                record.history_execution is not None
+                and self._execution_history is not None
+            ):
+                history_failure: Exception | None = None
+                for attempt in range(2):
+                    try:
+                        await self._execution_history.complete(
+                            record.history_execution,
+                            status=status,
+                            result=result,
+                            error=error,
+                        )
+                    except Exception as exc:
+                        history_failure = exc
+                        try:
+                            persisted = await self._execution_history.get_for_graph(
+                                record.history_execution.graph_id,
+                                record.execution_id,
+                            )
+                        except Exception as reconciliation_exc:
+                            history_failure = reconciliation_exc
+                        else:
+                            expected_workflow_run_id = (
+                                result.workflow_run_id if result is not None else None
+                            )
+                            if (
+                                persisted is not None
+                                and persisted.execution.status == status
+                                and persisted.execution.workflow_run_id
+                                == expected_workflow_run_id
+                                and persisted.execution.error == error
+                            ):
+                                history_failure = None
+                                break
+                        if attempt == 0:
+                            await asyncio.sleep(0)
+                    else:
+                        history_failure = None
+                        break
+                if history_failure is not None:
+                    history_error = (
+                        "Execution history could not record the terminal result: "
+                        f"{_render_exception_chain(history_failure)}"
+                    )
+            active_node_id = record.control.active_node_id
+            if active_node_id is not None:
+                record.control.finish_outer_node(active_node_id)
+            record.status = status
+            record.task = None
+            record.result = result
+            if history_error is None:
+                record.error = error
+            elif error is None:
+                record.error = history_error
+            else:
+                record.error = f"{error} <- caused by {history_error}"
+            if record.retained_terminal:
+                return
+            record.retained_terminal = True
+            self._terminal_order.append(record.execution_id)
+            while len(self._terminal_order) > self._terminal_retention:
+                expired_id = self._terminal_order.popleft()
+                self._executions.pop(expired_id, None)
 
 
 def _contains_cancellation(exception: BaseException) -> bool:

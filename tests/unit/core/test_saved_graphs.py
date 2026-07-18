@@ -16,6 +16,7 @@ from notarius_core.domain.saved_graphs import (
     SavedGraphEdge,
     SavedGraphInputPlug,
     SavedGraphNode,
+    SavedGraphNodeLayout,
 )
 
 
@@ -131,6 +132,39 @@ def test_saved_graph_document_migrates_v2_bindings_to_v3() -> None:
     assert document.nodes[0].artifact_type_binding_map() == {
         "T": ArtifactTypeKey("example.value", 2)
     }
+
+
+def test_saved_graph_node_layout_round_trips_and_rejects_empty_or_out_of_range() -> None:
+    layout = SavedGraphNodeLayout(width=420, body_height=180, appendix_height=320)
+    node = SavedGraphNode(
+        id="resized",
+        operator_id="example.operator",
+        operator_version=1,
+        config={},
+        position=GraphPoint(x=0.0, y=0.0),
+        layout=layout,
+    )
+
+    payload = node.model_dump(mode="json")
+    assert payload["layout"] == {
+        "width": 420.0,
+        "body_height": 180.0,
+        "appendix_height": 320.0,
+    }
+    assert SavedGraphNode.model_validate(payload) == node
+
+    with pytest.raises(ValidationError, match="at least one of width"):
+        SavedGraphNodeLayout()
+    with pytest.raises(ValidationError):
+        SavedGraphNodeLayout(width=100)
+    with pytest.raises(ValidationError):
+        SavedGraphNodeLayout(body_height=10)
+    with pytest.raises(ValidationError):
+        SavedGraphNodeLayout(appendix_height=10)
+    # Past the shared browser/GPU compositing ceiling.
+    with pytest.raises(ValidationError):
+        SavedGraphNodeLayout(width=16_385)
+    assert SavedGraphNodeLayout(body_height=900).body_height == 900.0
 
 
 def test_saved_graph_node_config_is_deeply_immutable_and_serializable() -> None:

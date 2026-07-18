@@ -4,6 +4,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     JSON,
@@ -11,6 +12,8 @@ from sqlalchemy import (
     MetaData,
     String,
     Table,
+    Text,
+    UniqueConstraint,
 )
 from sqlalchemy import Uuid as SaUuid
 from sqlalchemy.engine import Dialect
@@ -191,6 +194,94 @@ materialized_node_outputs = Table(
         "graph_id",
         "graph_revision",
         "materialized_at",
+    ),
+)
+
+
+graph_executions = Table(
+    "graph_executions",
+    metadata,
+    Column("execution_id", SaUuid(as_uuid=True), primary_key=True),
+    Column("graph_id", SaUuid(as_uuid=True), nullable=False),
+    Column("graph_revision", Integer, nullable=False),
+    Column("status", String(24), nullable=False),
+    Column("scope", String(32), nullable=False),
+    Column("workflow_run_id", SaUuid(as_uuid=True), nullable=True),
+    Column("error", Text, nullable=True),
+    Column("created_at", UTCDateTime(), nullable=False),
+    Column("started_at", UTCDateTime(), nullable=True),
+    Column("finished_at", UTCDateTime(), nullable=True),
+    ForeignKeyConstraint(
+        ("graph_id", "graph_revision"),
+        ("saved_graph_revisions.graph_id", "saved_graph_revisions.revision"),
+        ondelete="CASCADE",
+    ),
+    Index(
+        "ix_graph_executions_graph_created",
+        "graph_id",
+        "created_at",
+        "execution_id",
+    ),
+    Index(
+        "ix_graph_executions_graph_revision_created",
+        "graph_id",
+        "graph_revision",
+        "created_at",
+        "execution_id",
+    ),
+    Index("ix_graph_executions_status", "status"),
+)
+
+
+graph_execution_requested_nodes = Table(
+    "graph_execution_requested_nodes",
+    metadata,
+    Column(
+        "execution_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("graph_executions.execution_id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("node_id", String(255), primary_key=True),
+    Column("position", Integer, nullable=False),
+    UniqueConstraint(
+        "execution_id",
+        "position",
+        name="uq_graph_execution_requested_nodes_execution_position",
+    ),
+    Index(
+        "ix_graph_execution_requested_nodes_node_execution",
+        "node_id",
+        "execution_id",
+    ),
+)
+
+
+graph_execution_node_results = Table(
+    "graph_execution_node_results",
+    metadata,
+    Column(
+        "execution_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("graph_executions.execution_id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("node_id", String(255), primary_key=True),
+    Column("position", Integer, nullable=False),
+    Column("status", String(16), nullable=False),
+    Column("outputs", ArtifactOutputsType(), nullable=False),
+    Column("artifact_count", Integer, nullable=False),
+    Column("error", Text, nullable=True),
+    Column("completed_at", UTCDateTime(), nullable=False),
+    UniqueConstraint(
+        "execution_id",
+        "position",
+        name="uq_graph_execution_node_results_execution_position",
+    ),
+    Index(
+        "ix_graph_execution_node_results_node_execution",
+        "node_id",
+        "execution_id",
     ),
 )
 

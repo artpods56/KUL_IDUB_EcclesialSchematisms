@@ -6,6 +6,7 @@ import Markdown, {
   type MarkdownToJSX,
   sanitizer as sanitizeMarkdownUrl,
 } from "markdown-to-jsx";
+import maplibregl, { type GeoJSONSourceSpecification } from "maplibre-gl";
 
 import { artifactContentUrl, type ArtifactSummary } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
@@ -68,6 +69,29 @@ const s = stylex.create({
     width: "100%",
     borderRadius: "8px",
     backgroundColor: tokens.colorSurface,
+  },
+  mapShell: { display: "grid", gap: "7px" },
+  map: {
+    width: "100%",
+    height: "220px",
+    overflow: "hidden",
+    borderRadius: "8px",
+    backgroundColor: tokens.colorSurfaceSunken,
+  },
+  mapLegend: { display: "flex", flexWrap: "wrap", gap: "5px" },
+  mapLayerToggle: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    padding: "3px 6px",
+    borderRadius: "6px",
+    backgroundColor: tokens.colorSurfaceSunken,
+    fontSize: "10px",
+  },
+  mapSwatch: {
+    width: "8px",
+    height: "8px",
+    borderRadius: "9999px",
   },
   markdown: {
     color: tokens.colorText,
@@ -323,6 +347,198 @@ const imageRenderer: ArtifactRendererSpec = {
   },
 };
 
+interface GeoMapLayerPayload {
+  id: string;
+  title: string;
+  color: string;
+  visible: boolean;
+  feature_collection: {
+    type: "FeatureCollection";
+    features: Record<string, unknown>[];
+  };
+}
+
+interface GeoMapPayload {
+  layers: GeoMapLayerPayload[];
+  bounds: [number, number, number, number] | null;
+}
+
+function geoMapPayload(payload: unknown): GeoMapPayload | null {
+  const value = record(payload);
+  if (!value || !Array.isArray(value.layers)) return null;
+  const layers = value.layers.flatMap((candidate) => {
+    const layer = record(candidate);
+    const collection = record(layer?.feature_collection);
+    if (
+      !layer ||
+      typeof layer.id !== "string" ||
+      typeof layer.title !== "string" ||
+      typeof layer.color !== "string" ||
+      typeof layer.visible !== "boolean" ||
+      collection?.type !== "FeatureCollection" ||
+      !Array.isArray(collection.features)
+    ) return [];
+    return [{
+      id: layer.id,
+      title: layer.title,
+      color: layer.color,
+      visible: layer.visible,
+      feature_collection: {
+        type: "FeatureCollection" as const,
+        features: collection.features.filter(
+          (feature): feature is Record<string, unknown> => record(feature) !== null,
+        ),
+      },
+    }];
+  });
+  const bounds = Array.isArray(value.bounds) &&
+      value.bounds.length === 4 &&
+      value.bounds.every((coordinate) => typeof coordinate === "number")
+    ? value.bounds as [number, number, number, number]
+    : null;
+  return layers.length ? { layers, bounds } : null;
+}
+
+function GeoMapPreview({ value }: { value: GeoMapPayload }) {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const mapRef = React.useRef<maplibregl.Map | null>(null);
+
+  React.useEffect(() => {
+    if (!containerRef.current || typeof WebGLRenderingContext === "undefined") {
+      return;
+    }
+    const map = new maplibregl.Map({
+      container: containerRef.current,
+      center: [0, 20],
+      zoom: 1,
+      style: {
+        version: 8,
+        sources: {
+          basemap: {
+            type: "raster",
+            tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+            tileSize: 256,
+            attribution: "© OpenStreetMap contributors",
+          },
+        },
+        layers: [{ id: "basemap", type: "raster", source: "basemap" }],
+      },
+    });
+    mapRef.current = map;
+    map.addControl(new maplibregl.NavigationControl(), "top-right");
+    map.on("load", () => {
+      for (const layer of value.layers) {
+        const sourceId = `geo-source-${layer.id}`;
+        const visibility = layer.visible ? "visible" : "none";
+        map.addSource(sourceId, {
+          type: "geojson",
+          data: layer.feature_collection as unknown as GeoJSONSourceSpecification["data"],
+        });
+        map.addLayer({
+          id: `${layer.id}-fill`,
+          type: "fill",
+          source: sourceId,
+          paint: { "fill-color": layer.color, "fill-opacity": 0.28 },
+          layout: { visibility },
+          filter: ["==", ["geometry-type"], "Polygon"],
+        });
+        map.addLayer({
+          id: `${layer.id}-line`,
+          type: "line",
+          source: sourceId,
+          paint: { "line-color": layer.color, "line-width": 2 },
+          layout: { visibility },
+          filter: ["in", ["geometry-type"], ["literal", ["LineString", "Polygon"]]],
+        });
+        map.addLayer({
+          id: `${layer.id}-point`,
+          type: "circle",
+          source: sourceId,
+          paint: {
+            "circle-color": layer.color,
+            "circle-radius": 5,
+            "circle-stroke-color": "#ffffff",
+            "circle-stroke-width": 1,
+          },
+          layout: { visibility },
+          filter: ["==", ["geometry-type"], "Point"],
+        });
+      }
+      if (value.bounds) {
+        map.fitBounds(
+          [[value.bounds[0], value.bounds[1]], [value.bounds[2], value.bounds[3]]],
+          { padding: 28, maxZoom: 14, duration: 0 },
+        );
+      }
+    });
+    map.on("click", (event) => {
+      const layerIds = value.layers.flatMap((layer) => [
+        `${layer.id}-fill`,
+        `${layer.id}-line`,
+        `${layer.id}-point`,
+      ]).filter((id) => map.getLayer(id));
+      const feature = map.queryRenderedFeatures(event.point, { layers: layerIds })[0];
+      if (!feature) return;
+      const content = document.createElement("pre");
+      content.textContent = JSON.stringify(feature.properties ?? {}, null, 2);
+      new maplibregl.Popup({ maxWidth: "320px" })
+        .setLngLat(event.lngLat)
+        .setDOMContent(content)
+        .addTo(map);
+    });
+    return () => {
+      mapRef.current = null;
+      map.remove();
+    };
+  }, [value]);
+
+  return (
+    <div {...stylex.props(s.mapShell)}>
+      <div ref={containerRef} aria-label="Interactive map" {...stylex.props(s.map)} />
+      <div {...stylex.props(s.mapLegend)}>
+        {value.layers.map((layer) => (
+          <label key={layer.id} {...stylex.props(s.mapLayerToggle)}>
+            <input
+              type="checkbox"
+              defaultChecked={layer.visible}
+              onChange={(event) => {
+                for (const suffix of ["fill", "line", "point"]) {
+                  const id = `${layer.id}-${suffix}`;
+                  if (mapRef.current?.getLayer(id)) {
+                    mapRef.current.setLayoutProperty(
+                      id,
+                      "visibility",
+                      event.currentTarget.checked ? "visible" : "none",
+                    );
+                  }
+                }
+              }}
+            />
+            <span style={{ backgroundColor: layer.color }} {...stylex.props(s.mapSwatch)} />
+            {layer.title}
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const geoMapRenderer: ArtifactRendererSpec = {
+  id: "geo-map",
+  modes: ["map", "raw"],
+  matches: (artifact) =>
+    artifact.artifact_type === "geo.map_document" && artifact.schema_version === 1,
+  Component: ({ artifact, payload, mode }) => {
+    const value = geoMapPayload(payload);
+    if (mode === "map" && value) return <GeoMapPreview value={value} />;
+    return (
+      <pre {...stylex.props(s.jsonCode)}>
+        {JSON.stringify(payload ?? artifactMeta(artifact), null, 2)}
+      </pre>
+    );
+  },
+};
+
 const jsonSchemaRenderer: ArtifactRendererSpec = {
   id: "json-schema",
   modes: ["pretty", "raw"],
@@ -486,6 +702,7 @@ export const META_ARTIFACT_RENDERER: ArtifactRendererSpec = {
 
 export const ARTIFACT_RENDERERS: readonly ArtifactRendererSpec[] = [
   imageRenderer,
+  geoMapRenderer,
   jsonSchemaRenderer,
   markdownRenderer,
   jsonRenderer,

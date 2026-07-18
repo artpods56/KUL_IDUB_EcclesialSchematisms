@@ -6,6 +6,7 @@ import { Popover } from "@base-ui/react/popover";
 import {
   Handle,
   Position,
+  useEdges,
   useNodeConnections,
   useUpdateNodeInternals,
   type Node,
@@ -15,9 +16,12 @@ import {
   ArrowDown,
   ArrowUp,
   CircleHelp,
+  ExternalLink,
   GripVertical,
+  History,
   LoaderCircle,
   Plus,
+  Power,
   RotateCcw,
   Trash2,
   Upload,
@@ -28,7 +32,7 @@ import type { Port } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import { schemaFields, type SchemaField } from "../config-schema";
 import { handleStyle } from "../handle-style";
-import { encodeHandleId } from "../handles";
+import { decodeHandleId, encodeHandleId } from "../handles";
 import {
   inputPlugsForPort,
   reconcileSchemaFieldInputPlugs,
@@ -55,7 +59,13 @@ import {
   type SchemaSequenceItemKind,
 } from "../schema-builder";
 import {
+  resolvedBodyHeight,
+  resolvedNodeWidth,
+  type WorkflowNodeLayout,
+} from "../node-layout";
+import {
   IMAGE_UPLOAD_OPERATOR_ID,
+  GEOJSON_UPLOAD_OPERATOR_ID,
   WORKFLOW_NODE_TYPE,
   acceptedPortShapes,
   declaredArtifactTypeVariables,
@@ -65,9 +75,12 @@ import {
   portHasInstancePlugs,
   portMetaForPort,
   resolvedPortArtifactType,
+  type WorkflowEdge,
+  type WorkflowInputPlug,
   type WorkflowNodeData,
 } from "../types";
 import { ArtifactsAppendix } from "./ArtifactsAppendix";
+import { LayoutResizeHandle } from "./LayoutResizeHandle";
 import { PortTypePopover } from "./type-inspector";
 
 type WorkflowNode = Node<WorkflowNodeData, typeof WORKFLOW_NODE_TYPE>;
@@ -87,6 +100,17 @@ const s = stylex.create({
     color: tokens.colorText,
     fontSize: tokens.fontSizeSm,
     boxSizing: "border-box",
+  },
+  textareaFill: {
+    flex: "1 1 0%",
+    width: "100%",
+    // Literal keeps StyleX happy (imported layout constants can't be used here).
+    minHeight: "96px",
+    height: "auto",
+    resize: "none",
+  },
+  textareaDefault: {
+    height: "96px",
   },
   selected: {
     boxShadow: `0 2px 5px light-dark(rgba(107, 82, 212, 0.16), rgba(128, 103, 232, 0.22)), 0 12px 30px light-dark(rgba(20, 24, 32, 0.14), rgba(0, 0, 0, 0.46)), 0 0 0 2px ${tokens.colorAccentBorder}`,
@@ -184,14 +208,41 @@ const s = stylex.create({
     backgroundColor: tokens.colorDangerHover,
     color: tokens.colorDanger,
   },
-  operator: {
-    overflow: "hidden",
+  operatorRow: {
+    minWidth: 0,
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
     marginLeft: "56px",
+  },
+  operatorCopy: {
+    minWidth: 0,
+    overflow: "hidden",
     color: tokens.colorSubtle,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
     fontSize: tokens.fontSizeXs,
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
+  },
+  openModuleSource: {
+    flexShrink: 0,
+    minHeight: "18px",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "3px",
+    paddingInline: "5px",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorBorder,
+    borderRadius: "4px",
+    backgroundColor: {
+      default: tokens.colorSurface,
+      ":hover": tokens.colorHover,
+    },
+    color: tokens.colorMuted,
+    cursor: "pointer",
+    fontSize: "10px",
+    fontWeight: 700,
   },
   helpPopup: {
     width: "280px",
@@ -424,7 +475,7 @@ const s = stylex.create({
   tab: {
     display: "flex",
     alignItems: "center",
-    gap: "7px",
+    gap: "4px",
     maxWidth: "calc(100% - 12px)",
     height: "24px",
     paddingInline: "14px 12px",
@@ -434,9 +485,24 @@ const s = stylex.create({
       ":hover": tokens.colorHoverStrong,
     },
     color: tokens.colorTextEmphasis,
-    cursor: "pointer",
     fontSize: tokens.fontSizeXs,
     fontWeight: 600,
+  },
+  tabWithToggle: {
+    paddingInlineEnd: "5px",
+  },
+  tabTrigger: {
+    minWidth: 0,
+    display: "flex",
+    alignItems: "center",
+    gap: "7px",
+    height: "100%",
+    padding: 0,
+    borderWidth: 0,
+    backgroundColor: "transparent",
+    color: "inherit",
+    cursor: "pointer",
+    font: "inherit",
   },
   tabLabel: {
     minWidth: 0,
@@ -451,6 +517,48 @@ const s = stylex.create({
     paddingInline: "12px 14px",
     borderRadius: "9999px 0 0 9999px",
   },
+  tabDisabled: {
+    color: tokens.colorTextDisabled,
+    backgroundColor: {
+      default: tokens.colorSurfaceSunken,
+      ":hover": tokens.colorSurfaceSunken,
+    },
+  },
+  connectionToggle: {
+    width: "18px",
+    height: "18px",
+    flexShrink: 0,
+    display: "grid",
+    placeItems: "center",
+    padding: 0,
+    borderWidth: 0,
+    borderRadius: "9999px",
+    backgroundColor: {
+      default: "transparent",
+      ":hover": tokens.colorHoverStrong,
+    },
+    color: tokens.colorMuted,
+    cursor: "pointer",
+  },
+  connectionToggleEnabled: {
+    color: tokens.colorAccent,
+    backgroundColor: {
+      default: tokens.colorAccentSoft,
+      ":hover": tokens.colorAccentSoft,
+    },
+  },
+  connectionToggleDisabled: {
+    color: tokens.colorTextDisabled,
+    backgroundColor: {
+      default: tokens.colorSurface,
+      ":hover": tokens.colorHover,
+    },
+  },
+  plugConnectionToggle: {
+    width: "18px",
+    height: "20px",
+    borderRadius: "5px",
+  },
   dot: {
     width: "6px",
     height: "6px",
@@ -461,6 +569,25 @@ const s = stylex.create({
     display: "grid",
     gap: "9px",
     padding: "0 16px 14px",
+    minHeight: 0,
+  },
+  bodySized: {
+    display: "flex",
+    flexDirection: "column",
+    minHeight: 0,
+    boxSizing: "border-box",
+  },
+  configListSized: {
+    flex: "1 1 0%",
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+  },
+  fieldSized: {
+    flex: "1 1 0%",
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
   },
   upload: {
     width: "100%",
@@ -541,6 +668,7 @@ const s = stylex.create({
   configList: { display: "grid", gap: "9px" },
   field: { display: "grid", gap: "4px" },
   fieldLabel: {
+    flexShrink: 0,
     display: "flex",
     alignItems: "center",
     gap: "3px",
@@ -550,6 +678,7 @@ const s = stylex.create({
     textTransform: "capitalize",
   },
   fieldDescription: {
+    flexShrink: 0,
     color: tokens.colorSubtle,
     fontSize: tokens.fontSizeXs,
     lineHeight: 1.4,
@@ -569,7 +698,6 @@ const s = stylex.create({
     fontSize: tokens.fontSizeSm,
   },
   textarea: {
-    height: "96px",
     paddingBlock: "8px",
     lineHeight: 1.45,
     resize: "none",
@@ -884,6 +1012,16 @@ const s = stylex.create({
     whiteSpace: "nowrap",
   },
   schemaConnectionBound: { color: tokens.colorTextEmphasis, fontWeight: 650 },
+  schemaConnectionRow: {
+    minWidth: 0,
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
+  },
+  schemaConnectionGrow: {
+    minWidth: 0,
+    flex: "1 1 auto",
+  },
   schemaAddField: {
     minHeight: "28px",
     display: "flex",
@@ -912,6 +1050,11 @@ const s = stylex.create({
     boxShadow: tokens.shadowNode,
     color: tokens.colorText,
     boxSizing: "border-box",
+  },
+  shellStack: {
+    position: "relative",
+    display: "grid",
+    width: "fit-content",
   },
   errorAccent: { backgroundColor: tokens.colorDanger },
   errorContent: {
@@ -975,16 +1118,84 @@ function nodeInteractionProps(props: ReturnType<typeof stylex.props>) {
   };
 }
 
+function useOptionalInputConnection(
+  nodeId: string,
+  port: Port,
+  plugId?: string,
+) {
+  const edges = useEdges<WorkflowEdge>();
+  return React.useMemo(() => {
+    if (port.direction !== "input") return null;
+    const edge = edges.find((candidate) => {
+      if (candidate.target !== nodeId) return false;
+      const handle = decodeHandleId(candidate.targetHandle);
+      if (!handle || handle.portName !== port.name) return false;
+      if (plugId !== undefined) return handle.plugId === plugId;
+      return handle.plugId === undefined;
+    });
+    const onUpdate = edge?.data?.onUpdate;
+    if (!edge || !onUpdate) return null;
+    const enabled = edge.data?.enabled !== false;
+    // Only optional ports can be disabled; still allow re-enabling a
+    // connection that was left disabled against a required input.
+    if (port.required && enabled) return null;
+    return {
+      enabled,
+      toggle: () => onUpdate(edge.id, { enabled: !enabled }),
+    };
+  }, [edges, nodeId, plugId, port.direction, port.name, port.required]);
+}
+
+function OptionalConnectionToggle({
+  connection,
+  label,
+  compact = false,
+}: {
+  connection: { enabled: boolean; toggle: () => void };
+  label: string;
+  compact?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={connection.enabled}
+      aria-label={`${label} connection enabled`}
+      title={
+        connection.enabled ? "Disable connection" : "Enable connection"
+      }
+      {...nodeInteractionProps(
+        stylex.props(
+          s.connectionToggle,
+          connection.enabled
+            ? s.connectionToggleEnabled
+            : s.connectionToggleDisabled,
+          compact ? s.plugConnectionToggle : null,
+        ),
+      )}
+      onClick={(event) => {
+        event.stopPropagation();
+        connection.toggle();
+      }}
+    >
+      <Power size={compact ? 10 : 11} aria-hidden="true" />
+    </button>
+  );
+}
+
 function PortTab({
+  id,
   data,
   port,
   shape,
 }: {
+  id: string;
   data: WorkflowNodeData;
   port: Port;
   shape: Port["shape"];
 }) {
   const input = port.direction === "input";
+  const connection = useOptionalInputConnection(id, port);
   const visibleName = port.title ?? port.name;
   const artifactType = resolvedPortArtifactType(
     port,
@@ -1001,31 +1212,45 @@ function PortTab({
   const accessibleLabel = input
     ? `Input port ${visibleName}, accepts ${effectiveContract}${port.required ? ", required" : ""}`
     : `Output port ${visibleName}, provides ${effectiveContract}`;
+  const connectionDisabled = Boolean(connection && !connection.enabled);
 
   return (
     <div {...stylex.props(s.tabRow, input ? null : s.tabRowOut)}>
-      <PortTypePopover
-        port={port}
-        shape={shape}
-        artifactTypeBindings={data.artifactTypeBindings}
+      <div
+        {...stylex.props(
+          s.tab,
+          input ? s.tabIn : s.tabOut,
+          connection ? s.tabWithToggle : null,
+          connectionDisabled ? s.tabDisabled : null,
+        )}
       >
-        <Popover.Trigger
-          type="button"
-          aria-label={`Inspect ${visibleName} type`}
-          title={port.description ?? `Inspect ${visibleName} type`}
-          {...nodeInteractionProps(
-            stylex.props(s.tab, input ? s.tabIn : s.tabOut),
-          )}
+        <PortTypePopover
+          port={port}
+          shape={shape}
+          artifactTypeBindings={data.artifactTypeBindings}
         >
-          <span {...stylex.props(s.tabLabel)}>{visibleName}</span>
-          {input && port.required ? (
-            <span {...stylex.props(s.required, s.tabShape)}>*</span>
-          ) : null}
-          {shape === "many" ? (
-            <span {...stylex.props(s.tabShape)}>· many</span>
-          ) : null}
-        </Popover.Trigger>
-      </PortTypePopover>
+          <Popover.Trigger
+            type="button"
+            aria-label={`Inspect ${visibleName} type`}
+            title={port.description ?? `Inspect ${visibleName} type`}
+            {...nodeInteractionProps(stylex.props(s.tabTrigger))}
+          >
+            <span {...stylex.props(s.tabLabel)}>{visibleName}</span>
+            {input && port.required ? (
+              <span {...stylex.props(s.required, s.tabShape)}>*</span>
+            ) : null}
+            {shape === "many" ? (
+              <span {...stylex.props(s.tabShape)}>· many</span>
+            ) : null}
+          </Popover.Trigger>
+        </PortTypePopover>
+        {connection ? (
+          <OptionalConnectionToggle
+            connection={connection}
+            label={visibleName}
+          />
+        ) : null}
+      </div>
       <Handle
         type={input ? "target" : "source"}
         position={input ? Position.Left : Position.Right}
@@ -1045,6 +1270,194 @@ function PortTab({
         }
         style={handleStyle("50%", color, port.variadic)}
       />
+    </div>
+  );
+}
+
+function InstancePlugRow({
+  id,
+  data,
+  port,
+  plug,
+  index,
+  plugCount,
+  visibleName,
+  acceptedShapeLabel,
+  color,
+  draggedPlugId,
+  draggedPlugIdRef,
+  lastPointerTargetRef,
+  setDraggedPlugId,
+  finishPointerDrag,
+}: {
+  id: string;
+  data: WorkflowNodeData;
+  port: Port;
+  plug: WorkflowInputPlug;
+  index: number;
+  plugCount: number;
+  visibleName: string;
+  acceptedShapeLabel: string;
+  color: string;
+  draggedPlugId: string | null;
+  draggedPlugIdRef: React.MutableRefObject<string | null>;
+  lastPointerTargetRef: React.MutableRefObject<string | null>;
+  setDraggedPlugId: React.Dispatch<React.SetStateAction<string | null>>;
+  finishPointerDrag: (event: React.PointerEvent<HTMLButtonElement>) => void;
+}) {
+  const connection = useOptionalInputConnection(id, port, plug.id);
+  const binding = data.inputPlugBindings[plug.id];
+  const connectionMeta = binding
+    ? [
+        binding.sourceShape === "many" ? "sequence" : "single",
+        binding.conversionLabel ? `via ${binding.conversionLabel}` : null,
+        binding.contributionLabel,
+      ]
+        .filter((label): label is string => Boolean(label))
+        .join(" · ")
+    : `Accepts ${acceptedShapeLabel}`;
+  const accessibleLabel = `${visibleName} input ${index + 1}, accepts ${acceptedShapeLabel}`;
+  const connectionDisabled = Boolean(connection && !connection.enabled);
+
+  return (
+    <div
+      data-input-plug-id={plug.id}
+      data-input-plug-port={port.name}
+      {...stylex.props(
+        s.plugRow,
+        draggedPlugId === plug.id ? s.plugRowDragging : null,
+      )}
+    >
+      <Handle
+        className="nodrag nowheel"
+        type="target"
+        position={Position.Left}
+        id={encodeHandleId(
+          portMetaForPort(
+            port,
+            port.shape,
+            plug.id,
+            data.artifactTypeBindings,
+          ),
+        )}
+        aria-label={accessibleLabel}
+        title={`${accessibleLabel}. Connect one compatible output here.`}
+        style={handleStyle("50%", color, true)}
+      />
+      <button
+        type="button"
+        aria-label={`Drag to reorder ${visibleName} input ${index + 1}`}
+        title="Drag to reorder; arrow buttons also move this input"
+        {...nodeInteractionProps(stylex.props(s.plugGrip))}
+        onPointerDown={(event) => {
+          if (event.button !== 0) return;
+          event.stopPropagation();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          draggedPlugIdRef.current = plug.id;
+          lastPointerTargetRef.current = plug.id;
+          setDraggedPlugId(plug.id);
+        }}
+        onPointerMove={(event) => {
+          const activePlugId = draggedPlugIdRef.current;
+          if (!activePlugId) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const target = document
+            .elementFromPoint(event.clientX, event.clientY)
+            ?.closest<HTMLElement>("[data-input-plug-id]");
+          const targetPlugId = target?.dataset.inputPlugId;
+          if (targetPlugId === activePlugId) {
+            lastPointerTargetRef.current = null;
+            return;
+          }
+          if (
+            !targetPlugId ||
+            target?.dataset.inputPlugPort !== port.name ||
+            targetPlugId === lastPointerTargetRef.current
+          ) {
+            return;
+          }
+          const targetIndex = inputPlugsForPort(
+            data.inputPlugs,
+            port.name,
+          ).findIndex((candidate) => candidate.id === targetPlugId);
+          if (targetIndex === -1) return;
+          lastPointerTargetRef.current = targetPlugId;
+          data.onReorderInputPlug?.(id, port.name, activePlugId, targetIndex);
+        }}
+        onPointerUp={finishPointerDrag}
+        onPointerCancel={finishPointerDrag}
+      >
+        <GripVertical size={12} />
+      </button>
+      <span {...stylex.props(s.plugIndex)}>{index + 1}</span>
+      <span {...stylex.props(s.plugCopy)}>
+        <span
+          {...stylex.props(
+            s.plugSource,
+            binding ? null : s.plugSourceEmpty,
+            connectionDisabled ? s.tabDisabled : null,
+          )}
+          title={binding?.sourceLabel}
+        >
+          {binding?.sourceLabel ?? "Connect input"}
+        </span>
+        <span {...stylex.props(s.plugMeta)} title={connectionMeta}>
+          {connectionMeta}
+        </span>
+      </span>
+      <span {...stylex.props(s.plugActions)}>
+        {connection ? (
+          <OptionalConnectionToggle
+            connection={connection}
+            label={`${visibleName} input ${index + 1}`}
+            compact
+          />
+        ) : null}
+        <button
+          type="button"
+          disabled={index === 0}
+          aria-label={`Move ${visibleName} input ${index + 1} up`}
+          title="Move input up"
+          {...nodeInteractionProps(
+            stylex.props(
+              s.plugAction,
+              index === 0 ? s.plugActionDisabled : null,
+            ),
+          )}
+          onClick={() =>
+            data.onReorderInputPlug?.(id, port.name, plug.id, index - 1)
+          }
+        >
+          <ArrowUp size={10} />
+        </button>
+        <button
+          type="button"
+          disabled={index === plugCount - 1}
+          aria-label={`Move ${visibleName} input ${index + 1} down`}
+          title="Move input down"
+          {...nodeInteractionProps(
+            stylex.props(
+              s.plugAction,
+              index === plugCount - 1 ? s.plugActionDisabled : null,
+            ),
+          )}
+          onClick={() =>
+            data.onReorderInputPlug?.(id, port.name, plug.id, index + 1)
+          }
+        >
+          <ArrowDown size={10} />
+        </button>
+        <button
+          type="button"
+          aria-label={`Remove ${visibleName} input ${index + 1}`}
+          title="Remove input and its connection"
+          {...nodeInteractionProps(stylex.props(s.plugAction, s.plugRemove))}
+          onClick={() => data.onRemoveInputPlug?.(id, plug.id)}
+        >
+          <Trash2 size={10} />
+        </button>
+      </span>
     </div>
   );
 }
@@ -1108,173 +1521,25 @@ function InstancePlugPort({
       </div>
 
       <div {...stylex.props(s.plugList)}>
-        {plugs.map((plug, index) => {
-          const binding = data.inputPlugBindings[plug.id];
-          const connectionMeta = binding
-            ? [
-                binding.sourceShape === "many" ? "sequence" : "single",
-                binding.conversionLabel
-                  ? `via ${binding.conversionLabel}`
-                  : null,
-                binding.contributionLabel,
-              ]
-                .filter((label): label is string => Boolean(label))
-                .join(" · ")
-            : `Accepts ${acceptedShapeLabel}`;
-          const accessibleLabel = `${visibleName} input ${index + 1}, accepts ${acceptedShapeLabel}`;
-          return (
-            <div
-              key={plug.id}
-              data-input-plug-id={plug.id}
-              data-input-plug-port={port.name}
-              {...stylex.props(
-                s.plugRow,
-                draggedPlugId === plug.id ? s.plugRowDragging : null,
-              )}
-            >
-              <Handle
-                className="nodrag nowheel"
-                type="target"
-                position={Position.Left}
-                id={encodeHandleId(
-                  portMetaForPort(
-                    port,
-                    port.shape,
-                    plug.id,
-                    data.artifactTypeBindings,
-                  ),
-                )}
-                aria-label={accessibleLabel}
-                title={`${accessibleLabel}. Connect one compatible output here.`}
-                style={handleStyle("50%", color, true)}
-              />
-              <button
-                type="button"
-                aria-label={`Drag to reorder ${visibleName} input ${index + 1}`}
-                title="Drag to reorder; arrow buttons also move this input"
-                {...nodeInteractionProps(stylex.props(s.plugGrip))}
-                onPointerDown={(event) => {
-                  if (event.button !== 0) return;
-                  event.stopPropagation();
-                  event.currentTarget.setPointerCapture(event.pointerId);
-                  draggedPlugIdRef.current = plug.id;
-                  lastPointerTargetRef.current = plug.id;
-                  setDraggedPlugId(plug.id);
-                }}
-                onPointerMove={(event) => {
-                  const activePlugId = draggedPlugIdRef.current;
-                  if (!activePlugId) return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  const target = document
-                    .elementFromPoint(event.clientX, event.clientY)
-                    ?.closest<HTMLElement>("[data-input-plug-id]");
-                  const targetPlugId = target?.dataset.inputPlugId;
-                  if (targetPlugId === activePlugId) {
-                    lastPointerTargetRef.current = null;
-                    return;
-                  }
-                  if (
-                    !targetPlugId ||
-                    target?.dataset.inputPlugPort !== port.name ||
-                    targetPlugId === lastPointerTargetRef.current
-                  ) {
-                    return;
-                  }
-                  const targetIndex = plugs.findIndex(
-                    (candidate) => candidate.id === targetPlugId,
-                  );
-                  if (targetIndex === -1) return;
-                  lastPointerTargetRef.current = targetPlugId;
-                  data.onReorderInputPlug?.(
-                    id,
-                    port.name,
-                    activePlugId,
-                    targetIndex,
-                  );
-                }}
-                onPointerUp={finishPointerDrag}
-                onPointerCancel={finishPointerDrag}
-              >
-                <GripVertical size={12} />
-              </button>
-              <span {...stylex.props(s.plugIndex)}>{index + 1}</span>
-              <span {...stylex.props(s.plugCopy)}>
-                <span
-                  {...stylex.props(
-                    s.plugSource,
-                    binding ? null : s.plugSourceEmpty,
-                  )}
-                  title={binding?.sourceLabel}
-                >
-                  {binding?.sourceLabel ?? "Connect input"}
-                </span>
-                <span {...stylex.props(s.plugMeta)} title={connectionMeta}>
-                  {connectionMeta}
-                </span>
-              </span>
-              <span {...stylex.props(s.plugActions)}>
-                <button
-                  type="button"
-                  disabled={index === 0}
-                  aria-label={`Move ${visibleName} input ${index + 1} up`}
-                  title="Move input up"
-                  {...nodeInteractionProps(
-                    stylex.props(
-                      s.plugAction,
-                      index === 0 ? s.plugActionDisabled : null,
-                    ),
-                  )}
-                  onClick={() =>
-                    data.onReorderInputPlug?.(
-                      id,
-                      port.name,
-                      plug.id,
-                      index - 1,
-                    )
-                  }
-                >
-                  <ArrowUp size={10} />
-                </button>
-                <button
-                  type="button"
-                  disabled={index === plugs.length - 1}
-                  aria-label={`Move ${visibleName} input ${index + 1} down`}
-                  title="Move input down"
-                  {...nodeInteractionProps(
-                    stylex.props(
-                      s.plugAction,
-                      index === plugs.length - 1
-                        ? s.plugActionDisabled
-                        : null,
-                    ),
-                  )}
-                  onClick={() =>
-                    data.onReorderInputPlug?.(
-                      id,
-                      port.name,
-                      plug.id,
-                      index + 1,
-                    )
-                  }
-                >
-                  <ArrowDown size={10} />
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Remove ${visibleName} input ${index + 1}`}
-                  title="Remove input and its connection"
-                  {...nodeInteractionProps(
-                    stylex.props(s.plugAction, s.plugRemove),
-                  )}
-                  onClick={() => data.onRemoveInputPlug?.(id, plug.id)}
-                >
-                  <Trash2 size={10} />
-                </button>
-              </span>
-            </div>
-          );
-        })}
+        {plugs.map((plug, index) => (
+          <InstancePlugRow
+            key={plug.id}
+            id={id}
+            data={data}
+            port={port}
+            plug={plug}
+            index={index}
+            plugCount={plugs.length}
+            visibleName={visibleName}
+            acceptedShapeLabel={acceptedShapeLabel}
+            color={color}
+            draggedPlugId={draggedPlugId}
+            draggedPlugIdRef={draggedPlugIdRef}
+            lastPointerTargetRef={lastPointerTargetRef}
+            setDraggedPlugId={setDraggedPlugId}
+            finishPointerDrag={finishPointerDrag}
+          />
+        ))}
       </div>
       <button
         type="button"
@@ -1364,14 +1629,17 @@ function ConfigField({
   field,
   value,
   onChange,
+  fillHeight = false,
 }: {
   field: SchemaField;
   value: unknown;
   onChange: (value: unknown) => void;
+  fillHeight?: boolean;
 }) {
+  const fieldProps = stylex.props(s.field, fillHeight ? s.fieldSized : null);
   if (field.type === "boolean") {
     return (
-      <label {...stylex.props(s.field)}>
+      <label {...fieldProps}>
         <span {...stylex.props(s.checkRow)}>
           <input
             type="checkbox"
@@ -1392,7 +1660,7 @@ function ConfigField({
   }
 
   return (
-    <label {...stylex.props(s.field)}>
+    <label {...fieldProps}>
       <span {...stylex.props(s.fieldLabel)}>
         {field.title}
         {field.required ? <span {...stylex.props(s.required)}>*</span> : null}
@@ -1431,7 +1699,13 @@ function ConfigField({
           value={typeof value === "string" ? value : ""}
           minLength={field.minLength}
           maxLength={field.maxLength}
-          {...nodeInteractionProps(stylex.props(s.input, s.textarea))}
+          {...nodeInteractionProps(
+            stylex.props(
+              s.input,
+              s.textarea,
+              fillHeight ? s.textareaFill : s.textareaDefault,
+            ),
+          )}
           onChange={(event) => onChange(event.currentTarget.value)}
         />
       ) : (
@@ -1593,17 +1867,18 @@ function SecretInputField({
   );
 }
 
-function ImageUploadBody({ id, data }: { id: string; data: WorkflowNodeData }) {
+function FileUploadBody({ id, data }: { id: string; data: WorkflowNodeData }) {
   const uploads = imageUploads(data);
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const isGeoJson = data.spec.operator_id === GEOJSON_UPLOAD_OPERATOR_ID;
 
   return (
     <div {...stylex.props(s.body)}>
       <input
         ref={inputRef}
         type="file"
-        multiple
-        accept={ACCEPTED_IMAGE_TYPES}
+        multiple={!isGeoJson}
+        accept={isGeoJson ? ".geojson,.json,application/geo+json,application/json" : ACCEPTED_IMAGE_TYPES}
         {...nodeInteractionProps(stylex.props(s.hiddenInput))}
         onChange={(event) => {
           const files = Array.from(event.currentTarget.files ?? []);
@@ -1624,8 +1899,8 @@ function ImageUploadBody({ id, data }: { id: string; data: WorkflowNodeData }) {
         {data.execution.status === "uploading"
           ? "Uploading…"
           : uploads.length
-            ? "Replace images"
-            : "Choose images"}
+            ? isGeoJson ? "Replace file" : "Replace images"
+            : isGeoJson ? "Choose GeoJSON" : "Choose images"}
       </button>
       {uploads.length ? (
         <div {...nodeInteractionProps(stylex.props(s.fileList))}>
@@ -1655,7 +1930,9 @@ function ImageUploadBody({ id, data }: { id: string; data: WorkflowNodeData }) {
         </div>
       ) : (
         <p {...stylex.props(s.moreFiles)}>
-          PNG, JPEG, WebP, TIFF or BMP · ordered as selected
+          {isGeoJson
+            ? "GeoJSON FeatureCollection · WGS84 longitude/latitude"
+            : "PNG, JPEG, WebP, TIFF or BMP · ordered as selected"}
         </p>
       )}
     </div>
@@ -1678,6 +1955,28 @@ const SCHEMA_ITEM_KIND_LABELS: Record<SchemaSequenceItemKind, string> = {
   boolean: "Boolean",
   schema: "Schema",
 };
+
+function SchemaFieldConnectionToggle({
+  nodeId,
+  port,
+  plugId,
+  label,
+}: {
+  nodeId: string;
+  port: Port;
+  plugId: string;
+  label: string;
+}) {
+  const connection = useOptionalInputConnection(nodeId, port, plugId);
+  if (!connection) return null;
+  return (
+    <OptionalConnectionToggle
+      connection={connection}
+      label={label}
+      compact
+    />
+  );
+}
 
 function SchemaBuilderBody({
   id,
@@ -2059,14 +2358,25 @@ function SchemaBuilderBody({
                         ))}
                       </select>
                       {field.item_kind === "schema" ? (
-                        <span
-                          title={connectionLabel}
-                          {...stylex.props(
-                            s.schemaConnection,
-                            binding ? s.schemaConnectionBound : null,
-                          )}
-                        >
-                          {connectionLabel}
+                        <span {...stylex.props(s.schemaConnectionRow)}>
+                          <span
+                            title={connectionLabel}
+                            {...stylex.props(
+                              s.schemaConnection,
+                              s.schemaConnectionGrow,
+                              binding ? s.schemaConnectionBound : null,
+                            )}
+                          >
+                            {connectionLabel}
+                          </span>
+                          {inputPort ? (
+                            <SchemaFieldConnectionToggle
+                              nodeId={id}
+                              port={inputPort}
+                              plugId={field.id}
+                              label={`${field.name || `field ${index + 1}`} schema`}
+                            />
+                          ) : null}
                         </span>
                       ) : null}
                     </div>
@@ -2074,14 +2384,27 @@ function SchemaBuilderBody({
                     <div {...stylex.props(s.schemaItemRow)}>
                       <span {...stylex.props(s.schemaItemLabel)}>Value</span>
                       <span
-                        title={connectionLabel}
-                        {...stylex.props(
-                          s.schemaConnection,
-                          binding ? s.schemaConnectionBound : null,
-                        )}
+                        {...stylex.props(s.schemaConnectionRow)}
                         style={{ gridColumn: "2 / -1" }}
                       >
-                        {connectionLabel}
+                        <span
+                          title={connectionLabel}
+                          {...stylex.props(
+                            s.schemaConnection,
+                            s.schemaConnectionGrow,
+                            binding ? s.schemaConnectionBound : null,
+                          )}
+                        >
+                          {connectionLabel}
+                        </span>
+                        {inputPort ? (
+                          <SchemaFieldConnectionToggle
+                            nodeId={id}
+                            port={inputPort}
+                            plugId={field.id}
+                            label={`${field.name || `field ${index + 1}`} schema`}
+                          />
+                        ) : null}
                       </span>
                     </div>
                   ) : null}
@@ -2116,19 +2439,32 @@ function SchemaBuilderBody({
   );
 }
 
-function GenericBody({ id, data }: { id: string; data: WorkflowNodeData }) {
+function GenericBody({
+  id,
+  data,
+  bodyHeight,
+}: {
+  id: string;
+  data: WorkflowNodeData;
+  bodyHeight: number | null;
+}) {
   const fields = schemaFields(data.spec.config_schema);
   const secretInputs = nodeSecretInputs(data.spec);
   if (!fields.length && !secretInputs.length) return null;
+  const sized = bodyHeight !== null;
 
   return (
-    <div {...stylex.props(s.body)}>
-      <div {...stylex.props(s.configList)}>
+    <div
+      {...stylex.props(s.body, sized ? s.bodySized : null)}
+      style={sized ? { height: bodyHeight } : undefined}
+    >
+      <div {...stylex.props(s.configList, sized ? s.configListSized : null)}>
         {fields.map((field) => (
           <ConfigField
             key={field.name}
             field={field}
             value={data.config[field.name]}
+            fillHeight={sized && field.format === "textarea"}
             onChange={(value) =>
               data.onConfigChange?.(id, field.name, value)
             }
@@ -2227,10 +2563,39 @@ function NodeHeader({ id, data }: { id: string; data: WorkflowNodeData }) {
           </span>
         ) : null}
       </span>
-      <span {...stylex.props(s.operator)} title={data.spec.description}>
-        {typeof data.spec.module_graph_revision === "number"
-          ? `Module · r${data.spec.module_graph_revision}`
-          : `${data.spec.operator_id}@${data.spec.operator_version}`}
+      <span {...stylex.props(s.operatorRow)}>
+        <span {...stylex.props(s.operatorCopy)} title={data.spec.description}>
+          {typeof data.spec.module_graph_revision === "number"
+            ? `Module · r${data.spec.module_graph_revision}`
+            : `${data.spec.operator_id}@${data.spec.operator_version}`}
+        </span>
+        {data.spec.module_graph_id && data.onOpenModuleSource ? (
+          <button
+            type="button"
+            aria-label={`Open source graph for ${data.spec.title}`}
+            title="Open source graph"
+            {...nodeInteractionProps(stylex.props(s.openModuleSource))}
+            onClick={() => {
+              if (!data.spec.module_graph_id) return;
+              data.onOpenModuleSource?.(data.spec.module_graph_id);
+            }}
+          >
+            <ExternalLink size={9} />
+            Source
+          </button>
+        ) : null}
+        {data.onOpenExecutionHistory ? (
+          <button
+            type="button"
+            aria-label={`Open execution history for ${data.spec.title}`}
+            title="Execution history"
+            {...nodeInteractionProps(stylex.props(s.openModuleSource))}
+            onClick={() => data.onOpenExecutionHistory?.(id)}
+          >
+            <History size={9} />
+            History
+          </button>
+        ) : null}
       </span>
     </header>
   );
@@ -2239,7 +2604,9 @@ function NodeHeader({ id, data }: { id: string; data: WorkflowNodeData }) {
 function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
   const fields = schemaFields(data.spec.config_schema);
   const secretInputs = nodeSecretInputs(data.spec);
-  const isImageUpload = data.spec.operator_id === IMAGE_UPLOAD_OPERATOR_ID;
+  const isFileUpload =
+    data.spec.operator_id === IMAGE_UPLOAD_OPERATOR_ID ||
+    data.spec.operator_id === GEOJSON_UPLOAD_OPERATOR_ID;
   const isSchemaBuilder =
     data.spec.operator_id === SCHEMA_BUILDER_OPERATOR_ID;
   const visibleInputPorts = isSchemaBuilder
@@ -2270,6 +2637,26 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
   const updateNodeInternals = useUpdateNodeInternals();
   const measuredArtifactTypeBindings = data.artifactTypeBindings;
   const onHandlesMeasured = data.onHandlesMeasured;
+  const [draftLayout, setDraftLayout] = React.useState<WorkflowNodeLayout | null>(
+    null,
+  );
+  const layout = draftLayout ?? data.layout;
+  const nodeWidth = resolvedNodeWidth(layout);
+  const bodyHeight = resolvedBodyHeight(layout);
+  const layoutRevision = [
+    layout?.width ?? "",
+    layout?.bodyHeight ?? "",
+    layout?.appendixHeight ?? "",
+  ].join(":");
+
+  const commitLayout = React.useCallback(
+    (next: WorkflowNodeLayout | null) => {
+      setDraftLayout(null);
+      data.onLayoutChange?.(id, next);
+      window.requestAnimationFrame(() => updateNodeInternals(id));
+    },
+    [data, id, updateNodeInternals],
+  );
 
   React.useEffect(() => {
     // React Flow measures handles in the animation frame queued here. Queue the
@@ -2286,6 +2673,7 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
     artifactTypeBindingRevision,
     inputPlugRevision,
     schemaBuilderRevision,
+    layoutRevision,
     data.spec.inputs.length,
     data.spec.outputs.length,
     fields.length,
@@ -2298,7 +2686,7 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
   ]);
 
   return (
-    <>
+    <div {...stylex.props(s.shellStack)} style={{ width: nodeWidth }}>
       <article
         {...stylex.props(
           s.shell,
@@ -2311,6 +2699,7 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
             ? s.cancellingExecution
             : null,
         )}
+        style={{ width: nodeWidth }}
       >
         <NodeHeader id={id} data={data} />
         <GenericArtifactTypeState
@@ -2331,6 +2720,7 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
               ) : (
                 <PortTab
                   key={`in-${port.name}`}
+                  id={id}
                   data={data}
                   port={port}
                   shape={effectivePortShape(data, port)}
@@ -2341,10 +2731,10 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
         ) : null}
         {isSchemaBuilder ? (
           <SchemaBuilderBody id={id} data={data} />
-        ) : isImageUpload ? (
-          <ImageUploadBody id={id} data={data} />
+        ) : isFileUpload ? (
+          <FileUploadBody id={id} data={data} />
         ) : hasConfig ? (
-          <GenericBody id={id} data={data} />
+          <GenericBody id={id} data={data} bodyHeight={bodyHeight} />
         ) : (
           <div {...stylex.props(s.spacer)} aria-hidden />
         )}
@@ -2353,6 +2743,7 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
             {data.spec.outputs.map((port) => (
               <PortTab
                 key={`out-${port.name}`}
+                id={id}
                 data={data}
                 port={port}
                 shape={effectivePortShape(data, port)}
@@ -2360,7 +2751,7 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
             ))}
           </div>
         ) : null}
-        {!isImageUpload &&
+        {!isFileUpload &&
         !isSchemaBuilder &&
         !hasConfig &&
         !hasExecutionError &&
@@ -2370,12 +2761,20 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
             {data.spec.description || "No configuration for this operator."}
           </p>
         ) : null}
+        <LayoutResizeHandle
+          layout={layout}
+          axes={["width", "bodyHeight"]}
+          ariaLabel={`Resize ${data.spec.title}`}
+          onDraft={setDraftLayout}
+          onCommit={commitLayout}
+        />
       </article>
       {data.execution.error ? (
         <aside
           role="alert"
           aria-label="Node issue"
           {...nodeInteractionProps(stylex.props(s.errorAppendix))}
+          style={{ width: nodeWidth }}
         >
           <span aria-hidden="true" {...stylex.props(s.errorAccent)} />
           <div {...stylex.props(s.errorContent)}>
@@ -2387,8 +2786,13 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
           </div>
         </aside>
       ) : null}
-      <ArtifactsAppendix data={data} />
-    </>
+      <ArtifactsAppendix
+        data={data}
+        layout={layout}
+        onLayoutDraft={setDraftLayout}
+        onLayoutCommit={commitLayout}
+      />
+    </div>
   );
 }
 

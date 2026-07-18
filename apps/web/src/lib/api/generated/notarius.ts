@@ -93,6 +93,40 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/graphs/{graph_id}/executions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List Graph Executions */
+        readonly get: operations["list_graph_executions_v1_graphs__graph_id__executions_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/graphs/{graph_id}/executions/{execution_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Graph Execution History */
+        readonly get: operations["get_graph_execution_history_v1_graphs__graph_id__executions__execution_id__get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/graphs/{graph_id}/materializations": {
         readonly parameters: {
             readonly query?: never;
@@ -364,6 +398,110 @@ export interface components {
             /** Title */
             readonly title: string;
         };
+        /** GraphExecutionDetailResponse */
+        readonly GraphExecutionDetailResponse: {
+            /** Artifact Count */
+            readonly artifact_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Error */
+            readonly error: string | null;
+            /**
+             * Execution Id
+             * Format: uuid
+             */
+            readonly execution_id: string;
+            /** Finished At */
+            readonly finished_at: string | null;
+            /**
+             * Graph Id
+             * Format: uuid
+             */
+            readonly graph_id: string;
+            /** Graph Revision */
+            readonly graph_revision: number;
+            /** Node Count */
+            readonly node_count: number;
+            /** Node Results */
+            readonly node_results: readonly components["schemas"]["GraphExecutionNodeResultResponse"][];
+            /** Requested Node Ids */
+            readonly requested_node_ids: readonly string[];
+            readonly scope: components["schemas"]["GraphExecutionScope"];
+            /** Started At */
+            readonly started_at: string | null;
+            readonly status: components["schemas"]["GraphExecutionStatus"];
+            /** Workflow Run Id */
+            readonly workflow_run_id: string | null;
+        };
+        /** GraphExecutionListResponse */
+        readonly GraphExecutionListResponse: {
+            /** Items */
+            readonly items: readonly components["schemas"]["GraphExecutionSummaryResponse"][];
+            /** Next Cursor */
+            readonly next_cursor: string | null;
+        };
+        /** GraphExecutionNodeResultResponse */
+        readonly GraphExecutionNodeResultResponse: {
+            /**
+             * Completed At
+             * Format: date-time
+             */
+            readonly completed_at: string;
+            /** Error */
+            readonly error: string | null;
+            /** Node Id */
+            readonly node_id: string;
+            /** Outputs */
+            readonly outputs: readonly components["schemas"]["RunPortOutputResponse"][];
+            /** Position */
+            readonly position: number;
+            readonly status: components["schemas"]["GraphExecutionNodeStatus"];
+        };
+        /** @enum {string} */
+        readonly GraphExecutionNodeStatus: "succeeded" | "failed" | "skipped";
+        /** @enum {string} */
+        readonly GraphExecutionScope: "all" | "selected" | "selected-with-dependencies";
+        /** @enum {string} */
+        readonly GraphExecutionStatus: "queued" | "running" | "cancelling" | "cancelled" | "succeeded" | "failed";
+        /** GraphExecutionSummaryResponse */
+        readonly GraphExecutionSummaryResponse: {
+            /** Artifact Count */
+            readonly artifact_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Error */
+            readonly error: string | null;
+            /**
+             * Execution Id
+             * Format: uuid
+             */
+            readonly execution_id: string;
+            /** Finished At */
+            readonly finished_at: string | null;
+            /**
+             * Graph Id
+             * Format: uuid
+             */
+            readonly graph_id: string;
+            /** Graph Revision */
+            readonly graph_revision: number;
+            /** Node Count */
+            readonly node_count: number;
+            /** Requested Node Ids */
+            readonly requested_node_ids: readonly string[];
+            readonly scope: components["schemas"]["GraphExecutionScope"];
+            /** Started At */
+            readonly started_at: string | null;
+            readonly status: components["schemas"]["GraphExecutionStatus"];
+            /** Workflow Run Id */
+            readonly workflow_run_id: string | null;
+        };
         /** GraphMaterializationsResponse */
         readonly GraphMaterializationsResponse: {
             /**
@@ -419,6 +557,8 @@ export interface components {
             readonly nodes: readonly components["schemas"]["NodeSpecResponse"][];
             /** Plugins */
             readonly plugins: readonly components["schemas"]["PluginSpecResponse"][];
+            /** Unavailable Modules */
+            readonly unavailable_modules?: readonly components["schemas"]["UnavailableGraphModuleResponse"][];
         };
         /** NodeSecretInputResponse */
         readonly NodeSecretInputResponse: {
@@ -646,6 +786,8 @@ export interface components {
             readonly nodes: readonly components["schemas"]["RunNodeRequest"][];
             /** Pinned Outputs */
             readonly pinned_outputs?: readonly components["schemas"]["PinnedOutputRequest"][];
+            /** @default all */
+            readonly scope: components["schemas"]["GraphExecutionScope"];
             /** Secret Graph Id */
             readonly secret_graph_id?: string | null;
             /** Secret Graph Revision */
@@ -718,6 +860,15 @@ export interface components {
             /** Graphs */
             readonly graphs: readonly components["schemas"]["SavedGraphSummaryResponse"][];
         };
+        /** SavedGraphNodeLayoutModel */
+        readonly SavedGraphNodeLayoutModel: {
+            /** Appendix Height */
+            readonly appendix_height?: number | null;
+            /** Body Height */
+            readonly body_height?: number | null;
+            /** Width */
+            readonly width?: number | null;
+        };
         /** SavedGraphNodeModel */
         readonly "SavedGraphNodeModel-Input": {
             /** Artifact Type Bindings */
@@ -730,6 +881,7 @@ export interface components {
             readonly id: string;
             /** Input Plugs */
             readonly input_plugs?: readonly components["schemas"]["SavedGraphInputPlugModel"][];
+            readonly layout?: components["schemas"]["SavedGraphNodeLayoutModel"] | null;
             /** Operator Id */
             readonly operator_id: string;
             /** Operator Version */
@@ -748,6 +900,7 @@ export interface components {
             readonly id: string;
             /** Input Plugs */
             readonly input_plugs?: readonly components["schemas"]["SavedGraphInputPlugModel"][];
+            readonly layout?: components["schemas"]["SavedGraphNodeLayoutModel"] | null;
             /** Operator Id */
             readonly operator_id: string;
             /** Operator Version */
@@ -805,6 +958,20 @@ export interface components {
              * Format: date-time
              */
             readonly updated_at: string;
+        };
+        /** UnavailableGraphModuleResponse */
+        readonly UnavailableGraphModuleResponse: {
+            /**
+             * Graph Id
+             * Format: uuid
+             */
+            readonly graph_id: string;
+            /** Name */
+            readonly name: string;
+            /** Reason */
+            readonly reason: string;
+            /** Revision */
+            readonly revision: number;
         };
         /** UpdateSavedGraphRequest */
         readonly UpdateSavedGraphRequest: {
@@ -1110,6 +1277,75 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly list_graph_executions_v1_graphs__graph_id__executions_get: {
+        readonly parameters: {
+            readonly query?: {
+                readonly cursor?: string | null;
+                readonly graph_revision?: number | null;
+                readonly limit?: number;
+                readonly node_id?: string | null;
+                readonly status?: components["schemas"]["GraphExecutionStatus"] | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly graph_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GraphExecutionListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly get_graph_execution_history_v1_graphs__graph_id__executions__execution_id__get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly execution_id: string;
+                readonly graph_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GraphExecutionDetailResponse"];
+                };
             };
             /** @description Validation Error */
             readonly 422: {

@@ -4,6 +4,7 @@ import { decodeHandleId } from "../canvas/handles";
 import { inputPlugsForPort } from "../canvas/input-plugs";
 import {
   IMAGE_UPLOAD_OPERATOR_ID,
+  isFileUploadOperator,
   WORKFLOW_NODE_TYPE,
   imageUploads,
   portHasInstancePlugs,
@@ -16,6 +17,7 @@ import type {
   PinnedOutputInput,
   RunEdgeInput,
   RunRequest,
+  RunScopeInput,
 } from "@/lib/api";
 
 export type WorkflowNode = Node<
@@ -23,7 +25,7 @@ export type WorkflowNode = Node<
   typeof WORKFLOW_NODE_TYPE
 >;
 
-export type RunScope = "all" | "selected" | "selected-with-dependencies";
+export type RunScope = RunScopeInput;
 
 export interface ExecutionSubgraph {
   nodeIds: ReadonlySet<string>;
@@ -185,14 +187,15 @@ export function executionValidationIssue(
 
   const imageUploadWithoutImages = executionNodes.find(
     (node) =>
-      node.data.spec.operator_id === IMAGE_UPLOAD_OPERATOR_ID &&
+      isFileUploadOperator(node.data.spec.operator_id) &&
       !imageUploads(node.data).length,
   );
   if (imageUploadWithoutImages) {
     return {
       nodeId: imageUploadWithoutImages.id,
-      message:
-        `Choose images for ${imageUploadWithoutImages.data.spec.title} before running.`,
+      message: imageUploadWithoutImages.data.spec.operator_id === IMAGE_UPLOAD_OPERATOR_ID
+        ? `Choose images for ${imageUploadWithoutImages.data.spec.title} before running.`
+        : `Choose a GeoJSON file for ${imageUploadWithoutImages.data.spec.title} before running.`,
     };
   }
 
@@ -301,6 +304,7 @@ export function executionRequestPlan(
   const request: RunRequest = {
     nodes: runNodes,
     edges: runEdges,
+    scope,
     ...(scope === "selected" ? { pinned_outputs: pinnedOutputs } : {}),
   };
   return { status: "ready", request };

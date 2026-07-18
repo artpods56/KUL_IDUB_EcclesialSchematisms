@@ -6,6 +6,7 @@ import {
   ArrowDownToLine,
   ArrowUpFromLine,
   Cable,
+  ExternalLink,
   Package,
   Plus,
   Search,
@@ -33,12 +34,19 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { NodeRegistry, NodeSpec, Port } from "@/lib/api";
+import type {
+  NodeRegistry,
+  NodeSpec,
+  Port,
+  UnavailableGraphModule,
+} from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import {
   catalogNodeSpecs,
   catalogPluginSections,
 } from "../model/node-catalog";
+
+const MODULE_PLUGIN_SLUG = "graph.module";
 
 interface NodeSelectorProps {
   open: boolean;
@@ -46,6 +54,7 @@ interface NodeSelectorProps {
   activeGraphId: string | null;
   onOpenChange: (open: boolean) => void;
   onAddNode: (spec: NodeSpec) => void;
+  onOpenGraph?: (graphId: string) => void;
 }
 
 interface CompatibleNode {
@@ -602,6 +611,88 @@ const s = stylex.create({
     lineHeight: 1.5,
     textAlign: "center",
   },
+  moduleDiagnostics: {
+    display: "grid",
+    gap: "8px",
+    padding: "12px 14px 16px",
+    borderTopWidth: 1,
+    borderTopStyle: "solid",
+    borderTopColor: tokens.colorBorder,
+    backgroundColor: tokens.colorSurfaceMuted,
+  },
+  moduleDiagnosticsTitle: {
+    color: tokens.colorMuted,
+    fontSize: "10px",
+    fontWeight: 800,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
+  },
+  moduleDiagnosticsNote: {
+    color: tokens.colorSubtle,
+    fontSize: tokens.fontSizeXs,
+    lineHeight: 1.45,
+  },
+  unavailableList: {
+    display: "grid",
+    gap: "8px",
+  },
+  unavailableCard: {
+    display: "grid",
+    gap: "6px",
+    padding: "9px 10px",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorBorder,
+    borderRadius: "7px",
+    backgroundColor: tokens.colorSurface,
+  },
+  unavailableHeader: {
+    minWidth: 0,
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: "8px",
+  },
+  unavailableTitle: {
+    minWidth: 0,
+    color: tokens.colorTextEmphasis,
+    fontSize: tokens.fontSizeSm,
+    fontWeight: 700,
+  },
+  unavailableMeta: {
+    color: tokens.colorSubtle,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontSize: "10px",
+  },
+  unavailableReason: {
+    color: tokens.colorMuted,
+    fontSize: tokens.fontSizeXs,
+    lineHeight: 1.45,
+  },
+  openGraphButton: {
+    flexShrink: 0,
+    minHeight: "24px",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    paddingInline: "7px",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorBorderStrong,
+    borderRadius: "5px",
+    backgroundColor: {
+      default: tokens.colorSurface,
+      ":hover": tokens.colorHover,
+    },
+    color: tokens.colorMuted,
+    cursor: "pointer",
+    fontSize: "10px",
+    fontWeight: 700,
+  },
+  inspectorOpenGraph: {
+    marginTop: "8px",
+    alignSelf: "flex-start",
+  },
   resetButton: {
     minHeight: "29px",
     paddingInline: "10px",
@@ -985,12 +1076,44 @@ function PortList({ direction, ports, registry }: PortListProps) {
   );
 }
 
+function UnavailableModuleCard({
+  module,
+  onOpenGraph,
+}: {
+  module: UnavailableGraphModule;
+  onOpenGraph?: (graphId: string) => void;
+}) {
+  return (
+    <div {...stylex.props(s.unavailableCard)}>
+      <div {...stylex.props(s.unavailableHeader)}>
+        <div>
+          <div {...stylex.props(s.unavailableTitle)}>{module.name}</div>
+          <div {...stylex.props(s.unavailableMeta)}>revision {module.revision}</div>
+        </div>
+        {onOpenGraph ? (
+          <button
+            type="button"
+            title={`Open ${module.name}`}
+            {...stylex.props(s.openGraphButton)}
+            onClick={() => onOpenGraph(module.graph_id)}
+          >
+            <ExternalLink size={10} />
+            Open
+          </button>
+        ) : null}
+      </div>
+      <p {...stylex.props(s.unavailableReason)}>{module.reason}</p>
+    </div>
+  );
+}
+
 export function NodeSelector({
   open,
   registry,
   activeGraphId,
   onOpenChange,
   onAddNode,
+  onOpenGraph,
 }: NodeSelectorProps) {
   const [query, setQuery] = React.useState("");
   const [pluginFilter, setPluginFilter] = React.useState<string | null>(null);
@@ -1004,6 +1127,19 @@ export function NodeSelector({
   const catalogRegistry = React.useMemo(
     () => ({ ...registry, nodes: catalogNodes }),
     [catalogNodes, registry],
+  );
+  const unavailableModules = registry.unavailable_modules ?? [];
+  const showingModules = pluginFilter === MODULE_PLUGIN_SLUG;
+  const activeEditingModule = React.useMemo(
+    () =>
+      activeGraphId
+        ? registry.nodes.find(
+            (spec) =>
+              spec.module_graph_id === activeGraphId &&
+              spec.catalog_visible !== false,
+          ) ?? null
+        : null,
+    [activeGraphId, registry.nodes],
   );
 
   const normalizedQuery = query.trim().toLowerCase();
@@ -1219,7 +1355,12 @@ export function NodeSelector({
                 );
               }) : (
                 <div {...stylex.props(s.empty)}>
-                  <span>No nodes match the current category and search.</span>
+                  <span>
+                    {showingModules &&
+                    (unavailableModules.length > 0 || activeEditingModule)
+                      ? "No catalog-visible modules match the current search."
+                      : "No nodes match the current category and search."}
+                  </span>
                   <button
                     type="button"
                     {...stylex.props(s.resetButton)}
@@ -1233,6 +1374,36 @@ export function NodeSelector({
                 </div>
               )}
             </div>
+            {showingModules &&
+            (activeEditingModule || unavailableModules.length > 0) ? (
+              <div
+                aria-label="Module availability"
+                {...stylex.props(s.moduleDiagnostics)}
+              >
+                {activeEditingModule ? (
+                  <p {...stylex.props(s.moduleDiagnosticsNote)}>
+                    “{activeEditingModule.title}” is hidden here because it is
+                    the graph currently being edited.
+                  </p>
+                ) : null}
+                {unavailableModules.length ? (
+                  <>
+                    <div {...stylex.props(s.moduleDiagnosticsTitle)}>
+                      Unavailable as modules · {unavailableModules.length}
+                    </div>
+                    <div {...stylex.props(s.unavailableList)}>
+                      {unavailableModules.map((module) => (
+                        <UnavailableModuleCard
+                          key={`${module.graph_id}:${module.revision}`}
+                          module={module}
+                          onOpenGraph={onOpenGraph}
+                        />
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
           </section>
 
           <aside aria-label="Node information" {...stylex.props(s.inspector)}>
@@ -1268,6 +1439,22 @@ export function NodeSelector({
                         ? `Saved graph module · revision ${selectedSpec.module_graph_revision}`
                         : `${selectedSpec.operator_id}@${selectedSpec.operator_version}`}
                     </div>
+                    {selectedSpec.module_graph_id && onOpenGraph ? (
+                      <button
+                        type="button"
+                        title="Open the saved graph that defines this module"
+                        {...stylex.props(
+                          s.openGraphButton,
+                          s.inspectorOpenGraph,
+                        )}
+                        onClick={() =>
+                          onOpenGraph(selectedSpec.module_graph_id!)
+                        }
+                      >
+                        <ExternalLink size={10} />
+                        Open source graph
+                      </button>
+                    ) : null}
                     <p {...stylex.props(s.inspectorDescription)}>
                       {selectedSpec.description || "No description is available for this node."}
                     </p>

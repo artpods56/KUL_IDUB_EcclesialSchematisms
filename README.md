@@ -54,6 +54,9 @@ flowchart LR
 - `plugins/ocr` is an independently packaged example plugin. It owns OCR and
   table-extraction nodes, their artifacts and persistence/resolution, the
   server-side Mistral adapter, and its Mistral SDK dependency.
+- `plugins/gis` owns WGS84 GeoJSON import, spatial artifact persistence, and
+  ordered map composition. Its map documents are rendered interactively by the
+  web workbench with MapLibre.
 - `plugins/llm` owns provider-backed generation. Its generic OpenAI-compatible
   Chat Completions node wraps the official OpenAI Python SDK, consumes built-in
   prompt messages and an optional runtime JSON Schema, and keeps credentials
@@ -144,6 +147,18 @@ Enable the optional LLM plugin with:
 make install-llm
 ```
 
+Enable the optional GIS plugin with:
+
+```bash
+make install-gis
+```
+
+Install every optional plugin together with the default workspaces using:
+
+```bash
+make install-all
+```
+
 Start the API and web app in separate terminals:
 
 ```bash
@@ -164,6 +179,27 @@ After a default installation, `make api-ocr` installs the OCR extra and starts
 the API in one command. Use `make api-ocr` whenever that plugin should be
 available; `make api` keeps the API environment on its minimal package graph.
 Use `make api-llm` for the OpenAI-compatible and Mistral LLM nodes.
+Use `make api-gis` to discover the GeoJSON import and map composition nodes.
+
+### Compose GeoJSON layers
+
+With the GIS plugin enabled, import one WGS84 GeoJSON `FeatureCollection` per
+Import GeoJSON node. Connect those outputs to the generic Collect node in the
+desired layer order, bind its `T` artifact type to `geo.feature_collection@1`,
+and connect the resulting sequence to Compose map:
+
+```mermaid
+flowchart LR
+  A["Import cities.geojson"] --> C["Collect"]
+  B["Import offices.geojson"] --> C
+  C --> M["Compose map"]
+  M --> V["Interactive map artifact"]
+```
+
+Compose map preserves collection order, assigns deterministic layer colors,
+fits the preview to the combined bounds, and exposes visibility toggles and
+click-to-inspect feature properties. Coordinates outside WGS84 longitude and
+latitude ranges are rejected; reprojection is not implicit.
 
 Open <http://localhost:3000>. The API is available at
 <http://localhost:8000>; its health endpoint is `/health`.

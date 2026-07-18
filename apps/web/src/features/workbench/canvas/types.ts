@@ -18,10 +18,12 @@ import {
   type WorkflowInputPlug,
   type WorkflowInputPlugBinding,
 } from "./input-plugs";
+import type { WorkflowNodeLayout } from "./node-layout";
 import type { SchemaBuilderField } from "./schema-builder";
 import type { WorkflowNodeSecretStatuses } from "./node-secrets";
 
 export type { WorkflowInputPlug, WorkflowInputPlugBinding } from "./input-plugs";
+export type { WorkflowNodeLayout } from "./node-layout";
 
 export type WorkflowEdgeProjection = RunEdgeProjectionInput;
 export type WorkflowEdgeConversion = ArtifactConversionInput;
@@ -59,8 +61,6 @@ export interface WorkflowEdgeData extends Record<string, unknown> {
   conversionTitles?: readonly string[];
   routeOptions?: readonly WorkflowEdgeRouteOption[];
   allowedCollectionModes?: readonly RunEdgeCollectionMode[];
-  /** Whether the target port permits this connection to be disabled. */
-  canDisable?: boolean;
   onUpdate?: (edgeId: string, update: WorkflowEdgeUpdate) => void;
   onRouteOffsetChange?: (
     edgeId: string,
@@ -159,10 +159,13 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   /** Derived lifecycle scope for clearing unapplied write-only input values. */
   secretInputScope: string;
   config: WorkflowNodeConfig;
+  /** Canvas chrome sizes; persisted with the saved graph, not with run transport. */
+  layout: WorkflowNodeLayout | null;
   run: RunNodeResult | null;
   execution: NodeExecution;
   onImagesSelected?: (nodeId: string, files: File[]) => void;
   onConfigChange?: (nodeId: string, name: string, value: unknown) => void;
+  onLayoutChange?: (nodeId: string, layout: WorkflowNodeLayout | null) => void;
   onRemoveNode?: (nodeId: string) => void;
   onRemoveImageUpload?: (nodeId: string, index: number) => void;
   onAddInputPlug?: (nodeId: string, portName: string) => void;
@@ -192,11 +195,19 @@ export interface WorkflowNodeData extends Record<string, unknown> {
     nodeId: string,
     artifactTypeBindings: WorkflowArtifactTypeBindings,
   ) => void;
+  onOpenModuleSource?: (graphId: string) => void;
+  onOpenExecutionHistory?: (nodeId: string) => void;
 }
 
 export const WORKFLOW_NODE_TYPE = "notariusWorkflowNode";
 export const WORKFLOW_EDGE_TYPE = "notariusWorkflowEdge";
 export const IMAGE_UPLOAD_OPERATOR_ID = "image.upload";
+export const GEOJSON_UPLOAD_OPERATOR_ID = "gis.geojson.upload";
+
+export function isFileUploadOperator(operatorId: string): boolean {
+  return operatorId === IMAGE_UPLOAD_OPERATOR_ID ||
+    operatorId === GEOJSON_UPLOAD_OPERATOR_ID;
+}
 
 function schemaRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -221,7 +232,7 @@ export function defaultNodeConfig(
     }
   }
 
-  if (spec.operator_id === IMAGE_UPLOAD_OPERATOR_ID) {
+  if (isFileUploadOperator(spec.operator_id)) {
     config.uploads = [];
   }
   return config;
@@ -246,6 +257,7 @@ export function createWorkflowNodeData(
     secretInputReadiness: {},
     secretInputScope: "unsaved:none",
     config: defaultNodeConfig(spec),
+    layout: null,
     run: null,
     execution: { status: "idle" },
   };

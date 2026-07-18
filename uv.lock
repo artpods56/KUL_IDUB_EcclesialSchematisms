@@ -11,6 +11,7 @@ members = [
     "notarius-api",
     "notarius-core",
     "notarius-persistence",
+    "notarius-plugin-gis",
     "notarius-plugin-llm",
     "notarius-plugin-ocr",
     "notarius-storage",
@@ -1001,6 +1002,21 @@ requires-dist = [
 ]
 
 [[package]]
+name = "notarius-plugin-gis"
+version = "0.1.0"
+source = { editable = "plugins/gis" }
+dependencies = [
+    { name = "notarius-core" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "notarius-core", editable = "libs/core" },
+    { name = "pydantic" },
+]
+
+[[package]]
 name = "notarius-plugin-llm"
 version = "0.1.0"
 source = { editable = "plugins/llm" }
@@ -1066,6 +1082,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+gis = [
+    { name = "notarius-plugin-gis" },
+]
 llm = [
     { name = "notarius-plugin-llm" },
 ]
@@ -1088,11 +1107,12 @@ requires-dist = [
     { name = "notarius-api", editable = "apps/api" },
     { name = "notarius-core", editable = "libs/core" },
     { name = "notarius-persistence", editable = "libs/persistence" },
+    { name = "notarius-plugin-gis", marker = "extra == 'gis'", editable = "plugins/gis" },
     { name = "notarius-plugin-llm", marker = "extra == 'llm'", editable = "plugins/llm" },
     { name = "notarius-plugin-ocr", marker = "extra == 'ocr'", editable = "plugins/ocr" },
     { name = "notarius-storage", editable = "libs/storage" },
 ]
-provides-extras = ["llm", "ocr"]
+provides-extras = ["gis", "llm", "ocr"]
 
 [package.metadata.requires-dev]
 dev = [

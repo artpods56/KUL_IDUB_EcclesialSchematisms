@@ -1,4 +1,4 @@
-.PHONY: install install-llm install-ocr api api-llm api-ocr web test lint typecheck contract build check smoke db-upgrade db-downgrade db-current db-history db-revision docker-up docker-down
+.PHONY: install install-all install-gis install-llm install-ocr api api-gis api-llm api-ocr web test lint typecheck contract build check smoke db-upgrade db-downgrade db-current db-history db-revision docker-up docker-down
 
 -include .env
 export
@@ -7,8 +7,16 @@ install:
 	uv sync
 	npm --prefix apps/web ci
 
+install-all:
+	uv sync --extra gis --extra llm --extra ocr
+	npm --prefix apps/web ci
+
 install-ocr:
 	uv sync --extra ocr
+	npm --prefix apps/web ci
+
+install-gis:
+	uv sync --extra gis
 	npm --prefix apps/web ci
 
 install-llm:
@@ -21,8 +29,14 @@ api: db-upgrade
 api-ocr: db-upgrade
 	uv run --exact --no-dev --extra ocr uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
 
+api-gis: db-upgrade
+	uv run --exact --no-dev --extra gis uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
+
 api-llm: db-upgrade
 	uv run --exact --no-dev --extra llm uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
+
+api-all: db-upgrade
+	uv run --exact --no-dev --extra llm --extra gis --extra ocr uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
 
 prefect:
 	.venv/bin/prefect server start
@@ -31,15 +45,15 @@ web:
 	npm --prefix apps/web run dev
 
 test:
-	uv run --extra llm --extra ocr pytest
+	uv run --extra gis --extra llm --extra ocr pytest
 	npm --prefix apps/web test
 
 lint:
-	uv run ruff check apps/api/src libs/core/src libs/persistence/src libs/storage/src plugins/llm/src plugins/ocr/src infra/db/migrations scripts tests
+	uv run ruff check apps/api/src libs/core/src libs/persistence/src libs/storage/src plugins/gis/src plugins/llm/src plugins/ocr/src infra/db/migrations scripts tests
 	npm --prefix apps/web run lint
 
 typecheck:
-	uv run --extra llm --extra ocr basedpyright
+	uv run --extra gis --extra llm --extra ocr basedpyright
 	npm --prefix apps/web run typecheck
 
 contract:

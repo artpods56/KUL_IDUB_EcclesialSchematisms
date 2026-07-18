@@ -12,6 +12,8 @@ def test_openapi_contains_exact_public_routes() -> None:
         "/v1/executions/{execution_id}",
         "/v1/graphs",
         "/v1/graphs/{graph_id}",
+        "/v1/graphs/{graph_id}/executions",
+        "/v1/graphs/{graph_id}/executions/{execution_id}",
         "/v1/graphs/{graph_id}/materializations",
         "/v1/graphs/{graph_id}/node-secrets",
         "/v1/graphs/{graph_id}/nodes/{node_id}/secrets/{name}",
@@ -48,6 +50,28 @@ def test_openapi_contains_exact_public_routes() -> None:
         "put",
     }
     assert set(schema["paths"]["/v1/graphs/{graph_id}/materializations"]) == {"get"}
+    assert set(schema["paths"]["/v1/graphs/{graph_id}/executions"]) == {"get"}
+    assert set(
+        schema["paths"]["/v1/graphs/{graph_id}/executions/{execution_id}"]
+    ) == {"get"}
+    history_summary = schema["components"]["schemas"][
+        "GraphExecutionSummaryResponse"
+    ]
+    assert set(history_summary["properties"]) == {
+        "execution_id",
+        "graph_id",
+        "graph_revision",
+        "scope",
+        "status",
+        "requested_node_ids",
+        "node_count",
+        "artifact_count",
+        "created_at",
+        "started_at",
+        "finished_at",
+        "workflow_run_id",
+        "error",
+    }
     assert set(schema["paths"]["/v1/graphs/{graph_id}/node-secrets"]) == {"get"}
     assert set(
         schema["paths"]["/v1/graphs/{graph_id}/nodes/{node_id}/secrets/{name}"]

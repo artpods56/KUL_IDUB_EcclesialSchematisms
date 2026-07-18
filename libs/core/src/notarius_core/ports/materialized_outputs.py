@@ -1,9 +1,9 @@
 from typing import Protocol
 from uuid import UUID
 
-from notarius_core.artifacts import UnitOfWorkPort
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
 from notarius_core.ports.invocation_cache import InvocationCacheRepositoryPort
+from notarius_core.ports.execution_history import ExecutionHistoryUnitOfWorkPort
 
 
 class MaterializedNodeOutputsRepositoryPort(Protocol):
@@ -23,7 +23,7 @@ class MaterializedNodeOutputsRepositoryPort(Protocol):
     ) -> list[MaterializedNodeOutputs]: ...
 
 
-class WorkbenchUnitOfWorkPort(UnitOfWorkPort, Protocol):
+class WorkbenchUnitOfWorkPort(ExecutionHistoryUnitOfWorkPort, Protocol):
     @property
     def materialized_outputs(self) -> MaterializedNodeOutputsRepositoryPort: ...
 
