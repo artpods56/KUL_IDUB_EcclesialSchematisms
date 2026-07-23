@@ -13,6 +13,7 @@ from notarius_core.ports.storage import (
     FileStreamProtocol,
     SaveFileCommand,
     StoredFile,
+    StoredObjectInfo,
 )
 
 if TYPE_CHECKING:
@@ -58,6 +59,61 @@ class S3ObjectStore(FileStoragePort):
     @override
     async def load(self, bucket: str, path: str) -> FileStreamProtocol:
         return await asyncio.to_thread(self._load_sync, bucket, path)
+
+    @override
+    async def stat(self, bucket: str, path: str) -> StoredObjectInfo | None:
+        try:
+            metadata = await self._store_for(bucket).head_async(path)
+        except FileNotFoundError:
+            return None
+        except Exception as exc:
+            raise RuntimeError(f"Could not stat stored object: {bucket}/{path}") from exc
+
+        return StoredObjectInfo(
+            bucket=bucket,
+            path=path,
+            byte_size=metadata["size"],
+            etag=metadata["e_tag"],
+            version_id=metadata["version"],
+        )
+
+    @override
+    async def load_range(
+        self,
+        bucket: str,
+        path: str,
+        start: int,
+        end_exclusive: int,
+    ) -> bytes:
+        if start < 0 or end_exclusive < 0:
+            raise ValueError(
+                "Storage byte range bounds must be nonnegative: "
+                f"start={start}, end_exclusive={end_exclusive}"
+            )
+        if end_exclusive < start:
+            raise ValueError(
+                "Storage byte range end must not precede start: "
+                f"start={start}, end_exclusive={end_exclusive}"
+            )
+        if end_exclusive == start:
+            return b""
+
+        try:
+            content = await self._store_for(bucket).get_range_async(
+                path,
+                start=start,
+                end=end_exclusive,
+            )
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                f"Stored object does not exist: {bucket}/{path}"
+            ) from exc
+        except Exception as exc:
+            raise RuntimeError(
+                "Could not load stored object byte range "
+                f"{bucket}/{path}[{start}:{end_exclusive}]"
+            ) from exc
+        return bytes(content)
 
     @override
     async def delete(self, bucket: str, path: str) -> None:

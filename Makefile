@@ -1,4 +1,4 @@
-.PHONY: install install-all install-gis install-llm install-ocr api api-gis api-llm api-ocr web test lint typecheck contract build check smoke db-upgrade db-downgrade db-current db-history db-revision docker-up docker-down
+.PHONY: install install-all install-gis install-llm install-ocr install-sql api api-gis api-llm api-ocr api-sql mcp web test lint typecheck contract build check smoke db-upgrade db-downgrade db-current db-history db-revision docker-up docker-down
 
 -include .env
 export
@@ -8,7 +8,7 @@ install:
 	npm --prefix apps/web ci
 
 install-all:
-	uv sync --extra gis --extra llm --extra ocr
+	uv sync --extra gis --extra llm --extra ocr --extra sql
 	npm --prefix apps/web ci
 
 install-ocr:
@@ -23,6 +23,10 @@ install-llm:
 	uv sync --extra llm
 	npm --prefix apps/web ci
 
+install-sql:
+	uv sync --extra sql
+	npm --prefix apps/web ci
+
 api: db-upgrade
 	uv run --exact --no-dev --package notarius-api uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
 
@@ -35,8 +39,14 @@ api-gis: db-upgrade
 api-llm: db-upgrade
 	uv run --exact --no-dev --extra llm uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
 
+api-sql: db-upgrade
+	uv run --exact --no-dev --extra sql uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
+
 api-all: db-upgrade
-	uv run --exact --no-dev --extra llm --extra gis --extra ocr uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
+	uv run --exact --no-dev --extra llm --extra gis --extra ocr --extra sql uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
+
+mcp:
+	uv run --package notarius-mcp notarius-mcp
 
 prefect:
 	.venv/bin/prefect server start
@@ -45,15 +55,15 @@ web:
 	npm --prefix apps/web run dev
 
 test:
-	uv run --extra gis --extra llm --extra ocr pytest
+	uv run --extra gis --extra llm --extra ocr --extra sql pytest
 	npm --prefix apps/web test
 
 lint:
-	uv run ruff check apps/api/src libs/core/src libs/persistence/src libs/storage/src plugins/gis/src plugins/llm/src plugins/ocr/src infra/db/migrations scripts tests
+	uv run ruff check apps/api/src apps/mcp/src libs/core/src libs/persistence/src libs/storage/src plugins/gis/src plugins/llm/src plugins/ocr/src plugins/sql/src infra/db/migrations scripts tests
 	npm --prefix apps/web run lint
 
 typecheck:
-	uv run --extra gis --extra llm --extra ocr basedpyright
+	uv run --extra gis --extra llm --extra ocr --extra sql basedpyright
 	npm --prefix apps/web run typecheck
 
 contract:

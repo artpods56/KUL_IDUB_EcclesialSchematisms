@@ -7,6 +7,7 @@ dependencies = [
     "fastapi[standard]>=0.136.1",
     "notarius-api",
     "notarius-core",
+    "notarius-mcp",
     "notarius-persistence",
     "notarius-storage",
 ]
@@ -15,6 +16,7 @@ dependencies = [
 gis = ["notarius-plugin-gis"]
 llm = ["notarius-plugin-llm"]
 ocr = ["notarius-plugin-ocr"]
+sql = ["notarius-plugin-sql"]
 
 [tool.uv]
 package = false
@@ -27,16 +29,20 @@ members = [
     "plugins/llm",
     "plugins/ocr",
     "plugins/gis",
+    "plugins/sql",
     "apps/api",
+    "apps/mcp",
 ]
 
 [tool.uv.sources]
 notarius-api = { workspace = true }
 notarius-core = { workspace = true }
+notarius-mcp = { workspace = true }
 notarius-persistence = { workspace = true }
 notarius-plugin-llm = { workspace = true }
 notarius-plugin-ocr = { workspace = true }
 notarius-plugin-gis = { workspace = true }
+notarius-plugin-sql = { workspace = true }
 notarius-storage = { workspace = true }
 
 [dependency-groups]
@@ -49,91 +55,20 @@ dev = [
 ]
 
 [tool.basedpyright]
+pythonVersion = "3.12"
 venvPath = "."
 venv = ".venv"
-pythonVersion = "3.12"
 typeCheckingMode = "strict"
 include = [
-    "libs/core/src/notarius_core/artifacts.py",
-    "libs/core/src/notarius_core/conversions.py",
-    "libs/core/src/notarius_core/application",
-    "libs/core/src/notarius_core/domain/materialized_outputs.py",
-    "libs/core/src/notarius_core/domain/execution_history.py",
-    "libs/core/src/notarius_core/domain/modules.py",
-    "libs/core/src/notarius_core/domain/node_secrets.py",
-    "libs/core/src/notarius_core/domain/saved_graphs.py",
-    "libs/core/src/notarius_core/nodes.py",
-    "libs/core/src/notarius_core/domain/errors.py",
-    "libs/core/src/notarius_core/operators",
-    "libs/core/src/notarius_core/plugins.py",
-    "libs/core/src/notarius_core/ports/storage.py",
-    "libs/core/src/notarius_core/ports/execution_history.py",
-    "libs/core/src/notarius_core/ports/materialized_outputs.py",
-    "libs/core/src/notarius_core/ports/modules.py",
-    "libs/core/src/notarius_core/ports/node_secrets.py",
-    "libs/core/src/notarius_core/ports/saved_graphs.py",
-    "libs/core/src/notarius_core/runtime",
-    "libs/storage/src/notarius_storage",
-    "libs/persistence/src/notarius_persistence",
-    "infra/db/migrations",
-    "apps/api/src/notarius_api/builtins.py",
-    "apps/api/src/notarius_api/main.py",
-    "apps/api/src/notarius_api/openapi.py",
-    "apps/api/src/notarius_api/plugin_discovery.py",
-    "apps/api/src/notarius_api/schemas/saved_graphs.py",
-    "apps/api/src/notarius_api/schemas/node_secrets.py",
-    "apps/api/src/notarius_api/schemas/execution_history.py",
-    "apps/api/src/notarius_api/schemas/workbench.py",
-    "apps/api/src/notarius_api/settings.py",
-    "apps/api/src/notarius_api/services",
-    "apps/api/src/notarius_api/v1/routes/saved_graphs.py",
-    "apps/api/src/notarius_api/v1/routes/node_secrets.py",
-    "apps/api/src/notarius_api/v1/routes/execution_history.py",
-    "apps/api/src/notarius_api/v1/routes/workbench.py",
-    "plugins/llm/src/notarius_plugin_llm",
-    "plugins/ocr/src/notarius_plugin_ocr",
-    "plugins/gis/src/notarius_plugin_gis",
-    "tests/unit/core/test_invocation.py",
-    "tests/unit/core/test_execution_history.py",
-    "tests/unit/core/test_modules.py",
-    "tests/unit/core/test_mistral_ocr.py",
-    "tests/unit/core/test_node_contracts.py",
-    "tests/unit/core/test_plugins.py",
-    "tests/unit/core/test_prompts.py",
-    "tests/unit/core/test_images.py",
-    "tests/unit/core/test_text.py",
-    "tests/unit/core/test_saved_graphs.py",
-    "tests/unit/application/test_saved_graphs.py",
-    "tests/unit/persistence/test_saved_graph_persistence.py",
-    "tests/unit/persistence/test_materialized_output_persistence.py",
-    "tests/unit/persistence/test_execution_history_persistence.py",
-    "tests/unit/persistence/test_node_secret_persistence.py",
-    "tests/unit/persistence/test_migrations.py",
-    "tests/unit/storage",
-    "tests/unit/api/test_saved_graphs.py",
-    "tests/unit/api/test_node_secrets.py",
-    "tests/unit/api/test_modules.py",
-    "tests/unit/api/test_settings.py",
-    "tests/unit/api/test_arithmetic.py",
-    "tests/unit/api/test_composition.py",
-    "tests/unit/api/test_edge_values.py",
-    "tests/unit/api/test_execution_history.py",
-    "tests/unit/api/test_graph_compiler.py",
-    "tests/unit/api/test_graph_preflight.py",
-    "tests/unit/api/test_inline_execution_engine.py",
-    "tests/unit/api/test_prefect_execution_engine.py",
-    "tests/unit/api/test_mistral_ocr_provider.py",
-    "tests/unit/api/test_openapi.py",
-    "tests/unit/api/test_plugin_discovery.py",
-    "tests/unit/api/test_routes.py",
-    "tests/unit/api/test_text.py",
-    "tests/unit/plugins/test_llm_node.py",
-    "tests/unit/plugins/test_llm_plugin.py",
-    "tests/unit/plugins/test_mistral_structured_provider.py",
-    "tests/unit/plugins/test_ocr_plugin.py",
-    "tests/unit/plugins/test_ocr_tables.py",
-    "tests/unit/architecture/test_import_boundaries.py",
-    "scripts/smoke_workbench.py",
+    "libs/core/*",
+    "libs/persistence/*",
+    "libs/storage/*",
+    "plugins/llm/*",
+    "plugins/ocr/*",
+    "plugins/gis/*",
+    "plugins/sql/*",
+    "apps/api/*",
+    "apps/mcp/*",
 ]
 exclude = [
     ".venv",
@@ -148,6 +83,9 @@ executionEnvironments = [
         "libs/storage/src",
         "plugins/llm/src",
         "plugins/ocr/src",
+        "plugins/gis/src",
+        "plugins/sql/src",
         "apps/api/src",
+        "apps/mcp/src",
     ] },
 ]

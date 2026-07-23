@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "notarius-plugin-sql"
+version = "0.1.0"
+requires-python = "==3.12.9"
+dependencies = [
+    "asyncpg>=0.30.0",
+    "duckdb==1.5.5",
+    "notarius-core",
+    "pydantic",
+    "sqlalchemy[asyncio]>=2.0.51",
+]
+
+[project.entry-points."notarius.plugins"]
+sql = "notarius_plugin_sql.plugin:SQL"
+
+[tool.uv.sources]
+notarius-core = { workspace = true }
+
+[tool.basedpyright]
+extends = "../../pyproject.toml"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

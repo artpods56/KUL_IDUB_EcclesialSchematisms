@@ -25,6 +25,7 @@ from notarius_core.application.saved_graphs import SavedGraphService
 from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
 from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
 from notarius_core.operators.arithmetic import INTEGER_VALUE
+from notarius_core.operators.tables import TableArtifactWriter
 from notarius_core.operators.text import TEXT_VALUE
 from notarius_core.plugins import Plugin
 from notarius_core.runtime.persistence import InlineModelOutputWriter
@@ -38,17 +39,21 @@ from notarius_api.services.composition import (
     build_workbench_components,
 )
 from notarius_api.settings import Settings
-from notarius_api.v1.routes.execution_history import execution_history_service
-from notarius_api.v1.routes.workbench import (
-    artifact_service,
+from notarius_api.v1.routes.artifacts.dependencies import artifact_service
+from notarius_api.v1.routes.catalog.dependencies import (
     graph_module_catalog,
-    image_upload_service,
-    materialization_service,
-    run_graph_service,
-    run_execution_manager,
-    run_result_presenter,
-    workbench_plugin_registry,
+    graph_module_executor,
+    plugin_registry,
 )
+from notarius_api.v1.routes.executions.dependencies import (
+    execution_history_service,
+    materialization_service,
+    run_execution_manager,
+    run_graph_service,
+    run_result_presenter,
+)
+from notarius_api.v1.routes.uploads.dependencies import image_upload_service
+from notarius_storage import LocalFileObjectStore
 
 
 class CompoundResultPayload(BaseModel):
@@ -296,7 +301,7 @@ def install_workbench_dependency_overrides(
 
     application.dependency_overrides.update(
         {
-            workbench_plugin_registry: lambda: components.plugin_registry,
+            plugin_registry: lambda: components.plugin_registry,
             image_upload_service: lambda: components.uploads,
             run_graph_service: lambda: components.run_graph,
             run_execution_manager: lambda: components.execution_manager,
@@ -305,6 +310,7 @@ def install_workbench_dependency_overrides(
             run_result_presenter: lambda: components.presenter,
             artifact_service: lambda: components.artifacts,
             graph_module_catalog: lambda: components.modules,
+            graph_module_executor: lambda: components.run_graph,
         }
     )
 
@@ -341,6 +347,43 @@ def builtin_client(tmp_path: Path) -> Iterator[TestClient]:
             yield client
     finally:
         asyncio.run(saved_graph_database.dispose())
+
+
+@pytest.fixture
+def table_artifact_client(
+    tmp_path: Path,
+) -> Iterator[tuple[TestClient, TableArtifactWriter, WorkbenchComponents]]:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'api.sqlite3'}"
+    asyncio.run(_create_schema(database_url))
+    registry = build_plugin_registry(
+        builtin_plugins(),
+        external_plugins=(),
+    )
+    unit_of_work = InMemoryUnitOfWork()
+    storage = LocalFileObjectStore(tmp_path / "workbench" / "objects")
+    components = build_workbench_components(
+        plugin_registry=registry,
+        execution_backend="inline",
+        workspace=tmp_path / "workbench",
+        unit_of_work=unit_of_work,
+        storage=storage,
+    )
+    application = create_app(
+        Settings(
+            workspace=tmp_path / "workbench",
+            database_url=SecretStr(database_url),
+            execution_backend="inline",
+        )
+    )
+    install_workbench_dependency_overrides(application, components)
+    writer = TableArtifactWriter(
+        storage=storage,
+        uow=unit_of_work,
+        bucket="workbench-artifacts",
+        storage_backend="local",
+    )
+    with TestClient(application) as client:
+        yield client, writer, components
 
 
 @pytest.fixture

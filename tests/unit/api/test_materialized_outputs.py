@@ -19,12 +19,12 @@ from notarius_persistence.orm import metadata
 from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from notarius_api.main import create_app
-from notarius_api.schemas.saved_graphs import SavedGraphResponse
-from notarius_api.schemas.workbench import (
+from notarius_api.v1.routes.executions.models import (
     GraphMaterializationsResponse,
     RunPortOutputResponse,
     RunResponse,
 )
+from notarius_api.v1.routes.saved_graphs.models import SavedGraphResponse
 from notarius_api.settings import Settings
 
 
@@ -604,9 +604,9 @@ def test_fresh_app_runs_collect_only_from_persisted_scalar_and_sequence_pins(
         collected = _output(selected_result, "collect")
         assert isinstance(collected.value, ArtifactRefSequence)
         assert [
-            fresh_client.get(
-                f"/v1/artifacts/{artifact.artifact_id}/content"
-            ).json()["value"]
+            fresh_client.get(f"/v1/artifacts/{artifact.artifact_id}/content").json()[
+                "value"
+            ]
             for artifact in collected.artifacts
         ] == ["second", "third", "first"]
 

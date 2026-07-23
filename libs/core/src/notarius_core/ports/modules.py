@@ -1,7 +1,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Protocol, cast
+from typing import Protocol, cast, runtime_checkable
 
 from notarius_core.artifacts import ArtifactRef
 from notarius_core.domain.modules import GraphModuleDefinition
@@ -30,6 +30,7 @@ class GraphModuleExecutionResult:
         object.__setattr__(self, "outputs", MappingProxyType(copied))
 
 
+@runtime_checkable
 class GraphModuleExecutorPort(Protocol):
     async def execute_module(
         self,

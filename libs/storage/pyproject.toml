@@ -14,6 +14,9 @@ dependencies = [
 [tool.uv.sources]
 notarius-core = { workspace = true }
 
+[tool.basedpyright]
+extends = "../../pyproject.toml"
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 

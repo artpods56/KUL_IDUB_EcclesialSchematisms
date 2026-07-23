@@ -2,7 +2,8 @@ from typing import cast
 
 from fastapi.testclient import TestClient
 
-from notarius_api.schemas.workbench import NodeRegistryResponse, RunResponse
+from notarius_api.v1.routes.catalog.models import NodeRegistryResponse
+from notarius_api.v1.routes.executions.models import RunResponse
 from notarius_core.artifacts import ArtifactRefSequence
 from notarius_core.operators.text import (
     MarkdownValue,

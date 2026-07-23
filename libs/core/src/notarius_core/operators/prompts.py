@@ -1,5 +1,5 @@
 from enum import StrEnum
-from typing import Annotated, Self, cast, final, override
+from typing import Annotated, Self, cast
 
 from pydantic import (
     BaseModel,
@@ -10,6 +10,7 @@ from pydantic import (
 )
 
 from notarius_core.artifacts import (
+    Artifact,
     ArtifactRef,
     ArtifactRefSequence,
     ArtifactTypeKey,
@@ -19,12 +20,12 @@ from notarius_core.artifacts import (
     NodeInput,
     NodeOutput,
 )
-from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
+from notarius_core.nodes import InPort, OutPort
 from notarius_core.operators.images import RASTER_IMAGE
 from notarius_core.operators.text import TEXT_VALUE
 from notarius_core.plugins import NodeCachePolicy, Plugin
 from notarius_core.runtime.persistence import InlineModelOutputWriter
-from notarius_core.runtime.resolvers import InlineModelResolver, Resolver
+from notarius_core.runtime.resolvers import InlineModelResolver
 
 
 class PromptMessageRole(StrEnum):
@@ -64,9 +65,6 @@ PROMPTS = Plugin(
     slug="builtin.prompt",
     title="Prompt",
 )
-PROMPTS.register_artifact_type(PROMPT_MESSAGE)
-
-
 class PromptMessageConfig(NodeConfig):
     role: PromptMessageRole = Field(
         default=PromptMessageRole.USER,
@@ -95,56 +93,48 @@ class PromptMessageOutput(NodeOutput):
     ]
 
 
-@PROMPTS.node(
+@PROMPTS.function_node(
     operator_id="prompt.message.create",
     version=2,
     title="Create prompt message",
     cache_policy=NodeCachePolicy.EXACT,
 )
-@final
-class CreatePromptMessageNode(
-    Node[PromptMessageConfig, PromptMessageInput, PromptMessageOutput]
-):
+async def create_prompt_message(
+    config: PromptMessageConfig,
+    inputs: PromptMessageInput,
+) -> PromptMessageOutput:
     """Composes prompt text and optional image references into one message."""
-
-    @override
-    async def run(
-        self,
-        _context: NodeExecutionContext,
-        config: PromptMessageConfig,
-        inputs: PromptMessageInput,
-        /,
-    ) -> PromptMessageOutput:
-        if inputs.images is not None and not inputs.images.ordered:
-            raise ValueError(
-                "Cannot create a prompt message from unordered image sequence "
-                f"{inputs.images.sequence_id}"
-            )
-        image_refs = [] if inputs.images is None else inputs.images.item_refs
-        return PromptMessageOutput(
-            message=PromptMessage(
-                role=config.role,
-                text=inputs.text,
-                image_refs=image_refs,
-            )
+    if inputs.images is not None and not inputs.images.ordered:
+        raise ValueError(
+            "Cannot create a prompt message from unordered image sequence "
+            f"{inputs.images.sequence_id}"
         )
+    image_refs = [] if inputs.images is None else inputs.images.item_refs
+    return PromptMessageOutput(
+        message=PromptMessage(
+            role=config.role,
+            text=inputs.text,
+            image_refs=image_refs,
+        )
+    )
 
 
-PROMPTS.register_resolver(
-    lambda context: cast(
-        Resolver[object],
-        InlineModelResolver(
+CreatePromptMessageNode = PROMPTS.nodes[-1].node_class
+
+
+PROMPTS.register(
+    Artifact(
+        spec=PROMPT_MESSAGE,
+        resolver=lambda context: InlineModelResolver(
             source=PROMPT_MESSAGE.key,
             target=PromptMessage,
             uow=context.uow,
         ),
-    )
-)
-PROMPTS.register_writer(
-    lambda context: InlineModelOutputWriter(
-        artifact_type=PROMPT_MESSAGE.key,
-        model=PromptMessage,
-        uow=context.uow,
+        writer=lambda context: InlineModelOutputWriter(
+            artifact_type=PROMPT_MESSAGE.key,
+            model=PromptMessage,
+            uow=context.uow,
+        ),
     )
 )
 

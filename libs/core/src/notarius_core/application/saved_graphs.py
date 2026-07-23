@@ -94,11 +94,15 @@ class SavedGraphService:
                 for registration in self._plugin_registry.nodes
             }
             valid_secret_bindings: set[tuple[str, str, str, int, str]] = set()
+            dormant_secret_nodes: set[tuple[str, str, int]] = set()
             for node in document.nodes:
                 registration = registrations.get(
                     (node.operator_id, node.operator_version)
                 )
                 if registration is None:
+                    dormant_secret_nodes.add(
+                        (node.id, node.operator_id, node.operator_version)
+                    )
                     continue
                 try:
                     config = (
@@ -137,6 +141,13 @@ class SavedGraphService:
                     secret.dependency_sha256,
                 )
                 if binding in valid_secret_bindings:
+                    continue
+                dormant_node = (
+                    secret.node_id,
+                    secret.operator_id,
+                    secret.operator_version,
+                )
+                if dormant_node in dormant_secret_nodes:
                     continue
                 await unit_of_work.node_secrets.remove(
                     graph_id,

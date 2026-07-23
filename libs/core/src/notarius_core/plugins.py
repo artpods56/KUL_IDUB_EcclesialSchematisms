@@ -1,10 +1,10 @@
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
-from inspect import getdoc
+from inspect import Parameter, getdoc, iscoroutinefunction, signature
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Any, Final, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Final, TypeAlias, cast, get_type_hints, override
 
 from notarius_core.artifacts import (
     ArtifactFieldProjection,
@@ -12,14 +12,24 @@ from notarius_core.artifacts import (
     ArtifactTypeSpec,
     JsonObject,
     MaterializedJsonType,
-    UnitOfWorkPort,
+    NodeConfig,
+    NodeInput,
+    NodeOutput,
+    UnitOfWorkPort, Artifact,
 )
 from notarius_core.conversions import (
     ArtifactConversion,
     ArtifactConversionKey,
     conversion_runtime_types_are_compatible,
 )
-from notarius_core.nodes import ArtifactTypeVariable, Node
+from notarius_core.nodes import (
+    ArtifactTypeVariable,
+    ConfigContract,
+    Node,
+    NodeExecutionContext,
+    derive_input_contract,
+    derive_output_contract,
+)
 from notarius_core.ports.node_secrets import (
     NodeSecretResolverPort,
     UnavailableNodeSecretResolver,
@@ -93,6 +103,20 @@ NodeFactory: TypeAlias = Callable[
     [PluginRuntimeContext],
     Node[Any, Any, Any],
 ]
+type LegacyNodeFunction[
+    ConfigT: NodeConfig,
+    InputT: NodeInput,
+    OutputT: NodeOutput,
+] = Callable[[ConfigT, InputT], Awaitable[OutputT]]
+type ContextNodeFunction[
+    ConfigT: NodeConfig,
+    InputT: NodeInput,
+    OutputT: NodeOutput,
+] = Callable[[NodeExecutionContext, ConfigT, InputT], Awaitable[OutputT]]
+type NodeFunction[ConfigT: NodeConfig, InputT: NodeInput, OutputT: NodeOutput] = (
+    LegacyNodeFunction[ConfigT, InputT, OutputT]
+    | ContextNodeFunction[ConfigT, InputT, OutputT]
+)
 ResolverFactory: TypeAlias = Callable[
     [PluginRuntimeContext],
     "Resolver[object]",
@@ -221,6 +245,126 @@ class Plugin:
 
         return decorate
 
+    def function_node[
+        ConfigT: NodeConfig,
+        InputT: NodeInput,
+        OutputT: NodeOutput,
+    ](
+        self,
+        *,
+        operator_id: str,
+        version: int,
+        title: str,
+        cache_policy: NodeCachePolicy = NodeCachePolicy.NEVER,
+    ) -> Callable[
+        [NodeFunction[ConfigT, InputT, OutputT]],
+        NodeFunction[ConfigT, InputT, OutputT],
+    ]:
+        """Register one stateless async function as a node."""
+
+        def decorate(
+            function: NodeFunction[ConfigT, InputT, OutputT],
+        ) -> NodeFunction[ConfigT, InputT, OutputT]:
+            if not iscoroutinefunction(function):
+                raise PluginRegistrationError(
+                    f"Plugin {self.slug!r} function node {operator_id!r} must be async"
+                )
+            function_signature = signature(function)
+            parameters = list(function_signature.parameters.values())
+            if len(parameters) not in {2, 3} or any(
+                parameter.kind
+                not in {Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD}
+                for parameter in parameters
+            ):
+                raise PluginRegistrationError(
+                    f"Plugin {self.slug!r} function node {operator_id!r} must declare "
+                    "either (config, inputs) or (context, config, inputs) "
+                    "positional parameters"
+                )
+            try:
+                hints = get_type_hints(function)
+            except Exception as exc:
+                raise PluginRegistrationError(
+                    f"Plugin {self.slug!r} function node {operator_id!r} has "
+                    "unresolvable type annotations"
+                ) from exc
+            accepts_context = len(parameters) == 3
+            config_parameter_index = 1 if accepts_context else 0
+            input_parameter_index = 2 if accepts_context else 1
+            if (
+                accepts_context
+                and hints.get(parameters[0].name) is not NodeExecutionContext
+            ):
+                raise PluginRegistrationError(
+                    f"Plugin {self.slug!r} function node {operator_id!r} context "
+                    "parameter must be annotated with NodeExecutionContext"
+                )
+            config_model = hints.get(parameters[config_parameter_index].name)
+            input_model = hints.get(parameters[input_parameter_index].name)
+            output_model = hints.get("return")
+            if not isinstance(config_model, type) or not issubclass(
+                config_model, NodeConfig
+            ):
+                raise PluginRegistrationError(
+                    f"Plugin {self.slug!r} function node {operator_id!r} config "
+                    "parameter must be annotated with a NodeConfig model"
+                )
+            if not isinstance(input_model, type) or not issubclass(
+                input_model, NodeInput
+            ):
+                raise PluginRegistrationError(
+                    f"Plugin {self.slug!r} function node {operator_id!r} inputs "
+                    "parameter must be annotated with a NodeInput model"
+                )
+            if not isinstance(output_model, type) or not issubclass(
+                output_model, NodeOutput
+            ):
+                raise PluginRegistrationError(
+                    f"Plugin {self.slug!r} function node {operator_id!r} return "
+                    "type must be a NodeOutput model"
+                )
+
+            legacy_function = cast(
+                Callable[[NodeConfig, NodeInput], Awaitable[NodeOutput]],
+                function,
+            )
+            context_function = cast(
+                Callable[
+                    [NodeExecutionContext, NodeConfig, NodeInput],
+                    Awaitable[NodeOutput],
+                ],
+                function,
+            )
+
+            class FunctionNodeAdapter(Node[NodeConfig, NodeInput, NodeOutput]):
+                @override
+                async def run(
+                    self,
+                    context: NodeExecutionContext,
+                    config: NodeConfig,
+                    inputs: NodeInput,
+                    /,
+                ) -> NodeOutput:
+                    if accepts_context:
+                        return await context_function(context, config, inputs)
+                    return await legacy_function(config, inputs)
+
+            FunctionNodeAdapter.__name__ = function.__name__
+            FunctionNodeAdapter.__qualname__ = function.__qualname__
+            FunctionNodeAdapter.__doc__ = getdoc(function)
+            FunctionNodeAdapter.config_contract = ConfigContract(model=config_model)
+            FunctionNodeAdapter.input_contract = derive_input_contract(input_model)
+            FunctionNodeAdapter.output_contract = derive_output_contract(output_model)
+            self.node(
+                operator_id=operator_id,
+                version=version,
+                title=title,
+                cache_policy=cache_policy,
+            )(FunctionNodeAdapter)
+            return function
+
+        return decorate
+
     def register_artifact_type(self, artifact_type: ArtifactTypeSpec) -> None:
         key = (
             artifact_type.key.id,
@@ -248,6 +392,13 @@ class Plugin:
 
     def register_writer(self, factory: WriterFactory) -> None:
         self._writer_factories.append(factory)
+
+
+    def register(self, artifact: Artifact) -> None:
+        self.register_artifact_type(artifact.spec)
+        self._writer_factories.append(artifact.writer)
+        self._resolver_factories.append(artifact.resolver)
+
 
     @property
     def nodes(self) -> tuple[NodeRegistration, ...]:

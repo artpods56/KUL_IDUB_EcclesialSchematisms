@@ -18,6 +18,7 @@ from pydantic import (
 from referencing.exceptions import Unresolvable
 
 from notarius_core.artifacts import (
+    Artifact,
     ArtifactObject,
     ArtifactRef,
     ArtifactTypeKey,
@@ -56,9 +57,6 @@ SCHEMAS = Plugin(
     slug="builtin.schema",
     title="Schema",
 )
-SCHEMAS.register_artifact_type(JSON_SCHEMA)
-
-
 class SchemaFieldKind(StrEnum):
     STRING = "string"
     INTEGER = "integer"
@@ -442,8 +440,13 @@ class JsonSchemaResolver(Resolver[str]):
             raise ResolutionError(message) from exc
 
 
-SCHEMAS.register_resolver(lambda context: JsonSchemaResolver(uow=context.uow))
-SCHEMAS.register_writer(lambda context: JsonSchemaOutputWriter(uow=context.uow))
+SCHEMAS.register(
+    Artifact(
+        spec=JSON_SCHEMA,
+        resolver=lambda context: JsonSchemaResolver(uow=context.uow),
+        writer=lambda context: JsonSchemaOutputWriter(uow=context.uow),
+    )
+)
 
 
 __all__ = [

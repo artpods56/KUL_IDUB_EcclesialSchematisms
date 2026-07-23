@@ -10,6 +10,7 @@ from notarius_core.ports.storage import (
     FileStreamProtocol,
     SaveFileCommand,
     StoredFile,
+    StoredObjectInfo,
 )
 
 
@@ -62,6 +63,62 @@ class LocalFileObjectStore(FileStoragePort):
     @override
     async def load(self, bucket: str, path: str) -> FileStreamProtocol:
         return self._path_for(bucket, path).open("rb")
+
+    @override
+    async def stat(self, bucket: str, path: str) -> StoredObjectInfo | None:
+        file_path = self._path_for(bucket, path)
+        try:
+            object_stat = file_path.stat()
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise OSError(f"Could not stat stored object: {bucket}/{path}") from exc
+
+        if not file_path.is_file():
+            return None
+        return StoredObjectInfo(
+            bucket=bucket,
+            path=path,
+            byte_size=object_stat.st_size,
+            etag=None,
+            version_id=None,
+        )
+
+    @override
+    async def load_range(
+        self,
+        bucket: str,
+        path: str,
+        start: int,
+        end_exclusive: int,
+    ) -> bytes:
+        if start < 0 or end_exclusive < 0:
+            raise ValueError(
+                "Storage byte range bounds must be nonnegative: "
+                f"start={start}, end_exclusive={end_exclusive}"
+            )
+        if end_exclusive < start:
+            raise ValueError(
+                "Storage byte range end must not precede start: "
+                f"start={start}, end_exclusive={end_exclusive}"
+            )
+        if end_exclusive == start:
+            return b""
+
+        file_path = self._path_for(bucket, path)
+        try:
+            with file_path.open("rb") as source:
+                _ = source.seek(start)
+                return source.read(end_exclusive - start)
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                f"Stored object does not exist: {bucket}/{path}"
+            ) from exc
+        except OSError as exc:
+            raise OSError(
+                "Could not load stored object byte range "
+                f"{bucket}/{path}[{start}:{end_exclusive}]"
+            ) from exc
 
     @override
     async def delete(self, bucket: str, path: str) -> None:

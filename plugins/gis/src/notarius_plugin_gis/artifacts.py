@@ -1,4 +1,11 @@
-from notarius_core.artifacts import ArtifactTypeKey, ArtifactTypeSpec
+from typing import cast
+
+from notarius_core.artifacts import ArtifactTypeKey, ArtifactTypeSpec, JsonObject
+
+from notarius_plugin_gis.models import (
+    GeoMapDocument,
+    GeoMapLayer,
+)
 
 
 GEO_FEATURE_COLLECTION = ArtifactTypeSpec(
@@ -6,7 +13,19 @@ GEO_FEATURE_COLLECTION = ArtifactTypeSpec(
     title="GeoJSON feature collection",
 )
 
+GEO_RASTER_SCAN = ArtifactTypeSpec(
+    key=ArtifactTypeKey("geo.raster_scan", 1),
+    title="Georeferenced raster scan",
+)
+
+GEO_MAP_LAYER = ArtifactTypeSpec(
+    key=ArtifactTypeKey("geo.map_layer", 1),
+    title="Map layer",
+    payload_schema=cast(JsonObject, GeoMapLayer.model_json_schema()),
+)
+
 GEO_MAP_DOCUMENT = ArtifactTypeSpec(
     key=ArtifactTypeKey("geo.map_document", 1),
     title="Map document",
+    payload_schema=cast(JsonObject, GeoMapDocument.model_json_schema()),
 )

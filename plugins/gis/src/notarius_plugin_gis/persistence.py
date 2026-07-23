@@ -1,18 +1,30 @@
+import json
+from asyncio import to_thread
 from hashlib import sha256
 from io import BytesIO
-from typing import cast, final, override
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import Literal, cast, final, override
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
 
+from notarius_core.artifact_collections import (
+    JSON_COLLECTIONS_STORAGE_FORMAT,
+    JsonCollection,
+    load_json_collections_page,
+    save_json_collections,
+)
 from notarius_core.artifacts import (
     ArtifactObject,
     ArtifactRef,
-    ArtifactTypeKey,
     JsonObject,
     UnitOfWorkPort,
 )
 from notarius_core.domain.errors import NotFoundError
-from notarius_core.ports.storage import FileMetadata, FileStoragePort, SaveFileCommand
+from notarius_core.ports.storage import (
+    FileStoragePort,
+    SaveFileCommand,
+)
 from notarius_core.runtime.persistence import ArtifactOutputWriter, ArtifactWriteContext
 from notarius_core.runtime.resolvers import (
     ArtifactContractError,
@@ -20,27 +32,137 @@ from notarius_core.runtime.resolvers import (
     Resolver,
 )
 
+from notarius_plugin_gis.artifacts import GEO_FEATURE_COLLECTION, GEO_RASTER_SCAN
+from notarius_plugin_gis.gdal import GdalCli, GdalError
+from notarius_plugin_gis.models import (
+    Bounds,
+    GeoFeatureCollection,
+    GeoRasterScan,
+    RasterProjectionMetadata,
+    VectorProjectionMetadata,
+)
+
+type _PropertyValueType = Literal[
+    "text",
+    "integer",
+    "number",
+    "boolean",
+    "null",
+    "mixed",
+    "unknown",
+]
+
+
+class _FeaturePropertyFieldMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: StrictStr = Field(min_length=1, max_length=255)
+    title: StrictStr = Field(min_length=1, max_length=1_024)
+    value_type: _PropertyValueType
+
+
+class _FeatureCollectionManifestMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["geo.feature_collection"] = "geo.feature_collection"
+    crs: Literal["EPSG:4326"] = "EPSG:4326"
+    source_name: StrictStr = Field(min_length=1)
+    bounds: Bounds | None
+    property_fields: list[_FeaturePropertyFieldMetadata] = Field(
+        default_factory=list,
+    )
+
+
+def _feature_property_fields(
+    features: list[JsonObject],
+) -> list[_FeaturePropertyFieldMetadata]:
+    observed: dict[str, set[_PropertyValueType]] = {}
+    for feature in features:
+        properties = feature.get("properties")
+        if not isinstance(properties, dict):
+            continue
+        typed_properties = cast(dict[str, object], properties)
+        for field_name, value in typed_properties.items():
+            if not field_name or len(field_name) > 255:
+                continue
+            if value is None:
+                value_type: _PropertyValueType = "null"
+            elif isinstance(value, bool):
+                value_type = "boolean"
+            elif isinstance(value, int):
+                value_type = "integer"
+            elif isinstance(value, float):
+                value_type = "number"
+            elif isinstance(value, str):
+                value_type = "text"
+            else:
+                value_type = "unknown"
+            observed.setdefault(field_name, set()).add(value_type)
+    return [
+        _FeaturePropertyFieldMetadata(
+            id=field_name,
+            title=field_name,
+            value_type=(
+                next(iter(value_types))
+                if len(value_types) == 1
+                else "mixed"
+            ),
+        )
+        for field_name, value_types in observed.items()
+    ]
+
+
+def _verify_artifact_content(artifact: ArtifactObject, content: bytes) -> None:
+    if artifact.byte_size is not None and len(content) != artifact.byte_size:
+        raise ValueError(
+            f"Spatial artifact {artifact.id} contains {len(content)} bytes, "
+            f"expected {artifact.byte_size}"
+        )
+    if artifact.sha256 is not None:
+        observed_sha256 = sha256(content).hexdigest()
+        if observed_sha256 != artifact.sha256:
+            raise ValueError(
+                f"Spatial artifact {artifact.id} has SHA-256 "
+                f"{observed_sha256}, expected {artifact.sha256}"
+            )
+
+
+def _json_metadata(model: BaseModel) -> JsonObject:
+    return cast(JsonObject, model.model_dump(mode="json"))
+
+
+def _provenance(context: ArtifactWriteContext) -> JsonObject:
+    return {
+        input_name: [
+            {
+                "artifact_id": str(ref.artifact_id),
+                "artifact_type": ref.artifact_type,
+                "schema_version": ref.schema_version,
+            }
+            for ref in refs
+        ]
+        for input_name, refs in context.provenance.refs_by_input.items()
+    }
+
 
 @final
-class SpatialJsonOutputWriter(ArtifactOutputWriter):
+class FeatureCollectionOutputWriter(ArtifactOutputWriter):
+    artifact_type = GEO_FEATURE_COLLECTION.key
+
     def __init__(
         self,
         *,
-        artifact_type: ArtifactTypeKey,
-        model: type[BaseModel],
-        content_type: str,
         storage: FileStoragePort,
         uow: UnitOfWorkPort,
         bucket: str,
         storage_backend: str,
+        gdal: GdalCli | None = None,
     ) -> None:
-        self.artifact_type = artifact_type
-        self._model = model
-        self._content_type = content_type
         self._storage = storage
         self._uow = uow
         self._bucket = bucket
         self._storage_backend = storage_backend
+        self._gdal = gdal or GdalCli()
 
     @override
     async def write(
@@ -48,66 +170,134 @@ class SpatialJsonOutputWriter(ArtifactOutputWriter):
         value: object,
         context: ArtifactWriteContext,
     ) -> ArtifactRef:
-        payload = self._model.model_validate(value)
-        content = payload.model_dump_json().encode("utf-8")
-        content_hash = sha256(content).hexdigest()
-        storage_path = (
-            f"{self.artifact_type.id}/v{self.artifact_type.schema_version}/"
-            f"{content_hash}.json"
+        payload = GeoFeatureCollection.model_validate(value)
+        payload_json = cast(JsonObject, payload.model_dump(mode="json"))
+        logical_content = json.dumps(
+            payload_json,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        content_hash = sha256(logical_content).hexdigest()
+        property_fields = _feature_property_fields(payload.features)
+        manifest_metadata = _FeatureCollectionManifestMetadata(
+            source_name=payload.source_name,
+            bounds=payload.bounds,
+            property_fields=property_fields,
         )
-        metadata: FileMetadata = {
-            "artifact_kind": self.artifact_type.id,
-            "sha256": content_hash,
-        }
-        if context.node_context.node_id is not None:
-            metadata["job_id"] = context.node_context.node_id
-        try:
-            stored_file = await self._storage.save(
-                SaveFileCommand(
-                    bucket=self._bucket,
-                    path=storage_path,
-                    stream=BytesIO(content),
-                    content_type=self._content_type,
-                    metadata=metadata,
-                    allow_overwrite=True,
-                )
-            )
-        except Exception as exc:
-            node_id = context.node_context.node_id or "<unknown>"
-            raise RuntimeError(
-                f"Failed to persist {self.artifact_type.id} output for node "
-                f"{node_id!r} at {self._bucket}/{storage_path}"
-            ) from exc
+        stored = await save_json_collections(
+            self._storage,
+            bucket=self._bucket,
+            artifact_type=self.artifact_type,
+            collections=[JsonCollection(id="features", items=payload.features)],
+            metadata=_json_metadata(manifest_metadata),
+            node_id=context.node_context.node_id,
+        )
 
-        provenance: JsonObject = {
-            input_name: [
-                {
-                    "artifact_id": str(ref.artifact_id),
-                    "artifact_type": ref.artifact_type,
-                    "schema_version": ref.schema_version,
-                }
-                for ref in refs
-            ]
-            for input_name, refs in context.provenance.refs_by_input.items()
-        }
-        artifact_metadata: JsonObject = {
-            "producer_node_id": context.node_context.node_id,
-            "content_hash": content_hash,
-            "storage_byte_size": stored_file.byte_size,
-            "storage_sha256": stored_file.sha256,
-        }
+        vector_projection: VectorProjectionMetadata | None = None
+        if payload.bounds is not None:
+            with TemporaryDirectory(prefix="notarius-gis-vector-") as directory:
+                work_dir = Path(directory)
+                source_path = work_dir / "features.geojson"
+                projection_path = work_dir / "features.pmtiles"
+                source_path.write_text(
+                    json.dumps(
+                        {
+                            "type": "FeatureCollection",
+                            "features": payload.features,
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                    encoding="utf-8",
+                )
+                try:
+                    compilation = await to_thread(
+                        self._gdal.compile_geojson_to_pmtiles,
+                        source_path,
+                        projection_path,
+                        source_layer="features",
+                        min_zoom=0,
+                        max_zoom=14,
+                    )
+                except GdalError as exc:
+                    node_id = context.node_context.node_id or "<unknown>"
+                    raise RuntimeError(
+                        f"Failed to compile PMTiles for feature source "
+                        f"{payload.source_name!r} produced by node {node_id!r}"
+                    ) from exc
+                projection_content = projection_path.read_bytes()
+                projection_hash = sha256(projection_content).hexdigest()
+                projection_key = (
+                    f"{self.artifact_type.id}/v{self.artifact_type.schema_version}/"
+                    f"projections/pmtiles/{projection_hash}.pmtiles"
+                )
+                try:
+                    stored_projection = await self._storage.save(
+                        SaveFileCommand(
+                            bucket=self._bucket,
+                            path=projection_key,
+                            stream=BytesIO(projection_content),
+                            content_type="application/vnd.pmtiles",
+                            metadata={
+                                "artifact_kind": self.artifact_type.id,
+                                "source": "gdal-pmtiles-projection",
+                                "sha256": projection_hash,
+                            },
+                            allow_overwrite=True,
+                        )
+                    )
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Failed to persist PMTiles projection for feature source "
+                        f"{payload.source_name!r} at {self._bucket}/{projection_key}"
+                    ) from exc
+                vector_projection = VectorProjectionMetadata(
+                    bucket=stored_projection.bucket,
+                    object_key=stored_projection.path,
+                    byte_size=stored_projection.byte_size,
+                    sha256=stored_projection.sha256,
+                    min_zoom=compilation.min_zoom,
+                    max_zoom=compilation.max_zoom,
+                    source_layer=compilation.source_layer,
+                    bounds=payload.bounds,
+                    compiler=(f"{compilation.compiler} {compilation.compiler_version}"),
+                )
+
+        artifact_metadata: JsonObject = dict(context.metadata)
+        artifact_metadata.update(
+            {
+                "producer_node_id": context.node_context.node_id,
+                "content_hash": content_hash,
+                "storage_format": JSON_COLLECTIONS_STORAGE_FORMAT,
+                "source_name": payload.source_name,
+                "crs": payload.crs,
+                "feature_count": stored.total_items,
+                "property_fields": [
+                    _json_metadata(field) for field in property_fields
+                ],
+                "logical_byte_size": len(logical_content),
+                "storage_byte_size": stored.storage_byte_size,
+                "manifest_byte_size": stored.manifest_byte_size,
+                "manifest_sha256": stored.manifest_sha256,
+            }
+        )
+        if payload.bounds is not None:
+            artifact_metadata["bounds"] = list(payload.bounds)
+        if vector_projection is not None:
+            artifact_metadata["vector_projection"] = _json_metadata(vector_projection)
+        provenance = _provenance(context)
         if provenance:
             artifact_metadata["provenance"] = provenance
-        artifact_metadata.update(context.metadata)
         artifact = ArtifactObject(
             artifact_type=self.artifact_type.id,
             schema_version=self.artifact_type.schema_version,
-            content_type=self._content_type,
+            content_type="application/geo+json",
             storage_backend=self._storage_backend,
-            bucket=stored_file.bucket,
-            object_key=stored_file.path,
-            byte_size=stored_file.byte_size,
-            sha256=stored_file.sha256,
+            bucket=stored.bucket,
+            object_key=stored.manifest_path,
+            byte_size=len(logical_content),
+            sha256=content_hash,
             metadata=artifact_metadata,
         )
         async with self._uow as uow:
@@ -117,26 +307,24 @@ class SpatialJsonOutputWriter(ArtifactOutputWriter):
 
 
 @final
-class SpatialJsonResolver[T: BaseModel](Resolver[T]):
+class FeatureCollectionResolver(Resolver[GeoFeatureCollection]):
+    source = GEO_FEATURE_COLLECTION.key
+    target = cast(type[object], GeoFeatureCollection)
+
     def __init__(
         self,
         *,
-        source: ArtifactTypeKey,
-        target: type[T],
         uow: UnitOfWorkPort,
         storage: FileStoragePort,
     ) -> None:
-        self.source = source
-        self.target = cast(type[object], target)
-        self._model = target
         self._uow = uow
         self._storage = storage
 
     @override
-    async def resolve(self, ref: ArtifactRef) -> T:
+    async def resolve(self, ref: ArtifactRef) -> GeoFeatureCollection:
         if ref.key() != self.source:
             raise ArtifactContractError(
-                f"Spatial JSON resolver expected {self.source.id}@"
+                f"Feature collection resolver expected {self.source.id}@"
                 f"{self.source.schema_version}, got {ref.artifact_type}@"
                 f"{ref.schema_version} for {ref.artifact_id}"
             )
@@ -146,11 +334,291 @@ class SpatialJsonResolver[T: BaseModel](Resolver[T]):
             raise NotFoundError("Artifact", str(ref.artifact_id))
         if artifact.ref() != ref:
             raise ArtifactContractError(
-                f"Artifact repository returned a different artifact ref for {ref.artifact_id}"
+                f"Artifact repository returned a different artifact ref for "
+                f"{ref.artifact_id}"
             )
         if artifact.bucket is None or artifact.object_key is None:
             raise ArtifactContractError(
-                f"Artifact {ref.artifact_id} does not have a storage object"
+                f"Feature collection artifact {ref.artifact_id} has no storage object"
+            )
+        try:
+            if (
+                artifact.metadata.get("storage_format")
+                != JSON_COLLECTIONS_STORAGE_FORMAT
+            ):
+                raise ValueError(
+                    f"Feature collection artifact {artifact.id} uses unsupported "
+                    f"storage format {artifact.metadata.get('storage_format')!r}"
+                )
+            feature_count = artifact.metadata.get("feature_count")
+            if (
+                not isinstance(feature_count, int)
+                or isinstance(feature_count, bool)
+                or feature_count < 0
+            ):
+                raise ValueError(
+                    f"Feature collection artifact {artifact.id} has invalid "
+                    "feature_count metadata"
+                )
+            page = await load_json_collections_page(
+                artifact,
+                self._storage,
+                offset=0,
+                limit=max(1, feature_count),
+            )
+            metadata = _FeatureCollectionManifestMetadata.model_validate(page.metadata)
+            if len(page.collections) != 1 or page.collections[0].id != "features":
+                raise ValueError(
+                    "Geo feature collection manifest must contain one 'features' collection"
+                )
+            collection = page.collections[0]
+            if len(collection.items) != collection.total_items:
+                raise ValueError("Geo feature collection page is incomplete")
+            payload = GeoFeatureCollection(
+                features=collection.items,
+                source_name=metadata.source_name,
+                bounds=metadata.bounds,
+            )
+            logical_content = json.dumps(
+                cast(JsonObject, payload.model_dump(mode="json")),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            _verify_artifact_content(artifact, logical_content)
+            return payload
+        except (ArtifactContractError, ResolutionError):
+            raise
+        except Exception as exc:
+            raise ResolutionError(
+                f"Failed to resolve feature collection artifact {ref.artifact_id} from "
+                f"{artifact.bucket}/{artifact.object_key}"
+            ) from exc
+
+
+@final
+class RasterScanOutputWriter(ArtifactOutputWriter):
+    artifact_type = GEO_RASTER_SCAN.key
+
+    def __init__(
+        self,
+        *,
+        storage: FileStoragePort,
+        uow: UnitOfWorkPort,
+        bucket: str,
+        storage_backend: str,
+        gdal: GdalCli | None = None,
+    ) -> None:
+        self._storage = storage
+        self._uow = uow
+        self._bucket = bucket
+        self._storage_backend = storage_backend
+        self._gdal = gdal or GdalCli()
+
+    @override
+    async def write(
+        self,
+        value: object,
+        context: ArtifactWriteContext,
+    ) -> ArtifactRef:
+        payload = GeoRasterScan.model_validate(value)
+        with TemporaryDirectory(prefix="notarius-gis-raster-") as directory:
+            work_dir = Path(directory)
+            source_path = work_dir / "source.tif"
+            cog_path = work_dir / "source.cog.tif"
+            tiles_dir = work_dir / "tiles"
+            source_path.write_bytes(payload.content)
+            try:
+                cog = await to_thread(
+                    self._gdal.normalize_geotiff_to_cog,
+                    source_path,
+                    cog_path,
+                )
+            except GdalError as exc:
+                node_id = context.node_context.node_id or "<unknown>"
+                raise RuntimeError(
+                    f"Failed to validate and normalize GeoTIFF "
+                    f"{payload.filename!r} for raster source "
+                    f"{payload.source_name!r} produced by node {node_id!r}"
+                ) from exc
+            cog_content = cog_path.read_bytes()
+            cog_hash = sha256(cog_content).hexdigest()
+            try:
+                tile_projection = await to_thread(
+                    self._gdal.tile_raster_to_xyz,
+                    cog_path,
+                    tiles_dir,
+                )
+            except GdalError as exc:
+                node_id = context.node_context.node_id or "<unknown>"
+                raise RuntimeError(
+                    f"Failed to compile XYZ tiles for raster source "
+                    f"{payload.source_name!r} produced by node {node_id!r}"
+                ) from exc
+            tile_paths = sorted(tiles_dir.rglob("*.png"))
+            if not tile_paths:
+                raise RuntimeError(
+                    f"GDAL produced no non-blank XYZ tiles for raster "
+                    f"{payload.source_name!r}"
+                )
+            if (
+                cog.bounds_wgs84 is None
+                or cog.native_crs is None
+                or tile_projection.min_zoom is None
+                or tile_projection.max_zoom is None
+            ):
+                raise RuntimeError(
+                    f"GDAL could not derive complete georeferencing and zoom "
+                    f"metadata for raster {payload.source_name!r}"
+                )
+            if tile_projection.tile_count != len(tile_paths):
+                raise RuntimeError(
+                    f"GDAL reported {tile_projection.tile_count} XYZ tiles for raster "
+                    f"{payload.source_name!r}, found {len(tile_paths)}"
+                )
+
+            cog_key = (
+                f"{self.artifact_type.id}/v{self.artifact_type.schema_version}/"
+                f"{cog_hash}.tif"
+            )
+            try:
+                stored_cog = await self._storage.save(
+                    SaveFileCommand(
+                        bucket=self._bucket,
+                        path=cog_key,
+                        stream=BytesIO(cog_content),
+                        content_type=(
+                            "image/tiff; application=geotiff; profile=cloud-optimized"
+                        ),
+                        metadata={
+                            "original_filename": payload.filename,
+                            "artifact_kind": self.artifact_type.id,
+                            "source": "gdal-cog-normalization",
+                            "sha256": cog_hash,
+                        },
+                        allow_overwrite=True,
+                    )
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to persist canonical COG for raster "
+                    f"{payload.source_name!r} at {self._bucket}/{cog_key}"
+                ) from exc
+
+            tile_prefix = (
+                f"{self.artifact_type.id}/v{self.artifact_type.schema_version}/"
+                f"projections/{cog_hash}/xyz"
+            )
+            for tile_path in tile_paths:
+                relative_tile = tile_path.relative_to(tiles_dir).as_posix()
+                tile_key = f"{tile_prefix}/{relative_tile}"
+                tile_content = tile_path.read_bytes()
+                tile_hash = sha256(tile_content).hexdigest()
+                try:
+                    await self._storage.save(
+                        SaveFileCommand(
+                            bucket=self._bucket,
+                            path=tile_key,
+                            stream=BytesIO(tile_content),
+                            content_type="image/png",
+                            metadata={
+                                "artifact_kind": self.artifact_type.id,
+                                "source": "gdal-xyz-projection",
+                                "sha256": tile_hash,
+                            },
+                            allow_overwrite=True,
+                        )
+                    )
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Failed to persist XYZ tile for raster "
+                        f"{payload.source_name!r} at {self._bucket}/{tile_key}"
+                    ) from exc
+
+        raster_projection = RasterProjectionMetadata(
+            bucket=stored_cog.bucket,
+            prefix=tile_prefix,
+            min_zoom=tile_projection.min_zoom,
+            max_zoom=tile_projection.max_zoom,
+            bounds=cog.bounds_wgs84,
+            source_crs=cog.native_crs,
+            width=cog.width,
+            height=cog.height,
+            band_count=cog.bands,
+            compiler=(f"{tile_projection.compiler} {tile_projection.compiler_version}"),
+        )
+        artifact_metadata: JsonObject = dict(context.metadata)
+        artifact_metadata.update(
+            {
+                "producer_node_id": context.node_context.node_id,
+                "content_hash": stored_cog.sha256,
+                "source_name": payload.source_name,
+                "original_filename": payload.filename,
+                "bounds": list(cog.bounds_wgs84),
+                "source_crs": cog.native_crs,
+                "raster_projection": _json_metadata(raster_projection),
+            }
+        )
+        provenance = _provenance(context)
+        if provenance:
+            artifact_metadata["provenance"] = provenance
+        artifact = ArtifactObject(
+            artifact_type=self.artifact_type.id,
+            schema_version=self.artifact_type.schema_version,
+            content_type=("image/tiff; application=geotiff; profile=cloud-optimized"),
+            storage_backend=self._storage_backend,
+            bucket=stored_cog.bucket,
+            object_key=stored_cog.path,
+            byte_size=stored_cog.byte_size,
+            sha256=stored_cog.sha256,
+            metadata=artifact_metadata,
+        )
+        async with self._uow as uow:
+            await uow.artifacts.add(artifact)
+            await uow.commit()
+        return artifact.ref()
+
+
+@final
+class RasterScanResolver(Resolver[GeoRasterScan]):
+    source = GEO_RASTER_SCAN.key
+    target = cast(type[object], GeoRasterScan)
+
+    def __init__(
+        self,
+        *,
+        uow: UnitOfWorkPort,
+        storage: FileStoragePort,
+    ) -> None:
+        self._uow = uow
+        self._storage = storage
+
+    @override
+    async def resolve(self, ref: ArtifactRef) -> GeoRasterScan:
+        if ref.key() != self.source:
+            raise ArtifactContractError(
+                f"Raster scan resolver expected {self.source.id}@"
+                f"{self.source.schema_version}, got {ref.artifact_type}@"
+                f"{ref.schema_version} for {ref.artifact_id}"
+            )
+        async with self._uow as uow:
+            artifact = await uow.artifacts.get(ref.artifact_id)
+        if artifact is None:
+            raise NotFoundError("Artifact", str(ref.artifact_id))
+        if artifact.ref() != ref:
+            raise ArtifactContractError(
+                f"Artifact repository returned a different artifact ref for "
+                f"{ref.artifact_id}"
+            )
+        if artifact.bucket is None or artifact.object_key is None:
+            raise ArtifactContractError(
+                f"Raster scan artifact {ref.artifact_id} has no storage object"
+            )
+        source_name = artifact.metadata.get("source_name")
+        original_filename = artifact.metadata.get("original_filename")
+        if not isinstance(source_name, str) or not isinstance(original_filename, str):
+            raise ArtifactContractError(
+                f"Raster scan artifact {ref.artifact_id} lacks source name or filename"
             )
         try:
             stream = await self._storage.load(
@@ -161,9 +629,24 @@ class SpatialJsonResolver[T: BaseModel](Resolver[T]):
                 content = stream.read()
             finally:
                 stream.close()
-            return self._model.model_validate_json(content)
+            _verify_artifact_content(artifact, content)
+            return GeoRasterScan(
+                content=content,
+                filename=original_filename,
+                source_name=source_name,
+            )
+        except (ArtifactContractError, ResolutionError):
+            raise
         except Exception as exc:
             raise ResolutionError(
-                f"Failed to resolve spatial artifact {ref.artifact_id} from "
-                f"{artifact.bucket}/{artifact.object_key} as {self._model.__name__}"
+                f"Failed to resolve raster scan artifact {ref.artifact_id} from "
+                f"{artifact.bucket}/{artifact.object_key}"
             ) from exc
+
+
+__all__ = [
+    "FeatureCollectionOutputWriter",
+    "FeatureCollectionResolver",
+    "RasterScanOutputWriter",
+    "RasterScanResolver",
+]

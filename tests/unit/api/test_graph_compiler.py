@@ -16,15 +16,15 @@ from notarius_storage import LocalFileObjectStore
 
 from notarius_api.builtins import builtin_plugins
 from notarius_api.plugin_discovery import build_plugin_registry
-from notarius_api.schemas.workbench import (
+from notarius_api.v1.routes.executions.models import (
     ArtifactConversionRequest,
     PinnedOutputRequest,
     RunEdgeRequest,
     RunNodeRequest,
     RunRequest,
 )
-from notarius_api.services.execution.compiler import GraphCompiler
-from notarius_api.services.modules import GraphModuleCatalog
+from notarius_api.v1.routes.catalog.services import GraphModuleCatalog
+from notarius_api.v1.routes.executions.runtime.compiler import GraphCompiler
 
 
 class _UnusedModuleExecutor:

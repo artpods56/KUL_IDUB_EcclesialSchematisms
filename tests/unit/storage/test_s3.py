@@ -28,6 +28,7 @@ class _FakeS3Store:
         self.objects: dict[str, bytes] = {}
         self.attributes: dict[str, dict[str, str]] = {}
         self.put_modes: list[str] = []
+        self.range_requests: list[tuple[str, int, int]] = []
         self.instances.append(self)
 
     def put(
@@ -54,10 +55,24 @@ class _FakeS3Store:
         content = self.objects[path]
         return iter((content[:2], content[2:]))
 
-    def head(self, path: str) -> dict[str, str]:
+    def head(self, path: str) -> dict[str, object]:
         if path not in self.objects:
             raise FileNotFoundError(path)
-        return {"path": path}
+        return {
+            "path": path,
+            "size": len(self.objects[path]),
+            "e_tag": '"etag"',
+            "version": "version-1",
+        }
+
+    async def head_async(self, path: str) -> dict[str, object]:
+        return self.head(path)
+
+    async def get_range_async(self, path: str, *, start: int, end: int) -> bytes:
+        if path not in self.objects:
+            raise FileNotFoundError(path)
+        self.range_requests.append((path, start, end))
+        return self.objects[path][start:end]
 
     def delete(self, path: str) -> None:
         self.objects.pop(path, None)
@@ -153,6 +168,43 @@ async def test_s3_object_store_loads_moves_and_deletes(
     await storage.delete("artifacts", "runs/final.bin")
 
     assert len(fake_s3.instances) == 1
+
+
+@pytest.mark.asyncio
+async def test_s3_object_store_stats_and_loads_native_byte_range(
+    fake_s3: type[_FakeS3Store],
+) -> None:
+    storage = _storage()
+    await storage.save(_command(b"0123456789"))
+
+    info = await storage.stat("artifacts", "runs/output.bin")
+    content = await storage.load_range("artifacts", "runs/output.bin", 2, 7)
+
+    assert info is not None
+    assert info.bucket == "artifacts"
+    assert info.path == "runs/output.bin"
+    assert info.byte_size == 10
+    assert info.etag == '"etag"'
+    assert info.version_id == "version-1"
+    assert content == b"23456"
+    assert fake_s3.instances[0].range_requests == [("runs/output.bin", 2, 7)]
+
+
+@pytest.mark.asyncio
+async def test_s3_object_store_range_validation_and_missing_object_context(
+    fake_s3: type[_FakeS3Store],
+) -> None:
+    storage = _storage()
+
+    assert await storage.stat("artifacts", "runs/missing.bin") is None
+    assert await storage.load_range("artifacts", "runs/missing.bin", 3, 3) == b""
+
+    with pytest.raises(ValueError, match="nonnegative.*start=-1"):
+        await storage.load_range("artifacts", "runs/missing.bin", -1, 2)
+    with pytest.raises(ValueError, match="must not precede.*start=3"):
+        await storage.load_range("artifacts", "runs/missing.bin", 3, 2)
+    with pytest.raises(FileNotFoundError, match="artifacts/runs/missing.bin"):
+        await storage.load_range("artifacts", "runs/missing.bin", 0, 1)
 
 
 @pytest.mark.asyncio

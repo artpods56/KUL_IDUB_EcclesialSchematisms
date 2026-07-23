@@ -10,7 +10,7 @@ from notarius_core.operators.sequences import SEQUENCES
 from notarius_core.operators.images import IMAGES
 from notarius_core.operators.text import TEXT, TEXT_VALUE
 from notarius_core.plugins import PluginOrigin, PluginRegistry, PluginRuntimeContext
-from notarius_core.ports.storage import SaveFileCommand, StoredFile
+from notarius_core.ports.storage import SaveFileCommand, StoredFile, StoredObjectInfo
 from notarius_core.runtime.persistence import InlineModelOutputWriter
 from notarius_core.runtime.resolvers import InlineModelResolver
 from notarius_plugin_llm import LLM
@@ -38,6 +38,20 @@ class EmptyStorage:
 
     async def load(self, bucket: str, path: str) -> BytesIO:
         raise AssertionError(f"Unexpected load from {bucket}/{path}")
+
+    async def stat(self, bucket: str, path: str) -> StoredObjectInfo | None:
+        raise AssertionError(f"Unexpected stat for {bucket}/{path}")
+
+    async def load_range(
+        self,
+        bucket: str,
+        path: str,
+        start: int,
+        end_exclusive: int,
+    ) -> bytes:
+        raise AssertionError(
+            f"Unexpected range load from {bucket}/{path}: {start}:{end_exclusive}"
+        )
 
     async def delete(self, bucket: str, path: str) -> None:
         raise AssertionError(f"Unexpected delete from {bucket}/{path}")

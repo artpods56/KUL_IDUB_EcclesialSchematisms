@@ -68,6 +68,41 @@ unfinished executions as failed and assumes one owning API process; horizontal
 workers require an execution lease or heartbeat before they can safely share that
 recovery policy.
 
+### Live execution event
+
+A transient, user-visible observation emitted while one managed graph execution
+is active. The owning API process assigns every event a monotonic execution-local
+sequence and retains a bounded replay window so a browser can subscribe after the
+run starts or reconnect without silently missing recent progress. The stream
+carries lightweight execution and node lifecycle changes plus explicit progress
+reported by a node; the ordinary execution response remains the source of truth
+for terminal results and artifact outputs.
+
+Node progress is plain, bounded display text, not a diagnostic dump. A node may
+report a current and total count, but it must never include credentials, secret
+values, complete input payloads, or other sensitive runtime state. Progress
+publication is best-effort observation: a missing or slow subscriber never blocks,
+fails, or cancels the node. Live events are not persisted in saved-graph history.
+
+Node events carry an instance path whose first item is the visible node in the
+submitted top-level graph and whose remaining items identify nested module call
+sites and the emitting leaf node. This instance path is separate from the module
+definition path used for cycle detection and invocation caching. The distinction
+lets two nodes that invoke the same saved module revision aggregate their child
+events under the correct outer canvas node.
+
+Mapped node events also carry an invocation path: the ordered, zero-based item
+indices accumulated as execution enters mapped module instances. The separate
+local invocation index identifies the emitting node's own MAP item when it has
+one. Together they distinguish progress from nested mapped modules without
+encoding runtime item identity into the stable canvas node path.
+
+The current Server-Sent Events adapter and its replay window share the existing
+single-process execution ownership boundary. Supporting multiple API owners would
+also require shared execution state, event replay, cancellation routing, and an
+owner lease; adding more HTTP stream endpoints alone would not make execution
+multi-worker safe.
+
 ### Invocation cache entry
 
 A global, content-addressed reuse record for one node invocation. It is not a
@@ -127,6 +162,39 @@ the registry again. It validates and replays the stored keys in order, composes
 their pure callables in memory, and materializes only the final target-typed
 artifact.
 
+### Spatial artifact model
+
+Spatial sources and map presentation are separate artifact roles. A
+`geo.feature_collection@1` is an exact, canonical WGS84 vector dataset whose
+features may contain points, lines, polygons, multipolygons, or geometry
+collections. Its logical source is stored in bounded chunks; a content-addressed
+PMTiles sidecar is a derived rendering projection and never replaces the exact
+features. A `geo.raster_scan@1` is an exact georeferenced scan normalized to a
+Cloud Optimized GeoTIFF. Its browser-ready XYZ pyramid is likewise a derived
+projection, not another workflow artifact.
+
+A `geo.map_layer@1` is an inline, lightweight drawing recipe. It references one
+feature collection or raster scan, or declares one public remote WMS source, and
+owns visibility, zoom range, opacity, attribution, and vector or raster style.
+A `geo.map_document@1` contains only an ordered list of map-layer references, an
+optional basemap, and optional initial bounds. It never embeds source geometry,
+pixels, PMTiles, or XYZ tiles. The same exact source can therefore participate in
+several independently styled maps without data duplication.
+
+The artifact HTTP adapter resolves those references into one small immutable
+render descriptor. Vector archives are served through byte-range reads and
+raster requests load one stored XYZ tile; storage bucket names and object keys
+never cross the API boundary. Renderer controls are local preview overrides
+unless a workflow deliberately produces another map-layer artifact.
+
+Remote spatial services follow the same ownership split. WFS import takes a
+bounded snapshot and produces an exact feature collection. WMS remains a remote
+raster source referenced by a map layer and is fetched through the narrow image
+proxy. Spatial service URLs are public, credential-free HTTP(S) endpoints;
+secrets, arbitrary proxy targets, redirects, and browser-forwarded credentials
+are outside this contract. Attribution remains attached to the source and is
+carried into the renderer.
+
 ### Prompt message
 
 A provider-neutral conversation message containing a `system` or `user` role,
@@ -175,21 +243,26 @@ adapters.
 ### Node catalog
 
 The host's built-in catalog contains only broadly reusable operation families:
-Image, Sequence, Arithmetic, Text, Schema, and Prompt. A built-in artifact type
+Image, Sequence, Arithmetic, Text, Schema, Prompt, and Table. A built-in artifact type
 must have precise, producer-neutral meaning and be independently reusable. A
 built-in node must be broadly reusable, deterministic, dependency-light, and
 must not duplicate projection, conversion, mapping, or other edge/runtime behavior.
 Image owns the producer-neutral `image.raster@1` artifact, its storage writer,
-and deterministic import of staged image uploads.
+and deterministic import of staged image uploads. Table owns the producer-neutral
+`table.data@1` artifact: stable ordered columns with duplicate-friendly display
+titles, declared value types, and rectangular rows keyed by column id. SQL results
+embed this table and expose it through an explicit field projection; source-specific
+table interpretation remains with its producer.
 
 Sequence provides `Collect<T>`, Count, Slice, and Pick item; image- and
 text-specific collectors are not separate built-ins. Schema provides one
 recursive JSON Schema Builder, and Prompt provides deterministic prompt-message
 construction; provider-backed execution remains an optional external plugin.
-Tables are not a built-in family because the current table artifacts and
-extraction semantics belong to OCR. Installing optional entry-point plugins
-contributes remote or domain-specific nodes as external catalog entries. The
-catalog exposes the host-assigned origin and visually separates built-in
+OCR table fragments remain OCR-owned because deciding how Markdown rows become
+headers, columns, and inferred values is a source-specific normalization rather
+than a shape-preserving artifact conversion. Installing optional entry-point
+plugins contributes remote or domain-specific nodes as external catalog entries.
+The catalog exposes the host-assigned origin and visually separates built-in
 families from registered external plugins.
 
 ### Port
@@ -333,3 +406,19 @@ upstream node or run with dependencies. `Run with dependencies` is a separate
 action that expands the selection to its full upstream closure and executes that
 expanded graph. Pins and live running state remain transient; revision-scoped
 materialized outputs are restored when a saved graph is reopened.
+
+Every saved graph presented as a supported product workflow must be reproducible,
+inspectable, and editable through the production Workbench UI. MCP tools, HTTP
+APIs, scripts, and direct graph-document manipulation may automate only authoring
+operations that the UI itself exposes; they must not populate hidden
+configuration or create graph states that a user cannot subsequently maintain in
+the UI. Registry schemas and backend validation establish that a state is
+representable, not that it is product-authorable.
+
+When a node requires essential configuration that the generic JSON Schema form
+cannot render or edit, the dedicated Workbench interaction must be implemented
+before that configuration is used in a persisted workflow. End-to-end acceptance
+therefore includes creating or editing the workflow through the real UI, not only
+saving it through an API and executing it successfully. Any deliberate
+low-level-only exception requires explicit user approval and must be identified
+as unsupported or experimental rather than presented as a completed UI workflow.

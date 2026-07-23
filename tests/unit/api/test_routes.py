@@ -1,5 +1,6 @@
 import asyncio
-import base64
+from io import BytesIO
+import json
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
@@ -12,14 +13,32 @@ from notarius_persistence.database import create_database
 from notarius_persistence.orm import metadata
 
 from notarius_api.main import create_app
-from notarius_api.schemas.workbench import (
-    NodeRegistryResponse,
+from notarius_api.v1.routes.catalog.models import NodeRegistryResponse
+from notarius_api.v1.routes.executions.models import (
     RunExecutionResponse,
     RunResponse,
 )
-from notarius_api.services.uploads import ImageUploadService
+from notarius_api.v1.routes.uploads.services import ImageUploadService
 from notarius_api.settings import Settings
 from notarius_core.plugins import PluginOrigin
+
+
+def _parse_sse_events(body: str) -> list[dict[str, object]]:
+    events: list[dict[str, object]] = []
+    for frame in body.split("\n\n"):
+        fields: dict[str, str] = {}
+        for line in frame.splitlines():
+            if ": " not in line:
+                continue
+            name, value = line.split(": ", 1)
+            fields[name] = value
+        if "data" not in fields:
+            continue
+        data = cast(dict[str, object], json.loads(fields["data"]))
+        assert fields["id"] == str(data["sequence"])
+        assert fields["event"] == data["kind"]
+        events.append(data)
+    return events
 
 
 async def _prepare_database(database_url: str) -> None:
@@ -82,6 +101,7 @@ def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
         ("builtin.text", "Text"),
         ("builtin.schema", "Schema"),
         ("builtin.prompt", "Prompt"),
+        ("builtin.table", "Table"),
         ("graph.module", "Modules"),
     ]
     assert {plugin.origin for plugin in registry.plugins} == {
@@ -110,6 +130,9 @@ def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
         "text.join",
         "schema.builder",
         "prompt.message.create",
+        "table.file.import",
+        "table.text.normalize",
+        "table.fuzzy_match",
     }
     assert {
         (artifact_type.key.id, artifact_type.key.schema_version)
@@ -121,6 +144,7 @@ def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
         ("text.markdown", 1),
         ("json.schema", 1),
         ("prompt.message", 2),
+        ("table.data", 1),
     }
     assert [
         conversion.model_dump() for conversion in registry.artifact_conversions
@@ -256,9 +280,7 @@ def test_async_execution_routes_return_pollable_typed_state(
     assert polled.result is not None
     assert polled.result.status == "succeeded"
 
-    cancel_response = builtin_client.delete(
-        f"/v1/executions/{started.execution_id}"
-    )
+    cancel_response = builtin_client.delete(f"/v1/executions/{started.execution_id}")
     assert cancel_response.status_code == 200
     assert RunExecutionResponse.model_validate(cancel_response.json()).status == (
         "succeeded"
@@ -269,6 +291,90 @@ def test_async_execution_routes_return_pollable_typed_state(
     assert builtin_client.delete(f"/v1/executions/{missing_id}").status_code == 404
 
 
+def test_execution_event_stream_replays_ids_and_closes_after_terminal(
+    builtin_client: TestClient,
+) -> None:
+    started = builtin_client.post(
+        "/v1/executions",
+        json={"nodes": [], "edges": []},
+    ).json()
+    execution_id = started["execution_id"]
+
+    response = builtin_client.get(f"/v1/executions/{execution_id}/events")
+    events = _parse_sse_events(response.text)
+    replay_response = builtin_client.get(
+        f"/v1/executions/{execution_id}/events",
+        headers={"Last-Event-ID": "1"},
+    )
+    replayed = _parse_sse_events(replay_response.text)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["cache-control"] == "no-cache, no-transform"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert [event["sequence"] for event in events] == [1, 2, 3]
+    assert [event["status"] for event in events] == [
+        "queued",
+        "running",
+        "succeeded",
+    ]
+    assert all(event["execution_id"] == execution_id for event in events)
+    assert [event["sequence"] for event in replayed] == [2, 3]
+
+
+def test_execution_event_stream_validates_replay_and_missing_execution_ids(
+    builtin_client: TestClient,
+) -> None:
+    started = builtin_client.post(
+        "/v1/executions",
+        json={"nodes": [], "edges": []},
+    ).json()
+    execution_id = started["execution_id"]
+    missing_id = uuid4()
+
+    invalid_replay = builtin_client.get(
+        f"/v1/executions/{execution_id}/events",
+        headers={"Last-Event-ID": "not-a-sequence"},
+    )
+    oversized_replay = builtin_client.get(
+        f"/v1/executions/{execution_id}/events",
+        headers={"Last-Event-ID": "9" * 5_000},
+    )
+    missing = builtin_client.get(f"/v1/executions/{missing_id}/events")
+    malformed = builtin_client.get("/v1/executions/not-a-uuid/events")
+
+    assert invalid_replay.status_code == 422
+    assert invalid_replay.json()["detail"] == (
+        "Last-Event-ID must be a non-negative integer"
+    )
+    assert oversized_replay.status_code == 422
+    assert oversized_replay.json()["detail"] == (
+        "Last-Event-ID exceeds the supported sequence range"
+    )
+    assert missing.status_code == 404
+    assert malformed.status_code == 422
+
+
+def test_execution_request_rejects_oversized_node_ids(
+    builtin_client: TestClient,
+) -> None:
+    response = builtin_client.post(
+        "/v1/executions",
+        json={
+            "nodes": [
+                {
+                    "id": "x" * 256,
+                    "operator_id": "text.input",
+                    "operator_version": 1,
+                    "config": {"value": "hello"},
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+
+
 @pytest.mark.asyncio
 async def test_upload_from_relative_workspace_returns_opaque_upload_key(
     tmp_path: Path,
@@ -277,9 +383,9 @@ async def test_upload_from_relative_workspace_returns_opaque_upload_key(
     monkeypatch.chdir(tmp_path)
     service = ImageUploadService(Path("relative-workbench/uploads"))
 
-    item = await service.save_image_upload(
+    item = service.save_upload(
         "page.png",
-        base64.b64encode(b"image-bytes").decode("ascii"),
+        BytesIO(b"image-bytes"),
     )
 
     assert "/" not in item.upload_key
@@ -287,6 +393,27 @@ async def test_upload_from_relative_workspace_returns_opaque_upload_key(
     assert item.upload_key.endswith("-page.png")
     assert item.filename == "page.png"
     assert item.byte_size == len(b"image-bytes")
+
+
+def test_upload_endpoint_streams_an_opaque_file(
+    builtin_client: TestClient,
+) -> None:
+    response = builtin_client.post(
+        "/v1/uploads",
+        files={
+            "file": (
+                "historical-map.tif",
+                b"geotiff-bytes",
+                "image/tiff",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["filename"] == "historical-map.tif"
+    assert payload["byte_size"] == len(b"geotiff-bytes")
+    assert payload["upload_key"].endswith("-historical-map.tif")
 
 
 def test_image_upload_materializes_sample_images(

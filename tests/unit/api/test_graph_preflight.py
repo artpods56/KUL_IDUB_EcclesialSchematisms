@@ -25,18 +25,17 @@ from notarius_core.domain.saved_graphs import (
 from notarius_core.nodes import Node, NodeExecutionContext
 from notarius_core.plugins import NodeSecretInput, Plugin, PluginRegistry
 
-from notarius_api.schemas.workbench import (
+from notarius_api.v1.models import ArtifactTypeBindingModel, ArtifactTypeKeyResponse
+from notarius_api.v1.routes.executions.models import (
     ArtifactConversionRequest,
-    ArtifactTypeBindingModel,
-    ArtifactTypeKeyResponse,
     FieldProjectionRequest,
     RunEdgeRequest,
     RunInputPlugRequest,
     RunNodeRequest,
     RunRequest,
 )
-from notarius_api.services.execution.errors import GraphExecutionError
-from notarius_api.services.execution.preflight import GraphRunPreflight
+from notarius_api.v1.routes.executions.runtime.errors import GraphExecutionError
+from notarius_api.v1.routes.executions.runtime.preflight import GraphRunPreflight
 
 
 class SecretConfig(NodeConfig):

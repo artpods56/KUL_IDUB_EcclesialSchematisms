@@ -7,8 +7,8 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, ValidationError
 
-from notarius_api.schemas.workbench import (
-    NodeRegistryResponse,
+from notarius_api.v1.routes.catalog.models import NodeRegistryResponse
+from notarius_api.v1.routes.executions.models import (
     RunEdgeRequest,
     RunPortOutputResponse,
     RunResponse,
@@ -960,9 +960,7 @@ def test_test_compound_graph_projects_both_result_fields_into_multiply(
         "addition": 13,
         "subtraction": 5,
     }
-    compound_content = client.get(
-        f"/v1/artifacts/{compound.artifact_id}/content"
-    )
+    compound_content = client.get(f"/v1/artifacts/{compound.artifact_id}/content")
     assert compound_content.status_code == 200
     assert compound_content.json() == {"addition": 13, "subtraction": 5}
 
@@ -1624,8 +1622,7 @@ def test_missing_required_arithmetic_input_is_422_before_node_execution(
 
     assert response.status_code == 422
     assert response.json()["detail"] == (
-        "Node 'add' (arithmetic.add@1) required input "
-        "'right' has no incoming edge"
+        "Node 'add' (arithmetic.add@1) required input 'right' has no incoming edge"
     )
 
 

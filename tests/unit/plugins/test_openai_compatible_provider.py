@@ -15,7 +15,7 @@ from notarius_core.artifacts import (
 )
 from notarius_core.operators.images import RASTER_IMAGE
 from notarius_core.operators.prompts import PromptMessage, PromptMessageRole
-from notarius_core.ports.storage import SaveFileCommand, StoredFile
+from notarius_core.ports.storage import SaveFileCommand, StoredFile, StoredObjectInfo
 from notarius_plugin_llm.openai_compatible import (
     OpenAICompatibleConfig,
     OpenAICompatibleProviderError,
@@ -123,6 +123,27 @@ class FakeStorage:
 
     async def load(self, bucket: str, path: str) -> BytesIO:
         return BytesIO(self.files[(bucket, path)])
+
+    async def stat(self, bucket: str, path: str) -> StoredObjectInfo | None:
+        content = self.files.get((bucket, path))
+        if content is None:
+            return None
+        return StoredObjectInfo(
+            bucket=bucket,
+            path=path,
+            byte_size=len(content),
+            etag=None,
+            version_id=None,
+        )
+
+    async def load_range(
+        self,
+        bucket: str,
+        path: str,
+        start: int,
+        end_exclusive: int,
+    ) -> bytes:
+        return self.files[(bucket, path)][start:end_exclusive]
 
     async def delete(self, bucket: str, path: str) -> None:
         raise AssertionError(f"Unexpected delete from {bucket}/{path}")

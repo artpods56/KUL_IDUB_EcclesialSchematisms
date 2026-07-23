@@ -19,8 +19,6 @@ from notarius_core.artifacts import (
 )
 from notarius_core.nodes import (
     InPort,
-    Node,
-    NodeExecutionContext,
     OutPort,
 )
 from notarius_core.plugins import NodeCachePolicy, Plugin
@@ -71,25 +69,15 @@ class NumberOutput(NodeOutput):
     ]
 
 
-@ARITHMETIC.node(
+@ARITHMETIC.function_node(
     operator_id="arithmetic.number",
     version=1,
     title="Number",
     cache_policy=NodeCachePolicy.EXACT,
 )
-@final
-class NumberNode(Node[NumberConfig, NumberInput, NumberOutput]):
+async def number(config: NumberConfig, _inputs: NumberInput) -> NumberOutput:
     """Produces a configured integer value."""
-
-    @override
-    async def run(
-        self,
-        _context: NodeExecutionContext,
-        config: NumberConfig,
-        _inputs: NumberInput,
-        /,
-    ) -> NumberOutput:
-        return NumberOutput(value=config.value)
+    return NumberOutput(value=config.value)
 
 
 class IntegerSequenceConfig(NodeConfig):
@@ -115,29 +103,20 @@ class IntegerSequenceOutput(NodeOutput):
     ]
 
 
-@ARITHMETIC.node(
+@ARITHMETIC.function_node(
     operator_id="arithmetic.integer_sequence",
     version=1,
     title="Integer sequence",
     cache_policy=NodeCachePolicy.EXACT,
 )
-@final
-class IntegerSequenceNode(
-    Node[IntegerSequenceConfig, IntegerSequenceInput, IntegerSequenceOutput]
-):
+async def integer_sequence(
+    config: IntegerSequenceConfig,
+    _inputs: IntegerSequenceInput,
+) -> IntegerSequenceOutput:
     """Produces an ordered sequence of configured integer values."""
-
-    @override
-    async def run(
-        self,
-        _context: NodeExecutionContext,
-        config: IntegerSequenceConfig,
-        _inputs: IntegerSequenceInput,
-        /,
-    ) -> IntegerSequenceOutput:
-        return IntegerSequenceOutput(
-            values=[config.start + index * config.step for index in range(config.count)]
-        )
+    return IntegerSequenceOutput(
+        values=[config.start + index * config.step for index in range(config.count)]
+    )
 
 
 class BinaryIntegerInput(NodeInput):
@@ -161,67 +140,46 @@ class IntegerResultOutput(NodeOutput):
     ]
 
 
-@ARITHMETIC.node(
+@ARITHMETIC.function_node(
     operator_id="arithmetic.add",
     version=1,
     title="Add integers",
     cache_policy=NodeCachePolicy.EXACT,
 )
-@final
-class AddNode(Node[NoConfig, BinaryIntegerInput, IntegerResultOutput]):
+async def add_integers(
+    _config: NoConfig,
+    inputs: BinaryIntegerInput,
+) -> IntegerResultOutput:
     """Adds two integer inputs."""
-
-    @override
-    async def run(
-        self,
-        _context: NodeExecutionContext,
-        _config: NoConfig,
-        inputs: BinaryIntegerInput,
-        /,
-    ) -> IntegerResultOutput:
-        return IntegerResultOutput(result=inputs.left + inputs.right)
+    return IntegerResultOutput(result=inputs.left + inputs.right)
 
 
-@ARITHMETIC.node(
+@ARITHMETIC.function_node(
     operator_id="arithmetic.subtract",
     version=1,
     title="Subtract integers",
     cache_policy=NodeCachePolicy.EXACT,
 )
-@final
-class SubtractNode(Node[NoConfig, BinaryIntegerInput, IntegerResultOutput]):
+async def subtract_integers(
+    _config: NoConfig,
+    inputs: BinaryIntegerInput,
+) -> IntegerResultOutput:
     """Subtracts the right integer input from the left input."""
-
-    @override
-    async def run(
-        self,
-        _context: NodeExecutionContext,
-        _config: NoConfig,
-        inputs: BinaryIntegerInput,
-        /,
-    ) -> IntegerResultOutput:
-        return IntegerResultOutput(result=inputs.left - inputs.right)
+    return IntegerResultOutput(result=inputs.left - inputs.right)
 
 
-@ARITHMETIC.node(
+@ARITHMETIC.function_node(
     operator_id="arithmetic.multiply",
     version=1,
     title="Multiply",
     cache_policy=NodeCachePolicy.EXACT,
 )
-@final
-class MultiplyNode(Node[NoConfig, BinaryIntegerInput, IntegerResultOutput]):
+async def multiply_integers(
+    _config: NoConfig,
+    inputs: BinaryIntegerInput,
+) -> IntegerResultOutput:
     """Multiplies two integer inputs."""
-
-    @override
-    async def run(
-        self,
-        _context: NodeExecutionContext,
-        _config: NoConfig,
-        inputs: BinaryIntegerInput,
-        /,
-    ) -> IntegerResultOutput:
-        return IntegerResultOutput(result=inputs.left * inputs.right)
+    return IntegerResultOutput(result=inputs.left * inputs.right)
 
 
 class SumIntegersInput(NodeInput):
@@ -244,25 +202,18 @@ class SumIntegersOutput(NodeOutput):
     ]
 
 
-@ARITHMETIC.node(
+@ARITHMETIC.function_node(
     operator_id="arithmetic.sum",
     version=1,
     title="Sum integers",
     cache_policy=NodeCachePolicy.EXACT,
 )
-@final
-class SumIntegersNode(Node[NoConfig, SumIntegersInput, SumIntegersOutput]):
+async def sum_integers(
+    _config: NoConfig,
+    inputs: SumIntegersInput,
+) -> SumIntegersOutput:
     """Sums an ordered integer sequence into one integer value."""
-
-    @override
-    async def run(
-        self,
-        _context: NodeExecutionContext,
-        _config: NoConfig,
-        inputs: SumIntegersInput,
-        /,
-    ) -> SumIntegersOutput:
-        return SumIntegersOutput(result=sum(inputs.values))
+    return SumIntegersOutput(result=sum(inputs.values))
 
 
 @final

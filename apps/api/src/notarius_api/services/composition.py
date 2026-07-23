@@ -29,22 +29,30 @@ from notarius_core.runtime.persistence import (
 from notarius_core.runtime.resolvers import Resolver, ResolverRegistry
 from notarius_storage import LocalFileObjectStore
 
-from notarius_api.services.artifacts import ArtifactService
-from notarius_api.services.execution.compiler import GraphCompiler
-from notarius_api.services.execution.coordinator import GraphExecutionCoordinator
-from notarius_api.services.execution.edge_values import EdgeValueResolver
-from notarius_api.services.execution.inline import InlineExecutionEngine
-from notarius_api.services.execution.manager import RunExecutionManager
-from notarius_api.services.execution.node_execution import NodeExecutionService
-from notarius_api.services.execution.prefect import PrefectExecutionEngine
-from notarius_api.services.execution.preflight import GraphRunPreflight
-from notarius_api.services.execution.run_graph import RunGraph
-from notarius_api.services.execution_history import ExecutionHistoryService
-from notarius_api.services.invocation_cache import PersistentInvocationCache
-from notarius_api.services.materializations import MaterializationService
-from notarius_api.services.modules import GraphModuleCatalog
-from notarius_api.services.run_presenter import RunResultPresenter
-from notarius_api.services.uploads import ImageUploadService
+from notarius_api.v1.routes.artifacts.services import ArtifactService
+from notarius_api.v1.routes.catalog.services import GraphModuleCatalog
+from notarius_api.v1.routes.executions.runtime.compiler import GraphCompiler
+from notarius_api.v1.routes.executions.runtime.coordinator import (
+    GraphExecutionCoordinator,
+)
+from notarius_api.v1.routes.executions.runtime.edge_values import EdgeValueResolver
+from notarius_api.v1.routes.executions.runtime.inline import InlineExecutionEngine
+from notarius_api.v1.routes.executions.runtime.invocation_cache import (
+    PersistentInvocationCache,
+)
+from notarius_api.v1.routes.executions.runtime.manager import RunExecutionManager
+from notarius_api.v1.routes.executions.runtime.node_execution import (
+    NodeExecutionService,
+)
+from notarius_api.v1.routes.executions.runtime.prefect import PrefectExecutionEngine
+from notarius_api.v1.routes.executions.runtime.preflight import GraphRunPreflight
+from notarius_api.v1.routes.executions.runtime.run_graph import RunGraph
+from notarius_api.v1.routes.executions.services import (
+    ExecutionHistoryService,
+    MaterializationService,
+    RunResultPresenter,
+)
+from notarius_api.v1.routes.uploads.services import ImageUploadService
 
 
 _WORKBENCH_BUCKET = "workbench-artifacts"

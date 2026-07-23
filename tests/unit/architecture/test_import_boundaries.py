@@ -8,12 +8,15 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 FORBIDDEN_CORE_IMPORTS = (
     "aiosqlite",
     "alembic",
+    "asyncpg",
     "fastapi",
     "mistralai",
     "notarius_api",
     "notarius_persistence",
+    "notarius_plugin_gis",
     "notarius_plugin_llm",
     "notarius_plugin_ocr",
+    "notarius_plugin_sql",
     "notarius_storage",
     "sqlalchemy",
 )
@@ -24,10 +27,50 @@ FORBIDDEN_OCR_PLUGIN_IMPORTS = (
 FORBIDDEN_LLM_PLUGIN_IMPORTS = FORBIDDEN_OCR_PLUGIN_IMPORTS
 FORBIDDEN_API_PLUGIN_IMPORTS = (
     "mistralai",
+    "notarius_plugin_gis",
     "notarius_plugin_llm",
     "notarius_plugin_ocr",
+    "notarius_plugin_sql",
+)
+FORBIDDEN_MCP_IMPORTS = (
+    "notarius_api",
+    "notarius_core",
+    "notarius_persistence",
+    "notarius_plugin_gis",
+    "notarius_plugin_llm",
+    "notarius_plugin_ocr",
+    "notarius_plugin_sql",
+    "notarius_storage",
 )
 LEGACY_NAMESPACE = "proto" + "type"
+API_ROUTE_AREAS = (
+    "artifacts",
+    "catalog",
+    "executions",
+    "node_secrets",
+    "saved_graphs",
+    "uploads",
+)
+API_SERVICE_AREAS = (
+    "artifacts",
+    "catalog",
+    "executions",
+    "node_secrets",
+    "uploads",
+)
+
+
+def test_api_routes_are_organized_as_capability_slices() -> None:
+    routes_root = REPO_ROOT / "apps/api/src/notarius_api/v1/routes"
+
+    assert {path.name for path in routes_root.glob("*.py")} == {"__init__.py"}
+    for area in API_ROUTE_AREAS:
+        area_root = routes_root / area
+        assert area_root.is_dir()
+        for module in ("__init__.py", "dependencies.py", "models.py", "views.py"):
+            assert (area_root / module).is_file()
+    for area in API_SERVICE_AREAS:
+        assert (routes_root / area / "services.py").is_file()
 
 
 def test_mistral_sdk_dependency_is_owned_by_optional_plugins() -> None:
@@ -63,14 +106,21 @@ def test_mistral_sdk_dependency_is_owned_by_optional_plugins() -> None:
         for requirement in root_dependencies
     )
     assert not any(
+        requirement.startswith("notarius-plugin-sql")
+        for requirement in root_dependencies
+    )
+    assert not any(
         requirement.startswith("mistralai") for requirement in root_dependencies
     )
     assert root_extras["ocr"] == ["notarius-plugin-ocr"]
     assert root_extras["llm"] == ["notarius-plugin-llm"]
+    assert root_extras["sql"] == ["notarius-plugin-sql"]
 
     for dependencies in (api_dependencies, core_dependencies):
         assert not any(
-            requirement.startswith(("notarius-plugin-llm", "notarius-plugin-ocr"))
+            requirement.startswith(
+                ("notarius-plugin-llm", "notarius-plugin-ocr", "notarius-plugin-sql")
+            )
             for requirement in dependencies
         )
         assert not any(
@@ -133,8 +183,10 @@ def test_persistence_does_not_import_api_or_plugins() -> None:
         text = path.read_text()
         for forbidden in (
             "notarius_api",
+            "notarius_plugin_gis",
             "notarius_plugin_llm",
             "notarius_plugin_ocr",
+            "notarius_plugin_sql",
         ):
             if f"import {forbidden}" in text or f"from {forbidden}" in text:
                 offenders.append(f"{path.relative_to(REPO_ROOT)}: {forbidden}")
@@ -149,6 +201,19 @@ def test_api_host_does_not_import_optional_plugin_implementations() -> None:
     for path in api_root.rglob("*.py"):
         text = path.read_text()
         for forbidden in FORBIDDEN_API_PLUGIN_IMPORTS:
+            if f"import {forbidden}" in text or f"from {forbidden}" in text:
+                offenders.append(f"{path.relative_to(REPO_ROOT)}: {forbidden}")
+
+    assert offenders == []
+
+
+def test_mcp_depends_on_the_http_api_contract_not_internal_packages() -> None:
+    mcp_root = REPO_ROOT / "apps/mcp/src/notarius_mcp"
+    offenders: list[str] = []
+
+    for path in mcp_root.rglob("*.py"):
+        text = path.read_text()
+        for forbidden in FORBIDDEN_MCP_IMPORTS:
             if f"import {forbidden}" in text or f"from {forbidden}" in text:
                 offenders.append(f"{path.relative_to(REPO_ROOT)}: {forbidden}")
 
@@ -181,11 +246,25 @@ def test_llm_plugin_depends_on_core_ports_not_outer_layers() -> None:
     assert offenders == []
 
 
+def test_sql_plugin_depends_on_core_ports_not_outer_layers() -> None:
+    plugin_root = REPO_ROOT / "plugins/sql/src/notarius_plugin_sql"
+    offenders: list[str] = []
+
+    for path in plugin_root.rglob("*.py"):
+        text = path.read_text()
+        for forbidden in FORBIDDEN_LLM_PLUGIN_IMPORTS:
+            if f"import {forbidden}" in text or f"from {forbidden}" in text:
+                offenders.append(f"{path.relative_to(REPO_ROOT)}: {forbidden}")
+
+    assert offenders == []
+
+
 def test_retained_python_sources_do_not_use_legacy_namespace() -> None:
     source_roots = (
         REPO_ROOT / "libs/core/src/notarius_core",
         REPO_ROOT / "plugins/llm/src/notarius_plugin_llm",
         REPO_ROOT / "plugins/ocr/src/notarius_plugin_ocr",
+        REPO_ROOT / "plugins/sql/src/notarius_plugin_sql",
         REPO_ROOT / "apps/api/src/notarius_api",
     )
     offenders: list[str] = []

@@ -1,6 +1,18 @@
 from fastapi.testclient import TestClient
+from fastapi.routing import APIRoute
 
 from notarius_api.main import app
+
+
+def test_public_routes_are_registered_once() -> None:
+    operations = [
+        (method, route.path)
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path.startswith("/v1")
+        for method in route.methods
+    ]
+
+    assert len(operations) == len(set(operations))
 
 
 def test_openapi_contains_exact_public_routes() -> None:
@@ -8,8 +20,19 @@ def test_openapi_contains_exact_public_routes() -> None:
 
     assert set(schema["paths"]) == {
         "/v1/artifacts/{artifact_id}/content",
+        "/v1/artifacts/{artifact_id}/geo/query",
+        "/v1/artifacts/{artifact_id}/geo/render",
+        "/v1/artifacts/{artifact_id}/table/cell",
+        "/v1/artifacts/{artifact_id}/table/page",
+        "/v1/artifacts/{artifact_id}/table/query",
+        "/v1/artifacts/{artifact_id}/table/schema",
+        "/v1/artifacts/{source_id}/geo/features/{feature_index}",
+        "/v1/artifacts/{source_id}/geo/raster/tilejson.json",
+        "/v1/artifacts/{source_id}/geo/raster/{z}/{x}/{y}.png",
+        "/v1/artifacts/{source_id}/geo/vector.pmtiles",
         "/v1/executions",
         "/v1/executions/{execution_id}",
+        "/v1/executions/{execution_id}/events",
         "/v1/graphs",
         "/v1/graphs/{graph_id}",
         "/v1/graphs/{graph_id}/executions",
@@ -24,6 +47,31 @@ def test_openapi_contains_exact_public_routes() -> None:
     }
     assert set(schema["paths"]["/v1/graphs"]) == {"get", "post"}
     assert set(schema["paths"]["/v1/executions"]) == {"post"}
+    assert "GeoPageResponse" not in schema["components"]["schemas"]
+    geo_render_schema = schema["components"]["schemas"]["GeoRenderResponse"]
+    assert set(geo_render_schema["properties"]) == {
+        "artifact_id",
+        "kind",
+        "basemap",
+        "initial_bounds",
+        "layers",
+    }
+    assert geo_render_schema["properties"]["layers"]["items"] == {
+        "$ref": "#/components/schemas/GeoRenderLayerResponse"
+    }
+    raster_tilejson_schema = schema["components"]["schemas"][
+        "GeoRasterTileJsonResponse"
+    ]
+    assert set(raster_tilejson_schema["properties"]) == {
+        "tilejson",
+        "name",
+        "tiles",
+        "bounds",
+        "minzoom",
+        "maxzoom",
+        "attribution",
+        "scheme",
+    }
     assert set(schema["paths"]["/v1/executions/{execution_id}"]) == {
         "delete",
         "get",
@@ -51,12 +99,10 @@ def test_openapi_contains_exact_public_routes() -> None:
     }
     assert set(schema["paths"]["/v1/graphs/{graph_id}/materializations"]) == {"get"}
     assert set(schema["paths"]["/v1/graphs/{graph_id}/executions"]) == {"get"}
-    assert set(
-        schema["paths"]["/v1/graphs/{graph_id}/executions/{execution_id}"]
-    ) == {"get"}
-    history_summary = schema["components"]["schemas"][
-        "GraphExecutionSummaryResponse"
-    ]
+    assert set(schema["paths"]["/v1/graphs/{graph_id}/executions/{execution_id}"]) == {
+        "get"
+    }
+    history_summary = schema["components"]["schemas"]["GraphExecutionSummaryResponse"]
     assert set(history_summary["properties"]) == {
         "execution_id",
         "graph_id",

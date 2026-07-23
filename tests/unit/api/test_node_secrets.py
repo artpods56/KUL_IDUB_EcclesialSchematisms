@@ -26,20 +26,20 @@ from notarius_persistence.orm import metadata
 from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from notarius_api.main import create_app
-from notarius_api.schemas.workbench import RunNodeRequest, RunRequest
+from notarius_api.v1.routes.executions.models import RunNodeRequest, RunRequest
 from notarius_api.services.composition import (
     WorkbenchComponents,
     build_workbench_components,
 )
-from notarius_api.services.execution.errors import GraphExecutionError
-from notarius_api.services.node_secrets import (
+from notarius_api.v1.routes.executions.runtime.errors import GraphExecutionError
+from notarius_api.v1.routes.node_secrets.services import (
     NodeSecretConfigurationError,
     NodeSecretDeclarationError,
     NodeSecretService,
     NodeSecretValueError,
 )
 from notarius_api.settings import Settings
-from notarius_api.v1.routes.node_secrets import node_secret_service
+from notarius_api.v1.routes.node_secrets.dependencies import node_secret_service
 
 from tests.unit.api.conftest import install_workbench_dependency_overrides
 
@@ -344,6 +344,73 @@ async def test_unrelated_graph_edits_retain_and_resolve_secret(
     assert status.secrets[0].configured is True
     assert resolved.get_secret_value() == plaintext
     assert stored_count == 1
+
+
+@pytest.mark.asyncio
+async def test_unavailable_operator_keeps_secret_dormant_until_supported_again(
+    node_secret_setup: tuple[
+        Database,
+        NodeSecretService,
+        SavedGraphService,
+        PluginRegistry,
+    ],
+) -> None:
+    database, supported_secrets, supported_graphs, _ = node_secret_setup
+    graph = await _saved_secret_graph(supported_graphs)
+    await supported_secrets.configure(
+        graph_id=graph.id,
+        node_id="llm",
+        name="api_key",
+        value=SecretStr("dormant-provider-key"),
+        expected_graph_revision=graph.revision,
+    )
+    unavailable_registry = PluginRegistry()
+    unavailable_registry.freeze()
+    unavailable_graphs = SavedGraphService(
+        lambda: SqlAlchemyUnitOfWork(database.sessions),
+        unavailable_registry,
+    )
+    unavailable_secrets = NodeSecretService(
+        unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
+        plugin_registry=unavailable_registry,
+        encryption_key=_encryption_key(),
+    )
+
+    updated = await unavailable_graphs.replace(
+        graph.id,
+        name="Saved while plugin unavailable",
+        document=_secret_document(model="edited-while-dormant"),
+        expected_revision=graph.revision,
+    )
+
+    status = await unavailable_secrets.status(updated.id)
+    async with database.engine.connect() as connection:
+        stored_count = await connection.scalar(
+            text("SELECT COUNT(*) FROM node_secrets WHERE graph_id = :graph_id"),
+            {"graph_id": graph.id.hex},
+        )
+    assert status.secrets == ()
+    assert stored_count == 1
+    with pytest.raises(NodeSecretDeclarationError, match="unavailable operator"):
+        await unavailable_secrets.resolve_secret(
+            graph_id=updated.id,
+            graph_revision=updated.revision,
+            node_id="llm",
+            name="api_key",
+            dependencies={"base_url": "https://llm.example/v1"},
+        )
+
+    restored_status = await supported_secrets.status(updated.id)
+    restored = await supported_secrets.resolve_secret(
+        graph_id=updated.id,
+        graph_revision=updated.revision,
+        node_id="llm",
+        name="api_key",
+        dependencies={"base_url": "https://llm.example/v1"},
+    )
+
+    assert restored_status.secrets[0].configured is True
+    assert restored.get_secret_value() == "dormant-provider-key"
 
 
 @pytest.mark.asyncio

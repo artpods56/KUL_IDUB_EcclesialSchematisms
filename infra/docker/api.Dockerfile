@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS source
+FROM ghcr.io/astral-sh/uv:python3.12-trixie-slim AS source
 
 WORKDIR /app
 
@@ -8,7 +8,10 @@ COPY libs/persistence ./libs/persistence
 COPY libs/storage ./libs/storage
 COPY plugins/llm ./plugins/llm
 COPY plugins/ocr ./plugins/ocr
+COPY plugins/gis ./plugins/gis
+COPY plugins/sql ./plugins/sql
 COPY apps/api ./apps/api
+COPY apps/mcp ./apps/mcp
 COPY infra/db ./infra/db
 
 EXPOSE 8000
@@ -21,7 +24,12 @@ RUN uv sync --locked --no-dev --extra ocr
 
 FROM source AS api-plugins
 
-RUN uv sync --locked --no-dev --extra llm --extra ocr
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends gdal-bin \
+    && rm -rf /var/lib/apt/lists/*
+RUN ogrinfo --format PMTiles
+RUN gdal2tiles.py --version
+RUN uv sync --locked --no-dev --extra gis --extra llm --extra ocr --extra sql
 
 FROM source AS api
 

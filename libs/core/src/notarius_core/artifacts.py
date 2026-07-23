@@ -5,7 +5,17 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from types import TracebackType
-from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeAlias, final, override
+from typing import (
+    TYPE_CHECKING,
+    Literal,
+    Protocol,
+    Self,
+    TypeAlias,
+    final,
+    override,
+    Any,
+    Callable,
+)
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -28,6 +38,9 @@ if TYPE_CHECKING:
     from notarius_core.ports.materialized_outputs import (
         MaterializedNodeOutputsRepositoryPort,
     )
+    from notarius_core.plugins import PluginRuntimeContext
+    from notarius_core.runtime.persistence import ArtifactOutputWriter
+    from notarius_core.runtime.resolvers import Resolver
 
 JsonObject: TypeAlias = dict[str, object]
 MaterializedJsonType: TypeAlias = Literal["string", "integer"]
@@ -82,6 +95,11 @@ class ArtifactTypeSpec:
     field_projections: tuple[ArtifactFieldProjection, ...] = ()
     materialized_json_type: MaterializedJsonType | None = None
 
+@dataclass(frozen=True, slots=True)
+class Artifact:
+    spec: ArtifactTypeSpec
+    resolver: "Callable[[PluginRuntimeContext], Resolver[Any]]"
+    writer: "Callable[[PluginRuntimeContext], ArtifactOutputWriter]"
 
 class ArtifactRef(BaseModel):
     artifact_id: UUID

@@ -33,7 +33,7 @@ from notarius_core.plugins import Plugin
 
 from notarius_api.builtins import builtin_plugins
 from notarius_api.plugin_discovery import build_plugin_registry
-from notarius_api.schemas.workbench import (
+from notarius_api.v1.routes.executions.models import (
     RunEdgeRequest,
     RunNodeRequest,
     RunRequest,
@@ -139,9 +139,7 @@ class ControlledIntegerNode(
     title="Blocking integer",
 )
 @final
-class BlockingIntegerNode(
-    Node[NoConfig, BlockingIntegerInput, BlockingIntegerOutput]
-):
+class BlockingIntegerNode(Node[NoConfig, BlockingIntegerInput, BlockingIntegerOutput]):
     started: ClassVar[asyncio.Event | None] = None
     workflow_run_id: ClassVar[UUID | None] = None
 
@@ -439,8 +437,7 @@ async def test_prefect_execution_preserves_map_order_and_uses_prefect_run_ids(
     assert isinstance(mapped_output, ArtifactRefSequence)
     integer_resolver = IntegerValueResolver(uow=unit_of_work)
     assert [
-        await integer_resolver.resolve(item_ref)
-        for item_ref in mapped_output.item_refs
+        await integer_resolver.resolve(item_ref) for item_ref in mapped_output.item_refs
     ] == [21, 22, 23]
 
     once_invocations = [
@@ -454,9 +451,11 @@ async def test_prefect_execution_preserves_map_order_and_uses_prefect_run_ids(
         if invocation.node_id == "mapped"
     ]
     assert [invocation.invocation_index for invocation in once_invocations] == [None]
-    assert [
-        invocation.invocation_index for invocation in mapped_invocations
-    ] == [0, 1, 2]
+    assert [invocation.invocation_index for invocation in mapped_invocations] == [
+        0,
+        1,
+        2,
+    ]
     assert all(
         invocation.workflow_run_id == result.workflow_run_id
         for invocation in ControlledIntegerNode.invocations
@@ -559,17 +558,16 @@ async def test_failed_node_fails_prefect_flow_and_skips_downstream(
 
     assert result.status == "failed"
     assert {
-        node_result.node_id: node_result.status
-        for node_result in result.node_results
+        node_result.node_id: node_result.status for node_result in result.node_results
     } == {
         "left": "succeeded",
         "right": "succeeded",
         "failed": "failed",
         "downstream": "skipped",
     }
-    assert [
-        invocation.node_id for invocation in ControlledIntegerNode.invocations
-    ] == ["failed"]
+    assert [invocation.node_id for invocation in ControlledIntegerNode.invocations] == [
+        "failed"
+    ]
     failed_node_run_id = ControlledIntegerNode.invocations[0].node_run_id
 
     task_runs = await read_settled_task_runs(

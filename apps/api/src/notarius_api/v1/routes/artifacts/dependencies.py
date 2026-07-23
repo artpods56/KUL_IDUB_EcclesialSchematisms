@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
-from notarius_api.services.artifacts import ArtifactService
+from .services import ArtifactService
 
 
 def artifact_service(request: Request) -> ArtifactService:

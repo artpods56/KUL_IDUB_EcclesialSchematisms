@@ -3,7 +3,7 @@ from typing import cast
 
 from fastapi.testclient import TestClient
 
-from notarius_api.schemas.workbench import RunResponse
+from notarius_api.v1.routes.executions.models import RunResponse
 
 
 def test_schema_builders_compose_nested_objects_and_sequence_items_by_plug(
@@ -124,7 +124,9 @@ def test_schema_builders_compose_nested_objects_and_sequence_items_by_plug(
     result = RunResponse.model_validate(response.json())
     assert result.status == "succeeded"
     invoice_run = next(
-        node_run for node_run in result.node_runs if node_run.node_id == "invoice-schema"
+        node_run
+        for node_run in result.node_runs
+        if node_run.node_id == "invoice-schema"
     )
     schema_ref = invoice_run.outputs[0].artifacts[0]
     stored_payload = builtin_client.get(

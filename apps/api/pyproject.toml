@@ -9,6 +9,7 @@ requires-python = "==3.12.9"
 dependencies = [
     "cryptography>=45.0.0",
     "fastapi>=0.123.0",
+    "httpx>=0.28.0",
     "notarius-core",
     "notarius-persistence",
     "notarius-storage",
@@ -16,7 +17,9 @@ dependencies = [
     "prefect==3.6.21",
     "pydantic",
     "pydantic-settings>=2.12.0",
+    "python-multipart>=0.0.20",
     "starlette<1.0.0",
+    "truststore>=0.10.4",
     "uvicorn>=0.38.0",
 ]
 
@@ -24,6 +27,9 @@ dependencies = [
 notarius-core = { workspace = true }
 notarius-persistence = { workspace = true }
 notarius-storage = { workspace = true }
+
+[tool.basedpyright]
+extends = "../../pyproject.toml"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

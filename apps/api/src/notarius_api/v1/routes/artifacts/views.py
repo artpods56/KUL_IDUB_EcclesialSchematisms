@@ -1,14 +1,19 @@
-import json
-from typing import Annotated, Literal
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Path, Query, Request
 from fastapi.responses import Response
 
-from notarius_api.schemas.workbench import (
+from .models import (
+    GeoExactFeatureResponse,
+    GeoFeatureQueryRequest,
+    GeoFeatureQueryResponse,
+    GeoRasterTileJsonResponse,
+    GeoRenderResponse,
     TableCellResponse,
-    TableColumnResponse,
     TablePageResponse,
+    TableQueryRequest,
+    TableSchemaResponse,
     WorkbenchErrorResponse,
 )
 from notarius_api.services.errors import (
@@ -17,10 +22,245 @@ from notarius_api.services.errors import (
 )
 
 from .dependencies import ArtifactDependency
-from .models import table_cell_preview
+from .services import (
+    GeoRangeNotSatisfiableError,
+    IMMUTABLE_CACHE_CONTROL,
+)
 
 
 router = APIRouter(tags=["workbench"])
+
+
+@router.get(
+    "/artifacts/{artifact_id}/geo/render",
+    response_model=GeoRenderResponse,
+    responses={
+        400: {"model": WorkbenchErrorResponse, "description": "Invalid geo request"},
+        404: {"model": WorkbenchErrorResponse, "description": "Artifact not found"},
+        500: {
+            "model": WorkbenchErrorResponse,
+            "description": "Artifact content is unavailable",
+        },
+    },
+)
+async def get_geo_render_descriptor(
+    artifact_id: UUID,
+    service: ArtifactDependency,
+) -> GeoRenderResponse:
+    artifact = await service.get(artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    try:
+        return await service.load_geo_render(artifact)
+    except ArtifactContentUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except WorkbenchOperationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/artifacts/{artifact_id}/geo/query",
+    response_model=GeoFeatureQueryResponse,
+    responses={
+        400: {"model": WorkbenchErrorResponse, "description": "Invalid geo query"},
+        404: {"model": WorkbenchErrorResponse, "description": "Artifact not found"},
+        500: {
+            "model": WorkbenchErrorResponse,
+            "description": "Artifact content is unavailable",
+        },
+    },
+)
+async def query_geo_features(
+    artifact_id: UUID,
+    query: GeoFeatureQueryRequest,
+    service: ArtifactDependency,
+) -> GeoFeatureQueryResponse:
+    artifact = await service.get(artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    try:
+        return await service.query_geo_features(artifact, query.rows)
+    except ArtifactContentUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except WorkbenchOperationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
+    "/artifacts/{source_id}/geo/vector.pmtiles",
+    responses={
+        400: {"model": WorkbenchErrorResponse, "description": "Invalid vector source"},
+        404: {"model": WorkbenchErrorResponse, "description": "Artifact not found"},
+        416: {"description": "Requested byte range is not satisfiable"},
+        500: {
+            "model": WorkbenchErrorResponse,
+            "description": "Vector projection is unavailable",
+        },
+    },
+)
+async def get_geo_vector_pmtiles(
+    source_id: UUID,
+    service: ArtifactDependency,
+    range_header: Annotated[str | None, Header(alias="Range")] = None,
+) -> Response:
+    artifact = await service.get(source_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    try:
+        archive = await service.load_vector_archive(artifact, range_header)
+    except GeoRangeNotSatisfiableError as exc:
+        return Response(
+            status_code=416,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Range": f"bytes */{exc.total_size}",
+                "Content-Length": "0",
+                "ETag": exc.etag,
+                "Cache-Control": IMMUTABLE_CACHE_CONTROL,
+            },
+        )
+    except ArtifactContentUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except WorkbenchOperationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(len(archive.content)),
+        "ETag": archive.etag,
+        "Cache-Control": IMMUTABLE_CACHE_CONTROL,
+    }
+    if archive.status_code == 206:
+        headers["Content-Range"] = (
+            f"bytes {archive.start}-{archive.end_exclusive - 1}/{archive.total_size}"
+        )
+    return Response(
+        content=archive.content,
+        status_code=archive.status_code,
+        media_type=archive.content_type,
+        headers=headers,
+    )
+
+
+@router.get(
+    "/artifacts/{source_id}/geo/features/{feature_index}",
+    response_model=GeoExactFeatureResponse,
+    responses={
+        400: {"model": WorkbenchErrorResponse, "description": "Invalid vector source"},
+        404: {"model": WorkbenchErrorResponse, "description": "Feature not found"},
+        500: {
+            "model": WorkbenchErrorResponse,
+            "description": "Feature content is unavailable",
+        },
+    },
+)
+async def get_geo_exact_feature(
+    source_id: UUID,
+    service: ArtifactDependency,
+    feature_index: Annotated[int, Path(ge=0)],
+) -> GeoExactFeatureResponse:
+    artifact = await service.get(source_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    try:
+        feature = await service.load_exact_feature(artifact, feature_index)
+    except ArtifactContentUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except WorkbenchOperationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if feature is None:
+        raise HTTPException(status_code=404, detail="Feature not found")
+    return feature
+
+
+@router.get(
+    "/artifacts/{source_id}/geo/raster/tilejson.json",
+    response_model=GeoRasterTileJsonResponse,
+    responses={
+        400: {"model": WorkbenchErrorResponse, "description": "Invalid raster source"},
+        404: {"model": WorkbenchErrorResponse, "description": "Artifact not found"},
+        500: {
+            "model": WorkbenchErrorResponse,
+            "description": "Raster projection is unavailable",
+        },
+    },
+)
+async def get_geo_raster_tilejson(
+    source_id: UUID,
+    service: ArtifactDependency,
+    request: Request,
+) -> GeoRasterTileJsonResponse:
+    artifact = await service.get(source_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    try:
+        tilejson = await service.load_raster_tilejson(artifact)
+        return tilejson.model_copy(
+            update={
+                "tiles": [
+                    str(
+                        request.url_for(
+                            "get_geo_raster_tile",
+                            source_id=source_id,
+                            z="{z}",
+                            x="{x}",
+                            y="{y}",
+                        )
+                    )
+                ]
+            }
+        )
+    except ArtifactContentUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except WorkbenchOperationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not load raster TileJSON for artifact {source_id}",
+        ) from exc
+
+
+@router.get(
+    "/artifacts/{source_id}/geo/raster/{z}/{x}/{y}.png",
+    responses={
+        400: {"model": WorkbenchErrorResponse, "description": "Invalid raster source"},
+        404: {"model": WorkbenchErrorResponse, "description": "Raster tile not found"},
+        500: {
+            "model": WorkbenchErrorResponse,
+            "description": "Raster tile is unavailable",
+        },
+    },
+)
+async def get_geo_raster_tile(
+    source_id: UUID,
+    service: ArtifactDependency,
+    z: Annotated[int, Path(ge=0, le=24)],
+    x: Annotated[int, Path(ge=0)],
+    y: Annotated[int, Path(ge=0)],
+) -> Response:
+    artifact = await service.get(source_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    try:
+        tile = await service.load_raster_tile(artifact, z=z, x=x, y=y)
+    except ArtifactContentUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except WorkbenchOperationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if tile is None:
+        raise HTTPException(status_code=404, detail="Raster tile not found")
+    headers = {
+        "Content-Length": str(len(tile.content)),
+        "Cache-Control": "private, max-age=300",
+    }
+    if tile.etag is not None:
+        headers["ETag"] = tile.etag
+        headers["Cache-Control"] = IMMUTABLE_CACHE_CONTROL
+    return Response(
+        content=tile.content,
+        media_type=tile.content_type,
+        headers=headers,
+    )
 
 
 @router.get(
@@ -66,35 +306,97 @@ async def get_table_artifact_page(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except WorkbenchOperationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    effective_column_offset = min(column_offset, len(page.columns))
-    visible_columns = page.columns[
-        effective_column_offset : effective_column_offset + column_limit
-    ]
-    return TablePageResponse(
-        columns=[
-            TableColumnResponse(
-                id=column.id,
-                title=column.title,
-                value_type=column.value_type,
-            )
-            for column in visible_columns
-        ],
-        rows=[
-            {
-                column.id: table_cell_preview(
-                    row[column.id],
-                    max_cell_characters,
-                )
-                for column in visible_columns
-            }
-            for row in page.rows
-        ],
-        offset=page.offset,
+    return TablePageResponse.from_page(
+        page,
         limit=limit,
-        total_rows=page.total_rows,
-        column_offset=effective_column_offset,
+        column_offset=column_offset,
         column_limit=column_limit,
-        total_columns=len(page.columns),
+        max_cell_characters=max_cell_characters,
+    )
+
+
+@router.get(
+    "/artifacts/{artifact_id}/table/schema",
+    response_model=TableSchemaResponse,
+    responses={
+        400: {"model": WorkbenchErrorResponse, "description": "Invalid table request"},
+        404: {"model": WorkbenchErrorResponse, "description": "Artifact not found"},
+        500: {
+            "model": WorkbenchErrorResponse,
+            "description": "Artifact content is unavailable",
+        },
+    },
+)
+async def get_table_artifact_schema(
+    artifact_id: UUID,
+    service: ArtifactDependency,
+) -> TableSchemaResponse:
+    artifact = await service.get(artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    try:
+        page = await service.load_table_page(artifact, offset=0, limit=1)
+    except ArtifactContentUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except WorkbenchOperationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return TableSchemaResponse.from_page(page)
+
+
+@router.post(
+    "/artifacts/{artifact_id}/table/query",
+    response_model=TablePageResponse,
+    responses={
+        400: {"model": WorkbenchErrorResponse, "description": "Invalid table query"},
+        404: {"model": WorkbenchErrorResponse, "description": "Artifact not found"},
+        500: {
+            "model": WorkbenchErrorResponse,
+            "description": "Artifact content is unavailable",
+        },
+    },
+)
+async def query_table_artifact_page(
+    artifact_id: UUID,
+    query: TableQueryRequest,
+    service: ArtifactDependency,
+) -> TablePageResponse:
+    if (
+        query.limit
+        * query.column_limit
+        * query.max_cell_characters
+        > 2_000_000
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Requested table preview exceeds the 2,000,000-character "
+                "response budget; reduce limit, column_limit, or "
+                "max_cell_characters"
+            ),
+        )
+    artifact = await service.get(artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    try:
+        result = await service.load_table_query_page(
+            artifact,
+            filter_groups=query.filter_groups,
+            highlight_groups=query.highlight_groups,
+            offset=query.offset,
+            limit=query.limit,
+        )
+    except ArtifactContentUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except WorkbenchOperationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return TablePageResponse.from_page(
+        result.page,
+        limit=query.limit,
+        column_offset=query.column_offset,
+        column_limit=query.column_limit,
+        max_cell_characters=query.max_cell_characters,
+        row_indices=result.row_indices,
+        highlighted_row_indices=result.highlighted_row_indices,
     )
 
 
@@ -129,20 +431,10 @@ async def get_table_artifact_cell(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except WorkbenchOperationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if isinstance(value, int) and not isinstance(value, bool):
-        response_value: str | float | bool | None = str(value)
-        encoding: Literal["native", "integer", "json"] = "integer"
-    elif value is None or isinstance(value, str | float | bool):
-        response_value = value
-        encoding = "native"
-    else:
-        response_value = json.dumps(value, ensure_ascii=False, sort_keys=True)
-        encoding = "json"
-    return TableCellResponse(
+    return TableCellResponse.from_value(
         row_index=row_index,
         column_id=column_id,
-        value=response_value,
-        encoding=encoding,
+        value=value,
     )
 
 
@@ -180,7 +472,15 @@ async def get_artifact_content(
 
 __all__ = [
     "get_artifact_content",
+    "get_geo_exact_feature",
+    "get_geo_raster_tile",
+    "get_geo_raster_tilejson",
+    "get_geo_render_descriptor",
+    "get_geo_vector_pmtiles",
+    "query_geo_features",
     "get_table_artifact_cell",
     "get_table_artifact_page",
+    "get_table_artifact_schema",
+    "query_table_artifact_page",
     "router",
 ]

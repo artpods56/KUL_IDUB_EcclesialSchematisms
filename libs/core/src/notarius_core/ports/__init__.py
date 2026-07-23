@@ -4,6 +4,7 @@ from notarius_core.ports.storage import (
     FileStreamProtocol,
     SaveFileCommand,
     StoredFile,
+    StoredObjectInfo,
 )
 from notarius_core.ports.saved_graphs import (
     SavedGraphRepositoryPort,
@@ -43,5 +44,6 @@ __all__ = [
     "SavedGraphRepositoryPort",
     "SavedGraphUnitOfWorkPort",
     "StoredFile",
+    "StoredObjectInfo",
     "UnavailableNodeSecretResolver",
 ]

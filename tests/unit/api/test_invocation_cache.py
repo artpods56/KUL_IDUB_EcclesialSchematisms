@@ -1,11 +1,34 @@
+from io import BytesIO
 from pathlib import Path
 from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
 
-from notarius_core.artifacts import ArtifactObject, ArtifactRef, InMemoryUnitOfWork
+from notarius_core.artifact_collections import (
+    JSON_COLLECTIONS_STORAGE_FORMAT,
+    JsonCollection,
+    load_json_collections_manifest,
+    save_json_collections,
+)
+from notarius_core.artifacts import (
+    ArtifactObject,
+    ArtifactRef,
+    ArtifactTypeKey,
+    InMemoryUnitOfWork,
+)
 from notarius_core.domain.invocation_cache import InvocationCacheEntry
+from notarius_core.nodes import NodeExecutionContext
+from notarius_core.operators.tables import (
+    Table,
+    TableArtifactWriter,
+    TableColumn,
+    TableValueType,
+    load_table_manifest,
+)
+from notarius_core.runtime.materialization import MaterializationProvenance
+from notarius_core.runtime.persistence import ArtifactWriteContext
+from notarius_core.ports.storage import SaveFileCommand
 from notarius_persistence.database import create_database
 from notarius_persistence.orm import metadata
 from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
@@ -13,8 +36,8 @@ from notarius_storage import LocalFileObjectStore
 
 from notarius_api.builtins import builtin_plugins
 from notarius_api.plugin_discovery import build_plugin_registry
-from notarius_api.schemas.workbench import RunNodeRequest, RunRequest
-from notarius_api.services.invocation_cache import (
+from notarius_api.v1.routes.executions.models import RunNodeRequest, RunRequest
+from notarius_api.v1.routes.executions.runtime.invocation_cache import (
     InvocationCacheAccessError,
     PersistentInvocationCache,
 )
@@ -171,6 +194,122 @@ async def test_storage_outage_preserves_the_cache_entry(
         preserved = await entered.invocation_cache.get(entry.key_sha256)
     assert preserved is not None
     assert preserved.generation == entry.generation
+
+
+@pytest.mark.asyncio
+async def test_cache_evicts_a_table_with_a_missing_chunk(tmp_path: Path) -> None:
+    unit_of_work = InMemoryUnitOfWork()
+    storage = LocalFileObjectStore(tmp_path / "objects")
+    writer = TableArtifactWriter(
+        storage=storage,
+        uow=unit_of_work,
+        bucket="artifacts",
+        storage_backend="local",
+    )
+    ref = await writer.write(
+        Table(
+            columns=[
+                TableColumn(
+                    id="row",
+                    title="Row",
+                    value_type=TableValueType.INTEGER,
+                )
+            ],
+            rows=[{"row": index} for index in range(205)],
+        ),
+        ArtifactWriteContext(
+            node_context=NodeExecutionContext(node_id="table"),
+            provenance=MaterializationProvenance(refs_by_input={}),
+        ),
+    )
+    entry = InvocationCacheEntry(
+        key_sha256="e" * 64,
+        outputs={"table": ref},
+    )
+    async with unit_of_work as uow:
+        assert await uow.invocation_cache.put_if_absent(entry)
+        artifact = await uow.artifacts.get(ref.artifact_id)
+        await uow.commit()
+    assert artifact is not None
+    assert artifact.bucket is not None
+    manifest = await load_table_manifest(artifact, storage)
+    await storage.delete(artifact.bucket, manifest.chunks[1].object_key)
+
+    cache = PersistentInvocationCache(
+        unit_of_work=unit_of_work,
+        storage=storage,
+    )
+    assert await cache.get(entry.key_sha256) is None
+    async with unit_of_work as uow:
+        assert await uow.invocation_cache.get(entry.key_sha256) is None
+
+
+@pytest.mark.asyncio
+async def test_cache_evicts_a_json_collection_with_a_corrupt_chunk(
+    tmp_path: Path,
+) -> None:
+    unit_of_work = InMemoryUnitOfWork()
+    storage = LocalFileObjectStore(tmp_path / "objects")
+    artifact_type = ArtifactTypeKey(id="geo.feature_collection", schema_version=1)
+    stored = await save_json_collections(
+        storage,
+        bucket="artifacts",
+        artifact_type=artifact_type,
+        collections=[
+            JsonCollection(
+                id="features",
+                items=[{"type": "Feature", "id": index} for index in range(60)],
+            )
+        ],
+        metadata={
+            "kind": "geo.feature_collection",
+            "source_name": "Cached features",
+            "bounds": None,
+        },
+        node_id="features",
+    )
+    artifact = ArtifactObject(
+        artifact_type=artifact_type.id,
+        schema_version=artifact_type.schema_version,
+        content_type="application/geo+json",
+        storage_backend="local",
+        bucket=stored.bucket,
+        object_key=stored.manifest_path,
+        sha256="f" * 64,
+        metadata={
+            "storage_format": JSON_COLLECTIONS_STORAGE_FORMAT,
+            "manifest_byte_size": stored.manifest_byte_size,
+            "manifest_sha256": stored.manifest_sha256,
+        },
+    )
+    entry = InvocationCacheEntry(
+        key_sha256="1" * 64,
+        outputs={"features": artifact.ref()},
+    )
+    async with unit_of_work as uow:
+        await uow.artifacts.add(artifact)
+        assert await uow.invocation_cache.put_if_absent(entry)
+        await uow.commit()
+    manifest = await load_json_collections_manifest(artifact, storage)
+    chunk = manifest.collections[0].chunks[0]
+    await storage.save(
+        SaveFileCommand(
+            bucket=stored.bucket,
+            path=chunk.object_key,
+            stream=BytesIO(b"{}"),
+            content_type="application/json",
+            metadata={},
+            allow_overwrite=True,
+        )
+    )
+
+    cache = PersistentInvocationCache(
+        unit_of_work=unit_of_work,
+        storage=storage,
+    )
+    assert await cache.get(entry.key_sha256) is None
+    async with unit_of_work as uow:
+        assert await uow.invocation_cache.get(entry.key_sha256) is None
 
 
 @pytest.mark.asyncio

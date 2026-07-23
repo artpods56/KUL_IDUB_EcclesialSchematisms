@@ -22,14 +22,14 @@ from notarius_storage import create_file_storage
 from notarius_api.builtins import builtin_plugins
 from notarius_api.plugin_discovery import build_plugin_registry
 from notarius_api.services.composition import build_workbench_components
-from notarius_api.services.node_secrets import NodeSecretService
 from notarius_api.settings import Settings, get_settings
-from notarius_api.v1.routes.saved_graphs import router as saved_graphs_router
-from notarius_api.v1.routes.execution_history import (
-    router as execution_history_router,
-)
-from notarius_api.v1.routes.node_secrets import router as node_secrets_router
-from notarius_api.v1.routes.workbench import router as workbench_router
+from notarius_api.v1.routes.artifacts.views import router as artifacts_router
+from notarius_api.v1.routes.catalog.views import router as catalog_router
+from notarius_api.v1.routes.executions.views import router as executions_router
+from notarius_api.v1.routes.node_secrets.services import NodeSecretService
+from notarius_api.v1.routes.node_secrets.views import router as node_secrets_router
+from notarius_api.v1.routes.saved_graphs.views import router as saved_graphs_router
+from notarius_api.v1.routes.uploads.views import router as uploads_router
 
 
 class HealthResponse(BaseModel):
@@ -129,6 +129,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             yield
         finally:
             await components.execution_manager.shutdown()
+            await components.artifacts.close()
             del app.state.node_secrets
             del app.state.saved_graphs
             del app.state.artifacts
@@ -153,6 +154,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=[
+            "Accept-Ranges",
+            "Cache-Control",
+            "Content-Length",
+            "Content-Range",
+            "ETag",
+        ],
     )
     application.add_exception_handler(
         RequestValidationError,
@@ -166,9 +174,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         include_in_schema=False,
     )
     application.include_router(saved_graphs_router, prefix="/v1")
-    application.include_router(execution_history_router, prefix="/v1")
     application.include_router(node_secrets_router, prefix="/v1")
-    application.include_router(workbench_router, prefix="/v1")
+    application.include_router(catalog_router, prefix="/v1")
+    application.include_router(uploads_router, prefix="/v1")
+    application.include_router(executions_router, prefix="/v1")
+    application.include_router(artifacts_router, prefix="/v1")
     return application
 
 

@@ -5,6 +5,7 @@ from typing import Annotated, cast, final, override
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
 
 from notarius_core.artifacts import (
+    Artifact,
     ArtifactObject,
     ArtifactRef,
     ArtifactTypeKey,
@@ -18,7 +19,7 @@ from notarius_core.artifacts import (
 )
 from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
 from notarius_core.domain.errors import NotFoundError
-from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
+from notarius_core.nodes import InPort, OutPort
 from notarius_core.operators.arithmetic import INTEGER_VALUE
 from notarius_core.plugins import NodeCachePolicy, Plugin
 from notarius_core.runtime.persistence import (
@@ -84,7 +85,6 @@ TEXT = Plugin(
     title="Text",
 )
 TEXT.register_artifact_type(TEXT_VALUE)
-TEXT.register_artifact_type(MARKDOWN)
 TEXT.register_artifact_conversion(INTEGER_TO_TEXT)
 
 
@@ -107,25 +107,18 @@ class TextInputOutput(NodeOutput):
     ]
 
 
-@TEXT.node(
+@TEXT.function_node(
     operator_id="text.input",
     version=1,
     title="Text input",
     cache_policy=NodeCachePolicy.EXACT,
 )
-@final
-class TextInputNode(Node[TextInputConfig, TextInputInput, TextInputOutput]):
+async def text_input(config: TextInputConfig, _inputs: TextInputInput) -> TextInputOutput:
     """Produces one configured multiline text value."""
+    return TextInputOutput(text=config.text)
 
-    @override
-    async def run(
-        self,
-        _context: NodeExecutionContext,
-        config: TextInputConfig,
-        _inputs: TextInputInput,
-        /,
-    ) -> TextInputOutput:
-        return TextInputOutput(text=config.text)
+
+TextInputNode = TEXT.nodes[-1].node_class
 
 
 class AsMarkdownInput(NodeInput):
@@ -144,27 +137,21 @@ class AsMarkdownOutput(NodeOutput):
     ]
 
 
-@TEXT.node(
+@TEXT.function_node(
     operator_id="text.as_markdown",
     version=1,
     title="As Markdown",
     cache_policy=NodeCachePolicy.EXACT,
 )
-@final
-class AsMarkdownNode(Node[NoConfig, AsMarkdownInput, AsMarkdownOutput]):
+async def as_markdown(
+    _config: NoConfig,
+    inputs: AsMarkdownInput,
+) -> AsMarkdownOutput:
     """Marks text as Markdown without transforming its source."""
+    return AsMarkdownOutput(markdown=MarkdownValue(markdown=inputs.text))
 
-    @override
-    async def run(
-        self,
-        _context: NodeExecutionContext,
-        _config: NoConfig,
-        inputs: AsMarkdownInput,
-        /,
-    ) -> AsMarkdownOutput:
-        return AsMarkdownOutput(
-            markdown=MarkdownValue(markdown=inputs.text),
-        )
+
+AsMarkdownNode = TEXT.nodes[-1].node_class
 
 
 class SplitTextConfig(NodeConfig):
@@ -190,25 +177,18 @@ class SplitTextOutput(NodeOutput):
     ]
 
 
-@TEXT.node(
+@TEXT.function_node(
     operator_id="text.split",
     version=1,
     title="Split text",
     cache_policy=NodeCachePolicy.EXACT,
 )
-@final
-class SplitTextNode(Node[SplitTextConfig, SplitTextInput, SplitTextOutput]):
+async def split_text(config: SplitTextConfig, inputs: SplitTextInput) -> SplitTextOutput:
     """Splits text on an exact separator while preserving empty parts."""
+    return SplitTextOutput(parts=inputs.text.split(config.separator))
 
-    @override
-    async def run(
-        self,
-        _context: NodeExecutionContext,
-        config: SplitTextConfig,
-        inputs: SplitTextInput,
-        /,
-    ) -> SplitTextOutput:
-        return SplitTextOutput(parts=inputs.text.split(config.separator))
+
+SplitTextNode = TEXT.nodes[-1].node_class
 
 
 class ReplaceTextConfig(NodeConfig):
@@ -238,27 +218,23 @@ class ReplaceTextOutput(NodeOutput):
     ]
 
 
-@TEXT.node(
+@TEXT.function_node(
     operator_id="text.replace",
     version=1,
     title="Replace text",
     cache_policy=NodeCachePolicy.EXACT,
 )
-@final
-class ReplaceTextNode(Node[ReplaceTextConfig, ReplaceTextInput, ReplaceTextOutput]):
+async def replace_text(
+    config: ReplaceTextConfig,
+    inputs: ReplaceTextInput,
+) -> ReplaceTextOutput:
     """Replaces every exact occurrence of configured search text."""
+    return ReplaceTextOutput(
+        text=inputs.text.replace(config.search, config.replacement)
+    )
 
-    @override
-    async def run(
-        self,
-        _context: NodeExecutionContext,
-        config: ReplaceTextConfig,
-        inputs: ReplaceTextInput,
-        /,
-    ) -> ReplaceTextOutput:
-        return ReplaceTextOutput(
-            text=inputs.text.replace(config.search, config.replacement)
-        )
+
+ReplaceTextNode = TEXT.nodes[-1].node_class
 
 
 class JoinTextConfig(NodeConfig):
@@ -284,25 +260,18 @@ class JoinTextOutput(NodeOutput):
     ]
 
 
-@TEXT.node(
+@TEXT.function_node(
     operator_id="text.join",
     version=1,
     title="Join text",
     cache_policy=NodeCachePolicy.EXACT,
 )
-@final
-class JoinTextNode(Node[JoinTextConfig, JoinTextInput, JoinTextOutput]):
+async def join_text(config: JoinTextConfig, inputs: JoinTextInput) -> JoinTextOutput:
     """Joins an ordered text sequence with a configured separator."""
+    return JoinTextOutput(text=config.separator.join(inputs.parts))
 
-    @override
-    async def run(
-        self,
-        _context: NodeExecutionContext,
-        config: JoinTextConfig,
-        inputs: JoinTextInput,
-        /,
-    ) -> JoinTextOutput:
-        return JoinTextOutput(text=config.separator.join(inputs.parts))
+
+JoinTextNode = TEXT.nodes[-1].node_class
 
 
 @final
@@ -420,20 +389,18 @@ class TextValueResolver(Resolver[str]):
             raise ResolutionError(message) from exc
 
 
-TEXT.register_resolver(
-    lambda context: cast(
-        Resolver[object],
-        InlineModelResolver(
+TEXT.register(
+    Artifact(
+        spec=MARKDOWN,
+        resolver=lambda context: InlineModelResolver(
             source=MARKDOWN.key,
             target=MarkdownValue,
             uow=context.uow,
         ),
-    )
-)
-TEXT.register_writer(
-    lambda context: InlineModelOutputWriter(
-        artifact_type=MARKDOWN.key,
-        model=MarkdownValue,
-        uow=context.uow,
+        writer=lambda context: InlineModelOutputWriter(
+            artifact_type=MARKDOWN.key,
+            model=MarkdownValue,
+            uow=context.uow,
+        ),
     )
 )

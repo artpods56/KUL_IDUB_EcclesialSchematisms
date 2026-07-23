@@ -1,4 +1,5 @@
 from dataclasses import FrozenInstanceError
+from datetime import UTC, datetime
 from types import TracebackType
 from typing import Self
 from uuid import UUID
@@ -171,6 +172,23 @@ def _document(node_id: str = "draft-node") -> SavedGraphDocument:
     )
 
 
+def _encrypted_secret(graph_id: UUID) -> EncryptedNodeSecret:
+    now = datetime.now(UTC)
+    return EncryptedNodeSecret(
+        graph_id=graph_id,
+        node_id="draft-node",
+        name="api_key",
+        operator_id="example.operator",
+        operator_version=1,
+        key_id="test-key",
+        dependency_sha256="0" * 64,
+        nonce=b"n" * 12,
+        ciphertext=b"encrypted",
+        created_at=now,
+        updated_at=now,
+    )
+
+
 @pytest.mark.asyncio
 async def test_create_adds_graph_and_commits_once() -> None:
     factory = FakeSavedGraphUnitOfWorkFactory()
@@ -277,6 +295,75 @@ async def test_replace_updates_graph_and_commits_once() -> None:
     assert graph.revision == 2
     assert factory.created[-1].graphs.locked_revisions == [(graph.id, 1)]
     assert factory.created[-1].commit_count == 1
+
+
+@pytest.mark.asyncio
+async def test_replace_preserves_secret_for_unchanged_unavailable_operator() -> None:
+    factory = FakeSavedGraphUnitOfWorkFactory()
+    graph = SavedGraph(name="Dormant", document=_document())
+    secret = _encrypted_secret(graph.id)
+    factory.graphs[graph.id] = graph
+    factory.secrets[(graph.id, secret.node_id, secret.name)] = secret
+    service = SavedGraphService(factory, factory.plugin_registry)
+
+    await service.replace(
+        graph.id,
+        name="Still dormant",
+        document=_document(),
+        expected_revision=1,
+    )
+
+    assert factory.secrets == {(graph.id, secret.node_id, secret.name): secret}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        SavedGraphDocument(),
+        SavedGraphDocument(
+            nodes=(
+                SavedGraphNode(
+                    id="draft-node",
+                    operator_id="different.operator",
+                    operator_version=1,
+                    config={},
+                    position=GraphPoint(x=1.0, y=2.0),
+                ),
+            )
+        ),
+        SavedGraphDocument(
+            nodes=(
+                SavedGraphNode(
+                    id="draft-node",
+                    operator_id="example.operator",
+                    operator_version=2,
+                    config={},
+                    position=GraphPoint(x=1.0, y=2.0),
+                ),
+            )
+        ),
+    ],
+    ids=("node-removed", "operator-changed", "version-changed"),
+)
+async def test_replace_deletes_dormant_secret_when_node_identity_changes(
+    replacement: SavedGraphDocument,
+) -> None:
+    factory = FakeSavedGraphUnitOfWorkFactory()
+    graph = SavedGraph(name="Dormant", document=_document())
+    secret = _encrypted_secret(graph.id)
+    factory.graphs[graph.id] = graph
+    factory.secrets[(graph.id, secret.node_id, secret.name)] = secret
+    service = SavedGraphService(factory, factory.plugin_registry)
+
+    await service.replace(
+        graph.id,
+        name=graph.name,
+        document=replacement,
+        expected_revision=1,
+    )
+
+    assert factory.secrets == {}
 
 
 @pytest.mark.asyncio

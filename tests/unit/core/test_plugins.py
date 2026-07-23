@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated, cast, override
@@ -21,7 +22,12 @@ from notarius_core.conversions import (
     ArtifactConversionKey,
     conversion_runtime_types_are_compatible,
 )
-from notarius_core.nodes import InPort, Node, NodeExecutionContext
+from notarius_core.nodes import (
+    MAX_NODE_PROGRESS_COUNTER,
+    InPort,
+    Node,
+    NodeExecutionContext,
+)
 from notarius_core.plugins import (
     NodeCachePolicy,
     NodeSecretInput,
@@ -145,6 +151,56 @@ class ConcretePortNode(Node[NoConfig, ConcretePortInput, EmptyOutput]):
         return EmptyOutput()
 
 
+async def empty_function_node(
+    _config: NoConfig,
+    _inputs: EmptyInput,
+) -> EmptyOutput:
+    """Returns an empty output through the function API."""
+    return EmptyOutput()
+
+
+_context_function_calls: list[NodeExecutionContext] = []
+
+
+async def context_function_node(
+    context: NodeExecutionContext,
+    _config: NoConfig,
+    _inputs: EmptyInput,
+) -> EmptyOutput:
+    _context_function_calls.append(context)
+    return EmptyOutput()
+
+
+class RecordingProgressReporter:
+    def __init__(self) -> None:
+        self.reports: list[
+            tuple[NodeExecutionContext, str, int | None, int | None]
+        ] = []
+
+    async def report_progress(
+        self,
+        context: NodeExecutionContext,
+        message: str,
+        *,
+        current: int | None,
+        total: int | None,
+    ) -> None:
+        self.reports.append((context, message, current, total))
+
+
+class FailingProgressReporter:
+    async def report_progress(
+        self,
+        context: NodeExecutionContext,
+        message: str,
+        *,
+        current: int | None,
+        total: int | None,
+    ) -> None:
+        del context, message, current, total
+        raise RuntimeError("progress transport failed")
+
+
 class ProjectionCustomer(BaseModel):
     model_config = ConfigDict(title="Customer")
 
@@ -206,6 +262,109 @@ def test_node_decorator_records_exact_cache_policy() -> None:
     )(DefaultNode)
 
     assert plugin.nodes[0].cache_policy is NodeCachePolicy.EXACT
+
+
+@pytest.mark.asyncio
+async def test_function_node_registers_an_ordinary_runtime_node(tmp_path: Path) -> None:
+    plugin = Plugin(slug="example.functions", title="Function examples")
+
+    decorated = plugin.function_node(
+        operator_id="example.function",
+        version=1,
+        title="Function example",
+        cache_policy=NodeCachePolicy.EXACT,
+    )(empty_function_node)
+    registry = PluginRegistry()
+    registry.install(plugin)
+    registry.freeze()
+
+    registration = registry.node_registration("example.function", 1)
+    node = registry.build_node("example.function", 1, runtime_context(tmp_path))
+    result = await node.run(NodeExecutionContext(), NoConfig(), EmptyInput())
+
+    assert decorated is empty_function_node
+    assert registration.node_class.config_contract.model is NoConfig
+    assert registration.node_class.input_contract.model is EmptyInput
+    assert registration.node_class.output_contract.model is EmptyOutput
+    assert registration.description == (
+        "Returns an empty output through the function API."
+    )
+    assert registration.cache_policy is NodeCachePolicy.EXACT
+    assert result == EmptyOutput()
+
+
+@pytest.mark.asyncio
+async def test_function_node_can_opt_into_execution_context(tmp_path: Path) -> None:
+    _context_function_calls.clear()
+    plugin = Plugin(slug="example.context-functions", title="Context functions")
+    decorated = plugin.function_node(
+        operator_id="example.context-function",
+        version=1,
+        title="Context function",
+    )(context_function_node)
+    registry = PluginRegistry()
+    registry.install(plugin)
+    registry.freeze()
+    context = NodeExecutionContext(node_id="context-node")
+
+    node = registry.build_node(
+        "example.context-function",
+        1,
+        runtime_context(tmp_path),
+    )
+    result = await node.run(context, NoConfig(), EmptyInput())
+
+    assert decorated is context_function_node
+    assert result == EmptyOutput()
+    assert _context_function_calls == [context]
+
+
+@pytest.mark.asyncio
+async def test_node_context_progress_is_validated_and_survives_replacement() -> None:
+    reporter = RecordingProgressReporter()
+    context = NodeExecutionContext(
+        node_id="mapped-node",
+        node_path=("module-instance", "mapped-node"),
+        progress_reporter=reporter,
+    )
+    mapped_context = replace(context, invocation_index=2)
+
+    await NodeExecutionContext().progress("No reporter is a no-op")
+    await mapped_context.progress("  Preparing payload  ", current=2, total=4)
+    await mapped_context.progress(
+        "At the counter boundary",
+        current=MAX_NODE_PROGRESS_COUNTER,
+        total=MAX_NODE_PROGRESS_COUNTER,
+    )
+    await NodeExecutionContext(progress_reporter=FailingProgressReporter()).progress(
+        "Best effort"
+    )
+
+    assert reporter.reports == [
+        (mapped_context, "Preparing payload", 2, 4),
+        (
+            mapped_context,
+            "At the counter boundary",
+            MAX_NODE_PROGRESS_COUNTER,
+            MAX_NODE_PROGRESS_COUNTER,
+        ),
+    ]
+    with pytest.raises(ValueError, match="must not be blank"):
+        await context.progress("   ")
+    with pytest.raises(ValueError, match="must be at most 1000 characters"):
+        await context.progress("x" * 1_001)
+    with pytest.raises(ValueError, match="must not exceed total"):
+        await context.progress("Invalid count", current=5, total=4)
+    with pytest.raises(ValueError, match="current value must not exceed"):
+        await context.progress(
+            "Oversized current",
+            current=MAX_NODE_PROGRESS_COUNTER + 1,
+        )
+    with pytest.raises(ValueError, match="total value must not exceed"):
+        await context.progress(
+            "Oversized total",
+            total=MAX_NODE_PROGRESS_COUNTER + 1,
+        )
 
 
 def test_node_decorator_records_declared_secret_config_dependencies() -> None:

@@ -18,12 +18,12 @@ from notarius_persistence.unit_of_work import (
 from notarius_api.builtins import builtin_plugins
 from notarius_api.main import create_app
 from notarius_api.plugin_discovery import build_plugin_registry
-from notarius_api.schemas.execution_history import (
+from notarius_api.v1.routes.executions.models import (
     GraphExecutionDetailResponse,
     GraphExecutionListResponse,
+    RunExecutionResponse,
 )
-from notarius_api.schemas.saved_graphs import SavedGraphResponse
-from notarius_api.schemas.workbench import RunExecutionResponse
+from notarius_api.v1.routes.saved_graphs.models import SavedGraphResponse
 from notarius_api.settings import Settings
 
 
@@ -177,9 +177,7 @@ def test_saved_graph_execution_history_lists_filters_and_renders_artifacts(
         revision_two_response.json()
     )
     assert [item.execution_id for item in revision_two.items] == [second.execution_id]
-    all_revisions_response = builtin_client.get(
-        f"/v1/graphs/{graph.id}/executions"
-    )
+    all_revisions_response = builtin_client.get(f"/v1/graphs/{graph.id}/executions")
     assert {
         item.graph_revision
         for item in GraphExecutionListResponse.model_validate(
@@ -197,9 +195,7 @@ def test_saved_graph_execution_history_lists_filters_and_renders_artifacts(
         f"/v1/graphs/{graph.id}/executions",
         params={"limit": 1, "cursor": first_page.next_cursor},
     )
-    second_page = GraphExecutionListResponse.model_validate(
-        second_page_response.json()
-    )
+    second_page = GraphExecutionListResponse.model_validate(second_page_response.json())
     assert len(second_page.items) == 1
     assert second_page.items[0].execution_id != first_page.items[0].execution_id
 
@@ -249,9 +245,7 @@ def test_duplicate_saved_node_ids_become_a_browsable_failed_execution(
     assert start_response.status_code == 202
     execution = RunExecutionResponse.model_validate(start_response.json())
     for _ in range(100):
-        poll_response = builtin_client.get(
-            f"/v1/executions/{execution.execution_id}"
-        )
+        poll_response = builtin_client.get(f"/v1/executions/{execution.execution_id}")
         assert poll_response.status_code == 200
         execution = RunExecutionResponse.model_validate(poll_response.json())
         if execution.status == "failed":
@@ -317,9 +311,7 @@ def test_application_startup_marks_stale_active_execution_failed(
     )
 
     with TestClient(application) as client:
-        response = client.get(
-            f"/v1/graphs/{graph_id}/executions/{execution_id}"
-        )
+        response = client.get(f"/v1/graphs/{graph_id}/executions/{execution_id}")
 
     assert response.status_code == 200
     detail = GraphExecutionDetailResponse.model_validate(response.json())

@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
-from notarius_api.schemas.workbench import NodeRegistryResponse, RunResponse
+from notarius_api.v1.routes.catalog.models import NodeRegistryResponse
+from notarius_api.v1.routes.executions.models import RunResponse
 
 
 def test_registry_derives_nested_json_scalar_projections(
@@ -15,7 +16,9 @@ def test_registry_derives_nested_json_scalar_projections(
         for artifact_type in registry.artifact_types
         if artifact_type.key.id == "test.api_response"
     )
-    assert [projection.model_dump() for projection in api_response.field_projections] == [
+    assert [
+        projection.model_dump() for projection in api_response.field_projections
+    ] == [
         {
             "path": ["customer", "display_name"],
             "target_artifact_type": {

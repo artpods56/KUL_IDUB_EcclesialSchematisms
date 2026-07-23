@@ -35,17 +35,17 @@ from notarius_core.runtime.persistence import (
 from notarius_core.runtime.resolvers import Resolver, ResolverRegistry
 from notarius_storage import LocalFileObjectStore
 
-from notarius_api.schemas.workbench import (
+from notarius_api.v1.routes.executions.models import (
     ArtifactConversionRequest,
     FieldProjectionRequest,
     RunEdgeRequest,
     RunInputPlugRequest,
     RunNodeRequest,
 )
-from notarius_api.services.artifacts import ArtifactService
-from notarius_api.services.execution.edge_values import EdgeValueResolver
-from notarius_api.services.execution.errors import GraphExecutionError
-from notarius_api.services.execution.models import CompiledEdge, CompiledNode
+from notarius_api.v1.routes.artifacts.services import ArtifactService
+from notarius_api.v1.routes.executions.runtime.edge_values import EdgeValueResolver
+from notarius_api.v1.routes.executions.runtime.errors import GraphExecutionError
+from notarius_api.v1.routes.executions.runtime.models import CompiledEdge, CompiledNode
 
 
 SOURCE_RESPONSE = ArtifactTypeKey("test.edge_values.response", 1)

@@ -1,4 +1,4 @@
-from typing import Annotated, final, override
+from typing import Annotated
 
 from pydantic import Field, StrictInt
 
@@ -15,8 +15,6 @@ from notarius_core.artifacts import (
 from notarius_core.nodes import (
     ArtifactTypeVariable,
     InPort,
-    Node,
-    NodeExecutionContext,
     OutPort,
 )
 from notarius_core.operators.arithmetic import INTEGER_VALUE
@@ -55,81 +53,77 @@ class CollectOutput(NodeOutput):
     ]
 
 
-@SEQUENCES.node(
+@SEQUENCES.function_node(
     operator_id="sequence.collect",
     version=1,
     title="Collect",
     cache_policy=NodeCachePolicy.EXACT,
 )
-@final
-class CollectNode(Node[NoConfig, CollectInput, CollectOutput]):
+async def collect(
+    _config: NoConfig,
+    inputs: CollectInput,
+) -> CollectOutput:
     """Collects homogeneous artifact refs without rewriting their payloads."""
-
-    @override
-    async def run(
-        self,
-        _context: NodeExecutionContext,
-        _config: NoConfig,
-        inputs: CollectInput,
-        /,
-    ) -> CollectOutput:
-        first = inputs.items[0]
-        if isinstance(first, ArtifactRef):
-            artifact_type = first.key()
-        else:
-            artifact_type = ArtifactTypeKey(
-                first.artifact_type,
-                first.schema_version,
-            )
-
-        item_refs: list[ArtifactRef] = []
-        collect_segments: list[JsonObject] = []
-        ordered = True
-        for input_index, source in enumerate(inputs.items):
-            if isinstance(source, ArtifactRef):
-                source_type = source.key()
-            else:
-                source_type = ArtifactTypeKey(
-                    source.artifact_type,
-                    source.schema_version,
-                )
-            if source_type != artifact_type:
-                raise ValueError(
-                    "Collect inputs must share one artifact type; expected "
-                    f"{artifact_type.id}@{artifact_type.schema_version}, got "
-                    f"{source_type.id}@{source_type.schema_version} at input "
-                    f"{input_index}"
-                )
-
-            start_index = len(item_refs)
-            if isinstance(source, ArtifactRef):
-                item_refs.append(source)
-                item_count = 1
-                source_kind = "single"
-            else:
-                item_refs.extend(source.item_refs)
-                item_count = len(source.item_refs)
-                source_kind = "sequence"
-                if not source.ordered:
-                    ordered = False
-            collect_segments.append(
-                {
-                    "input_index": input_index,
-                    "start_index": start_index,
-                    "item_count": item_count,
-                    "source_kind": source_kind,
-                }
-            )
-
-        return CollectOutput(
-            items=ArtifactRefSequence(
-                artifact_type=artifact_type.id,
-                schema_version=artifact_type.schema_version,
-                item_refs=item_refs,
-                ordered=ordered,
-                metadata={"collect_segments": collect_segments},
-            )
+    first = inputs.items[0]
+    if isinstance(first, ArtifactRef):
+        artifact_type = first.key()
+    else:
+        artifact_type = ArtifactTypeKey(
+            first.artifact_type,
+            first.schema_version,
         )
+
+    item_refs: list[ArtifactRef] = []
+    collect_segments: list[JsonObject] = []
+    ordered = True
+    for input_index, source in enumerate(inputs.items):
+        if isinstance(source, ArtifactRef):
+            source_type = source.key()
+        else:
+            source_type = ArtifactTypeKey(
+                source.artifact_type,
+                source.schema_version,
+            )
+        if source_type != artifact_type:
+            raise ValueError(
+                "Collect inputs must share one artifact type; expected "
+                f"{artifact_type.id}@{artifact_type.schema_version}, got "
+                f"{source_type.id}@{source_type.schema_version} at input "
+                f"{input_index}"
+            )
+
+        start_index = len(item_refs)
+        if isinstance(source, ArtifactRef):
+            item_refs.append(source)
+            item_count = 1
+            source_kind = "single"
+        else:
+            item_refs.extend(source.item_refs)
+            item_count = len(source.item_refs)
+            source_kind = "sequence"
+            if not source.ordered:
+                ordered = False
+        collect_segments.append(
+            {
+                "input_index": input_index,
+                "start_index": start_index,
+                "item_count": item_count,
+                "source_kind": source_kind,
+            }
+        )
+
+    return CollectOutput(
+        items=ArtifactRefSequence(
+            artifact_type=artifact_type.id,
+            schema_version=artifact_type.schema_version,
+            item_refs=item_refs,
+            ordered=ordered,
+            metadata={"collect_segments": collect_segments},
+        )
+    )
+
+
+CollectNode = SEQUENCES.nodes[-1].node_class
 
 
 class CountInput(NodeInput):
@@ -148,25 +142,18 @@ class CountOutput(NodeOutput):
     ]
 
 
-@SEQUENCES.node(
+@SEQUENCES.function_node(
     operator_id="sequence.count",
     version=1,
     title="Count",
     cache_policy=NodeCachePolicy.EXACT,
 )
-@final
-class CountNode(Node[NoConfig, CountInput, CountOutput]):
+async def count(_config: NoConfig, inputs: CountInput) -> CountOutput:
     """Counts the refs in an artifact sequence."""
+    return CountOutput(count=len(inputs.items.item_refs))
 
-    @override
-    async def run(
-        self,
-        _context: NodeExecutionContext,
-        _config: NoConfig,
-        inputs: CountInput,
-        /,
-    ) -> CountOutput:
-        return CountOutput(count=len(inputs.items.item_refs))
+
+CountNode = SEQUENCES.nodes[-1].node_class
 
 
 class SliceConfig(NodeConfig):
@@ -198,43 +185,36 @@ class SliceOutput(NodeOutput):
     ]
 
 
-@SEQUENCES.node(
+@SEQUENCES.function_node(
     operator_id="sequence.slice",
     version=1,
     title="Slice",
     cache_policy=NodeCachePolicy.EXACT,
 )
-@final
-class SliceNode(Node[SliceConfig, SliceInput, SliceOutput]):
+async def slice_sequence(config: SliceConfig, inputs: SliceInput) -> SliceOutput:
     """Selects a contiguous range from an ordered artifact sequence."""
+    source = inputs.items
+    if not source.ordered:
+        raise ValueError(f"Cannot slice unordered sequence {source.sequence_id}")
 
-    @override
-    async def run(
-        self,
-        _context: NodeExecutionContext,
-        config: SliceConfig,
-        inputs: SliceInput,
-        /,
-    ) -> SliceOutput:
-        source = inputs.items
-        if not source.ordered:
-            raise ValueError(f"Cannot slice unordered sequence {source.sequence_id}")
-
-        stop = None if config.count is None else config.start + config.count
-        return SliceOutput(
-            items=ArtifactRefSequence(
-                artifact_type=source.artifact_type,
-                schema_version=source.schema_version,
-                item_refs=source.item_refs[config.start : stop],
-                ordered=True,
-                index_key=source.index_key,
-                metadata={
-                    "source_sequence_id": str(source.sequence_id),
-                    "start": config.start,
-                    "count": config.count,
-                },
-            )
+    stop = None if config.count is None else config.start + config.count
+    return SliceOutput(
+        items=ArtifactRefSequence(
+            artifact_type=source.artifact_type,
+            schema_version=source.schema_version,
+            item_refs=source.item_refs[config.start : stop],
+            ordered=True,
+            index_key=source.index_key,
+            metadata={
+                "source_sequence_id": str(source.sequence_id),
+                "start": config.start,
+                "count": config.count,
+            },
         )
+    )
+
+
+SliceNode = SEQUENCES.nodes[-1].node_class
 
 
 class ItemAtConfig(NodeConfig):
@@ -261,34 +241,27 @@ class ItemAtOutput(NodeOutput):
     ]
 
 
-@SEQUENCES.node(
+@SEQUENCES.function_node(
     operator_id="sequence.item_at",
     version=1,
     title="Pick item",
     cache_policy=NodeCachePolicy.EXACT,
 )
-@final
-class ItemAtNode(Node[ItemAtConfig, ItemAtInput, ItemAtOutput]):
+async def item_at(config: ItemAtConfig, inputs: ItemAtInput) -> ItemAtOutput:
     """Picks one artifact ref from an ordered artifact sequence."""
+    source = inputs.items
+    if not source.ordered:
+        raise ValueError(
+            f"Cannot pick an item from unordered sequence {source.sequence_id}"
+        )
 
-    @override
-    async def run(
-        self,
-        _context: NodeExecutionContext,
-        config: ItemAtConfig,
-        inputs: ItemAtInput,
-        /,
-    ) -> ItemAtOutput:
-        source = inputs.items
-        if not source.ordered:
-            raise ValueError(
-                f"Cannot pick an item from unordered sequence {source.sequence_id}"
-            )
+    length = len(source.item_refs)
+    if config.index >= length:
+        raise ValueError(
+            f"Cannot pick index {config.index} from sequence "
+            f"{source.sequence_id} with length {length}"
+        )
+    return ItemAtOutput(item=source.item_refs[config.index])
 
-        length = len(source.item_refs)
-        if config.index >= length:
-            raise ValueError(
-                f"Cannot pick index {config.index} from sequence "
-                f"{source.sequence_id} with length {length}"
-            )
-        return ItemAtOutput(item=source.item_refs[config.index])
+
+ItemAtNode = SEQUENCES.nodes[-1].node_class

@@ -1,6 +1,6 @@
 import re
 from collections.abc import Sequence
-from typing import Annotated, override
+from typing import Annotated
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -10,7 +10,7 @@ from notarius_core.artifacts import (
     NodeInput,
     NodeOutput,
 )
-from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
+from notarius_core.nodes import InPort, OutPort
 
 from notarius_plugin_ocr.artifacts import MISTRAL_OCR_RESPONSE, TABLE_FRAGMENT
 from notarius_plugin_ocr.declaration import OCR
@@ -163,24 +163,16 @@ class ExtractTableFragmentsOutput(NodeOutput):
     ]
 
 
-@OCR.node(
+@OCR.function_node(
     operator_id="table.markdown.extract",
     version=1,
     title="Extract Markdown Tables",
 )
-class ExtractTableFragmentsNode(
-    Node[NoConfig, ExtractTableFragmentsInput, ExtractTableFragmentsOutput]
-):
+async def extract_markdown_tables(
+    _config: NoConfig,
+    inputs: ExtractTableFragmentsInput,
+) -> ExtractTableFragmentsOutput:
     """Extracts provider tables with page-Markdown fallback."""
-
-    @override
-    async def run(
-        self,
-        _context: NodeExecutionContext,
-        _config: NoConfig,
-        inputs: ExtractTableFragmentsInput,
-        /,
-    ) -> ExtractTableFragmentsOutput:
-        return ExtractTableFragmentsOutput(
-            fragments=extract_table_fragments(inputs.responses)
-        )
+    return ExtractTableFragmentsOutput(
+        fragments=extract_table_fragments(inputs.responses)
+    )

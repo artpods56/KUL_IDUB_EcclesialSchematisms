@@ -12,7 +12,8 @@ from notarius_core.artifacts import (
 from notarius_core.operators.images import RASTER_IMAGE
 from notarius_core.operators.sequences import ItemAtConfig, SliceConfig
 
-from notarius_api.schemas.workbench import NodeRegistryResponse, RunResponse
+from notarius_api.v1.routes.catalog.models import NodeRegistryResponse
+from notarius_api.v1.routes.executions.models import RunResponse
 
 
 async def _store_artifacts(
@@ -435,9 +436,7 @@ def test_collect_rejects_removed_page_image_artifact_type(
     )
 
     assert response.status_code == 422
-    assert "unavailable artifact type source.page_image@1" in response.json()[
-        "detail"
-    ]
+    assert "unavailable artifact type source.page_image@1" in response.json()["detail"]
 
 
 @pytest.mark.parametrize("schema_version", [True, 1.5])
@@ -508,6 +507,6 @@ def test_collect_rejects_an_input_with_a_different_artifact_type(
     )
 
     assert response.status_code == 422
-    assert "cannot connect scalar.integer@1 to image.raster@1" in response.json()[
-        "detail"
-    ]
+    assert (
+        "cannot connect scalar.integer@1 to image.raster@1" in response.json()["detail"]
+    )

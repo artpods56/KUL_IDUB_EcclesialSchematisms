@@ -1,6 +1,7 @@
 import asyncio
 import base64
 from collections.abc import Iterator
+import json
 from pathlib import Path
 from typing import Annotated, cast, final, override
 
@@ -11,6 +12,7 @@ from pydantic import Field, SecretStr, StrictStr
 from notarius_core.application.saved_graphs import SavedGraphService
 from notarius_core.artifacts import (
     InMemoryUnitOfWork,
+    NoConfig,
     NodeConfig,
     NodeInput,
     NodeOutput,
@@ -26,13 +28,13 @@ from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
 from notarius_api.builtins import builtin_plugins
 from notarius_api.main import create_app
 from notarius_api.plugin_discovery import build_plugin_registry
-from notarius_api.services.node_secrets import NodeSecretService
+from notarius_api.v1.routes.node_secrets.services import NodeSecretService
 from notarius_api.services.composition import (
     build_workbench_components,
 )
 from notarius_api.settings import Settings
-from notarius_api.v1.routes.saved_graphs import saved_graph_service
-from notarius_api.v1.routes.node_secrets import node_secret_service
+from notarius_api.v1.routes.node_secrets.dependencies import node_secret_service
+from notarius_api.v1.routes.saved_graphs.dependencies import saved_graph_service
 
 from tests.unit.api.conftest import install_workbench_dependency_overrides
 
@@ -121,6 +123,28 @@ class OptionalSuffixNode(Node[NodeConfig, OptionalSuffixInput, OptionalSuffixOut
         return OptionalSuffixOutput(text=f"{inputs.text}{suffix}")
 
 
+class ModuleProgressInput(NodeInput):
+    text: Annotated[StrictStr, InPort(TEXT_VALUE)]
+
+
+class ModuleProgressOutput(NodeOutput):
+    text: Annotated[StrictStr, OutPort(TEXT_VALUE)]
+
+
+@SECRET_MODULE_PLUGIN.function_node(
+    operator_id="test.module_progress",
+    version=1,
+    title="Module progress",
+)
+async def module_progress(
+    context: NodeExecutionContext,
+    _config: NoConfig,
+    inputs: ModuleProgressInput,
+) -> ModuleProgressOutput:
+    await context.progress("Transforming module text", current=1, total=1)
+    return ModuleProgressOutput(text=inputs.text.replace("a", "A"))
+
+
 async def _create_schema(database_url: str) -> None:
     database = create_database(database_url)
     try:
@@ -188,6 +212,7 @@ def _text_module_payload(
     name: str = "Capitalize A",
     replacement: str = "A",
     input_required: bool = True,
+    emit_progress: bool = False,
 ) -> dict[str, object]:
     return {
         "name": name,
@@ -206,9 +231,13 @@ def _text_module_payload(
             },
             {
                 "id": "replace",
-                "operator_id": "text.replace",
+                "operator_id": (
+                    "test.module_progress" if emit_progress else "text.replace"
+                ),
                 "operator_version": 1,
-                "config": {"search": "a", "replacement": replacement},
+                "config": (
+                    {} if emit_progress else {"search": "a", "replacement": replacement}
+                ),
                 "position": {"x": 240, "y": 0},
             },
             {
@@ -235,6 +264,68 @@ def _text_module_payload(
                 "id": "replace-to-output",
                 "from_node": "replace",
                 "from_port": "text",
+                "to_node": "module-output",
+                "to_port": "value",
+            },
+        ],
+    }
+
+
+def _nested_map_progress_module_payload() -> dict[str, object]:
+    return {
+        "name": "Nested map progress",
+        "nodes": [
+            {
+                "id": "module-input",
+                "operator_id": "module.input",
+                "operator_version": 1,
+                "config": {"public_name": "text"},
+                "position": {"x": 0, "y": 0},
+                "artifact_type_bindings": _artifact_binding(),
+            },
+            {
+                "id": "split",
+                "operator_id": "text.split",
+                "operator_version": 1,
+                "config": {"separator": ","},
+                "position": {"x": 240, "y": 120},
+            },
+            {
+                "id": "progress",
+                "operator_id": "test.module_progress",
+                "operator_version": 1,
+                "config": {},
+                "position": {"x": 480, "y": 120},
+            },
+            {
+                "id": "module-output",
+                "operator_id": "module.output",
+                "operator_version": 1,
+                "config": {"public_name": "result"},
+                "position": {"x": 480, "y": 0},
+                "artifact_type_bindings": _artifact_binding(),
+            },
+        ],
+        "edges": [
+            {
+                "id": "input-to-split",
+                "from_node": "module-input",
+                "from_port": "value",
+                "to_node": "split",
+                "to_port": "text",
+            },
+            {
+                "id": "split-to-progress",
+                "from_node": "split",
+                "from_port": "parts",
+                "to_node": "progress",
+                "to_port": "text",
+                "collection_mode": "map",
+            },
+            {
+                "id": "input-to-output",
+                "from_node": "module-input",
+                "from_port": "value",
                 "to_node": "module-output",
                 "to_port": "value",
             },
@@ -519,6 +610,226 @@ def test_saved_graph_module_is_discoverable_and_executes_once(
     assert artifacts[0]["text"] == '"A cAt"'
     metadata = cast(dict[str, object], artifacts[0]["metadata"])
     assert metadata["producer_node_id"] == "replace"
+
+
+def test_execution_events_route_nested_nodes_to_each_module_instance(
+    module_client: TestClient,
+) -> None:
+    created = module_client.post(
+        "/v1/graphs",
+        json=_text_module_payload(emit_progress=True),
+    ).json()
+    operator_id = f"graph.module.{created['id']}"
+    started = module_client.post(
+        "/v1/executions",
+        json={
+            "nodes": [
+                {
+                    "id": "source",
+                    "operator_id": "text.input",
+                    "operator_version": 1,
+                    "config": {"text": "a cat"},
+                },
+                {
+                    "id": "module-one",
+                    "operator_id": operator_id,
+                    "operator_version": 1,
+                    "config": {},
+                },
+                {
+                    "id": "module-two",
+                    "operator_id": operator_id,
+                    "operator_version": 1,
+                    "config": {},
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "source",
+                    "from_port": "text",
+                    "to_node": "module-one",
+                    "to_port": "text",
+                },
+                {
+                    "from_node": "source",
+                    "from_port": "text",
+                    "to_node": "module-two",
+                    "to_port": "text",
+                },
+            ],
+        },
+    ).json()
+
+    response = module_client.get(f"/v1/executions/{started['execution_id']}/events")
+    events = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    nested_paths = {
+        tuple(event["node_path"])
+        for event in events
+        if event["kind"] == "node.status" and len(event["node_path"]) > 1
+    }
+    progress_paths = [
+        tuple(event["node_path"])
+        for event in events
+        if event["kind"] == "node.progress"
+    ]
+
+    assert response.status_code == 200
+    assert nested_paths == {
+        ("module-one", "replace"),
+        ("module-one", "module-output"),
+        ("module-two", "replace"),
+        ("module-two", "module-output"),
+    }
+    assert progress_paths == [
+        ("module-one", "replace"),
+        ("module-two", "replace"),
+    ]
+
+
+def test_mapped_module_events_keep_the_outer_invocation_identity(
+    module_client: TestClient,
+) -> None:
+    created = module_client.post(
+        "/v1/graphs",
+        json=_text_module_payload(emit_progress=True),
+    ).json()
+    operator_id = f"graph.module.{created['id']}"
+    started = module_client.post(
+        "/v1/executions",
+        json={
+            "nodes": [
+                {
+                    "id": "source",
+                    "operator_id": "text.input",
+                    "operator_version": 1,
+                    "config": {"text": "a|ba|ca"},
+                },
+                {
+                    "id": "split",
+                    "operator_id": "text.split",
+                    "operator_version": 1,
+                    "config": {"separator": "|"},
+                },
+                {
+                    "id": "module",
+                    "operator_id": operator_id,
+                    "operator_version": 1,
+                    "config": {},
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "source",
+                    "from_port": "text",
+                    "to_node": "split",
+                    "to_port": "text",
+                },
+                {
+                    "from_node": "split",
+                    "from_port": "parts",
+                    "to_node": "module",
+                    "to_port": "text",
+                    "collection_mode": "map",
+                },
+            ],
+        },
+    ).json()
+
+    response = module_client.get(f"/v1/executions/{started['execution_id']}/events")
+    progress_events = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ") and '"kind":"node.progress"' in line
+    ]
+
+    assert response.status_code == 200
+    assert sorted(
+        (
+            tuple(event["node_path"]),
+            event["invocation_index"],
+            tuple(event["invocation_path"]),
+        )
+        for event in progress_events
+    ) == [
+        (("module", "replace"), None, (0,)),
+        (("module", "replace"), None, (1,)),
+        (("module", "replace"), None, (2,)),
+    ]
+
+
+def test_nested_map_events_append_each_local_invocation_index(
+    module_client: TestClient,
+) -> None:
+    created = module_client.post(
+        "/v1/graphs",
+        json=_nested_map_progress_module_payload(),
+    ).json()
+    started = module_client.post(
+        "/v1/executions",
+        json={
+            "nodes": [
+                {
+                    "id": "source",
+                    "operator_id": "text.input",
+                    "operator_version": 1,
+                    "config": {"text": "a,b|ca,da"},
+                },
+                {
+                    "id": "split",
+                    "operator_id": "text.split",
+                    "operator_version": 1,
+                    "config": {"separator": "|"},
+                },
+                {
+                    "id": "module",
+                    "operator_id": f"graph.module.{created['id']}",
+                    "operator_version": 1,
+                    "config": {},
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "source",
+                    "from_port": "text",
+                    "to_node": "split",
+                    "to_port": "text",
+                },
+                {
+                    "from_node": "split",
+                    "from_port": "parts",
+                    "to_node": "module",
+                    "to_port": "text",
+                    "collection_mode": "map",
+                },
+            ],
+        },
+    ).json()
+
+    response = module_client.get(f"/v1/executions/{started['execution_id']}/events")
+    progress_events = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ") and '"kind":"node.progress"' in line
+    ]
+
+    assert response.status_code == 200
+    assert sorted(
+        (
+            tuple(event["node_path"]),
+            event["invocation_index"],
+            tuple(event["invocation_path"]),
+        )
+        for event in progress_events
+    ) == [
+        (("module", "progress"), 0, (0, 0)),
+        (("module", "progress"), 0, (1, 0)),
+        (("module", "progress"), 1, (0, 1)),
+        (("module", "progress"), 1, (1, 1)),
+    ]
 
 
 def test_module_uses_existing_map_semantics_and_keeps_revision_pinned(
@@ -820,9 +1131,10 @@ def test_module_catalog_reports_invalid_boundary_wiring(
     assert len(unavailable) == 1
     assert unavailable[0]["revision"] == 1
     assert unavailable[0]["name"] == "Input without output"
-    assert "Module Input boundary must connect its 'value' output" in unavailable[0][
-        "reason"
-    ]
+    assert (
+        "Module Input boundary must connect its 'value' output"
+        in unavailable[0]["reason"]
+    )
     assert all(
         node["module_graph_id"] != graph_id
         for node in registry["nodes"]

@@ -1,0 +1,16 @@
+[mcp_servers.notarius]
+command = "uv"
+args = ["run", "--package", "notarius-mcp", "notarius-mcp"]
+cwd = "."
+default_tools_approval_mode = "auto"
+startup_timeout_sec = 30
+tool_timeout_sec = 60
+
+[mcp_servers.notarius.env]
+NOTARIUS_MCP_API_URL = "http://127.0.0.1:8000"
+
+[mcp_servers.notarius.tools.create_graph]
+approval_mode = "prompt"
+
+[mcp_servers.notarius.tools.replace_graph]
+approval_mode = "prompt"
