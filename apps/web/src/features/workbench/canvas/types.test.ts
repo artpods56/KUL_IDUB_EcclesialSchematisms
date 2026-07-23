@@ -53,6 +53,82 @@ const genericNodeSpec: NodeSpec = {
   ],
 };
 
+const artifactQueryNodeSpec: NodeSpec = {
+  operator_id: "sql.artifacts.query",
+  operator_version: 1,
+  plugin_slug: "external.sql",
+  title: "Query artifact tables",
+  description: "Runs read-only queries over table artifacts.",
+  catalog_visible: true,
+  config_schema: {
+    type: "object",
+    properties: { relations: { type: "array" } },
+    required: ["relations"],
+  },
+  input_schema: {},
+  output_schema: {},
+  inputs: [
+    {
+      name: "statements",
+      title: "Statements",
+      description: null,
+      direction: "input",
+      artifact_type: { id: "sql.statement", schema_version: 1 },
+      artifact_type_variable: null,
+      shape: "one",
+      accepted_shapes: ["one"],
+      instance_plugs: true,
+      variadic: true,
+      required: true,
+    },
+    {
+      name: "relations",
+      title: "Relations",
+      description: null,
+      direction: "input",
+      artifact_type: { id: "table.data", schema_version: 1 },
+      artifact_type_variable: null,
+      shape: "one",
+      accepted_shapes: ["one"],
+      instance_plugs: true,
+      variadic: true,
+      required: true,
+    },
+  ],
+  outputs: [
+    {
+      name: "tables",
+      title: "Tables",
+      description: null,
+      direction: "output",
+      artifact_type: { id: "table.data", schema_version: 1 },
+      artifact_type_variable: null,
+      shape: "many",
+      accepted_shapes: ["many"],
+      instance_plugs: false,
+      variadic: false,
+      required: true,
+    },
+  ],
+};
+
+describe("artifact query initialization", () => {
+  it("seeds one statement plug and one named relation with shared identity", () => {
+    const data = createWorkflowNodeData(artifactQueryNodeSpec);
+    const relationPlug = data.inputPlugs.find(
+      (plug) => plug.portName === "relations",
+    );
+
+    expect(data.inputPlugs.map((plug) => plug.portName)).toEqual([
+      "statements",
+      "relations",
+    ]);
+    expect(data.config.relations).toEqual([
+      { id: relationPlug?.id, alias: "relation_1" },
+    ]);
+  });
+});
+
 describe("generic artifact type reset", () => {
   it("keeps an incident binding and clears a disconnected binding", () => {
     const data = createWorkflowNodeData(genericNodeSpec);
@@ -60,6 +136,18 @@ describe("generic artifact type reset", () => {
       T: { id: "scalar.text", schema_version: 1 },
     };
     data.execution = { status: "failed", error: "stale" };
+    data.progress = {
+      omittedCount: 0,
+      entries: [{
+        sequence: 1,
+        message: "stale",
+        current: null,
+        total: null,
+        sourceNodePath: [],
+        invocationIndex: null,
+        invocationPath: [],
+      }],
+    };
 
     expect(resetArtifactTypeBinding(data, "T", true)).toBe(data);
 
@@ -67,6 +155,7 @@ describe("generic artifact type reset", () => {
     expect(reset).not.toBe(data);
     expect(reset.artifactTypeBindings).toEqual({});
     expect(reset.execution).toEqual({ status: "idle" });
+    expect(reset.progress).toBeNull();
   });
 
   it("resolves every port sharing T after the first binding", () => {
@@ -154,11 +243,24 @@ describe("run node serialization", () => {
     data.config = {
       base_url: "https://api.openai.com/v1",
       model: "gpt-5-mini",
+      bounds: [19.75, 49.97, 19.82, 50.03],
     };
     data.secretStatuses = { api_key: { state: "configured" } };
     data.secretInputReadiness = { api_key: true };
     data.secretInputScope = "graph-1:2";
     data.onApplyNodeSecret = async () => true;
+    data.progress = {
+      omittedCount: 0,
+      entries: [{
+        sequence: 1,
+        message: "api_key=must-not-be-serialized",
+        current: null,
+        total: null,
+        sourceNodePath: [],
+        invocationIndex: null,
+        invocationPath: [],
+      }],
+    };
 
     const request = serializeRunNode("llm-node", data);
 
@@ -167,6 +269,7 @@ describe("run node serialization", () => {
     expect(request).not.toHaveProperty("secretInputReadiness");
     expect(request).not.toHaveProperty("secretInputScope");
     expect(request).not.toHaveProperty("onApplyNodeSecret");
+    expect(request).not.toHaveProperty("progress");
     expect(JSON.stringify(request)).not.toContain("api_key");
   });
 
@@ -199,6 +302,18 @@ function nodeWithRun(id: string) {
     error: null,
   };
   data.execution = { status: "succeeded" };
+  data.progress = {
+    omittedCount: 0,
+    entries: [{
+      sequence: 1,
+      message: `Progress for ${id}`,
+      current: 1,
+      total: 1,
+      sourceNodePath: [],
+      invocationIndex: null,
+      invocationPath: [],
+    }],
+  };
   return { id, data };
 }
 
@@ -220,12 +335,15 @@ describe("workflow result invalidation", () => {
 
     expect(next[0]).toBe(source);
     expect(next[0]?.data.run).toBe(source.data.run);
+    expect(next[0]?.data.progress).toBe(source.data.progress);
     expect(next[3]).toBe(unrelated);
     expect(next[3]?.data.run).toBe(unrelated.data.run);
     expect(next[1]?.data.run).toBeNull();
     expect(next[1]?.data.execution).toEqual({ status: "idle" });
+    expect(next[1]?.data.progress).toBeNull();
     expect(next[2]?.data.run).toBeNull();
     expect(next[2]?.data.execution).toEqual({ status: "idle" });
+    expect(next[2]?.data.progress).toBeNull();
   });
 
   it("clears only descendants reached through enabled edges", () => {

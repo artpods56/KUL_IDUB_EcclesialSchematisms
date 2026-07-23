@@ -6,10 +6,24 @@ import Markdown, {
   type MarkdownToJSX,
   sanitizer as sanitizeMarkdownUrl,
 } from "markdown-to-jsx";
-import maplibregl, { type GeoJSONSourceSpecification } from "maplibre-gl";
+import useSWR from "swr";
 
-import { artifactContentUrl, type ArtifactSummary } from "@/lib/api";
+import {
+  artifactContentUrl,
+  getArtifactTableCell,
+  getArtifactTablePage,
+  getArtifactTableSchema,
+  queryArtifactTablePage,
+  type ArtifactSummary,
+  type TablePage,
+  type TableQueryInput,
+} from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
+import type {
+  ArtifactViewerEffect,
+  ArtifactViewerInteractionContext,
+} from "../artifact-interactions";
+import { GeoMapArtifactRenderer } from "./geo-map-artifact-renderer";
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 
@@ -69,29 +83,6 @@ const s = stylex.create({
     width: "100%",
     borderRadius: "8px",
     backgroundColor: tokens.colorSurface,
-  },
-  mapShell: { display: "grid", gap: "7px" },
-  map: {
-    width: "100%",
-    height: "220px",
-    overflow: "hidden",
-    borderRadius: "8px",
-    backgroundColor: tokens.colorSurfaceSunken,
-  },
-  mapLegend: { display: "flex", flexWrap: "wrap", gap: "5px" },
-  mapLayerToggle: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "4px",
-    padding: "3px 6px",
-    borderRadius: "6px",
-    backgroundColor: tokens.colorSurfaceSunken,
-    fontSize: "10px",
-  },
-  mapSwatch: {
-    width: "8px",
-    height: "8px",
-    borderRadius: "9999px",
   },
   markdown: {
     color: tokens.colorText,
@@ -200,6 +191,224 @@ const s = stylex.create({
     color: tokens.colorTextEmphasis,
     fontWeight: 700,
   },
+  tablePreview: {
+    display: "grid",
+    gap: "7px",
+    minWidth: 0,
+  },
+  tableSummary: {
+    display: "flex",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: "12px",
+    color: tokens.colorMuted,
+    fontSize: "10px",
+  },
+  tableSummaryStrong: {
+    color: tokens.colorTextEmphasis,
+    fontWeight: 700,
+  },
+  tableViewport: {
+    width: "100%",
+    maxHeight: "420px",
+    overflow: "auto",
+    borderTopWidth: 1,
+    borderTopStyle: "solid",
+    borderTopColor: tokens.colorDivider,
+    borderBottomWidth: 1,
+    borderBottomStyle: "solid",
+    borderBottomColor: tokens.colorDivider,
+  },
+  dataTable: {
+    width: "max-content",
+    minWidth: "100%",
+    borderCollapse: "separate",
+    borderSpacing: 0,
+    color: tokens.colorText,
+    fontSize: tokens.fontSizeXs,
+  },
+  tableIndexHeader: {
+    position: "sticky",
+    top: 0,
+    left: 0,
+    zIndex: 3,
+    width: "42px",
+    minWidth: "42px",
+    padding: "7px 9px",
+    borderRightWidth: 1,
+    borderRightStyle: "solid",
+    borderRightColor: tokens.colorDivider,
+    borderBottomWidth: 1,
+    borderBottomStyle: "solid",
+    borderBottomColor: tokens.colorDivider,
+    backgroundColor: tokens.colorSurfaceSunken,
+    color: tokens.colorSubtle,
+    fontFamily: MONO,
+    fontSize: "9px",
+    fontWeight: 600,
+    textAlign: "right",
+  },
+  tableHeader: {
+    position: "sticky",
+    top: 0,
+    zIndex: 2,
+    minWidth: "132px",
+    maxWidth: "300px",
+    padding: "7px 10px",
+    borderRightWidth: 1,
+    borderRightStyle: "solid",
+    borderRightColor: tokens.colorDivider,
+    borderBottomWidth: 1,
+    borderBottomStyle: "solid",
+    borderBottomColor: tokens.colorDivider,
+    backgroundColor: tokens.colorSurfaceSunken,
+    textAlign: "left",
+    verticalAlign: "bottom",
+  },
+  tableHeaderTitle: {
+    display: "block",
+    overflow: "hidden",
+    color: tokens.colorTextEmphasis,
+    fontWeight: 700,
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  tableHeaderType: {
+    display: "block",
+    marginTop: "2px",
+    color: tokens.colorSubtle,
+    fontFamily: MONO,
+    fontSize: "9px",
+    fontWeight: 500,
+  },
+  tableIndexCell: {
+    position: "sticky",
+    left: 0,
+    zIndex: 1,
+    width: "42px",
+    minWidth: "42px",
+    padding: "6px 9px",
+    borderRightWidth: 1,
+    borderRightStyle: "solid",
+    borderRightColor: tokens.colorDivider,
+    borderBottomWidth: 1,
+    borderBottomStyle: "solid",
+    borderBottomColor: tokens.colorDivider,
+    backgroundColor: tokens.colorSurface,
+    color: tokens.colorSubtle,
+    fontFamily: MONO,
+    fontSize: "9px",
+    textAlign: "right",
+  },
+  tableCell: {
+    minWidth: "132px",
+    maxWidth: "300px",
+    padding: "6px 10px",
+    overflow: "hidden",
+    borderRightWidth: 1,
+    borderRightStyle: "solid",
+    borderRightColor: tokens.colorDivider,
+    borderBottomWidth: 1,
+    borderBottomStyle: "solid",
+    borderBottomColor: tokens.colorDivider,
+    color: tokens.colorText,
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    verticalAlign: "top",
+  },
+  tableCellSelected: {
+    backgroundColor: tokens.colorAccentSoft,
+  },
+  tableCellHighlighted: {
+    backgroundColor: tokens.colorHoverStrong,
+  },
+  tableRowInteractive: {
+    cursor: "pointer",
+    outlineWidth: { default: 0, ":focus-visible": "2px" },
+    outlineStyle: "solid",
+    outlineColor: tokens.colorAccent,
+    outlineOffset: "-2px",
+  },
+  tableCellCode: { fontFamily: MONO, fontSize: "10px" },
+  tableCellNull: { color: tokens.colorSubtle, fontStyle: "italic" },
+  tableEmpty: {
+    padding: "28px 14px",
+    color: tokens.colorMuted,
+    fontSize: tokens.fontSizeXs,
+    textAlign: "center",
+  },
+  tableLimit: {
+    color: tokens.colorSubtle,
+    fontSize: "10px",
+  },
+  tablePager: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+  },
+  tablePagerActions: { display: "flex", gap: "5px" },
+  tablePagerButton: {
+    minHeight: "26px",
+    paddingInline: "9px",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorDivider,
+    borderRadius: "6px",
+    backgroundColor: tokens.colorSurface,
+    color: {
+      default: tokens.colorText,
+      ":disabled": tokens.colorTextDisabled,
+    },
+    cursor: { default: "pointer", ":disabled": "not-allowed" },
+    fontSize: "10px",
+  },
+  tableTruncatedCellButton: {
+    width: "100%",
+    padding: 0,
+    overflow: "hidden",
+    borderWidth: 0,
+    backgroundColor: "transparent",
+    color: tokens.colorAccent,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    fontSize: "inherit",
+    textAlign: "left",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  tableCellDetail: {
+    display: "grid",
+    gap: "6px",
+    padding: "8px",
+    borderRadius: "7px",
+    backgroundColor: tokens.colorSurfaceSunken,
+  },
+  tableCellDetailHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "8px",
+    color: tokens.colorMuted,
+    fontSize: "10px",
+  },
+  tableCellDetailValue: {
+    width: "100%",
+    minHeight: "100px",
+    resize: "vertical",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorDivider,
+    borderRadius: "6px",
+    backgroundColor: tokens.colorSurface,
+    color: tokens.colorText,
+    fontFamily: MONO,
+    fontSize: "10px",
+  },
+  tableDownload: {
+    color: tokens.colorAccent,
+    fontSize: "10px",
+    textDecorationLine: "underline",
+  },
   markdownImageReference: {
     display: "flex",
     alignItems: "baseline",
@@ -219,11 +428,19 @@ export interface ArtifactRenderProps {
   artifact: ArtifactSummary;
   payload?: unknown;
   mode: string;
+  availableHeight?: number;
+  interaction?: ArtifactViewerInteractionContext;
+}
+
+export interface ArtifactRendererInteractionCapabilities {
+  emits: readonly "key-selection"[];
+  accepts: readonly ArtifactViewerEffect[];
 }
 
 export interface ArtifactRendererSpec {
   id: string;
   modes: readonly string[];
+  interaction?: ArtifactRendererInteractionCapabilities;
   matches(artifact: ArtifactSummary, payload?: unknown): boolean;
   Component: React.ComponentType<ArtifactRenderProps>;
 }
@@ -347,196 +564,613 @@ const imageRenderer: ArtifactRendererSpec = {
   },
 };
 
-interface GeoMapLayerPayload {
-  id: string;
-  title: string;
-  color: string;
-  visible: boolean;
-  feature_collection: {
-    type: "FeatureCollection";
-    features: Record<string, unknown>[];
-  };
+const geoMapRenderer: ArtifactRendererSpec = {
+  id: "geo-map",
+  modes: ["map", "raw"],
+  interaction: {
+    emits: ["key-selection"],
+    accepts: ["filter", "highlight", "focus"],
+  },
+  matches: (artifact) =>
+    [
+      "geo.feature_collection",
+      "geo.raster_scan",
+      "geo.map_layer",
+      "geo.map_document",
+    ].includes(artifact.artifact_type) && artifact.schema_version === 1,
+  Component: GeoMapArtifactRenderer,
+};
+
+const TABLE_PAGE_SIZE = 50;
+const TABLE_COLUMN_PAGE_SIZE = 25;
+const TABLE_CELL_PREVIEW_CHARACTERS = 256;
+
+function tableCellText(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "[unavailable value]";
+  }
 }
 
-interface GeoMapPayload {
-  layers: GeoMapLayerPayload[];
-  bounds: [number, number, number, number] | null;
+interface TableCellSelection {
+  rowIndex: number;
+  columnId: string;
+  columnTitle: string;
 }
 
-function geoMapPayload(payload: unknown): GeoMapPayload | null {
-  const value = record(payload);
-  if (!value || !Array.isArray(value.layers)) return null;
-  const layers = value.layers.flatMap((candidate) => {
-    const layer = record(candidate);
-    const collection = record(layer?.feature_collection);
-    if (
-      !layer ||
-      typeof layer.id !== "string" ||
-      typeof layer.title !== "string" ||
-      typeof layer.color !== "string" ||
-      typeof layer.visible !== "boolean" ||
-      collection?.type !== "FeatureCollection" ||
-      !Array.isArray(collection.features)
-    ) return [];
-    return [{
-      id: layer.id,
-      title: layer.title,
-      color: layer.color,
-      visible: layer.visible,
-      feature_collection: {
-        type: "FeatureCollection" as const,
-        features: collection.features.filter(
-          (feature): feature is Record<string, unknown> => record(feature) !== null,
-        ),
-      },
-    }];
+function TablePageNavigation({
+  page,
+  requestedOffset,
+  requestedColumnOffset,
+  onOffsetChange,
+  onColumnOffsetChange,
+}: {
+  page: TablePage;
+  requestedOffset: number;
+  requestedColumnOffset: number;
+  onOffsetChange: (offset: number) => void;
+  onColumnOffsetChange: (offset: number) => void;
+}) {
+  const pageEnd = page.offset + page.rows.length;
+  const columnEnd = page.column_offset + page.columns.length;
+  const waitingForRows = requestedOffset !== page.offset;
+  const waitingForColumns = requestedColumnOffset !== page.column_offset;
+  return (
+    <>
+      <div role="group" aria-label="Table row pages" {...stylex.props(s.tablePager)}>
+        <span aria-live="polite" {...stylex.props(s.tableLimit)}>
+          {page.total_rows === 0
+            ? "No rows"
+            : `Rows ${page.offset + 1}–${pageEnd} of ${page.total_rows}`}
+        </span>
+        <span {...stylex.props(s.tablePagerActions)}>
+          <button
+            type="button"
+            disabled={requestedOffset === 0}
+            {...stylex.props(s.tablePagerButton)}
+            onClick={() =>
+              onOffsetChange(Math.max(0, requestedOffset - TABLE_PAGE_SIZE))
+            }
+          >
+            Previous
+          </button>
+          <button
+            type="button"
+            disabled={waitingForRows || pageEnd >= page.total_rows}
+            {...stylex.props(s.tablePagerButton)}
+            onClick={() => onOffsetChange(pageEnd)}
+          >
+            Next
+          </button>
+        </span>
+      </div>
+      <div
+        role="group"
+        aria-label="Table column pages"
+        {...stylex.props(s.tablePager)}
+      >
+        <span aria-live="polite" {...stylex.props(s.tableLimit)}>
+          {page.total_columns === 0
+            ? "No columns"
+            : `Columns ${page.column_offset + 1}–${columnEnd} of ${page.total_columns}`}
+        </span>
+        <span {...stylex.props(s.tablePagerActions)}>
+          <button
+            type="button"
+            disabled={requestedColumnOffset === 0}
+            {...stylex.props(s.tablePagerButton)}
+            onClick={() =>
+              onColumnOffsetChange(
+                Math.max(
+                  0,
+                  requestedColumnOffset - TABLE_COLUMN_PAGE_SIZE,
+                ),
+              )
+            }
+          >
+            Previous columns
+          </button>
+          <button
+            type="button"
+            disabled={waitingForColumns || columnEnd >= page.total_columns}
+            {...stylex.props(s.tablePagerButton)}
+            onClick={() => onColumnOffsetChange(columnEnd)}
+          >
+            Next columns
+          </button>
+        </span>
+      </div>
+    </>
+  );
+}
+
+function TableArtifactRendererState({
+  artifact,
+  mode,
+  availableHeight,
+  interaction,
+}: {
+  artifact: ArtifactSummary;
+  mode: string;
+  availableHeight?: number;
+  interaction?: ArtifactViewerInteractionContext;
+}) {
+  const [offset, setOffset] = React.useState(0);
+  const [columnOffset, setColumnOffset] = React.useState(0);
+  const [selectedCell, setSelectedCell] =
+    React.useState<TableCellSelection | null>(null);
+  const [selectingRowIndex, setSelectingRowIndex] =
+    React.useState<number | null>(null);
+  const [selectionError, setSelectionError] = React.useState<string | null>(
+    null,
+  );
+  const cellDetailId = React.useId();
+  const cellTriggerRef = React.useRef<HTMLButtonElement | null>(null);
+  const { data: tableSchema } = useSWR(
+    interaction
+      ? ["table-artifact-schema", artifact.artifact_id] as const
+      : null,
+    ([, artifactId]) => getArtifactTableSchema(artifactId),
+  );
+  const filterGroups = interaction?.incoming.flatMap((binding) =>
+    binding.effects.includes("filter") && binding.rows.length
+      ? [{ rows: binding.rows.map((values) => ({ values })) }]
+      : []
+  ) ?? [];
+  const highlightGroups = interaction?.incoming.flatMap((binding) =>
+    binding.effects.includes("highlight") && binding.rows.length
+      ? [{ rows: binding.rows.map((values) => ({ values })) }]
+      : []
+  ) ?? [];
+  const interactionQuery: TableQueryInput | null =
+    filterGroups.length || highlightGroups.length
+      ? {
+          filter_groups: filterGroups,
+          highlight_groups: highlightGroups,
+          offset,
+          limit: TABLE_PAGE_SIZE,
+          column_offset: columnOffset,
+          column_limit: TABLE_COLUMN_PAGE_SIZE,
+          max_cell_characters: TABLE_CELL_PREVIEW_CHARACTERS,
+        }
+      : null;
+  const interactionQuerySignature = JSON.stringify({
+    filter_groups: filterGroups,
+    highlight_groups: highlightGroups,
   });
-  const bounds = Array.isArray(value.bounds) &&
-      value.bounds.length === 4 &&
-      value.bounds.every((coordinate) => typeof coordinate === "number")
-    ? value.bounds as [number, number, number, number]
+  const pageKey = [
+    interactionQuery ? "table-artifact-query" : "table-artifact-page",
+    artifact.artifact_id,
+    offset,
+    columnOffset,
+    interactionQuerySignature,
+  ] as const;
+  const {
+    data: page,
+    error: pageError,
+    isValidating: pageLoading,
+    mutate: retryPage,
+  } = useSWR(
+    pageKey,
+    ([, artifactId, pageOffset, pageColumnOffset]) =>
+      interactionQuery
+        ? queryArtifactTablePage(artifactId, interactionQuery)
+        : getArtifactTablePage(
+            artifactId,
+            pageOffset,
+            TABLE_PAGE_SIZE,
+            pageColumnOffset,
+            TABLE_COLUMN_PAGE_SIZE,
+            TABLE_CELL_PREVIEW_CHARACTERS,
+          ),
+    { keepPreviousData: true },
+  );
+  const cellKey = selectedCell
+    ? [
+        "table-artifact-cell",
+        artifact.artifact_id,
+        selectedCell.rowIndex,
+        selectedCell.columnId,
+      ] as const
     : null;
-  return layers.length ? { layers, bounds } : null;
-}
-
-function GeoMapPreview({ value }: { value: GeoMapPayload }) {
-  const containerRef = React.useRef<HTMLDivElement>(null);
-  const mapRef = React.useRef<maplibregl.Map | null>(null);
+  const {
+    data: fullCell,
+    error: fullCellError,
+    isLoading: fullCellLoading,
+  } = useSWR(cellKey, ([, artifactId, rowIndex, columnId]) =>
+    getArtifactTableCell(artifactId, rowIndex, columnId),
+  );
 
   React.useEffect(() => {
-    if (!containerRef.current || typeof WebGLRenderingContext === "undefined") {
+    if (!interaction || !tableSchema) return;
+    interaction.onFieldsChange(
+      tableSchema.columns.map((column) => ({
+        id: column.id,
+        title: column.title || column.id,
+        valueType: column.value_type,
+      })),
+    );
+  }, [interaction, tableSchema]);
+
+  if (!page) {
+    return (
+      <div {...stylex.props(s.tablePreview)}>
+        <span
+          role={pageError ? "alert" : "status"}
+          aria-live={pageError ? undefined : "polite"}
+          {...stylex.props(s.tableLimit)}
+        >
+          {pageError
+            ? "Could not load this table page."
+            : "Loading table page…"}
+        </span>
+        {pageError ? (
+          <button
+            type="button"
+            {...stylex.props(s.tablePagerButton)}
+            onClick={() => void retryPage()}
+          >
+            Retry
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
+  const viewportHeight = availableHeight
+    ? Math.max(140, availableHeight - 92)
+    : undefined;
+  const contentUrl = artifactContentUrl(artifact.content_url);
+  const fullCellText = fullCell
+    ? tableCellText(fullCell.value)
+    : "";
+  const selectedSourceIndices = new Set(
+    interaction?.selection.items.flatMap((item) =>
+      item.sourceIndex === undefined ? [] : [item.sourceIndex]
+    ) ?? [],
+  );
+  const highlightedSourceIndices = new Set(page.highlighted_row_indices);
+  const selectRow = async (
+    rowIndex: number,
+    visibleRow: TablePage["rows"][number],
+  ) => {
+    if (!interaction) return;
+    if (selectedSourceIndices.has(rowIndex)) {
+      interaction.onSelectionChange({
+        kind: "key-selection",
+        items: [],
+      });
       return;
     }
-    const map = new maplibregl.Map({
-      container: containerRef.current,
-      center: [0, 20],
-      zoom: 1,
-      style: {
-        version: 8,
-        sources: {
-          basemap: {
-            type: "raster",
-            tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-            tileSize: 256,
-            attribution: "© OpenStreetMap contributors",
-          },
-        },
-        layers: [{ id: "basemap", type: "raster", source: "basemap" }],
-      },
-    });
-    mapRef.current = map;
-    map.addControl(new maplibregl.NavigationControl(), "top-right");
-    map.on("load", () => {
-      for (const layer of value.layers) {
-        const sourceId = `geo-source-${layer.id}`;
-        const visibility = layer.visible ? "visible" : "none";
-        map.addSource(sourceId, {
-          type: "geojson",
-          data: layer.feature_collection as unknown as GeoJSONSourceSpecification["data"],
-        });
-        map.addLayer({
-          id: `${layer.id}-fill`,
-          type: "fill",
-          source: sourceId,
-          paint: { "fill-color": layer.color, "fill-opacity": 0.28 },
-          layout: { visibility },
-          filter: ["==", ["geometry-type"], "Polygon"],
-        });
-        map.addLayer({
-          id: `${layer.id}-line`,
-          type: "line",
-          source: sourceId,
-          paint: { "line-color": layer.color, "line-width": 2 },
-          layout: { visibility },
-          filter: ["in", ["geometry-type"], ["literal", ["LineString", "Polygon"]]],
-        });
-        map.addLayer({
-          id: `${layer.id}-point`,
-          type: "circle",
-          source: sourceId,
-          paint: {
-            "circle-color": layer.color,
-            "circle-radius": 5,
-            "circle-stroke-color": "#ffffff",
-            "circle-stroke-width": 1,
-          },
-          layout: { visibility },
-          filter: ["==", ["geometry-type"], "Point"],
-        });
+    const requestedFields = interaction.outgoingFields.length
+      ? interaction.outgoingFields
+      : page.columns.map((column) => column.id);
+    if (!requestedFields.length) return;
+    setSelectingRowIndex(rowIndex);
+    setSelectionError(null);
+    try {
+      const cells = await Promise.all(
+        requestedFields.map((fieldName) =>
+          getArtifactTableCell(
+            artifact.artifact_id,
+            rowIndex,
+            fieldName,
+          )
+        ),
+      );
+      const values = Object.fromEntries(
+        cells.flatMap((cell) =>
+          cell.encoding === "json"
+            ? []
+            : [[cell.column_id, cell.value]]
+        ),
+      );
+      for (const column of page.columns) {
+        const cell = visibleRow[column.id];
+        if (
+          !(column.id in values) &&
+          cell &&
+          !cell.truncated &&
+          (cell.display === null ||
+            typeof cell.display === "string" ||
+            typeof cell.display === "number" ||
+            typeof cell.display === "boolean")
+        ) {
+          values[column.id] = cell.display;
+        }
       }
-      if (value.bounds) {
-        map.fitBounds(
-          [[value.bounds[0], value.bounds[1]], [value.bounds[2], value.bounds[3]]],
-          { padding: 28, maxZoom: 14, duration: 0 },
-        );
-      }
-    });
-    map.on("click", (event) => {
-      const layerIds = value.layers.flatMap((layer) => [
-        `${layer.id}-fill`,
-        `${layer.id}-line`,
-        `${layer.id}-point`,
-      ]).filter((id) => map.getLayer(id));
-      const feature = map.queryRenderedFeatures(event.point, { layers: layerIds })[0];
-      if (!feature) return;
-      const content = document.createElement("pre");
-      content.textContent = JSON.stringify(feature.properties ?? {}, null, 2);
-      new maplibregl.Popup({ maxWidth: "320px" })
-        .setLngLat(event.lngLat)
-        .setDOMContent(content)
-        .addTo(map);
-    });
-    return () => {
-      mapRef.current = null;
-      map.remove();
-    };
-  }, [value]);
-
+      interaction.onSelectionChange({
+        kind: "key-selection",
+        items: [{ values, sourceIndex: rowIndex }],
+      });
+    } catch (error) {
+      setSelectionError(
+        error instanceof Error
+          ? error.message
+          : "Could not read the selected row.",
+      );
+    } finally {
+      setSelectingRowIndex(null);
+    }
+  };
   return (
-    <div {...stylex.props(s.mapShell)}>
-      <div ref={containerRef} aria-label="Interactive map" {...stylex.props(s.map)} />
-      <div {...stylex.props(s.mapLegend)}>
-        {value.layers.map((layer) => (
-          <label key={layer.id} {...stylex.props(s.mapLayerToggle)}>
-            <input
-              type="checkbox"
-              defaultChecked={layer.visible}
-              onChange={(event) => {
-                for (const suffix of ["fill", "line", "point"]) {
-                  const id = `${layer.id}-${suffix}`;
-                  if (mapRef.current?.getLayer(id)) {
-                    mapRef.current.setLayoutProperty(
-                      id,
-                      "visibility",
-                      event.currentTarget.checked ? "visible" : "none",
-                    );
-                  }
-                }
-              }}
-            />
-            <span style={{ backgroundColor: layer.color }} {...stylex.props(s.mapSwatch)} />
-            {layer.title}
-          </label>
-        ))}
+    <div aria-busy={pageLoading} {...stylex.props(s.tablePreview)}>
+      {pageError ? (
+        <span role="alert" {...stylex.props(s.tableLimit)}>
+          Could not load the requested table page. The previous page is still
+          available. <button type="button" onClick={() => void retryPage()}>
+            Retry
+          </button>
+        </span>
+      ) : pageLoading ? (
+        <span role="status" aria-live="polite" {...stylex.props(s.tableLimit)}>
+          Loading table page…
+        </span>
+      ) : null}
+      {selectionError ? (
+        <span role="alert" {...stylex.props(s.tableLimit)}>
+          {selectionError}
+        </span>
+      ) : selectingRowIndex !== null ? (
+        <span role="status" aria-live="polite" {...stylex.props(s.tableLimit)}>
+          Reading row {selectingRowIndex + 1}…
+        </span>
+      ) : null}
+      {mode === "raw" ? (
+        <pre {...stylex.props(s.jsonCode)}>{JSON.stringify(page, null, 2)}</pre>
+      ) : (
+        <>
+      <div {...stylex.props(s.tableSummary)}>
+        <span>
+          <span {...stylex.props(s.tableSummaryStrong)}>
+            {page.total_rows}
+          </span>{" "}
+          {page.total_rows === 1 ? "row" : "rows"}
+        </span>
+        <span>
+          {page.total_columns} {page.total_columns === 1 ? "column" : "columns"}
+        </span>
       </div>
+      <div
+        role="region"
+        aria-label="Table preview"
+        tabIndex={0}
+        className="nodrag nowheel"
+        {...stylex.props(s.tableViewport)}
+        style={{ maxHeight: viewportHeight }}
+      >
+        <table {...stylex.props(s.dataTable)}>
+          <thead>
+            <tr>
+              <th scope="col" {...stylex.props(s.tableIndexHeader)}>
+                #
+              </th>
+              {page.columns.map((column) => (
+                <th
+                  key={column.id}
+                  scope="col"
+                  title={`${column.title || column.id} · ${column.value_type}`}
+                  {...stylex.props(s.tableHeader)}
+                >
+                  <span {...stylex.props(s.tableHeaderTitle)}>
+                    {column.title || column.id}
+                  </span>
+                  <span {...stylex.props(s.tableHeaderType)}>
+                    {column.value_type}
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {page.rows.map((row, pageRowIndex) => {
+              const rowIndex =
+                page.row_indices?.[pageRowIndex] ??
+                page.offset + pageRowIndex;
+              const selected = selectedSourceIndices.has(rowIndex);
+              const highlighted = highlightedSourceIndices.has(rowIndex);
+              return (
+              <tr
+                key={rowIndex}
+                tabIndex={interaction ? 0 : undefined}
+                aria-selected={interaction ? selected : undefined}
+                {...stylex.props(
+                  interaction ? s.tableRowInteractive : null,
+                )}
+                onClick={() => void selectRow(rowIndex, row)}
+                onKeyDown={(event) => {
+                  if (
+                    interaction &&
+                    (event.key === "Enter" || event.key === " ")
+                  ) {
+                    event.preventDefault();
+                    void selectRow(rowIndex, row);
+                  }
+                }}
+              >
+                <th
+                  scope="row"
+                  {...stylex.props(
+                    s.tableIndexCell,
+                    selected ? s.tableCellSelected : null,
+                    !selected && highlighted
+                      ? s.tableCellHighlighted
+                      : null,
+                  )}
+                >
+                  {rowIndex + 1}
+                </th>
+                {page.columns.map((column) => {
+                  const cell = row[column.id];
+                  const text = tableCellText(cell.display);
+                  const code =
+                    column.value_type !== "text" &&
+                    column.value_type !== "boolean";
+                  return (
+                    <td
+                      key={column.id}
+                      title={cell.truncated ? "Preview truncated; click to inspect" : undefined}
+                      {...stylex.props(
+                        s.tableCell,
+                        code ? s.tableCellCode : null,
+                        cell.display === null
+                          ? s.tableCellNull
+                          : null,
+                        selected ? s.tableCellSelected : null,
+                        !selected && highlighted
+                          ? s.tableCellHighlighted
+                          : null,
+                      )}
+                    >
+                      {cell.truncated ? (
+                        <button
+                          type="button"
+                          aria-expanded={
+                            selectedCell?.rowIndex === rowIndex &&
+                            selectedCell.columnId === column.id
+                          }
+                          aria-controls={cellDetailId}
+                          {...stylex.props(s.tableTruncatedCellButton)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            cellTriggerRef.current = event.currentTarget;
+                            setSelectedCell({
+                              rowIndex,
+                              columnId: column.id,
+                              columnTitle: column.title || column.id,
+                            });
+                          }}
+                        >
+                          {text}
+                        </button>
+                      ) : text}
+                    </td>
+                  );
+                })}
+              </tr>
+            )})}
+            {!page.rows.length ? (
+              <tr>
+                <td
+                  colSpan={Math.max(1, page.columns.length + 1)}
+                  {...stylex.props(s.tableEmpty)}
+                >
+                  {page.columns.length
+                    ? "This table has no rows"
+                    : "This table has no columns or rows"}
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+        </>
+      )}
+      <TablePageNavigation
+        page={page}
+        requestedOffset={offset}
+        requestedColumnOffset={columnOffset}
+        onOffsetChange={(nextOffset) => {
+          setSelectedCell(null);
+          setOffset(nextOffset);
+        }}
+        onColumnOffsetChange={(nextOffset) => {
+          setSelectedCell(null);
+          setColumnOffset(nextOffset);
+        }}
+      />
+      {mode !== "raw" && selectedCell ? (
+        <div
+          id={cellDetailId}
+          role="region"
+          aria-label="Full table cell value"
+          {...stylex.props(s.tableCellDetail)}
+        >
+          <div {...stylex.props(s.tableCellDetailHeader)}>
+            <span>
+              Row {selectedCell.rowIndex + 1} · {selectedCell.columnTitle}
+            </span>
+            <button
+              type="button"
+              aria-label="Close full cell value"
+              {...stylex.props(s.tablePagerButton)}
+              onClick={() => {
+                const trigger = cellTriggerRef.current;
+                setSelectedCell(null);
+                window.requestAnimationFrame(() => trigger?.focus());
+              }}
+            >
+              Close
+            </button>
+          </div>
+          {fullCellLoading ? (
+            <span role="status" aria-live="polite" {...stylex.props(s.tableLimit)}>
+              Loading full cell…
+            </span>
+          ) : fullCellError ? (
+            <span role="alert" {...stylex.props(s.tableLimit)}>
+              Could not load the full cell value.
+            </span>
+          ) : fullCell ? (
+            <textarea
+              autoFocus
+              readOnly
+              aria-label="Full cell value"
+              value={fullCellText}
+              {...stylex.props(s.tableCellDetailValue)}
+            />
+          ) : null}
+        </div>
+      ) : null}
+      {contentUrl ? (
+        <a href={contentUrl} download {...stylex.props(s.tableDownload)}>
+          Download complete table JSON
+        </a>
+      ) : null}
     </div>
   );
 }
 
-const geoMapRenderer: ArtifactRendererSpec = {
-  id: "geo-map",
-  modes: ["map", "raw"],
-  matches: (artifact) =>
-    artifact.artifact_type === "geo.map_document" && artifact.schema_version === 1,
-  Component: ({ artifact, payload, mode }) => {
-    const value = geoMapPayload(payload);
-    if (mode === "map" && value) return <GeoMapPreview value={value} />;
-    return (
-      <pre {...stylex.props(s.jsonCode)}>
-        {JSON.stringify(payload ?? artifactMeta(artifact), null, 2)}
-      </pre>
-    );
+function TableArtifactRenderer(props: {
+  artifact: ArtifactSummary;
+  mode: string;
+  availableHeight?: number;
+  interaction?: ArtifactViewerInteractionContext;
+}) {
+  return (
+    <TableArtifactRendererState
+      key={[
+        props.artifact.artifact_id,
+        JSON.stringify(props.interaction?.incoming ?? []),
+      ].join(":")}
+      {...props}
+    />
+  );
+}
+
+const tableRenderer: ArtifactRendererSpec = {
+  id: "table",
+  modes: ["table", "raw"],
+  interaction: {
+    emits: ["key-selection"],
+    accepts: ["filter", "highlight"],
   },
+  matches: (artifact) =>
+    artifact.artifact_type === "table.data" && artifact.schema_version === 1,
+  Component: ({ artifact, mode, availableHeight, interaction }) => (
+    <TableArtifactRenderer
+      artifact={artifact}
+      mode={mode}
+      availableHeight={availableHeight}
+      interaction={interaction}
+    />
+  ),
 };
 
 const jsonSchemaRenderer: ArtifactRendererSpec = {
@@ -703,6 +1337,7 @@ export const META_ARTIFACT_RENDERER: ArtifactRendererSpec = {
 export const ARTIFACT_RENDERERS: readonly ArtifactRendererSpec[] = [
   imageRenderer,
   geoMapRenderer,
+  tableRenderer,
   jsonSchemaRenderer,
   markdownRenderer,
   jsonRenderer,

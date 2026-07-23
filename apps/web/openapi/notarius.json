@@ -64,6 +64,44 @@
         "title": "ArtifactConversionSpecResponse",
         "type": "object"
       },
+      "ArtifactExactMatchRow": {
+        "additionalProperties": false,
+        "properties": {
+          "values": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ArtifactInteractionScalar"
+            },
+            "maxProperties": 8,
+            "minProperties": 1,
+            "title": "Values",
+            "type": "object"
+          }
+        },
+        "required": [
+          "values"
+        ],
+        "title": "ArtifactExactMatchRow",
+        "type": "object"
+      },
+      "ArtifactInteractionScalar": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "ArtifactRef": {
         "properties": {
           "artifact_id": {
@@ -293,6 +331,20 @@
         "title": "ArtifactTypeSpecResponse",
         "type": "object"
       },
+      "Body_upload_file_v1_uploads_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_file_v1_uploads_post",
+        "type": "object"
+      },
       "ConfigureNodeSecretRequest": {
         "additionalProperties": false,
         "properties": {
@@ -385,6 +437,830 @@
           "title"
         ],
         "title": "FieldProjectionResponse",
+        "type": "object"
+      },
+      "GeoArtifactKind": {
+        "enum": [
+          "feature_collection",
+          "raster_scan",
+          "map_layer",
+          "map_document"
+        ],
+        "type": "string"
+      },
+      "GeoBounds": {
+        "maxItems": 4,
+        "minItems": 4,
+        "prefixItems": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "number"
+          }
+        ],
+        "type": "array"
+      },
+      "GeoCategorizedPointStyle": {
+        "additionalProperties": false,
+        "properties": {
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/GeoPointCategory"
+            },
+            "maxItems": 128,
+            "minItems": 1,
+            "title": "Categories",
+            "type": "array"
+          },
+          "category_property": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Category Property",
+            "type": "string"
+          },
+          "kind": {
+            "const": "categorized_points",
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GeoLabelStyle"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "category_property",
+          "categories",
+          "label"
+        ],
+        "title": "GeoCategorizedPointStyle",
+        "type": "object"
+      },
+      "GeoCategoryValue": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          }
+        ]
+      },
+      "GeoExactFeatureResponse": {
+        "properties": {
+          "feature": {
+            "additionalProperties": true,
+            "title": "Feature",
+            "type": "object"
+          },
+          "feature_index": {
+            "minimum": 0.0,
+            "title": "Feature Index",
+            "type": "integer"
+          },
+          "source_artifact_id": {
+            "format": "uuid",
+            "title": "Source Artifact Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_artifact_id",
+          "feature_index",
+          "feature"
+        ],
+        "title": "GeoExactFeatureResponse",
+        "type": "object"
+      },
+      "GeoFeatureQueryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactExactMatchRow"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "title": "GeoFeatureQueryRequest",
+        "type": "object"
+      },
+      "GeoFeatureQueryResponse": {
+        "properties": {
+          "artifact_id": {
+            "format": "uuid",
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "bounds": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GeoBounds"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "matched_feature_count": {
+            "minimum": 0.0,
+            "title": "Matched Feature Count",
+            "type": "integer"
+          },
+          "source_artifact_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Source Artifact Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "bounds",
+          "matched_feature_count",
+          "source_artifact_ids"
+        ],
+        "title": "GeoFeatureQueryResponse",
+        "type": "object"
+      },
+      "GeoFillStyle": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "title": "Color",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "opacity": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Opacity",
+            "type": "number"
+          }
+        },
+        "required": [
+          "enabled",
+          "color",
+          "opacity"
+        ],
+        "title": "GeoFillStyle",
+        "type": "object"
+      },
+      "GeoLabelStyle": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "title": "Color",
+            "type": "string"
+          },
+          "halo_color": {
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "title": "Halo Color",
+            "type": "string"
+          },
+          "halo_width": {
+            "maximum": 16.0,
+            "minimum": 0.0,
+            "title": "Halo Width",
+            "type": "number"
+          },
+          "property": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Property",
+            "type": "string"
+          },
+          "size": {
+            "maximum": 72.0,
+            "minimum": 6.0,
+            "title": "Size",
+            "type": "number"
+          }
+        },
+        "required": [
+          "property",
+          "color",
+          "size",
+          "halo_color",
+          "halo_width"
+        ],
+        "title": "GeoLabelStyle",
+        "type": "object"
+      },
+      "GeoLineStyle": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "title": "Color",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "opacity": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Opacity",
+            "type": "number"
+          },
+          "width": {
+            "maximum": 64.0,
+            "minimum": 0.0,
+            "title": "Width",
+            "type": "number"
+          }
+        },
+        "required": [
+          "enabled",
+          "color",
+          "opacity",
+          "width"
+        ],
+        "title": "GeoLineStyle",
+        "type": "object"
+      },
+      "GeoPointCategory": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "max_zoom": {
+            "maximum": 24.0,
+            "minimum": 0.0,
+            "title": "Max Zoom",
+            "type": "integer"
+          },
+          "min_zoom": {
+            "maximum": 24.0,
+            "minimum": 0.0,
+            "title": "Min Zoom",
+            "type": "integer"
+          },
+          "point": {
+            "$ref": "#/components/schemas/GeoPointStyle"
+          },
+          "title": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/GeoCategoryValue"
+            },
+            "maxItems": 128,
+            "minItems": 1,
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "values",
+          "point",
+          "min_zoom",
+          "max_zoom"
+        ],
+        "title": "GeoPointCategory",
+        "type": "object"
+      },
+      "GeoPointStyle": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "title": "Color",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "opacity": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Opacity",
+            "type": "number"
+          },
+          "radius": {
+            "maximum": 128.0,
+            "minimum": 0.0,
+            "title": "Radius",
+            "type": "number"
+          },
+          "stroke_color": {
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "title": "Stroke Color",
+            "type": "string"
+          },
+          "stroke_width": {
+            "maximum": 32.0,
+            "minimum": 0.0,
+            "title": "Stroke Width",
+            "type": "number"
+          }
+        },
+        "required": [
+          "enabled",
+          "color",
+          "opacity",
+          "radius",
+          "stroke_color",
+          "stroke_width"
+        ],
+        "title": "GeoPointStyle",
+        "type": "object"
+      },
+      "GeoPropertyFieldResponse": {
+        "properties": {
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "value_type": {
+            "$ref": "#/components/schemas/GeoPropertyValueType"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "value_type"
+        ],
+        "title": "GeoPropertyFieldResponse",
+        "type": "object"
+      },
+      "GeoPropertyValueType": {
+        "enum": [
+          "text",
+          "integer",
+          "number",
+          "boolean",
+          "null",
+          "mixed",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "GeoRasterRenderSourceResponse": {
+        "properties": {
+          "artifact_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Id"
+          },
+          "attribution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attribution"
+          },
+          "bounds": {
+            "$ref": "#/components/schemas/GeoBounds"
+          },
+          "kind": {
+            "const": "raster",
+            "default": "raster",
+            "title": "Kind",
+            "type": "string"
+          },
+          "tilejson_url": {
+            "title": "Tilejson Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "tilejson_url",
+          "bounds"
+        ],
+        "title": "GeoRasterRenderSourceResponse",
+        "type": "object"
+      },
+      "GeoRasterStyle": {
+        "additionalProperties": false,
+        "properties": {
+          "brightness_max": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Brightness Max",
+            "type": "number"
+          },
+          "brightness_min": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Brightness Min",
+            "type": "number"
+          },
+          "contrast": {
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "title": "Contrast",
+            "type": "number"
+          },
+          "hue": {
+            "maximum": 359.0,
+            "minimum": 0.0,
+            "title": "Hue",
+            "type": "number"
+          },
+          "kind": {
+            "const": "raster",
+            "title": "Kind",
+            "type": "string"
+          },
+          "opacity": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Opacity",
+            "type": "number"
+          },
+          "resampling": {
+            "enum": [
+              "linear",
+              "nearest"
+            ],
+            "title": "Resampling",
+            "type": "string"
+          },
+          "saturation": {
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "title": "Saturation",
+            "type": "number"
+          }
+        },
+        "required": [
+          "kind",
+          "opacity",
+          "brightness_min",
+          "brightness_max",
+          "contrast",
+          "saturation",
+          "hue",
+          "resampling"
+        ],
+        "title": "GeoRasterStyle",
+        "type": "object"
+      },
+      "GeoRasterTileJsonResponse": {
+        "properties": {
+          "attribution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attribution"
+          },
+          "bounds": {
+            "$ref": "#/components/schemas/GeoBounds"
+          },
+          "maxzoom": {
+            "maximum": 24.0,
+            "minimum": 0.0,
+            "title": "Maxzoom",
+            "type": "integer"
+          },
+          "minzoom": {
+            "maximum": 24.0,
+            "minimum": 0.0,
+            "title": "Minzoom",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "scheme": {
+            "const": "xyz",
+            "default": "xyz",
+            "title": "Scheme",
+            "type": "string"
+          },
+          "tilejson": {
+            "const": "3.0.0",
+            "default": "3.0.0",
+            "title": "Tilejson",
+            "type": "string"
+          },
+          "tiles": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Tiles",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "tiles",
+          "bounds",
+          "minzoom",
+          "maxzoom"
+        ],
+        "title": "GeoRasterTileJsonResponse",
+        "type": "object"
+      },
+      "GeoRenderLayerResponse": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "max_zoom": {
+            "maximum": 24.0,
+            "minimum": 0.0,
+            "title": "Max Zoom",
+            "type": "integer"
+          },
+          "min_zoom": {
+            "maximum": 24.0,
+            "minimum": 0.0,
+            "title": "Min Zoom",
+            "type": "integer"
+          },
+          "opacity": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Opacity",
+            "type": "number"
+          },
+          "source": {
+            "discriminator": {
+              "mapping": {
+                "raster": "#/components/schemas/GeoRasterRenderSourceResponse",
+                "vector": "#/components/schemas/GeoVectorRenderSourceResponse"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GeoVectorRenderSourceResponse"
+              },
+              {
+                "$ref": "#/components/schemas/GeoRasterRenderSourceResponse"
+              }
+            ],
+            "title": "Source"
+          },
+          "style": {
+            "discriminator": {
+              "mapping": {
+                "categorized_points": "#/components/schemas/GeoCategorizedPointStyle",
+                "raster": "#/components/schemas/GeoRasterStyle",
+                "vector": "#/components/schemas/GeoVectorStyle"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GeoVectorStyle"
+              },
+              {
+                "$ref": "#/components/schemas/GeoCategorizedPointStyle"
+              },
+              {
+                "$ref": "#/components/schemas/GeoRasterStyle"
+              }
+            ],
+            "title": "Style"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "visible": {
+            "title": "Visible",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "visible",
+          "opacity",
+          "min_zoom",
+          "max_zoom",
+          "source",
+          "style"
+        ],
+        "title": "GeoRenderLayerResponse",
+        "type": "object"
+      },
+      "GeoRenderResponse": {
+        "properties": {
+          "artifact_id": {
+            "format": "uuid",
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "basemap": {
+            "enum": [
+              "openstreetmap",
+              "none"
+            ],
+            "title": "Basemap",
+            "type": "string"
+          },
+          "initial_bounds": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GeoBounds"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/GeoArtifactKind"
+          },
+          "layers": {
+            "items": {
+              "$ref": "#/components/schemas/GeoRenderLayerResponse"
+            },
+            "title": "Layers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "kind",
+          "basemap",
+          "initial_bounds",
+          "layers"
+        ],
+        "title": "GeoRenderResponse",
+        "type": "object"
+      },
+      "GeoVectorRenderSourceResponse": {
+        "properties": {
+          "archive_url": {
+            "title": "Archive Url",
+            "type": "string"
+          },
+          "artifact_id": {
+            "format": "uuid",
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "bounds": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GeoBounds"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/GeoPropertyFieldResponse"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "kind": {
+            "const": "vector",
+            "default": "vector",
+            "title": "Kind",
+            "type": "string"
+          },
+          "max_zoom": {
+            "maximum": 24.0,
+            "minimum": 0.0,
+            "title": "Max Zoom",
+            "type": "integer"
+          },
+          "min_zoom": {
+            "maximum": 24.0,
+            "minimum": 0.0,
+            "title": "Min Zoom",
+            "type": "integer"
+          },
+          "source_layer": {
+            "title": "Source Layer",
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "archive_url",
+          "source_layer",
+          "bounds",
+          "min_zoom",
+          "max_zoom"
+        ],
+        "title": "GeoVectorRenderSourceResponse",
+        "type": "object"
+      },
+      "GeoVectorStyle": {
+        "additionalProperties": false,
+        "properties": {
+          "fill": {
+            "$ref": "#/components/schemas/GeoFillStyle"
+          },
+          "kind": {
+            "const": "vector",
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GeoLabelStyle"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "line": {
+            "$ref": "#/components/schemas/GeoLineStyle"
+          },
+          "outline": {
+            "$ref": "#/components/schemas/GeoLineStyle"
+          },
+          "point": {
+            "$ref": "#/components/schemas/GeoPointStyle"
+          }
+        },
+        "required": [
+          "kind",
+          "fill",
+          "line",
+          "outline",
+          "point",
+          "label"
+        ],
+        "title": "GeoVectorStyle",
         "type": "object"
       },
       "GraphExecutionDetailResponse": {
@@ -1365,6 +2241,8 @@
             "type": "object"
           },
           "id": {
+            "maxLength": 255,
+            "minLength": 1,
             "title": "Id",
             "type": "string"
           },
@@ -2042,6 +2920,309 @@
         "title": "SavedGraphSummaryResponse",
         "type": "object"
       },
+      "TableCellPreviewResponse": {
+        "properties": {
+          "display": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display"
+          },
+          "original_length": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Length"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "display",
+          "truncated"
+        ],
+        "title": "TableCellPreviewResponse",
+        "type": "object"
+      },
+      "TableCellResponse": {
+        "properties": {
+          "column_id": {
+            "title": "Column Id",
+            "type": "string"
+          },
+          "encoding": {
+            "default": "native",
+            "enum": [
+              "native",
+              "integer",
+              "json"
+            ],
+            "title": "Encoding",
+            "type": "string"
+          },
+          "row_index": {
+            "minimum": 0.0,
+            "title": "Row Index",
+            "type": "integer"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "row_index",
+          "column_id",
+          "value"
+        ],
+        "title": "TableCellResponse",
+        "type": "object"
+      },
+      "TableColumnResponse": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "value_type": {
+            "$ref": "#/components/schemas/TableValueType"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "value_type"
+        ],
+        "title": "TableColumnResponse",
+        "type": "object"
+      },
+      "TableExactMatchGroup": {
+        "additionalProperties": false,
+        "properties": {
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactExactMatchRow"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "title": "TableExactMatchGroup",
+        "type": "object"
+      },
+      "TablePageResponse": {
+        "properties": {
+          "column_limit": {
+            "minimum": 1.0,
+            "title": "Column Limit",
+            "type": "integer"
+          },
+          "column_offset": {
+            "minimum": 0.0,
+            "title": "Column Offset",
+            "type": "integer"
+          },
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/TableColumnResponse"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "highlighted_row_indices": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Highlighted Row Indices",
+            "type": "array"
+          },
+          "limit": {
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "row_indices": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Row Indices",
+            "type": "array"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/TableCellPreviewResponse"
+              },
+              "type": "object"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "total_columns": {
+            "minimum": 0.0,
+            "title": "Total Columns",
+            "type": "integer"
+          },
+          "total_rows": {
+            "minimum": 0.0,
+            "title": "Total Rows",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "columns",
+          "rows",
+          "offset",
+          "limit",
+          "total_rows",
+          "column_offset",
+          "column_limit",
+          "total_columns"
+        ],
+        "title": "TablePageResponse",
+        "type": "object"
+      },
+      "TableQueryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "column_limit": {
+            "default": 25,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Column Limit",
+            "type": "integer"
+          },
+          "column_offset": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Column Offset",
+            "type": "integer"
+          },
+          "filter_groups": {
+            "items": {
+              "$ref": "#/components/schemas/TableExactMatchGroup"
+            },
+            "maxItems": 8,
+            "title": "Filter Groups",
+            "type": "array"
+          },
+          "highlight_groups": {
+            "items": {
+              "$ref": "#/components/schemas/TableExactMatchGroup"
+            },
+            "maxItems": 8,
+            "title": "Highlight Groups",
+            "type": "array"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "max_cell_characters": {
+            "default": 256,
+            "maximum": 2000.0,
+            "minimum": 32.0,
+            "title": "Max Cell Characters",
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "title": "TableQueryRequest",
+        "type": "object"
+      },
+      "TableSchemaResponse": {
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/TableColumnResponse"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "total_rows": {
+            "minimum": 0.0,
+            "title": "Total Rows",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "columns",
+          "total_rows"
+        ],
+        "title": "TableSchemaResponse",
+        "type": "object"
+      },
+      "TableValueType": {
+        "enum": [
+          "text",
+          "integer",
+          "number",
+          "decimal",
+          "boolean",
+          "date",
+          "datetime",
+          "json",
+          "binary",
+          "unknown",
+          "mixed"
+        ],
+        "title": "TableValueType",
+        "type": "string"
+      },
       "UnavailableGraphModuleResponse": {
         "properties": {
           "graph_id": {
@@ -2108,24 +3289,6 @@
         "title": "UpdateSavedGraphRequest",
         "type": "object"
       },
-      "UploadRequest": {
-        "properties": {
-          "content_base64": {
-            "title": "Content Base64",
-            "type": "string"
-          },
-          "filename": {
-            "title": "Filename",
-            "type": "string"
-          }
-        },
-        "required": [
-          "filename",
-          "content_base64"
-        ],
-        "title": "UploadRequest",
-        "type": "object"
-      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -2165,6 +3328,19 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "WorkbenchErrorResponse": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "WorkbenchErrorResponse",
+        "type": "object"
       }
     }
   },
@@ -2198,6 +3374,16 @@
             },
             "description": "Successful Response"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact not found"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2207,9 +3393,903 @@
               }
             },
             "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact content is unavailable"
           }
         },
         "summary": "Get Artifact Content",
+        "tags": [
+          "workbench"
+        ]
+      }
+    },
+    "/v1/artifacts/{artifact_id}/geo/query": {
+      "post": {
+        "operationId": "query_geo_features_v1_artifacts__artifact_id__geo_query_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GeoFeatureQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeoFeatureQueryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid geo query"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact content is unavailable"
+          }
+        },
+        "summary": "Query Geo Features",
+        "tags": [
+          "workbench"
+        ]
+      }
+    },
+    "/v1/artifacts/{artifact_id}/geo/render": {
+      "get": {
+        "operationId": "get_geo_render_descriptor_v1_artifacts__artifact_id__geo_render_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeoRenderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid geo request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact content is unavailable"
+          }
+        },
+        "summary": "Get Geo Render Descriptor",
+        "tags": [
+          "workbench"
+        ]
+      }
+    },
+    "/v1/artifacts/{artifact_id}/table/cell": {
+      "get": {
+        "operationId": "get_table_artifact_cell_v1_artifacts__artifact_id__table_cell_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "row_index",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "title": "Row Index",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "column_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Column Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableCellResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid cell request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact content is unavailable"
+          }
+        },
+        "summary": "Get Table Artifact Cell",
+        "tags": [
+          "workbench"
+        ]
+      }
+    },
+    "/v1/artifacts/{artifact_id}/table/page": {
+      "get": {
+        "operationId": "get_table_artifact_page_v1_artifacts__artifact_id__table_page_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "column_offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Column Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "column_limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Column Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_cell_characters",
+            "required": false,
+            "schema": {
+              "default": 256,
+              "maximum": 2000,
+              "minimum": 32,
+              "title": "Max Cell Characters",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TablePageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid table request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact content is unavailable"
+          }
+        },
+        "summary": "Get Table Artifact Page",
+        "tags": [
+          "workbench"
+        ]
+      }
+    },
+    "/v1/artifacts/{artifact_id}/table/query": {
+      "post": {
+        "operationId": "query_table_artifact_page_v1_artifacts__artifact_id__table_query_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TableQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TablePageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid table query"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact content is unavailable"
+          }
+        },
+        "summary": "Query Table Artifact Page",
+        "tags": [
+          "workbench"
+        ]
+      }
+    },
+    "/v1/artifacts/{artifact_id}/table/schema": {
+      "get": {
+        "operationId": "get_table_artifact_schema_v1_artifacts__artifact_id__table_schema_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableSchemaResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid table request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact content is unavailable"
+          }
+        },
+        "summary": "Get Table Artifact Schema",
+        "tags": [
+          "workbench"
+        ]
+      }
+    },
+    "/v1/artifacts/{source_id}/geo/features/{feature_index}": {
+      "get": {
+        "operationId": "get_geo_exact_feature_v1_artifacts__source_id__geo_features__feature_index__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "feature_index",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "title": "Feature Index",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeoExactFeatureResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid vector source"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Feature not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Feature content is unavailable"
+          }
+        },
+        "summary": "Get Geo Exact Feature",
+        "tags": [
+          "workbench"
+        ]
+      }
+    },
+    "/v1/artifacts/{source_id}/geo/raster/tilejson.json": {
+      "get": {
+        "operationId": "get_geo_raster_tilejson_v1_artifacts__source_id__geo_raster_tilejson_json_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeoRasterTileJsonResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid raster source"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Raster projection is unavailable"
+          }
+        },
+        "summary": "Get Geo Raster Tilejson",
+        "tags": [
+          "workbench"
+        ]
+      }
+    },
+    "/v1/artifacts/{source_id}/geo/raster/{z}/{x}/{y}.png": {
+      "get": {
+        "operationId": "get_geo_raster_tile_v1_artifacts__source_id__geo_raster__z___x___y__png_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "z",
+            "required": true,
+            "schema": {
+              "maximum": 24,
+              "minimum": 0,
+              "title": "Z",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "x",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "title": "X",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "y",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "title": "Y",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid raster source"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Raster tile not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Raster tile is unavailable"
+          }
+        },
+        "summary": "Get Geo Raster Tile",
+        "tags": [
+          "workbench"
+        ]
+      }
+    },
+    "/v1/artifacts/{source_id}/geo/vector.pmtiles": {
+      "get": {
+        "operationId": "get_geo_vector_pmtiles_v1_artifacts__source_id__geo_vector_pmtiles_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Range",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Range"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid vector source"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact not found"
+          },
+          "416": {
+            "description": "Requested byte range is not satisfiable"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Vector projection is unavailable"
+          }
+        },
+        "summary": "Get Geo Vector Pmtiles",
         "tags": [
           "workbench"
         ]
@@ -2252,7 +4332,7 @@
         },
         "summary": "Start Graph Execution",
         "tags": [
-          "workbench"
+          "executions"
         ]
       }
     },
@@ -2295,7 +4375,7 @@
         },
         "summary": "Cancel Graph Execution",
         "tags": [
-          "workbench"
+          "executions"
         ]
       },
       "get": {
@@ -2336,7 +4416,66 @@
         },
         "summary": "Get Graph Execution",
         "tags": [
-          "workbench"
+          "executions"
+        ]
+      }
+    },
+    "/v1/executions/{execution_id}/events": {
+      "get": {
+        "operationId": "stream_graph_execution_events_v1_executions__execution_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Execution Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Server-sent execution lifecycle and node progress events"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stream Graph Execution Events",
+        "tags": [
+          "executions"
         ]
       }
     },
@@ -2762,7 +4901,7 @@
         },
         "summary": "Get Graph Materializations",
         "tags": [
-          "workbench"
+          "executions"
         ]
       }
     },
@@ -3000,7 +5139,7 @@
         },
         "summary": "Run Graph",
         "tags": [
-          "workbench"
+          "executions"
         ]
       }
     },
@@ -3054,9 +5193,9 @@
         "operationId": "upload_file_v1_uploads_post",
         "requestBody": {
           "content": {
-            "application/json": {
+            "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/UploadRequest"
+                "$ref": "#/components/schemas/Body_upload_file_v1_uploads_post"
               }
             }
           },

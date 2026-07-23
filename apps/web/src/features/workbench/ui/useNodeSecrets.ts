@@ -16,6 +16,7 @@ import {
   type WorkflowNodeSecretStatus,
   type WorkflowNodeSecretStatuses,
 } from "../canvas/node-secrets";
+import { workflowNodeIsSupported } from "../canvas/types";
 import type { WorkflowNode } from "../model/execution-plan";
 
 export interface NodeSecretGraph {
@@ -54,7 +55,11 @@ function graphNodeSecretStatuses(
 ): NodeSecretStatusesByNode {
   return Object.fromEntries(
     nodes
-      .filter((node) => nodeSecretInputs(node.data.spec).length > 0)
+      .filter(
+        (node) =>
+          workflowNodeIsSupported(node.data) &&
+          nodeSecretInputs(node.data.spec).length > 0,
+      )
       .map((node) => [
         node.id,
         reconciledNodeSecretStatuses(node.data.spec, node.id, remote),
@@ -69,7 +74,11 @@ function nodeSecretStatusesWithState(
 ): NodeSecretStatusesByNode {
   return Object.fromEntries(
     nodes
-      .filter((node) => nodeSecretInputs(node.data.spec).length > 0)
+      .filter(
+        (node) =>
+          workflowNodeIsSupported(node.data) &&
+          nodeSecretInputs(node.data.spec).length > 0,
+      )
       .map((node) => [
         node.id,
         Object.fromEntries(
@@ -204,7 +213,9 @@ export function useNodeSecrets(
     );
 
     if (!graphNodes.some(
-      (node) => nodeSecretInputs(node.data.spec).length > 0,
+      (node) =>
+        workflowNodeIsSupported(node.data) &&
+        nodeSecretInputs(node.data.spec).length > 0,
     )) {
       setNodeSecretStatuses({});
       return true;
@@ -287,7 +298,7 @@ export function useNodeSecrets(
     const graph = activeGraphRef.current;
     if (!graph) return false;
     const node = nodesByIdRef.current.get(nodeId);
-    const input = node
+    const input = node && workflowNodeIsSupported(node.data)
       ? nodeSecretInputs(node.data.spec).find(
           (candidate) => candidate.name === name,
         )
@@ -381,7 +392,7 @@ export function useNodeSecrets(
     const graph = activeGraphRef.current;
     if (!graph) return false;
     const node = nodesByIdRef.current.get(nodeId);
-    const input = node
+    const input = node && workflowNodeIsSupported(node.data)
       ? nodeSecretInputs(node.data.spec).find(
           (candidate) => candidate.name === name,
         )

@@ -12,6 +12,8 @@ import type {
   RunEdgeProjectionInput,
   RunNodeInput,
   RunNodeResult,
+  SavedGraphEdge,
+  SavedGraphNode,
 } from "@/lib/api";
 import {
   initialInputPlugs,
@@ -19,6 +21,13 @@ import {
   type WorkflowInputPlugBinding,
 } from "./input-plugs";
 import type { WorkflowNodeLayout } from "./node-layout";
+import {
+  ARTIFACT_QUERY_OPERATOR_ID,
+  ARTIFACT_QUERY_RELATIONS_PORT,
+  createArtifactQueryRelation,
+  reconcileArtifactQueryRelationInputPlugs,
+  type ArtifactQueryRelation,
+} from "./query-artifact-tables";
 import type { SchemaBuilderField } from "./schema-builder";
 import type { WorkflowNodeSecretStatuses } from "./node-secrets";
 
@@ -57,7 +66,14 @@ export interface WorkflowEdgeData extends Record<string, unknown> {
   conversionPath?: WorkflowEdgeConversionPath;
   /** Visual routing adjustment from the edge's natural midpoint. */
   routeOffset?: WorkflowEdgeRouteOffset;
+  /** Persisted endpoint names remain authoritative when a live port is unavailable. */
   sourcePortName?: string;
+  targetPortName?: string;
+  targetPlugId?: string | null;
+  /** Exact API transport retained for a lossless compatibility round trip. */
+  persistedEdge?: SavedGraphEdge;
+  /** Registry compatibility failures disable editing and in-scope execution. */
+  compatibilityIssues?: readonly string[];
   conversionTitles?: readonly string[];
   routeOptions?: readonly WorkflowEdgeRouteOption[];
   allowedCollectionModes?: readonly RunEdgeCollectionMode[];
@@ -142,8 +158,47 @@ export interface NodeExecution {
   error?: string;
 }
 
+export interface WorkflowNodeProgressEntry {
+  sequence: number;
+  message: string;
+  current: number | null;
+  total: number | null;
+  sourceNodePath: readonly string[];
+  invocationIndex: number | null;
+  invocationPath: readonly number[];
+}
+
+export interface WorkflowNodeProgress {
+  entries: readonly WorkflowNodeProgressEntry[];
+  omittedCount: number;
+}
+
+export interface WorkflowNodeHistoryContext {
+  graphId: string | null;
+  isDirty: boolean;
+}
+
+export interface WorkflowCompatibilityEndpoint {
+  portName: string;
+  plugId?: string;
+}
+
+export type WorkflowNodeCompatibility =
+  | {
+      status: "supported";
+    }
+  | {
+      status: "unsupported" | "invalid";
+      issues: readonly string[];
+      inputs: readonly WorkflowCompatibilityEndpoint[];
+      outputs: readonly WorkflowCompatibilityEndpoint[];
+      /** Exact API transport retained while the live contract is unavailable. */
+      persistedNode: SavedGraphNode;
+    };
+
 export interface WorkflowNodeData extends Record<string, unknown> {
   spec: NodeSpec;
+  compatibility: WorkflowNodeCompatibility;
   /** Persisted concrete choices for artifact type variables declared by ports. */
   artifactTypeBindings: WorkflowArtifactTypeBindings;
   /** Ordered, serializable input instances. Their ids remain stable on reorder. */
@@ -163,6 +218,10 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   layout: WorkflowNodeLayout | null;
   run: RunNodeResult | null;
   execution: NodeExecution;
+  /** Bounded, ephemeral live telemetry; never serialized with the graph. */
+  progress: WorkflowNodeProgress | null;
+  /** Saved-graph identity and authoring state; never serialized with the graph. */
+  historyContext: WorkflowNodeHistoryContext | null;
   onImagesSelected?: (nodeId: string, files: File[]) => void;
   onConfigChange?: (nodeId: string, name: string, value: unknown) => void;
   onLayoutChange?: (nodeId: string, layout: WorkflowNodeLayout | null) => void;
@@ -181,6 +240,11 @@ export interface WorkflowNodeData extends Record<string, unknown> {
     fields: readonly SchemaBuilderField[],
     inputPlugs: readonly WorkflowInputPlug[],
   ) => void;
+  onArtifactQueryRelationsChange?: (
+    nodeId: string,
+    relations: readonly ArtifactQueryRelation[],
+    inputPlugs: readonly WorkflowInputPlug[],
+  ) => void;
   onApplyNodeSecret?: (
     nodeId: string,
     name: string,
@@ -196,17 +260,48 @@ export interface WorkflowNodeData extends Record<string, unknown> {
     artifactTypeBindings: WorkflowArtifactTypeBindings,
   ) => void;
   onOpenModuleSource?: (graphId: string) => void;
-  onOpenExecutionHistory?: (nodeId: string) => void;
+  onOpenExecutionHistory?: (nodeId: string, executionId?: string) => void;
 }
 
 export const WORKFLOW_NODE_TYPE = "notariusWorkflowNode";
 export const WORKFLOW_EDGE_TYPE = "notariusWorkflowEdge";
 export const IMAGE_UPLOAD_OPERATOR_ID = "image.upload";
+export const TABLE_FILE_IMPORT_OPERATOR_ID = "table.file.import";
 export const GEOJSON_UPLOAD_OPERATOR_ID = "gis.geojson.upload";
+export const GEOTIFF_UPLOAD_OPERATOR_ID = "gis.geotiff.upload";
+export const GIS_COMPOSE_MAP_OPERATOR_ID = "gis.map.compose";
+export const GIS_VECTOR_LAYER_OPERATOR_ID = "gis.map.vector_layer";
+
+export function workflowNodeIsSupported(data: WorkflowNodeData): boolean {
+  return data.compatibility.status === "supported";
+}
+
+export function compatibilityHandleId(
+  direction: "input" | "output",
+  endpoint: WorkflowCompatibilityEndpoint,
+): string {
+  const plugId = endpoint.plugId
+    ? encodeURIComponent(endpoint.plugId)
+    : "";
+  return [
+    "$compatibility",
+    direction,
+    encodeURIComponent(endpoint.portName),
+    plugId,
+  ].join("::");
+}
 
 export function isFileUploadOperator(operatorId: string): boolean {
   return operatorId === IMAGE_UPLOAD_OPERATOR_ID ||
-    operatorId === GEOJSON_UPLOAD_OPERATOR_ID;
+    operatorId === TABLE_FILE_IMPORT_OPERATOR_ID ||
+    operatorId === GEOJSON_UPLOAD_OPERATOR_ID ||
+    operatorId === GEOTIFF_UPLOAD_OPERATOR_ID;
+}
+
+export function defaultNodeLayout(spec: NodeSpec): WorkflowNodeLayout | null {
+  return spec.operator_id === GIS_COMPOSE_MAP_OPERATOR_ID
+    ? { width: 620, appendixHeight: 420 }
+    : null;
 }
 
 function schemaRecord(value: unknown): Record<string, unknown> | null {
@@ -242,24 +337,45 @@ export function createWorkflowNodeData(
   spec: NodeSpec,
   savedInputPlugs?: readonly InputPlugInput[],
 ): WorkflowNodeData {
+  let inputPlugs = savedInputPlugs
+    ? savedInputPlugs.map((plug) => ({
+        id: plug.id,
+        portName: plug.port,
+      }))
+    : initialInputPlugs(spec);
+  const config = defaultNodeConfig(spec);
+  if (
+    !savedInputPlugs &&
+    spec.operator_id === ARTIFACT_QUERY_OPERATOR_ID
+  ) {
+    const relationPlug = inputPlugs.find(
+      (plug) => plug.portName === ARTIFACT_QUERY_RELATIONS_PORT,
+    );
+    const relation = relationPlug
+      ? createArtifactQueryRelation(0, relationPlug.id)
+      : createArtifactQueryRelation(0);
+    config.relations = [relation];
+    inputPlugs = reconcileArtifactQueryRelationInputPlugs(
+      inputPlugs,
+      [relation],
+    );
+  }
   return {
     spec,
+    compatibility: { status: "supported" },
     artifactTypeBindings: {},
-    inputPlugs: savedInputPlugs
-      ? savedInputPlugs.map((plug) => ({
-          id: plug.id,
-          portName: plug.port,
-        }))
-      : initialInputPlugs(spec),
+    inputPlugs,
     inputPlugBindings: {},
     mappedInputPort: null,
     secretStatuses: {},
     secretInputReadiness: {},
     secretInputScope: "unsaved:none",
-    config: defaultNodeConfig(spec),
-    layout: null,
+    config,
+    layout: defaultNodeLayout(spec),
     run: null,
     execution: { status: "idle" },
+    progress: null,
+    historyContext: null,
   };
 }
 
@@ -268,6 +384,11 @@ export function serializeRunNode(
   data: WorkflowNodeData,
   activeInputPlugIds?: ReadonlySet<string>,
 ): RunNodeInput {
+  if (!workflowNodeIsSupported(data)) {
+    throw new Error(
+      `Cannot serialize unsupported node ${id} (${data.spec.operator_id}@${data.spec.operator_version}) for execution`,
+    );
+  }
   const inputPlugs = serializeInputPlugs(data);
   return {
     id,
@@ -333,6 +454,7 @@ export function resetArtifactTypeBinding(
     artifactTypeBindings: bindings,
     run: null,
     execution: { status: "idle" },
+    progress: null,
   };
 }
 
@@ -448,6 +570,7 @@ export function invalidateWorkflowNodeRuns<NodeType extends WorkflowNodeState>(
         ...node.data,
         run: null,
         execution: { status: "idle" },
+        progress: null,
       },
     };
   });

@@ -1,4 +1,4 @@
-import { API_BASE, request } from "./client";
+import { API_BASE, ApiError, request } from "./client";
 import type {
   AppliedNodeSecret,
   ApplyNodeSecretRequest,
@@ -9,14 +9,230 @@ import type {
   GraphExecutionList,
   GraphExecutionStatus,
   GraphMaterializations,
+  GeoFeatureQuery,
+  GeoRenderDescriptor,
+  RunExecutionEvent,
   RunExecution,
   RunRequest,
   RunResponse,
   SavedGraph,
-  UploadRequest,
+  TableCell,
+  TablePage,
+  TableSchema,
   UploadResponse,
   UpdateSavedGraphRequest,
 } from "./contract";
+
+export interface RunExecutionEventHandlers {
+  onEvent: (event: RunExecutionEvent) => void;
+  onError: (error: Event | Error) => void;
+  onOpen?: () => void;
+}
+
+export interface RunExecutionEventSubscription {
+  close: () => void;
+}
+
+export type ArtifactInteractionScalar = string | number | boolean | null;
+
+export interface TableExactMatchInput {
+  values: Record<string, ArtifactInteractionScalar>;
+}
+
+export interface TableExactMatchGroupInput {
+  rows: TableExactMatchInput[];
+}
+
+export interface TableQueryInput {
+  filter_groups: TableExactMatchGroupInput[];
+  highlight_groups: TableExactMatchGroupInput[];
+  offset: number;
+  limit: number;
+  column_offset: number;
+  column_limit: number;
+  max_cell_characters: number;
+}
+
+export interface GeoFeatureQueryInput {
+  rows: TableExactMatchInput[];
+}
+
+const RUN_EXECUTION_EVENT_KINDS = [
+  "execution.status",
+  "node.status",
+  "node.progress",
+] as const;
+
+const RUN_EXECUTION_STATUSES = new Set([
+  "queued",
+  "running",
+  "cancelling",
+  "cancelled",
+  "succeeded",
+  "failed",
+]);
+
+const RUN_EXECUTION_NODE_STATUSES = new Set([
+  "running",
+  "succeeded",
+  "failed",
+  "skipped",
+]);
+
+const EXECUTION_EVENT_DATE_TIME =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
+const EXECUTION_EVENT_UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_EXECUTION_EVENT_PATH_DEPTH = 64;
+const MAX_EXECUTION_IDENTIFIER_CHARACTERS = 255;
+const MAX_EXECUTION_PROGRESS_MESSAGE_CHARACTERS = 1_000;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validExecutionEventUuid(value: unknown): value is string {
+  return typeof value === "string" && EXECUTION_EVENT_UUID.test(value);
+}
+
+function nullableExecutionEventUuid(value: unknown): value is string | null {
+  return value === null || validExecutionEventUuid(value);
+}
+
+function validExecutionIdentifier(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim();
+  return normalized.length >= 1 &&
+    normalized.length <= MAX_EXECUTION_IDENTIFIER_CHARACTERS;
+}
+
+function nullableExecutionIdentifier(
+  value: unknown,
+): value is string | null {
+  return value === null || validExecutionIdentifier(value);
+}
+
+function nullableNonNegativeInteger(value: unknown): value is number | null {
+  return value === null ||
+    (typeof value === "number" &&
+      Number.isSafeInteger(value) &&
+      value >= 0);
+}
+
+function validExecutionEventDateTime(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = EXECUTION_EVENT_DATE_TIME.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const offsetHour = match[7] === undefined ? 0 : Number(match[7]);
+  const offsetMinute = match[8] === undefined ? 0 : Number(match[8]);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [
+    31,
+    leapYear ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+  return month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= (daysInMonth[month - 1] ?? 0) &&
+    hour <= 23 &&
+    minute <= 59 &&
+    second <= 59 &&
+    offsetHour <= 23 &&
+    offsetMinute <= 59 &&
+    !Number.isNaN(Date.parse(value));
+}
+
+function parseRunExecutionEvent(
+  eventKind: RunExecutionEvent["kind"],
+  raw: unknown,
+): RunExecutionEvent {
+  if (typeof raw !== "string") {
+    throw new Error(`${eventKind} event data must be JSON text.`);
+  }
+  const value: unknown = JSON.parse(raw);
+  if (
+    !isRecord(value) ||
+    value.kind !== eventKind ||
+    typeof value.sequence !== "number" ||
+    !Number.isSafeInteger(value.sequence) ||
+    value.sequence < 1 ||
+    !validExecutionEventUuid(value.execution_id) ||
+    !validExecutionEventDateTime(value.occurred_at)
+  ) {
+    throw new Error(`Invalid ${eventKind} execution event payload.`);
+  }
+
+  if (eventKind === "execution.status") {
+    if (
+      typeof value.status !== "string" ||
+      !RUN_EXECUTION_STATUSES.has(value.status) ||
+      !nullableExecutionIdentifier(value.active_node_id)
+    ) {
+      throw new Error(`Invalid ${eventKind} execution event payload.`);
+    }
+    return value as unknown as RunExecutionEvent;
+  }
+
+  if (
+    !Array.isArray(value.node_path) ||
+    value.node_path.length === 0 ||
+    value.node_path.length > MAX_EXECUTION_EVENT_PATH_DEPTH ||
+    !value.node_path.every(validExecutionIdentifier) ||
+    !validExecutionIdentifier(value.node_id) ||
+    !nullableExecutionEventUuid(value.node_run_id) ||
+    !nullableNonNegativeInteger(value.invocation_index) ||
+    !Array.isArray(value.invocation_path) ||
+    value.invocation_path.length > MAX_EXECUTION_EVENT_PATH_DEPTH ||
+    !value.invocation_path.every(
+      (index) =>
+        typeof index === "number" &&
+        Number.isSafeInteger(index) &&
+        index >= 0,
+    )
+  ) {
+    throw new Error(`Invalid ${eventKind} execution event payload.`);
+  }
+
+  if (eventKind === "node.status") {
+    if (
+      typeof value.status !== "string" ||
+      !RUN_EXECUTION_NODE_STATUSES.has(value.status)
+    ) {
+      throw new Error(`Invalid ${eventKind} execution event payload.`);
+    }
+    return value as unknown as RunExecutionEvent;
+  }
+
+  if (
+    typeof value.message !== "string" ||
+    value.message.trim().length === 0 ||
+    value.message.length > MAX_EXECUTION_PROGRESS_MESSAGE_CHARACTERS ||
+    !nullableNonNegativeInteger(value.current) ||
+    !nullableNonNegativeInteger(value.total) ||
+    (value.current !== null &&
+      value.total !== null &&
+      value.current > value.total)
+  ) {
+    throw new Error(`Invalid ${eventKind} execution event payload.`);
+  }
+  return value as unknown as RunExecutionEvent;
+}
 
 export interface ListGraphExecutionsOptions {
   limit?: number;
@@ -153,17 +369,33 @@ export function deleteSavedGraph(
   );
 }
 
-export function uploadImage(
-  filename: string,
-  contentBase64: string,
-) {
-  const body: UploadRequest = {
-    filename,
-    content_base64: contentBase64,
-  };
-  return request<UploadResponse>("POST", "/v1/uploads", {
+export async function uploadFile(
+  file: File,
+  signal?: AbortSignal,
+): Promise<UploadResponse> {
+  const body = new FormData();
+  body.append("file", file, file.name);
+  const response = await fetch(`${API_BASE}/v1/uploads`, {
+    method: "POST",
+    headers: { Accept: "application/json" },
     body,
+    signal,
   });
+  if (!response.ok) {
+    let detail = `${response.status} ${response.statusText}`;
+    try {
+      const payload: unknown = await response.json();
+      if (typeof payload === "string") {
+        detail = payload;
+      } else if (typeof payload === "object" && payload !== null && "detail" in payload) {
+        detail = String(payload.detail);
+      }
+    } catch {
+      /* keep the status detail when the API did not return JSON */
+    }
+    throw new ApiError(response.status, detail);
+  }
+  return (await response.json()) as UploadResponse;
 }
 
 export function runGraph(requestBody: RunRequest) {
@@ -185,6 +417,59 @@ export function getRunExecution(executionId: string) {
   );
 }
 
+export function subscribeRunExecutionEvents(
+  executionId: string,
+  handlers: RunExecutionEventHandlers,
+): RunExecutionEventSubscription {
+  let source: EventSource;
+  try {
+    source = new EventSource(
+      `${API_BASE}/v1/executions/${encodeURIComponent(executionId)}/events`,
+    );
+  } catch (error) {
+    handlers.onError(
+      error instanceof Error
+        ? error
+        : new Error("Live execution events are unavailable."),
+    );
+    return { close() {} };
+  }
+  const eventListeners = RUN_EXECUTION_EVENT_KINDS.map((eventKind) => {
+    const listener: EventListener = (event) => {
+      try {
+        const raw = "data" in event ? event.data : undefined;
+        handlers.onEvent(parseRunExecutionEvent(eventKind, raw));
+      } catch (error) {
+        handlers.onError(
+          error instanceof Error
+            ? error
+            : new Error(`Could not read ${eventKind} execution event.`),
+        );
+      }
+    };
+    source.addEventListener(eventKind, listener);
+    return { eventKind, listener };
+  });
+  const openListener: EventListener = () => handlers.onOpen?.();
+  const errorListener: EventListener = (event) => handlers.onError(event);
+  source.addEventListener("open", openListener);
+  source.addEventListener("error", errorListener);
+
+  let closed = false;
+  return {
+    close() {
+      if (closed) return;
+      closed = true;
+      for (const { eventKind, listener } of eventListeners) {
+        source.removeEventListener(eventKind, listener);
+      }
+      source.removeEventListener("open", openListener);
+      source.removeEventListener("error", errorListener);
+      source.close();
+    },
+  };
+}
+
 export function cancelRunExecution(executionId: string) {
   return request<RunExecution>(
     "DELETE",
@@ -199,13 +484,88 @@ export function artifactContentUrl(
   return new URL(contentUrl, `${API_BASE}/v1/`).toString();
 }
 
-export async function fileToBase64(file: File): Promise<string> {
-  const buffer = await file.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 32_768;
-  let binary = "";
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
-  }
-  return window.btoa(binary);
+export function getArtifactTablePage(
+  artifactId: string,
+  offset: number,
+  limit: number,
+  columnOffset: number,
+  columnLimit: number,
+  maxCellCharacters: number,
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams({
+    offset: String(offset),
+    limit: String(limit),
+    column_offset: String(columnOffset),
+    column_limit: String(columnLimit),
+    max_cell_characters: String(maxCellCharacters),
+  });
+  return request<TablePage>(
+    "GET",
+    `/v1/artifacts/${encodeURIComponent(artifactId)}/table/page?${query}`,
+    { signal },
+  );
+}
+
+export function getArtifactTableSchema(
+  artifactId: string,
+  signal?: AbortSignal,
+) {
+  return request<TableSchema>(
+    "GET",
+    `/v1/artifacts/${encodeURIComponent(artifactId)}/table/schema`,
+    { signal },
+  );
+}
+
+export function queryArtifactTablePage(
+  artifactId: string,
+  query: TableQueryInput,
+  signal?: AbortSignal,
+) {
+  return request<TablePage>(
+    "POST",
+    `/v1/artifacts/${encodeURIComponent(artifactId)}/table/query`,
+    { body: query, signal },
+  );
+}
+
+export function getArtifactGeoRender(
+  artifactId: string,
+  signal?: AbortSignal,
+) {
+  return request<GeoRenderDescriptor>(
+    "GET",
+    `/v1/artifacts/${encodeURIComponent(artifactId)}/geo/render`,
+    { signal },
+  );
+}
+
+export function queryArtifactGeoFeatures(
+  artifactId: string,
+  query: GeoFeatureQueryInput,
+  signal?: AbortSignal,
+) {
+  return request<GeoFeatureQuery>(
+    "POST",
+    `/v1/artifacts/${encodeURIComponent(artifactId)}/geo/query`,
+    { body: query, signal },
+  );
+}
+
+export function getArtifactTableCell(
+  artifactId: string,
+  rowIndex: number,
+  columnId: string,
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams({
+    row_index: String(rowIndex),
+    column_id: columnId,
+  });
+  return request<TableCell>(
+    "GET",
+    `/v1/artifacts/${encodeURIComponent(artifactId)}/table/cell?${query}`,
+    { signal },
+  );
 }

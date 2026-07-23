@@ -186,3 +186,19 @@
 
 @stylex;
 @import "maplibre-gl/dist/maplibre-gl.css";
+
+/* Keep map panning available while exposing rendered vector features as targets. */
+[data-notarius-geo-map]
+  .maplibregl-canvas-container.maplibregl-interactive {
+  cursor: grab;
+}
+
+[data-notarius-geo-map]
+  .maplibregl-canvas-container.maplibregl-interactive.maplibregl-track-pointer {
+  cursor: pointer;
+}
+
+[data-notarius-geo-map]
+  .maplibregl-canvas-container.maplibregl-interactive:active {
+  cursor: grabbing;
+}

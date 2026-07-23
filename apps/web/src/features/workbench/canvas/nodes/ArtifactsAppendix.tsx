@@ -4,43 +4,24 @@ import * as React from "react";
 import * as stylex from "@stylexjs/stylex";
 import useSWR from "swr";
 
-import { useNodeRegistry } from "@/hooks/use-api";
 import {
   artifactContentUrl,
   type ArtifactTypeSpec,
   type RunPortOutput,
 } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
-import {
-  resolvedAppendixHeight,
-  resolvedNodeWidth,
-  type WorkflowNodeLayout,
-} from "../node-layout";
-import type { WorkflowNodeData } from "../types";
+import type { ArtifactViewerInteractionContext } from "../artifact-interactions";
 import {
   META_ARTIFACT_RENDERER,
   PrettyValue,
   rendererFor,
 } from "./artifact-renderers";
-import { LayoutResizeHandle } from "./LayoutResizeHandle";
 import { schemaTypeLabel } from "./type-inspector";
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
+const EAGER_JSON_PREVIEW_BYTE_LIMIT = 512 * 1_024;
 
 const s = stylex.create({
-  appendix: {
-    position: "relative",
-    display: "grid",
-    gap: "12px",
-    width: "300px",
-    marginTop: "10px",
-    padding: "11px 12px 12px",
-    borderRadius: tokens.radiusLg,
-    backgroundColor: tokens.colorSurface,
-    boxShadow: tokens.shadowNode,
-    color: tokens.colorText,
-    fontSize: tokens.fontSizeSm,
-  },
   section: { display: "grid", gap: "8px" },
   headRow: {
     display: "flex",
@@ -92,7 +73,10 @@ const s = stylex.create({
     paddingInline: "7px",
     borderWidth: 0,
     borderRadius: "7px",
-    outline: "none",
+    outlineWidth: { default: 0, ":focus-visible": "2px" },
+    outlineStyle: "solid",
+    outlineColor: tokens.colorAccent,
+    outlineOffset: "2px",
     backgroundColor: tokens.colorSurfaceMuted,
     color: tokens.colorText,
     fontFamily: MONO,
@@ -145,7 +129,10 @@ const s = stylex.create({
     paddingInline: "5px",
     borderWidth: 0,
     borderRadius: "7px",
-    outline: "none",
+    outlineWidth: { default: 0, ":focus-visible": "2px" },
+    outlineStyle: "solid",
+    outlineColor: tokens.colorAccent,
+    outlineOffset: "2px",
     backgroundColor: tokens.colorSurfaceMuted,
     color: tokens.colorText,
     fontFamily: MONO,
@@ -420,22 +407,56 @@ export function ArtifactPortPreview({
   output,
   artifactTypes,
   previewHeight,
+  modeChoice: controlledModeChoice,
+  onModeChoiceChange,
+  interaction,
 }: {
   output: RunPortOutput;
   artifactTypes: readonly ArtifactTypeSpec[];
   previewHeight: number;
+  modeChoice?: string | null;
+  onModeChoiceChange?: (mode: string) => void;
+  interaction?: ArtifactViewerInteractionContext;
 }) {
   const artifacts = output.artifacts;
   const sequence = output.kind === "sequence";
   const [index, setIndex] = React.useState(0);
-  const [modeChoice, setModeChoice] = React.useState<string | null>(null);
+  const [localModeChoice, setLocalModeChoice] =
+    React.useState<string | null>(null);
+  const modeChoice = controlledModeChoice === undefined
+    ? localModeChoice
+    : controlledModeChoice;
   const [field, setField] = React.useState("");
+  const [requestedPayloadArtifactId, setRequestedPayloadArtifactId] =
+    React.useState<string | null>(null);
 
   const focusedIndex = Math.min(index, artifacts.length - 1);
   const active = artifacts[focusedIndex];
   const activeContentUrl = artifactContentUrl(active.content_url);
+  const tableArtifact =
+    active.artifact_type === "table.data" && active.schema_version === 1;
+  const geoArtifact =
+    active.schema_version === 1 &&
+    [
+      "geo.feature_collection",
+      "geo.raster_scan",
+      "geo.map_layer",
+      "geo.map_document",
+    ].includes(active.artifact_type);
+  const rendererOwnsPayload = tableArtifact || geoArtifact;
+  const activeJsonSizeIsBounded =
+    active.byte_size != null &&
+    active.byte_size <= EAGER_JSON_PREVIEW_BYTE_LIMIT;
+  const payloadDeferred =
+    !rendererOwnsPayload &&
+    active.content_type === "application/json" &&
+    !activeJsonSizeIsBounded &&
+    requestedPayloadArtifactId !== active.artifact_id;
   const activePayloadKey: ArtifactPayloadKey | null =
-    active.content_type === "application/json" && activeContentUrl
+    !rendererOwnsPayload &&
+    !payloadDeferred &&
+    active.content_type === "application/json" &&
+    activeContentUrl
       ? [
           "artifact-json",
           { artifactId: active.artifact_id, url: activeContentUrl },
@@ -446,18 +467,34 @@ export function ArtifactPortPreview({
     error: activePayloadError,
     isLoading: activePayloadLoading,
   } = useSWR(activePayloadKey, loadArtifactPayload);
+  const explicitPayloadLoading =
+    requestedPayloadArtifactId === active.artifact_id && activePayloadLoading;
 
   const artifactType = artifactTypes.find(
     (candidate) =>
       candidate.key.id === active.artifact_type &&
       candidate.key.schema_version === active.schema_version,
   );
-  const fields =
+  const candidateFields =
     sequence &&
+    !geoArtifact &&
     active.content_type === "application/json" &&
     activeContentUrl
       ? projectableFields(artifactType)
       : [];
+  const projectionPayloadByteSize = artifacts.reduce(
+    (total, artifact) => total + (artifact.byte_size ?? 0),
+    0,
+  );
+  const projectionPayloadsAreBounded =
+    artifacts.every(
+      (artifact) =>
+        artifact.content_type === "application/json" &&
+        artifact.byte_size != null,
+    ) && projectionPayloadByteSize <= EAGER_JSON_PREVIEW_BYTE_LIMIT;
+  const fields = projectionPayloadsAreBounded ? candidateFields : [];
+  const projectionDeferred =
+    candidateFields.length > 0 && !projectionPayloadsAreBounded;
   const selectedField = fields.find((option) => option.name === field);
 
   const projectionRequests = selectedField
@@ -482,10 +519,14 @@ export function ArtifactPortPreview({
   } = useSWR(projectionKey, loadSequencePayloads);
 
   const jsonPayloadMissing =
-    active.content_type === "application/json" && !activeContentUrl;
+    !rendererOwnsPayload &&
+    active.content_type === "application/json" &&
+    !activeContentUrl;
   const jsonPayloadFailed =
-    active.content_type === "application/json" && Boolean(activePayloadError);
-  const renderer = jsonPayloadMissing || jsonPayloadFailed
+    !rendererOwnsPayload &&
+    active.content_type === "application/json" &&
+    Boolean(activePayloadError);
+  const renderer = jsonPayloadMissing || jsonPayloadFailed || payloadDeferred
     ? META_ARTIFACT_RENDERER
     : rendererFor(active, activePayload);
   const mode =
@@ -505,7 +546,7 @@ export function ArtifactPortPreview({
     ? projectionFallback
       ? META_ARTIFACT_RENDERER.modes
       : projectionModes
-    : activePayloadLoading
+    : activePayloadLoading || payloadDeferred
       ? []
       : renderer.modes;
   const projectedValues =
@@ -517,6 +558,15 @@ export function ArtifactPortPreview({
             ],
         )
       : null;
+  let payloadLoadingNotice =
+    "This JSON artifact is not loaded automatically because its size is unknown.";
+  if (explicitPayloadLoading) {
+    payloadLoadingNotice = "Loading the complete JSON artifact…";
+  } else if (active.byte_size != null) {
+    const sizeMegabytes = (active.byte_size / (1_024 * 1_024)).toFixed(1);
+    payloadLoadingNotice =
+      `This JSON artifact is not loaded automatically (${sizeMegabytes} MB).`;
+  }
   return (
     <section {...stylex.props(s.section)}>
       <div {...stylex.props(s.headRow)}>
@@ -526,7 +576,7 @@ export function ArtifactPortPreview({
         </span>
         {visibleModes.length > 1 ? (
           <div
-            role="tablist"
+            role="group"
             aria-label="Artifact view mode"
             {...stylex.props(s.modeToggle)}
           >
@@ -536,15 +586,19 @@ export function ArtifactPortPreview({
                 <button
                   key={option}
                   type="button"
-                  role="tab"
-                  aria-selected={selectedMode === option}
+                  aria-pressed={selectedMode === option}
                   {...nodeInteractionProps(
                     stylex.props(
                       s.modeButton,
                       selectedMode === option ? s.modeButtonActive : null,
                     ),
                   )}
-                  onClick={() => setModeChoice(option)}
+                  onClick={() => {
+                    if (controlledModeChoice === undefined) {
+                      setLocalModeChoice(option);
+                    }
+                    onModeChoiceChange?.(option);
+                  }}
                 >
                   {option}
                 </button>
@@ -568,6 +622,12 @@ export function ArtifactPortPreview({
           ))}
         </select>
       ) : null}
+      {projectionDeferred ? (
+        <span {...stylex.props(s.notice)}>
+          Field projection is disabled because this sequence is too large to
+          load safely in the browser.
+        </span>
+      ) : null}
       {selectedField ? (
         <>
           <span {...stylex.props(s.projectionType)}>
@@ -578,10 +638,13 @@ export function ArtifactPortPreview({
             style={{ maxHeight: previewHeight }}
           >
             {projectionLoading ? (
-              <span {...stylex.props(s.notice)}>Loading projected values…</span>
+              <span role="status" aria-live="polite" {...stylex.props(s.notice)}>
+                Loading projected values…
+              </span>
             ) : projectionError || projectionMissingContent ? (
               <>
                 <p
+                  role="alert"
                   title={
                     projectionError instanceof Error
                       ? projectionError.message
@@ -629,10 +692,30 @@ export function ArtifactPortPreview({
             {...nodeInteractionProps(stylex.props(s.body))}
             style={{ maxHeight: previewHeight }}
           >
-            {activePayloadLoading ? (
-              <p {...stylex.props(s.notice)}>Loading JSON preview…</p>
+            {payloadDeferred || explicitPayloadLoading ? (
+              <div {...stylex.props(s.notice)}>
+                <p>{payloadLoadingNotice}</p>
+                <button
+                  type="button"
+                  disabled={explicitPayloadLoading}
+                  {...nodeInteractionProps(stylex.props(s.modeButton))}
+                  onClick={() => setRequestedPayloadArtifactId(active.artifact_id)}
+                >
+                  {explicitPayloadLoading ? "Loading…" : "Load complete JSON"}
+                </button>
+                {explicitPayloadLoading ? (
+                  <span role="status" aria-live="polite">
+                    Loading complete JSON…
+                  </span>
+                ) : null}
+              </div>
+            ) : activePayloadLoading ? (
+              <p role="status" aria-live="polite" {...stylex.props(s.notice)}>
+                Loading complete JSON…
+              </p>
             ) : activePayloadError || jsonPayloadMissing ? (
               <p
+                role="alert"
                 title={
                   activePayloadError instanceof Error
                     ? activePayloadError.message
@@ -643,60 +726,18 @@ export function ArtifactPortPreview({
                 JSON preview unavailable; showing artifact metadata.
               </p>
             ) : null}
-            {activePayloadLoading ? null : (
+            {activePayloadLoading || payloadDeferred ? null : (
               <renderer.Component
                 artifact={active}
                 payload={activePayload}
                 mode={mode}
+                availableHeight={previewHeight}
+                interaction={interaction}
               />
             )}
           </div>
         </>
       )}
     </section>
-  );
-}
-
-export function ArtifactsAppendix({
-  data,
-  layout,
-  onLayoutDraft,
-  onLayoutCommit,
-}: {
-  data: WorkflowNodeData;
-  layout: WorkflowNodeLayout | null;
-  onLayoutDraft: (layout: WorkflowNodeLayout | null) => void;
-  onLayoutCommit: (layout: WorkflowNodeLayout | null) => void;
-}) {
-  const { data: registry } = useNodeRegistry();
-  const outputs = (data.run?.outputs ?? []).filter(
-    (output) => output.artifacts.length > 0,
-  );
-  if (!outputs.length) return null;
-  const width = resolvedNodeWidth(layout);
-  const previewHeight = resolvedAppendixHeight(layout);
-
-  return (
-    <aside
-      aria-label="Produced artifacts"
-      {...nodeInteractionProps(stylex.props(s.appendix))}
-      style={{ width }}
-    >
-      {outputs.map((output) => (
-        <ArtifactPortPreview
-          key={output.port}
-          output={output}
-          artifactTypes={registry?.artifact_types ?? []}
-          previewHeight={previewHeight}
-        />
-      ))}
-      <LayoutResizeHandle
-        layout={layout}
-        axes={["width", "appendixHeight"]}
-        ariaLabel="Resize artifact preview"
-        onDraft={onLayoutDraft}
-        onCommit={onLayoutCommit}
-      />
-    </aside>
   );
 }

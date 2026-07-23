@@ -10,7 +10,6 @@ import {
   type EdgeTypes,
   type FitViewOptions,
   type IsValidConnection,
-  type Node,
   type NodeTypes,
   type OnConnect,
   type OnEdgesChange,
@@ -24,24 +23,34 @@ import "@xyflow/react/dist/style.css";
 
 import { useTheme } from "@/components/theme";
 import { tokens } from "@/lib/stylex/tokens.stylex";
+import {
+  ARTIFACT_VIEWER_EDGE_TYPE,
+  ARTIFACT_VIEWER_INTERACTION_EDGE_TYPE,
+  ARTIFACT_VIEWER_NODE_TYPE,
+  type CanvasEdge,
+  type CanvasNode,
+} from "./artifact-viewer";
 import { connectionIsValid } from "./handles";
+import ArtifactViewerEdge from "./edges/ArtifactViewerEdge";
+import ArtifactViewerInteractionEdge from "./edges/ArtifactViewerInteractionEdge";
 import WorkflowEdgeControl from "./edges/WorkflowEdge";
+import ArtifactViewerNode from "./nodes/ArtifactViewerNode";
 import WorkflowNodeCard from "./nodes/WorkflowNode";
 import {
   WORKFLOW_EDGE_TYPE,
   WORKFLOW_NODE_TYPE,
   type WorkflowEdge,
-  type WorkflowNodeData,
 } from "./types";
-
-type WorkflowNode = Node<WorkflowNodeData, typeof WORKFLOW_NODE_TYPE>;
 
 export const nodeTypes: NodeTypes = {
   [WORKFLOW_NODE_TYPE]: WorkflowNodeCard,
+  [ARTIFACT_VIEWER_NODE_TYPE]: ArtifactViewerNode,
 };
 
 export const edgeTypes: EdgeTypes = {
   [WORKFLOW_EDGE_TYPE]: WorkflowEdgeControl,
+  [ARTIFACT_VIEWER_EDGE_TYPE]: ArtifactViewerEdge,
+  [ARTIFACT_VIEWER_INTERACTION_EDGE_TYPE]: ArtifactViewerInteractionEdge,
 };
 
 const s = stylex.create({
@@ -55,15 +64,15 @@ const s = stylex.create({
 
 export interface WorkflowCanvasProps {
   children?: React.ReactNode;
-  fitViewOptions?: FitViewOptions<WorkflowNode>;
-  nodes: WorkflowNode[];
-  edges: WorkflowEdge[];
-  onNodesChange: OnNodesChange<WorkflowNode>;
-  onEdgesChange: OnEdgesChange<WorkflowEdge>;
+  fitViewOptions?: FitViewOptions<CanvasNode>;
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  onNodesChange: OnNodesChange<CanvasNode>;
+  onEdgesChange: OnEdgesChange<CanvasEdge>;
   onConnect: OnConnect;
-  isValidConnection?: IsValidConnection<WorkflowEdge>;
+  isValidConnection?: IsValidConnection<CanvasEdge>;
   onPaneReady?: (
-    instance: ReactFlowInstance<WorkflowNode, WorkflowEdge>,
+    instance: ReactFlowInstance<CanvasNode, CanvasEdge>,
   ) => void;
   onPaneClick?: () => void;
   animateEdges?: boolean;
@@ -84,13 +93,19 @@ export function WorkflowCanvas({
 }: WorkflowCanvasProps) {
   const { resolved } = useTheme();
   const renderedEdges = React.useMemo(
-    () => edges.map((edge) => ({ ...edge, animated: animateEdges })),
+    () => edges.map((edge) => ({
+      ...edge,
+      animated:
+        edge.type === WORKFLOW_EDGE_TYPE &&
+        animateEdges &&
+        !(edge as WorkflowEdge).data?.compatibilityIssues?.length,
+    })),
     [animateEdges, edges],
   );
 
   return (
     <div {...stylex.props(s.wrapper)}>
-      <ReactFlow<WorkflowNode, WorkflowEdge>
+      <ReactFlow<CanvasNode, CanvasEdge>
         nodes={nodes}
         edges={renderedEdges}
         nodeTypes={nodeTypes}

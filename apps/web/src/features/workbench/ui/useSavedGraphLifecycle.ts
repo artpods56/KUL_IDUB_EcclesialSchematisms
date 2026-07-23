@@ -61,6 +61,7 @@ interface UseSavedGraphLifecycleOptions {
   closeNodeLibrary: () => void;
   requestCanvasRefit: () => void;
   refreshNodeRegistry: () => void | Promise<unknown>;
+  onGraphDeleted?: (graphId: string) => void;
 }
 
 export interface UseSavedGraphLifecycleResult {
@@ -113,6 +114,7 @@ export function useSavedGraphLifecycle({
   closeNodeLibrary,
   requestCanvasRefit,
   refreshNodeRegistry,
+  onGraphDeleted,
 }: UseSavedGraphLifecycleOptions): UseSavedGraphLifecycleResult {
   const router = useRouter();
   const {
@@ -272,25 +274,28 @@ export function useSavedGraphLifecycle({
         revision: savedGraph.revision,
         nodes: savedGraph.nodes ?? [],
       };
+      const createdGraph = activeGraph === null;
+      if (createdGraph) {
+        approvedRouteGraphIdRef.current = savedGraph.id;
+      }
       activeGraphRef.current = nextActiveGraph;
       setActiveGraph(nextActiveGraph);
       setSavedFingerprint(savedGraphFingerprint(responseDraft));
       setGraphNameState((current) =>
         current.trim() === submittedDraft.name ? savedGraph.name : current,
       );
+      if (createdGraph) {
+        router.replace(
+          workbenchGraphPath(workspaceSlug, savedGraph.id),
+          { scroll: false },
+        );
+      }
       await refreshNodeSecretStatuses(nextActiveGraph, nodes);
       if (
         !mountedRef.current ||
         documentGenerationRef.current !== documentGeneration
       ) {
         return;
-      }
-      if (!activeGraph) {
-        approvedRouteGraphIdRef.current = savedGraph.id;
-        router.replace(
-          workbenchGraphPath(workspaceSlug, savedGraph.id),
-          { scroll: false },
-        );
       }
     } catch (error) {
       if (
@@ -542,6 +547,7 @@ export function useSavedGraphLifecycle({
     try {
       await deleteSavedGraph(graph.id, expectedRevision);
       if (!mountedRef.current) return;
+      onGraphDeleted?.(graph.id);
       void mutateSavedGraphs();
       void refreshNodeRegistry();
       if (
@@ -597,6 +603,7 @@ export function useSavedGraphLifecycle({
     currentFingerprint,
     isDirty,
     mutateSavedGraphs,
+    onGraphDeleted,
     refreshNodeRegistry,
     router,
     showBlankGraph,

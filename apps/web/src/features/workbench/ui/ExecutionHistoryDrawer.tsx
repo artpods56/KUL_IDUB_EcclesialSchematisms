@@ -414,6 +414,7 @@ export interface ExecutionHistoryDrawerProps {
   graphId: string | null;
   graphName: string;
   nodeId: string | null;
+  initialExecutionId: string | null;
   nodeTitles: Readonly<Record<string, string>>;
   executionRunning: boolean;
   isDirty: boolean;
@@ -424,13 +425,15 @@ export function ExecutionHistoryDrawer({
   graphId,
   graphName,
   nodeId,
+  initialExecutionId,
   nodeTitles,
   executionRunning,
   isDirty,
   onClose,
 }: ExecutionHistoryDrawerProps) {
   const { data: registry } = useNodeRegistry();
-  const [selectedExecutionId, setSelectedExecutionId] = React.useState<string | null>(null);
+  const [selectedExecutionId, setSelectedExecutionId] =
+    React.useState<string | null>(initialExecutionId);
   const historyKey = React.useCallback(
     (
       index: number,

@@ -6,6 +6,7 @@ import {
   createWorkflowNodeData,
   type WorkflowEdge,
   type WorkflowInputPlug,
+  type WorkflowNodeData,
 } from "../canvas/types";
 import type { NodeSpec, Port, RunNodeResult } from "@/lib/api";
 import {
@@ -64,11 +65,36 @@ function nodeSpec(
   };
 }
 
+function unsupportedCompatibility(
+  nodeId: string,
+  operatorId: string,
+): Exclude<
+  WorkflowNodeData["compatibility"],
+  { status: "supported" }
+> {
+  return {
+    status: "unsupported",
+    issues: [`Operator ${operatorId}@1 is unavailable.`],
+    inputs: [],
+    outputs: [{ portName: "result" }],
+    persistedNode: {
+      id: nodeId,
+      operator_id: operatorId,
+      operator_version: 1,
+      config: {},
+      position: { x: 0, y: 0 },
+      input_plugs: [],
+      artifact_type_bindings: [],
+    },
+  };
+}
+
 interface WorkflowNodeOptions {
   selected?: boolean;
   inputPlugs?: readonly WorkflowInputPlug[];
   run?: RunNodeResult | null;
   config?: Record<string, unknown>;
+  compatibility?: WorkflowNodeData["compatibility"];
 }
 
 function workflowNode(
@@ -83,6 +109,7 @@ function workflowNode(
   );
   data.run = options.run ?? null;
   data.config = options.config ?? data.config;
+  data.compatibility = options.compatibility ?? data.compatibility;
   return {
     id,
     type: WORKFLOW_NODE_TYPE,
@@ -361,6 +388,67 @@ describe("execution validation", () => {
     });
   });
 
+  it("blocks an unsupported node only when it belongs to the execution scope", () => {
+    const unsupported = workflowNode("legacy", nodeSpec("legacy"), {
+      compatibility: unsupportedCompatibility("legacy", "legacy"),
+    });
+    const healthy = workflowNode("healthy", nodeSpec("healthy"), {
+      selected: true,
+    });
+    const selected = executionSubgraphFor(
+      "selected",
+      [unsupported, healthy],
+      [],
+    );
+    const all = executionSubgraphFor(
+      "all",
+      [unsupported, healthy],
+      [],
+    );
+
+    expect(
+      executionValidationIssue(
+        "selected",
+        selected.nodes,
+        selected.edges,
+      ),
+    ).toBeNull();
+    expect(
+      executionValidationIssue("all", all.nodes, all.edges),
+    ).toEqual({
+      nodeId: "legacy",
+      message:
+        "Cannot run legacy: Operator legacy@1 is unavailable.",
+    });
+  });
+
+  it("blocks an unsupported upstream node when dependencies are requested", () => {
+    const unsupported = workflowNode("legacy", nodeSpec("legacy"), {
+      compatibility: unsupportedCompatibility("legacy", "legacy"),
+    });
+    const target = workflowNode("target", nodeSpec("target"), {
+      selected: true,
+    });
+    const edge = workflowEdge("legacy", "target");
+    const execution = executionSubgraphFor(
+      "selected-with-dependencies",
+      [unsupported, target],
+      [edge],
+    );
+
+    expect(
+      executionValidationIssue(
+        "selected-with-dependencies",
+        execution.nodes,
+        execution.edges,
+      ),
+    ).toEqual({
+      nodeId: "legacy",
+      message:
+        "Cannot run legacy: Operator legacy@1 is unavailable.",
+    });
+  });
+
   it("reports an empty image upload before required-input failures", () => {
     const missingInput = workflowNode(
       "missing-input",
@@ -377,6 +465,23 @@ describe("execution validation", () => {
     ).toEqual({
       nodeId: "upload",
       message: "Choose images for Images before running.",
+    });
+  });
+
+  it.each([
+    ["gis.geojson.upload", "GeoJSON", "Choose a GeoJSON file"],
+    ["gis.geotiff.upload", "Historical scan", "Choose a GeoTIFF file"],
+    ["table.file.import", "Source table", "Choose a CSV or XLSX file"],
+  ])("reports an empty %s upload", (operatorId, title, expectedMessage) => {
+    const upload = workflowNode(
+      "upload",
+      nodeSpec(operatorId, [], [port("result", "output")], title),
+      { config: { uploads: [] } },
+    );
+
+    expect(executionValidationIssue("all", [upload], [])).toEqual({
+      nodeId: "upload",
+      message: `${expectedMessage} for ${title} before running.`,
     });
   });
 
@@ -467,6 +572,71 @@ describe("execution request planning", () => {
       },
       {
         from_node: "source",
+        from_port: "result",
+        to_node: "target",
+        to_port: "input",
+        to_plug: null,
+        collection_mode: "direct",
+        projection: null,
+        conversion_path: [],
+      },
+    ]);
+  });
+
+  it("uses a materialized output from an unsupported node outside the selected scope", () => {
+    const unsupported = workflowNode("legacy", nodeSpec("legacy"), {
+      run: succeededRun("legacy", ["result"]),
+      compatibility: unsupportedCompatibility("legacy", "legacy"),
+    });
+    const target = workflowNode(
+      "target",
+      nodeSpec("target", [port("input", "input")]),
+      { selected: true },
+    );
+    const edge = workflowEdge("legacy", "target", {
+      sourceHandle: "$compatibility::output::result::",
+    });
+    edge.data = {
+      ...edge.data,
+      enabled: true,
+      collectionMode: "direct",
+      sourcePortName: "result",
+      targetPortName: "input",
+      targetPlugId: null,
+      compatibilityIssues: ["legacy: Operator legacy@1 is unavailable."],
+    };
+    const execution = executionSubgraphFor(
+      "selected",
+      [unsupported, target],
+      [edge],
+    );
+
+    expect(
+      executionValidationIssue(
+        "selected",
+        execution.nodes,
+        execution.edges,
+      ),
+    ).toBeNull();
+    const plan = executionRequestPlan(
+      "selected",
+      [unsupported, target],
+      execution,
+    );
+
+    expect(plan.status).toBe("ready");
+    if (plan.status !== "ready") return;
+    expect(plan.request.pinned_outputs).toEqual([
+      {
+        from_node: "legacy",
+        from_port: "result",
+        value: artifactValue,
+      },
+    ]);
+    expect(plan.request.nodes.map((node) => node.id)).toEqual(["target"]);
+    expect(plan.request.edges).toEqual([
+      {
+        from_node: "legacy",
         from_port: "result",
         to_node: "target",
         to_port: "input",

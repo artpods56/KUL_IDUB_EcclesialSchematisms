@@ -21,6 +21,176 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/artifacts/{artifact_id}/geo/query": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Query Geo Features */
+        readonly post: operations["query_geo_features_v1_artifacts__artifact_id__geo_query_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/artifacts/{artifact_id}/geo/render": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Geo Render Descriptor */
+        readonly get: operations["get_geo_render_descriptor_v1_artifacts__artifact_id__geo_render_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/artifacts/{artifact_id}/table/cell": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Table Artifact Cell */
+        readonly get: operations["get_table_artifact_cell_v1_artifacts__artifact_id__table_cell_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/artifacts/{artifact_id}/table/page": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Table Artifact Page */
+        readonly get: operations["get_table_artifact_page_v1_artifacts__artifact_id__table_page_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/artifacts/{artifact_id}/table/query": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Query Table Artifact Page */
+        readonly post: operations["query_table_artifact_page_v1_artifacts__artifact_id__table_query_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/artifacts/{artifact_id}/table/schema": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Table Artifact Schema */
+        readonly get: operations["get_table_artifact_schema_v1_artifacts__artifact_id__table_schema_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/artifacts/{source_id}/geo/features/{feature_index}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Geo Exact Feature */
+        readonly get: operations["get_geo_exact_feature_v1_artifacts__source_id__geo_features__feature_index__get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/artifacts/{source_id}/geo/raster/{z}/{x}/{y}.png": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Geo Raster Tile */
+        readonly get: operations["get_geo_raster_tile_v1_artifacts__source_id__geo_raster__z___x___y__png_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/artifacts/{source_id}/geo/raster/tilejson.json": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Geo Raster Tilejson */
+        readonly get: operations["get_geo_raster_tilejson_v1_artifacts__source_id__geo_raster_tilejson_json_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/artifacts/{source_id}/geo/vector.pmtiles": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Geo Vector Pmtiles */
+        readonly get: operations["get_geo_vector_pmtiles_v1_artifacts__source_id__geo_vector_pmtiles_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/executions": {
         readonly parameters: {
             readonly query?: never;
@@ -51,6 +221,23 @@ export interface paths {
         readonly post?: never;
         /** Cancel Graph Execution */
         readonly delete: operations["cancel_graph_execution_v1_executions__execution_id__delete"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/executions/{execution_id}/events": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Stream Graph Execution Events */
+        readonly get: operations["stream_graph_execution_events_v1_executions__execution_id__events_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -273,6 +460,14 @@ export interface components {
             /** Title */
             readonly title: string;
         };
+        /** ArtifactExactMatchRow */
+        readonly ArtifactExactMatchRow: {
+            /** Values */
+            readonly values: {
+                readonly [key: string]: components["schemas"]["ArtifactInteractionScalar"];
+            };
+        };
+        readonly ArtifactInteractionScalar: string | number | boolean | null;
         /** ArtifactRef */
         readonly ArtifactRef: {
             /**
@@ -366,6 +561,11 @@ export interface components {
             /** Title */
             readonly title: string;
         };
+        /** Body_upload_file_v1_uploads_post */
+        readonly Body_upload_file_v1_uploads_post: {
+            /** File */
+            readonly file: string;
+        };
         /** ConfigureNodeSecretRequest */
         readonly ConfigureNodeSecretRequest: {
             /** Expected Graph Revision */
@@ -397,6 +597,271 @@ export interface components {
             readonly target_artifact_type: components["schemas"]["ArtifactTypeKeyResponse"];
             /** Title */
             readonly title: string;
+        };
+        /** @enum {string} */
+        readonly GeoArtifactKind: "feature_collection" | "raster_scan" | "map_layer" | "map_document";
+        readonly GeoBounds: readonly [
+            number,
+            number,
+            number,
+            number
+        ];
+        /** GeoCategorizedPointStyle */
+        readonly GeoCategorizedPointStyle: {
+            /** Categories */
+            readonly categories: readonly components["schemas"]["GeoPointCategory"][];
+            /** Category Property */
+            readonly category_property: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "categorized_points";
+            readonly label: components["schemas"]["GeoLabelStyle"] | null;
+        };
+        readonly GeoCategoryValue: string | number | boolean;
+        /** GeoExactFeatureResponse */
+        readonly GeoExactFeatureResponse: {
+            /** Feature */
+            readonly feature: {
+                readonly [key: string]: unknown;
+            };
+            /** Feature Index */
+            readonly feature_index: number;
+            /**
+             * Source Artifact Id
+             * Format: uuid
+             */
+            readonly source_artifact_id: string;
+        };
+        /** GeoFeatureQueryRequest */
+        readonly GeoFeatureQueryRequest: {
+            /** Rows */
+            readonly rows: readonly components["schemas"]["ArtifactExactMatchRow"][];
+        };
+        /** GeoFeatureQueryResponse */
+        readonly GeoFeatureQueryResponse: {
+            /**
+             * Artifact Id
+             * Format: uuid
+             */
+            readonly artifact_id: string;
+            readonly bounds: components["schemas"]["GeoBounds"] | null;
+            /** Matched Feature Count */
+            readonly matched_feature_count: number;
+            /** Source Artifact Ids */
+            readonly source_artifact_ids: readonly string[];
+        };
+        /** GeoFillStyle */
+        readonly GeoFillStyle: {
+            /** Color */
+            readonly color: string;
+            /** Enabled */
+            readonly enabled: boolean;
+            /** Opacity */
+            readonly opacity: number;
+        };
+        /** GeoLabelStyle */
+        readonly GeoLabelStyle: {
+            /** Color */
+            readonly color: string;
+            /** Halo Color */
+            readonly halo_color: string;
+            /** Halo Width */
+            readonly halo_width: number;
+            /** Property */
+            readonly property: string;
+            /** Size */
+            readonly size: number;
+        };
+        /** GeoLineStyle */
+        readonly GeoLineStyle: {
+            /** Color */
+            readonly color: string;
+            /** Enabled */
+            readonly enabled: boolean;
+            /** Opacity */
+            readonly opacity: number;
+            /** Width */
+            readonly width: number;
+        };
+        /** GeoPointCategory */
+        readonly GeoPointCategory: {
+            /** Id */
+            readonly id: string;
+            /** Max Zoom */
+            readonly max_zoom: number;
+            /** Min Zoom */
+            readonly min_zoom: number;
+            readonly point: components["schemas"]["GeoPointStyle"];
+            /** Title */
+            readonly title: string;
+            /** Values */
+            readonly values: readonly components["schemas"]["GeoCategoryValue"][];
+        };
+        /** GeoPointStyle */
+        readonly GeoPointStyle: {
+            /** Color */
+            readonly color: string;
+            /** Enabled */
+            readonly enabled: boolean;
+            /** Opacity */
+            readonly opacity: number;
+            /** Radius */
+            readonly radius: number;
+            /** Stroke Color */
+            readonly stroke_color: string;
+            /** Stroke Width */
+            readonly stroke_width: number;
+        };
+        /** GeoPropertyFieldResponse */
+        readonly GeoPropertyFieldResponse: {
+            /** Id */
+            readonly id: string;
+            /** Title */
+            readonly title: string;
+            readonly value_type: components["schemas"]["GeoPropertyValueType"];
+        };
+        /** @enum {string} */
+        readonly GeoPropertyValueType: "text" | "integer" | "number" | "boolean" | "null" | "mixed" | "unknown";
+        /** GeoRasterRenderSourceResponse */
+        readonly GeoRasterRenderSourceResponse: {
+            /** Artifact Id */
+            readonly artifact_id: string | null;
+            /** Attribution */
+            readonly attribution?: string | null;
+            readonly bounds: components["schemas"]["GeoBounds"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "raster";
+            /** Tilejson Url */
+            readonly tilejson_url: string;
+        };
+        /** GeoRasterStyle */
+        readonly GeoRasterStyle: {
+            /** Brightness Max */
+            readonly brightness_max: number;
+            /** Brightness Min */
+            readonly brightness_min: number;
+            /** Contrast */
+            readonly contrast: number;
+            /** Hue */
+            readonly hue: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "raster";
+            /** Opacity */
+            readonly opacity: number;
+            /**
+             * Resampling
+             * @enum {string}
+             */
+            readonly resampling: "linear" | "nearest";
+            /** Saturation */
+            readonly saturation: number;
+        };
+        /** GeoRasterTileJsonResponse */
+        readonly GeoRasterTileJsonResponse: {
+            /** Attribution */
+            readonly attribution?: string | null;
+            readonly bounds: components["schemas"]["GeoBounds"];
+            /** Maxzoom */
+            readonly maxzoom: number;
+            /** Minzoom */
+            readonly minzoom: number;
+            /** Name */
+            readonly name: string;
+            /**
+             * Scheme
+             * @default xyz
+             * @constant
+             */
+            readonly scheme: "xyz";
+            /**
+             * Tilejson
+             * @default 3.0.0
+             * @constant
+             */
+            readonly tilejson: "3.0.0";
+            /** Tiles */
+            readonly tiles: readonly string[];
+        };
+        /** GeoRenderLayerResponse */
+        readonly GeoRenderLayerResponse: {
+            /** Id */
+            readonly id: string;
+            /** Max Zoom */
+            readonly max_zoom: number;
+            /** Min Zoom */
+            readonly min_zoom: number;
+            /** Opacity */
+            readonly opacity: number;
+            /** Source */
+            readonly source: components["schemas"]["GeoVectorRenderSourceResponse"] | components["schemas"]["GeoRasterRenderSourceResponse"];
+            /** Style */
+            readonly style: components["schemas"]["GeoVectorStyle"] | components["schemas"]["GeoCategorizedPointStyle"] | components["schemas"]["GeoRasterStyle"];
+            /** Title */
+            readonly title: string;
+            /** Visible */
+            readonly visible: boolean;
+        };
+        /** GeoRenderResponse */
+        readonly GeoRenderResponse: {
+            /**
+             * Artifact Id
+             * Format: uuid
+             */
+            readonly artifact_id: string;
+            /**
+             * Basemap
+             * @enum {string}
+             */
+            readonly basemap: "openstreetmap" | "none";
+            readonly initial_bounds: components["schemas"]["GeoBounds"] | null;
+            readonly kind: components["schemas"]["GeoArtifactKind"];
+            /** Layers */
+            readonly layers: readonly components["schemas"]["GeoRenderLayerResponse"][];
+        };
+        /** GeoVectorRenderSourceResponse */
+        readonly GeoVectorRenderSourceResponse: {
+            /** Archive Url */
+            readonly archive_url: string;
+            /**
+             * Artifact Id
+             * Format: uuid
+             */
+            readonly artifact_id: string;
+            readonly bounds: components["schemas"]["GeoBounds"] | null;
+            /** Fields */
+            readonly fields?: readonly components["schemas"]["GeoPropertyFieldResponse"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "vector";
+            /** Max Zoom */
+            readonly max_zoom: number;
+            /** Min Zoom */
+            readonly min_zoom: number;
+            /** Source Layer */
+            readonly source_layer: string;
+        };
+        /** GeoVectorStyle */
+        readonly GeoVectorStyle: {
+            readonly fill: components["schemas"]["GeoFillStyle"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "vector";
+            readonly label: components["schemas"]["GeoLabelStyle"] | null;
+            readonly line: components["schemas"]["GeoLineStyle"];
+            readonly outline: components["schemas"]["GeoLineStyle"];
+            readonly point: components["schemas"]["GeoPointStyle"];
         };
         /** GraphExecutionDetailResponse */
         readonly GraphExecutionDetailResponse: {
@@ -959,6 +1424,112 @@ export interface components {
              */
             readonly updated_at: string;
         };
+        /** TableCellPreviewResponse */
+        readonly TableCellPreviewResponse: {
+            /** Display */
+            readonly display: string | number | boolean | null;
+            /** Original Length */
+            readonly original_length?: number | null;
+            /** Truncated */
+            readonly truncated: boolean;
+        };
+        /** TableCellResponse */
+        readonly TableCellResponse: {
+            /** Column Id */
+            readonly column_id: string;
+            /**
+             * Encoding
+             * @default native
+             * @enum {string}
+             */
+            readonly encoding: "native" | "integer" | "json";
+            /** Row Index */
+            readonly row_index: number;
+            /** Value */
+            readonly value: string | number | boolean | null;
+        };
+        /** TableColumnResponse */
+        readonly TableColumnResponse: {
+            /** Id */
+            readonly id: string;
+            /** Title */
+            readonly title: string;
+            readonly value_type: components["schemas"]["TableValueType"];
+        };
+        /** TableExactMatchGroup */
+        readonly TableExactMatchGroup: {
+            /** Rows */
+            readonly rows: readonly components["schemas"]["ArtifactExactMatchRow"][];
+        };
+        /** TablePageResponse */
+        readonly TablePageResponse: {
+            /** Column Limit */
+            readonly column_limit: number;
+            /** Column Offset */
+            readonly column_offset: number;
+            /** Columns */
+            readonly columns: readonly components["schemas"]["TableColumnResponse"][];
+            /** Highlighted Row Indices */
+            readonly highlighted_row_indices?: readonly number[];
+            /** Limit */
+            readonly limit: number;
+            /** Offset */
+            readonly offset: number;
+            /** Row Indices */
+            readonly row_indices?: readonly number[];
+            /** Rows */
+            readonly rows: readonly {
+                readonly [key: string]: components["schemas"]["TableCellPreviewResponse"];
+            }[];
+            /** Total Columns */
+            readonly total_columns: number;
+            /** Total Rows */
+            readonly total_rows: number;
+        };
+        /** TableQueryRequest */
+        readonly TableQueryRequest: {
+            /**
+             * Column Limit
+             * @default 25
+             */
+            readonly column_limit: number;
+            /**
+             * Column Offset
+             * @default 0
+             */
+            readonly column_offset: number;
+            /** Filter Groups */
+            readonly filter_groups?: readonly components["schemas"]["TableExactMatchGroup"][];
+            /** Highlight Groups */
+            readonly highlight_groups?: readonly components["schemas"]["TableExactMatchGroup"][];
+            /**
+             * Limit
+             * @default 50
+             */
+            readonly limit: number;
+            /**
+             * Max Cell Characters
+             * @default 256
+             */
+            readonly max_cell_characters: number;
+            /**
+             * Offset
+             * @default 0
+             */
+            readonly offset: number;
+        };
+        /** TableSchemaResponse */
+        readonly TableSchemaResponse: {
+            /** Columns */
+            readonly columns: readonly components["schemas"]["TableColumnResponse"][];
+            /** Total Rows */
+            readonly total_rows: number;
+        };
+        /**
+         * TableValueType
+         * @enum {string}
+         */
+        readonly TableValueType: "text" | "integer" | "number" | "decimal" | "boolean" | "date" | "datetime" | "json" | "binary" | "unknown" | "mixed";
         /** UnavailableGraphModuleResponse */
         readonly UnavailableGraphModuleResponse: {
             /**
@@ -984,13 +1555,6 @@ export interface components {
             /** Nodes */
             readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel-Input"][];
         };
-        /** UploadRequest */
-        readonly UploadRequest: {
-            /** Content Base64 */
-            readonly content_base64: string;
-            /** Filename */
-            readonly filename: string;
-        };
         /** ValidationError */
         readonly ValidationError: {
             /** Context */
@@ -1003,6 +1567,11 @@ export interface components {
             readonly msg: string;
             /** Error Type */
             readonly type: string;
+        };
+        /** WorkbenchErrorResponse */
+        readonly WorkbenchErrorResponse: {
+            /** Detail */
+            readonly detail: string;
         };
     };
     responses: never;
@@ -1033,6 +1602,15 @@ export interface operations {
                     readonly "application/json": unknown;
                 };
             };
+            /** @description Artifact not found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
             /** @description Validation Error */
             readonly 422: {
                 headers: {
@@ -1040,6 +1618,625 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Artifact content is unavailable */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly query_geo_features_v1_artifacts__artifact_id__geo_query_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly artifact_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["GeoFeatureQueryRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GeoFeatureQueryResponse"];
+                };
+            };
+            /** @description Invalid geo query */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Artifact not found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Artifact content is unavailable */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly get_geo_render_descriptor_v1_artifacts__artifact_id__geo_render_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly artifact_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GeoRenderResponse"];
+                };
+            };
+            /** @description Invalid geo request */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Artifact not found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Artifact content is unavailable */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly get_table_artifact_cell_v1_artifacts__artifact_id__table_cell_get: {
+        readonly parameters: {
+            readonly query: {
+                readonly column_id: string;
+                readonly row_index: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly artifact_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TableCellResponse"];
+                };
+            };
+            /** @description Invalid cell request */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Artifact not found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Artifact content is unavailable */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly get_table_artifact_page_v1_artifacts__artifact_id__table_page_get: {
+        readonly parameters: {
+            readonly query?: {
+                readonly column_limit?: number;
+                readonly column_offset?: number;
+                readonly limit?: number;
+                readonly max_cell_characters?: number;
+                readonly offset?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly artifact_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TablePageResponse"];
+                };
+            };
+            /** @description Invalid table request */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Artifact not found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Artifact content is unavailable */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly query_table_artifact_page_v1_artifacts__artifact_id__table_query_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly artifact_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TableQueryRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TablePageResponse"];
+                };
+            };
+            /** @description Invalid table query */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Artifact not found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Artifact content is unavailable */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly get_table_artifact_schema_v1_artifacts__artifact_id__table_schema_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly artifact_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TableSchemaResponse"];
+                };
+            };
+            /** @description Invalid table request */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Artifact not found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Artifact content is unavailable */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly get_geo_exact_feature_v1_artifacts__source_id__geo_features__feature_index__get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly feature_index: number;
+                readonly source_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GeoExactFeatureResponse"];
+                };
+            };
+            /** @description Invalid vector source */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Feature not found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Feature content is unavailable */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly get_geo_raster_tile_v1_artifacts__source_id__geo_raster__z___x___y__png_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly source_id: string;
+                readonly x: number;
+                readonly y: number;
+                readonly z: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": unknown;
+                };
+            };
+            /** @description Invalid raster source */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Raster tile not found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Raster tile is unavailable */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly get_geo_raster_tilejson_v1_artifacts__source_id__geo_raster_tilejson_json_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly source_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GeoRasterTileJsonResponse"];
+                };
+            };
+            /** @description Invalid raster source */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Artifact not found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Raster projection is unavailable */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly get_geo_vector_pmtiles_v1_artifacts__source_id__geo_vector_pmtiles_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: {
+                readonly Range?: string | null;
+            };
+            readonly path: {
+                readonly source_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": unknown;
+                };
+            };
+            /** @description Invalid vector source */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Artifact not found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Requested byte range is not satisfiable */
+            readonly 416: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Vector projection is unavailable */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
                 };
             };
         };
@@ -1126,6 +2323,39 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunExecutionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly stream_graph_execution_events_v1_executions__execution_id__events_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: {
+                readonly "Last-Event-ID"?: string | null;
+            };
+            readonly path: {
+                readonly execution_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Server-sent execution lifecycle and node progress events */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "text/event-stream": string;
                 };
             };
             /** @description Validation Error */
@@ -1587,7 +2817,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["UploadRequest"];
+                readonly "multipart/form-data": components["schemas"]["Body_upload_file_v1_uploads_post"];
             };
         };
         readonly responses: {

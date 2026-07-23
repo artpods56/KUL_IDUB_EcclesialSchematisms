@@ -18,11 +18,11 @@ import {
   CircleHelp,
   ExternalLink,
   GripVertical,
-  History,
   LoaderCircle,
   Plus,
   Power,
   RotateCcw,
+  TriangleAlert,
   Trash2,
   Upload,
   X,
@@ -30,14 +30,20 @@ import {
 
 import type { Port } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
-import { schemaFields, type SchemaField } from "../config-schema";
+import {
+  schemaFields,
+  type NumberTupleItem,
+  type NumberTupleSchemaField,
+  type SchemaField,
+  type StringListSchemaField,
+} from "../config-schema";
 import { handleStyle } from "../handle-style";
 import { decodeHandleId, encodeHandleId } from "../handles";
 import {
   inputPlugsForPort,
   reconcileSchemaFieldInputPlugs,
 } from "../input-plugs";
-import { ARTIFACT_TYPE_COLOR } from "../nodes.css";
+import { artifactTypeColor } from "../nodes.css";
 import {
   nodeSecretDependencyRevision,
   nodeSecretInputs,
@@ -64,14 +70,27 @@ import {
   type WorkflowNodeLayout,
 } from "../node-layout";
 import {
-  IMAGE_UPLOAD_OPERATOR_ID,
+  ARTIFACT_QUERY_OPERATOR_ID,
+  ARTIFACT_QUERY_RELATIONS_PORT,
+  artifactQueryRelations,
+  createArtifactQueryRelation,
+  moveArtifactQueryRelation,
+  reconcileArtifactQueryRelationInputPlugs,
+  type ArtifactQueryRelation,
+} from "../query-artifact-tables";
+import {
+  TABLE_FILE_IMPORT_OPERATOR_ID,
   GEOJSON_UPLOAD_OPERATOR_ID,
+  GEOTIFF_UPLOAD_OPERATOR_ID,
+  GIS_VECTOR_LAYER_OPERATOR_ID,
   WORKFLOW_NODE_TYPE,
   acceptedPortShapes,
+  compatibilityHandleId,
   declaredArtifactTypeVariables,
   effectivePortShape,
   imageUploadSizeLabel,
   imageUploads,
+  isFileUploadOperator,
   portHasInstancePlugs,
   portMetaForPort,
   resolvedPortArtifactType,
@@ -79,9 +98,10 @@ import {
   type WorkflowInputPlug,
   type WorkflowNodeData,
 } from "../types";
-import { ArtifactsAppendix } from "./ArtifactsAppendix";
 import { LayoutResizeHandle } from "./LayoutResizeHandle";
+import { NodeExecutionAppendix } from "./NodeExecutionAppendix";
 import { PortTypePopover } from "./type-inspector";
+import { VectorLayerStyleBody } from "./VectorLayerStyleBody";
 
 type WorkflowNode = Node<WorkflowNodeData, typeof WORKFLOW_NODE_TYPE>;
 
@@ -100,6 +120,80 @@ const s = stylex.create({
     color: tokens.colorText,
     fontSize: tokens.fontSizeSm,
     boxSizing: "border-box",
+  },
+  compatibilityShell: {
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: tokens.colorBorderStrong,
+    backgroundColor: tokens.colorSurfaceMuted,
+    boxShadow: tokens.shadowNode,
+  },
+  compatibilityIcon: {
+    color: tokens.colorWarning,
+    flexShrink: 0,
+  },
+  compatibilityBadge: {
+    height: "18px",
+    display: "inline-flex",
+    alignItems: "center",
+    flexShrink: 0,
+    paddingInline: "6px",
+    borderRadius: "9999px",
+    backgroundColor: tokens.colorSurfaceSunken,
+    color: tokens.colorMuted,
+    fontSize: "9px",
+    fontWeight: 800,
+    letterSpacing: "0.05em",
+    lineHeight: 1,
+    textTransform: "uppercase",
+  },
+  compatibilityBody: {
+    display: "grid",
+    gap: "9px",
+    padding: "4px 12px 13px",
+  },
+  compatibilityIssue: {
+    margin: 0,
+    color: tokens.colorMuted,
+    fontSize: tokens.fontSizeXs,
+    lineHeight: 1.5,
+  },
+  compatibilityConfig: {
+    overflow: "hidden",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorBorder,
+    borderRadius: "6px",
+    backgroundColor: tokens.colorSurface,
+  },
+  compatibilityConfigSummary: {
+    padding: "7px 9px",
+    color: tokens.colorSubtle,
+    cursor: "pointer",
+    fontSize: "10px",
+    fontWeight: 700,
+  },
+  compatibilityConfigValue: {
+    maxHeight: "150px",
+    overflow: "auto",
+    margin: 0,
+    padding: "8px 9px",
+    borderTopWidth: 1,
+    borderTopStyle: "solid",
+    borderTopColor: tokens.colorBorder,
+    color: tokens.colorMuted,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontSize: "10px",
+    lineHeight: 1.45,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+  },
+  compatibilityPort: {
+    backgroundColor: {
+      default: tokens.colorSurfaceSunken,
+      ":hover": tokens.colorSurfaceSunken,
+    },
+    color: tokens.colorTextDisabled,
   },
   textareaFill: {
     flex: "1 1 0%",
@@ -667,6 +761,75 @@ const s = stylex.create({
   },
   configList: { display: "grid", gap: "9px" },
   field: { display: "grid", gap: "4px" },
+  tupleField: {
+    minWidth: 0,
+    margin: 0,
+    padding: 0,
+    borderWidth: 0,
+  },
+  tupleGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: "6px",
+  },
+  tupleItem: { minWidth: 0, display: "grid", gap: "3px" },
+  tupleItemLabel: {
+    overflow: "hidden",
+    color: tokens.colorSubtle,
+    fontSize: tokens.fontSizeXs,
+    fontWeight: 600,
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  tupleError: {
+    color: tokens.colorDanger,
+    fontSize: tokens.fontSizeXs,
+    lineHeight: 1.4,
+  },
+  stringList: {
+    display: "grid",
+    gap: "5px",
+  },
+  stringListRow: {
+    minWidth: 0,
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) 31px",
+    alignItems: "center",
+    gap: "5px",
+  },
+  stringListRemove: {
+    width: "31px",
+    height: "31px",
+    display: "grid",
+    placeItems: "center",
+    borderWidth: 0,
+    borderRadius: "8px",
+    backgroundColor: {
+      default: tokens.colorSurfaceMuted,
+      ":hover": tokens.colorDangerHover,
+    },
+    color: { default: tokens.colorSubtle, ":hover": tokens.colorDanger },
+    cursor: "pointer",
+    opacity: { ":disabled": 0.4 },
+  },
+  stringListAdd: {
+    minHeight: "29px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "5px",
+    borderWidth: 0,
+    borderRadius: "8px",
+    backgroundColor: {
+      default: tokens.colorSurfaceMuted,
+      ":hover": tokens.colorHover,
+    },
+    color: tokens.colorTextEmphasis,
+    cursor: "pointer",
+    fontSize: tokens.fontSizeXs,
+    fontWeight: 650,
+    opacity: { ":disabled": 0.4 },
+  },
   fieldLabel: {
     flexShrink: 0,
     display: "flex",
@@ -701,6 +864,11 @@ const s = stylex.create({
     paddingBlock: "8px",
     lineHeight: 1.45,
     resize: "none",
+  },
+  codeTextarea: {
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    fontSize: tokens.fontSizeXs,
+    tabSize: 2,
   },
   checkRow: {
     minHeight: "30px",
@@ -907,6 +1075,34 @@ const s = stylex.create({
     alignItems: "center",
     gap: "4px",
   },
+  queryRelationTop: {
+    minWidth: 0,
+    display: "grid",
+    gridTemplateColumns: "18px minmax(0, 1fr)",
+    alignItems: "center",
+    gap: "4px",
+  },
+  queryRelationDetail: {
+    minWidth: 0,
+    minHeight: "24px",
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
+    marginLeft: "22px",
+  },
+  queryRelationSource: {
+    minWidth: 0,
+    flex: "1 1 auto",
+    overflow: "hidden",
+    color: tokens.colorMuted,
+    fontSize: "10px",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  queryRelationSourceBound: {
+    color: tokens.colorTextEmphasis,
+    fontWeight: 650,
+  },
   schemaFieldGrip: {
     width: "18px",
     height: "26px",
@@ -1039,62 +1235,10 @@ const s = stylex.create({
     fontSize: tokens.fontSizeXs,
     fontWeight: 700,
   },
-  errorAppendix: {
-    width: "300px",
-    display: "grid",
-    gridTemplateColumns: "3px minmax(0, 1fr)",
-    marginTop: "6px",
-    overflow: "hidden",
-    borderRadius: tokens.radiusLg,
-    backgroundColor: tokens.colorSurface,
-    boxShadow: tokens.shadowNode,
-    color: tokens.colorText,
-    boxSizing: "border-box",
-  },
   shellStack: {
     position: "relative",
     display: "grid",
     width: "fit-content",
-  },
-  errorAccent: { backgroundColor: tokens.colorDanger },
-  errorContent: {
-    minWidth: 0,
-    display: "grid",
-    gap: "6px",
-    padding: "10px 12px 11px",
-  },
-  errorHeader: {
-    display: "flex",
-    alignItems: "center",
-    gap: "7px",
-  },
-  errorScope: {
-    padding: "1px 6px",
-    borderRadius: "9999px",
-    backgroundColor: tokens.colorSurfaceMuted,
-    color: tokens.colorTextEmphasis,
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    fontSize: "10px",
-    fontWeight: 800,
-    letterSpacing: "0.06em",
-  },
-  errorTitle: {
-    color: tokens.colorMuted,
-    fontSize: "10px",
-    fontWeight: 750,
-    letterSpacing: "0.04em",
-    textTransform: "uppercase",
-  },
-  errorMessage: {
-    maxHeight: "144px",
-    overflowY: "auto",
-    margin: 0,
-    color: tokens.colorTextEmphasis,
-    fontSize: tokens.fontSizeXs,
-    lineHeight: 1.5,
-    userSelect: "text",
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
   },
   emptyBody: {
     padding: "0 16px 14px",
@@ -1202,7 +1346,7 @@ function PortTab({
     data.artifactTypeBindings,
   );
   const color = artifactType
-    ? ARTIFACT_TYPE_COLOR[artifactType.id] ?? tokens.colorAccent
+    ? artifactTypeColor(artifactType.id, tokens.colorAccent)
     : tokens.colorAccent;
   const artifactContract = artifactType
     ? `${artifactType.id}@${artifactType.schema_version}`
@@ -1481,7 +1625,7 @@ function InstancePlugPort({
     data.artifactTypeBindings,
   );
   const color = artifactType
-    ? ARTIFACT_TYPE_COLOR[artifactType.id] ?? tokens.colorAccent
+    ? artifactTypeColor(artifactType.id, tokens.colorAccent)
     : tokens.colorAccent;
   const acceptedShapeLabel = acceptedPortShapes(port)
     .map((shape) => (shape === "many" ? "sequence" : "single"))
@@ -1581,8 +1725,10 @@ function GenericArtifactTypeState({
                 artifactType
                   ? {
                       backgroundColor:
-                        ARTIFACT_TYPE_COLOR[artifactType.id] ??
-                        tokens.colorAccent,
+                        artifactTypeColor(
+                          artifactType.id,
+                          tokens.colorAccent,
+                        ),
                     }
                   : undefined
               }
@@ -1625,6 +1771,220 @@ function GenericArtifactTypeState({
   );
 }
 
+function numberTupleValue(value: unknown, length: number): number[] | null {
+  if (
+    !Array.isArray(value) ||
+    value.length !== length ||
+    !value.every(
+      (item): item is number =>
+        typeof item === "number" && Number.isFinite(item),
+    )
+  ) {
+    return null;
+  }
+  return value;
+}
+
+function numberTupleValueSignature(value: unknown, length: number): string {
+  const tuple = numberTupleValue(value, length);
+  if (tuple) return `tuple:${JSON.stringify(tuple)}`;
+  return value === null ? `null:${length}` : `unset:${length}`;
+}
+
+function parseNumberTupleDraft(
+  values: readonly string[],
+  items: readonly NumberTupleItem[],
+): number[] | null {
+  if (values.length !== items.length) return null;
+  const parsedValues: number[] = [];
+  for (const [index, item] of items.entries()) {
+    const raw = values[index] ?? "";
+    if (raw === "") return null;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return null;
+    if (item.type === "integer" && !Number.isInteger(parsed)) return null;
+    if (item.minimum !== undefined && parsed < item.minimum) return null;
+    if (item.maximum !== undefined && parsed > item.maximum) return null;
+    parsedValues.push(parsed);
+  }
+  return parsedValues;
+}
+
+function NumberTupleConfigField({
+  field,
+  value,
+  onChange,
+}: {
+  field: NumberTupleSchemaField;
+  value: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  const itemCount = field.items.length;
+  const valueSignature = numberTupleValueSignature(value, itemCount);
+  const [draftValues, setDraftValues] = React.useState<string[]>(() => {
+    const tuple = numberTupleValue(value, itemCount);
+    return tuple?.map(String) ?? Array.from({ length: itemCount }, () => "");
+  });
+  const [touched, setTouched] = React.useState(false);
+  const previousValueSignature = React.useRef(valueSignature);
+  const pendingValueSignature = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    if (previousValueSignature.current === valueSignature) return;
+    previousValueSignature.current = valueSignature;
+    if (pendingValueSignature.current === valueSignature) {
+      pendingValueSignature.current = null;
+      return;
+    }
+
+    pendingValueSignature.current = null;
+    const tuple = numberTupleValue(value, itemCount);
+    setDraftValues(
+      tuple?.map(String) ?? Array.from({ length: itemCount }, () => ""),
+    );
+    setTouched(false);
+  }, [itemCount, value, valueSignature]);
+
+  const draftIsEmpty = draftValues.every((raw) => raw === "");
+  const draftIsValid = parseNumberTupleDraft(draftValues, field.items) !== null;
+  const showError =
+    touched &&
+    !draftIsValid &&
+    (!draftIsEmpty || (field.required && !field.nullable));
+
+  return (
+    <fieldset {...stylex.props(s.field, s.tupleField)}>
+      <legend {...stylex.props(s.fieldLabel)}>
+        {field.title}
+        {field.required ? <span {...stylex.props(s.required)}>*</span> : null}
+      </legend>
+      {field.description ? (
+        <span {...stylex.props(s.fieldDescription)}>{field.description}</span>
+      ) : null}
+      <div {...stylex.props(s.tupleGrid)}>
+        {field.items.map((item, index) => (
+          <label key={`${item.title}:${index}`} {...stylex.props(s.tupleItem)}>
+            <span title={item.title} {...stylex.props(s.tupleItemLabel)}>
+              {item.title}
+            </span>
+            <input
+              type="number"
+              aria-label={`${field.title}: ${item.title}`}
+              aria-invalid={showError}
+              value={draftValues[index] ?? ""}
+              min={item.minimum}
+              max={item.maximum}
+              step={item.type === "integer" ? 1 : "any"}
+              {...nodeInteractionProps(stylex.props(s.input))}
+              onChange={(event) => {
+                const nextDraftValues = [...draftValues];
+                nextDraftValues[index] = event.currentTarget.value;
+                setDraftValues(nextDraftValues);
+                setTouched(true);
+
+                const parsedValues = parseNumberTupleDraft(
+                  nextDraftValues,
+                  field.items,
+                );
+                const nextValue =
+                  parsedValues ?? (field.nullable ? null : undefined);
+                pendingValueSignature.current = numberTupleValueSignature(
+                  nextValue,
+                  itemCount,
+                );
+                onChange(nextValue);
+              }}
+            />
+          </label>
+        ))}
+      </div>
+      {showError ? (
+        <span role="alert" {...stylex.props(s.tupleError)}>
+          Enter all {itemCount} values as numbers within the shown ranges.
+        </span>
+      ) : field.nullable ? (
+        <span {...stylex.props(s.fieldDescription)}>
+          Leave every value blank to use no bounds.
+        </span>
+      ) : null}
+    </fieldset>
+  );
+}
+
+function StringListConfigField({
+  field,
+  value,
+  onChange,
+}: {
+  field: StringListSchemaField;
+  value: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  const values = Array.isArray(value) && value.every(
+    (item): item is string => typeof item === "string",
+  )
+    ? value
+    : [];
+  const minimumItems = field.minItems ?? 0;
+  const canAdd =
+    field.maxItems === undefined || values.length < field.maxItems;
+  const canRemove = values.length > minimumItems;
+
+  return (
+    <fieldset {...stylex.props(s.field, s.tupleField)}>
+      <legend {...stylex.props(s.fieldLabel)}>
+        {field.title}
+        {field.required ? <span {...stylex.props(s.required)}>*</span> : null}
+      </legend>
+      {field.description ? (
+        <span {...stylex.props(s.fieldDescription)}>{field.description}</span>
+      ) : null}
+      <div {...stylex.props(s.stringList)}>
+        {values.map((item, index) => (
+          <div key={index} {...stylex.props(s.stringListRow)}>
+            <input
+              type="text"
+              aria-label={`${field.title} item ${index + 1}`}
+              value={item}
+              minLength={field.itemMinLength}
+              maxLength={field.itemMaxLength}
+              pattern={field.itemPattern}
+              {...nodeInteractionProps(stylex.props(s.input))}
+              onChange={(event) => {
+                const nextValues = [...values];
+                nextValues[index] = event.currentTarget.value;
+                onChange(nextValues);
+              }}
+            />
+            <button
+              type="button"
+              aria-label={`Remove ${field.title} item ${index + 1}`}
+              title="Remove item"
+              disabled={!canRemove}
+              {...nodeInteractionProps(stylex.props(s.stringListRemove))}
+              onClick={() => {
+                onChange(values.filter((_, itemIndex) => itemIndex !== index));
+              }}
+            >
+              <Trash2 size={13} />
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          aria-label={`Add ${field.title} item`}
+          disabled={!canAdd}
+          {...nodeInteractionProps(stylex.props(s.stringListAdd))}
+          onClick={() => onChange([...values, ""])}
+        >
+          <Plus size={13} />
+          Add item
+        </button>
+      </div>
+    </fieldset>
+  );
+}
+
 function ConfigField({
   field,
   value,
@@ -1637,6 +1997,24 @@ function ConfigField({
   fillHeight?: boolean;
 }) {
   const fieldProps = stylex.props(s.field, fillHeight ? s.fieldSized : null);
+  if (field.type === "number-tuple") {
+    return (
+      <NumberTupleConfigField
+        field={field}
+        value={value}
+        onChange={onChange}
+      />
+    );
+  }
+  if (field.type === "string-list") {
+    return (
+      <StringListConfigField
+        field={field}
+        value={value}
+        onChange={onChange}
+      />
+    );
+  }
   if (field.type === "boolean") {
     return (
       <label {...fieldProps}>
@@ -1703,6 +2081,7 @@ function ConfigField({
             stylex.props(
               s.input,
               s.textarea,
+              field.codeLanguage ? s.codeTextarea : null,
               fillHeight ? s.textareaFill : s.textareaDefault,
             ),
           )}
@@ -1871,14 +2250,24 @@ function FileUploadBody({ id, data }: { id: string; data: WorkflowNodeData }) {
   const uploads = imageUploads(data);
   const inputRef = React.useRef<HTMLInputElement>(null);
   const isGeoJson = data.spec.operator_id === GEOJSON_UPLOAD_OPERATOR_ID;
+  const isGeoTiff = data.spec.operator_id === GEOTIFF_UPLOAD_OPERATOR_ID;
+  const isTableFile = data.spec.operator_id === TABLE_FILE_IMPORT_OPERATOR_ID;
+  const isSingleFile = isGeoJson || isGeoTiff || isTableFile;
+  const acceptedTypes = isGeoJson
+    ? ".geojson,.json,application/geo+json,application/json"
+    : isGeoTiff
+      ? ".tif,.tiff,image/tiff,application/geotiff"
+      : isTableFile
+        ? ".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        : ACCEPTED_IMAGE_TYPES;
 
   return (
     <div {...stylex.props(s.body)}>
       <input
         ref={inputRef}
         type="file"
-        multiple={!isGeoJson}
-        accept={isGeoJson ? ".geojson,.json,application/geo+json,application/json" : ACCEPTED_IMAGE_TYPES}
+        multiple={!isSingleFile}
+        accept={acceptedTypes}
         {...nodeInteractionProps(stylex.props(s.hiddenInput))}
         onChange={(event) => {
           const files = Array.from(event.currentTarget.files ?? []);
@@ -1899,8 +2288,14 @@ function FileUploadBody({ id, data }: { id: string; data: WorkflowNodeData }) {
         {data.execution.status === "uploading"
           ? "Uploading…"
           : uploads.length
-            ? isGeoJson ? "Replace file" : "Replace images"
-            : isGeoJson ? "Choose GeoJSON" : "Choose images"}
+            ? isSingleFile ? "Replace file" : "Replace images"
+            : isGeoJson
+              ? "Choose GeoJSON"
+              : isGeoTiff
+                ? "Choose GeoTIFF"
+                : isTableFile
+                  ? "Choose CSV or XLSX"
+                  : "Choose images"}
       </button>
       {uploads.length ? (
         <div {...nodeInteractionProps(stylex.props(s.fileList))}>
@@ -1932,7 +2327,11 @@ function FileUploadBody({ id, data }: { id: string; data: WorkflowNodeData }) {
         <p {...stylex.props(s.moreFiles)}>
           {isGeoJson
             ? "GeoJSON FeatureCollection · WGS84 longitude/latitude"
-            : "PNG, JPEG, WebP, TIFF or BMP · ordered as selected"}
+            : isGeoTiff
+              ? "Georeferenced GeoTIFF or Cloud Optimized GeoTIFF"
+              : isTableFile
+                ? "UTF-8 CSV or Excel workbook"
+                : "PNG, JPEG, WebP, TIFF or BMP · ordered as selected"}
         </p>
       )}
     </div>
@@ -1956,7 +2355,9 @@ const SCHEMA_ITEM_KIND_LABELS: Record<SchemaSequenceItemKind, string> = {
   schema: "Schema",
 };
 
-function SchemaFieldConnectionToggle({
+const ARTIFACT_QUERY_ALIAS_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function InstanceInputConnectionToggle({
   nodeId,
   port,
   plugId,
@@ -1993,7 +2394,7 @@ function SchemaBuilderBody({
     ? resolvedPortArtifactType(inputPort, data.artifactTypeBindings)
     : null;
   const handleColor = artifactType
-    ? ARTIFACT_TYPE_COLOR[artifactType.id] ?? tokens.colorAccent
+    ? artifactTypeColor(artifactType.id, tokens.colorAccent)
     : tokens.colorAccent;
   const [draggedFieldId, setDraggedFieldId] = React.useState<string | null>(
     null,
@@ -2370,7 +2771,7 @@ function SchemaBuilderBody({
                             {connectionLabel}
                           </span>
                           {inputPort ? (
-                            <SchemaFieldConnectionToggle
+                            <InstanceInputConnectionToggle
                               nodeId={id}
                               port={inputPort}
                               plugId={field.id}
@@ -2398,7 +2799,7 @@ function SchemaBuilderBody({
                           {connectionLabel}
                         </span>
                         {inputPort ? (
-                          <SchemaFieldConnectionToggle
+                          <InstanceInputConnectionToggle
                             nodeId={id}
                             port={inputPort}
                             plugId={field.id}
@@ -2439,6 +2840,253 @@ function SchemaBuilderBody({
   );
 }
 
+function ArtifactQueryTablesBody({
+  id,
+  data,
+}: {
+  id: string;
+  data: WorkflowNodeData;
+}) {
+  const relations = artifactQueryRelations(data.config.relations);
+  const inputPort = data.spec.inputs.find(
+    (port) => port.name === ARTIFACT_QUERY_RELATIONS_PORT,
+  );
+  const artifactType = inputPort
+    ? resolvedPortArtifactType(inputPort, data.artifactTypeBindings)
+    : null;
+  const handleColor = artifactType
+    ? artifactTypeColor(artifactType.id, tokens.colorAccent)
+    : tokens.colorAccent;
+
+  const commitRelations = (
+    nextRelations: readonly ArtifactQueryRelation[],
+  ) => {
+    const nextInputPlugs = reconcileArtifactQueryRelationInputPlugs(
+      data.inputPlugs,
+      nextRelations,
+    );
+    if (data.onArtifactQueryRelationsChange) {
+      data.onArtifactQueryRelationsChange(
+        id,
+        nextRelations,
+        nextInputPlugs,
+      );
+    } else {
+      data.onConfigChange?.(id, "relations", nextRelations);
+    }
+  };
+
+  const replaceRelation = (
+    relationId: string,
+    nextRelation: ArtifactQueryRelation,
+  ) => {
+    commitRelations(
+      relations.map((relation) =>
+        relation.id === relationId ? nextRelation : relation,
+      ),
+    );
+  };
+
+  return (
+    <div {...stylex.props(s.schemaBody)}>
+      <section
+        {...stylex.props(s.schemaFieldsSection)}
+        aria-label="Artifact table relations"
+      >
+        <div {...stylex.props(s.schemaFieldsHeader)}>
+          <span {...stylex.props(s.schemaFieldsTitle)}>Relations</span>
+          <span {...stylex.props(s.schemaFieldsCount)}>
+            {relations.length} {relations.length === 1 ? "table" : "tables"}
+            {" · ordered"}
+          </span>
+        </div>
+
+        <div {...nodeInteractionProps(stylex.props(s.schemaFieldList))}>
+          {relations.map((relation, index) => {
+            const binding = data.inputPlugBindings[relation.id];
+            const connectionLabel = binding?.sourceLabel ?? "Connect table";
+            const aliasIsUnique =
+              relations.filter(
+                (candidate) =>
+                  candidate.alias.toLowerCase() ===
+                    relation.alias.toLowerCase(),
+              ).length === 1;
+            const aliasIsValid =
+              ARTIFACT_QUERY_ALIAS_PATTERN.test(relation.alias) &&
+              aliasIsUnique;
+            return (
+              <div key={relation.id} {...stylex.props(s.schemaFieldRow)}>
+                {inputPort ? (
+                  <Handle
+                    className="nodrag nowheel"
+                    type="target"
+                    position={Position.Left}
+                    id={encodeHandleId(
+                      portMetaForPort(
+                        inputPort,
+                        inputPort.shape,
+                        relation.id,
+                        data.artifactTypeBindings,
+                      ),
+                    )}
+                    aria-label={`Table relation ${relation.alias || index + 1}`}
+                    title="Connect one table artifact here."
+                    style={handleStyle("19px", handleColor, true)}
+                  />
+                ) : null}
+
+                <div {...stylex.props(s.queryRelationTop)}>
+                  <span {...stylex.props(s.schemaFieldIndex)}>{index + 1}</span>
+                  <input
+                    type="text"
+                    value={relation.alias}
+                    pattern="[A-Za-z_][A-Za-z0-9_]*"
+                    maxLength={128}
+                    aria-label={`Relation ${index + 1} SQL alias`}
+                    aria-invalid={!aliasIsValid}
+                    title={
+                      aliasIsValid
+                        ? "SQL table name"
+                        : "Use a unique SQL identifier: letters, digits, and underscores"
+                    }
+                    placeholder={`relation_${index + 1}`}
+                    {...nodeInteractionProps(
+                      stylex.props(s.schemaCompactInput),
+                    )}
+                    onChange={(event) =>
+                      replaceRelation(relation.id, {
+                        ...relation,
+                        alias: event.currentTarget.value,
+                      })
+                    }
+                  />
+                </div>
+
+                <div {...stylex.props(s.queryRelationDetail)}>
+                  <span
+                    title={connectionLabel}
+                    {...stylex.props(
+                      s.queryRelationSource,
+                      binding ? s.queryRelationSourceBound : null,
+                    )}
+                  >
+                    {connectionLabel}
+                  </span>
+                  {inputPort ? (
+                    <InstanceInputConnectionToggle
+                      nodeId={id}
+                      port={inputPort}
+                      plugId={relation.id}
+                      label={`${relation.alias || `relation ${index + 1}`} table`}
+                    />
+                  ) : null}
+                  <span {...stylex.props(s.schemaFieldActions)}>
+                    <button
+                      type="button"
+                      disabled={index === 0}
+                      aria-label={`Move relation ${index + 1} up`}
+                      title="Move relation up"
+                      {...nodeInteractionProps(
+                        stylex.props(
+                          s.schemaFieldAction,
+                          index === 0 ? s.schemaFieldActionDisabled : null,
+                        ),
+                      )}
+                      onClick={() =>
+                        commitRelations(
+                          moveArtifactQueryRelation(
+                            relations,
+                            relation.id,
+                            index - 1,
+                          ),
+                        )
+                      }
+                    >
+                      <ArrowUp size={10} />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={index === relations.length - 1}
+                      aria-label={`Move relation ${index + 1} down`}
+                      title="Move relation down"
+                      {...nodeInteractionProps(
+                        stylex.props(
+                          s.schemaFieldAction,
+                          index === relations.length - 1
+                            ? s.schemaFieldActionDisabled
+                            : null,
+                        ),
+                      )}
+                      onClick={() =>
+                        commitRelations(
+                          moveArtifactQueryRelation(
+                            relations,
+                            relation.id,
+                            index + 1,
+                          ),
+                        )
+                      }
+                    >
+                      <ArrowDown size={10} />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={relations.length === 1}
+                      aria-label={`Remove relation ${index + 1}`}
+                      title={
+                        relations.length === 1
+                          ? "At least one relation is required"
+                          : "Remove relation and its connection"
+                      }
+                      {...nodeInteractionProps(
+                        stylex.props(
+                          s.schemaFieldAction,
+                          s.schemaFieldRemove,
+                          relations.length === 1
+                            ? s.schemaFieldActionDisabled
+                            : null,
+                        ),
+                      )}
+                      onClick={() =>
+                        commitRelations(
+                          relations.filter(
+                            (candidate) => candidate.id !== relation.id,
+                          ),
+                        )
+                      }
+                    >
+                      <Trash2 size={10} />
+                    </button>
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <button
+          type="button"
+          disabled={relations.length >= 32}
+          {...nodeInteractionProps(stylex.props(s.schemaAddField))}
+          onClick={() =>
+            commitRelations([
+              ...relations,
+              createArtifactQueryRelation(
+                relations.length,
+                crypto.randomUUID(),
+                relations,
+              ),
+            ])
+          }
+        >
+          <Plus size={11} />
+          Add relation
+        </button>
+      </section>
+    </div>
+  );
+}
+
 function GenericBody({
   id,
   data,
@@ -2456,7 +3104,7 @@ function GenericBody({
   return (
     <div
       {...stylex.props(s.body, sized ? s.bodySized : null)}
-      style={sized ? { height: bodyHeight } : undefined}
+      style={sized ? { minHeight: bodyHeight } : undefined}
     >
       <div {...stylex.props(s.configList, sized ? s.configListSized : null)}>
         {fields.map((field) => (
@@ -2584,42 +3232,240 @@ function NodeHeader({ id, data }: { id: string; data: WorkflowNodeData }) {
             Source
           </button>
         ) : null}
-        {data.onOpenExecutionHistory ? (
-          <button
-            type="button"
-            aria-label={`Open execution history for ${data.spec.title}`}
-            title="Execution history"
-            {...nodeInteractionProps(stylex.props(s.openModuleSource))}
-            onClick={() => data.onOpenExecutionHistory?.(id)}
-          >
-            <History size={9} />
-            History
-          </button>
-        ) : null}
       </span>
     </header>
   );
 }
 
-function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
+type IncompatibleWorkflowNodeCompatibility = Exclude<
+  WorkflowNodeData["compatibility"],
+  { status: "supported" }
+>;
+
+function CompatibilityPort({
+  direction,
+  endpoint,
+}: {
+  direction: "input" | "output";
+  endpoint: IncompatibleWorkflowNodeCompatibility["inputs"][number];
+}) {
+  const input = direction === "input";
+  const label = endpoint.plugId
+    ? `${endpoint.portName} · ${endpoint.plugId}`
+    : endpoint.portName;
+  return (
+    <div {...stylex.props(s.tabRow, input ? null : s.tabRowOut)}>
+      <div
+        {...stylex.props(
+          s.tab,
+          input ? s.tabIn : s.tabOut,
+          s.compatibilityPort,
+        )}
+        title={`Historical ${direction} ${label}`}
+      >
+        <span {...stylex.props(s.tabLabel)}>{label}</span>
+      </div>
+      <Handle
+        type={input ? "target" : "source"}
+        position={input ? Position.Left : Position.Right}
+        id={compatibilityHandleId(direction, endpoint)}
+        isConnectable={false}
+        aria-label={`Unavailable ${direction} port ${label}`}
+        title={`This historical ${direction} cannot accept new connections.`}
+        style={{
+          ...handleStyle("50%", tokens.colorMuted),
+          cursor: "not-allowed",
+          opacity: 0.72,
+        }}
+      />
+    </div>
+  );
+}
+
+function IncompatibleWorkflowNodeCard({
+  id,
+  data,
+  selected,
+  compatibility,
+}: {
+  id: string;
+  data: WorkflowNodeData;
+  selected: boolean;
+  compatibility: IncompatibleWorkflowNodeCompatibility;
+}) {
+  const updateNodeInternals = useUpdateNodeInternals();
+  const [draftLayout, setDraftLayout] = React.useState<WorkflowNodeLayout | null>(
+    null,
+  );
+  const layout = draftLayout ?? data.layout;
+  const nodeWidth = resolvedNodeWidth(layout);
+  const endpointRevision = JSON.stringify({
+    inputs: compatibility.inputs,
+    outputs: compatibility.outputs,
+  });
+  const hasProgress = Boolean(data.progress?.entries.length);
+  const hasExecutionError = Boolean(data.execution.error);
+  const hasMaterialization = (data.run?.outputs ?? []).some(
+    (output) => output.artifacts.length > 0,
+  );
+  const hasSavedHistory = Boolean(data.historyContext?.graphId);
+
+  React.useEffect(() => {
+    updateNodeInternals(id);
+  }, [
+    endpointRevision,
+    hasExecutionError,
+    hasMaterialization,
+    hasProgress,
+    hasSavedHistory,
+    id,
+    selected,
+    updateNodeInternals,
+  ]);
+
+  const commitLayout = React.useCallback(
+    (next: WorkflowNodeLayout | null) => {
+      setDraftLayout(null);
+      data.onLayoutChange?.(id, next);
+      window.requestAnimationFrame(() => updateNodeInternals(id));
+    },
+    [data, id, updateNodeInternals],
+  );
+
+  return (
+    <div {...stylex.props(s.shellStack)} style={{ width: nodeWidth }}>
+      <article
+        aria-label={`${data.spec.title} ${compatibility.status} node`}
+        {...stylex.props(
+          s.shell,
+          s.compatibilityShell,
+          selected ? s.selected : null,
+        )}
+        style={{ width: nodeWidth }}
+      >
+        <header {...stylex.props(s.header)}>
+          <span {...stylex.props(s.titleRow)}>
+            <TriangleAlert
+              size={14}
+              aria-hidden="true"
+              {...stylex.props(s.compatibilityIcon)}
+            />
+            <button
+              type="button"
+              aria-label={`Remove ${data.spec.title}`}
+              title={`Remove ${data.spec.title}`}
+              {...nodeInteractionProps(
+                stylex.props(s.headerButton, s.removeButton),
+              )}
+              onClick={() => data.onRemoveNode?.(id)}
+            >
+              <X size={13} />
+            </button>
+            <span {...stylex.props(s.title)} title={data.spec.title}>
+              {data.spec.title}
+            </span>
+            <span {...stylex.props(s.compatibilityBadge)}>
+              {compatibility.status}
+            </span>
+          </span>
+          <span {...stylex.props(s.operatorRow)}>
+            <span {...stylex.props(s.operatorCopy)}>
+              {data.spec.operator_id}@{data.spec.operator_version}
+            </span>
+          </span>
+        </header>
+        {compatibility.inputs.length ? (
+          <div {...stylex.props(s.tabs)}>
+            {compatibility.inputs.map((endpoint) => (
+              <CompatibilityPort
+                key={`input:${endpoint.portName}:${endpoint.plugId ?? ""}`}
+                direction="input"
+                endpoint={endpoint}
+              />
+            ))}
+          </div>
+        ) : null}
+        <div {...stylex.props(s.compatibilityBody)}>
+          {compatibility.issues.map((issue) => (
+            <p key={issue} role="status" {...stylex.props(s.compatibilityIssue)}>
+              {issue}
+            </p>
+          ))}
+          <details
+            {...nodeInteractionProps(stylex.props(s.compatibilityConfig))}
+          >
+            <summary {...stylex.props(s.compatibilityConfigSummary)}>
+              Saved configuration
+            </summary>
+            <pre {...stylex.props(s.compatibilityConfigValue)}>
+              {JSON.stringify(data.config, null, 2)}
+            </pre>
+          </details>
+        </div>
+        {compatibility.outputs.length ? (
+          <div {...stylex.props(s.tabsOutput)}>
+            {compatibility.outputs.map((endpoint) => (
+              <CompatibilityPort
+                key={`output:${endpoint.portName}`}
+                direction="output"
+                endpoint={endpoint}
+              />
+            ))}
+          </div>
+        ) : null}
+        <LayoutResizeHandle
+          layout={layout}
+          axes={["width"]}
+          ariaLabel={`Resize ${data.spec.title}`}
+          onDraft={setDraftLayout}
+          onCommit={commitLayout}
+        />
+      </article>
+      <NodeExecutionAppendix
+        nodeId={id}
+        nodeTitle={data.spec.title}
+        expanded={selected}
+        width={nodeWidth}
+        execution={data.execution}
+        progress={data.progress}
+        run={data.run}
+        historyContext={data.historyContext}
+        onOpenHistory={data.onOpenExecutionHistory}
+      />
+    </div>
+  );
+}
+
+function SupportedWorkflowNodeCard({
+  id,
+  data,
+  selected,
+}: NodeProps<WorkflowNode>) {
   const fields = schemaFields(data.spec.config_schema);
   const secretInputs = nodeSecretInputs(data.spec);
-  const isFileUpload =
-    data.spec.operator_id === IMAGE_UPLOAD_OPERATOR_ID ||
-    data.spec.operator_id === GEOJSON_UPLOAD_OPERATOR_ID;
+  const isFileUpload = isFileUploadOperator(data.spec.operator_id);
   const isSchemaBuilder =
     data.spec.operator_id === SCHEMA_BUILDER_OPERATOR_ID;
-  const visibleInputPorts = isSchemaBuilder
-    ? data.spec.inputs.filter(
-        (port) => port.name !== SCHEMA_BUILDER_INPUT_PORT,
-      )
-    : data.spec.inputs;
+  const isArtifactQuery =
+    data.spec.operator_id === ARTIFACT_QUERY_OPERATOR_ID;
+  const isVectorLayer =
+    data.spec.operator_id === GIS_VECTOR_LAYER_OPERATOR_ID;
+  const visibleInputPorts = data.spec.inputs.filter((port) => {
+    if (isSchemaBuilder && port.name === SCHEMA_BUILDER_INPUT_PORT) {
+      return false;
+    }
+    if (isArtifactQuery && port.name === ARTIFACT_QUERY_RELATIONS_PORT) {
+      return false;
+    }
+    return true;
+  });
   const hasConfig = fields.length > 0 || secretInputs.length > 0;
   const hasExecutionError = Boolean(data.execution.error);
-  const producedArtifactCount = (data.run?.outputs ?? []).reduce(
-    (count, output) => count + output.artifacts.length,
-    0,
+  const hasProgress = Boolean(data.progress?.entries.length);
+  const hasMaterialization = (data.run?.outputs ?? []).some(
+    (output) => output.artifacts.length > 0,
   );
+  const hasSavedHistory = Boolean(data.historyContext?.graphId);
   const inputPlugRevision = data.inputPlugs
     .map((plug) => `${plug.portName}:${plug.id}`)
     .join("|");
@@ -2646,17 +3492,12 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
   const layoutRevision = [
     layout?.width ?? "",
     layout?.bodyHeight ?? "",
-    layout?.appendixHeight ?? "",
   ].join(":");
-
-  const commitLayout = React.useCallback(
-    (next: WorkflowNodeLayout | null) => {
-      setDraftLayout(null);
-      data.onLayoutChange?.(id, next);
-      window.requestAnimationFrame(() => updateNodeInternals(id));
-    },
-    [data, id, updateNodeInternals],
-  );
+  const commitLayout = (next: WorkflowNodeLayout | null) => {
+    setDraftLayout(null);
+    data.onLayoutChange?.(id, next);
+    window.requestAnimationFrame(() => updateNodeInternals(id));
+  };
 
   React.useEffect(() => {
     // React Flow measures handles in the animation frame queued here. Queue the
@@ -2679,9 +3520,12 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
     fields.length,
     secretInputs.length,
     hasExecutionError,
-    producedArtifactCount,
+    hasMaterialization,
+    hasProgress,
+    hasSavedHistory,
     onHandlesMeasured,
     id,
+    selected,
     updateNodeInternals,
   ]);
 
@@ -2731,8 +3575,15 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
         ) : null}
         {isSchemaBuilder ? (
           <SchemaBuilderBody id={id} data={data} />
+        ) : isArtifactQuery ? (
+          <ArtifactQueryTablesBody id={id} data={data} />
         ) : isFileUpload ? (
           <FileUploadBody id={id} data={data} />
+        ) : isVectorLayer ? (
+          <>
+            <GenericBody id={id} data={data} bodyHeight={bodyHeight} />
+            <VectorLayerStyleBody id={id} data={data} />
+          </>
         ) : hasConfig ? (
           <GenericBody id={id} data={data} bodyHeight={bodyHeight} />
         ) : (
@@ -2753,6 +3604,7 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
         ) : null}
         {!isFileUpload &&
         !isSchemaBuilder &&
+        !isArtifactQuery &&
         !hasConfig &&
         !hasExecutionError &&
         !data.spec.inputs.length &&
@@ -2769,30 +3621,32 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<WorkflowNode>) {
           onCommit={commitLayout}
         />
       </article>
-      {data.execution.error ? (
-        <aside
-          role="alert"
-          aria-label="Node issue"
-          {...nodeInteractionProps(stylex.props(s.errorAppendix))}
-          style={{ width: nodeWidth }}
-        >
-          <span aria-hidden="true" {...stylex.props(s.errorAccent)} />
-          <div {...stylex.props(s.errorContent)}>
-            <div {...stylex.props(s.errorHeader)}>
-              <span {...stylex.props(s.errorScope)}>NODE</span>
-              <span {...stylex.props(s.errorTitle)}>Node issue</span>
-            </div>
-            <p {...stylex.props(s.errorMessage)}>{data.execution.error}</p>
-          </div>
-        </aside>
-      ) : null}
-      <ArtifactsAppendix
-        data={data}
-        layout={layout}
-        onLayoutDraft={setDraftLayout}
-        onLayoutCommit={commitLayout}
+      <NodeExecutionAppendix
+        nodeId={id}
+        nodeTitle={data.spec.title}
+        expanded={selected}
+        width={nodeWidth}
+        execution={data.execution}
+        progress={data.progress}
+        run={data.run}
+        historyContext={data.historyContext}
+        onOpenHistory={data.onOpenExecutionHistory}
       />
     </div>
+  );
+}
+
+function WorkflowNodeCard(props: NodeProps<WorkflowNode>) {
+  if (props.data.compatibility.status === "supported") {
+    return <SupportedWorkflowNodeCard {...props} />;
+  }
+  return (
+    <IncompatibleWorkflowNodeCard
+      id={props.id}
+      data={props.data}
+      selected={props.selected}
+      compatibility={props.data.compatibility}
+    />
   );
 }
 

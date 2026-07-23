@@ -119,6 +119,7 @@ async function renderDrawer(
     graphId: "graph-1",
     graphName: "Invoices",
     nodeId: null,
+    initialExecutionId: null,
     nodeTitles: { "node-1": "Extract invoice" },
     executionRunning: false,
     isDirty: false,
@@ -211,6 +212,40 @@ describe("ExecutionHistoryDrawer", () => {
       { limit: 20, nodeId: "node-1" },
     );
     expect(apiMocks.getGraphExecution).not.toHaveBeenCalled();
+  });
+
+  it("selects the requested execution when it is present", async () => {
+    const latest = summary("execution-latest");
+    const requested = summary("execution-requested", {
+      created_at: "2026-07-17T08:00:00Z",
+      started_at: "2026-07-17T08:00:01Z",
+      finished_at: "2026-07-17T08:00:02Z",
+    });
+    apiMocks.listGraphExecutions.mockResolvedValue({
+      items: [latest, requested],
+      next_cursor: null,
+    });
+    apiMocks.getGraphExecution.mockResolvedValue(detail(requested));
+
+    const { container } = await renderDrawer({
+      initialExecutionId: requested.execution_id,
+    });
+
+    await vi.waitFor(() => {
+      expect(apiMocks.getGraphExecution).toHaveBeenCalledWith(
+        "graph-1",
+        "execution-requested",
+      );
+      const executionButtons = [...container.querySelectorAll(
+        'button[role="listitem"]',
+      )];
+      expect(executionButtons.find((button) =>
+        button.textContent?.includes("execution-requested")
+      )?.getAttribute("aria-current")).toBe("true");
+      expect(executionButtons.find((button) =>
+        button.textContent?.includes("execution-latest")
+      )?.getAttribute("aria-current")).toBeNull();
+    });
   });
 
   it("loads the next cursor and closes through explicit actions", async () => {

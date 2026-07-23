@@ -20,7 +20,7 @@ import {
   type ConnectionRoute,
 } from "../canvas/handles";
 import { schemaFields, type SchemaField } from "../canvas/config-schema";
-import { ARTIFACT_TYPE_COLOR } from "../canvas/nodes.css";
+import { artifactTypeColor } from "../canvas/nodes.css";
 import {
   acceptedPortShapes,
   portArtifactType,
@@ -223,11 +223,37 @@ function artifactTitleFor(registry: NodeRegistry, port: Port): string {
 function fieldTypeLabel(field: SchemaField): string {
   if (field.enumValues?.length) return "choice";
   if (field.format === "textarea") return "multiline text";
+  if (field.type === "number-tuple") {
+    return `${field.items.length}-number tuple`;
+  }
+  if (field.type === "string-list") return "text list";
   return field.type;
 }
 
 function fieldConstraintLabel(field: SchemaField): string {
   const constraints = [field.required ? "required" : "optional"];
+  if (field.type === "string-list") {
+    if (field.minItems !== undefined && field.maxItems !== undefined) {
+      constraints.push(`${field.minItems}–${field.maxItems} items`);
+    } else if (field.minItems !== undefined) {
+      constraints.push(`min ${field.minItems} items`);
+    } else if (field.maxItems !== undefined) {
+      constraints.push(`max ${field.maxItems} items`);
+    }
+    if (
+      field.itemMinLength !== undefined &&
+      field.itemMaxLength !== undefined
+    ) {
+      constraints.push(
+        `${field.itemMinLength}–${field.itemMaxLength} characters per item`,
+      );
+    } else if (field.itemMinLength !== undefined) {
+      constraints.push(`min ${field.itemMinLength} characters per item`);
+    } else if (field.itemMaxLength !== undefined) {
+      constraints.push(`max ${field.itemMaxLength} characters per item`);
+    }
+    return constraints.join(" · ");
+  }
   if (field.minimum !== undefined && field.maximum !== undefined) {
     constraints.push(`${field.minimum}–${field.maximum}`);
   } else if (field.minimum !== undefined) {
@@ -1045,10 +1071,9 @@ function PortList({ direction, ports, registry }: PortListProps) {
                   aria-hidden="true"
                   {...stylex.props(s.portDot)}
                   style={{
-                    backgroundColor:
-                      (artifactType
-                        ? ARTIFACT_TYPE_COLOR[artifactType.id]
-                        : undefined) ?? tokens.colorAccent,
+                    backgroundColor: artifactType
+                      ? artifactTypeColor(artifactType.id, tokens.colorAccent)
+                      : tokens.colorAccent,
                   }}
                 />
                 <div {...stylex.props(s.portCopy)}>

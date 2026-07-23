@@ -1,18 +1,102 @@
-import { createElement } from "react";
+// @vitest-environment jsdom
+
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { SWRConfig } from "swr";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
+const maplibreMock = vi.hoisted(() => {
+  const instances: Array<Record<string, unknown>> = [];
+  const addProtocol = vi.fn();
+
+  class MapMock {
+    options: Record<string, unknown>;
+    addControl = vi.fn();
+    canvas = document.createElement("canvas");
+    canvasContainer = document.createElement("div");
+    eventListeners: Record<
+      string,
+      Array<(event: Record<string, unknown>) => void>
+    > = {};
+    fitBounds = vi.fn();
+    getCanvas = vi.fn(() => this.canvas);
+    getCanvasContainer = vi.fn(() => this.canvasContainer);
+    getLayer: ReturnType<typeof vi.fn>;
+    getSource = vi.fn(() => ({}));
+    isStyleLoaded = vi.fn(() => true);
+    moveLayer = vi.fn();
+    queryRenderedFeatures = vi.fn((): Array<Record<string, unknown>> => []);
+    querySourceFeatures = vi.fn((): Array<Record<string, unknown>> => []);
+    remove = vi.fn();
+    resize = vi.fn();
+    setLayerZoomRange = vi.fn();
+    setLayoutProperty = vi.fn();
+    setPaintProperty = vi.fn();
+    setFilter = vi.fn();
+    unproject = vi.fn(() => ({ lng: 19.93821, lat: 50.06143 }));
+
+    constructor(options: Record<string, unknown>) {
+      this.options = options;
+      const style = options.style as { layers?: Array<{ id: string }> };
+      const layerIds = new Set((style.layers ?? []).map((layer) => layer.id));
+      this.getLayer = vi.fn((id: string) => layerIds.has(id) ? { id } : undefined);
+      instances.push(this as unknown as Record<string, unknown>);
+    }
+
+    emit(event: string, payload: Record<string, unknown>) {
+      for (const callback of this.eventListeners[event] ?? []) {
+        callback(payload);
+      }
+    }
+
+    on(
+      event: string,
+      callback: (event: Record<string, unknown>) => void,
+    ) {
+      this.eventListeners[event] ??= [];
+      this.eventListeners[event].push(callback);
+      if (event === "load") callback({});
+      return this;
+    }
+  }
+
+  return { addProtocol, instances, MapMock };
+});
+
+vi.mock("maplibre-gl", () => ({
+  default: {
+    addProtocol: maplibreMock.addProtocol,
+    Map: maplibreMock.MapMock,
+    NavigationControl: class NavigationControl {},
+    workerUrl: "",
+  },
+}));
+
+vi.mock("pmtiles", () => ({
+  Protocol: class Protocol {
+    tile = vi.fn();
+  },
+}));
 
 vi.mock("@stylexjs/stylex", () => ({
   create: <Styles,>(styles: Styles) => styles,
   props: () => ({}),
 }));
 
-import type { ArtifactSummary } from "@/lib/api";
+import type {
+  ArtifactSummary,
+  GeoRenderDescriptor,
+  TablePage,
+} from "@/lib/api";
 import {
   formatJsonSchemaPayload,
   markdownPayload,
   rendererFor,
 } from "./artifact-renderers";
+import type { ArtifactViewerInteractionContext } from "../artifact-interactions";
 
 const JSON_SCHEMA_ARTIFACT: ArtifactSummary = {
   artifact_id: "schema-artifact",
@@ -32,58 +116,1098 @@ const MAP_ARTIFACT: ArtifactSummary = {
   artifact_id: "map-artifact",
   artifact_type: "geo.map_document",
   schema_version: 1,
-  content_type: "application/geo+json",
+  content_type: "application/json",
+  content_url: "./artifacts/map-artifact/content",
 };
 
-describe("GIS map artifact rendering", () => {
-  it("selects the map renderer and exposes ordered layer toggles", () => {
-    const payload = {
-      layers: [
-        {
-          id: "layer-1",
-          title: "cities.geojson",
-          color: "#2563eb",
-          visible: true,
-          feature_collection: { type: "FeatureCollection", features: [] },
+const GEO_RENDER_DESCRIPTOR: GeoRenderDescriptor = {
+  artifact_id: "map-artifact",
+  kind: "map_document",
+  basemap: "openstreetmap",
+  initial_bounds: [-12, 35, 22, 61],
+  layers: [
+    {
+      id: "parcels",
+      title: "Parcels",
+      visible: true,
+      opacity: 1,
+      min_zoom: 2,
+      max_zoom: 18,
+      source: {
+        kind: "vector",
+        artifact_id: "features-artifact",
+        archive_url: "/v1/artifacts/features-artifact/geo/vector.pmtiles",
+        source_layer: "features",
+        bounds: [100, 10, 110, 20],
+        min_zoom: 0,
+        max_zoom: 14,
+        fields: [
+          { id: "name", title: "Name", value_type: "text" },
+          { id: "sheet", title: "Sheet", value_type: "text" },
+        ],
+      },
+      style: {
+        kind: "vector",
+        fill: { enabled: true, color: "#2563eb", opacity: 0.4 },
+        line: {
+          enabled: true,
+          color: "#1d4ed8",
+          opacity: 1,
+          width: 2,
         },
-        {
-          id: "layer-2",
-          title: "offices.geojson",
+        outline: {
+          enabled: true,
+          color: "#172554",
+          opacity: 0.8,
+          width: 1,
+        },
+        point: {
+          enabled: true,
           color: "#dc2626",
-          visible: true,
-          feature_collection: { type: "FeatureCollection", features: [] },
+          opacity: 1,
+          radius: 5,
+          stroke_color: "#ffffff",
+          stroke_width: 1,
         },
-      ],
-      bounds: [-0.12, 48.85, 13.4, 52.52],
-    };
-    const renderer = rendererFor(MAP_ARTIFACT, payload);
-    expect(renderer.id).toBe("geo-map");
-    expect(renderer.modes).toEqual(["map", "raw"]);
+        label: {
+          property: "name",
+          color: "#111827",
+          size: 12,
+          halo_color: "#ffffff",
+          halo_width: 1,
+        },
+      },
+    },
+    {
+      id: "elevation",
+      title: "Elevation",
+      visible: true,
+      opacity: 0.8,
+      min_zoom: 0,
+      max_zoom: 16,
+      source: {
+        kind: "raster",
+        artifact_id: "raster-artifact",
+        tilejson_url: "/v1/artifacts/raster-artifact/geo/raster/tilejson.json",
+        bounds: [-5, 40, 10, 55],
+        attribution: "Survey office",
+      },
+      style: {
+        kind: "raster",
+        opacity: 0.9,
+        brightness_min: 0,
+        brightness_max: 1,
+        contrast: 0,
+        saturation: 0,
+        hue: 0,
+        resampling: "linear",
+      },
+    },
+  ],
+};
 
+const CATEGORIZED_GEO_RENDER_DESCRIPTOR: GeoRenderDescriptor = {
+  artifact_id: "categorized-map-artifact",
+  kind: "map_document",
+  basemap: "openstreetmap",
+  initial_bounds: [27, 51, 33, 56],
+  layers: [
+    {
+      id: "chrzanowski-symbols",
+      title: "Chrzanowski symbols",
+      visible: true,
+      opacity: 1,
+      min_zoom: 0,
+      max_zoom: 22,
+      source: {
+        kind: "vector",
+        artifact_id: "chrzanowski-features",
+        archive_url: "/v1/artifacts/chrzanowski-features/geo/vector.pmtiles",
+        source_layer: "features",
+        bounds: [27, 51, 33, 56],
+        min_zoom: 0,
+        max_zoom: 14,
+      },
+      style: {
+        kind: "categorized_points",
+        category_property: "type",
+        categories: [
+          {
+            id: "cities",
+            title: "Cities and towns",
+            values: [1, 2, 3],
+            point: {
+              enabled: true,
+              color: "#b91c1c",
+              opacity: 1,
+              radius: 7,
+              stroke_color: "#ffffff",
+              stroke_width: 1,
+            },
+            min_zoom: 6,
+            max_zoom: 22,
+          },
+          {
+            id: "villages",
+            title: "Villages",
+            values: [5, 7, 8, 9, 10],
+            point: {
+              enabled: true,
+              color: "#d6a700",
+              opacity: 0.85,
+              radius: 4,
+              stroke_color: "#ffffff",
+              stroke_width: 1,
+            },
+            min_zoom: 10,
+            max_zoom: 22,
+          },
+        ],
+        label: {
+          property: "transcription",
+          color: "#111827",
+          size: 12,
+          halo_color: "#ffffff",
+          halo_width: 1,
+        },
+      },
+    },
+  ],
+};
+
+const TABLE_ARTIFACT: ArtifactSummary = {
+  artifact_id: "table-artifact",
+  artifact_type: "table.data",
+  schema_version: 1,
+  content_type: "application/json",
+  content_url: "./artifacts/table-artifact/content",
+};
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  maplibreMock.instances.length = 0;
+});
+
+describe("Table artifact rendering", () => {
+  async function renderTablePage(page: TablePage, mode = "table") {
+    const renderer = rendererFor(TABLE_ARTIFACT);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+      JSON.stringify(page),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    )));
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(
+        SWRConfig,
+        { value: { provider: () => new Map(), shouldRetryOnError: false } },
+        createElement(renderer.Component, {
+          artifact: TABLE_ARTIFACT,
+          mode,
+        }),
+      ));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const markup = container.innerHTML;
+    await act(async () => root.unmount());
+    return markup;
+  }
+
+  it("does not use the complete artifact payload for its initial render", () => {
+    const renderer = rendererFor(TABLE_ARTIFACT);
     const markup = renderToStaticMarkup(
       createElement(renderer.Component, {
-        artifact: MAP_ARTIFACT,
-        payload,
-        mode: "map",
+        artifact: TABLE_ARTIFACT,
+        payload: { rows: [{ geometry: "unbounded-full-value" }] },
+        mode: "table",
       }),
     );
-    expect(markup.indexOf("cities.geojson")).toBeLessThan(
-      markup.indexOf("offices.geojson"),
-    );
-    expect(markup).toContain('aria-label="Interactive map"');
-    expect(markup).toContain('type="checkbox"');
+    expect(markup).toContain("Loading table page");
+    expect(markup).not.toContain("unbounded-full-value");
   });
 
-  it("falls back to raw JSON for an invalid map payload", () => {
-    const renderer = rendererFor(MAP_ARTIFACT, { layers: [] });
-    const markup = renderToStaticMarkup(
-      createElement(renderer.Component, {
-        artifact: MAP_ARTIFACT,
-        payload: { layers: [] },
-        mode: "map",
-      }),
+  it("renders one server page and preserves duplicate display titles", async () => {
+    const page: TablePage = {
+      columns: [
+        { id: "column_1", title: "name", value_type: "text" },
+        { id: "column_2", title: "name", value_type: "integer" },
+      ],
+      rows: [
+        {
+          column_1: { display: "Invoice", truncated: false, original_length: null },
+          column_2: { display: 42, truncated: false, original_length: null },
+        },
+        {
+          column_1: { display: null, truncated: false, original_length: null },
+          column_2: { display: 7, truncated: false, original_length: null },
+        },
+      ],
+      offset: 0,
+      limit: 50,
+      total_rows: 102,
+      column_offset: 0,
+      column_limit: 25,
+      total_columns: 2,
+    };
+
+    const renderer = rendererFor(TABLE_ARTIFACT);
+    expect(renderer.id).toBe("table");
+    expect(renderer.modes).toEqual(["table", "raw"]);
+    expect(renderer.interaction).toEqual({
+      emits: ["key-selection"],
+      accepts: ["filter", "highlight"],
+    });
+
+    const markup = await renderTablePage(page);
+    expect(markup).toContain('aria-label="Table preview"');
+    expect(markup).toContain("<span>102</span> rows");
+    expect(markup.match(/>name<\/span>/g)).toHaveLength(2);
+    expect(markup).toContain(">Invoice</td>");
+    expect(markup).toContain(">—</td>");
+    expect(markup).toContain("Rows 1–2 of 102");
+    expect(markup).toContain("Columns 1–2 of 2");
+    expect(markup).toContain(">Next</button>");
+  });
+
+  it("renders a useful empty state for zero-row tables", async () => {
+    const page: TablePage = {
+      columns: [{ id: "column_1", title: "id", value_type: "integer" }],
+      rows: [],
+      offset: 0,
+      limit: 50,
+      total_rows: 0,
+      column_offset: 0,
+      column_limit: 25,
+      total_columns: 1,
+    };
+    const markup = await renderTablePage(page);
+
+    expect(markup).toContain("This table has no rows");
+    expect(markup).toContain("<span>0</span> rows");
+    expect(markup).toContain("No rows");
+  });
+
+  it("renders only bounded cell previews and makes full retrieval explicit", async () => {
+    const page: TablePage = {
+      columns: [{ id: "geometry", title: "Geometry", value_type: "text" }],
+      rows: [{
+        geometry: {
+          display: "MULTIPOLYGON (((preview…",
+          truncated: true,
+          original_length: 125_000,
+        },
+      }],
+      offset: 0,
+      limit: 50,
+      total_rows: 1,
+      column_offset: 0,
+      column_limit: 25,
+      total_columns: 1,
+    };
+    const markup = await renderTablePage(page);
+
+    expect(markup).toContain("MULTIPOLYGON (((preview…");
+    expect(markup).toContain("Preview truncated; click to inspect");
+    expect(markup).not.toContain("125000");
+    expect(markup).toContain("Download complete table JSON");
+  });
+
+  it("keeps row and column navigation available in raw mode", async () => {
+    const page: TablePage = {
+      columns: [{ id: "value", title: "Value", value_type: "text" }],
+      rows: [{
+        value: { display: "first", truncated: false, original_length: null },
+      }],
+      offset: 0,
+      limit: 50,
+      total_rows: 75,
+      column_offset: 0,
+      column_limit: 25,
+      total_columns: 30,
+    };
+    const markup = await renderTablePage(page, "raw");
+
+    expect(markup).toContain("total_rows");
+    expect(markup).toContain(">Next</button>");
+    expect(markup).toContain(">Next columns</button>");
+  });
+
+  it("keeps the previous page and recovery controls when the next page fails", async () => {
+    const page: TablePage = {
+      columns: [{ id: "value", title: "Value", value_type: "text" }],
+      rows: Array.from({ length: 50 }, (_, index) => ({
+        value: {
+          display: index === 0 ? "still visible" : `row ${index + 1}`,
+          truncated: false,
+          original_length: null,
+        },
+      })),
+      offset: 0,
+      limit: 50,
+      total_rows: 75,
+      column_offset: 0,
+      column_limit: 25,
+      total_columns: 1,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(page), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockRejectedValueOnce(new Error("page unavailable"));
+    vi.stubGlobal("fetch", fetchMock);
+    const renderer = rendererFor(TABLE_ARTIFACT);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(
+        SWRConfig,
+        { value: { provider: () => new Map(), shouldRetryOnError: false } },
+        createElement(renderer.Component, {
+          artifact: TABLE_ARTIFACT,
+          mode: "table",
+        }),
+      ));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const nextButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Next",
     );
-    expect(markup).toContain("layers");
+    expect(nextButton).toBeDefined();
+    await act(async () => {
+      nextButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).toContain("offset=50");
+    expect(container.textContent).toContain("still visible");
+    expect(container.textContent).toContain("previous page is still available");
+    const previousButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Previous",
+    );
+    expect(previousButton?.disabled).toBe(false);
+    await act(async () => root.unmount());
+  });
+
+  it("retrieves a full cell only after the truncated preview is activated", async () => {
+    const page: TablePage = {
+      columns: [{ id: "geometry/wkt", title: "Geometry", value_type: "text" }],
+      rows: [{
+        "geometry/wkt": {
+          display: "MULTIPOLYGON (((preview…",
+          truncated: true,
+          original_length: 125_000,
+        },
+      }],
+      offset: 0,
+      limit: 50,
+      total_rows: 1,
+      column_offset: 0,
+      column_limit: 25,
+      total_columns: 1,
+    };
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      const body = url.includes("/table/cell?")
+        ? {
+            row_index: 0,
+            column_id: "geometry/wkt",
+            value: "MULTIPOLYGON (((complete geometry)))",
+            encoding: "native",
+          }
+        : page;
+      return Promise.resolve(new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const renderer = rendererFor(TABLE_ARTIFACT);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(
+        SWRConfig,
+        { value: { provider: () => new Map(), shouldRetryOnError: false } },
+        createElement(renderer.Component, {
+          artifact: TABLE_ARTIFACT,
+          mode: "table",
+        }),
+      ));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const previewButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.includes("MULTIPOLYGON"),
+    );
+    expect(previewButton).toBeDefined();
+    await act(async () => {
+      previewButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).toContain(
+      "/table/cell?row_index=0&column_id=geometry%2Fwkt",
+    );
+    expect(container.querySelector("textarea")?.value).toBe(
+      "MULTIPOLYGON (((complete geometry)))",
+    );
+    await act(async () => root.unmount());
+  });
+
+  it("queries linked filters and emits mapped scalar values for a selected row", async () => {
+    const page: TablePage = {
+      columns: [
+        { id: "place", title: "Place", value_type: "text" },
+        { id: "district", title: "District", value_type: "text" },
+      ],
+      rows: [{
+        place: {
+          display: "Belynichi",
+          truncated: false,
+          original_length: null,
+        },
+        district: {
+          display: "Mohilev",
+          truncated: false,
+          original_length: null,
+        },
+      }],
+      row_indices: [7],
+      highlighted_row_indices: [7],
+      offset: 0,
+      limit: 50,
+      total_rows: 1,
+      column_offset: 0,
+      column_limit: 25,
+      total_columns: 2,
+    };
+    const fetchMock = vi.fn().mockImplementation((
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const url = String(input);
+      if (url.includes("/table/schema")) {
+        return Promise.resolve(new Response(JSON.stringify({
+          columns: page.columns,
+          total_rows: 1,
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }));
+      }
+      if (url.includes("/table/cell?")) {
+        const columnId = new URL(url).searchParams.get("column_id");
+        return Promise.resolve(new Response(JSON.stringify({
+          row_index: 7,
+          column_id: columnId,
+          value: columnId === "place" ? "Belynichi" : "Mohilev",
+          encoding: "native",
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }));
+      }
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        filter_groups: [{
+          rows: [{ values: { status: "accepted" } }],
+        }],
+      });
+      return Promise.resolve(new Response(JSON.stringify(page), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onSelectionChange = vi.fn();
+    const onFieldsChange = vi.fn();
+    const interaction: ArtifactViewerInteractionContext = {
+      outgoingFields: ["place", "district"],
+      selection: { kind: "key-selection", items: [] },
+      incoming: [{
+        bindingId: "binding-1",
+        effects: ["filter", "highlight"],
+        rows: [{ status: "accepted" }],
+      }],
+      onFieldsChange,
+      onSelectionChange,
+    };
+    const renderer = rendererFor(TABLE_ARTIFACT);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(
+        SWRConfig,
+        { value: { provider: () => new Map(), shouldRetryOnError: false } },
+        createElement(renderer.Component, {
+          artifact: TABLE_ARTIFACT,
+          mode: "table",
+          interaction,
+        }),
+      ));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes("/table/query")
+      ),
+    ).toBe(true);
+    expect(onFieldsChange).toHaveBeenCalledWith([
+      { id: "place", title: "Place", valueType: "text" },
+      { id: "district", title: "District", valueType: "text" },
+    ]);
+    const row = container.querySelector("tbody tr");
+    expect(row?.getAttribute("aria-selected")).toBe("false");
+    await act(async () => {
+      row?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(onSelectionChange).toHaveBeenCalledWith({
+      kind: "key-selection",
+      items: [{
+        sourceIndex: 7,
+        values: { place: "Belynichi", district: "Mohilev" },
+      }],
+    });
+    await act(async () => root.unmount());
+  });
+});
+
+describe("GIS map artifact rendering", () => {
+  async function renderGeo(
+    mode: "map" | "raw" = "map",
+    descriptor = GEO_RENDER_DESCRIPTOR,
+    interaction?: ArtifactViewerInteractionContext,
+  ) {
+    const fetchMock = vi.fn().mockImplementation((
+      input: RequestInfo | URL,
+    ) => Promise.resolve(new Response(
+      JSON.stringify(
+        String(input).includes("/geo/query")
+          ? {
+              artifact_id: descriptor.artifact_id,
+              bounds: [29, 53, 29, 53],
+              matched_feature_count: 1,
+              source_artifact_ids: ["features-artifact"],
+            }
+          : descriptor,
+      ),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    )));
+    vi.stubGlobal("fetch", fetchMock);
+    const renderer = rendererFor(MAP_ARTIFACT);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(
+        SWRConfig,
+        { value: { provider: () => new Map(), shouldRetryOnError: false } },
+        createElement(renderer.Component, {
+          artifact: MAP_ARTIFACT,
+          mode,
+          availableHeight: 480,
+          interaction,
+        }),
+      ));
+    });
+    return { container, fetchMock, renderer, root };
+  }
+
+  async function clickButton(container: HTMLElement, name: string) {
+    const button = [...container.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent?.trim() === name ||
+        candidate.getAttribute("aria-label") === name,
+    );
+    expect(button, `button ${name}`).toBeDefined();
+    await act(async () => {
+      button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  it("fetches only the render descriptor after explicit load and unloads map resources", async () => {
+    const { container, fetchMock, renderer, root } = await renderGeo();
+    expect(renderer.id).toBe("geo-map");
+    expect(renderer.modes).toEqual(["map", "raw"]);
+    expect(renderer.interaction).toEqual({
+      emits: ["key-selection"],
+      accepts: ["filter", "highlight", "focus"],
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("GIS preview ready");
+
+    await clickButton(container, "Load interactive map");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      "http://localhost:8000/v1/artifacts/map-artifact/geo/render",
+    );
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain("/content");
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain("/geo/page");
+    expect(maplibreMock.instances).toHaveLength(1);
+    expect(maplibreMock.addProtocol).toHaveBeenCalledTimes(1);
+
+    const firstMap = maplibreMock.instances[0] as unknown as {
+      remove: ReturnType<typeof vi.fn>;
+    };
+    await clickButton(container, "Unload interactive map");
+    expect(firstMap.remove).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("GIS preview ready");
+
+    await clickButton(container, "Load interactive map");
+    expect(maplibreMock.instances).toHaveLength(2);
+    expect(maplibreMock.addProtocol).toHaveBeenCalledTimes(1);
+    await act(async () => root.unmount());
+  });
+
+  it("builds ordered PMTiles and raster layers above the optional basemap", async () => {
+    const { container, root } = await renderGeo();
+    await clickButton(container, "Load interactive map");
+
+    const map = maplibreMock.instances[0] as unknown as {
+      options: {
+        bounds?: [[number, number], [number, number]];
+        fitBoundsOptions?: Record<string, unknown>;
+        style: {
+          sources: Record<string, Record<string, unknown>>;
+          layers: Array<Record<string, unknown>>;
+        };
+      };
+      fitBounds: ReturnType<typeof vi.fn>;
+    };
+    const { sources, layers } = map.options.style;
+    expect(sources["notarius-geo-source-parcels"]).toMatchObject({
+      type: "vector",
+      url: "pmtiles://http://localhost:8000/v1/artifacts/features-artifact/geo/vector.pmtiles",
+    });
+    expect(sources["notarius-geo-source-elevation"]).toMatchObject({
+      type: "raster",
+      url: "http://localhost:8000/v1/artifacts/raster-artifact/geo/raster/tilejson.json",
+    });
+    expect(layers.map((layer) => layer.id)).toEqual([
+      "notarius-openstreetmap-raster",
+      "notarius-geo-parcels-fill",
+      "notarius-geo-parcels-outline",
+      "notarius-geo-parcels-line",
+      "notarius-geo-parcels-point",
+      "notarius-geo-parcels-label",
+      "notarius-geo-elevation-raster",
+    ]);
+    for (const layer of layers.slice(1, 6)) {
+      expect(layer["source-layer"]).toBe("features");
+    }
+    expect(map.options.bounds).toEqual([[-12, 35], [22, 61]]);
+    expect(map.options.fitBoundsOptions).toEqual({
+      padding: 28,
+      maxZoom: 14,
+      duration: 0,
+    });
+    expect(map.fitBounds).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
+
+  it("applies linked filters and focuses exact features once per selection", async () => {
+    const interaction: ArtifactViewerInteractionContext = {
+      outgoingFields: [],
+      selection: { kind: "key-selection", items: [] },
+      incoming: [{
+        bindingId: "binding-1",
+        effects: ["filter", "highlight", "focus"],
+        rows: [{ name: "Control point 23", district: "Mohilev" }],
+      }],
+      onFieldsChange: vi.fn(),
+      onSelectionChange: vi.fn(),
+    };
+    const { container, fetchMock, renderer, root } = await renderGeo(
+      "map",
+      GEO_RENDER_DESCRIPTOR,
+      interaction,
+    );
+    await clickButton(container, "Load interactive map");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).toContain("/geo/query");
+    const map = maplibreMock.instances[0] as unknown as {
+      fitBounds: ReturnType<typeof vi.fn>;
+      setFilter: ReturnType<typeof vi.fn>;
+      setPaintProperty: ReturnType<typeof vi.fn>;
+    };
+    expect(
+      map.setFilter.mock.calls.some(([, filter]) =>
+        JSON.stringify(filter).includes("Control point 23")
+      ),
+    ).toBe(true);
+    expect(
+      map.setPaintProperty.mock.calls.some(([, , value]) =>
+        Array.isArray(value) && value[0] === "case"
+      ),
+    ).toBe(true);
+    expect(map.fitBounds).toHaveBeenCalledWith(
+      [[28.98, 52.98], [29.02, 53.02]],
+      expect.objectContaining({ duration: 450 }),
+    );
+
+    map.fitBounds.mockClear();
+    await act(async () => {
+      root.render(createElement(
+        SWRConfig,
+        { value: { provider: () => new Map(), shouldRetryOnError: false } },
+        createElement(renderer.Component, {
+          artifact: MAP_ARTIFACT,
+          mode: "map",
+          availableHeight: 480,
+          interaction: {
+            ...interaction,
+            selection: {
+              kind: "key-selection",
+              items: [{ values: { name: "A different map feature" } }],
+            },
+            incoming: interaction.incoming.map((binding) => ({
+              ...binding,
+              rows: binding.rows.map((values) => ({ ...values })),
+            })),
+          },
+        }),
+      ));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(map.fitBounds).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
+
+  it("renders categorized point filters and exposes an interactive legend", async () => {
+    const { container, root } = await renderGeo(
+      "map",
+      CATEGORIZED_GEO_RENDER_DESCRIPTOR,
+    );
+    await clickButton(container, "Load interactive map");
+
+    const map = maplibreMock.instances[0] as unknown as {
+      options: {
+        style: {
+          layers: Array<Record<string, unknown>>;
+        };
+      };
+      setLayoutProperty: ReturnType<typeof vi.fn>;
+      setPaintProperty: ReturnType<typeof vi.fn>;
+    };
+    const categorizedLayers = map.options.style.layers.slice(1);
+    expect(categorizedLayers.map((layer) => layer.id)).toEqual([
+      "notarius-geo-chrzanowski-symbols-category-cities-point",
+      "notarius-geo-chrzanowski-symbols-category-cities-label",
+      "notarius-geo-chrzanowski-symbols-category-villages-point",
+      "notarius-geo-chrzanowski-symbols-category-villages-label",
+    ]);
+    expect(categorizedLayers[0]).toMatchObject({
+      minzoom: 6,
+      maxzoom: 22,
+      filter: [
+        "all",
+        [
+          "any",
+          ["==", ["geometry-type"], "Point"],
+          ["==", ["geometry-type"], "MultiPoint"],
+        ],
+        ["in", ["get", "type"], ["literal", [1, 2, 3]]],
+      ],
+      paint: {
+        "circle-color": "#b91c1c",
+        "circle-radius": 7,
+        "circle-pitch-scale": "viewport",
+      },
+    });
+    expect(categorizedLayers[1]).toMatchObject({
+      layout: {
+        "text-variable-anchor": ["top", "bottom", "left", "right"],
+        "text-radial-offset": 7 / 12 + 0.35,
+        "text-justify": "auto",
+      },
+    });
+    expect(categorizedLayers[2]).toMatchObject({
+      minzoom: 10,
+      paint: {
+        "circle-color": "#d6a700",
+        "circle-radius": 4,
+        "circle-pitch-scale": "viewport",
+      },
+    });
+
+    await clickButton(container, "1 layer");
+    await clickButton(container, "1. Chrzanowski symbols");
+    expect(container.textContent).toContain("Categories · type");
+    expect(container.textContent).toContain("Cities and towns");
+    expect(container.textContent).toContain("Villages");
+    expect(container.textContent).toContain("5, 7, 8, 9, 10 · z10–22");
+
+    const citiesRadius = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Cities and towns radius"]',
+    );
+    expect(citiesRadius?.value).toBe("7");
+    await act(async () => {
+      if (citiesRadius) {
+        const valueSetter = Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          "value",
+        )?.set;
+        valueSetter?.call(citiesRadius, "9");
+        citiesRadius.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(map.setPaintProperty).toHaveBeenCalledWith(
+      "notarius-geo-chrzanowski-symbols-category-cities-point",
+      "circle-radius",
+      9,
+    );
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      "notarius-geo-chrzanowski-symbols-category-cities-label",
+      "text-radial-offset",
+      9 / 12 + 0.35,
+    );
+    const paintCallCountBeforeReset = map.setPaintProperty.mock.calls.length;
+    await clickButton(container, "Reset layer");
+    expect(citiesRadius?.value).toBe("7");
+    expect(
+      map.setPaintProperty.mock.calls.slice(paintCallCountBeforeReset),
+    ).toContainEqual([
+      "notarius-geo-chrzanowski-symbols-category-cities-point",
+      "circle-radius",
+      7,
+    ]);
+
+    const villagesToggle = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Show Villages"]',
+    );
+    expect(villagesToggle).not.toBeNull();
+    await act(async () => {
+      villagesToggle?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      "notarius-geo-chrzanowski-symbols-category-villages-point",
+      "visibility",
+      "none",
+    );
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      "notarius-geo-chrzanowski-symbols-category-villages-label",
+      "visibility",
+      "none",
+    );
+    await act(async () => root.unmount());
+  });
+
+  it("uses feature hit-testing to expose a pointer and inspect vector properties", async () => {
+    const onSelectionChange = vi.fn();
+    const onFieldsChange = vi.fn();
+    const { container, root } = await renderGeo(
+      "map",
+      GEO_RENDER_DESCRIPTOR,
+      {
+        outgoingFields: ["name", "sheet"],
+        selection: { kind: "key-selection", items: [] },
+        incoming: [],
+        onFieldsChange,
+        onSelectionChange,
+      },
+    );
+    await clickButton(container, "Load interactive map");
+    expect(onFieldsChange).toHaveBeenCalledWith([
+      { id: "name", title: "Name", valueType: "text" },
+      { id: "sheet", title: "Sheet", valueType: "text" },
+    ]);
+    await clickButton(container, "2 layers");
+
+    const map = maplibreMock.instances[0] as unknown as {
+      canvas: HTMLCanvasElement;
+      canvasContainer: HTMLElement;
+      emit: (event: string, payload: Record<string, unknown>) => void;
+      isStyleLoaded: ReturnType<typeof vi.fn>;
+      queryRenderedFeatures: ReturnType<typeof vi.fn>;
+    };
+    Object.defineProperties(map.canvas, {
+      clientWidth: { configurable: true, value: 800 },
+      clientHeight: { configurable: true, value: 480 },
+    });
+    vi.spyOn(map.canvas, "getBoundingClientRect").mockReturnValue({
+      width: 400,
+      height: 240,
+    } as DOMRect);
+    const pointerEvent = {
+      point: { x: 420, y: 180 },
+      lngLat: { lng: 19.93821, lat: 50.06143 },
+    };
+    map.queryRenderedFeatures.mockReturnValue([{
+      type: "Feature",
+      id: 23,
+      properties: {
+        name: "Control point 23",
+        sheet: "A-17",
+        surveyed: true,
+      },
+      geometry: {
+        type: "Point",
+        coordinates: [19.93821, 50.06143],
+      },
+      layer: { id: "notarius-geo-parcels-point" },
+      source: "notarius-geo-source-parcels",
+      sourceLayer: "features",
+      state: {},
+    }]);
+    map.isStyleLoaded.mockReturnValue(false);
+
+    map.emit("mousemove", pointerEvent);
+    expect(
+      map.canvasContainer.classList.contains("maplibregl-track-pointer"),
+    ).toBe(true);
+    expect(map.queryRenderedFeatures).toHaveBeenLastCalledWith(
+      [
+        [816, 336],
+        [864, 384],
+      ],
+      {
+        layers: [
+          "notarius-geo-parcels-fill",
+          "notarius-geo-parcels-line",
+          "notarius-geo-parcels-point",
+        ],
+      },
+    );
+
+    await act(async () => {
+      map.emit("click", pointerEvent);
+    });
+    const featureDetails = container.querySelector(
+      '[aria-label="Selected feature details"]',
+    );
+    expect(featureDetails?.textContent).toContain("Parcels · Point");
+    expect(featureDetails?.textContent).toContain("Control point 23");
+    expect(featureDetails?.textContent).toContain("ID 23");
+    expect(featureDetails?.textContent).toContain("19.93821, 50.06143");
+    expect(featureDetails?.textContent).toContain("sheet");
+    expect(featureDetails?.textContent).toContain("A-17");
+    expect(
+      container.querySelector('[aria-label="Map layer inspector"]'),
+    ).toBeNull();
+    expect(onSelectionChange).toHaveBeenCalledWith({
+      kind: "key-selection",
+      items: [{
+        values: {
+          name: "Control point 23",
+          sheet: "A-17",
+          surveyed: true,
+        },
+      }],
+    });
+
+    map.queryRenderedFeatures.mockReturnValue([]);
+    map.emit("mousemove", pointerEvent);
+    expect(
+      map.canvasContainer.classList.contains("maplibregl-track-pointer"),
+    ).toBe(false);
+    await act(async () => {
+      map.emit("click", pointerEvent);
+    });
+    expect(
+      container.querySelector('[aria-label="Selected feature details"]'),
+    ).toBeNull();
+    expect(onSelectionChange).toHaveBeenLastCalledWith({
+      kind: "key-selection",
+      items: [],
+    });
+
+    await act(async () => root.unmount());
+  });
+
+  it("previews vector and raster inspector overrides locally", async () => {
+    const { container, root } = await renderGeo();
+    await clickButton(container, "Load interactive map");
+    await clickButton(container, "2 layers");
+    await clickButton(container, "1. Parcels");
+
+    const layerOpacity = [...container.querySelectorAll("label")].find(
+      (label) => label.textContent?.includes("Layer opacity"),
+    )?.querySelector<HTMLInputElement>('input[type="range"]');
+    expect(layerOpacity).not.toBeNull();
+    await act(async () => {
+      if (layerOpacity) {
+        const valueSetter = Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          "value",
+        )?.set;
+        valueSetter?.call(layerOpacity, "0.5");
+        layerOpacity.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const map = maplibreMock.instances[0] as unknown as {
+      setLayoutProperty: ReturnType<typeof vi.fn>;
+      setPaintProperty: ReturnType<typeof vi.fn>;
+    };
+    expect(map.setPaintProperty).toHaveBeenCalledWith(
+      "notarius-geo-parcels-fill",
+      "fill-opacity",
+      0.2,
+    );
+    await clickButton(container, "Disable labels");
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      "notarius-geo-parcels-label",
+      "visibility",
+      "none",
+    );
+    await clickButton(container, "Enable labels");
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      "notarius-geo-parcels-label",
+      "visibility",
+      "visible",
+    );
+    await clickButton(container, "Hide Parcels");
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      "notarius-geo-parcels-fill",
+      "visibility",
+      "none",
+    );
+
+    await clickButton(container, "2. Elevation");
+    const resampling = [...container.querySelectorAll("label")].find(
+      (label) => label.textContent?.includes("Resampling"),
+    )?.querySelector<HTMLSelectElement>("select");
+    expect(resampling).not.toBeNull();
+    await act(async () => {
+      if (resampling) {
+        resampling.value = "nearest";
+        resampling.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(map.setPaintProperty).toHaveBeenCalledWith(
+      "notarius-geo-elevation-raster",
+      "raster-resampling",
+      "nearest",
+    );
+    expect(container.textContent).not.toContain("Features per page");
+    await act(async () => root.unmount());
+  });
+
+  it("shows the immutable descriptor in raw mode without constructing a map", async () => {
+    const { container, fetchMock, root } = await renderGeo("raw");
+    expect(fetchMock).not.toHaveBeenCalled();
+    await clickButton(container, "Load interactive map");
+
+    expect(container.textContent).toContain('"kind": "map_document"');
+    expect(container.textContent).toContain('"archive_url"');
+    expect(container.textContent).toContain('"tilejson_url"');
+    expect(maplibreMock.instances).toHaveLength(0);
+    await act(async () => root.unmount());
   });
 });
 

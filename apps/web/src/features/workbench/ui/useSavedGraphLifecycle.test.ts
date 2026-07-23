@@ -165,6 +165,39 @@ afterEach(() => {
 });
 
 describe("useSavedGraphLifecycle document ownership", () => {
+  it("opens a graph containing an unavailable operator as a preserved placeholder", async () => {
+    const graph: SavedGraph = {
+      ...savedGraph(GRAPH_A_ID, "Legacy graph"),
+      nodes: [
+        {
+          id: "legacy-node",
+          operator_id: "legacy.operator",
+          operator_version: 7,
+          config: { preserved: true },
+          position: { x: 20, y: 40 },
+          input_plugs: [],
+          artifact_type_bindings: [],
+        },
+      ],
+    };
+    api.getSavedGraph.mockResolvedValue(graph);
+    const { options, callbacks } = lifecycleOptions(GRAPH_A_ID);
+    const hook = await renderHook(useSavedGraphLifecycle, options);
+
+    await waitFor(() => hook.result.current.activeGraph?.id === GRAPH_A_ID);
+
+    expect(hook.result.current.persistenceError).toBeNull();
+    expect(callbacks.replaceCanvas).toHaveBeenCalledOnce();
+    const openedNodes = callbacks.replaceCanvas.mock.calls[0]?.[0];
+    expect(openedNodes).toHaveLength(1);
+    expect(openedNodes?.[0]?.data.compatibility).toMatchObject({
+      status: "unsupported",
+      issues: [
+        "Operator legacy.operator@7 is unavailable. This saved node is preserved but cannot run.",
+      ],
+    });
+  });
+
   it("does not apply trailing UI mutations from an open superseded during secret refresh", async () => {
     const graphA = savedGraph(GRAPH_A_ID, "Graph A");
     const graphB = savedGraph(GRAPH_B_ID, "Graph B");
@@ -334,5 +367,44 @@ describe("useSavedGraphLifecycle document ownership", () => {
       `/workspaces/local/graphs/${GRAPH_A_ID}`,
       { scroll: false },
     );
+  });
+
+  it("routes a newly created graph before secret refresh finishes", async () => {
+    const secretRefresh = deferred<boolean>();
+    api.createSavedGraph.mockResolvedValue(
+      savedGraph(GRAPH_A_ID, "Created graph"),
+    );
+    const refreshSecrets = vi.fn(() => secretRefresh.promise);
+    const { options, callbacks } = lifecycleOptions(null, refreshSecrets);
+    const hook = await renderHook(useSavedGraphLifecycle, options);
+
+    await React.act(async () => {
+      hook.result.current.setGraphName("Created graph");
+    });
+    let savePromise!: Promise<void>;
+    await React.act(async () => {
+      savePromise = hook.result.current.saveCurrentGraph();
+      await Promise.resolve();
+    });
+    await waitFor(() => refreshSecrets.mock.calls.length === 1);
+    await flushAsyncWork();
+
+    expect(hook.result.current.activeGraph?.id).toBe(GRAPH_A_ID);
+    expect(router.replace).toHaveBeenCalledWith(
+      `/workspaces/local/graphs/${GRAPH_A_ID}`,
+      { scroll: false },
+    );
+    expect(callbacks.replaceCanvas).not.toHaveBeenCalled();
+    const routeOrder = router.replace.mock.invocationCallOrder.at(0);
+    const secretRefreshOrder = refreshSecrets.mock.invocationCallOrder.at(0);
+    if (routeOrder === undefined || secretRefreshOrder === undefined) {
+      throw new Error("Expected routing and secret refresh to both run");
+    }
+    expect(routeOrder).toBeLessThan(secretRefreshOrder);
+
+    await React.act(async () => {
+      secretRefresh.resolve(true);
+      await savePromise;
+    });
   });
 });

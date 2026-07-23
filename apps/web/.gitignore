@@ -16,6 +16,7 @@
 # next.js
 /.next/
 /out/
+/public/maplibre-gl-csp-worker.js
 
 # production
 /build

@@ -21,6 +21,7 @@ import {
   type WorkflowEdge,
   type WorkflowEdgeRouteOption,
   type WorkflowNodeData,
+  workflowNodeIsSupported,
 } from "../canvas/types";
 
 export interface GraphAuthoringNode {
@@ -142,13 +143,21 @@ export function collectionModeForConnection(
   const targetHandle = decodeHandleId(connection.targetHandle);
   const sourceNode = nodes.find((node) => node.id === connection.source);
   const targetNode = nodes.find((node) => node.id === connection.target);
+  if (
+    !sourceNode ||
+    !targetNode ||
+    !workflowNodeIsSupported(sourceNode.data) ||
+    !workflowNodeIsSupported(targetNode.data)
+  ) {
+    return null;
+  }
   const sourcePort = sourceNode?.data.spec.outputs.find(
     (port) => port.name === sourceHandle?.portName,
   );
   const targetPort = targetNode?.data.spec.inputs.find(
     (port) => port.name === targetHandle?.portName,
   );
-  if (!sourceNode || !targetNode || !sourcePort || !targetPort) return null;
+  if (!sourcePort || !targetPort) return null;
 
   const sourceShape = effectiveShapeForPort(
     sourceNode,
@@ -263,6 +272,7 @@ export function inputPlugBindingsForNode(
   edges: readonly WorkflowEdge[],
   artifactConversions: readonly GraphAuthoringConversion[],
 ): Readonly<Record<string, WorkflowInputPlugBinding>> {
+  if (!workflowNodeIsSupported(node.data)) return {};
   const bindings: Record<string, WorkflowInputPlugBinding> = {};
   for (const port of node.data.spec.inputs.filter(portHasInstancePlugs)) {
     const portPlugs = inputPlugsForPort(node.data.inputPlugs, port.name);
@@ -277,6 +287,7 @@ export function inputPlugBindingsForNode(
 
       const sourceHandle = decodeHandleId(edge.sourceHandle);
       const sourceNode = nodes.find((candidate) => candidate.id === edge.source);
+      if (sourceNode && !workflowNodeIsSupported(sourceNode.data)) return;
       const sourcePort = sourceNode?.data.spec.outputs.find(
         (candidate) => candidate.name === sourceHandle?.portName,
       );

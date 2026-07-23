@@ -12,7 +12,7 @@ import type { Port } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import { handleStyle } from "../../handle-style";
 import { encodeHandleId } from "../../handles";
-import { ARTIFACT_TYPE_COLOR } from "../../nodes.css";
+import { artifactTypeColor } from "../../nodes.css";
 import {
   WORKFLOW_NODE_TYPE,
   portMetaForPort,
@@ -112,7 +112,7 @@ const s = stylex.create({
 });
 
 function portColor(artifactTypeId: string): string {
-  return ARTIFACT_TYPE_COLOR[artifactTypeId] ?? tokens.colorAccent;
+  return artifactTypeColor(artifactTypeId, tokens.colorAccent);
 }
 
 function portTypeLabel(

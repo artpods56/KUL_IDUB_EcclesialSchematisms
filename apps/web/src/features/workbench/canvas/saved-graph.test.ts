@@ -182,6 +182,93 @@ describe("saved conversion paths", () => {
   });
 });
 
+describe("unavailable saved operators", () => {
+  it("hydrates a placeholder and losslessly resaves its incident connection", () => {
+    const base = graphWithEdge({ conversion_path: conversionPath });
+    const graph: SavedGraph = {
+      ...base,
+      nodes: (base.nodes ?? []).map((node) =>
+        node.id === "source-node"
+          ? {
+              ...node,
+              operator_id: "gis.map.compose",
+              config: { nested: { preserved: true } },
+              input_plugs: [
+                { id: "historical-plug", port: "historical-input" },
+              ],
+              artifact_type_bindings: [
+                {
+                  variable: "Z",
+                  artifact_type: { id: "z", schema_version: 1 },
+                },
+                {
+                  variable: "A",
+                  artifact_type: { id: "x", schema_version: 1 },
+                },
+              ],
+              layout: null,
+            }
+          : {
+              ...node,
+              artifact_type_bindings: [],
+              layout: null,
+            },
+      ),
+    };
+    const liveRegistry = registry();
+    const hydrated = hydrateSavedGraph(graph, {
+      ...liveRegistry,
+      nodes: liveRegistry.nodes.filter(
+        (spec) => spec.operator_id !== "gis.map.compose",
+      ),
+    });
+    const sourceNode = hydrated.nodes.find(
+      (node) => node.id === "source-node",
+    );
+    const edge = hydrated.edges[0];
+
+    expect(sourceNode?.data.compatibility).toMatchObject({
+      status: "unsupported",
+      outputs: [{ portName: "output" }],
+    });
+    expect(sourceNode?.data.compatibility).toHaveProperty(
+      "issues.0",
+      "Operator gis.map.compose@1 is unavailable. This saved node is preserved but cannot run.",
+    );
+    expect(sourceNode?.data.layout).toBeNull();
+    expect(edge?.sourceHandle).toContain("$compatibility::output");
+    expect(decodeHandleId(edge?.sourceHandle)).toBeNull();
+    expect(decodeHandleId(edge?.targetHandle)).toMatchObject({
+      portName: "input",
+      direction: "input",
+    });
+    expect(edge?.data?.compatibilityIssues).toHaveLength(1);
+
+    const draft = savedGraphDraft(
+      graph.name,
+      hydrated.nodes,
+      hydrated.edges,
+    );
+    expect(draft.nodes?.[0]).toEqual(graph.nodes?.[0]);
+    expect(draft.edges?.[0]).toMatchObject({
+      from_node: "source-node",
+      from_port: "output",
+      to_node: "target-node",
+      to_port: "input",
+      to_plug: null,
+      collection_mode: "direct",
+      conversion_path: conversionPath,
+    });
+    expect(savedGraphFingerprint(draft)).toBe(
+      savedGraphFingerprint({
+        name: graph.name,
+        nodes: graph.nodes,
+        edges: graph.edges,
+      }),
+    );
+  });
+});
+
 describe("saved node layout", () => {
   it("hydrates and persists node chrome sizes", () => {
     const base = graphWithEdge({ conversion_path: conversionPath });
@@ -254,6 +341,39 @@ describe("saved node layout", () => {
     expect(savedGraphFingerprint(reserialized)).toBe(
       savedGraphFingerprint({ ...responseDraft, nodes: responseNodes }),
     );
+  });
+});
+
+describe("ephemeral execution progress", () => {
+  it("does not persist user-authored progress messages with the graph", () => {
+    const hydrated = hydrateSavedGraph(
+      graphWithEdge({ conversion_path: conversionPath }),
+      registry(),
+    );
+    const firstNode = hydrated.nodes[0];
+    if (!firstNode) throw new Error("Expected a hydrated workflow node");
+    firstNode.data.progress = {
+      omittedCount: 2,
+      entries: [{
+        sequence: 3,
+        message: "payload contains tenant-private detail",
+        current: 1,
+        total: 4,
+        sourceNodePath: [],
+        invocationIndex: null,
+        invocationPath: [],
+      }],
+    };
+
+    const draft = savedGraphDraft(
+      "Ephemeral state",
+      hydrated.nodes,
+      hydrated.edges,
+    );
+    const serialized = JSON.stringify(draft);
+
+    expect(draft.nodes?.every((node) => !("progress" in node))).toBe(true);
+    expect(serialized).not.toContain("tenant-private detail");
   });
 });
 
@@ -844,7 +964,7 @@ describe("saved generic artifact type bindings", () => {
     ]);
   });
 
-  it("rejects a binding for a variable not declared by the node ports", () => {
+  it("marks a binding for an undeclared variable invalid without rejecting the graph", () => {
     const graph = graphWithGenericCollectBinding();
     const invalid: SavedGraph = {
       ...graph,
@@ -866,12 +986,28 @@ describe("saved generic artifact type bindings", () => {
       ),
     };
 
-    expect(() => hydrateSavedGraph(invalid, genericCollectRegistry())).toThrow(
-      "binds undeclared artifact type variable Missing",
+    const hydrated = hydrateSavedGraph(invalid, genericCollectRegistry());
+    const collectNode = hydrated.nodes.find(
+      (node) => node.id === "collect-node",
     );
+    expect(collectNode?.data.compatibility).toMatchObject({
+      status: "invalid",
+      issues: [
+        "node collect-node binds undeclared artifact type variable Missing",
+      ],
+    });
+    expect(
+      savedGraphDraft(invalid.name, hydrated.nodes, hydrated.edges)
+        .nodes?.[1]?.artifact_type_bindings,
+    ).toEqual([
+      {
+        variable: "Missing",
+        artifact_type: { id: "scalar.integer", schema_version: 1 },
+      },
+    ]);
   });
 
-  it("rejects an unavailable artifact type on an isolated generic node", () => {
+  it("marks an unavailable artifact type invalid without rejecting the graph", () => {
     const graph = graphWithGenericCollectBinding();
     const collectNode = graph.nodes?.find((node) => node.id === "collect-node");
     const invalid: SavedGraph = {
@@ -895,9 +1031,22 @@ describe("saved generic artifact type bindings", () => {
       edges: [],
     };
 
-    expect(() => hydrateSavedGraph(invalid, genericCollectRegistry())).toThrow(
-      "binds unavailable artifact type artifact.missing@9",
-    );
+    const hydrated = hydrateSavedGraph(invalid, genericCollectRegistry());
+    expect(hydrated.nodes[0]?.data.compatibility).toMatchObject({
+      status: "invalid",
+      issues: [
+        "node collect-node binds unavailable artifact type artifact.missing@9",
+      ],
+    });
+    expect(
+      savedGraphDraft(invalid.name, hydrated.nodes, hydrated.edges)
+        .nodes?.[0]?.artifact_type_bindings,
+    ).toEqual([
+      {
+        variable: "T",
+        artifact_type: { id: "artifact.missing", schema_version: 9 },
+      },
+    ]);
   });
 });
 

@@ -3,7 +3,9 @@ import type { Node } from "@xyflow/react";
 import { decodeHandleId } from "../canvas/handles";
 import { inputPlugsForPort } from "../canvas/input-plugs";
 import {
+  GEOTIFF_UPLOAD_OPERATOR_ID,
   IMAGE_UPLOAD_OPERATOR_ID,
+  TABLE_FILE_IMPORT_OPERATOR_ID,
   isFileUploadOperator,
   WORKFLOW_NODE_TYPE,
   imageUploads,
@@ -12,6 +14,7 @@ import {
   serializeWorkflowEdgeTransport,
   type WorkflowEdge,
   type WorkflowNodeData,
+  workflowNodeIsSupported,
 } from "../canvas/types";
 import type {
   PinnedOutputInput,
@@ -26,6 +29,22 @@ export type WorkflowNode = Node<
 >;
 
 export type RunScope = RunScopeInput;
+
+function workflowEdgeEndpoints(edge: WorkflowEdge): {
+  sourcePortName: string;
+  targetPortName: string;
+  targetPlugId: string | null;
+} | null {
+  const source = decodeHandleId(edge.sourceHandle);
+  const target = decodeHandleId(edge.targetHandle);
+  const sourcePortName = edge.data?.sourcePortName ?? source?.portName;
+  const targetPortName = edge.data?.targetPortName ?? target?.portName;
+  if (!sourcePortName || !targetPortName) return null;
+  const targetPlugId = edge.data?.targetPlugId !== undefined
+    ? edge.data.targetPlugId
+    : (target?.plugId ?? null);
+  return { sourcePortName, targetPortName, targetPlugId };
+}
 
 export interface ExecutionSubgraph {
   nodeIds: ReadonlySet<string>;
@@ -185,17 +204,62 @@ export function executionValidationIssue(
     };
   }
 
+  const incompatibleNode = executionNodes.find(
+    (node) => !workflowNodeIsSupported(node.data),
+  );
+  if (incompatibleNode) {
+    const compatibility = incompatibleNode.data.compatibility;
+    const issue = compatibility.status === "supported"
+      ? "The node is unavailable."
+      : compatibility.issues.join(" ");
+    return {
+      nodeId: incompatibleNode.id,
+      message: `Cannot run ${incompatibleNode.data.spec.title}: ${issue}`,
+    };
+  }
+
+  const executionNodeIds = new Set(executionNodes.map((node) => node.id));
+  const incompatibleEdge = executionEdges.find(
+    (edge) =>
+      edge.data?.compatibilityIssues?.length &&
+      executionNodeIds.has(edge.source) &&
+      executionNodeIds.has(edge.target),
+  );
+  if (incompatibleEdge) {
+    return {
+      nodeId: incompatibleEdge.target,
+      message:
+        `Cannot run connection ${incompatibleEdge.id}: ${incompatibleEdge.data?.compatibilityIssues?.join(" ")}`,
+    };
+  }
+
   const imageUploadWithoutImages = executionNodes.find(
     (node) =>
       isFileUploadOperator(node.data.spec.operator_id) &&
       !imageUploads(node.data).length,
   );
   if (imageUploadWithoutImages) {
+    let message =
+      `Choose a GeoJSON file for ${imageUploadWithoutImages.data.spec.title} before running.`;
+    if (
+      imageUploadWithoutImages.data.spec.operator_id === IMAGE_UPLOAD_OPERATOR_ID
+    ) {
+      message =
+        `Choose images for ${imageUploadWithoutImages.data.spec.title} before running.`;
+    } else if (
+      imageUploadWithoutImages.data.spec.operator_id === GEOTIFF_UPLOAD_OPERATOR_ID
+    ) {
+      message =
+        `Choose a GeoTIFF file for ${imageUploadWithoutImages.data.spec.title} before running.`;
+    } else if (
+      imageUploadWithoutImages.data.spec.operator_id === TABLE_FILE_IMPORT_OPERATOR_ID
+    ) {
+      message =
+        `Choose a CSV or XLSX file for ${imageUploadWithoutImages.data.spec.title} before running.`;
+    }
     return {
       nodeId: imageUploadWithoutImages.id,
-      message: imageUploadWithoutImages.data.spec.operator_id === IMAGE_UPLOAD_OPERATOR_ID
-        ? `Choose images for ${imageUploadWithoutImages.data.spec.title} before running.`
-        : `Choose a GeoJSON file for ${imageUploadWithoutImages.data.spec.title} before running.`,
+      message,
     };
   }
 
@@ -228,9 +292,8 @@ export function executionRequestPlan(
     for (const edge of execution.edges) {
       if (execution.nodeIds.has(edge.source)) continue;
 
-      const source = decodeHandleId(edge.sourceHandle);
-      const target = decodeHandleId(edge.targetHandle);
-      if (!source || !target) {
+      const endpoints = workflowEdgeEndpoints(edge);
+      if (!endpoints) {
         return {
           status: "invalid",
           message:
@@ -239,25 +302,27 @@ export function executionRequestPlan(
       }
 
       const sourcePorts = pinnedSourcePorts.get(edge.source) ?? new Set<string>();
-      if (sourcePorts.has(source.portName)) continue;
-      sourcePorts.add(source.portName);
+      if (sourcePorts.has(endpoints.sourcePortName)) continue;
+      sourcePorts.add(endpoints.sourcePortName);
       pinnedSourcePorts.set(edge.source, sourcePorts);
 
       const sourceNode = nodesById.get(edge.source);
       const output = sourceNode?.data.run?.status === "succeeded"
         ? sourceNode.data.run.outputs.find(
-            (candidate) => candidate.port === source.portName,
+            (candidate) => candidate.port === endpoints.sourcePortName,
           )
         : undefined;
       if (!output) {
         const sourceName = sourceNode?.data.spec.title ?? edge.source;
-        missingPinnedOutputs.push(`${sourceName}.${source.portName}`);
+        missingPinnedOutputs.push(
+          `${sourceName}.${endpoints.sourcePortName}`,
+        );
         continue;
       }
 
       pinnedOutputs.push({
         from_node: edge.source,
-        from_port: source.portName,
+        from_port: endpoints.sourcePortName,
         value: output.value,
       });
     }
@@ -273,15 +338,14 @@ export function executionRequestPlan(
   }
 
   const runEdges = execution.edges.flatMap<RunEdgeInput>((edge) => {
-    const source = decodeHandleId(edge.sourceHandle);
-    const target = decodeHandleId(edge.targetHandle);
-    if (!source || !target) return [];
+    const endpoints = workflowEdgeEndpoints(edge);
+    if (!endpoints) return [];
     return [{
       from_node: edge.source,
-      from_port: source.portName,
+      from_port: endpoints.sourcePortName,
       to_node: edge.target,
-      to_port: target.portName,
-      to_plug: target.plugId ?? null,
+      to_port: endpoints.targetPortName,
+      to_plug: endpoints.targetPlugId,
       ...serializeWorkflowEdgeTransport(edge.data),
     }];
   });
@@ -289,9 +353,12 @@ export function executionRequestPlan(
   const activeInputPlugIdsByNode = new Map<string, Set<string>>();
   for (const edge of execution.edges) {
     const target = decodeHandleId(edge.targetHandle);
-    if (!target?.plugId) continue;
+    const targetPlugId = edge.data?.targetPlugId !== undefined
+      ? edge.data.targetPlugId
+      : target?.plugId;
+    if (!targetPlugId) continue;
     const plugIds = activeInputPlugIdsByNode.get(edge.target) ?? new Set();
-    plugIds.add(target.plugId);
+    plugIds.add(targetPlugId);
     activeInputPlugIdsByNode.set(edge.target, plugIds);
   }
 

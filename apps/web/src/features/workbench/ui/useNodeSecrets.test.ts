@@ -112,6 +112,37 @@ beforeEach(() => {
 });
 
 describe("useNodeSecrets", () => {
+  it("keeps an unsupported node's secrets dormant and absent from client status", async () => {
+    const node = workflowNode();
+    node.data.compatibility = {
+      status: "unsupported",
+      issues: ["The operator is unavailable."],
+      inputs: [],
+      outputs: [],
+      persistedNode: savedNode(),
+    };
+    const activeGraph = graph(
+      "00000000-0000-4000-8000-000000000001",
+      1,
+    );
+    const hook = await renderHook(
+      ({ nodes }: { nodes: readonly WorkflowNode[] }) => useNodeSecrets(nodes),
+      { nodes: [node] },
+    );
+
+    let refreshed = false;
+    await React.act(async () => {
+      refreshed = await hook.result.current.refreshNodeSecretStatuses(
+        activeGraph,
+        [node],
+      );
+    });
+
+    expect(refreshed).toBe(true);
+    expect(api.getGraphNodeSecrets).not.toHaveBeenCalled();
+    expect(hook.result.current.nodeSecretStatuses).toEqual({});
+  });
+
   it("keeps the newest refresh when an older graph request finishes last", async () => {
     const node = workflowNode();
     const olderGraph = graph("00000000-0000-4000-8000-000000000001", 1);

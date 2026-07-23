@@ -7,7 +7,9 @@ import {
   NodeToolbar,
   Position,
   type Connection,
+  type EdgeChange,
   type IsValidConnection,
+  type NodeChange,
   type OnConnect,
   type OnEdgesChange,
   type OnNodesChange,
@@ -15,6 +17,7 @@ import {
 } from "@xyflow/react";
 import {
   Copy,
+  Eye,
   History,
   LoaderCircle,
   Maximize2,
@@ -50,6 +53,30 @@ import {
   applyNodeChanges,
 } from "../canvas/WorkflowCanvas";
 import {
+  ARTIFACT_VIEWER_EDGE_TYPE,
+  ARTIFACT_VIEWER_INPUT_HANDLE,
+  ARTIFACT_VIEWER_INTERACTION_EDGE_TYPE,
+  ARTIFACT_VIEWER_INTERACTION_INPUT_HANDLE,
+  ARTIFACT_VIEWER_INTERACTION_OUTPUT_HANDLE,
+  ARTIFACT_VIEWER_NODE_TYPE,
+  artifactViewerStorageKey,
+  hydrateArtifactViewerDocument,
+  serializeArtifactViewerDocument,
+  type ArtifactViewerCanvasState,
+  type ArtifactViewerEdge,
+  type ArtifactViewerInteractionEdge,
+  type ArtifactViewerNode,
+  type CanvasEdge,
+  type CanvasNode,
+} from "../canvas/artifact-viewer";
+import {
+  EMPTY_ARTIFACT_KEY_SELECTION,
+  targetRowsForBinding,
+  type ArtifactInteractionField,
+  type ArtifactKeySelection,
+  type ArtifactViewerBinding,
+} from "../canvas/artifact-interactions";
+import {
   connectionRouteForSelection,
   connectionRouteMatchesSelection,
   connectionRouteSelection,
@@ -69,8 +96,9 @@ import {
   nodeSecretInputs,
 } from "../canvas/node-secrets";
 import {
-  ARTIFACT_TYPE_COLOR,
+  artifactTypeColor,
 } from "../canvas/nodes.css";
+import type { ArtifactQueryRelation } from "../canvas/query-artifact-tables";
 import type { SchemaBuilderField } from "../canvas/schema-builder";
 import { useTheme } from "@/components/theme";
 import {
@@ -79,17 +107,21 @@ import {
   WORKFLOW_NODE_TYPE,
   bindArtifactTypeVariable,
   createWorkflowNodeData,
+  effectivePortShape,
   imageUploads,
   invalidateWorkflowNodeRuns,
   removeImageUpload,
   replaceImageUploads,
   resetArtifactTypeBinding,
+  resolvedPortArtifactType,
   type WorkflowEdge,
   type WorkflowEdgeRouteOffset,
   type WorkflowEdgeUpdate,
   type WorkflowArtifactTypeBindings,
   type WorkflowNodeData,
   type WorkflowInputPlug,
+  portMetaForPort,
+  workflowNodeIsSupported,
 } from "../canvas/types";
 import {
   collectionModeForConnection,
@@ -107,8 +139,7 @@ import {
 import { workbenchGraphPath } from "../routes";
 import { useNodeRegistry } from "@/hooks/use-api";
 import {
-  fileToBase64,
-  uploadImage,
+  uploadFile,
   type ArtifactTypeKey,
   type NodeSpec,
   type RunEdgeCollectionMode,
@@ -150,6 +181,20 @@ export function Workbench({
   const { preference, cycleTheme } = useTheme();
   const [nodes, setNodes] = React.useState<WorkflowNode[]>([]);
   const [edges, setEdges] = React.useState<WorkflowEdge[]>([]);
+  const [artifactViewers, setArtifactViewers] =
+    React.useState<ArtifactViewerCanvasState>({
+      graphId: null,
+      nodes: [],
+      edges: [],
+      bindings: [],
+    });
+  const [artifactViewerSelections, setArtifactViewerSelections] =
+    React.useState<Record<string, ArtifactKeySelection>>({});
+  const [artifactViewerFields, setArtifactViewerFields] =
+    React.useState<Record<string, ArtifactInteractionField[]>>({});
+  const artifactViewersInitializedRef = React.useRef(initialGraphId === null);
+  const [artifactViewerPersistenceError, setArtifactViewerPersistenceError] =
+    React.useState<string | null>(null);
   const {
     nodeSecretStatuses,
     refreshNodeSecretStatuses,
@@ -159,11 +204,12 @@ export function Workbench({
     forgetNodeSecretStatuses,
   } = useNodeSecrets(nodes);
   const [flow, setFlow] = React.useState<
-    ReactFlowInstance<WorkflowNode, WorkflowEdge>
+    ReactFlowInstance<CanvasNode, CanvasEdge>
   >();
   const [libraryOpen, setLibraryOpen] = React.useState(false);
   const [executionHistoryTarget, setExecutionHistoryTarget] = React.useState<{
     nodeId: string | null;
+    executionId: string | null;
   } | null>(null);
   const [runError, setRunError] = React.useState<string | null>(null);
   const clearRunError = React.useCallback(() => setRunError(null), []);
@@ -226,6 +272,7 @@ export function Workbench({
                   : node.data.config,
               run: null,
               execution: { status: "idle" },
+              progress: null,
             },
           };
         }),
@@ -254,6 +301,93 @@ export function Workbench({
     [],
   );
 
+  const updateArtifactViewerLayout = React.useCallback((
+    nodeId: string,
+    layout: ArtifactViewerNode["data"]["layout"],
+  ) => {
+    setArtifactViewers((current) => ({
+      ...current,
+      nodes: current.nodes.map((node) =>
+        node.id === nodeId
+          ? { ...node, data: { ...node.data, layout } }
+          : node,
+      ),
+    }));
+  }, []);
+
+  const updateArtifactViewerMode = React.useCallback((
+    nodeId: string,
+    mode: string,
+  ) => {
+    setArtifactViewers((current) => ({
+      ...current,
+      nodes: current.nodes.map((node) =>
+        node.id === nodeId
+          ? { ...node, data: { ...node.data, mode } }
+          : node,
+      ),
+    }));
+  }, []);
+
+  const updateArtifactViewerSelection = React.useCallback((
+    nodeId: string,
+    selection: ArtifactKeySelection,
+  ) => {
+    setArtifactViewerSelections((current) => ({
+      ...current,
+      [nodeId]: selection,
+    }));
+  }, []);
+
+  const updateArtifactViewerFields = React.useCallback((
+    nodeId: string,
+    fields: ArtifactInteractionField[],
+  ) => {
+    setArtifactViewerFields((current) => {
+      if (JSON.stringify(current[nodeId] ?? []) === JSON.stringify(fields)) {
+        return current;
+      }
+      return { ...current, [nodeId]: fields };
+    });
+  }, []);
+
+  const updateArtifactViewerBinding = React.useCallback((
+    bindingId: string,
+    binding: ArtifactViewerBinding,
+  ) => {
+    setArtifactViewers((current) => ({
+      ...current,
+      bindings: current.bindings.map((candidate) =>
+        candidate.id === bindingId ? binding : candidate
+      ),
+    }));
+  }, []);
+
+  const removeArtifactViewer = React.useCallback((nodeId: string) => {
+    setArtifactViewers((current) => ({
+      ...current,
+      nodes: current.nodes.filter((node) => node.id !== nodeId),
+      edges: current.edges.filter(
+        (edge) => edge.source !== nodeId && edge.target !== nodeId,
+      ),
+      bindings: current.bindings.filter(
+        (binding) =>
+          binding.sourceViewerId !== nodeId &&
+          binding.targetViewerId !== nodeId,
+      ),
+    }));
+    setArtifactViewerSelections((current) => {
+      const next = { ...current };
+      delete next[nodeId];
+      return next;
+    });
+    setArtifactViewerFields((current) => {
+      const next = { ...current };
+      delete next[nodeId];
+      return next;
+    });
+  }, []);
+
   const removeNode = React.useCallback((nodeId: string) => {
     const changedTargetNodeIds = edges
       .filter(
@@ -273,6 +407,10 @@ export function Workbench({
         (edge) => edge.source !== nodeId && edge.target !== nodeId,
       ),
     );
+    setArtifactViewers((current) => ({
+      ...current,
+      edges: current.edges.filter((edge) => edge.source !== nodeId),
+    }));
     forgetNodeSecretStatuses(nodeId);
     setPendingConnectionRoute(null);
     setRunError(null);
@@ -292,6 +430,7 @@ export function Workbench({
                 : node.data),
               run: null,
               execution: { status: "idle" },
+              progress: null,
             },
           };
         }),
@@ -317,6 +456,7 @@ export function Workbench({
                   : node.data.inputPlugs,
               run: null,
               execution: { status: "idle" },
+              progress: null,
             },
           };
         }),
@@ -342,6 +482,7 @@ export function Workbench({
                   : node.data.inputPlugs,
               run: null,
               execution: { status: "idle" },
+              progress: null,
             },
           };
         }),
@@ -385,6 +526,7 @@ export function Workbench({
                   : node.data.inputPlugs,
               run: null,
               execution: { status: "idle" },
+              progress: null,
             },
           };
         }),
@@ -417,6 +559,48 @@ export function Workbench({
                 node.id === nodeId ? inputPlugs : node.data.inputPlugs,
               run: null,
               execution: { status: "idle" },
+              progress: null,
+            },
+          };
+        }),
+      );
+      setEdges((current) =>
+        current.filter((edge) => {
+          if (edge.target !== nodeId) return true;
+          const plugId = decodeHandleId(edge.targetHandle)?.plugId;
+          return !plugId || retainedPlugIds.has(plugId);
+        }),
+      );
+      setPendingConnectionRoute(null);
+      setRunError(null);
+    },
+    [edges],
+  );
+
+  const updateArtifactQueryRelations = React.useCallback(
+    (
+      nodeId: string,
+      relations: readonly ArtifactQueryRelation[],
+      inputPlugs: readonly WorkflowInputPlug[],
+    ) => {
+      const invalidatedNodeIds = nodeAndDescendantIds(nodeId, edges);
+      const retainedPlugIds = new Set(inputPlugs.map((plug) => plug.id));
+      setNodes((current) =>
+        current.map((node) => {
+          if (!invalidatedNodeIds.has(node.id)) return node;
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              config:
+                node.id === nodeId
+                  ? { ...node.data.config, relations }
+                  : node.data.config,
+              inputPlugs:
+                node.id === nodeId ? inputPlugs : node.data.inputPlugs,
+              run: null,
+              execution: { status: "idle" },
+              progress: null,
             },
           };
         }),
@@ -443,6 +627,7 @@ export function Workbench({
         data: {
           ...node.data,
           run: null,
+          progress: null,
           execution: node.id === nodeId
             ? { status: "uploading" }
             : { status: "idle" },
@@ -451,9 +636,7 @@ export function Workbench({
     }));
     setRunError(null);
     try {
-      const uploads = await Promise.all(files.map(async (file) =>
-        uploadImage(file.name, await fileToBase64(file)),
-      ));
+      const uploads = await Promise.all(files.map((file) => uploadFile(file)));
       setNodes((current) => current.map((node) => ({
         ...node,
         data: invalidatedNodeIds.has(node.id)
@@ -463,6 +646,7 @@ export function Workbench({
                 : node.data),
               execution: { status: "idle" },
               run: null,
+              progress: null,
             }
           : node.data,
       })));
@@ -509,33 +693,58 @@ export function Workbench({
     [workspaceSlug],
   );
 
-  const openNodeExecutionHistory = React.useCallback((nodeId: string) => {
+  const openNodeExecutionHistory = React.useCallback((
+    nodeId: string,
+    executionId?: string,
+  ) => {
     setLibraryOpen(false);
-    setExecutionHistoryTarget({ nodeId });
+    setExecutionHistoryTarget({ nodeId, executionId: executionId ?? null });
   }, []);
 
   const attachNodeCallbacks = React.useCallback(
-    (data: WorkflowNodeData): WorkflowNodeData => ({
-      ...data,
-      onConfigChange: updateConfig,
-      onLayoutChange: updateLayout,
-      onRemoveNode: removeNode,
-      onImagesSelected:
-        isFileUploadOperator(data.spec.operator_id)
-          ? handleImagesSelected
+    (data: WorkflowNodeData): WorkflowNodeData => {
+      if (!workflowNodeIsSupported(data)) {
+        return {
+          ...data,
+          onConfigChange: undefined,
+          onLayoutChange: updateLayout,
+          onRemoveNode: removeNode,
+          onImagesSelected: undefined,
+          onRemoveImageUpload: undefined,
+          onAddInputPlug: undefined,
+          onRemoveInputPlug: undefined,
+          onReorderInputPlug: undefined,
+          onSchemaBuilderFieldsChange: undefined,
+          onArtifactQueryRelationsChange: undefined,
+          onResetArtifactTypeBinding: undefined,
+          onHandlesMeasured: undefined,
+          onOpenModuleSource: undefined,
+          onOpenExecutionHistory: openNodeExecutionHistory,
+        };
+      }
+      return {
+        ...data,
+        onConfigChange: updateConfig,
+        onLayoutChange: updateLayout,
+        onRemoveNode: removeNode,
+        onImagesSelected:
+          isFileUploadOperator(data.spec.operator_id)
+            ? handleImagesSelected
+            : undefined,
+        onRemoveImageUpload: handleRemoveImageUpload,
+        onAddInputPlug: addNodeInputPlug,
+        onRemoveInputPlug: removeNodeInputPlug,
+        onReorderInputPlug: reorderNodeInputPlug,
+        onSchemaBuilderFieldsChange: updateSchemaBuilderFields,
+        onArtifactQueryRelationsChange: updateArtifactQueryRelations,
+        onResetArtifactTypeBinding: resetNodeArtifactTypeBinding,
+        onHandlesMeasured: handleNodeHandlesMeasured,
+        onOpenModuleSource: data.spec.module_graph_id
+          ? openGraphInNewTab
           : undefined,
-      onRemoveImageUpload: handleRemoveImageUpload,
-      onAddInputPlug: addNodeInputPlug,
-      onRemoveInputPlug: removeNodeInputPlug,
-      onReorderInputPlug: reorderNodeInputPlug,
-      onSchemaBuilderFieldsChange: updateSchemaBuilderFields,
-      onResetArtifactTypeBinding: resetNodeArtifactTypeBinding,
-      onHandlesMeasured: handleNodeHandlesMeasured,
-      onOpenModuleSource: data.spec.module_graph_id
-        ? openGraphInNewTab
-        : undefined,
-      onOpenExecutionHistory: openNodeExecutionHistory,
-    }),
+        onOpenExecutionHistory: openNodeExecutionHistory,
+      };
+    },
     [
       addNodeInputPlug,
       handleImagesSelected,
@@ -549,6 +758,7 @@ export function Workbench({
       resetNodeArtifactTypeBinding,
       updateConfig,
       updateLayout,
+      updateArtifactQueryRelations,
       updateSchemaBuilderFields,
     ],
   );
@@ -573,6 +783,18 @@ export function Workbench({
   const requestNodeRegistryRefresh = React.useCallback(() => {
     void refreshNodeRegistry();
   }, [refreshNodeRegistry]);
+  const removeArtifactViewerDocument = React.useCallback((graphId: string) => {
+    try {
+      window.localStorage.removeItem(
+        artifactViewerStorageKey(workspaceSlug, graphId),
+      );
+      setArtifactViewerPersistenceError(null);
+    } catch {
+      setArtifactViewerPersistenceError(
+        "Artifact Viewer layout could not be removed from browser storage.",
+      );
+    }
+  }, [workspaceSlug]);
   const uploading = nodes.some(
     (node) => node.data.execution.status === "uploading",
   );
@@ -619,6 +841,7 @@ export function Workbench({
     closeNodeLibrary,
     requestCanvasRefit,
     refreshNodeRegistry: requestNodeRegistryRefresh,
+    onGraphDeleted: removeArtifactViewerDocument,
   });
   const {
     running,
@@ -643,6 +866,130 @@ export function Workbench({
   React.useEffect(() => {
     executionRunningRef.current = running;
   }, [running]);
+
+  React.useEffect(() => {
+    const graphId = activeGraph?.id ?? null;
+    if (!artifactViewersInitializedRef.current && !graphId) return;
+    if (artifactViewersInitializedRef.current && artifactViewers.graphId === graphId) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      if (!artifactViewersInitializedRef.current) {
+        try {
+          const serialized = window.localStorage.getItem(
+            artifactViewerStorageKey(workspaceSlug, graphId!),
+          );
+          const hydrated = serialized
+            ? hydrateArtifactViewerDocument(serialized, graphId!)
+            : { graphId: graphId!, nodes: [], edges: [], bindings: [] };
+          setArtifactViewers(
+            hydrated ?? {
+              graphId: graphId!,
+              nodes: [],
+              edges: [],
+              bindings: [],
+            },
+          );
+          setArtifactViewerPersistenceError(
+            serialized && !hydrated
+              ? "Saved Artifact Viewer layout was invalid and has been reset."
+              : null,
+          );
+        } catch {
+          setArtifactViewers({
+            graphId: graphId!,
+            nodes: [],
+            edges: [],
+            bindings: [],
+          });
+          setArtifactViewerPersistenceError(
+            "Artifact Viewer layout could not be loaded from browser storage.",
+          );
+        }
+        artifactViewersInitializedRef.current = true;
+        return;
+      }
+
+      if (artifactViewers.graphId === null && graphId) {
+        setArtifactViewers((current) => ({ ...current, graphId }));
+        return;
+      }
+      if (!graphId) {
+        setArtifactViewers({
+          graphId: null,
+          nodes: [],
+          edges: [],
+          bindings: [],
+        });
+        return;
+      }
+
+      try {
+        const serialized = window.localStorage.getItem(
+          artifactViewerStorageKey(workspaceSlug, graphId),
+        );
+        const hydrated = serialized
+          ? hydrateArtifactViewerDocument(serialized, graphId)
+          : { graphId, nodes: [], edges: [], bindings: [] };
+        setArtifactViewers(
+          hydrated ?? { graphId, nodes: [], edges: [], bindings: [] },
+        );
+        setArtifactViewerPersistenceError(
+          serialized && !hydrated
+            ? "Saved Artifact Viewer layout was invalid and has been reset."
+            : null,
+        );
+      } catch {
+        setArtifactViewers({
+          graphId,
+          nodes: [],
+          edges: [],
+          bindings: [],
+        });
+        setArtifactViewerPersistenceError(
+          "Artifact Viewer layout could not be loaded from browser storage.",
+        );
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeGraph?.id, artifactViewers.graphId, workspaceSlug]);
+
+  React.useEffect(() => {
+    const graphId = activeGraph?.id;
+    if (
+      !graphId ||
+      !artifactViewersInitializedRef.current ||
+      artifactViewers.graphId !== graphId
+    ) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(
+          artifactViewerStorageKey(workspaceSlug, graphId),
+          serializeArtifactViewerDocument(
+            artifactViewers.nodes,
+            artifactViewers.edges,
+            artifactViewers.bindings,
+          ),
+        );
+        setArtifactViewerPersistenceError(null);
+      } catch {
+        setArtifactViewerPersistenceError(
+          "Artifact Viewer changes are available in this session but could not be saved in browser storage.",
+        );
+      }
+    }, 160);
+    return () => window.clearTimeout(timer);
+  }, [
+    activeGraph?.id,
+    artifactViewers.edges,
+    artifactViewers.bindings,
+    artifactViewers.graphId,
+    artifactViewers.nodes,
+    workspaceSlug,
+  ]);
+
   const graphOperationBusy = persistenceOperationBusy || running;
 
   React.useEffect(() => {
@@ -683,6 +1030,7 @@ export function Workbench({
 
   const imageUploadWithoutImages = nodes.some(
     (node) =>
+      workflowNodeIsSupported(node.data) &&
       isFileUploadOperator(node.data.spec.operator_id) &&
       !imageUploads(node.data).length,
   );
@@ -691,25 +1039,39 @@ export function Workbench({
     [nodes],
   );
   const selectedNodeCount = selectedNodeIds.length;
+  const selectedNodesAreRunnable = nodes.every(
+    (node) => !node.selected || workflowNodeIsSupported(node.data),
+  );
   const nodeTitles = React.useMemo(
     () => Object.fromEntries(
       nodes.map((node) => [node.id, node.data.spec.title]),
     ),
     [nodes],
   );
-  const selectedWithDependenciesCount = selectedNodeAndAncestorIds(
+  const selectedWithDependencyIds = selectedNodeAndAncestorIds(
     nodes,
     edges,
-  ).size;
+  );
+  const selectedWithDependenciesCount = selectedWithDependencyIds.size;
+  const selectedWithDependenciesAreRunnable = nodes.every(
+    (node) =>
+      !selectedWithDependencyIds.has(node.id) ||
+      workflowNodeIsSupported(node.data),
+  );
   const missingRequiredInputs = missingRequiredInputsFor(nodes, edges);
   const connectionInstruction = missingRequiredInputs.length
     ? `${missingRequiredInputs.length} required input${missingRequiredInputs.length === 1 ? "" : "s"} unconnected · drag between ports to connect them`
     : null;
-  const runSelectedDisabled =
-    !registry || running || selectedNodeCount === 0;
+  const runSelectionBusy = !registry || running || selectedNodeCount === 0;
+  const runSelectedDisabled = runSelectionBusy || !selectedNodesAreRunnable;
+  const runSelectedWithDependenciesDisabled =
+    runSelectionBusy || !selectedWithDependenciesAreRunnable;
   const nodeErrorCount = nodes.filter(
     (node) => Boolean(node.data.execution.error),
   ).length;
+  const compatibilityIssueCount =
+    nodes.filter((node) => !workflowNodeIsSupported(node.data)).length +
+    edges.filter((edge) => edge.data?.compatibilityIssues?.length).length;
   const globalIssues = React.useMemo<GlobalIssue[]>(() => {
     const issues: GlobalIssue[] = [];
     if (registryError) {
@@ -735,8 +1097,20 @@ export function Workbench({
         message: runError,
       });
     }
+    if (artifactViewerPersistenceError) {
+      issues.push({
+        id: "presentation",
+        title: "Artifact Viewer",
+        message: artifactViewerPersistenceError,
+      });
+    }
     return issues;
-  }, [persistenceError, registryError, runError]);
+  }, [
+    artifactViewerPersistenceError,
+    persistenceError,
+    registryError,
+    runError,
+  ]);
   const dismissGlobalIssue = React.useCallback((issue: GlobalIssue) => {
     if (issue.id === "graph") {
       dismissPersistenceError(issue.message);
@@ -744,15 +1118,31 @@ export function Workbench({
     if (issue.id === "run") {
       dismissRunError(issue.message);
     }
+    if (issue.id === "presentation") {
+      setArtifactViewerPersistenceError((current) =>
+        current === issue.message ? null : current,
+      );
+    }
   }, [dismissPersistenceError, dismissRunError]);
-  const graphHasErrors = globalIssues.length > 0 || nodeErrorCount > 0;
-  const graphNeedsAttention = imageUploadWithoutImages || missingRequiredInputs.length > 0;
+  const workflowGlobalIssueCount = globalIssues.filter(
+    (issue) => issue.id !== "presentation",
+  ).length;
+  const graphHasErrors =
+    workflowGlobalIssueCount > 0 ||
+    nodeErrorCount > 0 ||
+    compatibilityIssueCount > 0;
+  const graphNeedsAttention =
+    compatibilityIssueCount > 0 ||
+    imageUploadWithoutImages ||
+    missingRequiredInputs.length > 0;
   const canvasStatusMessage = runningScope === "selected"
     ? "running selected nodes · latest upstream outputs are pinned"
     : runningScope === "selected-with-dependencies"
       ? "running selected nodes and all upstream dependencies"
-      : globalIssues.length
-        ? `${globalIssues.length} workflow issue${globalIssues.length === 1 ? "" : "s"}`
+      : workflowGlobalIssueCount
+        ? `${workflowGlobalIssueCount} workflow issue${workflowGlobalIssueCount === 1 ? "" : "s"}`
+        : compatibilityIssueCount
+          ? `${compatibilityIssueCount} compatibility issue${compatibilityIssueCount === 1 ? "" : "s"}`
         : nodeErrorCount
           ? `${nodeErrorCount} node issue${nodeErrorCount === 1 ? "" : "s"}`
           : !registry
@@ -761,9 +1151,80 @@ export function Workbench({
               ? "choose images before running"
               : connectionInstruction ?? "all required inputs connected · ready to run";
 
-  const onNodesChange: OnNodesChange<WorkflowNode> = React.useCallback(
-    (changes) => setNodes((current) => applyNodeChanges(changes, current)),
-    [],
+  const activeArtifactViewers = artifactViewers.graphId ===
+      (activeGraph?.id ?? null)
+    ? artifactViewers
+    : {
+        graphId: activeGraph?.id ?? null,
+        nodes: [],
+        edges: [],
+        bindings: [],
+      };
+
+  const onNodesChange: OnNodesChange<CanvasNode> = React.useCallback(
+    (changes) => {
+      const workflowNodeIds = new Set(nodes.map((node) => node.id));
+      const artifactViewerIds = new Set(
+        artifactViewers.nodes.map((node) => node.id),
+      );
+      const workflowChanges = changes.filter((change) =>
+        change.type === "add" || change.type === "replace"
+          ? change.item.type === WORKFLOW_NODE_TYPE
+          : workflowNodeIds.has(change.id)
+      ) as NodeChange<WorkflowNode>[];
+      const artifactViewerChanges = changes.filter((change) =>
+        change.type === "add" || change.type === "replace"
+          ? change.item.type === ARTIFACT_VIEWER_NODE_TYPE
+          : artifactViewerIds.has(change.id)
+      ) as NodeChange<ArtifactViewerNode>[];
+      if (workflowChanges.length) {
+        setNodes((current) => applyNodeChanges(workflowChanges, current));
+      }
+      const removedArtifactViewerIds = new Set(
+        artifactViewerChanges.flatMap((change) =>
+          change.type === "remove" ? [change.id] : []
+        ),
+      );
+      if (artifactViewerChanges.length) {
+        setArtifactViewers((current) => ({
+          ...current,
+          nodes: applyNodeChanges(artifactViewerChanges, current.nodes),
+          bindings: removedArtifactViewerIds.size
+            ? current.bindings.filter(
+                (binding) =>
+                  !removedArtifactViewerIds.has(binding.sourceViewerId) &&
+                  !removedArtifactViewerIds.has(binding.targetViewerId),
+              )
+            : current.bindings,
+        }));
+      }
+      if (removedArtifactViewerIds.size) {
+        setArtifactViewerSelections((current) => {
+          const next = { ...current };
+          for (const nodeId of removedArtifactViewerIds) delete next[nodeId];
+          return next;
+        });
+        setArtifactViewerFields((current) => {
+          const next = { ...current };
+          for (const nodeId of removedArtifactViewerIds) delete next[nodeId];
+          return next;
+        });
+      }
+      const removedWorkflowNodeIds = new Set(
+        workflowChanges.flatMap((change) =>
+          change.type === "remove" ? [change.id] : [],
+        ),
+      );
+      if (removedWorkflowNodeIds.size) {
+        setArtifactViewers((current) => ({
+          ...current,
+          edges: current.edges.filter(
+            (edge) => !removedWorkflowNodeIds.has(edge.source),
+          ),
+        }));
+      }
+    },
+    [artifactViewers.nodes, nodes],
   );
 
   const invalidateWorkflowResults = React.useCallback(
@@ -784,10 +1245,33 @@ export function Workbench({
     [],
   );
 
-  const onEdgesChange: OnEdgesChange<WorkflowEdge> = React.useCallback(
+  const onEdgesChange: OnEdgesChange<CanvasEdge> = React.useCallback(
     (changes) => {
+      const workflowEdgeIds = new Set(edges.map((edge) => edge.id));
+      const artifactViewerEdgeIds = new Set(
+        artifactViewers.edges.map((edge) => edge.id),
+      );
+      const artifactViewerInteractionEdgeIds = new Set(
+        artifactViewers.bindings.map((binding) => binding.id),
+      );
+      const workflowChanges = changes.filter((change) =>
+        change.type === "add" || change.type === "replace"
+          ? change.item.type !== ARTIFACT_VIEWER_EDGE_TYPE &&
+            change.item.type !== ARTIFACT_VIEWER_INTERACTION_EDGE_TYPE
+          : workflowEdgeIds.has(change.id)
+      ) as EdgeChange<WorkflowEdge>[];
+      const artifactViewerChanges = changes.filter((change) =>
+        change.type === "add" || change.type === "replace"
+          ? change.item.type === ARTIFACT_VIEWER_EDGE_TYPE
+          : artifactViewerEdgeIds.has(change.id)
+      ) as EdgeChange<ArtifactViewerEdge>[];
+      const artifactViewerInteractionChanges = changes.filter((change) =>
+        change.type === "add" || change.type === "replace"
+          ? change.item.type === ARTIFACT_VIEWER_INTERACTION_EDGE_TYPE
+          : artifactViewerInteractionEdgeIds.has(change.id)
+      ) as EdgeChange<ArtifactViewerInteractionEdge>[];
       const changedTargetNodeIds = new Set<string>();
-      for (const change of changes) {
+      for (const change of workflowChanges) {
         if (change.type === "remove" || change.type === "replace") {
           const previousEdge = edges.find((edge) => edge.id === change.id);
           if (previousEdge && previousEdge.data?.enabled !== false) {
@@ -800,10 +1284,41 @@ export function Workbench({
           }
         }
       }
-      setEdges((current) => applyEdgeChanges(changes, current));
-      invalidateWorkflowResults([...changedTargetNodeIds], edges);
+      if (workflowChanges.length) {
+        setEdges((current) => applyEdgeChanges(workflowChanges, current));
+        invalidateWorkflowResults([...changedTargetNodeIds], edges);
+      }
+      if (artifactViewerChanges.length) {
+        setArtifactViewers((current) => ({
+          ...current,
+          edges: applyEdgeChanges(
+            artifactViewerChanges,
+            current.edges,
+          ),
+        }));
+      }
+      if (artifactViewerInteractionChanges.length) {
+        const removedBindingIds = new Set(
+          artifactViewerInteractionChanges.flatMap((change) =>
+            change.type === "remove" ? [change.id] : []
+          ),
+        );
+        if (removedBindingIds.size) {
+          setArtifactViewers((current) => ({
+            ...current,
+            bindings: current.bindings.filter(
+              (binding) => !removedBindingIds.has(binding.id),
+            ),
+          }));
+        }
+      }
     },
-    [edges, invalidateWorkflowResults],
+    [
+      artifactViewers.bindings,
+      artifactViewers.edges,
+      edges,
+      invalidateWorkflowResults,
+    ],
   );
 
   const updateEdge = React.useCallback(
@@ -911,7 +1426,7 @@ export function Workbench({
       ? decodedHandleArtifactType(source)
       : null;
     const color = sourceArtifactType
-      ? ARTIFACT_TYPE_COLOR[sourceArtifactType.id] ?? tokens.colorAccent
+      ? artifactTypeColor(sourceArtifactType.id, tokens.colorAccent)
       : tokens.colorAccent;
     const edgeStyle = {
       stroke: color,
@@ -966,11 +1481,14 @@ export function Workbench({
     } else {
       setEdges((current) => addEdge(edge, current));
     }
-    invalidateWorkflowResults([edge.target], [...edges, edge]);
+    const changedNodeIds = binding?.endpoint === "source" && newlyBoundNodeId
+      ? [newlyBoundNodeId, edge.target]
+      : [edge.target];
+    invalidateWorkflowResults(changedNodeIds, [...edges, edge]);
   }, [edges, invalidateWorkflowResults, nodes]);
 
   const isValidConnection = React.useCallback<
-    IsValidConnection<WorkflowEdge>
+    IsValidConnection<CanvasEdge>
   >((connection) => {
     const candidate: Connection = {
       source: connection.source,
@@ -978,6 +1496,47 @@ export function Workbench({
       target: connection.target,
       targetHandle: connection.targetHandle ?? null,
     };
+    if (
+      candidate.sourceHandle === ARTIFACT_VIEWER_INTERACTION_OUTPUT_HANDLE ||
+      candidate.targetHandle === ARTIFACT_VIEWER_INTERACTION_INPUT_HANDLE
+    ) {
+      return (
+        candidate.sourceHandle ===
+          ARTIFACT_VIEWER_INTERACTION_OUTPUT_HANDLE &&
+        candidate.targetHandle ===
+          ARTIFACT_VIEWER_INTERACTION_INPUT_HANDLE &&
+        candidate.source !== candidate.target &&
+        activeArtifactViewers.nodes.some(
+          (node) => node.id === candidate.source,
+        ) &&
+        activeArtifactViewers.nodes.some(
+          (node) => node.id === candidate.target,
+        ) &&
+        !activeArtifactViewers.bindings.some(
+          (binding) =>
+            binding.sourceViewerId === candidate.source &&
+            binding.targetViewerId === candidate.target,
+        )
+      );
+    }
+    if (
+      candidate.targetHandle === ARTIFACT_VIEWER_INPUT_HANDLE &&
+      activeArtifactViewers.nodes.some(
+        (node) => node.id === candidate.target,
+      )
+    ) {
+      const source = decodeHandleId(candidate.sourceHandle);
+      const sourceNode = nodes.find(
+        (node) => node.id === candidate.source,
+      );
+      return Boolean(
+        source &&
+        source.direction === "output" &&
+        sourceNode?.data.spec.outputs.some(
+          (port) => port.name === source.portName,
+        ),
+      );
+    }
     return isConnectionAccepted(
       candidate,
       nodes,
@@ -987,6 +1546,8 @@ export function Workbench({
       "id" in connection ? connection.id : null,
     );
   }, [
+    activeArtifactViewers.nodes,
+    activeArtifactViewers.bindings,
     edges,
     nodes,
     registry?.artifact_conversions,
@@ -995,6 +1556,49 @@ export function Workbench({
 
   const onConnect: OnConnect = React.useCallback((connection) => {
     if (!isValidConnection(connection)) return;
+    if (
+      connection.sourceHandle ===
+        ARTIFACT_VIEWER_INTERACTION_OUTPUT_HANDLE &&
+      connection.targetHandle === ARTIFACT_VIEWER_INTERACTION_INPUT_HANDLE
+    ) {
+      const binding: ArtifactViewerBinding = {
+        id: `artifact-viewer-binding-${crypto.randomUUID()}`,
+        sourceViewerId: connection.source,
+        targetViewerId: connection.target,
+        mappings: [{ sourceField: "", targetField: "" }],
+        effects: ["highlight", "focus"],
+        emptySelection: "show_all",
+      };
+      setArtifactViewers((current) => ({
+        ...current,
+        bindings: [...current.bindings, binding],
+      }));
+      setPendingConnectionRoute(null);
+      return;
+    }
+    if (connection.targetHandle === ARTIFACT_VIEWER_INPUT_HANDLE) {
+      const source = decodeHandleId(connection.sourceHandle);
+      if (!source || source.direction !== "output") return;
+      const edge: ArtifactViewerEdge = {
+        id: `artifact-viewer-edge-${crypto.randomUUID()}`,
+        type: ARTIFACT_VIEWER_EDGE_TYPE,
+        source: connection.source,
+        target: connection.target,
+        targetHandle: ARTIFACT_VIEWER_INPUT_HANDLE,
+        data: { sourcePortName: source.portName },
+      };
+      setArtifactViewers((current) => ({
+        ...current,
+        edges: [
+          ...current.edges.filter(
+            (candidate) => candidate.target !== connection.target,
+          ),
+          edge,
+        ],
+      }));
+      setPendingConnectionRoute(null);
+      return;
+    }
     const collectionMode = collectionModeForConnection(
       connection,
       nodes,
@@ -1064,6 +1668,52 @@ export function Workbench({
     setLibraryOpen(false);
   }, [attachNodeCallbacks, flow]);
 
+  const addArtifactViewer = React.useCallback(() => {
+    const id = `artifact-viewer-${crypto.randomUUID()}`;
+    const center = flow?.screenToFlowPosition({
+      x: window.innerWidth / 2,
+      y: window.innerHeight / 2,
+    }) ?? { x: 600, y: 280 };
+    const selectedSource = nodes.find((node) => node.selected);
+    const position = selectedSource
+      ? {
+          x: selectedSource.position.x + 380,
+          y: selectedSource.position.y - 20,
+        }
+      : { x: center.x - 260, y: center.y - 180 };
+    setNodes((current) =>
+      current.map((node) => ({ ...node, selected: false })),
+    );
+    setArtifactViewers((current) => ({
+      ...current,
+      nodes: [
+        ...current.nodes.map((node) => ({ ...node, selected: false })),
+        {
+          id,
+          type: ARTIFACT_VIEWER_NODE_TYPE,
+          position,
+          selected: true,
+          data: {
+            layout: { width: 520, appendixHeight: 300 },
+            mode: null,
+          },
+        },
+      ],
+    }));
+    setLibraryOpen(false);
+    closeGraphBrowser();
+    if (flow && selectedSource) {
+      window.requestAnimationFrame(() => {
+        void flow.fitView({
+          nodes: [{ id: selectedSource.id }, { id }],
+          padding: 0.22,
+          maxZoom: 0.94,
+          duration: 220,
+        });
+      });
+    }
+  }, [closeGraphBrowser, flow, nodes]);
+
   const duplicateSelectedNodes = React.useCallback(() => {
     const selectedNodes = nodes.filter((node) => node.selected);
     if (!selectedNodes.length || running) return;
@@ -1092,6 +1742,7 @@ export function Workbench({
         config: structuredClone(node.data.config),
         run: null,
         execution: { status: "idle" },
+        progress: null,
       },
     }));
     const duplicatedEdges: WorkflowEdge[] = edges.flatMap((edge) => {
@@ -1140,9 +1791,15 @@ export function Workbench({
           ...node,
           data: {
             ...node.data,
+            historyContext: {
+              graphId: activeGraph?.id ?? null,
+              isDirty,
+            },
             secretStatuses: nodeSecretStatuses[node.id] ?? {},
             secretInputReadiness: Object.fromEntries(
-              nodeSecretInputs(node.data.spec).map((input) => [
+              (workflowNodeIsSupported(node.data)
+                ? nodeSecretInputs(node.data.spec)
+                : []).map((input) => [
                 input.name,
                 nodeSecretBindingReady(input, {
                   id: node.id,
@@ -1169,6 +1826,7 @@ export function Workbench({
       activeGraph,
       applyConfiguredNodeSecret,
       edges,
+      isDirty,
       nodeSecretStatuses,
       nodes,
       registry,
@@ -1231,11 +1889,17 @@ export function Workbench({
             ...edge.data,
             enabled: edge.data?.enabled ?? true,
             collectionMode: edge.data?.collectionMode ?? "direct",
-            sourcePortName: source?.portName,
+            sourcePortName:
+              source?.portName ?? edge.data?.sourcePortName,
             conversionTitles,
             routeOptions,
-            allowedCollectionModes: validMode ? [validMode] : [],
-            onUpdate: updateEdge,
+            allowedCollectionModes:
+              edge.data?.compatibilityIssues?.length || !validMode
+                ? []
+                : [validMode],
+            onUpdate: edge.data?.compatibilityIssues?.length
+              ? undefined
+              : updateEdge,
             onRouteOffsetChange: updateEdgeRoute,
           },
         };
@@ -1247,6 +1911,147 @@ export function Workbench({
       registry?.artifact_types,
       updateEdge,
       updateEdgeRoute,
+    ],
+  );
+
+  const artifactViewerCanvasNodes = React.useMemo<ArtifactViewerNode[]>(
+    () => activeArtifactViewers.nodes.map((node) => {
+      const sourceBindings = activeArtifactViewers.bindings.filter(
+        (binding) => binding.sourceViewerId === node.id,
+      );
+      const incomingBindings = activeArtifactViewers.bindings
+        .filter((binding) => binding.targetViewerId === node.id)
+        .map((binding) => ({
+          bindingId: binding.id,
+          effects: binding.effects,
+          rows: targetRowsForBinding(
+            binding,
+            artifactViewerSelections[binding.sourceViewerId] ??
+              EMPTY_ARTIFACT_KEY_SELECTION,
+          ),
+        }));
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          outgoingFields: [
+            ...new Set(
+              sourceBindings.flatMap((binding) =>
+                binding.mappings.map((mapping) => mapping.sourceField)
+              ),
+            ),
+          ].filter(Boolean),
+          selection:
+            artifactViewerSelections[node.id] ??
+              EMPTY_ARTIFACT_KEY_SELECTION,
+          incomingBindings,
+          fields: artifactViewerFields[node.id] ?? [],
+          onLayoutChange: updateArtifactViewerLayout,
+          onModeChange: updateArtifactViewerMode,
+          onSelectionChange: updateArtifactViewerSelection,
+          onFieldsChange: updateArtifactViewerFields,
+          onRemoveNode: removeArtifactViewer,
+        },
+      };
+    }),
+    [
+      activeArtifactViewers.bindings,
+      activeArtifactViewers.nodes,
+      artifactViewerFields,
+      artifactViewerSelections,
+      removeArtifactViewer,
+      updateArtifactViewerLayout,
+      updateArtifactViewerMode,
+      updateArtifactViewerFields,
+      updateArtifactViewerSelection,
+    ],
+  );
+
+  const artifactViewerCanvasEdges = React.useMemo<ArtifactViewerEdge[]>(
+    () => activeArtifactViewers.edges.map((edge) => {
+      const sourceNode = nodes.find((node) => node.id === edge.source);
+      const sourcePort = sourceNode?.data.spec.outputs.find(
+        (port) => port.name === edge.data?.sourcePortName,
+      );
+      const sourceArtifactType = sourceNode && sourcePort
+        ? resolvedPortArtifactType(
+            sourcePort,
+            sourceNode.data.artifactTypeBindings,
+          )
+        : null;
+      const sourceHandle =
+        sourceNode &&
+          sourcePort &&
+          workflowNodeIsSupported(sourceNode.data)
+          ? encodeHandleId(
+              portMetaForPort(
+                sourcePort,
+                effectivePortShape(sourceNode.data, sourcePort),
+                undefined,
+                sourceNode.data.artifactTypeBindings,
+              ),
+            )
+          : null;
+      return {
+        ...edge,
+        type: ARTIFACT_VIEWER_EDGE_TYPE,
+        sourceHandle,
+        targetHandle: ARTIFACT_VIEWER_INPUT_HANDLE,
+        style: {
+          ...edge.style,
+          stroke: sourceArtifactType
+            ? artifactTypeColor(sourceArtifactType.id, tokens.colorAccent)
+            : tokens.colorAccent,
+          strokeWidth: 2,
+        },
+      };
+    }),
+    [activeArtifactViewers.edges, nodes],
+  );
+
+  const artifactViewerInteractionCanvasEdges =
+    React.useMemo<ArtifactViewerInteractionEdge[]>(
+      () => activeArtifactViewers.bindings.map((binding) => ({
+        id: binding.id,
+        type: ARTIFACT_VIEWER_INTERACTION_EDGE_TYPE,
+        source: binding.sourceViewerId,
+        sourceHandle: ARTIFACT_VIEWER_INTERACTION_OUTPUT_HANDLE,
+        target: binding.targetViewerId,
+        targetHandle: ARTIFACT_VIEWER_INTERACTION_INPUT_HANDLE,
+        data: {
+          binding,
+          sourceFields:
+            artifactViewerFields[binding.sourceViewerId] ?? [],
+          targetFields:
+            artifactViewerFields[binding.targetViewerId] ?? [],
+          onBindingChange: updateArtifactViewerBinding,
+        },
+        style: {
+          stroke: tokens.colorInfo,
+          strokeWidth: 2,
+        },
+      })),
+      [
+        activeArtifactViewers.bindings,
+        artifactViewerFields,
+        updateArtifactViewerBinding,
+      ],
+    );
+
+  const allCanvasNodes = React.useMemo<CanvasNode[]>(
+    () => [...canvasNodes, ...artifactViewerCanvasNodes],
+    [artifactViewerCanvasNodes, canvasNodes],
+  );
+  const allCanvasEdges = React.useMemo<CanvasEdge[]>(
+    () => [
+      ...canvasEdges,
+      ...artifactViewerCanvasEdges,
+      ...artifactViewerInteractionCanvasEdges,
+    ],
+    [
+      artifactViewerCanvasEdges,
+      artifactViewerInteractionCanvasEdges,
+      canvasEdges,
     ],
   );
 
@@ -1284,8 +2089,8 @@ export function Workbench({
       <section {...stylex.props(s.canvas)} aria-label="Workflow canvas">
         <WorkflowCanvas
           fitViewOptions={WORKBENCH_FIT_VIEW_OPTIONS}
-          nodes={canvasNodes}
-          edges={canvasEdges}
+          nodes={allCanvasNodes}
+          edges={allCanvasEdges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
@@ -1312,7 +2117,9 @@ export function Workbench({
               <button
                 type="button"
                 disabled={runSelectedDisabled}
-                title="Run only the selected nodes; latest accessible upstream outputs are pinned"
+                title={selectedNodesAreRunnable
+                  ? "Run only the selected nodes; latest accessible upstream outputs are pinned"
+                  : "Unavailable or invalid selected nodes cannot run"}
                 {...stylex.props(s.toolButton, s.primaryButton)}
                 onClick={() => void runWorkflow("selected")}
               >
@@ -1325,8 +2132,10 @@ export function Workbench({
               </button>
               <button
                 type="button"
-                disabled={runSelectedDisabled}
-                title={`Run the selection and every upstream dependency (${selectedWithDependenciesCount} total)`}
+                disabled={runSelectedWithDependenciesDisabled}
+                title={selectedWithDependenciesAreRunnable
+                  ? `Run the selection and every upstream dependency (${selectedWithDependenciesCount} total)`
+                  : "Unavailable or invalid upstream dependencies cannot run"}
                 {...stylex.props(s.toolButton)}
                 onClick={() => void runWorkflow("selected-with-dependencies")}
               >
@@ -1446,6 +2255,16 @@ export function Workbench({
         </button>
         <button
           type="button"
+          aria-label="Add Artifact Viewer"
+          title="Add a presentation-only Artifact Viewer"
+          {...stylex.props(s.railButton)}
+          onClick={addArtifactViewer}
+        >
+          <Eye size={14} />
+          <span {...stylex.props(s.railLabel)}>Viewer</span>
+        </button>
+        <button
+          type="button"
           {...firefoxDynamicButtonProps}
           disabled={!flow}
           title="Fit workflow"
@@ -1466,7 +2285,7 @@ export function Workbench({
           onClick={() => {
             closeGraphBrowser();
             setLibraryOpen(false);
-            setExecutionHistoryTarget({ nodeId: null });
+            setExecutionHistoryTarget({ nodeId: null, executionId: null });
           }}
         >
           <History size={14} />
@@ -1530,10 +2349,11 @@ export function Workbench({
 
       {executionHistoryTarget ? (
         <ExecutionHistoryDrawer
-          key={`${activeGraph?.id ?? "unsaved"}:${executionHistoryTarget.nodeId ?? "all"}`}
+          key={`${activeGraph?.id ?? "unsaved"}:${executionHistoryTarget.nodeId ?? "all"}:${executionHistoryTarget.executionId ?? "latest"}`}
           graphId={activeGraph?.id ?? null}
           graphName={graphName}
           nodeId={executionHistoryTarget.nodeId}
+          initialExecutionId={executionHistoryTarget.executionId}
           nodeTitles={nodeTitles}
           executionRunning={running}
           isDirty={isDirty}

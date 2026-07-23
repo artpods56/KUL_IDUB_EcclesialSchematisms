@@ -387,6 +387,8 @@ export default function WorkflowEdgeControl({
   };
   const onUpdate = edgeData.onUpdate;
   const enabled = edgeData.enabled !== false;
+  const compatibilityIssues = edgeData.compatibilityIssues ?? [];
+  const compatible = compatibilityIssues.length === 0;
   const savedRouteOffset = edgeData.routeOffset ?? { x: 0, y: 0 };
   const [draftRouteOffset, setDraftRouteOffset] =
     React.useState<WorkflowEdgeRouteOffset | null>(null);
@@ -480,7 +482,8 @@ export default function WorkflowEdgeControl({
   const routeLabel = `${projectionLabel(sourcePortName, edgeData.projection)}${conversionLabel}${
     edgeData.collectionMode === "map" ? " · each" : ""
   }`;
-  const label = enabled ? routeLabel : `${routeLabel} · disabled`;
+  let label = enabled ? routeLabel : `${routeLabel} · disabled`;
+  if (!compatible) label = `${label} · unavailable`;
 
   return (
     <>
@@ -490,8 +493,15 @@ export default function WorkflowEdgeControl({
         markerEnd={markerEnd}
         style={{
           ...style,
-          opacity: enabled ? style?.opacity : selected ? 0.58 : 0.42,
-          strokeDasharray: enabled ? style?.strokeDasharray : "7 5",
+          opacity: !compatible
+            ? (selected ? 0.82 : 0.58)
+            : enabled
+              ? style?.opacity
+              : selected
+                ? 0.58
+                : 0.42,
+          strokeDasharray:
+            compatible && enabled ? style?.strokeDasharray : "7 5",
           strokeWidth: selected ? 2.7 : (style?.strokeWidth ?? 2),
         }}
         interactionWidth={24}
@@ -512,7 +522,7 @@ export default function WorkflowEdgeControl({
             {...stylex.props(
               s.controls,
               selected ? s.controlsSelected : null,
-              enabled ? null : s.controlsDisabled,
+              enabled && compatible ? null : s.controlsDisabled,
             )}
           >
             <button
@@ -639,8 +649,17 @@ export default function WorkflowEdgeControl({
             <Popover.Root>
               <Popover.Trigger
                 type="button"
-                aria-label={`Edit connection ${label}`}
-                title="Edit projection, conversion, and collection handling"
+                disabled={!compatible}
+                aria-label={
+                  compatible
+                    ? `Edit connection ${label}`
+                    : `Connection unavailable: ${compatibilityIssues.join(" ")}`
+                }
+                title={
+                  compatible
+                    ? "Edit projection, conversion, and collection handling"
+                    : compatibilityIssues.join(" ")
+                }
                 {...stylex.props(s.editButton)}
               >
                 <span {...stylex.props(s.editLabel)}>{label}</span>

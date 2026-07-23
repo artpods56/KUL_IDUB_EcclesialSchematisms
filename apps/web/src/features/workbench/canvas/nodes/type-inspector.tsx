@@ -7,7 +7,7 @@ import { Popover } from "@base-ui/react/popover";
 import { useNodeRegistry } from "@/hooks/use-api";
 import type { Port } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
-import { ARTIFACT_TYPE_COLOR } from "../nodes.css";
+import { artifactTypeColor } from "../nodes.css";
 import {
   portArtifactTypeVariable,
   resolvedPortArtifactType,
@@ -295,7 +295,7 @@ export function PortTypePopover({
       )
     : undefined;
   const color = artifactType
-    ? ARTIFACT_TYPE_COLOR[artifactType.id] ?? tokens.colorAccent
+    ? artifactTypeColor(artifactType.id, tokens.colorAccent)
     : tokens.colorAccent;
   const contract = artifactType
     ? `${artifactType.id}@${artifactType.schema_version}`

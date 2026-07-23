@@ -32,12 +32,72 @@ export type RunEdgeProjectionInput = NonNullable<
 export type PinnedOutputInput = Schemas["PinnedOutputRequest"];
 export type ArtifactSummary =
   Schemas["ArtifactSummaryResponse"];
+export type TablePage = Schemas["TablePageResponse"];
+export type TableCell = Schemas["TableCellResponse"];
+export type TableSchema = Schemas["TableSchemaResponse"];
+export type GeoBounds = Schemas["GeoBounds"];
+export type GeoRenderVectorSource = Schemas["GeoVectorRenderSourceResponse"];
+export type GeoRenderRasterSource = Schemas["GeoRasterRenderSourceResponse"];
+export type GeoRenderFillStyle = Schemas["GeoFillStyle"];
+export type GeoRenderLineStyle = Schemas["GeoLineStyle"];
+export type GeoRenderPointStyle = Schemas["GeoPointStyle"];
+export type GeoRenderPointCategory = Schemas["GeoPointCategory"];
+export type GeoRenderLabelStyle = Schemas["GeoLabelStyle"];
+export type GeoRenderVectorStyle = Schemas["GeoVectorStyle"];
+export type GeoRenderCategorizedPointStyle =
+  Schemas["GeoCategorizedPointStyle"];
+export type GeoRenderRasterStyle = Schemas["GeoRasterStyle"];
+export type GeoRenderLayer = Schemas["GeoRenderLayerResponse"];
+export type GeoRenderDescriptor = Schemas["GeoRenderResponse"];
+export type GeoFeatureQuery = Schemas["GeoFeatureQueryResponse"];
 export type RunPortOutput =
   Schemas["RunPortOutputResponse"];
 export type RunNodeResult =
   Schemas["RunNodeResponse"];
 export type RunExecution =
   Schemas["RunExecutionResponse"];
+export type RunExecutionNodeStatus =
+  | NodeRunStatus
+  | "running";
+
+interface RunExecutionEventBase {
+  sequence: number;
+  execution_id: string;
+  occurred_at: string;
+}
+
+interface RunExecutionNodeEventBase extends RunExecutionEventBase {
+  node_path: string[];
+  node_id: string;
+  node_run_id: string | null;
+  invocation_index: number | null;
+  invocation_path: number[];
+}
+
+export interface RunExecutionStatusEvent extends RunExecutionEventBase {
+  kind: "execution.status";
+  status: RunExecution["status"];
+  active_node_id: string | null;
+}
+
+export interface RunExecutionNodeStatusEvent
+  extends RunExecutionNodeEventBase {
+  kind: "node.status";
+  status: RunExecutionNodeStatus;
+}
+
+export interface RunExecutionNodeProgressEvent
+  extends RunExecutionNodeEventBase {
+  kind: "node.progress";
+  message: string;
+  current: number | null;
+  total: number | null;
+}
+
+export type RunExecutionEvent =
+  | RunExecutionStatusEvent
+  | RunExecutionNodeStatusEvent
+  | RunExecutionNodeProgressEvent;
 export type GraphExecutionStatus = Schemas["GraphExecutionStatus"];
 export type GraphExecutionSummary =
   Schemas["GraphExecutionSummaryResponse"];
@@ -63,8 +123,6 @@ export type NodeRegistry =
   paths["/v1/nodes"]["get"]["responses"][200]["content"]["application/json"];
 export type UnavailableGraphModule =
   Schemas["UnavailableGraphModuleResponse"];
-export type UploadRequest =
-  paths["/v1/uploads"]["post"]["requestBody"]["content"]["application/json"];
 export type UploadResponse =
   paths["/v1/uploads"]["post"]["responses"][200]["content"]["application/json"];
 export type RunScopeInput = Schemas["GraphExecutionScope"];

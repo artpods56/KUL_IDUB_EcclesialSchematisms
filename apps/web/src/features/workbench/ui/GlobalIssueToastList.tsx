@@ -7,7 +7,7 @@ import { CircleAlert, X } from "lucide-react";
 
 import { tokens } from "@/lib/stylex/tokens.stylex";
 
-export type GlobalIssueId = "registry" | "graph" | "run";
+export type GlobalIssueId = "registry" | "graph" | "run" | "presentation";
 
 export interface GlobalIssue {
   id: GlobalIssueId;
