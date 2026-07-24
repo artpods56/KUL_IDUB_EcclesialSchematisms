@@ -334,6 +334,8 @@ export default function ArtifactViewerNodeCard({
         data.onFieldsChange?.(id, fields),
       onSelectionChange: (selection) =>
         data.onSelectionChange?.(id, selection),
+      onActivityChange: (activity) =>
+        data.onActivityChange?.(id, activity),
     }),
     [data, id],
   );

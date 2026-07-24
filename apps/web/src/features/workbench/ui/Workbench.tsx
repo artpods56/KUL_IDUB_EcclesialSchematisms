@@ -23,7 +23,6 @@ import {
   Maximize2,
   Play,
   Plus,
-  Square,
   Trash2,
   Workflow,
 } from "lucide-react";
@@ -33,6 +32,10 @@ import {
   GlobalIssueToastList,
   type GlobalIssue,
 } from "./GlobalIssueToastList";
+import {
+  WorkbenchActivityBar,
+  type WorkbenchActivity,
+} from "./WorkbenchActivityBar";
 import {
   ConnectionRouteDialog,
   type PendingConnectionRoute,
@@ -74,6 +77,7 @@ import {
   targetRowsForBinding,
   type ArtifactInteractionField,
   type ArtifactKeySelection,
+  type ArtifactViewerActivity,
   type ArtifactViewerBinding,
 } from "../canvas/artifact-interactions";
 import {
@@ -168,6 +172,11 @@ interface PendingBoundEdge {
   edge: WorkflowEdge;
 }
 
+interface ActiveArtifactViewerActivity {
+  activity: ArtifactViewerActivity;
+  revision: number;
+}
+
 
 export function Workbench({
   workspaceSlug,
@@ -192,6 +201,9 @@ export function Workbench({
     React.useState<Record<string, ArtifactKeySelection>>({});
   const [artifactViewerFields, setArtifactViewerFields] =
     React.useState<Record<string, ArtifactInteractionField[]>>({});
+  const [artifactViewerActivities, setArtifactViewerActivities] =
+    React.useState<Record<string, ActiveArtifactViewerActivity>>({});
+  const artifactViewerActivityRevisionRef = React.useRef(0);
   const artifactViewersInitializedRef = React.useRef(initialGraphId === null);
   const [artifactViewerPersistenceError, setArtifactViewerPersistenceError] =
     React.useState<string | null>(null);
@@ -351,6 +363,32 @@ export function Workbench({
     });
   }, []);
 
+  const updateArtifactViewerActivity = React.useCallback((
+    nodeId: string,
+    activity: ArtifactViewerActivity | null,
+  ) => {
+    if (!activity) {
+      setArtifactViewerActivities((current) => {
+        if (!current[nodeId]) return current;
+        const next = { ...current };
+        delete next[nodeId];
+        return next;
+      });
+      return;
+    }
+    const revision = artifactViewerActivityRevisionRef.current + 1;
+    artifactViewerActivityRevisionRef.current = revision;
+    setArtifactViewerActivities((current) => {
+      return {
+        ...current,
+        [nodeId]: {
+          activity,
+          revision,
+        },
+      };
+    });
+  }, []);
+
   const updateArtifactViewerBinding = React.useCallback((
     bindingId: string,
     binding: ArtifactViewerBinding,
@@ -382,6 +420,12 @@ export function Workbench({
       return next;
     });
     setArtifactViewerFields((current) => {
+      const next = { ...current };
+      delete next[nodeId];
+      return next;
+    });
+    setArtifactViewerActivities((current) => {
+      if (!current[nodeId]) return current;
       const next = { ...current };
       delete next[nodeId];
       return next;
@@ -1209,6 +1253,11 @@ export function Workbench({
           for (const nodeId of removedArtifactViewerIds) delete next[nodeId];
           return next;
         });
+        setArtifactViewerActivities((current) => {
+          const next = { ...current };
+          for (const nodeId of removedArtifactViewerIds) delete next[nodeId];
+          return next;
+        });
       }
       const removedWorkflowNodeIds = new Set(
         workflowChanges.flatMap((change) =>
@@ -1921,15 +1970,17 @@ export function Workbench({
       );
       const incomingBindings = activeArtifactViewers.bindings
         .filter((binding) => binding.targetViewerId === node.id)
-        .map((binding) => ({
-          bindingId: binding.id,
-          effects: binding.effects,
-          rows: targetRowsForBinding(
-            binding,
+        .map((binding) => {
+          const sourceSelection =
             artifactViewerSelections[binding.sourceViewerId] ??
-              EMPTY_ARTIFACT_KEY_SELECTION,
-          ),
-        }));
+              EMPTY_ARTIFACT_KEY_SELECTION;
+          return {
+            bindingId: binding.id,
+            effects: binding.effects,
+            sourceSelectionCount: sourceSelection.items.length,
+            rows: targetRowsForBinding(binding, sourceSelection),
+          };
+        });
       return {
         ...node,
         data: {
@@ -1950,6 +2001,7 @@ export function Workbench({
           onModeChange: updateArtifactViewerMode,
           onSelectionChange: updateArtifactViewerSelection,
           onFieldsChange: updateArtifactViewerFields,
+          onActivityChange: updateArtifactViewerActivity,
           onRemoveNode: removeArtifactViewer,
         },
       };
@@ -1960,6 +2012,7 @@ export function Workbench({
       artifactViewerFields,
       artifactViewerSelections,
       removeArtifactViewer,
+      updateArtifactViewerActivity,
       updateArtifactViewerLayout,
       updateArtifactViewerMode,
       updateArtifactViewerFields,
@@ -2055,6 +2108,45 @@ export function Workbench({
     ],
   );
 
+  const latestArtifactViewerActivity = React.useMemo(() => {
+    let latest: {
+      nodeId: string;
+      value: ActiveArtifactViewerActivity;
+    } | null = null;
+    for (const [nodeId, value] of Object.entries(artifactViewerActivities)) {
+      if (!latest || value.revision > latest.value.revision) {
+        latest = { nodeId, value };
+      }
+    }
+    return latest;
+  }, [artifactViewerActivities]);
+
+  const dismissArtifactViewerActivity = React.useCallback((
+    nodeId: string,
+    revision: number,
+  ) => {
+    setArtifactViewerActivities((current) => {
+      if (current[nodeId]?.revision !== revision) return current;
+      const next = { ...current };
+      delete next[nodeId];
+      return next;
+    });
+  }, []);
+
+  React.useEffect(() => {
+    if (
+      !latestArtifactViewerActivity ||
+      latestArtifactViewerActivity.value.activity.state !== "success"
+    ) {
+      return;
+    }
+    const { nodeId, value } = latestArtifactViewerActivity;
+    const timeout = window.setTimeout(
+      () => dismissArtifactViewerActivity(nodeId, value.revision),
+      4000,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [dismissArtifactViewerActivity, latestArtifactViewerActivity]);
 
   // Firefox uses autocomplete to control restored dynamic button state, but
   // React's button typings omit that browser-specific attribute.
@@ -2075,6 +2167,62 @@ export function Workbench({
         : visibleExecution?.status === "running"
           ? "Processing node"
           : "Starting execution");
+  const viewerActivity = latestArtifactViewerActivity?.value.activity ?? null;
+  let viewerActivityAction: WorkbenchActivity["action"];
+  if (latestArtifactViewerActivity && viewerActivity?.retry) {
+    viewerActivityAction = {
+      kind: "retry",
+      label: "Retry",
+      ariaLabel: `Retry ${viewerActivity.title}`,
+      onInvoke: viewerActivity.retry,
+    };
+  } else if (
+    latestArtifactViewerActivity &&
+    (
+      viewerActivity?.state === "warning" ||
+      viewerActivity?.state === "error"
+    )
+  ) {
+    viewerActivityAction = {
+      kind: "dismiss",
+      label: "Dismiss",
+      ariaLabel: `Dismiss ${viewerActivity.title}`,
+      onInvoke: () =>
+        dismissArtifactViewerActivity(
+          latestArtifactViewerActivity.nodeId,
+          latestArtifactViewerActivity.value.revision,
+        ),
+    };
+  }
+  const workbenchActivity: WorkbenchActivity | null = visibleExecution
+    ? {
+        eyebrow: "Execution",
+        title: visibleExecutionTitle,
+        message: visibleExecutionStatus,
+        tone: executionCancelling
+          ? "cancelling"
+          : visibleExecution.statusError
+            ? "error"
+            : "working",
+        action: {
+          kind: "cancel",
+          label: executionCancelling ? "Cancelling" : "Cancel",
+          ariaLabel: executionCancelling
+            ? "Cancelling execution"
+            : "Cancel execution",
+          disabled: !visibleExecution.executionId || executionCancelling,
+          onInvoke: () => void cancelCurrentExecution(),
+        },
+      }
+    : viewerActivity
+      ? {
+          eyebrow: "Linked view",
+          title: viewerActivity.title,
+          message: viewerActivity.message,
+          tone: viewerActivity.state,
+          action: viewerActivityAction,
+        }
+      : null;
 
   return (
     <main {...stylex.props(s.shell)}>
@@ -2153,53 +2301,8 @@ export function Workbench({
         </WorkflowCanvas>
       </section>
 
-      {visibleExecution ? (
-        <aside
-          aria-label={`Execution: ${visibleExecutionTitle}`}
-          {...stylex.props(s.executionBar)}
-        >
-          <span
-            aria-hidden="true"
-            {...stylex.props(
-              s.executionIndicator,
-              executionCancelling ? s.executionIndicatorCancelling : null,
-            )}
-          >
-            <LoaderCircle size={15} {...stylex.props(s.spinner)} />
-          </span>
-          <span
-            role="status"
-            aria-live="polite"
-            {...stylex.props(s.executionCopy)}
-          >
-            <span {...stylex.props(s.executionEyebrow)}>Execution</span>
-            <span {...stylex.props(s.executionTitle)}>
-              {visibleExecutionTitle}
-            </span>
-            <span
-              {...stylex.props(
-                s.executionStatus,
-                visibleExecution.statusError ? s.executionStatusError : null,
-              )}
-            >
-              {visibleExecutionStatus}
-            </span>
-          </span>
-          <button
-            type="button"
-            disabled={!visibleExecution.executionId || executionCancelling}
-            aria-label={executionCancelling ? "Cancelling execution" : "Cancel execution"}
-            {...stylex.props(s.cancelExecutionButton)}
-            onClick={() => void cancelCurrentExecution()}
-          >
-            {executionCancelling ? (
-              <LoaderCircle size={12} {...stylex.props(s.spinner)} />
-            ) : (
-              <Square size={11} fill="currentColor" />
-            )}
-            {executionCancelling ? "Cancelling" : "Cancel"}
-          </button>
-        </aside>
+      {workbenchActivity ? (
+        <WorkbenchActivityBar activity={workbenchActivity} />
       ) : null}
 
       <WorkbenchHeader

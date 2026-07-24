@@ -67,10 +67,16 @@ describe("table artifact API", () => {
     ));
     vi.stubGlobal("fetch", fetchMock);
 
-    await getArtifactTablePage("artifact/1", 50, 25, 10, 20, 256);
+    await getArtifactTablePage(
+      "artifact/1",
+      50,
+      25,
+      ["geometry/wkt", "source name"],
+      256,
+    );
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/v1/artifacts/artifact%2F1/table/page?offset=50&limit=25&column_offset=10&column_limit=20&max_cell_characters=256",
+      "http://localhost:8000/v1/artifacts/artifact%2F1/table/page?offset=50&limit=25&max_cell_characters=256&column_ids=geometry%2Fwkt&column_ids=source+name",
       expect.objectContaining({ method: "GET" }),
     );
   });

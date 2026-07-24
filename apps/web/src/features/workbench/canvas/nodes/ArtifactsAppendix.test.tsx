@@ -72,8 +72,8 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("artifact payload loading policy", () => {
   it("loads only the bounded page endpoint for table previews", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(new Response(
         JSON.stringify({
           columns: [],
           rows: [],
@@ -85,7 +85,7 @@ describe("artifact payload loading policy", () => {
           total_columns: 0,
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
+      ))
     );
     vi.stubGlobal("fetch", fetchMock);
     const artifact: ArtifactSummary = {
@@ -99,11 +99,18 @@ describe("artifact payload loading policy", () => {
 
     const { root } = await renderPreview(outputFor([artifact]));
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0][0])).toContain(
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.some((call) =>
+      String(call[0]).includes("/v1/artifacts/table-artifact/table/schema")
+    )).toBe(true);
+    expect(fetchMock.mock.calls.some((call) =>
+      String(call[0]).includes(
       "/v1/artifacts/table-artifact/table/page?",
-    );
-    expect(String(fetchMock.mock.calls[0][0])).not.toContain("/content");
+      )
+    )).toBe(true);
+    expect(fetchMock.mock.calls.every(
+      (call) => !String(call[0]).includes("/content"),
+    )).toBe(true);
     await act(async () => root.unmount());
   });
 

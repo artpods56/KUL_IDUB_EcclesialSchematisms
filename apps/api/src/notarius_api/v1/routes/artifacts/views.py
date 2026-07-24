@@ -282,9 +282,16 @@ async def get_table_artifact_page(
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     column_offset: Annotated[int, Query(ge=0)] = 0,
     column_limit: Annotated[int, Query(ge=1, le=100)] = 25,
+    column_ids: Annotated[
+        list[str] | None,
+        Query(min_length=1, max_length=100),
+    ] = None,
     max_cell_characters: Annotated[int, Query(ge=32, le=2_000)] = 256,
 ) -> TablePageResponse:
-    if limit * column_limit * max_cell_characters > 2_000_000:
+    requested_column_count = (
+        len(column_ids) if column_ids is not None else column_limit
+    )
+    if limit * requested_column_count * max_cell_characters > 2_000_000:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -302,17 +309,20 @@ async def get_table_artifact_page(
             offset=offset,
             limit=limit,
         )
+        return TablePageResponse.from_page(
+            page,
+            limit=limit,
+            column_offset=column_offset,
+            column_limit=column_limit,
+            column_ids=column_ids,
+            max_cell_characters=max_cell_characters,
+        )
     except ArtifactContentUnavailableError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except WorkbenchOperationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return TablePageResponse.from_page(
-        page,
-        limit=limit,
-        column_offset=column_offset,
-        column_limit=column_limit,
-        max_cell_characters=max_cell_characters,
-    )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get(
@@ -360,12 +370,12 @@ async def query_table_artifact_page(
     query: TableQueryRequest,
     service: ArtifactDependency,
 ) -> TablePageResponse:
-    if (
-        query.limit
-        * query.column_limit
-        * query.max_cell_characters
-        > 2_000_000
-    ):
+    requested_column_count = (
+        len(query.column_ids)
+        if query.column_ids is not None
+        else query.column_limit
+    )
+    if query.limit * requested_column_count * query.max_cell_characters > 2_000_000:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -385,19 +395,22 @@ async def query_table_artifact_page(
             offset=query.offset,
             limit=query.limit,
         )
+        return TablePageResponse.from_page(
+            result.page,
+            limit=query.limit,
+            column_offset=query.column_offset,
+            column_limit=query.column_limit,
+            column_ids=query.column_ids,
+            max_cell_characters=query.max_cell_characters,
+            row_indices=result.row_indices,
+            highlighted_row_indices=result.highlighted_row_indices,
+        )
     except ArtifactContentUnavailableError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except WorkbenchOperationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return TablePageResponse.from_page(
-        result.page,
-        limit=query.limit,
-        column_offset=query.column_offset,
-        column_limit=query.column_limit,
-        max_cell_characters=query.max_cell_characters,
-        row_indices=result.row_indices,
-        highlighted_row_indices=result.highlighted_row_indices,
-    )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get(

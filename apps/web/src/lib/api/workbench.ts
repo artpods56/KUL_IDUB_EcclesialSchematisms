@@ -48,8 +48,7 @@ export interface TableQueryInput {
   highlight_groups: TableExactMatchGroupInput[];
   offset: number;
   limit: number;
-  column_offset: number;
-  column_limit: number;
+  column_ids?: string[];
   max_cell_characters: number;
 }
 
@@ -488,18 +487,18 @@ export function getArtifactTablePage(
   artifactId: string,
   offset: number,
   limit: number,
-  columnOffset: number,
-  columnLimit: number,
+  columnIds: readonly string[],
   maxCellCharacters: number,
   signal?: AbortSignal,
 ) {
   const query = new URLSearchParams({
     offset: String(offset),
     limit: String(limit),
-    column_offset: String(columnOffset),
-    column_limit: String(columnLimit),
     max_cell_characters: String(maxCellCharacters),
   });
+  for (const columnId of columnIds) {
+    query.append("column_ids", columnId);
+  }
   return request<TablePage>(
     "GET",
     `/v1/artifacts/${encodeURIComponent(artifactId)}/table/page?${query}`,

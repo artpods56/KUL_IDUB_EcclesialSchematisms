@@ -3131,6 +3131,24 @@
       "TableQueryRequest": {
         "additionalProperties": false,
         "properties": {
+          "column_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 255,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Column Ids"
+          },
           "column_limit": {
             "default": 25,
             "maximum": 100.0,
@@ -3718,6 +3736,27 @@
               "minimum": 1,
               "title": "Column Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "column_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 100,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Column Ids"
             }
           },
           {

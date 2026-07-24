@@ -29,7 +29,15 @@ export interface ArtifactKeySelection {
 export interface ArtifactViewerIncomingBinding {
   bindingId: string;
   effects: ArtifactViewerEffect[];
+  sourceSelectionCount: number;
   rows: Array<Record<string, ArtifactInteractionScalar>>;
+}
+
+export interface ArtifactViewerActivity {
+  state: "working" | "success" | "warning" | "error";
+  title: string;
+  message: string;
+  retry?: () => void;
 }
 
 export interface ArtifactInteractionField {
@@ -44,6 +52,7 @@ export interface ArtifactViewerInteractionContext {
   incoming: ArtifactViewerIncomingBinding[];
   onFieldsChange: (fields: ArtifactInteractionField[]) => void;
   onSelectionChange: (selection: ArtifactKeySelection) => void;
+  onActivityChange: (activity: ArtifactViewerActivity | null) => void;
 }
 
 export const EMPTY_ARTIFACT_KEY_SELECTION: ArtifactKeySelection = {

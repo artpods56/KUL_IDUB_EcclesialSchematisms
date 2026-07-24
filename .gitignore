@@ -5,6 +5,7 @@
 .env
 .env.*
 !.env.example
+!infra/docker/.env.production.example
 
 .venv/
 __pycache__/

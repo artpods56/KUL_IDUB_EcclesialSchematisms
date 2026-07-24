@@ -127,14 +127,31 @@ class TablePageResponse(ApiResponse):
         limit: int,
         column_offset: int,
         column_limit: int,
+        column_ids: list[str] | None = None,
         max_cell_characters: int,
         row_indices: list[int] | None = None,
         highlighted_row_indices: list[int] | None = None,
     ) -> "TablePageResponse":
-        effective_column_offset = min(column_offset, len(page.columns))
-        visible_columns = page.columns[
-            effective_column_offset : effective_column_offset + column_limit
-        ]
+        if column_ids is None:
+            effective_column_offset = min(column_offset, len(page.columns))
+            visible_columns = page.columns[
+                effective_column_offset : effective_column_offset + column_limit
+            ]
+        else:
+            columns_by_id = {column.id: column for column in page.columns}
+            missing_column_ids = [
+                column_id
+                for column_id in column_ids
+                if column_id not in columns_by_id
+            ]
+            if missing_column_ids:
+                raise ValueError(
+                    f"Table has no column(s) {missing_column_ids!r}"
+                )
+            effective_column_offset = 0
+            visible_columns = [
+                columns_by_id[column_id] for column_id in column_ids
+            ]
         return cls(
             columns=[
                 TableColumnResponse.from_column(column) for column in visible_columns
@@ -159,7 +176,7 @@ class TablePageResponse(ApiResponse):
             limit=limit,
             total_rows=page.total_rows,
             column_offset=effective_column_offset,
-            column_limit=column_limit,
+            column_limit=len(visible_columns) if column_ids else column_limit,
             total_columns=len(page.columns),
         )
 
@@ -217,6 +234,9 @@ class TableQueryRequest(BaseModel):
     limit: StrictInt = Field(default=50, ge=1, le=100)
     column_offset: StrictInt = Field(default=0, ge=0)
     column_limit: StrictInt = Field(default=25, ge=1, le=100)
+    column_ids: list[
+        Annotated[str, Field(min_length=1, max_length=255)]
+    ] | None = Field(default=None, min_length=1, max_length=100)
     max_cell_characters: StrictInt = Field(default=256, ge=32, le=2_000)
 
 

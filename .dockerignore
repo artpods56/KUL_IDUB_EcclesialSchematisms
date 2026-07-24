@@ -1,7 +1,7 @@
 .git
 .idea
 .vscode
-.env
+.env*
 .venv
 .pytest_cache
 .ruff_cache

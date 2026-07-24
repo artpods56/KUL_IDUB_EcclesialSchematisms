@@ -151,6 +151,30 @@ def test_table_page_bounds_cell_previews_and_full_download(
     assert column_page["column_limit"] == 1
     assert column_page["total_columns"] == 4
 
+    selected_columns_response = client.get(
+        f"/v1/artifacts/{ref.artifact_id}/table/page",
+        params=[
+            ("column_ids", "metadata"),
+            ("column_ids", "id"),
+        ],
+    )
+    assert selected_columns_response.status_code == 200
+    selected_columns_page = selected_columns_response.json()
+    assert [
+        column["id"] for column in selected_columns_page["columns"]
+    ] == ["metadata", "id"]
+    assert list(selected_columns_page["rows"][0]) == ["metadata", "id"]
+    assert selected_columns_page["column_offset"] == 0
+    assert selected_columns_page["column_limit"] == 2
+    assert selected_columns_page["total_columns"] == 4
+    assert (
+        client.get(
+            f"/v1/artifacts/{ref.artifact_id}/table/page",
+            params={"column_ids": "missing"},
+        ).status_code
+        == 400
+    )
+
     schema_response = client.get(
         f"/v1/artifacts/{ref.artifact_id}/table/schema"
     )

@@ -79,10 +79,10 @@ const s = stylex.create({
     cursor: "pointer",
   },
   popup: {
-    width: "310px",
+    width: "min(520px, calc(100vw - 24px))",
     display: "grid",
-    gap: "8px",
-    padding: "9px",
+    gap: "10px",
+    padding: "11px",
     borderWidth: 1,
     borderStyle: "solid",
     borderColor: tokens.colorBorderStrong,
@@ -99,14 +99,14 @@ const s = stylex.create({
   },
   mapping: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) 14px minmax(0, 1fr) 24px",
+    gridTemplateColumns: "minmax(0, 1fr) 16px minmax(0, 1fr) 28px",
     alignItems: "center",
-    gap: "5px",
+    gap: "7px",
   },
   input: {
     minWidth: 0,
-    height: "26px",
-    paddingInline: "7px",
+    height: "30px",
+    paddingInline: "9px",
     borderWidth: 1,
     borderStyle: "solid",
     borderColor: tokens.colorBorder,
@@ -114,7 +114,7 @@ const s = stylex.create({
     backgroundColor: tokens.colorSurface,
     color: tokens.colorText,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    fontSize: "9px",
+    fontSize: "10px",
   },
   arrow: {
     color: tokens.colorSubtle,
@@ -266,6 +266,7 @@ export default function ArtifactViewerInteractionEdgeControl({
                           list={data?.sourceFields?.length
                             ? sourceFieldListId
                             : undefined}
+                          title={mapping.sourceField || "Source field"}
                           value={mapping.sourceField}
                           {...stylex.props(s.input)}
                           onChange={(event) => {
@@ -288,6 +289,7 @@ export default function ArtifactViewerInteractionEdgeControl({
                           list={data?.targetFields?.length
                             ? targetFieldListId
                             : undefined}
+                          title={mapping.targetField || "Target field"}
                           value={mapping.targetField}
                           {...stylex.props(s.input)}
                           onChange={(event) => {

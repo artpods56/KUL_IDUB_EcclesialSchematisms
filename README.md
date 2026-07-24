@@ -238,6 +238,11 @@ make api
 make web
 ```
 
+For a VPS deployment behind an existing Nginx instance, use the production
+[Docker Compose guide](infra/docker/README.md). The Compose services publish
+only loopback-bound ports, run migrations before the API, and keep the database
+and local artifact objects in one durable volume.
+
 ### Assemble graphs through MCP
 
 The local FastMCP server exposes six deliberately narrow tools over the public

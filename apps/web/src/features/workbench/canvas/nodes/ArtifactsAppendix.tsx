@@ -148,6 +148,13 @@ const s = stylex.create({
     borderRadius: "10px",
     backgroundColor: tokens.colorSurfaceMuted,
   },
+  tableBody: {
+    maxHeight: "none",
+    overflow: "visible",
+    padding: 0,
+    borderRadius: 0,
+    backgroundColor: "transparent",
+  },
   raw: {
     margin: 0,
     fontFamily: MONO,
@@ -689,8 +696,10 @@ export function ArtifactPortPreview({
             />
           ) : null}
           <div
-            {...nodeInteractionProps(stylex.props(s.body))}
-            style={{ maxHeight: previewHeight }}
+            {...nodeInteractionProps(
+              stylex.props(s.body, tableArtifact ? s.tableBody : null),
+            )}
+            style={{ maxHeight: tableArtifact ? undefined : previewHeight }}
           >
             {payloadDeferred || explicitPayloadLoading ? (
               <div {...stylex.props(s.notice)}>

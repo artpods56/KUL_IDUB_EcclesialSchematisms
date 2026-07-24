@@ -2,6 +2,15 @@
 
 import * as React from "react";
 import * as stylex from "@stylexjs/stylex";
+import { Popover } from "@base-ui/react/popover";
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Columns3,
+} from "lucide-react";
 import Markdown, {
   type MarkdownToJSX,
   sanitizer as sanitizeMarkdownUrl,
@@ -17,6 +26,7 @@ import {
   type ArtifactSummary,
   type TablePage,
   type TableQueryInput,
+  type TableSchema,
 } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import type {
@@ -193,20 +203,34 @@ const s = stylex.create({
   },
   tablePreview: {
     display: "grid",
-    gap: "7px",
+    gap: "6px",
     minWidth: 0,
   },
   tableSummary: {
     display: "flex",
-    alignItems: "baseline",
+    alignItems: "center",
     justifyContent: "space-between",
-    gap: "12px",
+    gap: "10px",
     color: tokens.colorMuted,
     fontSize: "10px",
+  },
+  tableSummaryMeta: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "5px",
+    whiteSpace: "nowrap",
   },
   tableSummaryStrong: {
     color: tokens.colorTextEmphasis,
     fontWeight: 700,
+  },
+  tableSummaryDivider: {
+    color: tokens.colorDivider,
+  },
+  tableToolbarActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
   },
   tableViewport: {
     width: "100%",
@@ -345,9 +369,20 @@ const s = stylex.create({
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: "8px",
+    gap: "10px",
+    minWidth: 0,
   },
-  tablePagerActions: { display: "flex", gap: "5px" },
+  tablePagerMeta: {
+    display: "flex",
+    alignItems: "center",
+    gap: "9px",
+    minWidth: 0,
+  },
+  tablePagerActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: "3px",
+  },
   tablePagerButton: {
     minHeight: "26px",
     paddingInline: "9px",
@@ -362,6 +397,137 @@ const s = stylex.create({
     },
     cursor: { default: "pointer", ":disabled": "not-allowed" },
     fontSize: "10px",
+  },
+  tablePagerIconButton: {
+    width: "26px",
+    paddingInline: 0,
+    display: "grid",
+    placeItems: "center",
+  },
+  tablePageIndicator: {
+    minWidth: "74px",
+    color: tokens.colorMuted,
+    fontSize: "10px",
+    textAlign: "center",
+    whiteSpace: "nowrap",
+  },
+  tablePageSize: {
+    height: "26px",
+    paddingInline: "6px",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorDivider,
+    borderRadius: "6px",
+    outlineWidth: { default: 0, ":focus-visible": "2px" },
+    outlineStyle: "solid",
+    outlineColor: tokens.colorAccent,
+    outlineOffset: "1px",
+    backgroundColor: tokens.colorSurface,
+    color: tokens.colorText,
+    fontSize: "10px",
+  },
+  columnPickerTrigger: {
+    height: "26px",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "5px",
+    paddingInline: "8px",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorDivider,
+    borderRadius: "6px",
+    backgroundColor: {
+      default: tokens.colorSurface,
+      ":hover": tokens.colorSurfaceMuted,
+    },
+    color: tokens.colorText,
+    cursor: "pointer",
+    fontSize: "10px",
+  },
+  columnPickerCount: {
+    color: tokens.colorSubtle,
+    fontFamily: MONO,
+    fontSize: "9px",
+  },
+  columnPickerPositioner: {
+    zIndex: 30,
+  },
+  columnPickerPopup: {
+    width: "248px",
+    padding: "9px",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorDivider,
+    borderRadius: "9px",
+    outline: "none",
+    backgroundColor: tokens.colorSurface,
+    boxShadow: tokens.shadowNodeSelected,
+    color: tokens.colorText,
+  },
+  columnPickerHeader: {
+    display: "flex",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: "8px",
+    paddingInline: "3px",
+    paddingBottom: "7px",
+  },
+  columnPickerTitle: {
+    color: tokens.colorTextEmphasis,
+    fontSize: "10px",
+    fontWeight: 750,
+  },
+  columnPickerHint: {
+    color: tokens.colorSubtle,
+    fontSize: "9px",
+  },
+  columnPickerList: {
+    maxHeight: "236px",
+    display: "grid",
+    gap: "2px",
+    overflowY: "auto",
+    paddingBlock: "2px",
+    borderTopWidth: 1,
+    borderTopStyle: "solid",
+    borderTopColor: tokens.colorDivider,
+    borderBottomWidth: 1,
+    borderBottomStyle: "solid",
+    borderBottomColor: tokens.colorDivider,
+  },
+  columnPickerOption: {
+    display: "grid",
+    gridTemplateColumns: "15px minmax(0, 1fr) auto",
+    alignItems: "center",
+    gap: "7px",
+    padding: "6px 4px",
+    borderRadius: "5px",
+    cursor: "pointer",
+    fontSize: "10px",
+  },
+  columnPickerOptionTitle: {
+    overflow: "hidden",
+    color: tokens.colorText,
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  columnPickerOptionType: {
+    color: tokens.colorSubtle,
+    fontFamily: MONO,
+    fontSize: "9px",
+  },
+  columnPickerFooter: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "6px",
+    paddingTop: "7px",
+  },
+  columnPickerTextButton: {
+    padding: "3px",
+    borderWidth: 0,
+    backgroundColor: "transparent",
+    color: tokens.colorAccent,
+    cursor: "pointer",
+    fontSize: "9px",
   },
   tableTruncatedCellButton: {
     width: "100%",
@@ -407,7 +573,7 @@ const s = stylex.create({
   tableDownload: {
     color: tokens.colorAccent,
     fontSize: "10px",
-    textDecorationLine: "underline",
+    textDecorationLine: "none",
   },
   markdownImageReference: {
     display: "flex",
@@ -581,9 +747,11 @@ const geoMapRenderer: ArtifactRendererSpec = {
   Component: GeoMapArtifactRenderer,
 };
 
-const TABLE_PAGE_SIZE = 50;
-const TABLE_COLUMN_PAGE_SIZE = 25;
+const DEFAULT_TABLE_PAGE_SIZE = 50;
+const DEFAULT_VISIBLE_COLUMN_COUNT = 6;
+const MAX_VISIBLE_COLUMN_COUNT = 100;
 const TABLE_CELL_PREVIEW_CHARACTERS = 256;
+const TABLE_SELECTION_ACTIVITY_DELAY_MS = 200;
 
 function tableCellText(value: unknown): string {
   if (value === null || value === undefined) return "—";
@@ -604,89 +772,222 @@ interface TableCellSelection {
   columnTitle: string;
 }
 
+function TableColumnPicker({
+  columns,
+  visibleColumnIds,
+  onVisibleColumnIdsChange,
+}: {
+  columns: TableSchema["columns"];
+  visibleColumnIds: readonly string[];
+  onVisibleColumnIdsChange: (columnIds: readonly string[]) => void;
+}) {
+  const visibleColumnIdSet = new Set(visibleColumnIds);
+  return (
+    <Popover.Root>
+      <Popover.Trigger
+        type="button"
+        aria-label="Choose visible table columns"
+        title="Choose visible columns"
+        {...stylex.props(s.columnPickerTrigger)}
+      >
+        <Columns3 size={12} aria-hidden="true" />
+        Columns
+        <span {...stylex.props(s.columnPickerCount)}>
+          {visibleColumnIds.length}/{columns.length}
+        </span>
+        <ChevronDown size={11} aria-hidden="true" />
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner
+          side="bottom"
+          align="end"
+          sideOffset={6}
+          {...stylex.props(s.columnPickerPositioner)}
+        >
+          <Popover.Popup
+            className="nodrag nopan nowheel"
+            {...stylex.props(s.columnPickerPopup)}
+          >
+            <div {...stylex.props(s.columnPickerHeader)}>
+              <span {...stylex.props(s.columnPickerTitle)}>
+                Visible columns
+              </span>
+              <span {...stylex.props(s.columnPickerHint)}>
+                Choose up to {MAX_VISIBLE_COLUMN_COUNT}
+              </span>
+            </div>
+            <div {...stylex.props(s.columnPickerList)}>
+              {columns.map((column) => {
+                const checked = visibleColumnIdSet.has(column.id);
+                const disabled =
+                  (checked && visibleColumnIds.length === 1) ||
+                  (!checked &&
+                    visibleColumnIds.length >= MAX_VISIBLE_COLUMN_COUNT);
+                return (
+                  <label
+                    key={column.id}
+                    title={column.title || column.id}
+                    {...stylex.props(s.columnPickerOption)}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={disabled}
+                      onChange={(event) => {
+                        if (event.currentTarget.checked) {
+                          onVisibleColumnIdsChange([
+                            ...visibleColumnIds,
+                            column.id,
+                          ]);
+                          return;
+                        }
+                        onVisibleColumnIdsChange(
+                          visibleColumnIds.filter(
+                            (columnId) => columnId !== column.id,
+                          ),
+                        );
+                      }}
+                    />
+                    <span {...stylex.props(s.columnPickerOptionTitle)}>
+                      {column.title || column.id}
+                    </span>
+                    <span {...stylex.props(s.columnPickerOptionType)}>
+                      {column.value_type}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            <div {...stylex.props(s.columnPickerFooter)}>
+              <button
+                type="button"
+                {...stylex.props(s.columnPickerTextButton)}
+                onClick={() =>
+                  onVisibleColumnIdsChange(
+                    columns
+                      .slice(0, MAX_VISIBLE_COLUMN_COUNT)
+                      .map((column) => column.id),
+                  )
+                }
+              >
+                Show all
+              </button>
+              <button
+                type="button"
+                {...stylex.props(s.columnPickerTextButton)}
+                onClick={() =>
+                  onVisibleColumnIdsChange(
+                    columns
+                      .slice(0, DEFAULT_VISIBLE_COLUMN_COUNT)
+                      .map((column) => column.id),
+                  )
+                }
+              >
+                Reset
+              </button>
+            </div>
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
 function TablePageNavigation({
   page,
   requestedOffset,
-  requestedColumnOffset,
+  pageSize,
   onOffsetChange,
-  onColumnOffsetChange,
+  onPageSizeChange,
 }: {
   page: TablePage;
   requestedOffset: number;
-  requestedColumnOffset: number;
+  pageSize: number;
   onOffsetChange: (offset: number) => void;
-  onColumnOffsetChange: (offset: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
 }) {
   const pageEnd = page.offset + page.rows.length;
-  const columnEnd = page.column_offset + page.columns.length;
   const waitingForRows = requestedOffset !== page.offset;
-  const waitingForColumns = requestedColumnOffset !== page.column_offset;
+  const totalPages = Math.max(1, Math.ceil(page.total_rows / pageSize));
+  const currentPage =
+    page.total_rows === 0 ? 1 : Math.floor(page.offset / pageSize) + 1;
+  const lastPageOffset =
+    page.total_rows === 0
+      ? 0
+      : Math.floor((page.total_rows - 1) / pageSize) * pageSize;
   return (
-    <>
-      <div role="group" aria-label="Table row pages" {...stylex.props(s.tablePager)}>
+    <div
+      role="group"
+      aria-label="Table row pages"
+      {...stylex.props(s.tablePager)}
+    >
+      <span {...stylex.props(s.tablePagerMeta)}>
         <span aria-live="polite" {...stylex.props(s.tableLimit)}>
           {page.total_rows === 0
             ? "No rows"
-            : `Rows ${page.offset + 1}–${pageEnd} of ${page.total_rows}`}
+            : `${page.offset + 1}–${pageEnd} of ${page.total_rows}`}
         </span>
-        <span {...stylex.props(s.tablePagerActions)}>
-          <button
-            type="button"
-            disabled={requestedOffset === 0}
-            {...stylex.props(s.tablePagerButton)}
-            onClick={() =>
-              onOffsetChange(Math.max(0, requestedOffset - TABLE_PAGE_SIZE))
-            }
-          >
-            Previous
-          </button>
-          <button
-            type="button"
-            disabled={waitingForRows || pageEnd >= page.total_rows}
-            {...stylex.props(s.tablePagerButton)}
-            onClick={() => onOffsetChange(pageEnd)}
-          >
-            Next
-          </button>
+        <select
+          aria-label="Rows per page"
+          value={pageSize}
+          {...stylex.props(s.tablePageSize)}
+          onChange={(event) =>
+            onPageSizeChange(Number(event.currentTarget.value))
+          }
+        >
+          <option value={25}>25 / page</option>
+          <option value={50}>50 / page</option>
+          <option value={100}>100 / page</option>
+        </select>
+      </span>
+      <span {...stylex.props(s.tablePagerActions)}>
+        <button
+          type="button"
+          aria-label="First page"
+          title="First page"
+          disabled={requestedOffset === 0}
+          {...stylex.props(s.tablePagerButton, s.tablePagerIconButton)}
+          onClick={() => onOffsetChange(0)}
+        >
+          <ChevronsLeft size={13} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          aria-label="Previous page"
+          title="Previous page"
+          disabled={requestedOffset === 0}
+          {...stylex.props(s.tablePagerButton, s.tablePagerIconButton)}
+          onClick={() =>
+            onOffsetChange(Math.max(0, requestedOffset - pageSize))
+          }
+        >
+          <ChevronLeft size={13} aria-hidden="true" />
+        </button>
+        <span aria-live="polite" {...stylex.props(s.tablePageIndicator)}>
+          Page {currentPage} of {totalPages}
         </span>
-      </div>
-      <div
-        role="group"
-        aria-label="Table column pages"
-        {...stylex.props(s.tablePager)}
-      >
-        <span aria-live="polite" {...stylex.props(s.tableLimit)}>
-          {page.total_columns === 0
-            ? "No columns"
-            : `Columns ${page.column_offset + 1}–${columnEnd} of ${page.total_columns}`}
-        </span>
-        <span {...stylex.props(s.tablePagerActions)}>
-          <button
-            type="button"
-            disabled={requestedColumnOffset === 0}
-            {...stylex.props(s.tablePagerButton)}
-            onClick={() =>
-              onColumnOffsetChange(
-                Math.max(
-                  0,
-                  requestedColumnOffset - TABLE_COLUMN_PAGE_SIZE,
-                ),
-              )
-            }
-          >
-            Previous columns
-          </button>
-          <button
-            type="button"
-            disabled={waitingForColumns || columnEnd >= page.total_columns}
-            {...stylex.props(s.tablePagerButton)}
-            onClick={() => onColumnOffsetChange(columnEnd)}
-          >
-            Next columns
-          </button>
-        </span>
-      </div>
-    </>
+        <button
+          type="button"
+          aria-label="Next page"
+          title="Next page"
+          disabled={waitingForRows || pageEnd >= page.total_rows}
+          {...stylex.props(s.tablePagerButton, s.tablePagerIconButton)}
+          onClick={() => onOffsetChange(pageEnd)}
+        >
+          <ChevronRight size={13} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          aria-label="Last page"
+          title="Last page"
+          disabled={waitingForRows || pageEnd >= page.total_rows}
+          {...stylex.props(s.tablePagerButton, s.tablePagerIconButton)}
+          onClick={() => onOffsetChange(lastPageOffset)}
+        >
+          <ChevronsRight size={13} aria-hidden="true" />
+        </button>
+      </span>
+    </div>
   );
 }
 
@@ -702,22 +1003,40 @@ function TableArtifactRendererState({
   interaction?: ArtifactViewerInteractionContext;
 }) {
   const [offset, setOffset] = React.useState(0);
-  const [columnOffset, setColumnOffset] = React.useState(0);
+  const [pageSize, setPageSize] = React.useState(DEFAULT_TABLE_PAGE_SIZE);
+  const [visibleColumnIds, setVisibleColumnIds] =
+    React.useState<readonly string[] | null>(null);
   const [selectedCell, setSelectedCell] =
     React.useState<TableCellSelection | null>(null);
   const [selectingRowIndex, setSelectingRowIndex] =
     React.useState<number | null>(null);
-  const [selectionError, setSelectionError] = React.useState<string | null>(
-    null,
-  );
+  const selectionRequestRef = React.useRef<AbortController | null>(null);
+  const selectionActivityTimerRef = React.useRef<number | null>(null);
+  const activityChangeRef = React.useRef(interaction?.onActivityChange);
   const cellDetailId = React.useId();
   const cellTriggerRef = React.useRef<HTMLButtonElement | null>(null);
-  const { data: tableSchema } = useSWR(
-    interaction
-      ? ["table-artifact-schema", artifact.artifact_id] as const
-      : null,
+  const {
+    data: tableSchema,
+    error: tableSchemaError,
+    mutate: retryTableSchema,
+  } = useSWR(
+    ["table-artifact-schema", artifact.artifact_id] as const,
     ([, artifactId]) => getArtifactTableSchema(artifactId),
   );
+  const selectedColumnIds = React.useMemo(() => {
+    if (!tableSchema) return [];
+    const availableColumnIds = new Set(
+      tableSchema.columns.map((column) => column.id),
+    );
+    const retainedColumnIds = visibleColumnIds?.filter(
+      (columnId) => availableColumnIds.has(columnId),
+    );
+    if (retainedColumnIds?.length) return retainedColumnIds;
+    return tableSchema.columns
+      .slice(0, DEFAULT_VISIBLE_COLUMN_COUNT)
+      .map((column) => column.id);
+  }, [tableSchema, visibleColumnIds]);
+  const selectedColumnSignature = selectedColumnIds.join("\u0000");
   const filterGroups = interaction?.incoming.flatMap((binding) =>
     binding.effects.includes("filter") && binding.rows.length
       ? [{ rows: binding.rows.map((values) => ({ values })) }]
@@ -734,9 +1053,10 @@ function TableArtifactRendererState({
           filter_groups: filterGroups,
           highlight_groups: highlightGroups,
           offset,
-          limit: TABLE_PAGE_SIZE,
-          column_offset: columnOffset,
-          column_limit: TABLE_COLUMN_PAGE_SIZE,
+          limit: pageSize,
+          ...(selectedColumnIds.length
+            ? { column_ids: [...selectedColumnIds] }
+            : {}),
           max_cell_characters: TABLE_CELL_PREVIEW_CHARACTERS,
         }
       : null;
@@ -748,7 +1068,8 @@ function TableArtifactRendererState({
     interactionQuery ? "table-artifact-query" : "table-artifact-page",
     artifact.artifact_id,
     offset,
-    columnOffset,
+    pageSize,
+    selectedColumnSignature,
     interactionQuerySignature,
   ] as const;
   const {
@@ -757,16 +1078,15 @@ function TableArtifactRendererState({
     isValidating: pageLoading,
     mutate: retryPage,
   } = useSWR(
-    pageKey,
-    ([, artifactId, pageOffset, pageColumnOffset]) =>
+    tableSchema ? pageKey : null,
+    ([, artifactId, pageOffset]) =>
       interactionQuery
         ? queryArtifactTablePage(artifactId, interactionQuery)
         : getArtifactTablePage(
             artifactId,
             pageOffset,
-            TABLE_PAGE_SIZE,
-            pageColumnOffset,
-            TABLE_COLUMN_PAGE_SIZE,
+            pageSize,
+            selectedColumnIds,
             TABLE_CELL_PREVIEW_CHARACTERS,
           ),
     { keepPreviousData: true },
@@ -798,23 +1118,44 @@ function TableArtifactRendererState({
     );
   }, [interaction, tableSchema]);
 
+  React.useEffect(() => {
+    activityChangeRef.current = interaction?.onActivityChange;
+  }, [interaction?.onActivityChange]);
+
+  React.useEffect(() => () => {
+    const request = selectionRequestRef.current;
+    selectionRequestRef.current = null;
+    request?.abort();
+    if (selectionActivityTimerRef.current !== null) {
+      window.clearTimeout(selectionActivityTimerRef.current);
+      selectionActivityTimerRef.current = null;
+    }
+    activityChangeRef.current?.(null);
+  }, []);
+
   if (!page) {
     return (
       <div {...stylex.props(s.tablePreview)}>
         <span
-          role={pageError ? "alert" : "status"}
-          aria-live={pageError ? undefined : "polite"}
+          role={tableSchemaError || pageError ? "alert" : "status"}
+          aria-live={
+            tableSchemaError || pageError ? undefined : "polite"
+          }
           {...stylex.props(s.tableLimit)}
         >
-          {pageError
-            ? "Could not load this table page."
-            : "Loading table page…"}
+          {tableSchemaError
+            ? "Could not load the table columns."
+            : pageError
+              ? "Could not load this table page."
+              : "Loading table page…"}
         </span>
-        {pageError ? (
+        {tableSchemaError || pageError ? (
           <button
             type="button"
             {...stylex.props(s.tablePagerButton)}
-            onClick={() => void retryPage()}
+            onClick={() =>
+              void (tableSchemaError ? retryTableSchema() : retryPage())
+            }
           >
             Retry
           </button>
@@ -824,7 +1165,7 @@ function TableArtifactRendererState({
   }
 
   const viewportHeight = availableHeight
-    ? Math.max(140, availableHeight - 92)
+    ? Math.max(120, availableHeight - 92)
     : undefined;
   const contentUrl = artifactContentUrl(artifact.content_url);
   const fullCellText = fullCell
@@ -842,6 +1183,15 @@ function TableArtifactRendererState({
   ) => {
     if (!interaction) return;
     if (selectedSourceIndices.has(rowIndex)) {
+      const previousRequest = selectionRequestRef.current;
+      selectionRequestRef.current = null;
+      previousRequest?.abort();
+      if (selectionActivityTimerRef.current !== null) {
+        window.clearTimeout(selectionActivityTimerRef.current);
+        selectionActivityTimerRef.current = null;
+      }
+      setSelectingRowIndex(null);
+      interaction.onActivityChange(null);
       interaction.onSelectionChange({
         kind: "key-selection",
         items: [],
@@ -851,9 +1201,33 @@ function TableArtifactRendererState({
     const requestedFields = interaction.outgoingFields.length
       ? interaction.outgoingFields
       : page.columns.map((column) => column.id);
-    if (!requestedFields.length) return;
+    if (!requestedFields.length) {
+      interaction.onActivityChange({
+        state: "warning",
+        title: "Row cannot be linked",
+        message: "This table has no fields available for selection.",
+      });
+      return;
+    }
+    selectionRequestRef.current?.abort();
+    if (selectionActivityTimerRef.current !== null) {
+      window.clearTimeout(selectionActivityTimerRef.current);
+      selectionActivityTimerRef.current = null;
+    }
+    interaction.onActivityChange(null);
+    const request = new AbortController();
+    selectionRequestRef.current = request;
     setSelectingRowIndex(rowIndex);
-    setSelectionError(null);
+    selectionActivityTimerRef.current = window.setTimeout(() => {
+      if (selectionRequestRef.current !== request) return;
+      selectionActivityTimerRef.current = null;
+      interaction.onActivityChange({
+        state: "working",
+        title: "Reading selected row",
+        message: `Loading mapped values from row ${rowIndex + 1}.`,
+      });
+    }, TABLE_SELECTION_ACTIVITY_DELAY_MS);
+    let selectionFailed = false;
     try {
       const cells = await Promise.all(
         requestedFields.map((fieldName) =>
@@ -861,9 +1235,11 @@ function TableArtifactRendererState({
             artifact.artifact_id,
             rowIndex,
             fieldName,
+            request.signal,
           )
         ),
       );
+      if (selectionRequestRef.current !== request) return;
       const values = Object.fromEntries(
         cells.flatMap((cell) =>
           cell.encoding === "json"
@@ -890,17 +1266,39 @@ function TableArtifactRendererState({
         items: [{ values, sourceIndex: rowIndex }],
       });
     } catch (error) {
-      setSelectionError(
-        error instanceof Error
-          ? error.message
-          : "Could not read the selected row.",
-      );
+      if (
+        request.signal.aborted ||
+        selectionRequestRef.current !== request
+      ) {
+        return;
+      }
+      selectionFailed = true;
+      const message = error instanceof Error
+        ? error.message
+        : "Could not read the selected row.";
+      interaction.onActivityChange({
+        state: "error",
+        title: "Could not read selected row",
+        message,
+        retry: () => void selectRow(rowIndex, visibleRow),
+      });
     } finally {
-      setSelectingRowIndex(null);
+      if (selectionRequestRef.current === request) {
+        if (selectionActivityTimerRef.current !== null) {
+          window.clearTimeout(selectionActivityTimerRef.current);
+          selectionActivityTimerRef.current = null;
+        }
+        selectionRequestRef.current = null;
+        setSelectingRowIndex(null);
+        if (!selectionFailed) interaction.onActivityChange(null);
+      }
     }
   };
   return (
-    <div aria-busy={pageLoading} {...stylex.props(s.tablePreview)}>
+    <div
+      aria-busy={pageLoading || selectingRowIndex !== null}
+      {...stylex.props(s.tablePreview)}
+    >
       {pageError ? (
         <span role="alert" {...stylex.props(s.tableLimit)}>
           Could not load the requested table page. The previous page is still
@@ -913,62 +1311,78 @@ function TableArtifactRendererState({
           Loading table page…
         </span>
       ) : null}
-      {selectionError ? (
-        <span role="alert" {...stylex.props(s.tableLimit)}>
-          {selectionError}
+      <div {...stylex.props(s.tableSummary)}>
+        <span {...stylex.props(s.tableSummaryMeta)}>
+          <span {...stylex.props(s.tableSummaryStrong)}>
+            {page.total_rows}
+          </span>
+          <span>{page.total_rows === 1 ? "row" : "rows"}</span>
+          <span aria-hidden="true" {...stylex.props(s.tableSummaryDivider)}>
+            ·
+          </span>
+          <span>
+            {page.total_columns}{" "}
+            {page.total_columns === 1 ? "column" : "columns"}
+          </span>
         </span>
-      ) : selectingRowIndex !== null ? (
-        <span role="status" aria-live="polite" {...stylex.props(s.tableLimit)}>
-          Reading row {selectingRowIndex + 1}…
+        <span {...stylex.props(s.tableToolbarActions)}>
+          {contentUrl ? (
+            <a
+              href={contentUrl}
+              download
+              title="Download the complete table as JSON"
+              {...stylex.props(s.tableDownload)}
+            >
+              Download JSON
+            </a>
+          ) : null}
+          {tableSchema?.columns.length ? (
+            <TableColumnPicker
+              columns={tableSchema.columns}
+              visibleColumnIds={selectedColumnIds}
+              onVisibleColumnIdsChange={(columnIds) => {
+                setSelectedCell(null);
+                setVisibleColumnIds(columnIds);
+              }}
+            />
+          ) : null}
         </span>
-      ) : null}
+      </div>
       {mode === "raw" ? (
         <pre {...stylex.props(s.jsonCode)}>{JSON.stringify(page, null, 2)}</pre>
       ) : (
-        <>
-      <div {...stylex.props(s.tableSummary)}>
-        <span>
-          <span {...stylex.props(s.tableSummaryStrong)}>
-            {page.total_rows}
-          </span>{" "}
-          {page.total_rows === 1 ? "row" : "rows"}
-        </span>
-        <span>
-          {page.total_columns} {page.total_columns === 1 ? "column" : "columns"}
-        </span>
-      </div>
-      <div
-        role="region"
-        aria-label="Table preview"
-        tabIndex={0}
-        className="nodrag nowheel"
-        {...stylex.props(s.tableViewport)}
-        style={{ maxHeight: viewportHeight }}
-      >
-        <table {...stylex.props(s.dataTable)}>
-          <thead>
-            <tr>
-              <th scope="col" {...stylex.props(s.tableIndexHeader)}>
-                #
-              </th>
-              {page.columns.map((column) => (
-                <th
-                  key={column.id}
-                  scope="col"
-                  title={`${column.title || column.id} · ${column.value_type}`}
-                  {...stylex.props(s.tableHeader)}
-                >
-                  <span {...stylex.props(s.tableHeaderTitle)}>
-                    {column.title || column.id}
-                  </span>
-                  <span {...stylex.props(s.tableHeaderType)}>
-                    {column.value_type}
-                  </span>
+        <div
+          role="region"
+          aria-label="Table preview"
+          tabIndex={0}
+          className="nodrag nowheel"
+          {...stylex.props(s.tableViewport)}
+          style={{ maxHeight: viewportHeight }}
+        >
+          <table {...stylex.props(s.dataTable)}>
+            <thead>
+              <tr>
+                <th scope="col" {...stylex.props(s.tableIndexHeader)}>
+                  #
                 </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
+                {page.columns.map((column) => (
+                  <th
+                    key={column.id}
+                    scope="col"
+                    title={`${column.title || column.id} · ${column.value_type}`}
+                    {...stylex.props(s.tableHeader)}
+                  >
+                    <span {...stylex.props(s.tableHeaderTitle)}>
+                      {column.title || column.id}
+                    </span>
+                    <span {...stylex.props(s.tableHeaderType)}>
+                      {column.value_type}
+                    </span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
             {page.rows.map((row, pageRowIndex) => {
               const rowIndex =
                 page.row_indices?.[pageRowIndex] ??
@@ -1067,22 +1481,22 @@ function TableArtifactRendererState({
                 </td>
               </tr>
             ) : null}
-          </tbody>
-        </table>
-      </div>
-        </>
+            </tbody>
+          </table>
+        </div>
       )}
       <TablePageNavigation
         page={page}
         requestedOffset={offset}
-        requestedColumnOffset={columnOffset}
+        pageSize={pageSize}
         onOffsetChange={(nextOffset) => {
           setSelectedCell(null);
           setOffset(nextOffset);
         }}
-        onColumnOffsetChange={(nextOffset) => {
+        onPageSizeChange={(nextPageSize) => {
           setSelectedCell(null);
-          setColumnOffset(nextOffset);
+          setOffset(0);
+          setPageSize(nextPageSize);
         }}
       />
       {mode !== "raw" && selectedCell ? (
@@ -1127,11 +1541,6 @@ function TableArtifactRendererState({
             />
           ) : null}
         </div>
-      ) : null}
-      {contentUrl ? (
-        <a href={contentUrl} download {...stylex.props(s.tableDownload)}>
-          Download complete table JSON
-        </a>
       ) : null}
     </div>
   );

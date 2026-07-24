@@ -37,6 +37,7 @@ import {
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import type {
   ArtifactInteractionScalar,
+  ArtifactViewerActivity,
   ArtifactViewerIncomingBinding,
   ArtifactViewerInteractionContext,
 } from "../artifact-interactions";
@@ -501,20 +502,6 @@ const s = stylex.create({
     padding: "10px",
     color: tokens.colorSubtle,
     fontSize: "10px",
-  },
-  notice: {
-    position: "absolute",
-    right: "10px",
-    bottom: "10px",
-    left: "10px",
-    zIndex: 2,
-    padding: "6px 9px",
-    borderRadius: "7px",
-    backgroundColor: "light-dark(rgba(255,255,255,.92), rgba(20,24,32,.92))",
-    boxShadow: tokens.shadowNode,
-    color: tokens.colorMuted,
-    fontSize: "10px",
-    backdropFilter: "blur(10px)",
   },
   rawShell: { display: "grid", gap: "7px" },
   rawHeader: {
@@ -1829,7 +1816,7 @@ function LayerInspector({
             aria-label={`Move ${layer.title} down in the map stack`}
             title="Move down"
             {...stylex.props(s.iconButton)}
-            onClick={() => onMove(-1)}
+            onClick={() => onMove(1)}
           >
             <ArrowDown size={12} aria-hidden="true" />
           </button>
@@ -1839,7 +1826,7 @@ function LayerInspector({
             aria-label={`Move ${layer.title} up in the map stack`}
             title="Move up"
             {...stylex.props(s.iconButton)}
-            onClick={() => onMove(1)}
+            onClick={() => onMove(-1)}
           >
             <ArrowUp size={12} aria-hidden="true" />
           </button>
@@ -1938,9 +1925,15 @@ function GeoMapPreview({
     signature: string;
   } | null>(null);
   const inspectorId = React.useId();
-  const focusRows = interaction?.incoming.flatMap((binding) =>
-    binding.effects.includes("focus") ? binding.rows : []
+  const focusBindings = interaction?.incoming.filter((binding) =>
+    binding.effects.includes("focus")
   ) ?? [];
+  const focusRows = focusBindings.flatMap((binding) => binding.rows);
+  const unmappedFocusSelectionCount = focusBindings.reduce(
+    (count, binding) =>
+      count + Math.max(0, binding.sourceSelectionCount - binding.rows.length),
+    0,
+  );
   const focusSignature = JSON.stringify(focusRows);
   const focusKey = focusRows.length
     ? [
@@ -1952,6 +1945,8 @@ function GeoMapPreview({
   const {
     data: focusResult,
     error: focusError,
+    isValidating: focusLoading,
+    mutate: retryFocus,
   } = useSWR(focusKey, ([, artifactId]) =>
     queryArtifactGeoFeatures(artifactId, {
       rows: focusRows.map((values) => ({ values })),
@@ -2229,6 +2224,101 @@ function GeoMapPreview({
     });
   };
 
+  const viewerActivity = React.useMemo<ArtifactViewerActivity | null>(() => {
+    if (mapError) {
+      return {
+        state: "error",
+        title: "Map rendering failed",
+        message: mapError,
+      };
+    }
+    if (!mapReady) {
+      return {
+        state: "working",
+        title: "Loading interactive map",
+        message: "Preparing map layers.",
+      };
+    }
+    if (focusError) {
+      const detail = focusError instanceof Error
+        ? focusError.message
+        : "The map query failed.";
+      return {
+        state: "error",
+        title: "Linked selection lookup failed",
+        message: detail,
+        retry: () => void retryFocus(),
+      };
+    }
+    if (focusLoading) {
+      return {
+        state: "working",
+        title: "Locating linked selection",
+        message: "Searching the map layers for matching features.",
+      };
+    }
+    if (unmappedFocusSelectionCount > 0 && focusRows.length === 0) {
+      return {
+        state: "warning",
+        title: "Selection mapping failed",
+        message:
+          "The selected row does not provide all configured target fields.",
+      };
+    }
+    if (focusResult?.matched_feature_count === 0) {
+      return {
+        state: "warning",
+        title: "No linked feature found",
+        message: "No map feature matched the linked selection.",
+      };
+    }
+    if (
+      focusResult &&
+      focusResult.matched_feature_count > 0 &&
+      !focusResult.bounds
+    ) {
+      const featureLabel = focusResult.matched_feature_count === 1
+        ? "feature"
+        : "features";
+      return {
+        state: "warning",
+        title: "Linked feature has no geometry",
+        message:
+          `Matched ${focusResult.matched_feature_count} ${featureLabel}, but no geometry was available to focus.`,
+      };
+    }
+    if (focusResult?.matched_feature_count === 1) {
+      return {
+        state: unmappedFocusSelectionCount > 0 ? "warning" : "success",
+        title: "Linked feature located",
+        message: "Located 1 matching map feature.",
+      };
+    }
+    if (focusResult && focusResult.matched_feature_count > 1) {
+      return {
+        state: "warning",
+        title: "Multiple linked features located",
+        message:
+          `Located ${focusResult.matched_feature_count} matches; showing their combined extent.`,
+      };
+    }
+    return null;
+  }, [
+    focusError,
+    focusLoading,
+    focusResult,
+    focusRows.length,
+    mapError,
+    mapReady,
+    retryFocus,
+    unmappedFocusSelectionCount,
+  ]);
+
+  React.useEffect(() => {
+    interaction?.onActivityChange(viewerActivity);
+    return () => interaction?.onActivityChange(null);
+  }, [interaction, viewerActivity]);
+
   return (
     <div
       data-notarius-geo-map="true"
@@ -2377,15 +2467,6 @@ function GeoMapPreview({
             </p>
           )}
         </section>
-      ) : null}
-      {mapError ? (
-        <div role="alert" {...stylex.props(s.notice)}>{mapError}</div>
-      ) : focusError ? (
-        <div role="alert" {...stylex.props(s.notice)}>
-          Could not locate the linked map feature.
-        </div>
-      ) : !mapReady ? (
-        <div role="status" {...stylex.props(s.notice)}>Loading map layers…</div>
       ) : null}
     </div>
   );

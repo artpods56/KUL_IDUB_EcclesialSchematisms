@@ -12,6 +12,7 @@ import {
 import type {
   ArtifactInteractionField,
   ArtifactKeySelection,
+  ArtifactViewerActivity,
   ArtifactViewerBinding,
   ArtifactViewerIncomingBinding,
 } from "./artifact-interactions";
@@ -45,6 +46,10 @@ export interface ArtifactViewerNodeData extends Record<string, unknown> {
   onFieldsChange?: (
     nodeId: string,
     fields: ArtifactInteractionField[],
+  ) => void;
+  onActivityChange?: (
+    nodeId: string,
+    activity: ArtifactViewerActivity | null,
   ) => void;
   onRemoveNode?: (nodeId: string) => void;
 }

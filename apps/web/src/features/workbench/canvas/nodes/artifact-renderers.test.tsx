@@ -291,10 +291,12 @@ afterEach(() => {
 describe("Table artifact rendering", () => {
   async function renderTablePage(page: TablePage, mode = "table") {
     const renderer = rendererFor(TABLE_ARTIFACT);
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
-      JSON.stringify(page),
-      { status: 200, headers: { "Content-Type": "application/json" } },
-    )));
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() =>
+      Promise.resolve(new Response(
+        JSON.stringify(page),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ))
+    ));
     const container = document.createElement("div");
     const root = createRoot(container);
     await act(async () => {
@@ -360,13 +362,15 @@ describe("Table artifact rendering", () => {
 
     const markup = await renderTablePage(page);
     expect(markup).toContain('aria-label="Table preview"');
-    expect(markup).toContain("<span>102</span> rows");
+    expect(markup).toContain(">102</span>");
+    expect(markup).toContain(">rows</span>");
     expect(markup.match(/>name<\/span>/g)).toHaveLength(2);
     expect(markup).toContain(">Invoice</td>");
     expect(markup).toContain(">—</td>");
-    expect(markup).toContain("Rows 1–2 of 102");
-    expect(markup).toContain("Columns 1–2 of 2");
-    expect(markup).toContain(">Next</button>");
+    expect(markup).toContain("1–2 of 102");
+    expect(markup).toContain("Page 1 of 3");
+    expect(markup).toContain('aria-label="Choose visible table columns"');
+    expect(markup).not.toContain("Next columns");
   });
 
   it("renders a useful empty state for zero-row tables", async () => {
@@ -383,7 +387,7 @@ describe("Table artifact rendering", () => {
     const markup = await renderTablePage(page);
 
     expect(markup).toContain("This table has no rows");
-    expect(markup).toContain("<span>0</span> rows");
+    expect(markup).toContain(">0</span>");
     expect(markup).toContain("No rows");
   });
 
@@ -409,10 +413,10 @@ describe("Table artifact rendering", () => {
     expect(markup).toContain("MULTIPOLYGON (((preview…");
     expect(markup).toContain("Preview truncated; click to inspect");
     expect(markup).not.toContain("125000");
-    expect(markup).toContain("Download complete table JSON");
+    expect(markup).toContain("Download JSON");
   });
 
-  it("keeps row and column navigation available in raw mode", async () => {
+  it("keeps row navigation and column visibility available in raw mode", async () => {
     const page: TablePage = {
       columns: [{ id: "value", title: "Value", value_type: "text" }],
       rows: [{
@@ -428,8 +432,9 @@ describe("Table artifact rendering", () => {
     const markup = await renderTablePage(page, "raw");
 
     expect(markup).toContain("total_rows");
-    expect(markup).toContain(">Next</button>");
-    expect(markup).toContain(">Next columns</button>");
+    expect(markup).toContain('aria-label="Next page"');
+    expect(markup).toContain('aria-label="Choose visible table columns"');
+    expect(markup).not.toContain("Next columns");
   });
 
   it("keeps the previous page and recovery controls when the next page fails", async () => {
@@ -454,6 +459,10 @@ describe("Table artifact rendering", () => {
         status: 200,
         headers: { "Content-Type": "application/json" },
       }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(page), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }))
       .mockRejectedValueOnce(new Error("page unavailable"));
     vi.stubGlobal("fetch", fetchMock);
     const renderer = rendererFor(TABLE_ARTIFACT);
@@ -470,8 +479,8 @@ describe("Table artifact rendering", () => {
       ));
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    const nextButton = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "Next",
+    const nextButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Next page"]',
     );
     expect(nextButton).toBeDefined();
     await act(async () => {
@@ -479,12 +488,12 @@ describe("Table artifact rendering", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[1][0])).toContain("offset=50");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(String(fetchMock.mock.calls[2][0])).toContain("offset=50");
     expect(container.textContent).toContain("still visible");
     expect(container.textContent).toContain("previous page is still available");
-    const previousButton = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "Previous",
+    const previousButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Previous page"]',
     );
     expect(previousButton?.disabled).toBe(false);
     await act(async () => root.unmount());
@@ -538,7 +547,7 @@ describe("Table artifact rendering", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     const previewButton = [...container.querySelectorAll("button")].find(
       (button) => button.textContent?.includes("MULTIPOLYGON"),
     );
@@ -548,8 +557,8 @@ describe("Table artifact rendering", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[1][0])).toContain(
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(String(fetchMock.mock.calls[2][0])).toContain(
       "/table/cell?row_index=0&column_id=geometry%2Fwkt",
     );
     expect(container.querySelector("textarea")?.value).toBe(
@@ -585,6 +594,10 @@ describe("Table artifact rendering", () => {
       column_limit: 25,
       total_columns: 2,
     };
+    let releaseCells: (() => void) | undefined;
+    const cellsReady = new Promise<void>((resolve) => {
+      releaseCells = resolve;
+    });
     const fetchMock = vi.fn().mockImplementation((
       input: RequestInfo | URL,
       init?: RequestInit,
@@ -601,15 +614,17 @@ describe("Table artifact rendering", () => {
       }
       if (url.includes("/table/cell?")) {
         const columnId = new URL(url).searchParams.get("column_id");
-        return Promise.resolve(new Response(JSON.stringify({
-          row_index: 7,
-          column_id: columnId,
-          value: columnId === "place" ? "Belynichi" : "Mohilev",
-          encoding: "native",
-        }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }));
+        return cellsReady.then(() =>
+          new Response(JSON.stringify({
+            row_index: 7,
+            column_id: columnId,
+            value: columnId === "place" ? "Belynichi" : "Mohilev",
+            encoding: "native",
+          }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          })
+        );
       }
       expect(init?.method).toBe("POST");
       expect(JSON.parse(String(init?.body))).toMatchObject({
@@ -625,16 +640,19 @@ describe("Table artifact rendering", () => {
     vi.stubGlobal("fetch", fetchMock);
     const onSelectionChange = vi.fn();
     const onFieldsChange = vi.fn();
+    const onActivityChange = vi.fn();
     const interaction: ArtifactViewerInteractionContext = {
       outgoingFields: ["place", "district"],
       selection: { kind: "key-selection", items: [] },
       incoming: [{
         bindingId: "binding-1",
         effects: ["filter", "highlight"],
+        sourceSelectionCount: 1,
         rows: [{ status: "accepted" }],
       }],
       onFieldsChange,
       onSelectionChange,
+      onActivityChange,
     };
     const renderer = rendererFor(TABLE_ARTIFACT);
     const container = document.createElement("div");
@@ -668,11 +686,140 @@ describe("Table artifact rendering", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+    });
+    expect(onActivityChange).toHaveBeenLastCalledWith({
+      state: "working",
+      title: "Reading selected row",
+      message: "Loading mapped values from row 8.",
+    });
+    await act(async () => {
+      releaseCells?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
     expect(onSelectionChange).toHaveBeenCalledWith({
       kind: "key-selection",
       items: [{
         sourceIndex: 7,
         values: { place: "Belynichi", district: "Mohilev" },
+      }],
+    });
+    expect(onActivityChange).toHaveBeenLastCalledWith(null);
+    await act(async () => root.unmount());
+  });
+
+  it("lets the latest row click win when an earlier cell read is still pending", async () => {
+    const page: TablePage = {
+      columns: [{ id: "place", title: "Place", value_type: "text" }],
+      rows: [
+        {
+          place: {
+            display: "First place",
+            truncated: false,
+            original_length: null,
+          },
+        },
+        {
+          place: {
+            display: "Second place",
+            truncated: false,
+            original_length: null,
+          },
+        },
+      ],
+      row_indices: [0, 1],
+      highlighted_row_indices: [],
+      offset: 0,
+      limit: 50,
+      total_rows: 2,
+      column_offset: 0,
+      column_limit: 25,
+      total_columns: 1,
+    };
+    const fetchMock = vi.fn().mockImplementation((
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const url = String(input);
+      if (url.includes("/table/schema")) {
+        return Promise.resolve(new Response(JSON.stringify({
+          columns: page.columns,
+          total_rows: 2,
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }));
+      }
+      if (url.includes("/table/cell?")) {
+        const rowIndex = Number(new URL(url).searchParams.get("row_index"));
+        if (rowIndex === 0) {
+          return new Promise<Response>((_, reject) => {
+            const rejectAborted = () =>
+              reject(new DOMException("Aborted", "AbortError"));
+            if (init?.signal?.aborted) {
+              rejectAborted();
+            } else {
+              init?.signal?.addEventListener("abort", rejectAborted, {
+                once: true,
+              });
+            }
+          });
+        }
+        return Promise.resolve(new Response(JSON.stringify({
+          row_index: 1,
+          column_id: "place",
+          value: "Second place",
+          encoding: "native",
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }));
+      }
+      return Promise.resolve(new Response(JSON.stringify(page), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onSelectionChange = vi.fn();
+    const interaction: ArtifactViewerInteractionContext = {
+      outgoingFields: ["place"],
+      selection: { kind: "key-selection", items: [] },
+      incoming: [],
+      onFieldsChange: vi.fn(),
+      onSelectionChange,
+      onActivityChange: vi.fn(),
+    };
+    const renderer = rendererFor(TABLE_ARTIFACT);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(
+        SWRConfig,
+        { value: { provider: () => new Map(), shouldRetryOnError: false } },
+        createElement(renderer.Component, {
+          artifact: TABLE_ARTIFACT,
+          mode: "table",
+          interaction,
+        }),
+      ));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const rows = container.querySelectorAll("tbody tr");
+    await act(async () => {
+      rows[0]?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      rows[1]?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(onSelectionChange).toHaveBeenCalledTimes(1);
+    expect(onSelectionChange).toHaveBeenCalledWith({
+      kind: "key-selection",
+      items: [{
+        sourceIndex: 1,
+        values: { place: "Second place" },
       }],
     });
     await act(async () => root.unmount());
@@ -813,16 +960,19 @@ describe("GIS map artifact rendering", () => {
   });
 
   it("applies linked filters and focuses exact features once per selection", async () => {
+    const onActivityChange = vi.fn();
     const interaction: ArtifactViewerInteractionContext = {
       outgoingFields: [],
       selection: { kind: "key-selection", items: [] },
       incoming: [{
         bindingId: "binding-1",
         effects: ["filter", "highlight", "focus"],
+        sourceSelectionCount: 1,
         rows: [{ name: "Control point 23", district: "Mohilev" }],
       }],
       onFieldsChange: vi.fn(),
       onSelectionChange: vi.fn(),
+      onActivityChange,
     };
     const { container, fetchMock, renderer, root } = await renderGeo(
       "map",
@@ -855,6 +1005,11 @@ describe("GIS map artifact rendering", () => {
       [[28.98, 52.98], [29.02, 53.02]],
       expect.objectContaining({ duration: 450 }),
     );
+    expect(onActivityChange).toHaveBeenLastCalledWith({
+      state: "success",
+      title: "Linked feature located",
+      message: "Located 1 matching map feature.",
+    });
 
     map.fitBounds.mockClear();
     await act(async () => {
@@ -881,6 +1036,99 @@ describe("GIS map artifact rendering", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(map.fitBounds).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
+
+  it("reports linked focus progress and a zero-match result", async () => {
+    const onActivityChange = vi.fn();
+    const interaction: ArtifactViewerInteractionContext = {
+      outgoingFields: [],
+      selection: { kind: "key-selection", items: [] },
+      incoming: [{
+        bindingId: "binding-1",
+        effects: ["focus"],
+        sourceSelectionCount: 1,
+        rows: [{ name: "Missing place" }],
+      }],
+      onFieldsChange: vi.fn(),
+      onSelectionChange: vi.fn(),
+      onActivityChange,
+    };
+    const { container, fetchMock, root } = await renderGeo(
+      "map",
+      GEO_RENDER_DESCRIPTOR,
+      interaction,
+    );
+    let resolveQuery: ((response: Response) => void) | undefined;
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      if (String(input).includes("/geo/query")) {
+        return new Promise<Response>((resolve) => {
+          resolveQuery = resolve;
+        });
+      }
+      return Promise.resolve(new Response(
+        JSON.stringify(GEO_RENDER_DESCRIPTOR),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ));
+    });
+
+    await clickButton(container, "Load interactive map");
+
+    expect(resolveQuery).toBeDefined();
+    expect(onActivityChange).toHaveBeenLastCalledWith({
+      state: "working",
+      title: "Locating linked selection",
+      message: "Searching the map layers for matching features.",
+    });
+    await act(async () => {
+      resolveQuery?.(new Response(JSON.stringify({
+        artifact_id: GEO_RENDER_DESCRIPTOR.artifact_id,
+        bounds: null,
+        matched_feature_count: 0,
+        source_artifact_ids: [],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(onActivityChange).toHaveBeenLastCalledWith({
+      state: "warning",
+      title: "No linked feature found",
+      message: "No map feature matched the linked selection.",
+    });
+    await act(async () => root.unmount());
+  });
+
+  it("explains when selected values cannot be mapped to map fields", async () => {
+    const onActivityChange = vi.fn();
+    const interaction: ArtifactViewerInteractionContext = {
+      outgoingFields: [],
+      selection: { kind: "key-selection", items: [] },
+      incoming: [{
+        bindingId: "binding-1",
+        effects: ["focus"],
+        sourceSelectionCount: 1,
+        rows: [],
+      }],
+      onFieldsChange: vi.fn(),
+      onSelectionChange: vi.fn(),
+      onActivityChange,
+    };
+    const { container, fetchMock, root } = await renderGeo(
+      "map",
+      GEO_RENDER_DESCRIPTOR,
+      interaction,
+    );
+    await clickButton(container, "Load interactive map");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onActivityChange).toHaveBeenLastCalledWith({
+      state: "warning",
+      title: "Selection mapping failed",
+      message:
+        "The selected row does not provide all configured target fields.",
+    });
     await act(async () => root.unmount());
   });
 
@@ -1017,6 +1265,7 @@ describe("GIS map artifact rendering", () => {
         incoming: [],
         onFieldsChange,
         onSelectionChange,
+        onActivityChange: vi.fn(),
       },
     );
     await clickButton(container, "Load interactive map");

@@ -1488,6 +1488,8 @@ export interface components {
         };
         /** TableQueryRequest */
         readonly TableQueryRequest: {
+            /** Column Ids */
+            readonly column_ids?: readonly string[] | null;
             /**
              * Column Limit
              * @default 25
@@ -1815,6 +1817,7 @@ export interface operations {
     readonly get_table_artifact_page_v1_artifacts__artifact_id__table_page_get: {
         readonly parameters: {
             readonly query?: {
+                readonly column_ids?: readonly string[] | null;
                 readonly column_limit?: number;
                 readonly column_offset?: number;
                 readonly limit?: number;

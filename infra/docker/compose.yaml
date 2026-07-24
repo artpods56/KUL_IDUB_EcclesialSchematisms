@@ -1,3 +1,34 @@
+name: notarius
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-file: "3"
+    max-size: "10m"
+
+x-persistence-environment: &persistence-environment
+  NOTARIUS_DATABASE_URL: ${NOTARIUS_DOCKER_DATABASE_URL:-sqlite+aiosqlite:////data/workbench/notarius.sqlite3}
+  NOTARIUS_WORKSPACE: /data/workbench
+
+x-api-environment: &api-environment
+  <<: *persistence-environment
+  MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+  OPENAI_CUSTOM_HEADERS: ${OPENAI_CUSTOM_HEADERS:-}
+  NOTARIUS_CORS_ORIGINS: ${NOTARIUS_CORS_ORIGINS:-http://localhost:3000}
+  NOTARIUS_CREDENTIAL_ENCRYPTION_KEY: ${NOTARIUS_CREDENTIAL_ENCRYPTION_KEY:-}
+  NOTARIUS_EXECUTION_BACKEND: ${NOTARIUS_EXECUTION_BACKEND:-prefect}
+  NOTARIUS_MAP_MAX_CONCURRENCY: ${NOTARIUS_MAP_MAX_CONCURRENCY:-4}
+  NOTARIUS_MCP_API_URL: http://127.0.0.1:8000
+  NOTARIUS_STORAGE_BACKEND: ${NOTARIUS_STORAGE_BACKEND:-local}
+  NOTARIUS_STORAGE_BUCKET: ${NOTARIUS_STORAGE_BUCKET:-workbench-artifacts}
+  NOTARIUS_S3_ENDPOINT_URL: ${NOTARIUS_S3_ENDPOINT_URL:-}
+  NOTARIUS_S3_REGION: ${NOTARIUS_S3_REGION:-us-east-1}
+  NOTARIUS_S3_ACCESS_KEY_ID: ${NOTARIUS_S3_ACCESS_KEY_ID:-}
+  NOTARIUS_S3_SECRET_ACCESS_KEY: ${NOTARIUS_S3_SECRET_ACCESS_KEY:-}
+  NOTARIUS_S3_FORCE_PATH_STYLE: ${NOTARIUS_S3_FORCE_PATH_STYLE:-false}
+  PREFECT_API_URL: http://prefect:4200/api
+  PREFECT_SERVER_ALLOW_EPHEMERAL_MODE: "false"
+
 services:
   migrate:
     build:
@@ -5,37 +36,74 @@ services:
       dockerfile: infra/docker/api.Dockerfile
       target: api
     command: [".venv/bin/alembic", "upgrade", "head"]
-    environment:
-      NOTARIUS_DATABASE_URL: ${NOTARIUS_DATABASE_URL:-sqlite+aiosqlite:////data/workbench/notarius.sqlite3}
-      NOTARIUS_WORKSPACE: /data/workbench
+    environment: *persistence-environment
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - notarius-data:/data
+
+  prefect:
+    image: prefecthq/prefect:3.6.21-python3.12
+    command: ["prefect", "server", "start", "--host", "0.0.0.0"]
+    environment:
+      PREFECT_SERVER_ANALYTICS_ENABLED: "false"
+      PREFECT_UI_API_URL: ${PREFECT_UI_API_URL:-http://127.0.0.1:4200/api}
+    logging: *default-logging
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 60s
+    volumes:
+      - prefect-data:/root/.prefect
+    ports:
+      - "${NOTARIUS_BIND_ADDRESS:-127.0.0.1}:${PREFECT_PORT:-4200}:4200"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4200/api/health', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
 
   api:
     build:
       context: ../..
       dockerfile: infra/docker/api.Dockerfile
       target: api-plugins
-    environment:
-      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
-      NOTARIUS_CORS_ORIGINS: ${NOTARIUS_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
-      NOTARIUS_CREDENTIAL_ENCRYPTION_KEY: ${NOTARIUS_CREDENTIAL_ENCRYPTION_KEY:-}
-      NOTARIUS_DATABASE_URL: ${NOTARIUS_DATABASE_URL:-sqlite+aiosqlite:////data/workbench/notarius.sqlite3}
-      NOTARIUS_WORKSPACE: /data/workbench
-      NOTARIUS_STORAGE_BACKEND: ${NOTARIUS_STORAGE_BACKEND:-local}
-      NOTARIUS_STORAGE_BUCKET: ${NOTARIUS_STORAGE_BUCKET:-workbench-artifacts}
-      NOTARIUS_S3_ENDPOINT_URL: ${NOTARIUS_S3_ENDPOINT_URL:-}
-      NOTARIUS_S3_REGION: ${NOTARIUS_S3_REGION:-us-east-1}
-      NOTARIUS_S3_ACCESS_KEY_ID: ${NOTARIUS_S3_ACCESS_KEY_ID:-}
-      NOTARIUS_S3_SECRET_ACCESS_KEY: ${NOTARIUS_S3_SECRET_ACCESS_KEY:-}
-      NOTARIUS_S3_FORCE_PATH_STYLE: ${NOTARIUS_S3_FORCE_PATH_STYLE:-false}
+    environment: *api-environment
+    init: true
+    logging: *default-logging
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 60s
     volumes:
       - notarius-data:/data
     ports:
-      - "8000:8000"
+      - "${NOTARIUS_BIND_ADDRESS:-127.0.0.1}:${NOTARIUS_API_PORT:-8000}:8000"
     depends_on:
       migrate:
         condition: service_completed_successfully
+      prefect:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          ".venv/bin/python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   web:
     build:
@@ -43,12 +111,30 @@ services:
       dockerfile: infra/docker/web.Dockerfile
       args:
         NEXT_PUBLIC_NOTARIUS_API_URL: ${NEXT_PUBLIC_NOTARIUS_API_URL:-http://localhost:8000}
-    environment:
-      NEXT_PUBLIC_NOTARIUS_API_URL: ${NEXT_PUBLIC_NOTARIUS_API_URL:-http://localhost:8000}
+    init: true
+    logging: *default-logging
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 20s
     ports:
-      - "3000:3000"
+      - "${NOTARIUS_BIND_ADDRESS:-127.0.0.1}:${NOTARIUS_WEB_PORT:-3000}:3000"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000').then(response => { if (!response.ok) process.exit(1) }).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
 volumes:
   notarius-data:
+  prefect-data:
