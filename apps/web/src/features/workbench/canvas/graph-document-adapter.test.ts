@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  graphCommandsFromNodeChanges,
   reduceWorkbenchAuthoringState,
   type WorkbenchAuthoringState,
 } from "./graph-document-adapter";
@@ -66,6 +67,27 @@ function state(): WorkbenchAuthoringState {
 }
 
 describe("Workbench authored document adapter", () => {
+  it("does not author a move while dragging", () => {
+    expect(graphCommandsFromNodeChanges([{
+      id: "source",
+      type: "position",
+      position: { x: 40, y: 50 },
+      dragging: true,
+    }])).toEqual([]);
+  });
+
+  it("authors the final position when dragging stops", () => {
+    expect(graphCommandsFromNodeChanges([{
+      id: "source",
+      type: "position",
+      position: { x: 40, y: 50 },
+      dragging: false,
+    }])).toEqual([{
+      kind: "move_nodes",
+      positions: [{ node_id: "source", x: 40, y: 50 }],
+    }]);
+  });
+
   it("keeps move overlays and scopes config invalidation", () => {
     const moved = reduceWorkbenchAuthoringState(state(), {
       kind: "apply_commands",
@@ -137,6 +159,20 @@ describe("Workbench authored document adapter", () => {
     expect(result.document).toEqual(initial.document);
     expect(result.nodeOverlays).toEqual(initial.nodeOverlays);
     expect(result.error).toContain("missing node missing");
+  });
+
+  it("bounds an update for a missing edge as an adapter error", () => {
+    const result = reduceWorkbenchAuthoringState(state(), {
+      kind: "apply_commands",
+      commands: [{
+        kind: "update_edge",
+        edge_id: "missing-edge",
+        update: { enabled: false },
+      }],
+    });
+
+    expect(result.document).toEqual(state().document);
+    expect(result.error).toContain("missing edge missing-edge");
   });
 
   it("clears an authoring error when the user dismisses it", () => {

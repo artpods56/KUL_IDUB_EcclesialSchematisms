@@ -99,15 +99,16 @@ function lifecycleOptions(
   initialGraphId: string | null,
   refreshNodeSecretStatuses: LifecycleOptions["refreshNodeSecretStatuses"] =
     vi.fn().mockResolvedValue(true),
-): { options: LifecycleOptions; callbacks: LifecycleCallbacks } {
-  const document: {
-    name: string;
-    nodes: LifecycleOptions["document"]["nodes"];
-    edges: LifecycleOptions["document"]["edges"];
-  } = {
+  initialDocument: LifecycleOptions["document"] = {
     name: "Untitled workflow",
     nodes: [],
     edges: [],
+  },
+): { options: LifecycleOptions; callbacks: LifecycleCallbacks } {
+  const document = {
+    name: initialDocument.name,
+    nodes: initialDocument.nodes,
+    edges: initialDocument.edges,
   };
   const callbacks = {
     replaceDocument: vi.fn((nextDocument: LifecycleOptions["document"]) => {
@@ -182,6 +183,68 @@ afterEach(() => {
 });
 
 describe("useSavedGraphLifecycle document ownership", () => {
+  it("submits the canonical final drag position", async () => {
+    const finalPosition = { x: 240, y: 180 };
+    const node = {
+      id: "source",
+      operator_id: "test.source",
+      operator_version: 1,
+      config: { label: "source" },
+      input_plugs: [],
+      artifact_type_bindings: [],
+      position: finalPosition,
+      layout: null,
+    };
+    const graph: SavedGraph = {
+      ...savedGraph(GRAPH_A_ID, "Dragged graph", 3),
+      nodes: [node],
+    };
+    const document = {
+      name: "Dragged graph",
+      nodes: graph.nodes ?? [],
+      edges: [],
+    };
+    api.createSavedGraph.mockResolvedValue(graph);
+    api.getSavedGraph.mockResolvedValue(graph);
+    const { options, callbacks } = lifecycleOptions(null, undefined, document);
+    const hook = await renderHook(useSavedGraphLifecycle, options);
+
+    await React.act(async () => {
+      await hook.result.current.saveCurrentGraph();
+    });
+
+    expect(api.createSavedGraph).toHaveBeenCalledWith(expect.objectContaining({
+      nodes: [expect.objectContaining({ position: finalPosition })],
+    }));
+
+    expect(callbacks.replaceDocument).not.toHaveBeenCalled();
+  });
+
+  it("restores the canonical final drag position when opening", async () => {
+    const finalPosition = { x: 240, y: 180 };
+    const graph: SavedGraph = {
+      ...savedGraph(GRAPH_A_ID, "Dragged graph", 3),
+      nodes: [{
+        id: "source",
+        operator_id: "test.source",
+        operator_version: 1,
+        config: { label: "source" },
+        input_plugs: [],
+        artifact_type_bindings: [],
+        position: finalPosition,
+        layout: null,
+      }],
+    };
+    api.getSavedGraph.mockResolvedValue(graph);
+    const { options, callbacks } = lifecycleOptions(GRAPH_A_ID);
+    await renderHook(useSavedGraphLifecycle, options);
+
+    await waitFor(() => callbacks.replaceDocument.mock.calls.length === 1);
+
+    const openedDocument = callbacks.replaceDocument.mock.calls[0]?.[0];
+    expect(openedDocument.nodes[0]?.position).toEqual(finalPosition);
+  });
+
   it("opens a graph containing an unavailable operator as a preserved placeholder", async () => {
     const graph: SavedGraph = {
       ...savedGraph(GRAPH_A_ID, "Legacy graph"),

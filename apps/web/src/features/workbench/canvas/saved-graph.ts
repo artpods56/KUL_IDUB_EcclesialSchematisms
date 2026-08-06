@@ -12,12 +12,10 @@ import {
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import {
   connectionRouteForSelection,
-  decodeHandleId,
   encodeHandleId,
 } from "./handles";
 import {
   hydrateNodeLayout,
-  serializeNodeLayout,
 } from "./node-layout";
 import { artifactTypeColor } from "./nodes.css";
 import {
@@ -31,9 +29,6 @@ import {
   portHasInstancePlugs,
   portMetaForPort,
   resolvedPortArtifactType,
-  serializeArtifactTypeBindings,
-  serializeInputPlugs,
-  serializeWorkflowEdgeTransport,
   type WorkflowEdge,
   type WorkflowArtifactTypeBindingInput,
   type WorkflowArtifactTypeBindings,
@@ -204,75 +199,6 @@ function sortedRecord(value: unknown): unknown {
     if (item !== undefined) sorted[key] = sortedRecord(item);
   }
   return sorted;
-}
-
-export function savedGraphDraft(
-  name: string,
-  nodes: readonly SavedGraphWorkflowNode[],
-  edges: readonly WorkflowEdge[],
-): CreateSavedGraphRequest {
-  const savedNodes = nodes.map((node) => {
-    const compatibility = node.data.compatibility;
-    if (compatibility.status !== "supported") {
-      return {
-        ...structuredClone(compatibility.persistedNode),
-        id: node.id,
-        position: {
-          x: node.position.x,
-          y: node.position.y,
-        },
-        layout: serializeNodeLayout(node.data.layout),
-      };
-    }
-    return {
-      id: node.id,
-      operator_id: node.data.spec.operator_id,
-      operator_version: node.data.spec.operator_version,
-      config: structuredClone(node.data.config),
-      input_plugs: serializeInputPlugs(node.data),
-      artifact_type_bindings: serializeArtifactTypeBindings(node.data),
-      position: {
-        x: node.position.x,
-        y: node.position.y,
-      },
-      layout: serializeNodeLayout(node.data.layout),
-    };
-  });
-  return {
-    name: name.trim(),
-    nodes: savedNodes,
-    edges: edges.map((edge) => {
-      const source = decodeHandleId(edge.sourceHandle);
-      const target = decodeHandleId(edge.targetHandle);
-      const sourcePortName = edge.data?.sourcePortName ?? source?.portName;
-      const targetPortName = edge.data?.targetPortName ?? target?.portName;
-      const targetPlugId = edge.data?.targetPlugId !== undefined
-        ? edge.data.targetPlugId
-        : (target?.plugId ?? null);
-      if (!sourcePortName || !targetPortName) {
-        throw new Error(`Cannot save edge ${edge.id}: its port handles are invalid`);
-      }
-      return {
-        ...(edge.data?.persistedEdge
-          ? structuredClone(edge.data.persistedEdge)
-          : {}),
-        id: edge.id,
-        from_node: edge.source,
-        from_port: sourcePortName,
-        to_node: edge.target,
-        to_port: targetPortName,
-        to_plug: targetPlugId,
-        enabled: edge.data?.enabled ?? true,
-        ...serializeWorkflowEdgeTransport(edge.data),
-        route_offset: edge.data?.routeOffset
-          ? {
-              x: edge.data.routeOffset.x,
-              y: edge.data.routeOffset.y,
-            }
-          : null,
-      };
-    }),
-  };
 }
 
 function requireArtifactTypeBindings(

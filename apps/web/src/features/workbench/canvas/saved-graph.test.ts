@@ -9,13 +9,10 @@ import type {
 import { decodeHandleId } from "./handles";
 import {
   hydrateSavedGraph,
-  savedGraphDraft,
   savedGraphFingerprint,
 } from "./saved-graph";
 import {
   IMAGE_UPLOAD_OPERATOR_ID,
-  WORKFLOW_NODE_TYPE,
-  createWorkflowNodeData,
   effectivePortShape,
   serializeWorkflowEdgeTransport,
 } from "./types";
@@ -175,10 +172,6 @@ describe("saved conversion paths", () => {
     expect(serializeWorkflowEdgeTransport(edge?.data).conversion_path).toEqual(
       conversionPath,
     );
-    expect(
-      savedGraphDraft("Conversion path", hydrated.nodes, hydrated.edges).edges?.[0]
-        ?.conversion_path,
-    ).toEqual(conversionPath);
   });
 });
 
@@ -243,29 +236,6 @@ describe("unavailable saved operators", () => {
       direction: "input",
     });
     expect(edge?.data?.compatibilityIssues).toHaveLength(1);
-
-    const draft = savedGraphDraft(
-      graph.name,
-      hydrated.nodes,
-      hydrated.edges,
-    );
-    expect(draft.nodes?.[0]).toEqual(graph.nodes?.[0]);
-    expect(draft.edges?.[0]).toMatchObject({
-      from_node: "source-node",
-      from_port: "output",
-      to_node: "target-node",
-      to_port: "input",
-      to_plug: null,
-      collection_mode: "direct",
-      conversion_path: conversionPath,
-    });
-    expect(savedGraphFingerprint(draft)).toBe(
-      savedGraphFingerprint({
-        name: graph.name,
-        nodes: graph.nodes,
-        edges: graph.edges,
-      }),
-    );
   });
 });
 
@@ -294,129 +264,6 @@ describe("saved node layout", () => {
       appendixHeight: 320,
     });
     expect(hydrated.nodes[1]?.data.layout).toBeNull();
-    expect(
-      savedGraphDraft("Layout", hydrated.nodes, hydrated.edges).nodes?.[0]
-        ?.layout,
-    ).toEqual({
-      width: 420,
-      body_height: 180,
-      appendix_height: 320,
-    });
-  });
-
-  it("keeps an API partial-layout response fingerprint stable after hydration", () => {
-    const base = graphWithEdge({ conversion_path: conversionPath });
-    const hydratedBase = hydrateSavedGraph(base, registry());
-    const responseDraft = savedGraphDraft(
-      "Partial layout",
-      hydratedBase.nodes,
-      hydratedBase.edges,
-    );
-    const responseNodes = (responseDraft.nodes ?? []).map((node, index) =>
-      index === 0
-        ? {
-            ...node,
-            layout: {
-              width: 420,
-              body_height: null,
-              appendix_height: null,
-            },
-          }
-        : node,
-    );
-    const apiResponse: SavedGraph = {
-      ...base,
-      name: responseDraft.name,
-      nodes: responseNodes,
-      edges: responseDraft.edges ?? [],
-    };
-
-    const hydrated = hydrateSavedGraph(apiResponse, registry());
-    const reserialized = savedGraphDraft(
-      apiResponse.name,
-      hydrated.nodes,
-      hydrated.edges,
-    );
-
-    expect(savedGraphFingerprint(reserialized)).toBe(
-      savedGraphFingerprint({ ...responseDraft, nodes: responseNodes }),
-    );
-  });
-});
-
-describe("ephemeral execution progress", () => {
-  it("does not persist user-authored progress messages with the graph", () => {
-    const hydrated = hydrateSavedGraph(
-      graphWithEdge({ conversion_path: conversionPath }),
-      registry(),
-    );
-    const firstNode = hydrated.nodes[0];
-    if (!firstNode) throw new Error("Expected a hydrated workflow node");
-    firstNode.data.progress = {
-      omittedCount: 2,
-      entries: [{
-        sequence: 3,
-        message: "payload contains tenant-private detail",
-        current: 1,
-        total: 4,
-        sourceNodePath: [],
-        invocationIndex: null,
-        invocationPath: [],
-      }],
-    };
-
-    const draft = savedGraphDraft(
-      "Ephemeral state",
-      hydrated.nodes,
-      hydrated.edges,
-    );
-    const serialized = JSON.stringify(draft);
-
-    expect(draft.nodes?.every((node) => !("progress" in node))).toBe(true);
-    expect(serialized).not.toContain("tenant-private detail");
-  });
-
-  it("excludes selection, callbacks, viewport, drafts, presence, secrets, history, and runtime overlays", () => {
-    const hydrated = hydrateSavedGraph(
-      graphWithEdge({ conversion_path: conversionPath }),
-      registry(),
-    );
-    const firstNode = hydrated.nodes[0];
-    if (!firstNode) throw new Error("Expected a hydrated workflow node");
-    firstNode.selected = true;
-    firstNode.data.onConfigChange = () => undefined;
-    firstNode.data.secretStatuses = {};
-    firstNode.data.historyContext = { graphId: "private", isDirty: true };
-    Object.assign(firstNode.data, {
-      viewport: { x: 100, y: 200, zoom: 1.1 },
-      privateFieldDraft: "draft-only value",
-      presence: { userId: "other-user" },
-    });
-    firstNode.data.execution = {
-      status: "failed",
-      error: "runtime-only failure",
-    };
-    firstNode.data.progress = {
-      omittedCount: 0,
-      entries: [],
-    };
-
-    const draft = savedGraphDraft(
-      "Ephemeral state",
-      hydrated.nodes,
-      hydrated.edges,
-    );
-    const serialized = JSON.stringify(draft);
-
-    expect(draft.nodes?.[0]).not.toHaveProperty("selected");
-    expect(serialized).not.toContain("onConfigChange");
-    expect(serialized).not.toContain("secretStatuses");
-    expect(serialized).not.toContain("historyContext");
-    expect(serialized).not.toContain("viewport");
-    expect(serialized).not.toContain("privateFieldDraft");
-    expect(serialized).not.toContain("presence");
-    expect(serialized).not.toContain("runtime-only failure");
-    expect(serialized).not.toContain("progress");
   });
 });
 
@@ -432,9 +279,6 @@ describe("saved edge enablement", () => {
     expect(serializeWorkflowEdgeTransport(edge?.data)).not.toHaveProperty(
       "enabled",
     );
-    expect(
-      savedGraphDraft("Legacy edge", hydrated.nodes, hydrated.edges).edges?.[0],
-    ).toMatchObject({ enabled: true });
   });
 
   it("persists disabled state and includes it in the dirty fingerprint", () => {
@@ -446,18 +290,17 @@ describe("saved edge enablement", () => {
         enabled: false,
       })),
     };
-    const enabled = hydrateSavedGraph(legacyGraph, registry());
     const disabled = hydrateSavedGraph(disabledGraph, registry());
-    const enabledDraft = savedGraphDraft(
-      "Edge state",
-      enabled.nodes,
-      enabled.edges,
-    );
-    const disabledDraft = savedGraphDraft(
-      "Edge state",
-      disabled.nodes,
-      disabled.edges,
-    );
+    const enabledDraft = {
+      name: "Edge state",
+      nodes: legacyGraph.nodes,
+      edges: legacyGraph.edges,
+    };
+    const disabledDraft = {
+      name: "Edge state",
+      nodes: disabledGraph.nodes,
+      edges: disabledGraph.edges,
+    };
 
     expect(disabled.edges[0]?.data?.enabled).toBe(false);
     expect(disabledDraft.edges?.[0]).toMatchObject({ enabled: false });
@@ -467,15 +310,12 @@ describe("saved edge enablement", () => {
   });
 
   it("normalizes a missing legacy flag to enabled in the fingerprint", () => {
-    const hydrated = hydrateSavedGraph(
-      graphWithEdge({ conversion_path: conversionPath }),
-      registry(),
-    );
-    const enabledDraft = savedGraphDraft(
-      "Legacy fingerprint",
-      hydrated.nodes,
-      hydrated.edges,
-    );
+    const graph = graphWithEdge({ conversion_path: conversionPath });
+    const enabledDraft = {
+      name: "Legacy fingerprint",
+      nodes: graph.nodes,
+      edges: graph.edges,
+    };
     const enabledEdge = enabledDraft.edges?.[0];
     if (!enabledEdge) throw new Error("enabled-edge fixture is incomplete");
     const legacyEdge = { ...enabledEdge } as
@@ -739,18 +579,6 @@ describe("saved instance plugs", () => {
       { id: "plug-second", portName: "items" },
     ]);
     expect(decodeHandleId(edge?.targetHandle)?.plugId).toBe("plug-second");
-
-    const draft = savedGraphDraft(
-      "Collect inputs",
-      hydrated.nodes,
-      hydrated.edges,
-    );
-    expect(draft.nodes?.[1]?.input_plugs).toEqual([
-      { id: "plug-first", port: "items" },
-      { id: "plug-second", port: "items" },
-    ]);
-    expect(draft.edges?.[0]?.to_plug).toBe("plug-second");
-    expect(draft.edges?.[0]?.route_offset).toEqual({ x: 12, y: -4 });
   });
 
   it("rejects an edge that targets a missing plug", () => {
@@ -764,111 +592,6 @@ describe("saved instance plugs", () => {
     expect(() => hydrateSavedGraph(invalidGraph, collectRegistry())).toThrow(
       "references missing input plug plug-missing",
     );
-  });
-});
-
-describe("saved image upload config", () => {
-  it("preserves the exact ordered uploads payload used by run requests", () => {
-    const imageUploadSpec = nodeSpec(
-      IMAGE_UPLOAD_OPERATOR_ID,
-      "output",
-      "image.raster",
-      "many",
-    );
-    const data = createWorkflowNodeData(imageUploadSpec);
-    data.config.uploads = [
-      {
-        upload_key: "second.png",
-        filename: "second.png",
-        byte_size: 22,
-      },
-      {
-        upload_key: "first.png",
-        filename: "first.png",
-        byte_size: 11,
-      },
-    ];
-    const draft = savedGraphDraft(
-      "Upload order",
-      [
-        {
-          id: "image-upload-node",
-          type: WORKFLOW_NODE_TYPE,
-          position: { x: 0, y: 0 },
-          data,
-        },
-      ],
-      [],
-    );
-    const savedGraph: SavedGraph = {
-      id: "00000000-0000-4000-8000-000000000004",
-      revision: 1,
-      name: draft.name,
-      created_at: "2026-07-15T12:00:00Z",
-      updated_at: "2026-07-15T12:00:00Z",
-      nodes: draft.nodes,
-      edges: draft.edges,
-    };
-    const hydrated = hydrateSavedGraph(savedGraph, {
-      plugins: [],
-      artifact_types: [],
-      artifact_conversions: [],
-      nodes: [imageUploadSpec],
-    });
-    const savedConfig = draft.nodes?.[0]?.config;
-
-    expect(savedConfig).toEqual({
-      uploads: [
-        {
-          upload_key: "second.png",
-          filename: "second.png",
-          byte_size: 22,
-        },
-        {
-          upload_key: "first.png",
-          filename: "first.png",
-          byte_size: 11,
-        },
-      ],
-    });
-    expect(hydrated.nodes[0]!.data.config).toEqual(savedConfig);
-  });
-});
-
-describe("saved write-only node state", () => {
-  it("persists ordinary config without secret status or callbacks", () => {
-    const spec = nodeSpec(
-      "llm.openai.completion",
-      "output",
-      "llm.completion",
-    );
-    const data = createWorkflowNodeData(spec);
-    data.config = {
-      base_url: "https://api.openai.com/v1",
-      model: "gpt-5-mini",
-    };
-    data.secretStatuses = { api_key: { state: "configured" } };
-    data.secretInputReadiness = { api_key: true };
-    data.secretInputScope = "graph-1:2";
-    data.onApplyNodeSecret = async () => true;
-
-    const draft = savedGraphDraft(
-      "Write-only node",
-      [{
-        id: "llm-node",
-        type: WORKFLOW_NODE_TYPE,
-        position: { x: 0, y: 0 },
-        data,
-      }],
-      [],
-    );
-
-    expect(draft.nodes?.[0]?.config).toEqual(data.config);
-    expect(draft.nodes?.[0]).not.toHaveProperty("secretStatuses");
-    expect(draft.nodes?.[0]).not.toHaveProperty("secretInputReadiness");
-    expect(draft.nodes?.[0]).not.toHaveProperty("secretInputScope");
-    expect(draft.nodes?.[0]).not.toHaveProperty("onApplyNodeSecret");
-    expect(JSON.stringify(draft)).not.toContain("api_key");
   });
 });
 
@@ -996,15 +719,6 @@ describe("saved generic artifact type bindings", () => {
       schemaVersion: 1,
       plugId: "plug-1",
     });
-    expect(
-      savedGraphDraft("Generic collect", hydrated.nodes, hydrated.edges)
-        .nodes?.[1]?.artifact_type_bindings,
-    ).toEqual([
-      {
-        variable: "T",
-        artifact_type: { id: "scalar.integer", schema_version: 1 },
-      },
-    ]);
   });
 
   it("marks a binding for an undeclared variable invalid without rejecting the graph", () => {
@@ -1039,15 +753,6 @@ describe("saved generic artifact type bindings", () => {
         "node collect-node binds undeclared artifact type variable Missing",
       ],
     });
-    expect(
-      savedGraphDraft(invalid.name, hydrated.nodes, hydrated.edges)
-        .nodes?.[1]?.artifact_type_bindings,
-    ).toEqual([
-      {
-        variable: "Missing",
-        artifact_type: { id: "scalar.integer", schema_version: 1 },
-      },
-    ]);
   });
 
   it("marks an unavailable artifact type invalid without rejecting the graph", () => {
@@ -1081,15 +786,6 @@ describe("saved generic artifact type bindings", () => {
         "node collect-node binds unavailable artifact type artifact.missing@9",
       ],
     });
-    expect(
-      savedGraphDraft(invalid.name, hydrated.nodes, hydrated.edges)
-        .nodes?.[0]?.artifact_type_bindings,
-    ).toEqual([
-      {
-        variable: "T",
-        artifact_type: { id: "artifact.missing", schema_version: 9 },
-      },
-    ]);
   });
 });
 

@@ -20,6 +20,9 @@ export interface AuthoredGraphDocument {
 export type AuthoredGraphNode = SavedGraphNode;
 export type AuthoredGraphEdge = SavedGraphEdge;
 
+type SavedGraphNodeInput = NonNullable<CreateSavedGraphRequest["nodes"]>[number];
+type SavedGraphEdgeInput = NonNullable<CreateSavedGraphRequest["edges"]>[number];
+
 export type GraphCommand =
   | {
       readonly kind: "rename_graph";
@@ -121,8 +124,8 @@ export function authoredGraphDocument(
 ): AuthoredGraphDocument {
   return {
     name: value.name,
-    nodes: structuredClone(value.nodes ?? []),
-    edges: structuredClone(value.edges ?? []),
+    nodes: (value.nodes ?? []).map(projectSavedGraphNode),
+    edges: (value.edges ?? []).map(projectSavedGraphEdge),
   };
 }
 
@@ -131,8 +134,62 @@ export function createSavedGraphRequest(
 ): CreateSavedGraphRequest {
   return {
     name: document.name.trim(),
-    nodes: structuredClone(document.nodes),
-    edges: structuredClone(document.edges),
+    nodes: document.nodes.map(projectSavedGraphNode),
+    edges: document.edges.map(projectSavedGraphEdge),
+  };
+}
+
+function projectSavedGraphNode(node: SavedGraphNodeInput | SavedGraphNode): SavedGraphNode {
+  return {
+    artifact_type_bindings: (node.artifact_type_bindings ?? []).map((binding) => ({
+      variable: binding.variable,
+      artifact_type: {
+        id: binding.artifact_type.id,
+        schema_version: binding.artifact_type.schema_version,
+      },
+    })),
+    config: structuredClone(node.config ?? {}),
+    id: node.id,
+    input_plugs: (node.input_plugs ?? []).map((plug) => ({
+      id: plug.id,
+      port: plug.port,
+    })),
+    layout: node.layout === null || node.layout === undefined
+      ? null
+      : {
+          appendix_height: node.layout.appendix_height ?? null,
+          body_height: node.layout.body_height ?? null,
+          width: node.layout.width ?? null,
+        },
+    operator_id: node.operator_id,
+    operator_version: node.operator_version,
+    position: {
+      x: node.position.x,
+      y: node.position.y,
+    },
+  };
+}
+
+function projectSavedGraphEdge(edge: SavedGraphEdgeInput | SavedGraphEdge): SavedGraphEdge {
+  return {
+    collection_mode: edge.collection_mode ?? "direct",
+    conversion_path: (edge.conversion_path ?? []).map((conversion) => ({
+      id: conversion.id,
+      version: conversion.version,
+    })),
+    enabled: edge.enabled ?? true,
+    from_node: edge.from_node,
+    from_port: edge.from_port,
+    id: edge.id,
+    projection: edge.projection === null || edge.projection === undefined
+      ? null
+      : { path: [...edge.projection.path] },
+    route_offset: edge.route_offset === null || edge.route_offset === undefined
+      ? null
+      : { x: edge.route_offset.x, y: edge.route_offset.y },
+    to_node: edge.to_node,
+    to_plug: edge.to_plug ?? null,
+    to_port: edge.to_port,
   };
 }
 
@@ -173,6 +230,8 @@ export function executionInvalidatedNodeIds(
     case "add_input_plug":
     case "remove_input_plug":
     case "reorder_input_plug":
+    case "bind_artifact_type":
+    case "reset_artifact_type_binding":
       return executionDescendants(document, [command.node_id]);
     case "add_edge":
       return executionDescendants(document, [command.edge.to_node]);
@@ -203,8 +262,6 @@ export function executionInvalidatedNodeIds(
     case "add_node":
     case "move_nodes":
     case "update_node_layout":
-    case "bind_artifact_type":
-    case "reset_artifact_type_binding":
       return new Set();
     case "replace_document":
       return new Set(document.nodes.map((node) => node.id));
@@ -385,15 +442,17 @@ export function applyGraphCommand(
         ...document,
         edges: [...document.edges, structuredClone(command.edge)],
       };
-    case "update_edge":
+    case "update_edge": {
+      edgeOrThrow(document, command.edge_id);
       return {
         ...document,
         edges: document.edges.map((edge) =>
           edge.id === command.edge_id
-            ? { ...edgeOrThrow(document, command.edge_id), ...structuredClone(command.update) }
+            ? { ...edge, ...structuredClone(command.update) }
             : edge,
         ),
       };
+    }
     case "remove_edges": {
       const removed = new Set(command.edge_ids);
       return {

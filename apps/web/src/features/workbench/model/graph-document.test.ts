@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { CreateSavedGraphRequest } from "@/lib/api";
 import {
   applyGraphCommand,
   authoredGraphDocument,
@@ -55,6 +56,61 @@ describe("authored graph document", () => {
     expect(JSON.stringify(value)).not.toContain("execution");
   });
 
+  it("projects adversarial React Flow runtime fields at both durable boundaries", () => {
+    const runtimeNode = {
+      ...node("source"),
+      config: { nested: { result: "legitimate config content" } },
+      selected: true,
+      width: 480,
+      height: 220,
+      internals: { handleBounds: { source: [] } },
+      onConfigChange: () => undefined,
+      execution: { status: "failed" },
+      progress: { entries: [] },
+      run: { status: "succeeded" },
+      result: { payload: "runtime result" },
+      presence: { userId: "other-user" },
+      privateFieldDraft: "draft-only value",
+    };
+    const runtimeEdge = {
+      ...edge,
+      selected: true,
+      sourceX: 480,
+      sourceY: 220,
+      internals: { z: 1 },
+      onUpdate: () => undefined,
+      execution: { status: "failed" },
+      progress: { entries: [] },
+      run: { status: "succeeded" },
+      result: { payload: "runtime result" },
+      presence: { userId: "other-user" },
+      privateFieldDraft: "draft-only value",
+    };
+    const input: CreateSavedGraphRequest = {
+      name: "Adversarial graph",
+      nodes: [runtimeNode as unknown as NonNullable<CreateSavedGraphRequest["nodes"]>[number]],
+      edges: [runtimeEdge as unknown as NonNullable<CreateSavedGraphRequest["edges"]>[number]],
+    };
+
+    const canonical = authoredGraphDocument(input);
+    const request = createSavedGraphRequest(canonical);
+    const serialized = JSON.stringify({ canonical, request });
+
+    expect(canonical.nodes[0]?.config).toEqual({
+      nested: { result: "legitimate config content" },
+    });
+    expect(canonical.nodes[0]).not.toHaveProperty("selected");
+    expect(canonical.nodes[0]).not.toHaveProperty("internals");
+    expect(canonical.nodes[0]).not.toHaveProperty("onConfigChange");
+    expect(canonical.nodes[0]).not.toHaveProperty("execution");
+    expect(canonical.edges[0]).not.toHaveProperty("sourceX");
+    expect(canonical.edges[0]).not.toHaveProperty("onUpdate");
+    expect(canonical.edges[0]).not.toHaveProperty("presence");
+    expect(serialized).not.toContain("runtime result");
+    expect(serialized).not.toContain("draft-only value");
+    expect(serialized).not.toContain("other-user");
+  });
+
   it("applies a compound node removal and its incident edges atomically", () => {
     const result = applyGraphCommand(document(), {
       kind: "remove_nodes",
@@ -102,6 +158,14 @@ describe("authored graph document", () => {
     });
   });
 
+  it("rejects an edge update for a missing edge", () => {
+    expect(() => applyGraphCommand(document(), {
+      kind: "update_edge",
+      edge_id: "missing-edge",
+      update: { enabled: false },
+    })).toThrow("missing edge missing-edge");
+  });
+
   it("does not invalidate execution for a move, but scopes configuration invalidation", () => {
     const graph = document();
     const move = executionInvalidatedNodeIds(graph, {
@@ -114,9 +178,22 @@ describe("authored graph document", () => {
       field: "label",
       value: "changed",
     });
+    const bind = executionInvalidatedNodeIds(graph, {
+      kind: "bind_artifact_type",
+      node_id: "source",
+      variable: "T",
+      artifact_type: { id: "artifact.scalar", schema_version: 1 },
+    });
+    const reset = executionInvalidatedNodeIds(graph, {
+      kind: "reset_artifact_type_binding",
+      node_id: "source",
+      variable: "T",
+    });
 
     expect(move).toEqual(new Set());
     expect(targetEdit).toEqual(new Set(["target"]));
+    expect(bind).toEqual(new Set(["source", "target"]));
+    expect(reset).toEqual(new Set(["source", "target"]));
   });
 
   it("preserves edits when stale dispatchers apply sequentially", () => {
