@@ -22,6 +22,39 @@ class ConcurrentWriteError(NotariusCoreError):
     """Raised when persistence detects an optimistic concurrency conflict."""
 
 
+class IdentityInvariantError(NotariusCoreError):
+    """Raised when an identity or workspace invariant would be violated."""
+
+
+class BootstrapOwnerRequiredError(IdentityInvariantError):
+    """Raised while the sealed legacy workspace is awaiting its owner."""
+
+
+class BootstrapOwnerMismatchError(IdentityInvariantError):
+    """Raised when a login does not match the configured bootstrap identity."""
+
+
+class LastWorkspaceOwnerError(IdentityInvariantError):
+    """Raised when an operation would remove the last active workspace owner."""
+
+
+class UserDisabledError(IdentityInvariantError):
+    """Raised when a disabled user attempts to authenticate or authorize."""
+
+
+class CapabilityDeniedError(IdentityInvariantError):
+    """Raised when an active membership lacks one required capability."""
+
+    def __init__(self, *, capability: str, workspace_id: UUID, user_id: UUID) -> None:
+        self.capability = capability
+        self.workspace_id = workspace_id
+        self.user_id = user_id
+        super().__init__(
+            f"User {user_id} is not authorized for capability {capability!r} "
+            f"in workspace {workspace_id}"
+        )
+
+
 class SavedGraphRevisionConflictError(NotariusCoreError):
     def __init__(
         self,

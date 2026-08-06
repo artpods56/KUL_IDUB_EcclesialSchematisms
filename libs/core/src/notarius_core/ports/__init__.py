@@ -26,6 +26,11 @@ from notarius_core.ports.execution_history import (
     ExecutionHistoryUnitOfWorkPort,
     GraphExecutionHistoryRepositoryPort,
 )
+from notarius_core.ports.identity import (
+    IdentityRepositoryPort,
+    IdentityUnitOfWorkPort,
+    SecurityAuditRepositoryPort,
+)
 
 __all__ = [
     "FileMetadata",
@@ -33,12 +38,15 @@ __all__ = [
     "FileStreamProtocol",
     "ExecutionHistoryUnitOfWorkPort",
     "GraphExecutionHistoryRepositoryPort",
+    "IdentityRepositoryPort",
+    "IdentityUnitOfWorkPort",
     "GraphModuleExecutionResult",
     "GraphModuleExecutorPort",
     "JsonValue",
     "NodeSecretRepositoryPort",
     "NodeSecretResolverPort",
     "NodeSecretUnavailableError",
+    "SecurityAuditRepositoryPort",
     "NodeSecretUnitOfWorkPort",
     "SaveFileCommand",
     "SavedGraphRepositoryPort",

@@ -13,6 +13,11 @@ from notarius_core.ports.execution_history import (
     GraphExecutionHistoryRepositoryPort,
 )
 from notarius_core.ports.invocation_cache import InvocationCacheRepositoryPort
+from notarius_core.ports.identity import (
+    IdentityRepositoryPort,
+    IdentityUnitOfWorkPort,
+    SecurityAuditRepositoryPort,
+)
 from notarius_core.ports.materialized_outputs import (
     MaterializedNodeOutputsRepositoryPort,
     WorkbenchUnitOfWorkPort,
@@ -29,10 +34,12 @@ from notarius_core.ports.saved_graphs import (
 from notarius_persistence.adapters.repositories import (
     SqlArtifactRepository,
     SqlGraphExecutionHistoryRepository,
+    SqlIdentityRepository,
     SqlInvocationCacheRepository,
     SqlMaterializedNodeOutputsRepository,
     SqlNodeSecretRepository,
     SqlSavedGraphRepository,
+    SqlSecurityAuditRepository,
 )
 
 
@@ -45,6 +52,8 @@ class _SqlAlchemyUnitOfWorkState:
     materialized_outputs: MaterializedNodeOutputsRepositoryPort
     node_secrets: NodeSecretRepositoryPort
     execution_history: GraphExecutionHistoryRepositoryPort
+    identity: IdentityRepositoryPort
+    security_audit: SecurityAuditRepositoryPort
 
 
 class SqlAlchemyUnitOfWork(
@@ -52,6 +61,7 @@ class SqlAlchemyUnitOfWork(
     SavedGraphUnitOfWorkPort,
     NodeSecretUnitOfWorkPort,
     ExecutionHistoryUnitOfWorkPort,
+    IdentityUnitOfWorkPort,
 ):
     """Reusable task-local SQLAlchemy transaction boundary.
 
@@ -100,6 +110,16 @@ class SqlAlchemyUnitOfWork(
     def execution_history(self) -> GraphExecutionHistoryRepositoryPort:
         return self._entered_state().execution_history
 
+    @property
+    @override
+    def identity(self) -> IdentityRepositoryPort:
+        return self._entered_state().identity
+
+    @property
+    @override
+    def security_audit(self) -> SecurityAuditRepositoryPort:
+        return self._entered_state().security_audit
+
     @override
     async def __aenter__(self) -> "SqlAlchemyUnitOfWork":
         if self._state.get() is not None:
@@ -114,6 +134,8 @@ class SqlAlchemyUnitOfWork(
                 materialized_outputs=SqlMaterializedNodeOutputsRepository(session),
                 node_secrets=SqlNodeSecretRepository(session),
                 execution_history=SqlGraphExecutionHistoryRepository(session),
+                identity=SqlIdentityRepository(session),
+                security_audit=SqlSecurityAuditRepository(session),
             )
         )
         return self

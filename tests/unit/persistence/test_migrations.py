@@ -37,6 +37,15 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "invocation_cache_entries",
             "materialized_node_outputs",
             "node_secrets",
+            "users",
+            "oidc_identities",
+            "oidc_login_transactions",
+            "oidc_bootstrap_owner_mappings",
+            "workspaces",
+            "workspace_memberships",
+            "auth_sessions",
+            "personal_access_tokens",
+            "security_audit_events",
             "saved_graphs",
             "saved_graph_revisions",
         }
@@ -57,8 +66,61 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "invocation_cache_entries",
             "materialized_node_outputs",
             "node_secrets",
+            "users",
+            "oidc_identities",
+            "oidc_login_transactions",
+            "oidc_bootstrap_owner_mappings",
+            "workspaces",
+            "workspace_memberships",
+            "auth_sessions",
+            "personal_access_tokens",
+            "security_audit_events",
             "saved_graphs",
             "saved_graph_revisions",
+        }
+
+    get_settings.cache_clear()
+
+
+def test_identity_migration_creates_sealed_local_workspace_and_audit_indexes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "identity" / "migrated.sqlite3"
+    monkeypatch.setenv(
+        "NOTARIUS_DATABASE_URL",
+        f"sqlite+aiosqlite:///{database_path}",
+    )
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+
+    command.upgrade(config, "0007_identity_workspace_foundation")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        local = connection.execute(
+            text(
+                "SELECT slug, kind, personal_owner_user_id "
+                "FROM workspaces WHERE slug = 'local'"
+            )
+        ).mappings().one()
+        assert local == {
+            "slug": "local",
+            "kind": "shared",
+            "personal_owner_user_id": None,
+        }
+        assert connection.execute(
+            text("SELECT COUNT(*) FROM users")
+        ).scalar_one() == 0
+        indexes = {
+            row[1]
+            for row in connection.execute(
+                text("PRAGMA index_list('security_audit_events')")
+            )
+        }
+        assert indexes >= {
+            "ix_security_audit_events_workspace_occurred_at",
+            "ix_security_audit_events_actor_occurred_at",
+            "ix_security_audit_events_operation_occurred_at",
+            "ix_security_audit_events_retention",
         }
 
     get_settings.cache_clear()

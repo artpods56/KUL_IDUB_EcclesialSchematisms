@@ -16,6 +16,17 @@ from notarius_core.artifacts import (
     ArtifactTypeKey,
 )
 from notarius_core.domain.invocation_cache import InvocationCacheEntry
+from notarius_core.domain.identity import (
+    AuthSession,
+    OidcBootstrapOwnerMapping,
+    OidcIdentity,
+    OidcLoginTransaction,
+    PersonalAccessToken,
+    User,
+    Workspace,
+    WorkspaceKind,
+    WorkspaceMembership,
+)
 from notarius_core.domain.errors import NotFoundError, ObjectAlreadyExistsError
 from notarius_core.domain.execution_history import (
     GraphExecution,
@@ -29,6 +40,11 @@ from notarius_core.domain.execution_history import (
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
 from notarius_core.domain.node_secrets import EncryptedNodeSecret
 from notarius_core.domain.saved_graphs import SavedGraph, SavedGraphRevision
+from notarius_core.domain.security_audit import SecurityAuditEvent
+from notarius_core.ports.identity import (
+    IdentityRepositoryPort,
+    SecurityAuditRepositoryPort,
+)
 from notarius_core.ports.invocation_cache import InvocationCacheRepositoryPort
 from notarius_core.ports.execution_history import (
     GraphExecutionHistoryRepositoryPort,
@@ -41,6 +57,215 @@ from notarius_core.ports.saved_graphs import SavedGraphRepositoryPort
 
 from notarius_persistence import schema
 from notarius_persistence.orm import GraphExecutionRecord, SavedGraphRevisionRecord
+
+
+class SqlIdentityRepository(IdentityRepositoryPort):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    @override
+    async def add_user(self, user: User) -> None:
+        self._session.add(user)
+
+    @override
+    async def get_user(self, user_id: UUID) -> User | None:
+        return await self._session.get(User, user_id)
+
+    @override
+    async def get_oidc_identity(
+        self,
+        *,
+        issuer: str,
+        subject: str,
+    ) -> OidcIdentity | None:
+        return await self._session.scalar(
+            select(OidcIdentity).where(
+                schema.oidc_identities.c.issuer == issuer,
+                schema.oidc_identities.c.subject == subject,
+            )
+        )
+
+    @override
+    async def add_oidc_identity(self, identity: OidcIdentity) -> None:
+        await self._session.flush()
+        self._session.add(identity)
+
+    @override
+    async def add_workspace(self, workspace: Workspace) -> None:
+        await self._session.flush()
+        self._session.add(workspace)
+
+    @override
+    async def get_workspace(self, workspace_id: UUID) -> Workspace | None:
+        return await self._session.get(Workspace, workspace_id)
+
+    @override
+    async def get_workspace_by_slug(self, slug: str) -> Workspace | None:
+        return await self._session.scalar(
+            select(Workspace).where(schema.workspaces.c.slug == slug)
+        )
+
+    @override
+    async def get_personal_workspace(self, user_id: UUID) -> Workspace | None:
+        return await self._session.scalar(
+            select(Workspace).where(
+                schema.workspaces.c.kind == WorkspaceKind.PERSONAL.value,
+                schema.workspaces.c.personal_owner_user_id == user_id,
+            )
+        )
+
+    @override
+    async def add_membership(self, membership: WorkspaceMembership) -> None:
+        await self._session.flush()
+        self._session.add(membership)
+
+    @override
+    async def get_membership(
+        self,
+        *,
+        workspace_id: UUID,
+        user_id: UUID,
+    ) -> WorkspaceMembership | None:
+        return await self._session.get(WorkspaceMembership, (workspace_id, user_id))
+
+    @override
+    async def list_memberships(self, workspace_id: UUID) -> list[WorkspaceMembership]:
+        result = await self._session.scalars(
+            select(WorkspaceMembership)
+            .where(schema.workspace_memberships.c.workspace_id == workspace_id)
+            .order_by(schema.workspace_memberships.c.user_id.asc())
+        )
+        return list(result)
+
+    @override
+    async def count_active_owners(self, workspace_id: UUID) -> int:
+        count = await self._session.scalar(
+            select(func.count())
+            .select_from(schema.workspace_memberships)
+            .where(
+                schema.workspace_memberships.c.workspace_id == workspace_id,
+                schema.workspace_memberships.c.role == "owner",
+                schema.workspace_memberships.c.revoked_at.is_(None),
+            )
+        )
+        return int(count or 0)
+
+    @override
+    async def get_unconsumed_bootstrap_mapping(
+        self,
+        workspace_id: UUID,
+    ) -> OidcBootstrapOwnerMapping | None:
+        return await self._session.scalar(
+            select(OidcBootstrapOwnerMapping).where(
+                schema.oidc_bootstrap_owner_mappings.c.workspace_id == workspace_id,
+                schema.oidc_bootstrap_owner_mappings.c.consumed_at.is_(None),
+            )
+        )
+
+    @override
+    async def add_bootstrap_mapping(
+        self,
+        mapping: OidcBootstrapOwnerMapping,
+    ) -> None:
+        self._session.add(mapping)
+
+    @override
+    async def add_login_transaction(self, transaction: OidcLoginTransaction) -> None:
+        self._session.add(transaction)
+
+    @override
+    async def get_login_transaction(
+        self,
+        transaction_id: UUID,
+    ) -> OidcLoginTransaction | None:
+        return await self._session.get(OidcLoginTransaction, transaction_id)
+
+    @override
+    async def add_auth_session(self, session: AuthSession) -> None:
+        self._session.add(session)
+
+    @override
+    async def get_auth_session_by_digest(
+        self,
+        secret_digest: bytes,
+    ) -> AuthSession | None:
+        return await self._session.scalar(
+            select(AuthSession).where(
+                schema.auth_sessions.c.secret_digest == secret_digest
+            )
+        )
+
+    @override
+    async def list_auth_sessions_for_user(self, user_id: UUID) -> list[AuthSession]:
+        result = await self._session.scalars(
+            select(AuthSession).where(schema.auth_sessions.c.user_id == user_id)
+        )
+        return list(result)
+
+    @override
+    async def add_personal_access_token(self, token: PersonalAccessToken) -> None:
+        self._session.add(token)
+
+    @override
+    async def get_personal_access_token_by_digest(
+        self,
+        secret_digest: bytes,
+    ) -> PersonalAccessToken | None:
+        return await self._session.scalar(
+            select(PersonalAccessToken).where(
+                schema.personal_access_tokens.c.secret_digest == secret_digest
+            )
+        )
+
+    @override
+    async def list_personal_access_tokens_for_user(
+        self,
+        user_id: UUID,
+    ) -> list[PersonalAccessToken]:
+        result = await self._session.scalars(
+            select(PersonalAccessToken).where(
+                schema.personal_access_tokens.c.user_id == user_id
+            )
+        )
+        return list(result)
+
+
+class SqlSecurityAuditRepository(SecurityAuditRepositoryPort):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    @override
+    async def add(self, event: SecurityAuditEvent) -> None:
+        self._session.add(event)
+
+    @override
+    async def list_for_workspace(
+        self,
+        workspace_id: UUID,
+        *,
+        limit: int,
+    ) -> list[SecurityAuditEvent]:
+        if limit < 1:
+            raise ValueError("Security audit event limit must be positive")
+        result = await self._session.scalars(
+            select(SecurityAuditEvent)
+            .where(schema.security_audit_events.c.workspace_id == workspace_id)
+            .order_by(schema.security_audit_events.c.occurred_at.desc())
+            .limit(limit)
+        )
+        return list(result)
+
+    @override
+    async def delete_before(self, occurred_before: datetime) -> int:
+        result = cast(
+            CursorResult[tuple[object, ...]],
+            await self._session.execute(
+                delete(schema.security_audit_events).where(
+                    schema.security_audit_events.c.occurred_at < occurred_before
+                )
+            ),
+        )
+        return result.rowcount
 
 
 class SqlSavedGraphRepository(SavedGraphRepositoryPort):

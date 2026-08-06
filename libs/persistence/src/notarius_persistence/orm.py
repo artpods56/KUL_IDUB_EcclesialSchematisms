@@ -6,6 +6,16 @@ from sqlalchemy.orm import registry
 
 from notarius_core.artifacts import ArtifactObject
 from notarius_core.domain.invocation_cache import InvocationCacheEntry
+from notarius_core.domain.identity import (
+    AuthSession,
+    OidcBootstrapOwnerMapping,
+    OidcIdentity,
+    OidcLoginTransaction,
+    PersonalAccessToken,
+    User,
+    Workspace,
+    WorkspaceMembership,
+)
 from notarius_core.domain.execution_history import (
     GraphExecution,
     GraphExecutionNodeResult,
@@ -15,6 +25,7 @@ from notarius_core.domain.execution_history import (
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
 from notarius_core.domain.node_secrets import EncryptedNodeSecret
 from notarius_core.domain.saved_graphs import SavedGraph, SavedGraphDocument
+from notarius_core.domain.security_audit import SecurityAuditEvent
 
 from notarius_persistence import schema
 
@@ -98,4 +109,28 @@ def start_mappers() -> None:
     mapper_registry.map_imperatively(
         EncryptedNodeSecret,
         schema.node_secrets,
+    )
+    mapper_registry.map_imperatively(User, schema.users)
+    mapper_registry.map_imperatively(OidcIdentity, schema.oidc_identities)
+    mapper_registry.map_imperatively(
+        OidcLoginTransaction,
+        schema.oidc_login_transactions,
+    )
+    mapper_registry.map_imperatively(
+        OidcBootstrapOwnerMapping,
+        schema.oidc_bootstrap_owner_mappings,
+    )
+    mapper_registry.map_imperatively(Workspace, schema.workspaces)
+    mapper_registry.map_imperatively(
+        WorkspaceMembership,
+        schema.workspace_memberships,
+    )
+    mapper_registry.map_imperatively(AuthSession, schema.auth_sessions)
+    mapper_registry.map_imperatively(
+        PersonalAccessToken,
+        schema.personal_access_tokens,
+    )
+    mapper_registry.map_imperatively(
+        SecurityAuditEvent,
+        schema.security_audit_events,
     )
