@@ -111,6 +111,14 @@ def test_identity_migration_creates_sealed_local_workspace_and_audit_indexes(
         assert connection.execute(
             text("SELECT COUNT(*) FROM users")
         ).scalar_one() == 0
+        workspaces_ddl = connection.execute(
+            text(
+                "SELECT sql FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'workspaces'"
+            )
+        ).scalar_one()
+        assert "GLOB" not in workspaces_ddl.upper()
+        assert "lower(trim(slug))" in workspaces_ddl
         indexes = {
             row[1]
             for row in connection.execute(
