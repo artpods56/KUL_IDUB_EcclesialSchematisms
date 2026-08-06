@@ -6,6 +6,7 @@ from alembic import command
 from alembic.config import Config
 import pytest
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 from notarius_api.settings import get_settings
 
@@ -122,6 +123,23 @@ def test_identity_migration_creates_sealed_local_workspace_and_audit_indexes(
             "ix_security_audit_events_operation_occurred_at",
             "ix_security_audit_events_retention",
         }
+        with pytest.raises(IntegrityError):
+            connection.execute(
+                text(
+                    "INSERT INTO workspaces "
+                    "(id, slug, name, kind, personal_owner_user_id, "
+                    "created_at, updated_at) VALUES "
+                    "(:id, :slug, :name, :kind, NULL, :created_at, :updated_at)"
+                ),
+                {
+                    "id": "00000000000000000000000000000008",
+                    "slug": "Not-Normalized",
+                    "name": "Invalid",
+                    "kind": "shared",
+                    "created_at": "2026-08-07 00:00:00",
+                    "updated_at": "2026-08-07 00:00:00",
+                },
+            )
 
     get_settings.cache_clear()
 

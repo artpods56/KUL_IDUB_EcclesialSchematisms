@@ -515,6 +515,13 @@ workspaces = Table(
         name="uq_workspaces_personal_owner_user_id",
     ),
     CheckConstraint(
+        "length(slug) BETWEEN 1 AND 80 AND "
+        "slug = lower(trim(slug)) AND "
+        "slug NOT GLOB '*[^a-z0-9-]*' AND "
+        "slug NOT LIKE '-%' AND slug NOT LIKE '%-'",
+        name="ck_workspaces_slug_normalized",
+    ),
+    CheckConstraint(
         "kind IN ('personal', 'shared')",
         name="ck_workspaces_kind_choice",
     ),

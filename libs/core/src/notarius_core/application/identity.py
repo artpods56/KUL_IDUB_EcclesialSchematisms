@@ -97,6 +97,11 @@ class IdentityService:
     ) -> IdentityProvisioningResult:
         """Provision or refresh one validated OIDC identity atomically."""
         async with self._unit_of_work_factory() as unit_of_work:
+            local_workspace = (
+                await unit_of_work.identity.lock_workspace_by_slug_for_membership_mutation(
+                    "local"
+                )
+            )
             identity = await unit_of_work.identity.get_oidc_identity(
                 issuer=issuer,
                 subject=subject,
@@ -137,7 +142,6 @@ class IdentityService:
                     local_workspace_membership=local_membership,
                 )
 
-            local_workspace = await unit_of_work.identity.get_workspace_by_slug("local")
             if local_workspace is None:
                 raise BootstrapOwnerRequiredError(
                     "Identity provisioning requires the migrated local workspace"
@@ -203,6 +207,8 @@ class IdentityService:
                     workspace_id=local_workspace.id
                     if local_membership is not None
                     else personal_workspace.id,
+                    resource_type="user",
+                    resource_id=str(user.id),
                 )
             )
             await unit_of_work.commit()
@@ -216,25 +222,26 @@ class IdentityService:
     async def create_shared_workspace(
         self,
         *,
-        actor_user_id: UUID,
+        actor: ActorContext,
         slug: str,
         name: str,
     ) -> Workspace:
         async with self._unit_of_work_factory() as unit_of_work:
-            await self._require_active_user(unit_of_work, actor_user_id)
+            await self._require_active_user(unit_of_work, actor.user_id)
             workspace = Workspace.shared(slug=slug, name=name)
             await unit_of_work.identity.add_workspace(workspace)
             await unit_of_work.identity.add_membership(
                 WorkspaceMembership(
                     workspace_id=workspace.id,
-                    user_id=actor_user_id,
+                    user_id=actor.user_id,
                     role=WorkspaceRole.OWNER,
                 )
             )
             await unit_of_work.security_audit.add(
                 SecurityAuditEvent(
                     actor_kind=SecurityAuditActorKind.AUTHENTICATED,
-                    user_id=actor_user_id,
+                    user_id=actor.user_id,
+                    credential_reference=actor.credential_reference,
                     operation="workspace.create",
                     outcome=SecurityAuditOutcome.SUCCESS,
                     workspace_id=workspace.id,
@@ -270,19 +277,23 @@ class IdentityService:
     async def add_or_reactivate_member(
         self,
         *,
-        actor_user_id: UUID,
+        actor: ActorContext,
         workspace_id: UUID,
         user_id: UUID,
         role: WorkspaceRole,
     ) -> WorkspaceMembership:
         role = WorkspaceRole(role)
         async with self._unit_of_work_factory() as unit_of_work:
+            workspace = await unit_of_work.identity.lock_workspace_for_membership_mutation(
+                workspace_id
+            )
+            if workspace is None:
+                raise NotFoundError("Workspace", str(workspace_id))
             await self._require_workspace_owner(
                 unit_of_work,
-                actor_user_id=actor_user_id,
+                actor=actor,
                 workspace_id=workspace_id,
             )
-            workspace = await self._require_workspace(unit_of_work, workspace_id)
             if workspace.kind is WorkspaceKind.PERSONAL and user_id != workspace.personal_owner_user_id:
                 raise IdentityInvariantError(
                     "Personal workspace cannot accept another membership"
@@ -305,13 +316,21 @@ class IdentityService:
                 )
                 await unit_of_work.identity.add_membership(membership)
             elif membership.is_active:
+                memberships = await unit_of_work.identity.list_memberships(workspace_id)
+                ensure_last_owner_can_change(
+                    workspace=workspace,
+                    memberships=memberships,
+                    target=membership,
+                    replacement_role=role,
+                )
                 membership.change_role(role)
             else:
                 membership.reactivate(role=role)
             await unit_of_work.security_audit.add(
                 SecurityAuditEvent(
                     actor_kind=SecurityAuditActorKind.AUTHENTICATED,
-                    user_id=actor_user_id,
+                    user_id=actor.user_id,
+                    credential_reference=actor.credential_reference,
                     operation="workspace.membership.upsert",
                     outcome=SecurityAuditOutcome.SUCCESS,
                     workspace_id=workspace_id,
@@ -325,19 +344,23 @@ class IdentityService:
     async def change_member_role(
         self,
         *,
-        actor_user_id: UUID,
+        actor: ActorContext,
         workspace_id: UUID,
         user_id: UUID,
         role: WorkspaceRole,
     ) -> WorkspaceMembership:
         role = WorkspaceRole(role)
         async with self._unit_of_work_factory() as unit_of_work:
+            workspace = await unit_of_work.identity.lock_workspace_for_membership_mutation(
+                workspace_id
+            )
+            if workspace is None:
+                raise NotFoundError("Workspace", str(workspace_id))
             await self._require_workspace_owner(
                 unit_of_work,
-                actor_user_id=actor_user_id,
+                actor=actor,
                 workspace_id=workspace_id,
             )
-            workspace = await self._require_workspace(unit_of_work, workspace_id)
             membership = await self._require_membership(
                 unit_of_work,
                 workspace_id=workspace_id,
@@ -354,7 +377,8 @@ class IdentityService:
             await unit_of_work.security_audit.add(
                 SecurityAuditEvent(
                     actor_kind=SecurityAuditActorKind.AUTHENTICATED,
-                    user_id=actor_user_id,
+                    user_id=actor.user_id,
+                    credential_reference=actor.credential_reference,
                     operation="workspace.membership.role_change",
                     outcome=SecurityAuditOutcome.SUCCESS,
                     workspace_id=workspace_id,
@@ -368,17 +392,21 @@ class IdentityService:
     async def remove_member(
         self,
         *,
-        actor_user_id: UUID,
+        actor: ActorContext,
         workspace_id: UUID,
         user_id: UUID,
     ) -> WorkspaceMembership:
         async with self._unit_of_work_factory() as unit_of_work:
+            workspace = await unit_of_work.identity.lock_workspace_for_membership_mutation(
+                workspace_id
+            )
+            if workspace is None:
+                raise NotFoundError("Workspace", str(workspace_id))
             await self._require_workspace_owner(
                 unit_of_work,
-                actor_user_id=actor_user_id,
+                actor=actor,
                 workspace_id=workspace_id,
             )
-            workspace = await self._require_workspace(unit_of_work, workspace_id)
             membership = await self._require_membership(
                 unit_of_work,
                 workspace_id=workspace_id,
@@ -395,7 +423,8 @@ class IdentityService:
             await unit_of_work.security_audit.add(
                 SecurityAuditEvent(
                     actor_kind=SecurityAuditActorKind.AUTHENTICATED,
-                    user_id=actor_user_id,
+                    user_id=actor.user_id,
+                    credential_reference=actor.credential_reference,
                     operation="workspace.membership.remove",
                     outcome=SecurityAuditOutcome.SUCCESS,
                     workspace_id=workspace_id,
@@ -509,20 +538,20 @@ class IdentityService:
         self,
         unit_of_work: IdentityUnitOfWorkPort,
         *,
-        actor_user_id: UUID,
+        actor: ActorContext,
         workspace_id: UUID,
     ) -> WorkspaceMembership:
-        await self._require_active_user(unit_of_work, actor_user_id)
+        await self._require_active_user(unit_of_work, actor.user_id)
         membership = await self._require_membership(
             unit_of_work,
             workspace_id=workspace_id,
-            user_id=actor_user_id,
+            user_id=actor.user_id,
         )
         if not membership.grants(WorkspaceCapability.MANAGE_MEMBERS):
             raise CapabilityDeniedError(
                 capability=WorkspaceCapability.MANAGE_MEMBERS.value,
                 workspace_id=workspace_id,
-                user_id=actor_user_id,
+                user_id=actor.user_id,
             )
         return membership
 

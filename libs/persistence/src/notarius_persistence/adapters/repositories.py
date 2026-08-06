@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import cast, override
 from uuid import UUID
 
-from sqlalchemy import delete, func, insert, or_, select, update
+from sqlalchemy import delete, func, insert, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import CursorResult
@@ -104,6 +104,32 @@ class SqlIdentityRepository(IdentityRepositoryPort):
         return await self._session.scalar(
             select(Workspace).where(schema.workspaces.c.slug == slug)
         )
+
+    @override
+    async def lock_workspace_for_membership_mutation(
+        self,
+        workspace_id: UUID,
+    ) -> Workspace | None:
+        statement = select(Workspace).where(
+            schema.workspaces.c.id == workspace_id,
+        )
+        if self._session.get_bind().dialect.name == "sqlite":
+            await self._session.execute(text("BEGIN IMMEDIATE"))
+        else:
+            statement = statement.with_for_update()
+        return await self._session.scalar(statement)
+
+    @override
+    async def lock_workspace_by_slug_for_membership_mutation(
+        self,
+        slug: str,
+    ) -> Workspace | None:
+        statement = select(Workspace).where(schema.workspaces.c.slug == slug)
+        if self._session.get_bind().dialect.name == "sqlite":
+            await self._session.execute(text("BEGIN IMMEDIATE"))
+        else:
+            statement = statement.with_for_update()
+        return await self._session.scalar(statement)
 
     @override
     async def get_personal_workspace(self, user_id: UUID) -> Workspace | None:

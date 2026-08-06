@@ -106,6 +106,13 @@ def upgrade() -> None:
             name="ck_workspaces_kind_choice",
         ),
         sa.CheckConstraint(
+            "length(slug) BETWEEN 1 AND 80 AND "
+            "slug = lower(trim(slug)) AND "
+            "slug NOT GLOB '*[^a-z0-9-]*' AND "
+            "slug NOT LIKE '-%' AND slug NOT LIKE '%-'",
+            name="ck_workspaces_slug_normalized",
+        ),
+        sa.CheckConstraint(
             "(kind = 'personal' AND personal_owner_user_id IS NOT NULL) OR "
             "(kind = 'shared' AND personal_owner_user_id IS NULL)",
             name="ck_workspaces_personal_owner_shape",
