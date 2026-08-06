@@ -51,10 +51,16 @@ import {
 import { useRunExecution } from "./useRunExecution";
 import {
   WorkflowCanvas,
-  addEdge,
   applyEdgeChanges,
   applyNodeChanges,
 } from "../canvas/WorkflowCanvas";
+import {
+  addEdgeCommand,
+  graphCommandsFromEdgeChanges,
+  graphCommandsFromNodeChanges,
+  nodeOverlaysFromNodes,
+  reduceWorkbenchAuthoringState,
+} from "../canvas/graph-document-adapter";
 import {
   ARTIFACT_VIEWER_EDGE_TYPE,
   ARTIFACT_VIEWER_INPUT_HANDLE,
@@ -72,6 +78,9 @@ import {
   type CanvasEdge,
   type CanvasNode,
 } from "../canvas/artifact-viewer";
+import {
+  hydrateAuthoredGraphDocument,
+} from "../canvas/saved-graph";
 import {
   EMPTY_ARTIFACT_KEY_SELECTION,
   targetRowsForBinding,
@@ -92,8 +101,6 @@ import {
 } from "../canvas/handles";
 import {
   appendInputPlug,
-  removeInputPlug as withoutInputPlug,
-  reorderInputPlug as withReorderedInputPlug,
 } from "../canvas/input-plugs";
 import {
   nodeSecretBindingReady,
@@ -104,19 +111,17 @@ import {
 } from "../canvas/nodes.css";
 import type { ArtifactQueryRelation } from "../canvas/query-artifact-tables";
 import type { SchemaBuilderField } from "../canvas/schema-builder";
+import { serializeNodeLayout } from "../canvas/node-layout";
 import { useTheme } from "@/components/theme";
 import {
   isFileUploadOperator,
   WORKFLOW_EDGE_TYPE,
   WORKFLOW_NODE_TYPE,
-  bindArtifactTypeVariable,
   createWorkflowNodeData,
   effectivePortShape,
   imageUploads,
   invalidateWorkflowNodeRuns,
   removeImageUpload,
-  replaceImageUploads,
-  resetArtifactTypeBinding,
   resolvedPortArtifactType,
   type WorkflowEdge,
   type WorkflowEdgeRouteOffset,
@@ -135,6 +140,10 @@ import {
   nodeAndDescendantIds,
   workflowEdgeRouteOption,
 } from "../model/graph-authoring";
+import {
+  type AuthoredGraphDocument,
+  type GraphCommand,
+} from "../model/graph-document";
 import {
   missingRequiredInputsFor,
   selectedNodeAndAncestorIds,
@@ -177,7 +186,6 @@ interface ActiveArtifactViewerActivity {
   revision: number;
 }
 
-
 export function Workbench({
   workspaceSlug,
   initialGraphId,
@@ -188,8 +196,103 @@ export function Workbench({
     mutate: refreshNodeRegistry,
   } = useNodeRegistry();
   const { preference, cycleTheme } = useTheme();
-  const [nodes, setNodes] = React.useState<WorkflowNode[]>([]);
-  const [edges, setEdges] = React.useState<WorkflowEdge[]>([]);
+  const [authoringState, dispatchAuthoringState] = React.useReducer(
+    reduceWorkbenchAuthoringState,
+    {
+      document: {
+        name: "Untitled workflow",
+        nodes: [],
+        edges: [],
+      },
+      nodeOverlays: {},
+      error: null,
+    },
+  );
+  const authoredDocument = authoringState.document;
+  const nodeOverlays = authoringState.nodeOverlays;
+  const authoredDocumentRef = React.useRef(authoredDocument);
+  const [selectedNodeIdSet, setSelectedNodeIdSet] =
+    React.useState<ReadonlySet<string>>(new Set());
+  const [selectedEdgeIdSet, setSelectedEdgeIdSet] =
+    React.useState<ReadonlySet<string>>(new Set());
+  const [positionOverrides, setPositionOverrides] =
+    React.useState<Record<string, { x: number; y: number }>>({});
+  const hydratedDocument = React.useMemo(
+    () => registry
+      ? hydrateAuthoredGraphDocument(authoredDocument, registry)
+      : { nodes: [], edges: [] },
+    [authoredDocument, registry],
+  );
+  const nodesRef = React.useRef<WorkflowNode[]>([]);
+  const edgesRef = React.useRef<WorkflowEdge[]>([]);
+  const nodes = React.useMemo<WorkflowNode[]>(
+    () => hydratedDocument.nodes.map((node) => ({
+      ...node,
+      position: positionOverrides[node.id] ?? node.position,
+      selected: selectedNodeIdSet.has(node.id),
+      data: {
+        ...node.data,
+        ...(nodeOverlays[node.id] ?? {}),
+      },
+    })),
+    [
+      hydratedDocument.nodes,
+      nodeOverlays,
+      positionOverrides,
+      selectedNodeIdSet,
+    ],
+  );
+  const edges = React.useMemo<WorkflowEdge[]>(
+    () => hydratedDocument.edges.map((edge) => ({
+      ...edge,
+      selected: selectedEdgeIdSet.has(edge.id),
+    })),
+    [hydratedDocument.edges, selectedEdgeIdSet],
+  );
+  React.useLayoutEffect(() => {
+    nodesRef.current = nodes;
+    edgesRef.current = edges;
+  }, [edges, nodes]);
+  const setNodes = React.useCallback<
+    React.Dispatch<React.SetStateAction<WorkflowNode[]>>
+  >((action) => {
+    const currentNodes = nodesRef.current;
+    const nextNodes = typeof action === "function" ? action(currentNodes) : action;
+    nodesRef.current = nextNodes;
+    setSelectedNodeIdSet(
+      new Set(nextNodes.filter((node) => node.selected).map((node) => node.id)),
+    );
+    setPositionOverrides(() => {
+      const next: Record<string, { x: number; y: number }> = {};
+      for (const node of nextNodes) {
+        const authoredNode = authoredDocumentRef.current.nodes.find(
+          (candidate) => candidate.id === node.id,
+        );
+        if (
+          authoredNode &&
+          (authoredNode.position.x !== node.position.x ||
+            authoredNode.position.y !== node.position.y)
+        ) {
+          next[node.id] = { x: node.position.x, y: node.position.y };
+        }
+      }
+      return next;
+    });
+    dispatchAuthoringState({
+      kind: "update_overlays",
+      update: nodeOverlaysFromNodes(nextNodes),
+    });
+  }, [dispatchAuthoringState]);
+  const setEdges = React.useCallback<
+    React.Dispatch<React.SetStateAction<WorkflowEdge[]>>
+  >((action) => {
+    const currentEdges = edgesRef.current;
+    const nextEdges = typeof action === "function" ? action(currentEdges) : action;
+    edgesRef.current = nextEdges;
+    setSelectedEdgeIdSet(
+      new Set(nextEdges.filter((edge) => edge.selected).map((edge) => edge.id)),
+    );
+  }, []);
   const [artifactViewers, setArtifactViewers] =
     React.useState<ArtifactViewerCanvasState>({
       graphId: null,
@@ -223,21 +326,52 @@ export function Workbench({
     nodeId: string | null;
     executionId: string | null;
   } | null>(null);
-  const [runError, setRunError] = React.useState<string | null>(null);
-  const clearRunError = React.useCallback(() => setRunError(null), []);
+  const [transientRunError, setRunError] = React.useState<string | null>(null);
+  const runError = authoringState.error ?? transientRunError;
+  const clearRunError = React.useCallback(() => {
+    setRunError(null);
+    dispatchAuthoringState({ kind: "clear_error" });
+  }, [dispatchAuthoringState]);
   const dismissRunError = React.useCallback((message: string) => {
     setRunError((current) => current === message ? null : current);
-  }, []);
+    if (authoringState.error === message) {
+      dispatchAuthoringState({ kind: "clear_error" });
+    }
+  }, [authoringState.error, dispatchAuthoringState]);
   const [pendingConnectionRoute, setPendingConnectionRoute] =
     React.useState<PendingConnectionRoute | null>(null);
   const [fitRevision, setFitRevision] = React.useState(0);
-  const initializedRef = React.useRef(false);
   const executionRunningRef = React.useRef(false);
   const isExecutionRunning = React.useCallback(
     () => executionRunningRef.current,
     [],
   );
   const pendingBoundEdgesRef = React.useRef<PendingBoundEdge[]>([]);
+
+  const applyAuthoringCommands = React.useCallback(
+    (commands: readonly GraphCommand[]) => {
+      if (!commands.length) return;
+      dispatchAuthoringState({ kind: "apply_commands", commands });
+      setPositionOverrides({});
+      setSelectedNodeIdSet((current) => new Set(
+        [...current].filter((nodeId) =>
+          authoredDocument.nodes.some((node) => node.id === nodeId),
+        ),
+      ));
+      setSelectedEdgeIdSet((current) => new Set(
+        [...current].filter((edgeId) =>
+          authoredDocument.edges.some((edge) => edge.id === edgeId),
+        ),
+      ));
+      setPendingConnectionRoute(null);
+      setRunError(null);
+    },
+    [authoredDocument.edges, authoredDocument.nodes, dispatchAuthoringState],
+  );
+
+  React.useLayoutEffect(() => {
+    authoredDocumentRef.current = authoredDocument;
+  }, [authoredDocument]);
 
   const handleNodeHandlesMeasured = React.useCallback((
     nodeId: string,
@@ -260,57 +394,39 @@ export function Workbench({
     if (!ready.length) return;
 
     pendingBoundEdgesRef.current = waiting;
-    setEdges((current) =>
-      ready.reduce(
-        (next, pending) => addEdge(pending.edge, next),
-        current,
-      ),
-    );
-  }, []);
+    const commands = ready.map((pending) => {
+      const connection: Connection = {
+        source: pending.edge.source,
+        sourceHandle: pending.edge.sourceHandle ?? null,
+        target: pending.edge.target,
+        targetHandle: pending.edge.targetHandle ?? null,
+      };
+      return addEdgeCommand(connection, pending.edge.data, pending.edge.id);
+    });
+    applyAuthoringCommands(commands);
+  }, [applyAuthoringCommands]);
 
   const updateConfig = React.useCallback(
     (nodeId: string, name: string, value: unknown) => {
-      const invalidatedNodeIds = nodeAndDescendantIds(nodeId, edges);
-      setNodes((current) =>
-        current.map((node) => {
-          if (!invalidatedNodeIds.has(node.id)) return node;
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              config:
-                node.id === nodeId
-                  ? { ...node.data.config, [name]: value }
-                  : node.data.config,
-              run: null,
-              execution: { status: "idle" },
-              progress: null,
-            },
-          };
-        }),
-      );
-      setRunError(null);
+      applyAuthoringCommands([{
+        kind: "update_node_configuration",
+        node_id: nodeId,
+        field: name,
+        value,
+      }]);
     },
-    [edges],
+    [applyAuthoringCommands],
   );
 
   const updateLayout = React.useCallback(
     (nodeId: string, layout: WorkflowNodeData["layout"]) => {
-      setNodes((current) =>
-        current.map((node) =>
-          node.id === nodeId
-            ? {
-                ...node,
-                data: {
-                  ...node.data,
-                  layout,
-                },
-              }
-            : node,
-        ),
-      );
+      applyAuthoringCommands([{
+        kind: "update_node_layout",
+        node_id: nodeId,
+        layout,
+      }]);
     },
-    [],
+    [applyAuthoringCommands],
   );
 
   const updateArtifactViewerLayout = React.useCallback((
@@ -433,24 +549,7 @@ export function Workbench({
   }, []);
 
   const removeNode = React.useCallback((nodeId: string) => {
-    const changedTargetNodeIds = edges
-      .filter(
-        (edge) =>
-          edge.data?.enabled !== false && edge.source === nodeId,
-      )
-      .map((edge) => edge.target);
-    setNodes((current) =>
-      invalidateWorkflowNodeRuns(
-        current.filter((node) => node.id !== nodeId),
-        edges,
-        changedTargetNodeIds,
-      ),
-    );
-    setEdges((current) =>
-      current.filter(
-        (edge) => edge.source !== nodeId && edge.target !== nodeId,
-      ),
-    );
+    applyAuthoringCommands([{ kind: "remove_nodes", node_ids: [nodeId] }]);
     setArtifactViewers((current) => ({
       ...current,
       edges: current.edges.filter((edge) => edge.source !== nodeId),
@@ -458,90 +557,49 @@ export function Workbench({
     forgetNodeSecretStatuses(nodeId);
     setPendingConnectionRoute(null);
     setRunError(null);
-  }, [edges, forgetNodeSecretStatuses]);
+  }, [applyAuthoringCommands, forgetNodeSecretStatuses]);
 
   const handleRemoveImageUpload = React.useCallback(
     (nodeId: string, index: number) => {
-      const invalidatedNodeIds = nodeAndDescendantIds(nodeId, edges);
-      setNodes((current) =>
-        current.map((node) => {
-          if (!invalidatedNodeIds.has(node.id)) return node;
-          return {
-            ...node,
-            data: {
-              ...(node.id === nodeId
-                ? removeImageUpload(node.data, index)
-                : node.data),
-              run: null,
-              execution: { status: "idle" },
-              progress: null,
-            },
-          };
-        }),
-      );
-      setRunError(null);
+      const node = nodes.find((candidate) => candidate.id === nodeId);
+      if (!node) return;
+      applyAuthoringCommands([{
+        kind: "update_node_configuration",
+        node_id: nodeId,
+        field: "uploads",
+        value: imageUploads(removeImageUpload(node.data, index)),
+      }]);
     },
-    [edges],
+    [applyAuthoringCommands, nodes],
   );
 
   const addNodeInputPlug = React.useCallback(
     (nodeId: string, portName: string) => {
-      const invalidatedNodeIds = nodeAndDescendantIds(nodeId, edges);
-      setNodes((current) =>
-        current.map((node) => {
-          if (!invalidatedNodeIds.has(node.id)) return node;
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              inputPlugs:
-                node.id === nodeId
-                  ? appendInputPlug(node.data.inputPlugs, portName)
-                  : node.data.inputPlugs,
-              run: null,
-              execution: { status: "idle" },
-              progress: null,
-            },
-          };
-        }),
-      );
-      setRunError(null);
+      const node = nodes.find((candidate) => candidate.id === nodeId);
+      if (!node) return;
+      const inputPlugs = appendInputPlug(node.data.inputPlugs, portName);
+      const plug = inputPlugs[inputPlugs.length - 1];
+      if (!plug) return;
+      applyAuthoringCommands([{
+        kind: "add_input_plug",
+        node_id: nodeId,
+        plug: { id: plug.id, port: plug.portName },
+      }]);
     },
-    [edges],
+    [applyAuthoringCommands, nodes],
   );
 
   const removeNodeInputPlug = React.useCallback(
     (nodeId: string, plugId: string) => {
-      const invalidatedNodeIds = nodeAndDescendantIds(nodeId, edges);
-      setNodes((current) =>
-        current.map((node) => {
-          if (!invalidatedNodeIds.has(node.id)) return node;
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              inputPlugs:
-                node.id === nodeId
-                  ? withoutInputPlug(node.data.inputPlugs, plugId)
-                  : node.data.inputPlugs,
-              run: null,
-              execution: { status: "idle" },
-              progress: null,
-            },
-          };
-        }),
-      );
-      setEdges((current) =>
-        current.filter(
-          (edge) =>
-            edge.target !== nodeId ||
-            decodeHandleId(edge.targetHandle)?.plugId !== plugId,
-        ),
-      );
+      applyAuthoringCommands([{
+        kind: "remove_input_plug",
+        node_id: nodeId,
+        plug_id: plugId,
+      }]);
       setPendingConnectionRoute(null);
       setRunError(null);
     },
-    [edges],
+    [applyAuthoringCommands],
   );
 
   const reorderNodeInputPlug = React.useCallback(
@@ -551,33 +609,15 @@ export function Workbench({
       plugId: string,
       toIndex: number,
     ) => {
-      const invalidatedNodeIds = nodeAndDescendantIds(nodeId, edges);
-      setNodes((current) =>
-        current.map((node) => {
-          if (!invalidatedNodeIds.has(node.id)) return node;
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              inputPlugs:
-                node.id === nodeId
-                  ? withReorderedInputPlug(
-                      node.data.inputPlugs,
-                      portName,
-                      plugId,
-                      toIndex,
-                    )
-                  : node.data.inputPlugs,
-              run: null,
-              execution: { status: "idle" },
-              progress: null,
-            },
-          };
-        }),
-      );
-      setRunError(null);
+      applyAuthoringCommands([{
+        kind: "reorder_input_plug",
+        node_id: nodeId,
+        port: portName,
+        plug_id: plugId,
+        to_index: toIndex,
+      }]);
     },
-    [edges],
+    [applyAuthoringCommands],
   );
 
   const updateSchemaBuilderFields = React.useCallback(
@@ -586,39 +626,21 @@ export function Workbench({
       fields: readonly SchemaBuilderField[],
       inputPlugs: readonly WorkflowInputPlug[],
     ) => {
-      const invalidatedNodeIds = nodeAndDescendantIds(nodeId, edges);
-      const retainedPlugIds = new Set(inputPlugs.map((plug) => plug.id));
-      setNodes((current) =>
-        current.map((node) => {
-          if (!invalidatedNodeIds.has(node.id)) return node;
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              config:
-                node.id === nodeId
-                  ? { ...node.data.config, fields }
-                  : node.data.config,
-              inputPlugs:
-                node.id === nodeId ? inputPlugs : node.data.inputPlugs,
-              run: null,
-              execution: { status: "idle" },
-              progress: null,
-            },
-          };
-        }),
-      );
-      setEdges((current) =>
-        current.filter((edge) => {
-          if (edge.target !== nodeId) return true;
-          const plugId = decodeHandleId(edge.targetHandle)?.plugId;
-          return !plugId || retainedPlugIds.has(plugId);
-        }),
-      );
+      const node = nodes.find((candidate) => candidate.id === nodeId);
+      if (!node) return;
+      applyAuthoringCommands([{
+        kind: "update_node_configuration_and_input_plugs",
+        node_id: nodeId,
+        config: { ...node.data.config, fields },
+        input_plugs: inputPlugs.map((plug) => ({
+          id: plug.id,
+          port: plug.portName,
+        })),
+      }]);
       setPendingConnectionRoute(null);
       setRunError(null);
     },
-    [edges],
+    [applyAuthoringCommands, nodes],
   );
 
   const updateArtifactQueryRelations = React.useCallback(
@@ -627,39 +649,21 @@ export function Workbench({
       relations: readonly ArtifactQueryRelation[],
       inputPlugs: readonly WorkflowInputPlug[],
     ) => {
-      const invalidatedNodeIds = nodeAndDescendantIds(nodeId, edges);
-      const retainedPlugIds = new Set(inputPlugs.map((plug) => plug.id));
-      setNodes((current) =>
-        current.map((node) => {
-          if (!invalidatedNodeIds.has(node.id)) return node;
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              config:
-                node.id === nodeId
-                  ? { ...node.data.config, relations }
-                  : node.data.config,
-              inputPlugs:
-                node.id === nodeId ? inputPlugs : node.data.inputPlugs,
-              run: null,
-              execution: { status: "idle" },
-              progress: null,
-            },
-          };
-        }),
-      );
-      setEdges((current) =>
-        current.filter((edge) => {
-          if (edge.target !== nodeId) return true;
-          const plugId = decodeHandleId(edge.targetHandle)?.plugId;
-          return !plugId || retainedPlugIds.has(plugId);
-        }),
-      );
+      const node = nodes.find((candidate) => candidate.id === nodeId);
+      if (!node) return;
+      applyAuthoringCommands([{
+        kind: "update_node_configuration_and_input_plugs",
+        node_id: nodeId,
+        config: { ...node.data.config, relations },
+        input_plugs: inputPlugs.map((plug) => ({
+          id: plug.id,
+          port: plug.portName,
+        })),
+      }]);
       setPendingConnectionRoute(null);
       setRunError(null);
     },
-    [edges],
+    [applyAuthoringCommands, nodes],
   );
 
   const handleImagesSelected = React.useCallback(async (nodeId: string, files: File[]) => {
@@ -681,19 +685,12 @@ export function Workbench({
     setRunError(null);
     try {
       const uploads = await Promise.all(files.map((file) => uploadFile(file)));
-      setNodes((current) => current.map((node) => ({
-        ...node,
-        data: invalidatedNodeIds.has(node.id)
-          ? {
-              ...(node.id === nodeId
-                ? replaceImageUploads(node.data, uploads)
-                : node.data),
-              execution: { status: "idle" },
-              run: null,
-              progress: null,
-            }
-          : node.data,
-      })));
+      applyAuthoringCommands([{
+        kind: "update_node_configuration",
+        node_id: nodeId,
+        field: "uploads",
+        value: uploads,
+      }]);
     } catch (uploadError) {
       const message = uploadError instanceof Error ? uploadError.message : "File upload failed";
       setNodes((current) => current.map((node) => node.id === nodeId ? {
@@ -701,7 +698,7 @@ export function Workbench({
         data: { ...node.data, execution: { status: "failed", error: message } },
       } : node));
     }
-  }, [edges]);
+  }, [applyAuthoringCommands, edges, setNodes]);
 
   const resetNodeArtifactTypeBinding = React.useCallback(
     (nodeId: string, variable: string) => {
@@ -710,20 +707,15 @@ export function Workbench({
       );
       if (hasIncidentEdges) return;
 
-      setNodes((current) =>
-        current.map((node) =>
-          node.id === nodeId
-            ? {
-                ...node,
-                data: resetArtifactTypeBinding(node.data, variable, false),
-              }
-            : node,
-        ),
-      );
+      applyAuthoringCommands([{
+        kind: "reset_artifact_type_binding",
+        node_id: nodeId,
+        variable,
+      }]);
       setPendingConnectionRoute(null);
       setRunError(null);
     },
-    [edges],
+    [applyAuthoringCommands, edges],
   );
 
   const openGraphInNewTab = React.useCallback(
@@ -807,14 +799,26 @@ export function Workbench({
     ],
   );
 
-  const replaceCanvas = React.useCallback((
-    nextNodes: WorkflowNode[],
-    nextEdges: WorkflowEdge[],
+  const replaceDocument = React.useCallback((
+    nextDocument: AuthoredGraphDocument,
+    overlayNodes: readonly WorkflowNode[] = [],
   ) => {
     pendingBoundEdgesRef.current = [];
-    setNodes(nextNodes);
-    setEdges(nextEdges);
-  }, []);
+    authoredDocumentRef.current = nextDocument;
+    nodesRef.current = [...overlayNodes];
+    edgesRef.current = [];
+    dispatchAuthoringState({
+      kind: "replace_document",
+      document: nextDocument,
+      nodeOverlays: nodeOverlaysFromNodes(overlayNodes),
+    });
+    setSelectedNodeIdSet(new Set());
+    setSelectedEdgeIdSet(new Set());
+    setPositionOverrides({});
+  }, [dispatchAuthoringState]);
+  const updateDocumentName = React.useCallback((name: string) => {
+    applyAuthoringCommands([{ kind: "rename_graph", name }]);
+  }, [applyAuthoringCommands]);
   const clearPendingConnectionRoute = React.useCallback(() => {
     setPendingConnectionRoute(null);
   }, []);
@@ -872,11 +876,12 @@ export function Workbench({
     workspaceSlug,
     initialGraphId,
     registry,
+    document: authoredDocument,
     nodes,
-    edges,
     isExecutionRunning,
     uploading,
-    replaceCanvas,
+    replaceDocument,
+    updateDocumentName,
     attachNodeCallbacks,
     refreshNodeSecretStatuses,
     clearGraphSecretStatuses,
@@ -1041,30 +1046,6 @@ export function Workbench({
   }, [closeGraphBrowser, executionHistoryTarget]);
 
   React.useEffect(() => {
-    if (!registry) return;
-    if (!initializedRef.current) {
-      initializedRef.current = true;
-      return;
-    }
-    const byOperator = new Map(
-      registry.nodes.map((spec) => [
-        `${spec.operator_id}@${spec.operator_version}`,
-        spec,
-      ]),
-    );
-    setNodes((current) => current.map((node) => {
-      const spec = byOperator.get(
-        `${node.data.spec.operator_id}@${node.data.spec.operator_version}`,
-      );
-      if (!spec) return { ...node, data: attachNodeCallbacks(node.data) };
-      return {
-        ...node,
-        data: attachNodeCallbacks({ ...node.data, spec }),
-      };
-    }));
-  }, [attachNodeCallbacks, registry]);
-
-  React.useEffect(() => {
     if (!flow || !nodes.length) return;
     const frame = window.requestAnimationFrame(
       () => void flow.fitView(WORKBENCH_FIT_VIEW_OPTIONS),
@@ -1221,8 +1202,11 @@ export function Workbench({
           ? change.item.type === ARTIFACT_VIEWER_NODE_TYPE
           : artifactViewerIds.has(change.id)
       ) as NodeChange<ArtifactViewerNode>[];
-      if (workflowChanges.length) {
-        setNodes((current) => applyNodeChanges(workflowChanges, current));
+      const rendererChanges = workflowChanges.filter(
+        (change) => change.type === "add" || change.type === "replace",
+      );
+      if (rendererChanges.length) {
+        setNodes((current) => applyNodeChanges(rendererChanges, current));
       }
       const removedArtifactViewerIds = new Set(
         artifactViewerChanges.flatMap((change) =>
@@ -1272,8 +1256,18 @@ export function Workbench({
           ),
         }));
       }
+      const semanticChanges = graphCommandsFromNodeChanges(workflowChanges);
+      const transientChanges = workflowChanges.filter(
+        (change) =>
+          change.type === "select" ||
+          (change.type === "position" && change.dragging === true),
+      );
+      if (transientChanges.length) {
+        setNodes((current) => applyNodeChanges(transientChanges, current));
+      }
+      if (semanticChanges.length) applyAuthoringCommands(semanticChanges);
     },
-    [artifactViewers.nodes, nodes],
+    [applyAuthoringCommands, artifactViewers.nodes, nodes, setNodes],
   );
 
   const invalidateWorkflowResults = React.useCallback(
@@ -1291,7 +1285,7 @@ export function Workbench({
       );
       setRunError(null);
     },
-    [],
+    [setNodes],
   );
 
   const onEdgesChange: OnEdgesChange<CanvasEdge> = React.useCallback(
@@ -1334,7 +1328,14 @@ export function Workbench({
         }
       }
       if (workflowChanges.length) {
-        setEdges((current) => applyEdgeChanges(workflowChanges, current));
+        const semanticChanges = graphCommandsFromEdgeChanges(workflowChanges);
+        const transientChanges = workflowChanges.filter(
+          (change) => change.type !== "remove",
+        );
+        if (transientChanges.length) {
+          setEdges((current) => applyEdgeChanges(transientChanges, current));
+        }
+        if (semanticChanges.length) applyAuthoringCommands(semanticChanges);
         invalidateWorkflowResults([...changedTargetNodeIds], edges);
       }
       if (artifactViewerChanges.length) {
@@ -1365,8 +1366,10 @@ export function Workbench({
     [
       artifactViewers.bindings,
       artifactViewers.edges,
+      applyAuthoringCommands,
       edges,
       invalidateWorkflowResults,
+      setEdges,
     ],
   );
 
@@ -1374,56 +1377,46 @@ export function Workbench({
     (edgeId: string, update: WorkflowEdgeUpdate) => {
       const changedEdge = edges.find((edge) => edge.id === edgeId);
       if (!changedEdge) return;
-      const updatedEdges = edges.map((edge) => {
-        if (edge.id !== edgeId) return edge;
-        const projection = update.route
-          ? update.route.projection
-          : edge.data?.projection;
-        const conversionPath = update.route
-          ? update.route.conversionPath.map((conversion) => ({
-              id: conversion.id,
-              version: conversion.version,
-            }))
-          : (edge.data?.conversionPath ?? []);
-        return {
-          ...edge,
-          data: {
-            ...edge.data,
-            enabled: update.enabled ?? edge.data?.enabled ?? true,
-            collectionMode:
-              update.collectionMode ??
-              edge.data?.collectionMode ??
-              "direct",
-            projection,
-            conversionPath,
-          },
-        };
-      });
-      setEdges(updatedEdges);
-      invalidateWorkflowResults([changedEdge.target], updatedEdges);
+      applyAuthoringCommands([{
+        kind: "update_edge",
+        edge_id: edgeId,
+        update: {
+          enabled: update.enabled ?? changedEdge.data?.enabled ?? true,
+          collection_mode:
+            update.collectionMode ??
+            changedEdge.data?.collectionMode ??
+            "direct",
+          projection: update.route
+            ? update.route.projection
+              ? { path: [...update.route.projection.path] }
+              : null
+            : changedEdge.data?.projection
+              ? { path: [...changedEdge.data.projection.path] }
+              : null,
+          conversion_path: update.route
+            ? update.route.conversionPath.map((conversion) => ({
+                id: conversion.id,
+                version: conversion.version,
+              }))
+            : (changedEdge.data?.conversionPath ?? []).map((conversion) => ({
+                id: conversion.id,
+                version: conversion.version,
+              })),
+        },
+      }]);
     },
-    [edges, invalidateWorkflowResults],
+    [applyAuthoringCommands, edges],
   );
 
   const updateEdgeRoute = React.useCallback(
     (edgeId: string, routeOffset: WorkflowEdgeRouteOffset) => {
-      setEdges((current) =>
-        current.map((edge) =>
-          edge.id === edgeId
-            ? {
-                ...edge,
-                data: {
-                  ...edge.data,
-                  enabled: edge.data?.enabled ?? true,
-                  collectionMode: edge.data?.collectionMode ?? "direct",
-                  routeOffset,
-                },
-              }
-            : edge,
-        ),
-      );
+      applyAuthoringCommands([{
+        kind: "update_edge",
+        edge_id: edgeId,
+        update: { route_offset: routeOffset },
+      }]);
     },
-    [],
+    [applyAuthoringCommands],
   );
 
   const addWorkflowEdge = React.useCallback((
@@ -1513,28 +1506,27 @@ export function Workbench({
           edge,
         },
       ];
-      setNodes((current) =>
-        current.map((candidate) =>
-          candidate.id === bindingNodeId
-            ? {
-                ...candidate,
-                data: bindArtifactTypeVariable(
-                  candidate.data,
-                  binding.variable,
-                  binding.artifactType,
-                ),
-              }
-            : candidate,
-        ),
-      );
+      applyAuthoringCommands([{
+        kind: "bind_artifact_type",
+        node_id: bindingNodeId,
+        variable: binding.variable,
+        artifact_type: binding.artifactType,
+      }]);
     } else {
-      setEdges((current) => addEdge(edge, current));
+      applyAuthoringCommands([
+        addEdgeCommand(committedConnection, edge.data, edge.id),
+      ]);
     }
     const changedNodeIds = binding?.endpoint === "source" && newlyBoundNodeId
       ? [newlyBoundNodeId, edge.target]
       : [edge.target];
     invalidateWorkflowResults(changedNodeIds, [...edges, edge]);
-  }, [edges, invalidateWorkflowResults, nodes]);
+  }, [
+    applyAuthoringCommands,
+    edges,
+    invalidateWorkflowResults,
+    nodes,
+  ]);
 
   const isValidConnection = React.useCallback<
     IsValidConnection<CanvasEdge>
@@ -1710,12 +1702,26 @@ export function Workbench({
     const id = `node-${crypto.randomUUID()}`;
     const center = flow?.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 }) ?? { x: 600, y: 280 };
     const data = attachNodeCallbacks(createWorkflowNodeData(spec));
-    setNodes((current) => [
-      ...current.map((node) => ({ ...node, selected: false })),
-      { id, type: WORKFLOW_NODE_TYPE, position: { x: center.x - 140, y: center.y - 110 }, selected: true, data },
-    ]);
+    const authoredNode = {
+      id,
+      operator_id: data.spec.operator_id,
+      operator_version: data.spec.operator_version,
+      config: structuredClone(data.config),
+      input_plugs: data.inputPlugs.map((plug) => ({
+        id: plug.id,
+        port: plug.portName,
+      })),
+      artifact_type_bindings: Object.entries(data.artifactTypeBindings).map(
+        ([variable, artifactType]) => ({ variable, artifact_type: artifactType }),
+      ),
+      position: { x: center.x - 140, y: center.y - 110 },
+      layout: serializeNodeLayout(data.layout),
+    };
+    applyAuthoringCommands([{ kind: "add_node", node: authoredNode }]);
+    setSelectedNodeIdSet(new Set([id]));
+    setSelectedEdgeIdSet(new Set());
     setLibraryOpen(false);
-  }, [attachNodeCallbacks, flow]);
+  }, [applyAuthoringCommands, attachNodeCallbacks, flow]);
 
   const addArtifactViewer = React.useCallback(() => {
     const id = `artifact-viewer-${crypto.randomUUID()}`;
@@ -1761,7 +1767,7 @@ export function Workbench({
         });
       });
     }
-  }, [closeGraphBrowser, flow, nodes]);
+  }, [closeGraphBrowser, flow, nodes, setNodes]);
 
   const duplicateSelectedNodes = React.useCallback(() => {
     const selectedNodes = nodes.filter((node) => node.selected);
@@ -1774,51 +1780,51 @@ export function Workbench({
     const duplicatedNodeIds = new Map(
       duplicates.map(({ node, id }) => [node.id, id]),
     );
-    const duplicatedNodes: WorkflowNode[] = duplicates.map(({ node, id }) => ({
-      ...node,
-      id,
-      position: { x: node.position.x + 36, y: node.position.y + 36 },
-      selected: true,
-      dragging: false,
-      data: {
-        ...node.data,
-        inputPlugs: node.data.inputPlugs.map((plug) => ({ ...plug })),
-        inputPlugBindings: {},
-        artifactTypeBindings: structuredClone(
-          node.data.artifactTypeBindings,
-        ),
-        mappedInputPort: null,
-        config: structuredClone(node.data.config),
-        run: null,
-        execution: { status: "idle" },
-        progress: null,
-      },
-    }));
-    const duplicatedEdges: WorkflowEdge[] = edges.flatMap((edge) => {
-      const source = duplicatedNodeIds.get(edge.source);
-      const target = duplicatedNodeIds.get(edge.target);
+    const duplicatedNodes = duplicates.flatMap(({ node, id }) => {
+      const authoredNode = authoredDocument.nodes.find(
+        (candidate) => candidate.id === node.id,
+      );
+      return authoredNode
+        ? [{
+            ...structuredClone(authoredNode),
+            id,
+            position: { x: node.position.x + 36, y: node.position.y + 36 },
+          }]
+        : [];
+    });
+    const duplicatedEdges = authoredDocument.edges.flatMap((edge) => {
+      const source = duplicatedNodeIds.get(edge.from_node);
+      const target = duplicatedNodeIds.get(edge.to_node);
       if (!source || !target) return [];
       return [{
-        ...edge,
+        ...structuredClone(edge),
         id: `edge-${crypto.randomUUID()}`,
-        source,
-        target,
-        selected: false,
-        data: edge.data ? structuredClone(edge.data) : undefined,
+        from_node: source,
+        to_node: target,
       }];
     });
-
-    setNodes([
-      ...nodes.map((node) => ({ ...node, selected: false })),
-      ...duplicatedNodes,
-    ]);
-    setEdges([
-      ...edges.map((edge) => ({ ...edge, selected: false })),
-      ...duplicatedEdges,
-    ]);
+    const commands: GraphCommand[] = [
+      ...duplicatedNodes.map((node) => ({
+        kind: "add_node" as const,
+        node,
+      })),
+      ...duplicatedEdges.map((edge) => ({
+        kind: "add_edge" as const,
+        edge,
+      })),
+    ];
+    applyAuthoringCommands(commands);
+    const duplicatedNodeIdSet = new Set(duplicatedNodes.map((node) => node.id));
+    setSelectedNodeIdSet(duplicatedNodeIdSet);
+    setSelectedEdgeIdSet(new Set());
     setPendingConnectionRoute(null);
     setRunError(null);
-  }, [edges, nodes, running]);
+  }, [
+    applyAuthoringCommands,
+    authoredDocument,
+    nodes,
+    running,
+  ]);
 
   const deleteSelectedNodes = React.useCallback(() => {
     if (!flow || !selectedNodeIds.length || running) return;
@@ -1839,7 +1845,7 @@ export function Workbench({
         return {
           ...node,
           data: {
-            ...node.data,
+            ...attachNodeCallbacks(node.data),
             historyContext: {
               graphId: activeGraph?.id ?? null,
               isDirty,
@@ -1874,6 +1880,7 @@ export function Workbench({
     [
       activeGraph,
       applyConfiguredNodeSecret,
+      attachNodeCallbacks,
       edges,
       isDirty,
       nodeSecretStatuses,
@@ -1948,8 +1955,10 @@ export function Workbench({
                 : [validMode],
             onUpdate: edge.data?.compatibilityIssues?.length
               ? undefined
-              : updateEdge,
-            onRouteOffsetChange: updateEdgeRoute,
+              : (edgeId: string, update: WorkflowEdgeUpdate) =>
+                  updateEdge(edgeId, update),
+            onRouteOffsetChange: (edgeId: string, routeOffset: WorkflowEdgeRouteOffset) =>
+              updateEdgeRoute(edgeId, routeOffset),
           },
         };
       }),

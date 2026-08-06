@@ -375,6 +375,49 @@ describe("ephemeral execution progress", () => {
     expect(draft.nodes?.every((node) => !("progress" in node))).toBe(true);
     expect(serialized).not.toContain("tenant-private detail");
   });
+
+  it("excludes selection, callbacks, viewport, drafts, presence, secrets, history, and runtime overlays", () => {
+    const hydrated = hydrateSavedGraph(
+      graphWithEdge({ conversion_path: conversionPath }),
+      registry(),
+    );
+    const firstNode = hydrated.nodes[0];
+    if (!firstNode) throw new Error("Expected a hydrated workflow node");
+    firstNode.selected = true;
+    firstNode.data.onConfigChange = () => undefined;
+    firstNode.data.secretStatuses = {};
+    firstNode.data.historyContext = { graphId: "private", isDirty: true };
+    Object.assign(firstNode.data, {
+      viewport: { x: 100, y: 200, zoom: 1.1 },
+      privateFieldDraft: "draft-only value",
+      presence: { userId: "other-user" },
+    });
+    firstNode.data.execution = {
+      status: "failed",
+      error: "runtime-only failure",
+    };
+    firstNode.data.progress = {
+      omittedCount: 0,
+      entries: [],
+    };
+
+    const draft = savedGraphDraft(
+      "Ephemeral state",
+      hydrated.nodes,
+      hydrated.edges,
+    );
+    const serialized = JSON.stringify(draft);
+
+    expect(draft.nodes?.[0]).not.toHaveProperty("selected");
+    expect(serialized).not.toContain("onConfigChange");
+    expect(serialized).not.toContain("secretStatuses");
+    expect(serialized).not.toContain("historyContext");
+    expect(serialized).not.toContain("viewport");
+    expect(serialized).not.toContain("privateFieldDraft");
+    expect(serialized).not.toContain("presence");
+    expect(serialized).not.toContain("runtime-only failure");
+    expect(serialized).not.toContain("progress");
+  });
 });
 
 describe("saved edge enablement", () => {

@@ -41,6 +41,10 @@ import {
   type WorkflowNodeData,
   workflowNodeIsSupported,
 } from "./types";
+import {
+  createSavedGraphRequest,
+  type AuthoredGraphDocument,
+} from "../model/graph-document";
 
 export type SavedGraphWorkflowNode = Node<
   WorkflowNodeData,
@@ -50,6 +54,24 @@ export type SavedGraphWorkflowNode = Node<
 export interface HydratedSavedGraph {
   nodes: SavedGraphWorkflowNode[];
   edges: WorkflowEdge[];
+}
+
+export function hydrateAuthoredGraphDocument(
+  document: AuthoredGraphDocument,
+  registry: NodeRegistry,
+  nodeRuns: readonly RunNodeResult[] = [],
+): HydratedSavedGraph {
+  return hydrateSavedGraph(
+    {
+      id: "00000000-0000-4000-8000-000000000000",
+      revision: 0,
+      created_at: "1970-01-01T00:00:00.000Z",
+      updated_at: "1970-01-01T00:00:00.000Z",
+      ...createSavedGraphRequest(document),
+    },
+    registry,
+    nodeRuns,
+  );
 }
 
 export function withMaterializedNodeRuns(

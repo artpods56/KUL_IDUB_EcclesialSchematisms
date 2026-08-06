@@ -85,7 +85,7 @@ function savedGraphSummary(graph: SavedGraph): SavedGraphSummary {
 type LifecycleOptions = Parameters<typeof useSavedGraphLifecycle>[0];
 
 interface LifecycleCallbacks {
-  replaceCanvas: ReturnType<typeof vi.fn>;
+  replaceDocument: ReturnType<typeof vi.fn>;
   refreshNodeSecretStatuses: LifecycleOptions["refreshNodeSecretStatuses"];
   clearGraphSecretStatuses: ReturnType<typeof vi.fn>;
   clearPendingConnectionRoute: ReturnType<typeof vi.fn>;
@@ -100,8 +100,21 @@ function lifecycleOptions(
   refreshNodeSecretStatuses: LifecycleOptions["refreshNodeSecretStatuses"] =
     vi.fn().mockResolvedValue(true),
 ): { options: LifecycleOptions; callbacks: LifecycleCallbacks } {
+  const document: {
+    name: string;
+    nodes: LifecycleOptions["document"]["nodes"];
+    edges: LifecycleOptions["document"]["edges"];
+  } = {
+    name: "Untitled workflow",
+    nodes: [],
+    edges: [],
+  };
   const callbacks = {
-    replaceCanvas: vi.fn(),
+    replaceDocument: vi.fn((nextDocument: LifecycleOptions["document"]) => {
+      document.name = nextDocument.name;
+      document.nodes = nextDocument.nodes;
+      document.edges = nextDocument.edges;
+    }),
     refreshNodeSecretStatuses,
     clearGraphSecretStatuses: vi.fn(),
     clearPendingConnectionRoute: vi.fn(),
@@ -110,16 +123,20 @@ function lifecycleOptions(
     requestCanvasRefit: vi.fn(),
     refreshNodeRegistry: vi.fn(),
   };
+  const updateDocumentName = vi.fn((name: string) => {
+    document.name = name;
+  });
   return {
     options: {
       workspaceSlug: "local",
       initialGraphId,
       registry,
+      document,
       nodes: [],
-      edges: [],
       isExecutionRunning: () => false,
       uploading: false,
-      replaceCanvas: callbacks.replaceCanvas,
+      replaceDocument: callbacks.replaceDocument,
+      updateDocumentName,
       attachNodeCallbacks: (data) => data,
       refreshNodeSecretStatuses: callbacks.refreshNodeSecretStatuses,
       clearGraphSecretStatuses: callbacks.clearGraphSecretStatuses,
@@ -187,14 +204,12 @@ describe("useSavedGraphLifecycle document ownership", () => {
     await waitFor(() => hook.result.current.activeGraph?.id === GRAPH_A_ID);
 
     expect(hook.result.current.persistenceError).toBeNull();
-    expect(callbacks.replaceCanvas).toHaveBeenCalledOnce();
-    const openedNodes = callbacks.replaceCanvas.mock.calls[0]?.[0];
-    expect(openedNodes).toHaveLength(1);
-    expect(openedNodes?.[0]?.data.compatibility).toMatchObject({
-      status: "unsupported",
-      issues: [
-        "Operator legacy.operator@7 is unavailable. This saved node is preserved but cannot run.",
-      ],
+    expect(callbacks.replaceDocument).toHaveBeenCalledOnce();
+    const openedDocument = callbacks.replaceDocument.mock.calls[0]?.[0];
+    expect(openedDocument.nodes).toHaveLength(1);
+    expect(openedDocument.nodes[0]).toMatchObject({
+      operator_id: "legacy.operator",
+      operator_version: 7,
     });
   });
 
@@ -287,7 +302,7 @@ describe("useSavedGraphLifecycle document ownership", () => {
     });
     await hook.rerender({ ...options, initialGraphId: GRAPH_B_ID });
     await waitFor(() => hook.result.current.activeGraph?.id === GRAPH_B_ID);
-    const canvasReplacementCount = callbacks.replaceCanvas.mock.calls.length;
+    const canvasReplacementCount = callbacks.replaceDocument.mock.calls.length;
 
     await React.act(async () => {
       deleteResponse.resolve();
@@ -298,7 +313,7 @@ describe("useSavedGraphLifecycle document ownership", () => {
     expect(hook.result.current.graphName).toBe("Graph B");
     expect(router.replace).not.toHaveBeenCalled();
     expect(callbacks.clearGraphSecretStatuses).not.toHaveBeenCalled();
-    expect(callbacks.replaceCanvas).toHaveBeenCalledTimes(
+    expect(callbacks.replaceDocument).toHaveBeenCalledTimes(
       canvasReplacementCount,
     );
     expect(savedGraphQuery.mutate).toHaveBeenCalledOnce();
@@ -394,7 +409,7 @@ describe("useSavedGraphLifecycle document ownership", () => {
       `/workspaces/local/graphs/${GRAPH_A_ID}`,
       { scroll: false },
     );
-    expect(callbacks.replaceCanvas).not.toHaveBeenCalled();
+    expect(callbacks.replaceDocument).not.toHaveBeenCalled();
     const routeOrder = router.replace.mock.invocationCallOrder.at(0);
     const secretRefreshOrder = refreshSecrets.mock.invocationCallOrder.at(0);
     if (routeOrder === undefined || secretRefreshOrder === undefined) {

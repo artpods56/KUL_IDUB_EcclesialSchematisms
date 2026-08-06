@@ -18,11 +18,14 @@ import {
 import { ApiError } from "@/lib/api/client";
 import {
   hydrateSavedGraph,
-  savedGraphDraft,
   savedGraphFingerprint,
 } from "../canvas/saved-graph";
+import {
+  authoredGraphDocument,
+  createSavedGraphRequest,
+  type AuthoredGraphDocument,
+} from "../model/graph-document";
 import type {
-  WorkflowEdge,
   WorkflowNodeData,
 } from "../canvas/types";
 import type { WorkflowNode } from "../model/execution-plan";
@@ -41,14 +44,15 @@ interface UseSavedGraphLifecycleOptions {
   workspaceSlug: string;
   initialGraphId: string | null;
   registry: NodeRegistry | undefined;
+  document: AuthoredGraphDocument;
   nodes: readonly WorkflowNode[];
-  edges: readonly WorkflowEdge[];
   isExecutionRunning: () => boolean;
   uploading: boolean;
-  replaceCanvas: (
-    nodes: WorkflowNode[],
-    edges: WorkflowEdge[],
+  replaceDocument: (
+    document: AuthoredGraphDocument,
+    overlayNodes?: readonly WorkflowNode[],
   ) => void;
+  updateDocumentName: (name: string) => void;
   attachNodeCallbacks: (data: WorkflowNodeData) => WorkflowNodeData;
   refreshNodeSecretStatuses: (
     graph: ActiveSavedGraph,
@@ -101,11 +105,12 @@ export function useSavedGraphLifecycle({
   workspaceSlug,
   initialGraphId,
   registry,
+  document,
   nodes,
-  edges,
   isExecutionRunning,
   uploading,
-  replaceCanvas,
+  replaceDocument,
+  updateDocumentName,
   attachNodeCallbacks,
   refreshNodeSecretStatuses,
   clearGraphSecretStatuses,
@@ -124,7 +129,6 @@ export function useSavedGraphLifecycle({
     isValidating: savedGraphsRefreshing,
     mutate: mutateSavedGraphs,
   } = useSavedGraphs();
-  const [graphName, setGraphNameState] = React.useState(NEW_GRAPH_NAME);
   const [activeGraph, setActiveGraph] =
     React.useState<ActiveSavedGraph | null>(null);
   const [savedFingerprint, setSavedFingerprint] =
@@ -142,8 +146,8 @@ export function useSavedGraphLifecycle({
   const activeGraphRef = React.useRef<ActiveSavedGraph | null>(null);
 
   const currentDraft = React.useMemo(
-    () => savedGraphDraft(graphName, nodes, edges),
-    [edges, graphName, nodes],
+    () => createSavedGraphRequest(document),
+    [document],
   );
   const currentFingerprint = React.useMemo(
     () => savedGraphFingerprint(currentDraft),
@@ -159,9 +163,9 @@ export function useSavedGraphLifecycle({
   }, [activeGraph]);
 
   const hasUnsavedDraft =
-    nodes.length > 0 ||
-    edges.length > 0 ||
-    graphName.trim() !== NEW_GRAPH_NAME;
+    document.nodes.length > 0 ||
+    document.edges.length > 0 ||
+    document.name.trim() !== NEW_GRAPH_NAME;
   const isDirty = activeGraph
     ? savedFingerprint !== currentFingerprint
     : hasUnsavedDraft;
@@ -191,17 +195,16 @@ export function useSavedGraphLifecycle({
     (action: string): boolean =>
       !isDirty ||
       window.confirm(
-        `“${graphName.trim() || NEW_GRAPH_NAME}” has unsaved changes. Discard them and ${action}?`,
+        `“${document.name.trim() || NEW_GRAPH_NAME}” has unsaved changes. Discard them and ${action}?`,
       ),
-    [graphName, isDirty],
+    [document.name, isDirty],
   );
 
   const showBlankGraph = React.useCallback(() => {
     documentGenerationRef.current += 1;
     openRequestRef.current?.abort();
-    replaceCanvas([], []);
+    replaceDocument({ name: NEW_GRAPH_NAME, nodes: [], edges: [] });
     clearGraphSecretStatuses();
-    setGraphNameState(NEW_GRAPH_NAME);
     activeGraphRef.current = null;
     setActiveGraph(null);
     setSavedFingerprint(null);
@@ -215,7 +218,7 @@ export function useSavedGraphLifecycle({
     clearPendingConnectionRoute,
     clearRunError,
     closeNodeLibrary,
-    replaceCanvas,
+    replaceDocument,
     requestCanvasRefit,
   ]);
 
@@ -264,11 +267,11 @@ export function useSavedGraphLifecycle({
       ) {
         return;
       }
-      const responseDraft = {
+      const responseDocument = authoredGraphDocument({
         name: savedGraph.name,
         nodes: savedGraph.nodes ?? [],
         edges: savedGraph.edges ?? [],
-      };
+      });
       const nextActiveGraph = {
         id: savedGraph.id,
         revision: savedGraph.revision,
@@ -280,9 +283,8 @@ export function useSavedGraphLifecycle({
       }
       activeGraphRef.current = nextActiveGraph;
       setActiveGraph(nextActiveGraph);
-      setSavedFingerprint(savedGraphFingerprint(responseDraft));
-      setGraphNameState((current) =>
-        current.trim() === submittedDraft.name ? savedGraph.name : current,
+      setSavedFingerprint(
+        savedGraphFingerprint(createSavedGraphRequest(responseDocument)),
       );
       if (createdGraph) {
         router.replace(
@@ -408,17 +410,16 @@ export function useSavedGraphLifecycle({
         return;
       }
 
-      const responseDraft = {
+      const responseDocument = authoredGraphDocument({
         name: savedGraph.name,
         nodes: savedGraph.nodes ?? [],
         edges: savedGraph.edges ?? [],
-      };
+      });
       const openedNodes = hydrated.nodes.map((node) => ({
         ...node,
         data: attachNodeCallbacks(node.data),
       }));
-      replaceCanvas(openedNodes, hydrated.edges);
-      setGraphNameState(savedGraph.name);
+      replaceDocument(responseDocument, openedNodes);
       const nextActiveGraph = {
         id: savedGraph.id,
         revision: savedGraph.revision,
@@ -426,7 +427,9 @@ export function useSavedGraphLifecycle({
       };
       activeGraphRef.current = nextActiveGraph;
       setActiveGraph(nextActiveGraph);
-      setSavedFingerprint(savedGraphFingerprint(responseDraft));
+      setSavedFingerprint(
+        savedGraphFingerprint(createSavedGraphRequest(responseDocument)),
+      );
       await refreshNodeSecretStatuses(
         nextActiveGraph,
         openedNodes,
@@ -471,7 +474,7 @@ export function useSavedGraphLifecycle({
     currentFingerprint,
     refreshNodeSecretStatuses,
     registry,
-    replaceCanvas,
+    replaceDocument,
     requestCanvasRefit,
     router,
     workspaceSlug,
@@ -611,9 +614,9 @@ export function useSavedGraphLifecycle({
   ]);
 
   const setGraphName = React.useCallback((name: string) => {
-    setGraphNameState(name);
+    updateDocumentName(name);
     setPersistenceError(null);
-  }, []);
+  }, [updateDocumentName]);
   const clearPersistenceError = React.useCallback(() => {
     setPersistenceError(null);
   }, []);
@@ -650,7 +653,7 @@ export function useSavedGraphLifecycle({
 
   return {
     activeGraph,
-    graphName,
+    graphName: document.name,
     setGraphName,
     currentFingerprint,
     isDirty,
