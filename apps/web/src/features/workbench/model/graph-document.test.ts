@@ -56,6 +56,104 @@ describe("authored graph document", () => {
     expect(JSON.stringify(value)).not.toContain("execution");
   });
 
+  it("round-trips the complete normalized durable graph payload", () => {
+    const input: CreateSavedGraphRequest = {
+      name: "Operator-agnostic graph",
+      nodes: [{
+        id: "legacy-node",
+        operator_id: "unavailable.operator",
+        operator_version: 7,
+        config: {
+          nested: {
+            ordered: ["first", { value: 2 }],
+            arbitrary: true,
+          },
+        },
+        input_plugs: [
+          { id: "plug-first", port: "items" },
+          { id: "plug-second", port: "items" },
+        ],
+        artifact_type_bindings: [
+          {
+            variable: "Z",
+            artifact_type: { id: "artifact.z", schema_version: 3 },
+          },
+          {
+            variable: "A",
+            artifact_type: { id: "artifact.a", schema_version: 1 },
+          },
+        ],
+        position: { x: 120, y: 240 },
+        layout: { width: 420, body_height: 180, appendix_height: 320 },
+      }],
+      edges: [{
+        id: "legacy-edge",
+        from_node: "legacy-node",
+        from_port: "output",
+        to_node: "target-node",
+        to_port: "items",
+        to_plug: "plug-second",
+        enabled: false,
+        collection_mode: "map",
+        projection: { path: ["properties", "value"] },
+        conversion_path: [
+          { id: "convert-a", version: 1 },
+          { id: "convert-b", version: 2 },
+        ],
+        route_offset: { x: 18, y: -6 },
+      }],
+    };
+
+    const canonical = authoredGraphDocument(input);
+
+    expect(createSavedGraphRequest(canonical)).toEqual({
+      name: "Operator-agnostic graph",
+      nodes: [{
+        id: "legacy-node",
+        operator_id: "unavailable.operator",
+        operator_version: 7,
+        config: {
+          nested: {
+            ordered: ["first", { value: 2 }],
+            arbitrary: true,
+          },
+        },
+        input_plugs: [
+          { id: "plug-first", port: "items" },
+          { id: "plug-second", port: "items" },
+        ],
+        artifact_type_bindings: [
+          {
+            variable: "Z",
+            artifact_type: { id: "artifact.z", schema_version: 3 },
+          },
+          {
+            variable: "A",
+            artifact_type: { id: "artifact.a", schema_version: 1 },
+          },
+        ],
+        position: { x: 120, y: 240 },
+        layout: { width: 420, body_height: 180, appendix_height: 320 },
+      }],
+      edges: [{
+        id: "legacy-edge",
+        from_node: "legacy-node",
+        from_port: "output",
+        to_node: "target-node",
+        to_port: "items",
+        to_plug: "plug-second",
+        enabled: false,
+        collection_mode: "map",
+        projection: { path: ["properties", "value"] },
+        conversion_path: [
+          { id: "convert-a", version: 1 },
+          { id: "convert-b", version: 2 },
+        ],
+        route_offset: { x: 18, y: -6 },
+      }],
+    });
+  });
+
   it("projects adversarial React Flow runtime fields at both durable boundaries", () => {
     const runtimeNode = {
       ...node("source"),

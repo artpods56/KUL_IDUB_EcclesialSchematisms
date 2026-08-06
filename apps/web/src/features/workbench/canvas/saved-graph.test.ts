@@ -161,7 +161,7 @@ function graphWithCollectionMode(
 }
 
 describe("saved conversion paths", () => {
-  it("hydrates, serializes for a run, and resaves the exact ordered path", () => {
+  it("hydrates and exposes the exact ordered path for run transport", () => {
     const hydrated = hydrateSavedGraph(
       graphWithEdge({ conversion_path: conversionPath }),
       registry(),
@@ -176,7 +176,7 @@ describe("saved conversion paths", () => {
 });
 
 describe("unavailable saved operators", () => {
-  it("hydrates a placeholder and losslessly resaves its incident connection", () => {
+  it("hydrates a placeholder and preserves its incident connection", () => {
     const base = graphWithEdge({ conversion_path: conversionPath });
     const graph: SavedGraph = {
       ...base,
@@ -240,7 +240,7 @@ describe("unavailable saved operators", () => {
 });
 
 describe("saved node layout", () => {
-  it("hydrates and persists node chrome sizes", () => {
+  it("hydrates node chrome sizes", () => {
     const base = graphWithEdge({ conversion_path: conversionPath });
     const withLayout: SavedGraph = {
       ...base,
@@ -281,7 +281,7 @@ describe("saved edge enablement", () => {
     );
   });
 
-  it("persists disabled state and includes it in the dirty fingerprint", () => {
+  it("keeps disabled state in the dirty fingerprint", () => {
     const legacyGraph = graphWithEdge({ conversion_path: conversionPath });
     const disabledGraph: SavedGraph = {
       ...legacyGraph,
@@ -566,7 +566,7 @@ function graphWithCollectPlugs(): SavedGraph {
 }
 
 describe("saved instance plugs", () => {
-  it("hydrates and resaves plug order and edge targeting", () => {
+  it("hydrates plug order and edge targeting", () => {
     const hydrated = hydrateSavedGraph(
       graphWithCollectPlugs(),
       collectRegistry(),
@@ -703,7 +703,7 @@ function graphWithGenericCollectBinding(): SavedGraph {
 }
 
 describe("saved generic artifact type bindings", () => {
-  it("hydrates bound handles and resaves the binding", () => {
+  it("hydrates bound handles", () => {
     const hydrated = hydrateSavedGraph(
       graphWithGenericCollectBinding(),
       genericCollectRegistry(),
