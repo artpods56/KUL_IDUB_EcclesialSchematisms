@@ -70,7 +70,10 @@ class AuthAbuseControl:
                 )
                 del self._outstanding_logins[oldest_key]
             current = self._outstanding_logins.get(browser_key)
-            if current is None or now - current.started_at >= self._outstanding_login_ttl_seconds:
+            if (
+                current is None
+                or now - current.started_at >= self._outstanding_login_ttl_seconds
+            ):
                 current = _Window(started_at=now)
                 self._outstanding_logins[browser_key] = current
             if current.count >= self._outstanding_login_limit:

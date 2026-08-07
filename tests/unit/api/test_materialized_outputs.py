@@ -19,6 +19,7 @@ from notarius_persistence.orm import metadata
 from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from notarius_api.main import create_app
+from tests.unit.api.conftest import install_browser_actor_override
 from notarius_api.v1.routes.executions.models import (
     GraphMaterializationsResponse,
     RunPortOutputResponse,
@@ -90,7 +91,9 @@ async def _persist_partially_accessible_materialization(
 
 @contextmanager
 def _client(settings: Settings) -> Iterator[TestClient]:
-    with TestClient(create_app(settings)) as client:
+    application = create_app(settings)
+    install_browser_actor_override(application)
+    with TestClient(application) as client:
         yield client
 
 

@@ -27,6 +27,7 @@ from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from notarius_api.builtins import builtin_plugins
 from notarius_api.main import create_app
+from tests.unit.api.conftest import install_browser_actor_override
 from notarius_api.plugin_discovery import build_plugin_registry
 from notarius_api.v1.routes.node_secrets.services import NodeSecretService
 from notarius_api.services.composition import (
@@ -187,6 +188,7 @@ def module_client(tmp_path: Path) -> Iterator[TestClient]:
             execution_backend="inline",
         )
     )
+    install_browser_actor_override(application)
     install_workbench_dependency_overrides(application, components)
     application.dependency_overrides[saved_graph_service] = lambda: saved_graphs
     application.dependency_overrides[node_secret_service] = lambda: node_secrets

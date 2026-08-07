@@ -1,8 +1,9 @@
+import logging
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from notarius_core.domain.identity import ActorContext
 
@@ -10,6 +11,7 @@ from notarius_api.v1.routes.auth.dependencies import browser_actor
 from notarius_api.v1.routes.auth.models import SessionResponse
 from notarius_api.v1.routes.auth.services import (
     OIDC_TRANSACTION_COOKIE,
+    SESSION_COOKIE,
     AuthService,
     OidcProtocolError,
     bounded_oidc_failure,
@@ -18,6 +20,7 @@ from notarius_api.v1.routes.auth.abuse import request_browser_key
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/oidc/login", include_in_schema=True)
@@ -45,7 +48,9 @@ async def oidc_login(
         )
         raise HTTPException(status_code=429, detail="Too many login attempts")
     try:
-        authorization_url, transaction_id = await auth.start_login(return_path=return_path)
+        authorization_url, transaction_id = await auth.start_login(
+            return_path=return_path
+        )
     except OidcProtocolError as error:
         await auth.release_login(browser_key)
         await auth.audit_unauthenticated_failure(
@@ -75,24 +80,46 @@ async def oidc_callback(
             operation="oidc.login.callback",
             error_code="rate_limited",
         )
-        raise HTTPException(status_code=429, detail="Too many callback attempts")
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Too many callback attempts"},
+        )
     try:
         _, issued, return_path = await auth.callback(
             transaction_id_value=request.cookies.get(OIDC_TRANSACTION_COOKIE),
             state=state,
             code=code,
             error=error,
+            current_session_cookie=request.cookies.get(SESSION_COOKIE),
         )
     except OidcProtocolError as protocol_error:
-        await auth.release_login(browser_key)
+        if protocol_error.transaction_consumed:
+            await auth.release_login(browser_key)
         await auth.audit_unauthenticated_failure(
             operation="oidc.login.callback",
             error_code=protocol_error.code,
         )
-        raise bounded_oidc_failure(protocol_error) from protocol_error
-    except Exception:
-        await auth.release_login(browser_key)
-        raise
+        failure = bounded_oidc_failure(protocol_error)
+        response = JSONResponse(
+            status_code=failure.status_code,
+            content={"detail": failure.detail},
+        )
+        auth.clear_transaction_cookie(response)
+        return response
+    except Exception as exception:
+        logger.warning(
+            "oidc_callback_failed operation=oidc.login.callback error_class=%s",
+            type(exception).__name__,
+        )
+        await auth.audit_unauthenticated_failure(
+            operation="oidc.login.callback",
+            error_code="internal_error",
+        )
+        response = JSONResponse(
+            status_code=500,
+            content={"detail": "OIDC callback failed"},
+        )
+        return response
     await auth.release_login(browser_key)
     response = RedirectResponse(return_path, status_code=303)
     auth.set_session_cookies(response, issued)
@@ -159,6 +186,11 @@ async def revoke_session(
     try:
         parsed_session_id = UUID(session_id)
     except ValueError as exc:
+        await request.app.state.auth_service.audit_request_failure(
+            request,
+            operation="auth.session.request",
+            error_code="not_found",
+        )
         raise HTTPException(status_code=404, detail="Session not found") from exc
     session = await request.app.state.auth_service.revoke_session(
         actor=actor,

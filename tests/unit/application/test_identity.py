@@ -14,6 +14,7 @@ from notarius_core.domain.errors import (
 )
 from notarius_core.domain.identity import (
     ActorContext,
+    User,
     Workspace,
     WorkspaceMembership,
     WorkspaceRole,
@@ -25,7 +26,9 @@ from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 @pytest.fixture
 async def database(tmp_path: Path) -> AsyncIterator[Database]:
-    created = create_database(f"sqlite+aiosqlite:///{tmp_path / 'identity-app.sqlite3'}")
+    created = create_database(
+        f"sqlite+aiosqlite:///{tmp_path / 'identity-app.sqlite3'}"
+    )
     async with created.engine.begin() as connection:
         await connection.run_sync(metadata.create_all)
     async with SqlAlchemyUnitOfWork(created.sessions) as unit_of_work:
@@ -92,9 +95,7 @@ async def test_bootstrap_mapping_gates_first_login_and_is_consumed_once(
 
     async with database.engine.begin() as connection:
         await connection.execute(
-            text(
-                "UPDATE oidc_bootstrap_owner_mappings SET consumed_at = NULL"
-            )
+            text("UPDATE oidc_bootstrap_owner_mappings SET consumed_at = NULL")
         )
 
     second = await service.provision_oidc_identity(
@@ -110,6 +111,76 @@ async def test_bootstrap_mapping_gates_first_login_and_is_consumed_once(
                 provisioned.local_workspace_membership.workspace_id
             )
         ) is not None
+
+
+@pytest.mark.asyncio
+async def test_local_workspace_is_visible_to_editor_and_viewer_after_bootstrap(
+    database: Database,
+) -> None:
+    service = _service(database)
+    editor = User(email="editor@example.test", display_name="Editor")
+    viewer = User(email="viewer@example.test", display_name="Viewer")
+    async with database.engine.connect() as connection:
+        local_id = UUID(
+            str(
+                (
+                    await connection.execute(
+                        text("SELECT id FROM workspaces WHERE slug = 'local'")
+                    )
+                ).scalar_one()
+            )
+        )
+    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        local = await unit_of_work.identity.get_workspace(local_id)
+        assert local is not None
+        await unit_of_work.identity.add_user(editor)
+        await unit_of_work.identity.add_user(viewer)
+        await unit_of_work.identity.add_membership(
+            WorkspaceMembership(
+                workspace_id=local.id,
+                user_id=editor.id,
+                role=WorkspaceRole.EDITOR,
+            )
+        )
+        await unit_of_work.identity.add_membership(
+            WorkspaceMembership(
+                workspace_id=local.id,
+                user_id=viewer.id,
+                role=WorkspaceRole.VIEWER,
+            )
+        )
+        await unit_of_work.commit()
+
+    editor_workspaces = await service.list_workspaces(
+        actor=ActorContext(user_id=editor.id, credential_reference="session-editor")
+    )
+    viewer_workspaces = await service.list_workspaces(
+        actor=ActorContext(user_id=viewer.id, credential_reference="session-viewer")
+    )
+    assert [
+        (workspace.slug, membership.role) for workspace, membership in editor_workspaces
+    ] == [("local", WorkspaceRole.EDITOR)]
+    assert [
+        (workspace.slug, membership.role) for workspace, membership in viewer_workspaces
+    ] == [("local", WorkspaceRole.VIEWER)]
+
+
+@pytest.mark.asyncio
+async def test_prebootstrap_user_without_membership_cannot_discover_local_workspace(
+    database: Database,
+) -> None:
+    service = _service(database)
+    user = User(email="pending@example.test", display_name="Pending")
+    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        await unit_of_work.identity.add_user(user)
+        await unit_of_work.commit()
+
+    assert (
+        await service.list_workspaces(
+            actor=ActorContext(user_id=user.id, credential_reference="session-pending")
+        )
+        == []
+    )
 
 
 @pytest.mark.asyncio
@@ -199,21 +270,23 @@ async def test_personal_membership_stays_owner_and_membership_changes_are_audite
     operations = {event.operation for event in events}
     assert "workspace.membership.role_change" in operations
     assert "workspace.membership.remove" in operations
-    assert all(
-        event.credential_reference == "session-owner" for event in events
-    )
+    assert all(event.credential_reference == "session-owner" for event in events)
 
     await service.disable_user(user_id=member.user.id)
     async with database.engine.connect() as connection:
         disabled_event = (
-            await connection.execute(
-                text(
-                    "SELECT resource_type, resource_id "
-                    "FROM security_audit_events "
-                    "WHERE operation = 'user.disable'"
+            (
+                await connection.execute(
+                    text(
+                        "SELECT resource_type, resource_id "
+                        "FROM security_audit_events "
+                        "WHERE operation = 'user.disable'"
+                    )
                 )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
     assert disabled_event["resource_type"] == "user"
     assert disabled_event["resource_id"] == str(member.user.id)
 

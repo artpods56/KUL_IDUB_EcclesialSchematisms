@@ -5,12 +5,15 @@ from uuid import UUID
 
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
+from sqlalchemy import text
 
 from notarius_api.main import create_app
 from notarius_api.settings import Settings
+from notarius_api.v1.routes.auth.models import PersonalAccessTokenCreatedResponse
 from notarius_api.v1.routes.auth.services import AuthService, IssuedSession
 from notarius_core.application.identity import IdentityService
 from notarius_core.domain.identity import (
+    OidcLoginTransaction,
     User,
     Workspace,
     WorkspaceCapability,
@@ -64,7 +67,9 @@ async def _seed(database_url: str) -> tuple[User, Workspace, IssuedSession]:
     return user, workspace, issued
 
 
-async def _set_session_expiry(database_url: str, session_id: UUID, *, expires_at: datetime) -> None:
+async def _set_session_expiry(
+    database_url: str, session_id: UUID, *, expires_at: datetime
+) -> None:
     database = create_database(database_url)
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
         stored = await unit_of_work.identity.get_auth_session(session_id)
@@ -104,12 +109,43 @@ def test_cookie_requests_require_exact_origin_and_csrf(tmp_path: Path) -> None:
     with TestClient(create_app(_settings(database_url))) as client:
         client.cookies.set("notarius_session", issued.cookie_value)
         client.cookies.set("notarius_csrf", issued.csrf_value)
-        assert client.post("/v1/workspaces", json={"slug": "team", "name": "Team"}).status_code == 403
-        assert client.post(
-            "/v1/workspaces",
-            json={"slug": "team", "name": "Team"},
-            headers={"Origin": "http://evil.example", "X-CSRF-Token": issued.csrf_value},
-        ).status_code == 403
+        assert (
+            client.post(
+                "/v1/workspaces", json={"slug": "team", "name": "Team"}
+            ).status_code
+            == 403
+        )
+        assert (
+            client.post(
+                "/v1/workspaces",
+                json={"slug": "team", "name": "Team"},
+                headers={
+                    "Origin": "http://evil.example",
+                    "X-CSRF-Token": issued.csrf_value,
+                },
+            ).status_code
+            == 403
+        )
+
+    async def read_failure_events() -> list[tuple[str, str, str | None]]:
+        database = create_database(database_url)
+        async with database.engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    text(
+                        "SELECT actor_kind, operation, error_code "
+                        "FROM security_audit_events "
+                        "WHERE operation = 'auth.session.verify'"
+                    )
+                )
+            ).all()
+        await database.dispose()
+        return [(row[0], row[1], row[2]) for row in rows]
+
+    events = asyncio.run(read_failure_events())
+    assert events
+    assert all(event[0] == "authenticated" for event in events)
+    assert {event[2] for event in events} == {"origin_rejected"}
 
 
 def test_session_idle_expiry_is_enforced_at_boundary(tmp_path: Path) -> None:
@@ -168,9 +204,14 @@ def test_pat_create_shows_secret_once_and_revoke_is_audited(tmp_path: Path) -> N
         )
         assert response.status_code == 201
         raw_token = response.json()["token"]
-        listed = client.get(
-            f"/v1/workspaces/{workspace.id}/personal-access-tokens"
-        )
+        created = PersonalAccessTokenCreatedResponse.model_validate(response.json())
+        assert raw_token not in repr(created)
+        assert raw_token not in str(created.model_dump())
+        assert raw_token not in created.model_dump_json()
+        redacted_with_caller_exclude = created.model_dump_json(exclude={"label"})
+        assert raw_token not in redacted_with_caller_exclude
+        assert '"label"' not in redacted_with_caller_exclude
+        listed = client.get(f"/v1/workspaces/{workspace.id}/personal-access-tokens")
         assert listed.status_code == 200
         assert raw_token not in listed.text
         token_id = response.json()["id"]
@@ -202,3 +243,107 @@ def test_pat_create_shows_secret_once_and_revoke_is_audited(tmp_path: Path) -> N
 
     assert "credential.pat.create" in asyncio.run(read_audits())
     assert "credential.pat.revoke" in asyncio.run(read_audits())
+
+
+def test_callback_validation_is_bounded_and_consumes_transaction(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'callback-validation.sqlite3'}"
+    _seed_sync(database_url)
+    settings = _settings(database_url)
+    settings = settings.model_copy(
+        update={
+            "oidc_issuer": "https://issuer.example.test",
+            "oidc_client_id": "notarius-client",
+            "oidc_auth_wrapping_key": SecretStr("callback-test-key"),
+            "auth_callback_rate_limit": 1,
+        }
+    )
+    application = create_app(settings)
+    auth = application.state.auth_service
+    transaction_id = UUID(int=42)
+    transaction = OidcLoginTransaction(
+        id=transaction_id,
+        state_digest=auth.digest_secret("valid-state"),
+        nonce_digest=auth.digest_secret("valid-nonce"),
+        encrypted_pkce_verifier=auth._encrypt_verifier("verifier", transaction_id),
+        pkce_key_version=settings.oidc_auth_wrapping_key_version,
+        return_path="/",
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
+    )
+
+    async def seed_transaction() -> None:
+        database = create_database(database_url)
+        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+            await unit_of_work.identity.add_login_transaction(transaction)
+            await unit_of_work.commit()
+        await database.dispose()
+
+    asyncio.run(seed_transaction())
+    asyncio.run(auth.reserve_login("testclient"))
+    state_sentinel = "S" * 513
+    with TestClient(application) as client:
+        client.cookies.set("notarius_oidc_transaction", str(transaction_id))
+        first = client.get(
+            "/v1/auth/oidc/callback",
+            params={"state": state_sentinel},
+        )
+        assert first.status_code == 422
+        assert state_sentinel not in first.text
+        assert "notarius_oidc_transaction" in first.headers.get("set-cookie", "")
+        second = client.get(
+            "/v1/auth/oidc/callback",
+            params={"state": state_sentinel},
+        )
+        assert second.status_code == 429
+        assert "Too many callback attempts" in second.text
+
+    async def read_transaction() -> tuple[bool, list[tuple[str, str]]]:
+        database = create_database(database_url)
+        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+            stored = await unit_of_work.identity.lock_login_transaction(transaction_id)
+            assert stored is not None
+            async with database.engine.connect() as connection:
+                rows = (
+                    await connection.execute(
+                        text(
+                            "SELECT operation, error_code FROM security_audit_events "
+                            "WHERE operation = 'oidc.login.callback'"
+                        )
+                    )
+                ).all()
+        await database.dispose()
+        return stored.is_consumed, [(row[0], row[1]) for row in rows]
+
+    consumed, audits = asyncio.run(read_transaction())
+    assert consumed
+    assert set(audits) == {
+        ("oidc.login.callback", "rate_limited"),
+        ("oidc.login.callback", "validation_failed"),
+    }
+    assert asyncio.run(auth.reserve_login("testclient"))
+
+
+def test_workspace_and_pat_request_validation_is_bounded(tmp_path: Path) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'dto-validation.sqlite3'}"
+    _, workspace, issued = _seed_sync(database_url)
+    with TestClient(create_app(_settings(database_url))) as client:
+        client.cookies.set("notarius_session", issued.cookie_value)
+        client.cookies.set("notarius_csrf", issued.csrf_value)
+        headers = {"Origin": "http://testserver", "X-CSRF-Token": issued.csrf_value}
+        whitespace = client.post(
+            "/v1/workspaces",
+            headers=headers,
+            json={"slug": "   ", "name": "Team"},
+        )
+        assert whitespace.status_code == 422
+        duplicate_scopes = client.post(
+            f"/v1/workspaces/{workspace.id}/personal-access-tokens",
+            headers=headers,
+            json={
+                "label": "duplicate",
+                "scopes": ["view_graph", "view_graph"],
+                "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+            },
+        )
+        assert duplicate_scopes.status_code == 422

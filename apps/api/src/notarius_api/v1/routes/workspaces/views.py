@@ -3,6 +3,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 
 from notarius_core.domain.identity import (
     ActorContext,
@@ -38,13 +39,15 @@ async def list_workspaces(
 ) -> list[WorkspaceResponse]:
     rows = await request.app.state.identity_service.list_workspaces(actor=actor)
     return [
-    WorkspaceResponse(
+        WorkspaceResponse(
             id=workspace.id,
             slug=workspace.slug,
             name=workspace.name,
             kind=workspace.kind,
             role=membership.role,
-            capabilities=tuple(sorted(membership.capabilities, key=lambda item: item.value)),
+            capabilities=tuple(
+                sorted(membership.capabilities, key=lambda item: item.value)
+            ),
         )
         for workspace, membership in rows
     ]
@@ -113,7 +116,9 @@ async def add_member(
     return await _member_response(request, membership.user_id, membership)
 
 
-@router.patch("/{workspace_id}/members/{user_id}", response_model=WorkspaceMemberResponse)
+@router.patch(
+    "/{workspace_id}/members/{user_id}", response_model=WorkspaceMemberResponse
+)
 async def change_member_role(
     workspace_id: UUID,
     user_id: UUID,
@@ -171,7 +176,7 @@ async def create_personal_access_token(
     payload: PersonalAccessTokenCreateRequest,
     request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
-) -> PersonalAccessTokenCreatedResponse:
+) -> JSONResponse:
     now = datetime.now(UTC)
     if payload.expires_at.tzinfo is None or payload.expires_at <= now:
         raise HTTPException(status_code=422, detail="PAT expiry must be in the future")
@@ -179,7 +184,9 @@ async def create_personal_access_token(
         seconds=request.app.state.settings.personal_access_token_max_lifetime_seconds
     )
     if payload.expires_at > maximum_expiry:
-        raise HTTPException(status_code=422, detail="PAT expiry exceeds configured lifetime")
+        raise HTTPException(
+            status_code=422, detail="PAT expiry exceeds configured lifetime"
+        )
     if not set(payload.scopes).issubset(PAT_ALLOWED_CAPABILITIES):
         raise HTTPException(
             status_code=422,
@@ -199,9 +206,15 @@ async def create_personal_access_token(
         actor=actor,
         token=token,
     )
-    return PersonalAccessTokenCreatedResponse(
+    response = PersonalAccessTokenCreatedResponse(
         **_pat_response(created).model_dump(),
         token=raw_token,
+    )
+    # FastAPI's response-model serialization is intentionally bypassed here:
+    # this is the sole opt-in boundary that may deliver the raw PAT once.
+    return JSONResponse(
+        status_code=status.HTTP_201_CREATED,
+        content=response.model_dump(mode="json", include_sensitive=True),
     )
 
 

@@ -1,9 +1,11 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Literal
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exception_handlers import (
+    http_exception_handler as default_http_exception_handler,
     request_validation_exception_handler as default_validation_error_handler,
 )
 from fastapi.exceptions import RequestValidationError
@@ -32,7 +34,11 @@ from notarius_api.plugin_discovery import build_plugin_registry
 from notarius_api.services.composition import build_workbench_components
 from notarius_api.settings import Settings, get_settings
 from notarius_api.v1.routes.auth.dependencies import browser_actor
-from notarius_api.v1.routes.auth.services import AuthService
+from notarius_api.v1.routes.auth.services import (
+    OIDC_TRANSACTION_COOKIE,
+    AuthService,
+)
+from notarius_api.v1.routes.auth.abuse import request_browser_key
 from notarius_api.v1.routes.auth.views import router as auth_router
 from notarius_api.v1.routes.artifacts.views import router as artifacts_router
 from notarius_api.v1.routes.catalog.views import router as catalog_router
@@ -42,6 +48,9 @@ from notarius_api.v1.routes.node_secrets.views import router as node_secrets_rou
 from notarius_api.v1.routes.saved_graphs.views import router as saved_graphs_router
 from notarius_api.v1.routes.uploads.views import router as uploads_router
 from notarius_api.v1.routes.workspaces.views import router as workspaces_router
+
+
+logger = logging.getLogger(__name__)
 
 
 class HealthResponse(BaseModel):
@@ -58,6 +67,43 @@ async def _request_validation_error_handler(
 ) -> Response:
     if not isinstance(exception, RequestValidationError):
         raise exception
+    is_oidc_callback = request.url.path.endswith("/auth/oidc/callback")
+    if is_oidc_callback:
+        auth: AuthService = request.app.state.auth_service
+        browser_key = request_browser_key(request)
+        allowed = await auth.allow_callback(browser_key)
+        consumed = await auth.replace_login_transaction(
+            request.cookies.get(OIDC_TRANSACTION_COOKIE)
+        )
+        if consumed:
+            await auth.release_login(browser_key)
+        error_code = "validation_failed" if allowed else "rate_limited"
+        await auth.audit_request_failure(
+            request,
+            operation="oidc.login.callback",
+            error_code=error_code,
+        )
+        response = JSONResponse(
+            status_code=422 if allowed else 429,
+            content=(
+                {
+                    "detail": [
+                        {"loc": error.get("loc"), "type": error.get("type")}
+                        for error in exception.errors()
+                    ]
+                }
+                if allowed
+                else {"detail": "Too many callback attempts"}
+            ),
+        )
+        auth.clear_transaction_cookie(response)
+        return response
+    if request.url.path.startswith("/v1/workspaces"):
+        await request.app.state.auth_service.audit_request_failure(
+            request,
+            operation="workspace.request",
+            error_code="validation_failed",
+        )
     if request.method != "PUT" or "/secrets/" not in request.url.path:
         return await default_validation_error_handler(request, exception)
     redacted_errors = [
@@ -68,31 +114,65 @@ async def _request_validation_error_handler(
 
 
 async def _not_found_error_handler(
-    _request: Request,
+    request: Request,
     _exception: Exception,
 ) -> JSONResponse:
+    await _audit_workspace_failure(request, "not_found")
+    await _audit_auth_failure(request, "not_found")
     return JSONResponse(status_code=404, content={"detail": "Not found"})
 
 
 async def _capability_denied_error_handler(
-    _request: Request,
+    request: Request,
     _exception: Exception,
 ) -> JSONResponse:
+    await _audit_workspace_failure(request, "capability_denied")
     return JSONResponse(status_code=403, content={"detail": "Forbidden"})
 
 
 async def _disabled_user_error_handler(
-    _request: Request,
+    request: Request,
     _exception: Exception,
 ) -> JSONResponse:
+    await _audit_workspace_failure(request, "disabled_user")
     return JSONResponse(status_code=401, content={"detail": "Authentication required"})
 
 
 async def _identity_invariant_error_handler(
-    _request: Request,
+    request: Request,
     _exception: Exception,
 ) -> JSONResponse:
-    return JSONResponse(status_code=409, content={"detail": "Identity operation failed"})
+    await _audit_workspace_failure(request, "identity_invariant")
+    return JSONResponse(
+        status_code=409, content={"detail": "Identity operation failed"}
+    )
+
+
+async def _http_error_handler(request: Request, exception: Exception) -> Response:
+    if isinstance(exception, HTTPException):
+        await _audit_workspace_failure(request, "http_error")
+        return await default_http_exception_handler(request, exception)
+    raise exception
+
+
+async def _audit_workspace_failure(request: Request, error_code: str) -> None:
+    if request.url.path.startswith("/v1/workspaces"):
+        await request.app.state.auth_service.audit_request_failure(
+            request,
+            operation="workspace.request",
+            error_code=error_code,
+        )
+
+
+async def _audit_auth_failure(request: Request, error_code: str) -> None:
+    if request.url.path.startswith("/v1/auth/") and not request.url.path.endswith(
+        ("/oidc/login", "/oidc/callback")
+    ):
+        await request.app.state.auth_service.audit_request_failure(
+            request,
+            operation="auth.session.request",
+            error_code=error_code,
+        )
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -165,6 +245,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.artifacts = components.artifacts
         app.state.saved_graphs = saved_graphs
         app.state.node_secrets = node_secrets
+
         async def cleanup_expired_auth_data() -> None:
             while True:
                 await asyncio.sleep(resolved_settings.auth_cleanup_interval_seconds)
@@ -172,7 +253,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     await auth_service.cleanup_expired()
                 except asyncio.CancelledError:
                     raise
-                except Exception:
+                except Exception as error:
+                    logger.warning(
+                        "auth_cleanup_failed operation=cleanup_expired error_class=%s",
+                        type(error).__name__,
+                    )
                     continue
 
         cleanup_task = asyncio.create_task(cleanup_expired_auth_data())
@@ -200,9 +285,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title="Notarius API",
         version="0.1.0",
         lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
     )
+
     def identity_uow_factory() -> SqlAlchemyUnitOfWork:
         return SqlAlchemyUnitOfWork(database.sessions)
+
     identity_service = IdentityService(identity_uow_factory)
     auth_service = AuthService(
         settings=resolved_settings,
@@ -231,10 +321,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         RequestValidationError,
         _request_validation_error_handler,
     )
+    application.add_exception_handler(HTTPException, _http_error_handler)
     application.add_exception_handler(NotFoundError, _not_found_error_handler)
-    application.add_exception_handler(CapabilityDeniedError, _capability_denied_error_handler)
+    application.add_exception_handler(
+        CapabilityDeniedError, _capability_denied_error_handler
+    )
     application.add_exception_handler(UserDisabledError, _disabled_user_error_handler)
-    application.add_exception_handler(IdentityInvariantError, _identity_invariant_error_handler)
+    application.add_exception_handler(
+        IdentityInvariantError, _identity_invariant_error_handler
+    )
     application.add_api_route(
         "/health",
         health,

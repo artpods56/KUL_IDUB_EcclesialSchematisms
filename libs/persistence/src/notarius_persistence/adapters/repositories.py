@@ -253,15 +253,8 @@ class SqlIdentityRepository(IdentityRepositoryPort):
         self._session.add(session)
 
     @override
-    async def get_auth_session_by_digest(
-        self,
-        secret_digest: bytes,
-    ) -> AuthSession | None:
-        return await self._session.scalar(
-            select(AuthSession).where(
-                schema.auth_sessions.c.secret_digest == secret_digest
-            )
-        )
+    async def get_auth_session(self, session_id: UUID) -> AuthSession | None:
+        return await self._session.get(AuthSession, session_id)
 
     @override
     async def list_auth_sessions_for_user(self, user_id: UUID) -> list[AuthSession]:
@@ -298,10 +291,6 @@ class SqlIdentityRepository(IdentityRepositoryPort):
             ),
         )
         return result.rowcount
-
-    @override
-    async def get_auth_session(self, session_id: UUID) -> AuthSession | None:
-        return await self._session.get(AuthSession, session_id)
 
     @override
     async def add_personal_access_token(self, token: PersonalAccessToken) -> None:
@@ -765,9 +754,7 @@ class SqlGraphExecutionHistoryRepository(
 
         await self._session.execute(
             update(schema.graph_executions)
-            .where(
-                schema.graph_executions.c.execution_id == execution.execution_id
-            )
+            .where(schema.graph_executions.c.execution_id == execution.execution_id)
             .values(
                 status=execution.status,
                 workflow_run_id=execution.workflow_run_id,
@@ -827,9 +814,7 @@ class SqlGraphExecutionHistoryRepository(
         execution = record.to_domain(await self._requested_node_ids(execution_id))
         results = await self._session.scalars(
             select(GraphExecutionNodeResult)
-            .where(
-                schema.graph_execution_node_results.c.execution_id == execution_id
-            )
+            .where(schema.graph_execution_node_results.c.execution_id == execution_id)
             .order_by(
                 schema.graph_execution_node_results.c.position.asc(),
                 schema.graph_execution_node_results.c.node_id.asc(),
@@ -888,9 +873,7 @@ class SqlGraphExecutionHistoryRepository(
             .where(executions.c.graph_id == graph_id)
         )
         if graph_revision is not None:
-            statement = statement.where(
-                executions.c.graph_revision == graph_revision
-            )
+            statement = statement.where(executions.c.graph_revision == graph_revision)
         if status is not None:
             statement = statement.where(executions.c.status == status)
         if normalized_node_id is not None:

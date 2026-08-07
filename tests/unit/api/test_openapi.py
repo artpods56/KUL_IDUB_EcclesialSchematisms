@@ -57,6 +57,29 @@ def test_openapi_contains_exact_public_routes() -> None:
     }
     assert set(schema["paths"]["/v1/graphs"]) == {"get", "post"}
     assert set(schema["paths"]["/v1/executions"]) == {"post"}
+    security_schemes = schema["components"]["securitySchemes"]
+    session_scheme_name = next(
+        name
+        for name, scheme in security_schemes.items()
+        if scheme
+        == {
+            "type": "apiKey",
+            "in": "cookie",
+            "name": "notarius_session",
+            "description": "Opaque host-only browser session cookie.",
+        }
+    )
+    assert schema["paths"]["/v1/auth/oidc/login"]["get"].get("security") is None
+    assert schema["paths"]["/v1/auth/oidc/callback"]["get"].get("security") is None
+    assert schema["paths"]["/v1/auth/session"]["get"]["security"] == [
+        {session_scheme_name: []}
+    ]
+    assert schema["paths"]["/v1/workspaces"]["get"]["security"] == [
+        {session_scheme_name: []}
+    ]
+    pat_schema = schema["components"]["schemas"]["PersonalAccessTokenCreatedResponse"]
+    assert "returned once" in pat_schema["properties"]["token"]["description"]
+
     assert "GeoPageResponse" not in schema["components"]["schemas"]
     geo_render_schema = schema["components"]["schemas"]["GeoRenderResponse"]
     assert set(geo_render_schema["properties"]) == {
@@ -250,3 +273,11 @@ def test_app_allows_local_web_origin() -> None:
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == ("http://localhost:3000")
+
+
+def test_framework_documentation_routes_are_disabled_but_openapi_is_callable() -> None:
+    assert {
+        route.path for route in app.routes if isinstance(route, APIRoute)
+    }.isdisjoint({"/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"})
+    schema = app.openapi()
+    assert schema["openapi"].startswith("3.")

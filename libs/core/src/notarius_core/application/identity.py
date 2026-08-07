@@ -47,19 +47,22 @@ class IdentityService:
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
 
-    async def list_workspaces(self, *, actor: ActorContext) -> list[tuple[Workspace, WorkspaceMembership]]:
+    async def list_workspaces(
+        self, *, actor: ActorContext
+    ) -> list[tuple[Workspace, WorkspaceMembership]]:
         async with self._unit_of_work_factory() as unit_of_work:
             await self._require_active_user(unit_of_work, actor.user_id)
-            memberships = await unit_of_work.identity.list_memberships_for_user(actor.user_id)
+            memberships = await unit_of_work.identity.list_memberships_for_user(
+                actor.user_id
+            )
             workspaces: list[tuple[Workspace, WorkspaceMembership]] = []
             for membership in memberships:
                 if not membership.is_active:
                     continue
-                workspace = await unit_of_work.identity.get_workspace(membership.workspace_id)
-                if workspace is not None and not (
-                    workspace.is_sealed_bootstrap_workspace
-                    and membership.role is not WorkspaceRole.OWNER
-                ):
+                workspace = await unit_of_work.identity.get_workspace(
+                    membership.workspace_id
+                )
+                if workspace is not None:
                     workspaces.append((workspace, membership))
             return workspaces
 
@@ -76,7 +79,9 @@ class IdentityService:
                 workspace_id=workspace_id,
             )
             members: list[tuple[User, WorkspaceMembership]] = []
-            for membership in await unit_of_work.identity.list_memberships(workspace_id):
+            for membership in await unit_of_work.identity.list_memberships(
+                workspace_id
+            ):
                 user = await unit_of_work.identity.get_user(membership.user_id)
                 if user is not None:
                     members.append((user, membership))
@@ -91,7 +96,9 @@ class IdentityService:
         async with self._unit_of_work_factory() as unit_of_work:
             await self._require_active_user(unit_of_work, actor.user_id)
             if token.user_id != actor.user_id:
-                raise IdentityInvariantError("PAT owner must match the authenticated user")
+                raise IdentityInvariantError(
+                    "PAT owner must match the authenticated user"
+                )
             if not set(token.scopes).issubset(PAT_ALLOWED_CAPABILITIES):
                 raise IdentityInvariantError(
                     "Personal access token scope is not available"
@@ -242,10 +249,8 @@ class IdentityService:
     ) -> IdentityProvisioningResult:
         """Provision or refresh one validated OIDC identity atomically."""
         async with self._unit_of_work_factory() as unit_of_work:
-            local_workspace = (
-                await unit_of_work.identity.lock_workspace_by_slug_for_membership_mutation(
-                    "local"
-                )
+            local_workspace = await unit_of_work.identity.lock_workspace_by_slug_for_membership_mutation(
+                "local"
             )
             identity = await unit_of_work.identity.get_oidc_identity(
                 issuer=issuer,
@@ -429,8 +434,10 @@ class IdentityService:
     ) -> WorkspaceMembership:
         role = WorkspaceRole(role)
         async with self._unit_of_work_factory() as unit_of_work:
-            workspace = await unit_of_work.identity.lock_workspace_for_membership_mutation(
-                workspace_id
+            workspace = (
+                await unit_of_work.identity.lock_workspace_for_membership_mutation(
+                    workspace_id
+                )
             )
             if workspace is None:
                 raise NotFoundError("Workspace", str(workspace_id))
@@ -439,11 +446,17 @@ class IdentityService:
                 actor=actor,
                 workspace_id=workspace_id,
             )
-            if workspace.kind is WorkspaceKind.PERSONAL and user_id != workspace.personal_owner_user_id:
+            if (
+                workspace.kind is WorkspaceKind.PERSONAL
+                and user_id != workspace.personal_owner_user_id
+            ):
                 raise IdentityInvariantError(
                     "Personal workspace cannot accept another membership"
                 )
-            if workspace.kind is WorkspaceKind.PERSONAL and role is not WorkspaceRole.OWNER:
+            if (
+                workspace.kind is WorkspaceKind.PERSONAL
+                and role is not WorkspaceRole.OWNER
+            ):
                 raise IdentityInvariantError(
                     "Personal workspace membership must remain owner-authorized"
                 )
@@ -496,8 +509,10 @@ class IdentityService:
     ) -> WorkspaceMembership:
         role = WorkspaceRole(role)
         async with self._unit_of_work_factory() as unit_of_work:
-            workspace = await unit_of_work.identity.lock_workspace_for_membership_mutation(
-                workspace_id
+            workspace = (
+                await unit_of_work.identity.lock_workspace_for_membership_mutation(
+                    workspace_id
+                )
             )
             if workspace is None:
                 raise NotFoundError("Workspace", str(workspace_id))
@@ -542,8 +557,10 @@ class IdentityService:
         user_id: UUID,
     ) -> WorkspaceMembership:
         async with self._unit_of_work_factory() as unit_of_work:
-            workspace = await unit_of_work.identity.lock_workspace_for_membership_mutation(
-                workspace_id
+            workspace = (
+                await unit_of_work.identity.lock_workspace_for_membership_mutation(
+                    workspace_id
+                )
             )
             if workspace is None:
                 raise NotFoundError("Workspace", str(workspace_id))
@@ -585,7 +602,9 @@ class IdentityService:
             user = await self._require_user(unit_of_work, user_id)
             user.active = False
             user.updated_at = _utc_now()
-            for session in await unit_of_work.identity.list_auth_sessions_for_user(user_id):
+            for session in await unit_of_work.identity.list_auth_sessions_for_user(
+                user_id
+            ):
                 session.revoke()
                 await unit_of_work.security_audit.add(
                     SecurityAuditEvent(
@@ -596,7 +615,9 @@ class IdentityService:
                         resource_id=str(session.id),
                     )
                 )
-            for token in await unit_of_work.identity.list_personal_access_tokens_for_user(
+            for (
+                token
+            ) in await unit_of_work.identity.list_personal_access_tokens_for_user(
                 user_id
             ):
                 token.revoke()

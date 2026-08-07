@@ -50,6 +50,8 @@ API_ROUTE_AREAS = (
     "node_secrets",
     "saved_graphs",
     "uploads",
+    "auth",
+    "workspaces",
 )
 API_SERVICE_AREAS = (
     "artifacts",
@@ -58,17 +60,35 @@ API_SERVICE_AREAS = (
     "node_secrets",
     "uploads",
 )
+API_ROUTE_STANDARD_FILES = (
+    "__init__.py",
+    "dependencies.py",
+    "models.py",
+    "views.py",
+)
 
 
 def test_api_routes_are_organized_as_capability_slices() -> None:
     routes_root = REPO_ROOT / "apps/api/src/notarius_api/v1/routes"
 
     assert {path.name for path in routes_root.glob("*.py")} == {"__init__.py"}
-    for area in API_ROUTE_AREAS:
+    for area in API_ROUTE_AREAS[:6]:
         area_root = routes_root / area
         assert area_root.is_dir()
-        for module in ("__init__.py", "dependencies.py", "models.py", "views.py"):
+        for module in API_ROUTE_STANDARD_FILES:
             assert (area_root / module).is_file()
+    assert {path.name for path in (routes_root / "auth").glob("*.py")} == {
+        "__init__.py",
+        "abuse.py",
+        "dependencies.py",
+        "models.py",
+        "services.py",
+        "views.py",
+    }
+    assert {path.name for path in (routes_root / "workspaces").glob("*.py")} == {
+        "__init__.py",
+        "views.py",
+    }
     for area in API_SERVICE_AREAS:
         assert (routes_root / area / "services.py").is_file()
 

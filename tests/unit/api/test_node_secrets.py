@@ -26,6 +26,7 @@ from notarius_persistence.orm import metadata
 from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from notarius_api.main import create_app
+from tests.unit.api.conftest import install_browser_actor_override
 from notarius_api.v1.routes.executions.models import RunNodeRequest, RunRequest
 from notarius_api.services.composition import (
     WorkbenchComponents,
@@ -977,6 +978,7 @@ def test_node_secret_routes_never_return_secret_value(tmp_path: Path) -> None:
             execution_backend="inline",
         )
     )
+    install_browser_actor_override(application)
     application.dependency_overrides[node_secret_service] = lambda: service
     install_workbench_dependency_overrides(application, components)
     plaintext = "route-secret-value"

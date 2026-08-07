@@ -14,6 +14,7 @@ from uuid import UUID
 
 from authlib.jose import JsonWebToken, JoseError
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+from cryptography.exceptions import InvalidTag
 import httpx
 from fastapi import HTTPException, Request, Response, status
 
@@ -46,14 +47,14 @@ from notarius_api.v1.routes.auth.abuse import AuthAbuseControl, request_browser_
 SESSION_COOKIE = "notarius_session"
 CSRF_COOKIE = "notarius_csrf"
 OIDC_TRANSACTION_COOKIE = "notarius_oidc_transaction"
-_COOKIE_MAX_AGE = 60 * 60 * 24 * 30
 
 
 class OidcProtocolError(Exception):
     """A bounded OIDC failure safe to expose as a generic HTTP error."""
 
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, *, transaction_consumed: bool = False) -> None:
         self.code = code
+        self.transaction_consumed = transaction_consumed
         super().__init__(code)
 
 
@@ -131,9 +132,11 @@ class AuthService:
                 )
             )
             await unit_of_work.commit()
-        challenge = base64.urlsafe_b64encode(
-            hashlib.sha256(verifier.encode("ascii")).digest()
-        ).rstrip(b"=").decode("ascii")
+        challenge = (
+            base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
+            .rstrip(b"=")
+            .decode("ascii")
+        )
         authorization_params = {
             "response_type": "code",
             "client_id": self._require_value(self._settings.oidc_client_id),
@@ -156,11 +159,19 @@ class AuthService:
         state: str | None,
         code: str | None,
         error: str | None,
+        current_session_cookie: str | None = None,
     ) -> tuple[IdentityProvisioningResult, IssuedSession, str]:
         self._require_oidc_configuration()
-        if error is not None or code is None or state is None:
-            raise OidcProtocolError("provider_callback_failed")
         transaction_id = self._parse_transaction_id(transaction_id_value)
+        if error is not None or code is None or state is None:
+            consumed = await self._consume_transaction_for_failure(
+                transaction_id,
+                state=state,
+            )
+            raise OidcProtocolError(
+                "provider_callback_failed",
+                transaction_consumed=consumed,
+            )
         transaction, verifier, return_path = await self._consume_transaction(
             transaction_id=transaction_id,
             state=state,
@@ -172,11 +183,14 @@ class AuthService:
                 nonce_digest=transaction.nonce_digest,
             )
         except (httpx.HTTPError, OidcProtocolError, JoseError) as exc:
-            raise OidcProtocolError("provider_token_validation_failed") from exc
+            raise OidcProtocolError(
+                "provider_token_validation_failed",
+                transaction_consumed=True,
+            ) from exc
         issuer = self._require_value(self._settings.oidc_issuer)
         subject = claims.get("sub")
         if not isinstance(subject, str) or not subject:
-            raise OidcProtocolError("missing_subject")
+            raise OidcProtocolError("missing_subject", transaction_consumed=True)
         email = claims.get("email")
         display_name = claims.get("name")
         if not isinstance(email, str):
@@ -191,8 +205,14 @@ class AuthService:
                 display_name=display_name,
             )
         except (BootstrapOwnerRequiredError, UserDisabledError) as exc:
-            raise OidcProtocolError("identity_not_eligible") from exc
-        issued = await self.issue_session(provisioned.user.id)
+            raise OidcProtocolError(
+                "identity_not_eligible",
+                transaction_consumed=True,
+            ) from exc
+        issued = await self.issue_session(
+            provisioned.user.id,
+            replacing_cookie=current_session_cookie,
+        )
         async with self._unit_of_work_factory() as unit_of_work:
             await unit_of_work.security_audit.add(
                 SecurityAuditEvent(
@@ -208,7 +228,12 @@ class AuthService:
             await unit_of_work.commit()
         return provisioned, issued, return_path
 
-    async def issue_session(self, user_id: UUID) -> IssuedSession:
+    async def issue_session(
+        self,
+        user_id: UUID,
+        *,
+        replacing_cookie: str | None = None,
+    ) -> IssuedSession:
         session_secret = token_urlsafe(32)
         csrf_value = token_urlsafe(32)
         session = AuthSession(
@@ -219,6 +244,26 @@ class AuthService:
             + timedelta(seconds=self._settings.auth_session_absolute_seconds),
         )
         async with self._unit_of_work_factory() as unit_of_work:
+            replacing_session_id = self._session_id_from_cookie(replacing_cookie)
+            replaced = None
+            if replacing_session_id is not None:
+                replaced = self._valid_session_from_cookie(
+                    await unit_of_work.identity.get_auth_session(replacing_session_id),
+                    replacing_cookie,
+                )
+            if replaced is not None:
+                replaced.revoke()
+                await unit_of_work.security_audit.add(
+                    SecurityAuditEvent(
+                        actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                        user_id=replaced.user_id,
+                        credential_reference=f"session:{replaced.id}",
+                        operation="credential.session.revoke",
+                        outcome=SecurityAuditOutcome.SUCCESS,
+                        resource_type="auth_session",
+                        resource_id=str(replaced.id),
+                    )
+                )
             await unit_of_work.identity.add_auth_session(session)
             await unit_of_work.security_audit.add(
                 SecurityAuditEvent(
@@ -272,13 +317,20 @@ class AuthService:
             if not await self._abuse_control.allow_session_failure(
                 request_browser_key(request)
             ):
-                raise HTTPException(status_code=429, detail="Too many authentication attempts") from exc
+                raise HTTPException(
+                    status_code=429, detail="Too many authentication attempts"
+                ) from exc
             raise
         async with self._unit_of_work_factory() as unit_of_work:
-            session = await unit_of_work.identity.get_auth_session_by_digest(
-                self.digest_secret(secret)
-            )
-            if session is None or session.id != session_id or session.is_revoked:
+            session = await unit_of_work.identity.get_auth_session(session_id)
+            if (
+                session is None
+                or session.is_revoked
+                or not hmac.compare_digest(
+                    session.secret_digest,
+                    self.digest_secret(secret),
+                )
+            ):
                 await self._raise_authentication_required(request)
             now = datetime.now(UTC)
             last_activity = session.last_used_at or session.created_at
@@ -295,6 +347,8 @@ class AuthService:
                 await unit_of_work.commit()
                 await self._raise_authentication_required(request)
             request.state.auth_session = session
+            request.state.auth_session_user_id = session.user_id
+            request.state.auth_session_credential_reference = f"session:{session.id}"
             self._check_cookie_request(request)
             session.last_used_at = now
             await unit_of_work.commit()
@@ -346,9 +400,58 @@ class AuthService:
             )
             await unit_of_work.commit()
 
+    async def audit_authenticated_failure(
+        self,
+        *,
+        user_id: UUID,
+        credential_reference: str,
+        operation: str,
+        error_code: str,
+    ) -> None:
+        async with self._unit_of_work_factory() as unit_of_work:
+            await unit_of_work.security_audit.add(
+                SecurityAuditEvent(
+                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                    user_id=user_id,
+                    credential_reference=credential_reference,
+                    operation=operation,
+                    outcome=SecurityAuditOutcome.FAILURE,
+                    error_code=error_code,
+                )
+            )
+            await unit_of_work.commit()
+
+    async def audit_request_failure(
+        self,
+        request: Request,
+        *,
+        operation: str,
+        error_code: str,
+    ) -> None:
+        user_id = getattr(request.state, "auth_session_user_id", None)
+        credential_reference = getattr(
+            request.state,
+            "auth_session_credential_reference",
+            None,
+        )
+        if isinstance(user_id, UUID) and isinstance(credential_reference, str):
+            await self.audit_authenticated_failure(
+                user_id=user_id,
+                credential_reference=credential_reference,
+                operation=operation,
+                error_code=error_code,
+            )
+            return
+        await self.audit_unauthenticated_failure(
+            operation=operation,
+            error_code=error_code,
+        )
+
     async def list_sessions(self, *, actor: ActorContext) -> list[AuthSession]:
         async with self._unit_of_work_factory() as unit_of_work:
-            return await unit_of_work.identity.list_auth_sessions_for_user(actor.user_id)
+            return await unit_of_work.identity.list_auth_sessions_for_user(
+                actor.user_id
+            )
 
     async def revoke_session(
         self,
@@ -382,7 +485,7 @@ class AuthService:
         response.set_cookie(
             SESSION_COOKIE,
             issued.cookie_value,
-            max_age=_COOKIE_MAX_AGE,
+            max_age=self._settings.auth_session_absolute_seconds,
             httponly=True,
             secure=self._settings.auth_cookie_secure,
             samesite="lax",
@@ -391,7 +494,7 @@ class AuthService:
         response.set_cookie(
             CSRF_COOKIE,
             issued.csrf_value,
-            max_age=_COOKIE_MAX_AGE,
+            max_age=self._settings.auth_session_absolute_seconds,
             httponly=False,
             secure=self._settings.auth_cookie_secure,
             samesite="lax",
@@ -419,12 +522,18 @@ class AuthService:
             path="/api/v1/auth/oidc",
         )
 
-    async def cleanup_expired(self, *, now: datetime | None = None) -> tuple[int, int, int]:
+    async def cleanup_expired(
+        self, *, now: datetime | None = None
+    ) -> tuple[int, int, int]:
         cutoff = now or datetime.now(UTC)
         async with self._unit_of_work_factory() as unit_of_work:
-            transactions = await unit_of_work.identity.delete_expired_login_transactions(cutoff)
+            transactions = (
+                await unit_of_work.identity.delete_expired_login_transactions(cutoff)
+            )
             sessions = await unit_of_work.identity.delete_expired_sessions(cutoff)
-            tokens = await unit_of_work.identity.delete_expired_personal_access_tokens(cutoff)
+            tokens = await unit_of_work.identity.delete_expired_personal_access_tokens(
+                cutoff
+            )
             await unit_of_work.commit()
         return transactions, sessions, tokens
 
@@ -451,7 +560,9 @@ class AuthService:
         except ValueError:
             return False
         async with self._unit_of_work_factory() as unit_of_work:
-            transaction = await unit_of_work.identity.lock_login_transaction(transaction_id)
+            transaction = await unit_of_work.identity.lock_login_transaction(
+                transaction_id
+            )
             if transaction is None or transaction.is_consumed:
                 return False
             transaction.consume()
@@ -465,26 +576,59 @@ class AuthService:
         state: str,
     ) -> tuple[OidcLoginTransaction, str, str]:
         async with self._unit_of_work_factory() as unit_of_work:
-            transaction = await unit_of_work.identity.lock_login_transaction(transaction_id)
+            transaction = await unit_of_work.identity.lock_login_transaction(
+                transaction_id
+            )
             if transaction is None or transaction.is_consumed:
                 raise OidcProtocolError("invalid_login_transaction")
             if transaction.expires_at <= datetime.now(UTC):
                 transaction.consume()
                 await unit_of_work.commit()
-                raise OidcProtocolError("expired_login_transaction")
-            if not hmac.compare_digest(transaction.state_digest, self.digest_secret(state)):
+                raise OidcProtocolError(
+                    "expired_login_transaction",
+                    transaction_consumed=True,
+                )
+            if not hmac.compare_digest(
+                transaction.state_digest, self.digest_secret(state)
+            ):
                 transaction.consume()
                 await unit_of_work.commit()
-                raise OidcProtocolError("invalid_state")
+                raise OidcProtocolError("invalid_state", transaction_consumed=True)
             try:
                 verifier = self._decrypt_verifier(transaction)
             except OidcProtocolError:
                 transaction.consume()
                 await unit_of_work.commit()
-                raise
+                raise OidcProtocolError(
+                    "invalid_pkce_verifier",
+                    transaction_consumed=True,
+                )
             transaction.consume()
             await unit_of_work.commit()
             return transaction, verifier, transaction.return_path
+
+    async def _consume_transaction_for_failure(
+        self,
+        transaction_id: UUID,
+        *,
+        state: str | None,
+    ) -> bool:
+        async with self._unit_of_work_factory() as unit_of_work:
+            transaction = await unit_of_work.identity.lock_login_transaction(
+                transaction_id
+            )
+            if transaction is None or transaction.is_consumed:
+                return False
+            if state is not None and not hmac.compare_digest(
+                transaction.state_digest,
+                self.digest_secret(state),
+            ):
+                transaction.consume()
+                await unit_of_work.commit()
+                raise OidcProtocolError("invalid_state", transaction_consumed=True)
+            transaction.consume()
+            await unit_of_work.commit()
+            return True
 
     async def _exchange_code(
         self,
@@ -507,7 +651,10 @@ class AuthService:
             response = await client.post(metadata.token_endpoint, data=data)
         if response.status_code != 200:
             raise OidcProtocolError("provider_token_exchange_failed")
-        raw_payload = response.json()
+        try:
+            raw_payload = response.json()
+        except (TypeError, ValueError) as exc:
+            raise OidcProtocolError("invalid_token_response") from exc
         if not isinstance(raw_payload, dict):
             raise OidcProtocolError("missing_id_token")
         payload = cast(dict[str, object], raw_payload)
@@ -592,7 +739,10 @@ class AuthService:
 
     async def _provider(self) -> ProviderMetadata:
         now = datetime.now(UTC)
-        if self._provider_metadata is not None and self._provider_metadata_expires_at is not None:
+        if (
+            self._provider_metadata is not None
+            and self._provider_metadata_expires_at is not None
+        ):
             if self._provider_metadata_expires_at > now:
                 return self._provider_metadata
         issuer = self._require_value(self._settings.oidc_issuer)
@@ -603,7 +753,11 @@ class AuthService:
             response.raise_for_status()
             raw_payload = response.json()
         except (httpx.HTTPError, ValueError) as exc:
-            if self._provider_metadata is not None:
+            if (
+                self._provider_metadata is not None
+                and self._provider_metadata_expires_at is not None
+                and self._provider_metadata_expires_at > now
+            ):
                 return self._provider_metadata
             raise OidcProtocolError("provider_discovery_unavailable") from exc
         if not isinstance(raw_payload, dict):
@@ -632,9 +786,15 @@ class AuthService:
         self._provider_metadata_expires_at = now + timedelta(minutes=5)
         return metadata
 
-    async def _keys(self, *, force_refresh: bool = False) -> dict[str, object] | list[object]:
+    async def _keys(
+        self, *, force_refresh: bool = False
+    ) -> dict[str, object] | list[object]:
         now = datetime.now(UTC)
-        if not force_refresh and self._jwks is not None and self._jwks_expires_at is not None:
+        if (
+            not force_refresh
+            and self._jwks is not None
+            and self._jwks_expires_at is not None
+        ):
             if self._jwks_expires_at > now:
                 return self._jwks
         metadata = await self._provider()
@@ -644,7 +804,12 @@ class AuthService:
             response.raise_for_status()
             raw_payload = response.json()
         except (httpx.HTTPError, ValueError) as exc:
-            if self._jwks is not None and not force_refresh:
+            if (
+                self._jwks is not None
+                and self._jwks_expires_at is not None
+                and self._jwks_expires_at > now
+                and not force_refresh
+            ):
                 return self._jwks
             raise OidcProtocolError("provider_keys_unavailable") from exc
         if not isinstance(raw_payload, (dict, list)):
@@ -664,7 +829,10 @@ class AuthService:
         return nonce + ciphertext
 
     def _decrypt_verifier(self, transaction: OidcLoginTransaction) -> str:
-        if transaction.pkce_key_version != self._settings.oidc_auth_wrapping_key_version:
+        if (
+            transaction.pkce_key_version
+            != self._settings.oidc_auth_wrapping_key_version
+        ):
             raise OidcProtocolError("unsupported_key_version")
         encrypted = transaction.encrypted_pkce_verifier
         try:
@@ -674,7 +842,7 @@ class AuthService:
                 transaction.id.bytes,
             )
             return plaintext.decode("ascii")
-        except (ValueError, UnicodeDecodeError) as exc:
+        except (InvalidTag, ValueError, UnicodeDecodeError) as exc:
             raise OidcProtocolError("invalid_pkce_verifier") from exc
 
     def _check_cookie_request(self, request: Request) -> None:
@@ -721,12 +889,50 @@ class AuthService:
         try:
             session_id = UUID(identifier)
         except ValueError as exc:
-            raise HTTPException(status_code=401, detail="Authentication required") from exc
+            raise HTTPException(
+                status_code=401, detail="Authentication required"
+            ) from exc
         return session_id, secret
 
+    @staticmethod
+    def _session_id_from_cookie(value: str | None) -> UUID | None:
+        if value is None:
+            return None
+        try:
+            return UUID(value.partition(".")[0])
+        except ValueError:
+            return None
+
+    def _valid_session_from_cookie(
+        self,
+        session: AuthSession | None,
+        cookie_value: str | None,
+    ) -> AuthSession | None:
+        if session is None or cookie_value is None:
+            return None
+        _, separator, secret = cookie_value.partition(".")
+        if not separator or not secret:
+            return None
+        last_activity = session.last_used_at or session.created_at
+        now = datetime.now(UTC)
+        if (
+            session.is_revoked
+            or session.expires_at <= now
+            or now - last_activity
+            >= timedelta(seconds=self._settings.auth_session_idle_seconds)
+        ):
+            return None
+        if not hmac.compare_digest(session.secret_digest, self.digest_secret(secret)):
+            return None
+        return session
+
     async def _raise_authentication_required(self, request: Request) -> NoReturn:
-        if not await self._abuse_control.allow_session_failure(request_browser_key(request)):
-            raise HTTPException(status_code=429, detail="Too many authentication attempts")
+        if not await self._abuse_control.allow_session_failure(
+            request_browser_key(request)
+        ):
+            raise HTTPException(
+                status_code=429, detail="Too many authentication attempts"
+            )
         raise HTTPException(status_code=401, detail="Authentication required")
 
     def _wrapping_key(self) -> bytes:

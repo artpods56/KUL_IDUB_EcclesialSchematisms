@@ -13,6 +13,7 @@ from notarius_persistence.database import create_database
 from notarius_persistence.orm import metadata
 
 from notarius_api.main import create_app
+from tests.unit.api.conftest import install_browser_actor_override
 from notarius_api.v1.routes.catalog.models import NodeRegistryResponse
 from notarius_api.v1.routes.executions.models import (
     RunExecutionResponse,
@@ -62,6 +63,7 @@ def test_application_lifespan_builds_and_releases_workbench_components(
             execution_backend="inline",
         )
     )
+    install_browser_actor_override(application)
     leaf_state_names = (
         "workbench_plugin_registry",
         "image_uploads",

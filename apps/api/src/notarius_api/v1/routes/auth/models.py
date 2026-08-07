@@ -1,9 +1,15 @@
 from datetime import datetime
+from typing import cast
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic.main import IncEx
 
-from notarius_core.domain.identity import WorkspaceCapability, WorkspaceKind, WorkspaceRole
+from notarius_core.domain.identity import (
+    WorkspaceCapability,
+    WorkspaceKind,
+    WorkspaceRole,
+)
 
 
 class SessionResponse(BaseModel):
@@ -45,6 +51,13 @@ class WorkspaceCreateRequest(BaseModel):
     slug: str = Field(min_length=1, max_length=80)
     name: str = Field(min_length=1, max_length=160)
 
+    @field_validator("slug", "name")
+    @classmethod
+    def reject_whitespace_only(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("value must contain a non-whitespace character")
+        return value
+
 
 class WorkspaceMemberRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -66,6 +79,16 @@ class PersonalAccessTokenCreateRequest(BaseModel):
     scopes: tuple[WorkspaceCapability, ...] = Field(min_length=1, max_length=8)
     expires_at: datetime
 
+    @field_validator("scopes")
+    @classmethod
+    def reject_duplicate_scopes(
+        cls,
+        value: tuple[WorkspaceCapability, ...],
+    ) -> tuple[WorkspaceCapability, ...]:
+        if len(value) != len(set(value)):
+            raise ValueError("PAT scopes must be unique")
+        return value
+
 
 class PersonalAccessTokenResponse(BaseModel):
     id: UUID
@@ -80,4 +103,35 @@ class PersonalAccessTokenResponse(BaseModel):
 
 
 class PersonalAccessTokenCreatedResponse(PersonalAccessTokenResponse):
-    token: str
+    token: str = Field(
+        repr=False,
+        description="Raw personal access token; returned once and never retrievable again.",
+    )
+
+    def model_dump(
+        self, *args: object, include_sensitive: bool = False, **kwargs: object
+    ) -> dict[str, object]:
+        dumped = super().model_dump(*args, **kwargs)
+        if not include_sensitive:
+            dumped.pop("token", None)
+        return dumped
+
+    def model_dump_json(
+        self,
+        *args: object,
+        include_sensitive: bool = False,
+        **kwargs: object,
+    ) -> str:
+        if include_sensitive:
+            return super().model_dump_json(*args, **kwargs)
+        caller_exclude = kwargs.pop("exclude", None)
+        if isinstance(caller_exclude, set):
+            merged_exclude_set = set(cast(set[str], caller_exclude))
+            merged_exclude_set.add("token")
+            return super().model_dump_json(*args, exclude=merged_exclude_set, **kwargs)
+        if isinstance(caller_exclude, dict):
+            merged_exclude: IncEx = dict(cast(dict[str, bool | IncEx], caller_exclude))
+            merged_exclude["token"] = True
+        else:
+            merged_exclude = {"token"}
+        return super().model_dump_json(*args, exclude=merged_exclude, **kwargs)

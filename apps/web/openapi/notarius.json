@@ -1911,6 +1911,196 @@
         "title": "NodeSpecResponse",
         "type": "object"
       },
+      "PersonalAccessTokenCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceCapability"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Scopes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "label",
+          "scopes",
+          "expires_at"
+        ],
+        "title": "PersonalAccessTokenCreateRequest",
+        "type": "object"
+      },
+      "PersonalAccessTokenCreatedResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "public_prefix": {
+            "title": "Public Prefix",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "scopes": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceCapability"
+            },
+            "title": "Scopes",
+            "type": "array"
+          },
+          "token": {
+            "description": "Raw personal access token; returned once and never retrievable again.",
+            "title": "Token",
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "public_prefix",
+          "workspace_id",
+          "label",
+          "scopes",
+          "created_at",
+          "last_used_at",
+          "expires_at",
+          "revoked_at",
+          "token"
+        ],
+        "title": "PersonalAccessTokenCreatedResponse",
+        "type": "object"
+      },
+      "PersonalAccessTokenResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "public_prefix": {
+            "title": "Public Prefix",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "scopes": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceCapability"
+            },
+            "title": "Scopes",
+            "type": "array"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "public_prefix",
+          "workspace_id",
+          "label",
+          "scopes",
+          "created_at",
+          "last_used_at",
+          "expires_at",
+          "revoked_at"
+        ],
+        "title": "PersonalAccessTokenResponse",
+        "type": "object"
+      },
       "PinnedOutputRequest": {
         "properties": {
           "from_node": {
@@ -2920,6 +3110,69 @@
         "title": "SavedGraphSummaryResponse",
         "type": "object"
       },
+      "SessionResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "current": {
+            "title": "Current",
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "created_at",
+          "last_used_at",
+          "expires_at",
+          "revoked_at",
+          "current"
+        ],
+        "title": "SessionResponse",
+        "type": "object"
+      },
       "TableCellPreviewResponse": {
         "properties": {
           "display": {
@@ -3307,6 +3560,49 @@
         "title": "UpdateSavedGraphRequest",
         "type": "object"
       },
+      "UserResponse": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "display_name",
+          "active"
+        ],
+        "title": "UserResponse",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -3359,6 +3655,182 @@
         ],
         "title": "WorkbenchErrorResponse",
         "type": "object"
+      },
+      "WorkspaceCapability": {
+        "enum": [
+          "view_graph",
+          "view_artifacts",
+          "view_materializations",
+          "view_history",
+          "view_execution",
+          "join_graph_room",
+          "publish_presence",
+          "create_graph",
+          "edit_graph",
+          "checkpoint_graph",
+          "execute_graph",
+          "cancel_execution",
+          "manage_secrets",
+          "delete_graph",
+          "manage_members",
+          "rename_workspace"
+        ],
+        "title": "WorkspaceCapability",
+        "type": "string"
+      },
+      "WorkspaceCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "name"
+        ],
+        "title": "WorkspaceCreateRequest",
+        "type": "object"
+      },
+      "WorkspaceKind": {
+        "enum": [
+          "personal",
+          "shared"
+        ],
+        "title": "WorkspaceKind",
+        "type": "string"
+      },
+      "WorkspaceMemberRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/WorkspaceRole"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "role"
+        ],
+        "title": "WorkspaceMemberRequest",
+        "type": "object"
+      },
+      "WorkspaceMemberResponse": {
+        "properties": {
+          "authorization_version": {
+            "title": "Authorization Version",
+            "type": "integer"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "role": {
+            "$ref": "#/components/schemas/WorkspaceRole"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserResponse"
+          }
+        },
+        "required": [
+          "user",
+          "role",
+          "authorization_version",
+          "revoked_at"
+        ],
+        "title": "WorkspaceMemberResponse",
+        "type": "object"
+      },
+      "WorkspaceMemberRoleRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/WorkspaceRole"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "WorkspaceMemberRoleRequest",
+        "type": "object"
+      },
+      "WorkspaceResponse": {
+        "properties": {
+          "capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceCapability"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/WorkspaceKind"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/WorkspaceRole"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "kind",
+          "role",
+          "capabilities"
+        ],
+        "title": "WorkspaceResponse",
+        "type": "object"
+      },
+      "WorkspaceRole": {
+        "enum": [
+          "viewer",
+          "editor",
+          "owner"
+        ],
+        "title": "WorkspaceRole",
+        "type": "string"
+      }
+    },
+    "securitySchemes": {
+      "APIKeyCookie": {
+        "description": "Opaque host-only browser session cookie.",
+        "in": "cookie",
+        "name": "notarius_session",
+        "type": "apiKey"
       }
     }
   },
@@ -3423,6 +3895,11 @@
             "description": "Artifact content is unavailable"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Get Artifact Content",
         "tags": [
           "workbench"
@@ -3506,6 +3983,11 @@
             "description": "Artifact content is unavailable"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Query Geo Features",
         "tags": [
           "workbench"
@@ -3579,6 +4061,11 @@
             "description": "Artifact content is unavailable"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Get Geo Render Descriptor",
         "tags": [
           "workbench"
@@ -3672,6 +4159,11 @@
             "description": "Artifact content is unavailable"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Get Table Artifact Cell",
         "tags": [
           "workbench"
@@ -3824,6 +4316,11 @@
             "description": "Artifact content is unavailable"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Get Table Artifact Page",
         "tags": [
           "workbench"
@@ -3907,6 +4404,11 @@
             "description": "Artifact content is unavailable"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Query Table Artifact Page",
         "tags": [
           "workbench"
@@ -3980,6 +4482,11 @@
             "description": "Artifact content is unavailable"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Get Table Artifact Schema",
         "tags": [
           "workbench"
@@ -4063,6 +4570,11 @@
             "description": "Feature content is unavailable"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Get Geo Exact Feature",
         "tags": [
           "workbench"
@@ -4136,6 +4648,11 @@
             "description": "Raster projection is unavailable"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Get Geo Raster Tilejson",
         "tags": [
           "workbench"
@@ -4238,6 +4755,11 @@
             "description": "Raster tile is unavailable"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Get Geo Raster Tile",
         "tags": [
           "workbench"
@@ -4328,9 +4850,251 @@
             "description": "Vector projection is unavailable"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Get Geo Vector Pmtiles",
         "tags": [
           "workbench"
+        ]
+      }
+    },
+    "/v1/auth/oidc/callback": {
+      "get": {
+        "operationId": "oidc_callback_v1_auth_oidc_callback_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "code",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 4096,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code"
+            }
+          },
+          {
+            "in": "query",
+            "name": "error",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Error"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Oidc Callback",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/oidc/login": {
+      "get": {
+        "operationId": "oidc_login_v1_auth_oidc_login_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "return_path",
+            "required": false,
+            "schema": {
+              "default": "/",
+              "maxLength": 2048,
+              "title": "Return Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Oidc Login",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/session": {
+      "delete": {
+        "operationId": "delete_session_v1_auth_session_delete",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Delete Session",
+        "tags": [
+          "auth"
+        ]
+      },
+      "get": {
+        "operationId": "get_session_v1_auth_session_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Session",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/sessions": {
+      "get": {
+        "operationId": "list_sessions_v1_auth_sessions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SessionResponse"
+                  },
+                  "title": "Response List Sessions V1 Auth Sessions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Sessions",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/sessions/{session_id}": {
+      "delete": {
+        "operationId": "revoke_session_v1_auth_sessions__session_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Revoke Session",
+        "tags": [
+          "auth"
         ]
       }
     },
@@ -4369,6 +5133,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Start Graph Execution",
         "tags": [
           "executions"
@@ -4412,6 +5181,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Cancel Graph Execution",
         "tags": [
           "executions"
@@ -4453,6 +5227,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Get Graph Execution",
         "tags": [
           "executions"
@@ -4512,6 +5291,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Stream Graph Execution Events",
         "tags": [
           "executions"
@@ -4533,6 +5317,11 @@
             "description": "Successful Response"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "List Saved Graphs",
         "tags": [
           "saved graphs"
@@ -4572,6 +5361,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Create Saved Graph",
         "tags": [
           "saved graphs"
@@ -4618,6 +5412,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Delete Saved Graph",
         "tags": [
           "saved graphs"
@@ -4659,6 +5458,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Get Saved Graph",
         "tags": [
           "saved graphs"
@@ -4710,6 +5514,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Update Saved Graph",
         "tags": [
           "saved graphs"
@@ -4832,6 +5641,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "List Graph Executions",
         "tags": [
           "executions"
@@ -4885,6 +5699,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Get Graph Execution History",
         "tags": [
           "executions"
@@ -4938,6 +5757,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Get Graph Materializations",
         "tags": [
           "executions"
@@ -4981,6 +5805,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Get Node Secret Status",
         "tags": [
           "node secrets"
@@ -5045,6 +5874,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Delete Node Secret",
         "tags": [
           "node secrets"
@@ -5114,6 +5948,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Configure Node Secret",
         "tags": [
           "node secrets"
@@ -5135,6 +5974,11 @@
             "description": "Successful Response"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "List Nodes",
         "tags": [
           "workbench"
@@ -5176,6 +6020,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Run Graph",
         "tags": [
           "executions"
@@ -5221,6 +6070,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Create Samples",
         "tags": [
           "workbench"
@@ -5262,9 +6116,472 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
         "summary": "Upload File",
         "tags": [
           "workbench"
+        ]
+      }
+    },
+    "/v1/workspaces": {
+      "get": {
+        "operationId": "list_workspaces_v1_workspaces_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WorkspaceResponse"
+                  },
+                  "title": "Response List Workspaces V1 Workspaces Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Workspaces",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "post": {
+        "operationId": "create_workspace_v1_workspaces_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Create Workspace",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/members": {
+      "get": {
+        "operationId": "list_members_v1_workspaces__workspace_id__members_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WorkspaceMemberResponse"
+                  },
+                  "title": "Response List Members V1 Workspaces  Workspace Id  Members Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Members",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "post": {
+        "operationId": "add_member_v1_workspaces__workspace_id__members_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceMemberRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceMemberResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Add Member",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/members/{user_id}": {
+      "delete": {
+        "operationId": "remove_member_v1_workspaces__workspace_id__members__user_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Remove Member",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "patch": {
+        "operationId": "change_member_role_v1_workspaces__workspace_id__members__user_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceMemberRoleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceMemberResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Change Member Role",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/personal-access-tokens": {
+      "get": {
+        "operationId": "list_personal_access_tokens_v1_workspaces__workspace_id__personal_access_tokens_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PersonalAccessTokenResponse"
+                  },
+                  "title": "Response List Personal Access Tokens V1 Workspaces  Workspace Id  Personal Access Tokens Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Personal Access Tokens",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "post": {
+        "operationId": "create_personal_access_token_v1_workspaces__workspace_id__personal_access_tokens_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonalAccessTokenCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalAccessTokenCreatedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Create Personal Access Token",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/personal-access-tokens/{token_id}": {
+      "delete": {
+        "operationId": "revoke_personal_access_token_v1_workspaces__workspace_id__personal_access_tokens__token_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "token_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Token Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Revoke Personal Access Token",
+        "tags": [
+          "workspaces"
         ]
       }
     }

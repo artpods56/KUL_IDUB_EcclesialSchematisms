@@ -144,9 +144,7 @@ async def test_identity_records_round_trip_without_plain_credential_material(
             workspace_id=workspace.id,
             user_id=user.id,
         )
-        loaded_session = await unit_of_work.identity.get_auth_session_by_digest(
-            session.secret_digest
-        )
+        loaded_session = await unit_of_work.identity.get_auth_session(session.id)
         loaded_token = await unit_of_work.identity.get_personal_access_token_by_digest(
             token.secret_digest
         )
@@ -169,14 +167,18 @@ async def test_identity_records_round_trip_without_plain_credential_material(
 
     async with database.engine.connect() as connection:
         stored = (
-            await connection.execute(
-            text(
-                "SELECT state_digest, nonce_digest, encrypted_pkce_verifier "
-                "FROM oidc_login_transactions WHERE id = :id"
-            ),
-            {"id": transaction.id.hex},
+            (
+                await connection.execute(
+                    text(
+                        "SELECT state_digest, nonce_digest, encrypted_pkce_verifier "
+                        "FROM oidc_login_transactions WHERE id = :id"
+                    ),
+                    {"id": transaction.id.hex},
+                )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
         assert stored["state_digest"] == transaction.state_digest
         assert stored["nonce_digest"] == transaction.nonce_digest
         assert stored["encrypted_pkce_verifier"] == transaction.encrypted_pkce_verifier
@@ -200,7 +202,9 @@ async def test_identity_records_round_trip_without_plain_credential_material(
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
         assert await unit_of_work.identity.delete_expired_login_transactions(now) == 1
         assert await unit_of_work.identity.delete_expired_sessions(now) == 1
-        assert await unit_of_work.identity.delete_expired_personal_access_tokens(now) == 1
+        assert (
+            await unit_of_work.identity.delete_expired_personal_access_tokens(now) == 1
+        )
         await unit_of_work.commit()
 
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:

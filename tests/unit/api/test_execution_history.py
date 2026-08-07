@@ -17,6 +17,7 @@ from notarius_persistence.unit_of_work import (
 
 from notarius_api.builtins import builtin_plugins
 from notarius_api.main import create_app
+from tests.unit.api.conftest import install_browser_actor_override
 from notarius_api.plugin_discovery import build_plugin_registry
 from notarius_api.v1.routes.executions.models import (
     GraphExecutionDetailResponse,
@@ -309,6 +310,7 @@ def test_application_startup_marks_stale_active_execution_failed(
             execution_backend="inline",
         )
     )
+    install_browser_actor_override(application)
 
     with TestClient(application) as client:
         response = client.get(f"/v1/graphs/{graph_id}/executions/{execution_id}")

@@ -191,6 +191,92 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/auth/oidc/callback": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Oidc Callback */
+        readonly get: operations["oidc_callback_v1_auth_oidc_callback_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/auth/oidc/login": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Oidc Login */
+        readonly get: operations["oidc_login_v1_auth_oidc_login_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/auth/session": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Session */
+        readonly get: operations["get_session_v1_auth_session_get"];
+        readonly put?: never;
+        readonly post?: never;
+        /** Delete Session */
+        readonly delete: operations["delete_session_v1_auth_session_delete"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/auth/sessions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List Sessions */
+        readonly get: operations["list_sessions_v1_auth_sessions_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/auth/sessions/{session_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Revoke Session */
+        readonly delete: operations["revoke_session_v1_auth_sessions__session_id__delete"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/executions": {
         readonly parameters: {
             readonly query?: never;
@@ -429,6 +515,95 @@ export interface paths {
         /** Upload File */
         readonly post: operations["upload_file_v1_uploads_post"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List Workspaces */
+        readonly get: operations["list_workspaces_v1_workspaces_get"];
+        readonly put?: never;
+        /** Create Workspace */
+        readonly post: operations["create_workspace_v1_workspaces_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/members": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List Members */
+        readonly get: operations["list_members_v1_workspaces__workspace_id__members_get"];
+        readonly put?: never;
+        /** Add Member */
+        readonly post: operations["add_member_v1_workspaces__workspace_id__members_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/members/{user_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Remove Member */
+        readonly delete: operations["remove_member_v1_workspaces__workspace_id__members__user_id__delete"];
+        readonly options?: never;
+        readonly head?: never;
+        /** Change Member Role */
+        readonly patch: operations["change_member_role_v1_workspaces__workspace_id__members__user_id__patch"];
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/personal-access-tokens": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List Personal Access Tokens */
+        readonly get: operations["list_personal_access_tokens_v1_workspaces__workspace_id__personal_access_tokens_get"];
+        readonly put?: never;
+        /** Create Personal Access Token */
+        readonly post: operations["create_personal_access_token_v1_workspaces__workspace_id__personal_access_tokens_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/personal-access-tokens/{token_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Revoke Personal Access Token */
+        readonly delete: operations["revoke_personal_access_token_v1_workspaces__workspace_id__personal_access_tokens__token_id__delete"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -1085,6 +1260,89 @@ export interface components {
             /** Title */
             readonly title: string;
         };
+        /** PersonalAccessTokenCreatedResponse */
+        readonly PersonalAccessTokenCreatedResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Label */
+            readonly label: string;
+            /** Last Used At */
+            readonly last_used_at: string | null;
+            /** Public Prefix */
+            readonly public_prefix: string;
+            /** Revoked At */
+            readonly revoked_at: string | null;
+            /** Scopes */
+            readonly scopes: readonly components["schemas"]["WorkspaceCapability"][];
+            /**
+             * Token
+             * @description Raw personal access token; returned once and never retrievable again.
+             */
+            readonly token: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            readonly workspace_id: string;
+        };
+        /** PersonalAccessTokenCreateRequest */
+        readonly PersonalAccessTokenCreateRequest: {
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /** Label */
+            readonly label: string;
+            /** Scopes */
+            readonly scopes: readonly components["schemas"]["WorkspaceCapability"][];
+        };
+        /** PersonalAccessTokenResponse */
+        readonly PersonalAccessTokenResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Label */
+            readonly label: string;
+            /** Last Used At */
+            readonly last_used_at: string | null;
+            /** Public Prefix */
+            readonly public_prefix: string;
+            /** Revoked At */
+            readonly revoked_at: string | null;
+            /** Scopes */
+            readonly scopes: readonly components["schemas"]["WorkspaceCapability"][];
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            readonly workspace_id: string;
+        };
         /** PinnedOutputRequest */
         readonly PinnedOutputRequest: {
             /** From Node */
@@ -1424,6 +1682,35 @@ export interface components {
              */
             readonly updated_at: string;
         };
+        /** SessionResponse */
+        readonly SessionResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Current */
+            readonly current: boolean;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Last Used At */
+            readonly last_used_at: string | null;
+            /** Revoked At */
+            readonly revoked_at: string | null;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            readonly user_id: string;
+        };
         /** TableCellPreviewResponse */
         readonly TableCellPreviewResponse: {
             /** Display */
@@ -1557,6 +1844,20 @@ export interface components {
             /** Nodes */
             readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel-Input"][];
         };
+        /** UserResponse */
+        readonly UserResponse: {
+            /** Active */
+            readonly active: boolean;
+            /** Display Name */
+            readonly display_name: string | null;
+            /** Email */
+            readonly email: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+        };
         /** ValidationError */
         readonly ValidationError: {
             /** Context */
@@ -1575,6 +1876,66 @@ export interface components {
             /** Detail */
             readonly detail: string;
         };
+        /**
+         * WorkspaceCapability
+         * @enum {string}
+         */
+        readonly WorkspaceCapability: "view_graph" | "view_artifacts" | "view_materializations" | "view_history" | "view_execution" | "join_graph_room" | "publish_presence" | "create_graph" | "edit_graph" | "checkpoint_graph" | "execute_graph" | "cancel_execution" | "manage_secrets" | "delete_graph" | "manage_members" | "rename_workspace";
+        /** WorkspaceCreateRequest */
+        readonly WorkspaceCreateRequest: {
+            /** Name */
+            readonly name: string;
+            /** Slug */
+            readonly slug: string;
+        };
+        /**
+         * WorkspaceKind
+         * @enum {string}
+         */
+        readonly WorkspaceKind: "personal" | "shared";
+        /** WorkspaceMemberRequest */
+        readonly WorkspaceMemberRequest: {
+            readonly role: components["schemas"]["WorkspaceRole"];
+            /**
+             * User Id
+             * Format: uuid
+             */
+            readonly user_id: string;
+        };
+        /** WorkspaceMemberResponse */
+        readonly WorkspaceMemberResponse: {
+            /** Authorization Version */
+            readonly authorization_version: number;
+            /** Revoked At */
+            readonly revoked_at: string | null;
+            readonly role: components["schemas"]["WorkspaceRole"];
+            readonly user: components["schemas"]["UserResponse"];
+        };
+        /** WorkspaceMemberRoleRequest */
+        readonly WorkspaceMemberRoleRequest: {
+            readonly role: components["schemas"]["WorkspaceRole"];
+        };
+        /** WorkspaceResponse */
+        readonly WorkspaceResponse: {
+            /** Capabilities */
+            readonly capabilities: readonly components["schemas"]["WorkspaceCapability"][];
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            readonly kind: components["schemas"]["WorkspaceKind"];
+            /** Name */
+            readonly name: string;
+            readonly role: components["schemas"]["WorkspaceRole"];
+            /** Slug */
+            readonly slug: string;
+        };
+        /**
+         * WorkspaceRole
+         * @enum {string}
+         */
+        readonly WorkspaceRole: "viewer" | "editor" | "owner";
     };
     responses: never;
     parameters: never;
@@ -2244,6 +2605,157 @@ export interface operations {
             };
         };
     };
+    readonly oidc_callback_v1_auth_oidc_callback_get: {
+        readonly parameters: {
+            readonly query?: {
+                readonly code?: string | null;
+                readonly error?: string | null;
+                readonly state?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly oidc_login_v1_auth_oidc_login_get: {
+        readonly parameters: {
+            readonly query?: {
+                readonly return_path?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly get_session_v1_auth_session_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionResponse"];
+                };
+            };
+        };
+    };
+    readonly delete_session_v1_auth_session_delete: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly list_sessions_v1_auth_sessions_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["SessionResponse"][];
+                };
+            };
+        };
+    };
+    readonly revoke_session_v1_auth_sessions__session_id__delete: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     readonly start_graph_execution_v1_executions_post: {
         readonly parameters: {
             readonly query?: never;
@@ -2832,6 +3344,287 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["ImageUploadItemResponse"];
                 };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly list_workspaces_v1_workspaces_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["WorkspaceResponse"][];
+                };
+            };
+        };
+    };
+    readonly create_workspace_v1_workspaces_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["WorkspaceCreateRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly list_members_v1_workspaces__workspace_id__members_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["WorkspaceMemberResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly add_member_v1_workspaces__workspace_id__members_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["WorkspaceMemberRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceMemberResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly remove_member_v1_workspaces__workspace_id__members__user_id__delete: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly user_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly change_member_role_v1_workspaces__workspace_id__members__user_id__patch: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly user_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["WorkspaceMemberRoleRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceMemberResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly list_personal_access_tokens_v1_workspaces__workspace_id__personal_access_tokens_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["PersonalAccessTokenResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly create_personal_access_token_v1_workspaces__workspace_id__personal_access_tokens_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PersonalAccessTokenCreateRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PersonalAccessTokenCreatedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly revoke_personal_access_token_v1_workspaces__workspace_id__personal_access_tokens__token_id__delete: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly token_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             readonly 422: {

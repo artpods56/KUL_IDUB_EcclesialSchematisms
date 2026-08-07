@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Annotated, cast, final, override
+from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
@@ -22,6 +23,7 @@ from notarius_core.artifacts import (
     NodeOutput,
 )
 from notarius_core.application.saved_graphs import SavedGraphService
+from notarius_core.domain.identity import ActorContext
 from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
 from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
 from notarius_core.operators.arithmetic import INTEGER_VALUE
@@ -40,6 +42,7 @@ from notarius_api.services.composition import (
 )
 from notarius_api.settings import Settings
 from notarius_api.v1.routes.artifacts.dependencies import artifact_service
+from notarius_api.v1.routes.auth.dependencies import browser_actor
 from notarius_api.v1.routes.catalog.dependencies import (
     graph_module_catalog,
     graph_module_executor,
@@ -61,6 +64,16 @@ class CompoundResultPayload(BaseModel):
 
     addition: StrictInt
     subtraction: StrictInt
+
+
+def install_browser_actor_override(application: FastAPI) -> None:
+    def test_browser_actor() -> ActorContext:
+        return ActorContext(
+            user_id=UUID(int=1),
+            credential_reference="test-session",
+        )
+
+    application.dependency_overrides[browser_actor] = test_browser_actor
 
 
 TEST_COMPOUND_RESULT = ArtifactTypeSpec(
@@ -313,6 +326,7 @@ def install_workbench_dependency_overrides(
             graph_module_executor: lambda: components.run_graph,
         }
     )
+    install_browser_actor_override(application)
 
 
 @pytest.fixture
