@@ -286,6 +286,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             node_secrets=node_secrets,
         )
         await components.execution_history.interrupt_all_active()
+        # Migration 0009 backfills heads; refuse to serve if any graph still lacks one.
+        await collaboration.verify_every_graph_has_head()
         app.state.workbench_plugin_registry = components.plugin_registry
         app.state.image_uploads = components.uploads
         app.state.graph_modules = components.modules

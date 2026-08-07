@@ -18,6 +18,7 @@ from notarius_core.domain.collaboration import (
     SetNodeArtifactTypeBindingCommand,
     SetNodeInputPlugsCommand,
     UpdateEdgeCommand,
+    UpdateNodeConfigurationAndInputPlugsCommand,
     UpdateNodeConfigurationCommand,
     UpdateNodeLayoutCommand,
     apply_graph_command,
@@ -320,3 +321,96 @@ def test_existing_graph_head_starts_at_sequence_zero() -> None:
     assert head.checkpoint_sequence == 0
     assert head.checkpoint_revision == 4
     assert head.is_fully_checkpointed
+
+
+def test_schema_builder_compound_updates_config_plugs_and_drops_orphan_edges() -> None:
+    builder = SavedGraphNode(
+        id="builder",
+        operator_id="schema.builder",
+        operator_version=1,
+        position=GraphPoint(x=0, y=0),
+        config={
+            "fields": [
+                {"id": "title", "name": "title", "kind": "string"},
+                {"id": "body", "name": "body", "kind": "object"},
+            ]
+        },
+        input_plugs=(
+            SavedGraphInputPlug(id="title", port="schemas"),
+            SavedGraphInputPlug(id="body", port="schemas"),
+        ),
+    )
+    source = _node("source")
+    keep_edge = SavedGraphEdge(
+        id="e-keep",
+        from_node="source",
+        from_port="result",
+        to_node="builder",
+        to_port="schemas",
+        to_plug="title",
+    )
+    drop_edge = SavedGraphEdge(
+        id="e-drop",
+        from_node="source",
+        from_port="result",
+        to_node="builder",
+        to_port="schemas",
+        to_plug="body",
+    )
+    document = SavedGraphDocument(
+        nodes=(source, builder),
+        edges=(keep_edge, drop_edge),
+    )
+    next_config = {
+        "fields": [
+            {"id": "title", "name": "title", "kind": "string"},
+            {"id": "extra", "name": "extra", "kind": "object"},
+        ]
+    }
+    next_plugs = (
+        SavedGraphInputPlug(id="title", port="schemas"),
+        SavedGraphInputPlug(id="extra", port="schemas"),
+    )
+
+    _, updated = apply_graph_command(
+        name="Graph",
+        document=document,
+        command=UpdateNodeConfigurationAndInputPlugsCommand(
+            node_id="builder",
+            config=next_config,
+            input_plugs=next_plugs,
+            expected_config=builder.config_dict(),
+            expected_plug_ids=("title", "body"),
+        ),
+    )
+
+    assert updated.nodes[1].config_dict() == next_config
+    assert [plug.id for plug in updated.nodes[1].input_plugs] == ["title", "extra"]
+    assert [edge.id for edge in updated.edges] == ["e-keep"]
+
+
+def test_schema_builder_compound_rejects_partial_field_conflict() -> None:
+    builder = SavedGraphNode(
+        id="builder",
+        operator_id="schema.builder",
+        operator_version=1,
+        position=GraphPoint(x=0, y=0),
+        config={"fields": [{"id": "a", "name": "a", "kind": "string"}]},
+        input_plugs=(SavedGraphInputPlug(id="a", port="schemas"),),
+    )
+    document = SavedGraphDocument(nodes=(builder,))
+    with pytest.raises(CollaborationCommandRejectedError) as exc:
+        apply_graph_command(
+            name="Graph",
+            document=document,
+            command=UpdateNodeConfigurationAndInputPlugsCommand(
+                node_id="builder",
+                config={"fields": []},
+                input_plugs=(),
+                expected_config={"fields": [{"id": "stale", "name": "stale", "kind": "string"}]},
+                expected_plug_ids=("a",),
+            ),
+        )
+    assert exc.value.error_code == "field_conflict"
+    assert document.nodes[0].config_dict()["fields"][0]["id"] == "a"
+    assert document.nodes[0].input_plugs[0].id == "a"

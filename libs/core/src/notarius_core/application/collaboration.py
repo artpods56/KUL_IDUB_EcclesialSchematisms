@@ -22,6 +22,7 @@ from notarius_core.domain.collaboration import (
     sanitize_document_for_cross_workspace_copy,
 )
 from notarius_core.domain.errors import (
+    CapabilityDeniedError,
     CollaborationActiveExecutionError,
     CollaborationCommandRejectedError,
     CollaborationHeadConflictError,
@@ -113,6 +114,18 @@ class CollaborationService:
             await unit_of_work.commit()
         return head
 
+    async def verify_every_graph_has_head(self) -> None:
+        """Fail closed at startup when migration left any graph without a head."""
+        async with self._unit_of_work_factory() as unit_of_work:
+            missing = await unit_of_work.collaboration.list_graphs_missing_heads()
+            if not missing:
+                return
+            workspace_id, graph_id = missing[0]
+            raise MissingCollaborativeHeadError(
+                workspace_id=workspace_id,
+                graph_id=graph_id,
+            )
+
     async def bootstrap_graph(
         self,
         *,
@@ -124,14 +137,27 @@ class CollaborationService:
         graph_room_session_id: UUID | None = None,
     ) -> tuple[SavedGraph, CollaborativeGraphHead, GraphCommandReceipt]:
         async with self._unit_of_work_factory() as unit_of_work:
-            access = await self._require_capability(
+            access = await self._authorize(
                 unit_of_work,
                 actor=actor,
                 workspace_id=workspace_id,
                 capability=WorkspaceCapability.CREATE_GRAPH,
+                operation="collaboration.graph.bootstrap",
+                resource_id=None if graph_id is None else str(graph_id),
             )
-            access.require(WorkspaceCapability.EDIT_GRAPH)
-            access.require(WorkspaceCapability.CHECKPOINT_GRAPH)
+            try:
+                access.require(WorkspaceCapability.EDIT_GRAPH)
+                access.require(WorkspaceCapability.CHECKPOINT_GRAPH)
+            except CapabilityDeniedError as exc:
+                await self._commit_rejection_audit(
+                    unit_of_work,
+                    actor=actor,
+                    workspace_id=workspace_id,
+                    operation="collaboration.graph.bootstrap",
+                    error_code="capability_denied",
+                    resource_id=None if graph_id is None else str(graph_id),
+                )
+                raise exc
 
             resolved_graph_id = uuid4() if graph_id is None else graph_id
             room_epoch = uuid4()
@@ -157,6 +183,14 @@ class CollaborationService:
             )
             if existing_receipt is not None:
                 if not hmac.compare_digest(existing_receipt.command_hmac, digest):
+                    await self._commit_rejection_audit(
+                        unit_of_work,
+                        actor=actor,
+                        workspace_id=workspace_id,
+                        operation="collaboration.graph.bootstrap",
+                        error_code="idempotency_mismatch",
+                        resource_id=str(resolved_graph_id),
+                    )
                     raise CollaborationIdempotencyMismatchError(
                         workspace_id=workspace_id,
                         graph_id=resolved_graph_id,
@@ -255,11 +289,13 @@ class CollaborationService:
         graph_id: UUID,
     ) -> CollaborativeGraphHead:
         async with self._unit_of_work_factory() as unit_of_work:
-            await self._require_capability(
+            await self._authorize(
                 unit_of_work,
                 actor=actor,
                 workspace_id=workspace_id,
                 capability=WorkspaceCapability.VIEW_GRAPH,
+                operation="collaboration.head.read",
+                resource_id=str(graph_id),
             )
             head = await unit_of_work.collaboration.get_head(workspace_id, graph_id)
             if head is None:
@@ -282,11 +318,13 @@ class CollaborationService:
         graph_room_session_id: UUID | None = None,
     ) -> tuple[CollaborativeGraphHead, GraphCommandReceipt]:
         async with self._unit_of_work_factory() as unit_of_work:
-            access = await self._require_capability(
+            access = await self._authorize(
                 unit_of_work,
                 actor=actor,
                 workspace_id=workspace_id,
                 capability=WorkspaceCapability.EDIT_GRAPH,
+                operation="collaboration.command.accept",
+                resource_id=str(graph_id),
             )
             digest = command_hmac_digest(
                 self._command_hmac_key,
@@ -305,6 +343,14 @@ class CollaborationService:
             )
             if existing_receipt is not None:
                 if not hmac.compare_digest(existing_receipt.command_hmac, digest):
+                    await self._commit_rejection_audit(
+                        unit_of_work,
+                        actor=actor,
+                        workspace_id=workspace_id,
+                        operation="collaboration.command.accept",
+                        error_code="idempotency_mismatch",
+                        resource_id=str(graph_id),
+                    )
                     raise CollaborationIdempotencyMismatchError(
                         workspace_id=workspace_id,
                         graph_id=graph_id,
@@ -418,11 +464,13 @@ class CollaborationService:
         expected_room_epoch: UUID,
     ) -> tuple[CollaborativeGraphHead, int]:
         async with self._unit_of_work_factory() as unit_of_work:
-            await self._require_capability(
+            await self._authorize(
                 unit_of_work,
                 actor=actor,
                 workspace_id=workspace_id,
                 capability=WorkspaceCapability.CHECKPOINT_GRAPH,
+                operation="collaboration.checkpoint",
+                resource_id=str(graph_id),
             )
             # Fixed lock order: saved-graph row, then collaborative head.
             graph = await unit_of_work.graphs.get(workspace_id, graph_id)
@@ -526,11 +574,13 @@ class CollaborationService:
         expected_revision: int,
     ) -> tuple[SavedGraph, CollaborativeGraphHead]:
         async with self._unit_of_work_factory() as unit_of_work:
-            access = await self._require_capability(
+            access = await self._authorize(
                 unit_of_work,
                 actor=actor,
                 workspace_id=workspace_id,
                 capability=WorkspaceCapability.EDIT_GRAPH,
+                operation="collaboration.graph.replace",
+                resource_id=str(graph_id),
             )
             # Fixed lock order: saved-graph row, then collaborative head.
             await unit_of_work.graphs.lock_revision(
@@ -626,20 +676,35 @@ class CollaborationService:
         target_graph_id: UUID | None = None,
     ) -> tuple[SavedGraph, CollaborativeGraphHead, GraphCommandReceipt]:
         async with self._unit_of_work_factory() as unit_of_work:
-            await self._require_capability(
+            await self._authorize(
                 unit_of_work,
                 actor=actor,
                 workspace_id=source_workspace_id,
                 capability=WorkspaceCapability.VIEW_GRAPH,
+                operation="collaboration.graph.copy",
+                resource_id=str(source_graph_id),
             )
-            access = await self._require_capability(
+            access = await self._authorize(
                 unit_of_work,
                 actor=actor,
                 workspace_id=target_workspace_id,
                 capability=WorkspaceCapability.CREATE_GRAPH,
+                operation="collaboration.graph.copy",
+                resource_id=str(source_graph_id),
             )
-            access.require(WorkspaceCapability.EDIT_GRAPH)
-            access.require(WorkspaceCapability.CHECKPOINT_GRAPH)
+            try:
+                access.require(WorkspaceCapability.EDIT_GRAPH)
+                access.require(WorkspaceCapability.CHECKPOINT_GRAPH)
+            except CapabilityDeniedError as exc:
+                await self._commit_rejection_audit(
+                    unit_of_work,
+                    actor=actor,
+                    workspace_id=target_workspace_id,
+                    operation="collaboration.graph.copy",
+                    error_code="capability_denied",
+                    resource_id=str(source_graph_id),
+                )
+                raise exc
 
             source_head = await unit_of_work.collaboration.lock_head(
                 source_workspace_id,
@@ -693,6 +758,14 @@ class CollaborationService:
             )
             if existing_receipt is not None:
                 if not hmac.compare_digest(existing_receipt.command_hmac, digest):
+                    await self._commit_rejection_audit(
+                        unit_of_work,
+                        actor=actor,
+                        workspace_id=target_workspace_id,
+                        operation="collaboration.graph.copy",
+                        error_code="idempotency_mismatch",
+                        resource_id=str(resolved_graph_id),
+                    )
                     raise CollaborationIdempotencyMismatchError(
                         workspace_id=target_workspace_id,
                         graph_id=resolved_graph_id,
@@ -797,11 +870,13 @@ class CollaborationService:
         expected_sequence: int | None = None,
     ) -> None:
         async with self._unit_of_work_factory() as unit_of_work:
-            await self._require_capability(
+            await self._authorize(
                 unit_of_work,
                 actor=actor,
                 workspace_id=workspace_id,
                 capability=WorkspaceCapability.DELETE_GRAPH,
+                operation="collaboration.graph.delete",
+                resource_id=str(graph_id),
             )
             # Fixed lock order: saved-graph row, then collaborative head.
             await unit_of_work.graphs.lock_revision(
@@ -871,6 +946,54 @@ class CollaborationService:
                     actual_revision=None,
                 ) from exc
 
+    async def _authorize(
+        self,
+        unit_of_work: CollaborationUnitOfWorkPort,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        capability: WorkspaceCapability,
+        operation: str,
+        resource_id: str | None,
+    ) -> WorkspaceAccess:
+        try:
+            return await self._require_capability(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+                capability=capability,
+            )
+        except UserDisabledError as exc:
+            await self._commit_rejection_audit(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+                operation=operation,
+                error_code="disabled_user",
+                resource_id=resource_id,
+            )
+            raise exc
+        except NotFoundError as exc:
+            await self._commit_rejection_audit(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+                operation=operation,
+                error_code="not_found",
+                resource_id=resource_id,
+            )
+            raise exc
+        except CapabilityDeniedError as exc:
+            await self._commit_rejection_audit(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+                operation=operation,
+                error_code="capability_denied",
+                resource_id=resource_id,
+            )
+            raise exc
+
     async def _require_capability(
         self,
         unit_of_work: CollaborationUnitOfWorkPort,
@@ -895,3 +1018,29 @@ class CollaborationService:
         )
         access.require(capability)
         return access
+
+    async def _commit_rejection_audit(
+        self,
+        unit_of_work: CollaborationUnitOfWorkPort,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        operation: str,
+        error_code: str,
+        resource_id: str | None,
+    ) -> None:
+        # Metadata-only: never claim command/config payloads or secrets.
+        await unit_of_work.security_audit.add(
+            SecurityAuditEvent(
+                actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                user_id=actor.user_id,
+                credential_reference=actor.credential_reference,
+                operation=operation,
+                outcome=SecurityAuditOutcome.FAILURE,
+                workspace_id=workspace_id,
+                resource_type="saved_graph",
+                resource_id=resource_id,
+                error_code=error_code,
+            )
+        )
+        await unit_of_work.commit()

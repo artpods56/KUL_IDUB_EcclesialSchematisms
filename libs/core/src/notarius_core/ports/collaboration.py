@@ -39,6 +39,10 @@ class CollaborationRepositoryPort(Protocol):
 
     async def remove_head(self, workspace_id: UUID, graph_id: UUID) -> None: ...
 
+    async def list_graphs_missing_heads(self) -> list[tuple[UUID, UUID]]:
+        """Return workspace/graph ids for saved graphs without a collaborative head."""
+        ...
+
     async def add_journal_entry(self, entry: GraphCommandJournalEntry) -> None: ...
 
     async def get_receipt(

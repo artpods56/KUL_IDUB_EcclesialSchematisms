@@ -481,6 +481,114 @@ def test_saved_graph_revision_migration_backfills_the_current_head(
     get_settings.cache_clear()
 
 
+def test_collaboration_head_migration_backfills_exactly_one_sequence_zero_head(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "collab-heads" / "migrated.sqlite3"
+    monkeypatch.setenv(
+        "NOTARIUS_DATABASE_URL",
+        f"sqlite+aiosqlite:///{database_path}",
+    )
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0008_tenant_existing_resources")
+
+    workspace_id = UUID("00000000-0000-0000-0000-000000000007")
+    graph_a = UUID("00000000-0000-0000-0000-000000000901")
+    graph_b = UUID("00000000-0000-0000-0000-000000000902")
+    document = {"schema_version": 3, "nodes": [], "edges": []}
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        for graph_id, name, revision in (
+            (graph_a, "Graph A", 2),
+            (graph_b, "Graph B", 5),
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO saved_graphs "
+                    "(workspace_id, id, name, document, revision, created_at, updated_at) "
+                    "VALUES ("
+                    ":workspace_id, :id, :name, :document, :revision, "
+                    ":created_at, :updated_at"
+                    ")"
+                ),
+                {
+                    "workspace_id": workspace_id.hex,
+                    "id": graph_id.hex,
+                    "name": name,
+                    "document": json.dumps(document),
+                    "revision": revision,
+                    "created_at": "2026-08-01 10:00:00",
+                    "updated_at": "2026-08-01 11:00:00",
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO saved_graph_revisions "
+                    "(workspace_id, graph_id, revision, name, document, created_at) "
+                    "VALUES ("
+                    ":workspace_id, :graph_id, :revision, :name, :document, :created_at"
+                    ")"
+                ),
+                {
+                    "workspace_id": workspace_id.hex,
+                    "graph_id": graph_id.hex,
+                    "revision": revision,
+                    "name": name,
+                    "document": json.dumps(document),
+                    "created_at": "2026-08-01 11:00:00",
+                },
+            )
+
+    command.upgrade(config, "0009_collaborative_graph_heads")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        heads = (
+            connection.execute(
+                text(
+                    "SELECT workspace_id, graph_id, collaboration_sequence, "
+                    "checkpoint_sequence, checkpoint_revision, name "
+                    "FROM collaborative_graph_heads "
+                    "ORDER BY graph_id"
+                )
+            )
+            .mappings()
+            .all()
+        )
+        assert len(heads) == 2
+        assert [head["graph_id"] for head in heads] == [graph_a.hex, graph_b.hex]
+        for head, expected_revision, expected_name in (
+            (heads[0], 2, "Graph A"),
+            (heads[1], 5, "Graph B"),
+        ):
+            assert head["workspace_id"] == workspace_id.hex
+            assert head["collaboration_sequence"] == 0
+            assert head["checkpoint_sequence"] == 0
+            assert head["checkpoint_revision"] == expected_revision
+            assert head["name"] == expected_name
+        orphan_count = connection.execute(
+            text(
+                "SELECT COUNT(*) FROM saved_graphs g "
+                "LEFT JOIN collaborative_graph_heads h "
+                "ON h.workspace_id = g.workspace_id AND h.graph_id = g.id "
+                "WHERE h.graph_id IS NULL"
+            )
+        ).scalar_one()
+        assert orphan_count == 0
+        duplicate_count = connection.execute(
+            text(
+                "SELECT COUNT(*) FROM ("
+                "SELECT workspace_id, graph_id, COUNT(*) AS n "
+                "FROM collaborative_graph_heads "
+                "GROUP BY workspace_id, graph_id "
+                "HAVING n > 1"
+                ")"
+            )
+        ).scalar_one()
+        assert duplicate_count == 0
+
+    get_settings.cache_clear()
+
+
 def test_tenant_migration_backfills_all_0006_resources_and_checks_composite_keys(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

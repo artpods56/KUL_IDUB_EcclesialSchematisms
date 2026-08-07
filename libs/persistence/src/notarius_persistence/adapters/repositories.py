@@ -1296,6 +1296,27 @@ class SqlCollaborationRepository:
             )
         )
 
+    async def list_graphs_missing_heads(self) -> list[tuple[UUID, UUID]]:
+        heads = schema.collaborative_graph_heads
+        graphs = schema.saved_graphs
+        rows = (
+            await self._session.execute(
+                select(graphs.c.workspace_id, graphs.c.id)
+                .select_from(
+                    graphs.outerjoin(
+                        heads,
+                        and_(
+                            heads.c.workspace_id == graphs.c.workspace_id,
+                            heads.c.graph_id == graphs.c.id,
+                        ),
+                    )
+                )
+                .where(heads.c.graph_id.is_(None))
+                .order_by(graphs.c.workspace_id.asc(), graphs.c.id.asc())
+            )
+        ).all()
+        return [(workspace_id, graph_id) for workspace_id, graph_id in rows]
+
     async def add_journal_entry(self, entry: GraphCommandJournalEntry) -> None:
         # Core inserts must see pending ORM parents (heads) in the same unit.
         await self._session.flush()

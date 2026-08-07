@@ -2142,7 +2142,7 @@ export interface components {
         /** SubmitGraphCommandRequest */
         readonly SubmitGraphCommandRequest: {
             /** Command */
-            readonly command: components["schemas"]["RenameGraphCommand"] | components["schemas"]["AddNodeCommand"] | components["schemas"]["DuplicateNodeCommand"] | components["schemas"]["RemoveNodesCommand"] | components["schemas"]["MoveNodesCommand"] | components["schemas"]["UpdateNodeConfigurationCommand"] | components["schemas"]["UpdateNodeLayoutCommand"] | components["schemas"]["SetNodeInputPlugsCommand"] | components["schemas"]["SetNodeArtifactTypeBindingCommand"] | components["schemas"]["ClearNodeArtifactTypeBindingCommand"] | components["schemas"]["AddEdgeCommand"] | components["schemas"]["UpdateEdgeCommand"] | components["schemas"]["RemoveEdgesCommand"] | components["schemas"]["ReplaceDocumentCommand"];
+            readonly command: components["schemas"]["RenameGraphCommand"] | components["schemas"]["AddNodeCommand"] | components["schemas"]["DuplicateNodeCommand"] | components["schemas"]["RemoveNodesCommand"] | components["schemas"]["MoveNodesCommand"] | components["schemas"]["UpdateNodeConfigurationCommand"] | components["schemas"]["UpdateNodeLayoutCommand"] | components["schemas"]["SetNodeInputPlugsCommand"] | components["schemas"]["UpdateNodeConfigurationAndInputPlugsCommand"] | components["schemas"]["SetNodeArtifactTypeBindingCommand"] | components["schemas"]["ClearNodeArtifactTypeBindingCommand"] | components["schemas"]["AddEdgeCommand"] | components["schemas"]["UpdateEdgeCommand"] | components["schemas"]["RemoveEdgesCommand"] | components["schemas"]["ReplaceDocumentCommand"];
             /**
              * Command Id
              * Format: uuid
@@ -2292,6 +2292,31 @@ export interface components {
              * @enum {string}
              */
             readonly kind: "update_edge";
+        };
+        /**
+         * UpdateNodeConfigurationAndInputPlugsCommand
+         * @description Atomic Schema Builder (and similar) config+plug compound gesture.
+         */
+        readonly UpdateNodeConfigurationAndInputPlugsCommand: {
+            /** Config */
+            readonly config: {
+                readonly [key: string]: unknown;
+            };
+            /** Expected Config */
+            readonly expected_config: {
+                readonly [key: string]: unknown;
+            };
+            /** Expected Plug Ids */
+            readonly expected_plug_ids: readonly string[];
+            /** Input Plugs */
+            readonly input_plugs: readonly components["schemas"]["SavedGraphInputPlug"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "update_node_configuration_and_input_plugs";
+            /** Node Id */
+            readonly node_id: string;
         };
         /** UpdateNodeConfigurationCommand */
         readonly UpdateNodeConfigurationCommand: {

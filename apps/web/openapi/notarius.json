@@ -4075,6 +4075,7 @@
                 "set_node_input_plugs": "#/components/schemas/SetNodeInputPlugsCommand",
                 "update_edge": "#/components/schemas/UpdateEdgeCommand",
                 "update_node_configuration": "#/components/schemas/UpdateNodeConfigurationCommand",
+                "update_node_configuration_and_input_plugs": "#/components/schemas/UpdateNodeConfigurationAndInputPlugsCommand",
                 "update_node_layout": "#/components/schemas/UpdateNodeLayoutCommand"
               },
               "propertyName": "kind"
@@ -4103,6 +4104,9 @@
               },
               {
                 "$ref": "#/components/schemas/SetNodeInputPlugsCommand"
+              },
+              {
+                "$ref": "#/components/schemas/UpdateNodeConfigurationAndInputPlugsCommand"
               },
               {
                 "$ref": "#/components/schemas/SetNodeArtifactTypeBindingCommand"
@@ -4539,6 +4543,55 @@
           "expected_edge"
         ],
         "title": "UpdateEdgeCommand",
+        "type": "object"
+      },
+      "UpdateNodeConfigurationAndInputPlugsCommand": {
+        "additionalProperties": false,
+        "description": "Atomic Schema Builder (and similar) config+plug compound gesture.",
+        "properties": {
+          "config": {
+            "additionalProperties": true,
+            "title": "Config",
+            "type": "object"
+          },
+          "expected_config": {
+            "additionalProperties": true,
+            "title": "Expected Config",
+            "type": "object"
+          },
+          "expected_plug_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Expected Plug Ids",
+            "type": "array"
+          },
+          "input_plugs": {
+            "items": {
+              "$ref": "#/components/schemas/SavedGraphInputPlug"
+            },
+            "title": "Input Plugs",
+            "type": "array"
+          },
+          "kind": {
+            "const": "update_node_configuration_and_input_plugs",
+            "default": "update_node_configuration_and_input_plugs",
+            "title": "Kind",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "config",
+          "input_plugs",
+          "expected_config",
+          "expected_plug_ids"
+        ],
+        "title": "UpdateNodeConfigurationAndInputPlugsCommand",
         "type": "object"
       },
       "UpdateNodeConfigurationCommand": {

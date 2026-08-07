@@ -53,6 +53,12 @@ class GraphCommandKind(StrEnum):
     UPDATE_NODE_CONFIGURATION = "update_node_configuration"
     UPDATE_NODE_LAYOUT = "update_node_layout"
     SET_NODE_INPUT_PLUGS = "set_node_input_plugs"
+    # Schema Builder field edits must use this one accept_command transaction
+    # (config fields + owned input plugs). Do not split into separate primitive
+    # update_node_configuration and set_node_input_plugs commands.
+    UPDATE_NODE_CONFIGURATION_AND_INPUT_PLUGS = (
+        "update_node_configuration_and_input_plugs"
+    )
     SET_NODE_ARTIFACT_TYPE_BINDING = "set_node_artifact_type_binding"
     CLEAR_NODE_ARTIFACT_TYPE_BINDING = "clear_node_artifact_type_binding"
     ADD_EDGE = "add_edge"
@@ -144,6 +150,19 @@ class SetNodeInputPlugsCommand(CollaborationValue):
     expected_plug_ids: tuple[str, ...]
 
 
+class UpdateNodeConfigurationAndInputPlugsCommand(CollaborationValue):
+    """Atomic Schema Builder (and similar) config+plug compound gesture."""
+
+    kind: Literal[GraphCommandKind.UPDATE_NODE_CONFIGURATION_AND_INPUT_PLUGS] = (
+        GraphCommandKind.UPDATE_NODE_CONFIGURATION_AND_INPUT_PLUGS
+    )
+    node_id: str
+    config: dict[str, object]
+    input_plugs: tuple[SavedGraphInputPlug, ...]
+    expected_config: dict[str, object]
+    expected_plug_ids: tuple[str, ...]
+
+
 class SetNodeArtifactTypeBindingCommand(CollaborationValue):
     kind: Literal[GraphCommandKind.SET_NODE_ARTIFACT_TYPE_BINDING] = (
         GraphCommandKind.SET_NODE_ARTIFACT_TYPE_BINDING
@@ -198,6 +217,7 @@ GraphCommand = Annotated[
     | UpdateNodeConfigurationCommand
     | UpdateNodeLayoutCommand
     | SetNodeInputPlugsCommand
+    | UpdateNodeConfigurationAndInputPlugsCommand
     | SetNodeArtifactTypeBindingCommand
     | ClearNodeArtifactTypeBindingCommand
     | AddEdgeCommand
@@ -448,6 +468,39 @@ def apply_graph_command(
                 for candidate in document.nodes
             ),
             edges=document.edges,
+        )
+
+    if isinstance(command, UpdateNodeConfigurationAndInputPlugsCommand):
+        node = _node_or_raise(document, command.node_id)
+        if not _json_equal(node.config_dict(), command.expected_config):
+            raise _field_conflict(
+                f"Configuration on node {command.node_id} changed"
+            )
+        current_ids = tuple(plug.id for plug in node.input_plugs)
+        if current_ids != command.expected_plug_ids:
+            raise _field_conflict(
+                f"Input plugs on node {command.node_id} changed"
+            )
+        retained_plug_ids = {plug.id for plug in command.input_plugs}
+        return name, SavedGraphDocument(
+            nodes=tuple(
+                candidate.model_copy(
+                    update={
+                        "config": command.config,
+                        "input_plugs": command.input_plugs,
+                    }
+                )
+                if candidate.id == command.node_id
+                else candidate
+                for candidate in document.nodes
+            ),
+            edges=tuple(
+                edge
+                for edge in document.edges
+                if edge.to_node != command.node_id
+                or edge.to_plug is None
+                or edge.to_plug in retained_plug_ids
+            ),
         )
 
     if isinstance(command, SetNodeArtifactTypeBindingCommand):
@@ -766,6 +819,7 @@ __all__ = [
     "SetNodeArtifactTypeBindingCommand",
     "SetNodeInputPlugsCommand",
     "UpdateEdgeCommand",
+    "UpdateNodeConfigurationAndInputPlugsCommand",
     "UpdateNodeConfigurationCommand",
     "UpdateNodeLayoutCommand",
     "apply_graph_command",
