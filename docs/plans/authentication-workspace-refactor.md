@@ -1,7 +1,9 @@
 # Authentication, workspace, and collaboration implementation plan
 
-- **Status:** Accepted; Phase 0–6 exit criteria met for MCP/PAT/gateway config;
-  Phase 7 deployment gate in progress. `executions:run` MCP tools deferred.
+- **Status:** Accepted; Phase 0–6 exit met; Phase 7 deployment gate started
+  (one-owner fence, same-origin Compose gateway, automatable deploy checks).
+  Remaining Phase 7: live SSH/OIDC rehearsal, two-browser acceptance, full
+  backup/restore drill. `executions:run` MCP tools deferred.
 - **Date:** 2026-08-06
 - **Audience:** Experienced contributors changing identity, persistence, API,
   Workbench, MCP, collaboration, execution, or deployment

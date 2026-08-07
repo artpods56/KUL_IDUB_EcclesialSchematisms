@@ -83,6 +83,9 @@ class Settings(BaseSettings):
         ge=1.0,
         le=60.0,
     )
+    # Collaboration and shared execution assume one FastAPI process with one
+    # HTTP worker. Startup acquires an exclusive lock under workspace when true.
+    require_single_api_owner: bool = True
 
     @field_validator("public_origin", "oidc_issuer")
     @classmethod

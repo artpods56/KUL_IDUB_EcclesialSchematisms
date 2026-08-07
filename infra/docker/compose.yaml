@@ -14,8 +14,12 @@ x-api-environment: &api-environment
   <<: *persistence-environment
   MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
   OPENAI_CUSTOM_HEADERS: ${OPENAI_CUSTOM_HEADERS:-}
-  NOTARIUS_CORS_ORIGINS: ${NOTARIUS_CORS_ORIGINS:-http://localhost:3000}
+  NOTARIUS_PUBLIC_ORIGIN: ${NOTARIUS_PUBLIC_ORIGIN:-https://notarius.example.com:8080}
+  NOTARIUS_CORS_ORIGINS: ${NOTARIUS_CORS_ORIGINS:-https://notarius.example.com:8080}
   NOTARIUS_CREDENTIAL_ENCRYPTION_KEY: ${NOTARIUS_CREDENTIAL_ENCRYPTION_KEY:-}
+  NOTARIUS_COMMAND_HMAC_KEY: ${NOTARIUS_COMMAND_HMAC_KEY:-}
+  NOTARIUS_COMMAND_HMAC_KEY_VERSION: ${NOTARIUS_COMMAND_HMAC_KEY_VERSION:-1}
+  NOTARIUS_REQUIRE_SINGLE_API_OWNER: "true"
   NOTARIUS_EXECUTION_BACKEND: ${NOTARIUS_EXECUTION_BACKEND:-prefect}
   NOTARIUS_MAP_MAX_CONCURRENCY: ${NOTARIUS_MAP_MAX_CONCURRENCY:-4}
   NOTARIUS_STORAGE_BACKEND: ${NOTARIUS_STORAGE_BACKEND:-local}
@@ -28,6 +32,8 @@ x-api-environment: &api-environment
   NOTARIUS_S3_FORCE_PATH_STYLE: ${NOTARIUS_S3_FORCE_PATH_STYLE:-false}
   PREFECT_API_URL: http://prefect:4200/api
   PREFECT_SERVER_ALLOW_EPHEMERAL_MODE: "false"
+  # Collaboration assumes one Uvicorn process with one worker.
+  WEB_CONCURRENCY: "1"
 
 services:
   migrate:
@@ -85,8 +91,9 @@ services:
     stop_grace_period: 60s
     volumes:
       - notarius-data:/data
-    ports:
-      - "${NOTARIUS_BIND_ADDRESS:-127.0.0.1}:${NOTARIUS_API_PORT:-8000}:8000"
+    # No host ports: the same-origin gateway is the only Notarius public listener.
+    expose:
+      - "8000"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -115,8 +122,8 @@ services:
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 20s
-    ports:
-      - "${NOTARIUS_BIND_ADDRESS:-127.0.0.1}:${NOTARIUS_WEB_PORT:-3000}:3000"
+    expose:
+      - "3000"
     depends_on:
       api:
         condition: service_healthy
@@ -132,6 +139,37 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+
+  gateway:
+    image: nginx:1.28-alpine
+    logging: *default-logging
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 20s
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "${NOTARIUS_BIND_ADDRESS:-127.0.0.1}:${NOTARIUS_GATEWAY_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:8080/",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
 volumes:
   notarius-data:

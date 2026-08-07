@@ -1,14 +1,16 @@
-# Deploy Notarius behind an existing Nginx
+# Deploy Notarius behind the same-origin gateway
 
-This Compose project runs four processes:
+This Compose project runs five processes:
 
 1. `migrate` applies Alembic migrations and exits.
 2. `prefect` runs the pinned self-hosted Prefect server and background services.
 3. `api` runs one FastAPI process with every bundled plugin installed.
 4. `web` runs the minimal Next.js standalone server.
+5. `gateway` is the only Notarius public listener (`127.0.0.1:8080` by default).
 
-The web, API, and Prefect ports bind to `127.0.0.1` by default. They are not
-reachable from another machine unless the host's Nginx proxies them.
+Web and API stay on the Compose network. Prefect publishes a separate loopback
+dashboard port for SSH-tunneled ops access. Do not scale the `api` service and
+do not set `WEB_CONCURRENCY` or Uvicorn `--workers` above 1.
 
 ## Prepare the VPS
 
@@ -20,16 +22,19 @@ cp infra/docker/.env.production.example .env.production
 openssl rand -base64 32
 ```
 
-Put the generated encryption key in `NOTARIUS_CREDENTIAL_ENCRYPTION_KEY`, then
-set the real public origin in `NOTARIUS_CORS_ORIGINS`.
+Put generated secrets in `NOTARIUS_CREDENTIAL_ENCRYPTION_KEY` and
+`NOTARIUS_COMMAND_HMAC_KEY`, then set the exact public HTTPS origin in
+`NOTARIUS_PUBLIC_ORIGIN` and `NOTARIUS_CORS_ORIGINS`. Register the OIDC
+callback
+`${NOTARIUS_PUBLIC_ORIGIN}/api/v1/auth/oidc/callback`
+with the identity provider before opening login.
 
 `NOTARIUS_DOCKER_DATABASE_URL` is deliberately separate from the local
 `NOTARIUS_DATABASE_URL`. This prevents a development `.env` file with a relative
 SQLite path from sending migrations to a container-local, non-persistent file.
 
-The browser uses the same-origin `/api` path; the public gateway owns its
-forwarding to FastAPI. Keep `.env.production` outside version control and
-restrict it to the deployment user:
+Keep `.env.production` outside version control and restrict it to the deployment
+user:
 
 ```bash
 chmod 600 .env.production
@@ -55,11 +60,25 @@ docker compose \
 docker compose \
   --env-file .env.production \
   -f infra/docker/compose.yaml \
-  logs --follow api web
+  logs --follow gateway api web
 ```
 
-Compose waits for the migration and Prefect health check before starting the
-API, and waits for the API health check before starting the web server.
+Compose waits for migration and Prefect health before starting the API, waits
+for the API before starting the web server, and waits for both before starting
+the gateway.
+
+## SSH tunnel to the test host
+
+On a host such as `ai-test-ihpan`, bind gateway port 8080 only to remote
+loopback and forward it locally:
+
+```bash
+ssh -N -L 8080:127.0.0.1:8080 ai-test-ihpan
+```
+
+Open the exact registered HTTPS hostname and port, never an HTTP or
+`127.0.0.1` alias. The tunnel protects the network hop; TLS supplies the stable
+OIDC origin and Secure-cookie contract.
 
 ## Prefect
 
@@ -70,7 +89,7 @@ worker.
 
 Prefect stores its SQLite database in the separate `prefect-data` volume.
 Its dashboard port is bound to `127.0.0.1:4200`. Access it without adding a
-public Nginx route:
+public gateway route:
 
 ```bash
 ssh -L 4200:127.0.0.1:4200 deploy@your-vps
@@ -78,21 +97,17 @@ ssh -L 4200:127.0.0.1:4200 deploy@your-vps
 
 Then open `http://127.0.0.1:4200`.
 
-## Nginx routing contract
+## Same-origin routing contract
 
-Checked configuration lives at `infra/docker/gateway/nginx.conf`. Whether you
-run that file as a Compose gateway service or adapt it on the host, keep this
-same-origin contract:
+Checked configuration lives at `infra/docker/gateway/nginx.conf`:
 
 - `/` proxies to the Next.js web process.
 - `/api/` proxies to the API process with a trailing-slash `proxy_pass` that
   strips only `/api`, so public `/api/v1/...` becomes FastAPI `/v1/...`.
-- `/mcp` proxies to the same API process without rewriting the path, so the
-  mounted Streamable HTTP MCP application remains under one authority with
-  `/api/v1`.
+- `/mcp` proxies to the same API process without rewriting the path.
 - Preserve WebSocket upgrade on graph-room paths and disable proxy buffering
   for SSE and MCP long-lived responses.
-- Nginx must overwrite, not append to, the forwarding headers before proxying:
+- Overwrite, do not append, forwarding headers:
 
   ```nginx
   proxy_set_header Host $host;
@@ -105,19 +120,55 @@ same-origin contract:
   If the subnet overlaps another Docker network, set
   `NOTARIUS_DOCKER_SUBNET` and `NOTARIUS_DOCKER_GATEWAY` together; never use
   `*` as the trusted peer.
-- Request body limits are high enough for the table, image, and GIS files you
-  intend to upload.
 
 Browser traffic uses the opaque Notarius session cookie after OIDC login. MCP
-clients use a workspace-bound PAT in `Authorization: Bearer`. Terminate TLS at
-the public origin registered for OIDC. Do not expose ports 3000 or 8000 on a
-non-loopback address.
+clients use a workspace-bound PAT in `Authorization: Bearer` against
+`https://<origin>/mcp`. Terminate TLS for the registered public origin before
+production login.
 
-## Persistence and backups
+## One API owner
+
+Collaboration rooms, journals, presence, and shared execution assume exactly one
+FastAPI owner process. Compose sets `NOTARIUS_REQUIRE_SINGLE_API_OWNER=true` and
+`WEB_CONCURRENCY=1`. On startup the API acquires an exclusive lock file under
+the data workspace; a second owner fails closed. Do not add replicas, Uvicorn
+`--workers`, or shared room pubsub across processes until a separate design is
+accepted.
+
+## First-owner bootstrap
+
+After migrate and before ordinary login:
+
+```bash
+docker compose \
+  --env-file .env.production \
+  -f infra/docker/compose.yaml \
+  exec api \
+  .venv/bin/notarius-admin bootstrap-oidc-owner \
+  --issuer "$NOTARIUS_OIDC_ISSUER" \
+  --subject "<first-owner-subject>"
+```
+
+The matching identity's first valid OIDC callback consumes the mapping and owns
+the migrated `local` workspace. Do not invent local passwords or anonymous
+owners.
+
+## Persistence, backup, and rollback
 
 The `notarius-data` volume contains the Notarius SQLite database, staged
 uploads, and local artifact objects. The `prefect-data` volume contains Prefect
-orchestration state. Back up both volumes while the stack is stopped:
+orchestration state. Treat migrations as a maintenance window for SQLite:
+
+1. stop gateway and API traffic (and Prefect if it might touch shared state);
+2. confirm one API owner and no active execution;
+3. checkpoint/truncate the SQLite WAL and create a consistent backup with the
+   SQLite backup API or a stopped-volume snapshot;
+4. back up the complete Notarius data volume and separately protect encryption,
+   auth-wrapping, command-HMAC, and OIDC client secrets;
+5. run `PRAGMA integrity_check` and restore the backup into a scratch location
+   before upgrading.
+
+Backup while the stack is stopped:
 
 ```bash
 docker run --rm \
@@ -133,9 +184,12 @@ docker run --rm \
   tar -czf /backup/prefect-data.tgz -C /source .
 ```
 
-Restore only while the Compose project is stopped. Keep one API replica when
-using SQLite and local artifact storage. Use an external PostgreSQL database
-and S3-compatible storage before introducing multiple API replicas.
+Restore only while the Compose project is stopped. Roll back by restoring the
+volume backup, checking out the previous known-good image/git revision, and
+bringing the stack up without re-running forward migrations against restored
+data unless that revision's Alembic head matches. Use external PostgreSQL and
+S3-compatible storage before introducing multiple API replicas; that topology
+is out of scope for the current release gate.
 
 ## MCP on the VPS
 
@@ -147,7 +201,19 @@ the browser UI, then point an MCP client at:
 
 with `Authorization: Bearer <token>`. First delivery is stateless: every request
 re-resolves the PAT. There is no separate stdio MCP process or ambient API
-credential.
+credential. `executions:run` MCP tools are deferred; shared runs stay on the
+browser/REST path.
+
+## Phase 7 release checklist (operator)
+
+- [ ] Exact `NOTARIUS_PUBLIC_ORIGIN` and OIDC callback registered
+- [ ] Secrets generated and backed up outside the data volume
+- [ ] `bootstrap-oidc-owner` mapping written for the intended first subject
+- [ ] Gateway serves `/`, `/api/v1`, `/mcp` on loopback `:8080` only
+- [ ] One API replica / one worker; second owner fails startup
+- [ ] Backup + integrity check rehearsed on a copy of realistic data
+- [ ] Authenticated browser smoke and PAT MCP smoke through the gateway
+- [ ] Collaboration drain before upgrade; restore rehearsed
 
 ## Stop or upgrade
 
