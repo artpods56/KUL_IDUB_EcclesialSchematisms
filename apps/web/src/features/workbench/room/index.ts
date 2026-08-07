@@ -7,6 +7,7 @@ export {
   type GraphRoomCommandResult,
   type GraphRoomSessionListeners,
   type GraphRoomSessionOptions,
+  type ActiveExecutionSummary,
   type GraphRoomStatus,
   type GraphRoomTerminalReason,
   type PresenceParticipant,
@@ -23,6 +24,8 @@ export {
   type UseGraphRoomSessionResult,
 } from "./useGraphRoomSession";
 export type {
+  ExecutionActiveMessage,
+  ExecutionClearedMessage,
   GraphCommandAcceptedMessage,
   GraphCommandReceiptMessage,
   GraphCommandRejectedMessage,

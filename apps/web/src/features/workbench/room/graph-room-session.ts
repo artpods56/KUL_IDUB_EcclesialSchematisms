@@ -6,7 +6,9 @@ import {
   ROOM_PROTOCOL_VERSION,
   parseServerRoomMessage,
   terminalReasonFromClose,
+  type ActiveExecutionSummary,
   type ActorPresentation,
+  type ExecutionClearedMessage,
   type GraphCommandAcceptedMessage,
   type GraphCommandReceiptMessage,
   type GraphCommandRejectedMessage,
@@ -19,7 +21,7 @@ import {
 } from "./protocol";
 
 export type { GraphRoomStatus, GraphRoomTerminalReason, RoomGraphCommand };
-export type { PresenceParticipant, PresenceUpdateSubmit };
+export type { ActiveExecutionSummary, PresenceParticipant, PresenceUpdateSubmit };
 export { ROOM_COMMAND_QUEUE_CAP, graphRoomWebSocketUrl };
 
 export const PRESENCE_CLIENT_MIN_INTERVAL_MS = 50;
@@ -48,6 +50,8 @@ export interface GraphRoomSessionListeners {
   onCommandAccepted?: (message: GraphCommandAcceptedMessage) => void;
   onCommandRejected?: (message: GraphCommandRejectedMessage) => void;
   onPresenceChange?: (participants: readonly PresenceParticipant[]) => void;
+  onActiveExecution?: (execution: ActiveExecutionSummary | null) => void;
+  onExecutionCleared?: (message: ExecutionClearedMessage) => void;
   onTerminalClose?: (reason: GraphRoomTerminalReason) => void;
 }
 
@@ -91,6 +95,7 @@ export class GraphRoomSession {
   private participants = new Map<string, PresenceParticipant>();
   private presenceSequence = 0;
   private lastPresenceSentAt = 0;
+  private activeExecution: ActiveExecutionSummary | null = null;
 
   private readonly queue: QueuedCommand[] = [];
   private inFlight: QueuedCommand | null = null;
@@ -109,6 +114,8 @@ export class GraphRoomSession {
       onCommandAccepted: options.onCommandAccepted,
       onCommandRejected: options.onCommandRejected,
       onPresenceChange: options.onPresenceChange,
+      onActiveExecution: options.onActiveExecution,
+      onExecutionCleared: options.onExecutionCleared,
       onTerminalClose: options.onTerminalClose,
     };
   }
@@ -139,6 +146,10 @@ export class GraphRoomSession {
 
   getGraphRoomSessionId(): string | null {
     return this.ready?.graph_room_session_id ?? null;
+  }
+
+  getActiveExecution(): ActiveExecutionSummary | null {
+    return this.activeExecution;
   }
 
   getParticipants(): readonly PresenceParticipant[] {
@@ -343,6 +354,22 @@ export class GraphRoomSession {
       this.removeParticipant(message.graph_room_session_id);
       return;
     }
+    if (message.type === "execution.active") {
+      this.activeExecution = message.execution;
+      this.listeners.onActiveExecution?.(message.execution);
+      return;
+    }
+    if (message.type === "execution.cleared") {
+      if (
+        this.activeExecution?.execution_id === message.execution_id ||
+        this.activeExecution === null
+      ) {
+        this.activeExecution = null;
+        this.listeners.onActiveExecution?.(null);
+      }
+      this.listeners.onExecutionCleared?.(message);
+      return;
+    }
     if (message.type === "graph.command.accepted") {
       this.applyAccepted(message);
       return;
@@ -376,8 +403,10 @@ export class GraphRoomSession {
     );
     this.presenceSequence = 0;
     this.lastPresenceSentAt = 0;
+    this.activeExecution = message.active_execution;
     this.setStatus("ready");
     this.listeners.onReady?.(message);
+    this.listeners.onActiveExecution?.(message.active_execution);
     this.emitPresenceChange();
     this.drainQueue();
   }

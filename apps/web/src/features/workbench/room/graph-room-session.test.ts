@@ -195,6 +195,53 @@ describe("GraphRoomSession", () => {
     expect(onStatusChange).toHaveBeenCalledWith("ready");
   });
 
+  it("tracks shared active execution discovery and clear", () => {
+    const onActiveExecution = vi.fn();
+    const onExecutionCleared = vi.fn();
+    const { session, socket } = connectReadySession({
+      workspaceId: WORKSPACE_ID,
+      graphId: GRAPH_ID,
+      onActiveExecution,
+      onExecutionCleared,
+    });
+    expect(session.getActiveExecution()).toBeNull();
+
+    const summary = {
+      execution_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      graph_revision: 1,
+      status: "running",
+      scope: "all",
+      requested_node_ids: [],
+      starter: {
+        actor_id: ACTOR_ID,
+        display_name: "Owner",
+        color: "emerald",
+      },
+      active_node_id: null,
+      overlays_compatible: true,
+      cancellable: true,
+    };
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "execution.active",
+      execution: summary,
+    });
+    expect(session.getActiveExecution()).toEqual(summary);
+    expect(onActiveExecution).toHaveBeenLastCalledWith(summary);
+
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "execution.cleared",
+      execution_id: summary.execution_id,
+      status: "succeeded",
+      graph_revision: 1,
+      error: null,
+    });
+    expect(session.getActiveExecution()).toBeNull();
+    expect(onActiveExecution).toHaveBeenLastCalledWith(null);
+    expect(onExecutionCleared).toHaveBeenCalledOnce();
+  });
+
   it("submits a command and resolves on receipt after accepted", async () => {
     const commandIds = ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"];
     const { session, socket } = connectReadySession({

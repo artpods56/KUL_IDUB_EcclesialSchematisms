@@ -1012,6 +1012,7 @@ export function Workbench({
     currentFingerprint,
     isDirty,
     nodeSecretStatuses,
+    roomActiveExecution: graphRoom.activeExecution,
     setNodes,
     setRunError,
     isGraphSnapshotCurrent,

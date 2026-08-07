@@ -30,6 +30,7 @@ import {
   type RunScope,
   type WorkflowNode,
 } from "../model/execution-plan";
+import type { ActiveExecutionSummary } from "../room";
 import type { NodeSecretStatusesByNode } from "./useNodeSecrets";
 import type { ActiveSavedGraph } from "./useSavedGraphLifecycle";
 
@@ -85,6 +86,8 @@ interface UseRunExecutionOptions {
   currentFingerprint: string;
   isDirty: boolean;
   nodeSecretStatuses: NodeSecretStatusesByNode;
+  /** Active execution discovered from the graph room (not only local start). */
+  roomActiveExecution?: ActiveExecutionSummary | null;
   setNodes: React.Dispatch<React.SetStateAction<WorkflowNode[]>>;
   setRunError: (message: string | null) => void;
   isGraphSnapshotCurrent: (
@@ -103,6 +106,7 @@ export function useRunExecution({
   currentFingerprint,
   isDirty,
   nodeSecretStatuses,
+  roomActiveExecution = null,
   setNodes,
   setRunError,
   isGraphSnapshotCurrent,
@@ -1317,6 +1321,215 @@ export function useRunExecution({
       }
     }
   }, [isGraphSnapshotCurrent, setNodes, workspaceId]);
+
+  React.useEffect(() => {
+    if (!roomActiveExecution) {
+      return;
+    }
+    const discoveredId = roomActiveExecution.execution_id;
+    const existing = executionGuardRef.current;
+    if (
+      existing &&
+      !existing.finished &&
+      existing.executionId === discoveredId
+    ) {
+      setVisibleExecution((current) =>
+        current?.executionId === discoveredId
+          ? {
+              ...current,
+              status: roomActiveExecution.status,
+              activeNodeId:
+                roomActiveExecution.active_node_id ?? current.activeNodeId,
+            }
+          : current,
+      );
+      existing.lastServerStatus = roomActiveExecution.status;
+      existing.activeNodeId =
+        roomActiveExecution.active_node_id ?? existing.activeNodeId;
+      if (roomActiveExecution.status === "cancelling") {
+        existing.cancellationRequested = true;
+      }
+      return;
+    }
+    if (runRequestReservedRef.current) {
+      return;
+    }
+    if (existing && !existing.finished && existing.executionId) {
+      return;
+    }
+
+    const executionGeneration = executionGenerationRef.current + 1;
+    executionGenerationRef.current = executionGeneration;
+    const planningActiveGraph = activeGraph;
+    const planningFingerprint = currentFingerprint;
+    executionGuardRef.current = {
+      generation: executionGeneration,
+      executionId: discoveredId,
+      cancellationRequested: roomActiveExecution.status === "cancelling",
+      cancelInFlight: false,
+      lastServerStatus: roomActiveExecution.status,
+      activeNodeId: roomActiveExecution.active_node_id,
+      lastEventSequence: 0,
+      reconciliationRequested: false,
+      terminalEventStatus: null,
+      planningActiveGraph,
+      planningFingerprint,
+      finished: false,
+    };
+    setRunningScope(roomActiveExecution.scope);
+    setVisibleExecution({
+      generation: executionGeneration,
+      executionId: discoveredId,
+      status: roomActiveExecution.status,
+      activeNodeId: roomActiveExecution.active_node_id,
+      statusError: null,
+    });
+    setAnnouncement(
+      `Observing shared execution started by ${roomActiveExecution.starter.display_name}.`,
+    );
+
+    let cancelled = false;
+    const eventSubscription = subscribeRunExecutionEvents(
+      workspaceId,
+      discoveredId,
+      {
+        onEvent: (event) => {
+          const guard = executionGuardRef.current;
+          if (
+            !guard ||
+            guard.generation !== executionGeneration ||
+            guard.executionId !== discoveredId ||
+            guard.finished ||
+            event.execution_id !== discoveredId ||
+            event.sequence <= guard.lastEventSequence
+          ) {
+            return;
+          }
+          guard.lastEventSequence = event.sequence;
+          if (event.kind === "execution.status") {
+            guard.lastServerStatus = event.status;
+            guard.activeNodeId = event.active_node_id ?? guard.activeNodeId;
+            if (
+              event.status === "cancelled" ||
+              event.status === "succeeded" ||
+              event.status === "failed"
+            ) {
+              guard.terminalEventStatus = event.status;
+            }
+            if (event.status === "cancelling") {
+              guard.cancellationRequested = true;
+            }
+            setVisibleExecution((current) =>
+              current?.generation === executionGeneration &&
+                  current.executionId === discoveredId
+                ? {
+                    ...current,
+                    status: event.status,
+                    activeNodeId: event.active_node_id ?? current.activeNodeId,
+                  }
+                : current,
+            );
+          }
+        },
+      },
+    );
+    executionEventStreamRef.current = eventSubscription;
+
+    void (async () => {
+      try {
+        while (!cancelled) {
+          const guard = executionGuardRef.current;
+          if (
+            !guard ||
+            guard.generation !== executionGeneration ||
+            guard.executionId !== discoveredId
+          ) {
+            return;
+          }
+          const response = await getRunExecution(workspaceId, discoveredId);
+          if (cancelled || !mountedRef.current) return;
+          const liveGuard = executionGuardRef.current;
+          if (
+            !liveGuard ||
+            liveGuard.generation !== executionGeneration ||
+            liveGuard.executionId !== discoveredId
+          ) {
+            return;
+          }
+          liveGuard.lastServerStatus = response.status;
+          liveGuard.activeNodeId =
+            response.active_node_id ?? liveGuard.activeNodeId;
+          setVisibleExecution((current) =>
+            current?.generation === executionGeneration &&
+                current.executionId === discoveredId
+              ? {
+                  ...current,
+                  status: response.status,
+                  activeNodeId:
+                    response.active_node_id ?? current.activeNodeId,
+                  statusError: null,
+                }
+              : current
+          );
+          if (
+            response.status === "cancelled" ||
+            response.status === "succeeded" ||
+            response.status === "failed"
+          ) {
+            liveGuard.finished = true;
+            setAnnouncement(
+              response.status === "cancelled"
+                ? "Shared execution cancelled."
+                : response.status === "succeeded"
+                  ? "Shared execution completed."
+                  : "Shared execution failed.",
+            );
+            setVisibleExecution((current) =>
+              current?.generation === executionGeneration ? null : current
+            );
+            setRunningScope(null);
+            return;
+          }
+          await new Promise((resolve) => window.setTimeout(resolve, 500));
+        }
+      } catch {
+        if (cancelled || !mountedRef.current) return;
+        const liveGuard = executionGuardRef.current;
+        if (
+          liveGuard?.generation === executionGeneration &&
+          liveGuard.executionId === discoveredId
+        ) {
+          setVisibleExecution((current) =>
+            current?.generation === executionGeneration &&
+                current.executionId === discoveredId
+              ? {
+                  ...current,
+                  statusError: "Shared execution status is unavailable.",
+                }
+              : current
+          );
+        }
+      } finally {
+        eventSubscription.close();
+        if (executionEventStreamRef.current === eventSubscription) {
+          executionEventStreamRef.current = null;
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      eventSubscription.close();
+      if (executionEventStreamRef.current === eventSubscription) {
+        executionEventStreamRef.current = null;
+      }
+    };
+  }, [
+    activeGraph,
+    currentFingerprint,
+    roomActiveExecution,
+    workspaceId,
+  ]);
 
   return {
     running,
