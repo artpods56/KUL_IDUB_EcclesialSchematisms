@@ -27,13 +27,21 @@ class PersistentInvocationCache(InvocationCachePort):
         self._unit_of_work = unit_of_work
         self._storage = storage
 
-    async def get(self, key_sha256: str) -> InvocationCacheEntry | None:
+    async def get(
+        self,
+        workspace_id: UUID,
+        key_sha256: str,
+    ) -> InvocationCacheEntry | None:
         async with self._unit_of_work as unit_of_work:
-            entry = await unit_of_work.invocation_cache.get(key_sha256)
+            entry = await unit_of_work.invocation_cache.get(
+                workspace_id,
+                key_sha256,
+            )
             if entry is None:
                 return None
             refs = _artifact_refs(entry.outputs)
             artifacts = await unit_of_work.artifacts.get_many(
+                workspace_id,
                 {ref.artifact_id for ref in refs}
             )
 
@@ -109,7 +117,11 @@ class PersistentInvocationCache(InvocationCachePort):
                 break
 
         if stale:
-            await self.remove_if_current(key_sha256, entry.generation)
+            await self.remove_if_current(
+                workspace_id,
+                key_sha256,
+                entry.generation,
+            )
             return None
         return entry
 
@@ -131,11 +143,13 @@ class PersistentInvocationCache(InvocationCachePort):
 
     async def remove_if_current(
         self,
+        workspace_id: UUID,
         key_sha256: str,
         generation: UUID,
     ) -> bool:
         async with self._unit_of_work as unit_of_work:
             removed = await unit_of_work.invocation_cache.remove_if_current(
+                workspace_id,
                 key_sha256,
                 generation,
             )

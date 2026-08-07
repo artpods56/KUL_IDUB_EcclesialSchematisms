@@ -6,8 +6,12 @@ import pytest
 from notarius_core.artifacts import ArtifactObject, InMemoryUnitOfWork
 
 
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
+
+
 def _artifact(artifact_id: str) -> ArtifactObject:
     return ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         id=UUID(artifact_id),
         artifact_type="scalar.integer",
         schema_version=1,
@@ -36,14 +40,16 @@ async def test_concurrent_tasks_commit_without_losing_artifacts() -> None:
         await first_entered.wait()
         second_waiting.set()
         async with unit_of_work as entered:
-            assert await entered.artifacts.get(first.id) == first
+            assert await entered.artifacts.get(WORKSPACE_ID, first.id) == first
             await entered.artifacts.add(second)
             await entered.commit()
 
     await asyncio.gather(write_first(), write_second())
 
     async with unit_of_work as entered:
-        stored = await entered.artifacts.get_many([first.id, second.id])
+        stored = await entered.artifacts.get_many(
+            WORKSPACE_ID, [first.id, second.id]
+        )
 
     assert stored == {first.id: first, second.id: second}
     assert unit_of_work.commit_count == 2
@@ -62,4 +68,4 @@ async def test_nested_entry_rejects_without_corrupting_outer_transaction() -> No
         await entered.commit()
 
     async with unit_of_work as entered:
-        assert await entered.artifacts.get(artifact.id) == artifact
+        assert await entered.artifacts.get(WORKSPACE_ID, artifact.id) == artifact

@@ -1,4 +1,4 @@
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -21,6 +21,9 @@ from notarius_plugin_llm.mistral import (
 )
 
 
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
+
+
 class FakeStructuredProvider:
     def __init__(
         self,
@@ -39,10 +42,13 @@ class FakeStructuredProvider:
         json_schema: str,
         config: MistralStructuredConfig,
         /,
+        *,
+        workspace_id: UUID,
     ) -> MistralStructuredProviderResponse:
         self.messages = messages
         self.json_schema = json_schema
         self.config = config
+        assert workspace_id == WORKSPACE_ID
         if self._error is not None:
             raise self._error
         return self._response
@@ -123,7 +129,7 @@ async def test_mistral_structured_node_builds_typed_response_envelope() -> None:
     config = structured_config()
 
     output = await node.run(
-        NodeExecutionContext(node_id="structured"),
+        NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="structured"),
         config,
         MistralStructuredInput(
             messages=messages,
@@ -170,7 +176,7 @@ async def test_mistral_structured_node_chains_contextual_provider_error() -> Non
         match="invoice.*mistral-small-latest.*1 messages.*provider timed out",
     ) as captured:
         await node.run(
-            NodeExecutionContext(),
+            NodeExecutionContext(workspace_id=WORKSPACE_ID),
             structured_config(),
             MistralStructuredInput(
                 messages=[
@@ -202,7 +208,7 @@ async def test_mistral_structured_node_rejects_provider_schema_mismatch() -> Non
         match="Mistral structured completion failed for schema 'invoice'",
     ) as captured:
         await node.run(
-            NodeExecutionContext(),
+            NodeExecutionContext(workspace_id=WORKSPACE_ID),
             structured_config(),
             MistralStructuredInput(
                 messages=[

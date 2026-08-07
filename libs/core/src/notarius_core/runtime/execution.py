@@ -106,7 +106,10 @@ class NodeRuntime:
                     opaque_secret_revisions=opaque_secret_revisions or {},
                 )
             if cache_key is not None:
-                cached_entry = await self._invocation_cache.get(cache_key)
+                cached_entry = await self._invocation_cache.get(
+                    context.workspace_id,
+                    cache_key,
+                )
                 if cached_entry is not None:
                     cached_values = _validated_cached_outputs(
                         resolved_contracts.output_contract,
@@ -118,6 +121,7 @@ class NodeRuntime:
                             cache_hits=1,
                         )
                     await self._invocation_cache.remove_if_current(
+                        context.workspace_id,
                         cache_key,
                         cached_entry.generation,
                     )

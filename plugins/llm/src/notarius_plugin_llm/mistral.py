@@ -1,4 +1,5 @@
 from typing import Annotated, Protocol, final, override
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 
@@ -97,6 +98,8 @@ class MistralStructuredProvider(Protocol):
         json_schema: str,
         config: MistralStructuredConfig,
         /,
+        *,
+        workspace_id: UUID,
     ) -> MistralStructuredProviderResponse: ...
 
 
@@ -139,7 +142,7 @@ class MistralStructuredNode(
     @override
     async def run(
         self,
-        _context: NodeExecutionContext,
+        context: NodeExecutionContext,
         config: MistralStructuredConfig,
         inputs: MistralStructuredInput,
         /,
@@ -149,6 +152,7 @@ class MistralStructuredNode(
                 inputs.messages,
                 inputs.json_schema,
                 config,
+                workspace_id=context.workspace_id,
             )
             validated_value = validate_json_schema_value(
                 inputs.json_schema,

@@ -112,26 +112,31 @@ class RecordingWriter:
 
 class MemoryInvocationCache(InvocationCachePort):
     def __init__(self) -> None:
-        self.entries: dict[str, InvocationCacheEntry] = {}
+        self.entries: dict[tuple[UUID, str], InvocationCacheEntry] = {}
 
-    async def get(self, key_sha256: str) -> InvocationCacheEntry | None:
-        return self.entries.get(key_sha256)
+    async def get(
+        self,
+        workspace_id: UUID,
+        key_sha256: str,
+    ) -> InvocationCacheEntry | None:
+        return self.entries.get((workspace_id, key_sha256))
 
     async def put_if_absent(self, entry: InvocationCacheEntry) -> bool:
-        if entry.key_sha256 in self.entries:
+        if (entry.workspace_id, entry.key_sha256) in self.entries:
             return False
-        self.entries[entry.key_sha256] = entry
+        self.entries[(entry.workspace_id, entry.key_sha256)] = entry
         return True
 
     async def remove_if_current(
         self,
+        workspace_id: UUID,
         key_sha256: str,
         generation: UUID,
     ) -> bool:
-        entry = self.entries.get(key_sha256)
+        entry = self.entries.get((workspace_id, key_sha256))
         if entry is None or entry.generation != generation:
             return False
-        del self.entries[key_sha256]
+        del self.entries[(workspace_id, key_sha256)]
         return True
 
 

@@ -31,6 +31,9 @@ from notarius_plugin_sql.nodes import (
 )
 
 
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
+
+
 class FakeSecretResolver:
     def __init__(self, password: SecretStr, error: Exception | None = None) -> None:
         self._password = password
@@ -40,6 +43,7 @@ class FakeSecretResolver:
     async def resolve_secret(
         self,
         *,
+        workspace_id: UUID,
         graph_id: UUID | None,
         graph_revision: int | None,
         node_id: str | None,
@@ -47,6 +51,7 @@ class FakeSecretResolver:
         dependencies: Mapping[str, JsonValue],
     ) -> SecretStr:
         self.request = {
+            "workspace_id": workspace_id,
             "graph_id": graph_id,
             "graph_revision": graph_revision,
             "node_id": node_id,
@@ -60,13 +65,14 @@ class FakeSecretResolver:
     async def cache_revision(
         self,
         *,
+        workspace_id: UUID,
         graph_id: UUID | None,
         graph_revision: int | None,
         node_id: str | None,
         name: str,
         dependencies: Mapping[str, JsonValue],
     ) -> str:
-        del graph_id, graph_revision, node_id, name, dependencies
+        del workspace_id, graph_id, graph_revision, node_id, name, dependencies
         return "unused"
 
 
@@ -182,7 +188,7 @@ def test_sql_nodes_declare_statement_plugs_and_result_sequence() -> None:
 
 async def test_raw_sql_statement_node_builds_parameterized_artifact() -> None:
     output = await RawSqlStatementNode().run(
-        NodeExecutionContext(node_id="statement"),
+        NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="statement"),
         RawSqlStatementConfig(
             sql="select * from invoices where id = :id and paid = :paid",
             parameters={"id": 42, "paid": False},
@@ -228,7 +234,7 @@ async def test_query_artifact_tables_preserves_statement_and_relation_order() ->
     node = QueryArtifactTablesNode(executor=executor)
 
     output = await node.run(
-        NodeExecutionContext(node_id="query-artifacts"),
+        NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="query-artifacts"),
         QueryArtifactTablesConfig(
             relations=[
                 ArtifactQueryRelation(id="plug-parcels", alias="parcels"),
@@ -255,7 +261,7 @@ async def test_query_artifact_tables_rejects_stale_relation_plugs_before_executi
         match="configured 2 relations but received 1 table inputs",
     ):
         await node.run(
-            NodeExecutionContext(node_id="query-artifacts"),
+            NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="query-artifacts"),
             QueryArtifactTablesConfig(
                 relations=[
                     ArtifactQueryRelation(id="plug-parcels", alias="parcels"),
@@ -303,7 +309,7 @@ async def test_query_artifact_tables_chains_isolated_batch_failure() -> None:
         match="query-artifacts.*2 statements.*1 relations",
     ) as captured:
         await node.run(
-            NodeExecutionContext(node_id="query-artifacts"),
+            NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="query-artifacts"),
             QueryArtifactTablesConfig(
                 relations=[ArtifactQueryRelation(id="plug", alias="source")]
             ),
@@ -363,6 +369,7 @@ async def test_execute_sql_resolves_bound_secret_and_preserves_result_order() ->
 
     output = await node.run(
         NodeExecutionContext(
+            workspace_id=WORKSPACE_ID,
             secret_graph_id=graph_id,
             secret_graph_revision=3,
             node_id="execute-postgres",
@@ -376,6 +383,7 @@ async def test_execute_sql_resolves_bound_secret_and_preserves_result_order() ->
     assert executor.password is password
     assert executor.statements == statements
     assert secrets.request == {
+        "workspace_id": WORKSPACE_ID,
         "graph_id": graph_id,
         "graph_revision": 3,
         "node_id": "execute-postgres",
@@ -402,7 +410,7 @@ async def test_execute_sql_chains_batch_failure_with_connection_context() -> Non
         match="notarius.*db.internal.*2 statements",
     ) as captured:
         await node.run(
-            NodeExecutionContext(node_id="execute-postgres"),
+            NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="execute-postgres"),
             execute_config(),
             ExecuteSqlInput(
                 statements=[
@@ -431,7 +439,7 @@ async def test_execute_sql_rejects_missing_results() -> None:
 
     with pytest.raises(SqlExecutionError, match="1 results for 2 statements"):
         await node.run(
-            NodeExecutionContext(node_id="execute-postgres"),
+            NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="execute-postgres"),
             execute_config(),
             ExecuteSqlInput(
                 statements=[

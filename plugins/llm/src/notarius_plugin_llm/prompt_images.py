@@ -1,6 +1,7 @@
 import base64
 from hashlib import sha256
 from typing import final
+from uuid import UUID
 
 from notarius_core.artifacts import ArtifactRef, UnitOfWorkPort
 from notarius_core.operators.images import RASTER_IMAGE
@@ -36,6 +37,7 @@ class PromptImageDataLoader:
         self,
         ref: ArtifactRef,
         *,
+        workspace_id: UUID,
         remaining_total_bytes: int,
     ) -> tuple[str, int]:
         if ref.key() != RASTER_IMAGE.key:
@@ -47,7 +49,7 @@ class PromptImageDataLoader:
 
         try:
             async with self._uow as uow:
-                artifact = await uow.artifacts.get(ref.artifact_id)
+                artifact = await uow.artifacts.get(workspace_id, ref.artifact_id)
         except Exception as exc:
             raise PromptImageDataError(
                 f"Failed to look up prompt image artifact {ref.artifact_id}"

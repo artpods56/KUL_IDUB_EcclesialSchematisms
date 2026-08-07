@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from hashlib import sha256
 from io import BytesIO
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from mistralai.client.models.assistantmessage import AssistantMessage
@@ -40,6 +40,9 @@ from notarius_plugin_llm.mistral_sdk import (
 
 
 type CapturedSdkMessage = SystemMessage | UserMessage
+
+
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
 
 
 class TrackingBytesIO(BytesIO):
@@ -203,6 +206,7 @@ async def add_image(
     content_hash: str | None = None,
 ) -> ArtifactObject:
     image = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         id=uuid4(),
         artifact_type=RASTER_IMAGE.key.id,
         schema_version=RASTER_IMAGE.key.schema_version,
@@ -258,6 +262,7 @@ async def test_sdk_provider_preserves_messages_and_builds_json_schema_request() 
         ],
         requested_schema,
         config,
+        workspace_id=WORKSPACE_ID,
     )
 
     assert endpoint.model == "mistral-small-2506"
@@ -313,6 +318,7 @@ async def test_sdk_provider_omits_empty_schema_description() -> None:
         [PromptMessage(role=PromptMessageRole.USER, text="Extract.")],
         schema(),
         mistral_config(schema_description=""),
+        workspace_id=WORKSPACE_ID,
     )
 
     assert endpoint.response_format is not None
@@ -336,6 +342,7 @@ async def test_sdk_provider_requires_server_api_key_lazily(
             [PromptMessage(role=PromptMessageRole.USER, text="Extract.")],
             schema(),
             mistral_config(),
+            workspace_id=WORKSPACE_ID,
         )
 
 
@@ -364,6 +371,7 @@ async def test_sdk_provider_rejects_invalid_completion_shapes(
             [PromptMessage(role=PromptMessageRole.USER, text="Extract.")],
             schema(),
             mistral_config(),
+            workspace_id=WORKSPACE_ID,
         )
 
 
@@ -382,6 +390,7 @@ async def test_sdk_provider_rejects_json_that_does_not_match_schema() -> None:
             [PromptMessage(role=PromptMessageRole.USER, text="Extract.")],
             schema(),
             mistral_config(),
+            workspace_id=WORKSPACE_ID,
         )
 
     assert captured.value.__cause__ is not None
@@ -401,6 +410,7 @@ async def test_sdk_provider_chains_request_and_image_load_failures() -> None:
             [PromptMessage(role=PromptMessageRole.USER, text="Extract.")],
             schema(),
             mistral_config(),
+            workspace_id=WORKSPACE_ID,
         )
     assert request.value.__cause__ is request_failure
 
@@ -428,12 +438,14 @@ async def test_sdk_provider_chains_request_and_image_load_failures() -> None:
             ],
             schema(),
             mistral_config(),
+            workspace_id=WORKSPACE_ID,
         )
     assert loaded.value.__cause__ is load_failure
 
 
 async def test_sdk_provider_reports_missing_nested_image() -> None:
     missing_ref = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         id=uuid4(),
         artifact_type=RASTER_IMAGE.key.id,
         schema_version=RASTER_IMAGE.key.schema_version,
@@ -459,12 +471,14 @@ async def test_sdk_provider_reports_missing_nested_image() -> None:
             ],
             schema(),
             mistral_config(),
+            workspace_id=WORKSPACE_ID,
         )
 
 
 async def test_sdk_provider_enforces_image_count_and_local_image_limits() -> None:
     image_refs = [
         ArtifactObject(
+            workspace_id=WORKSPACE_ID,
             id=uuid4(),
             artifact_type=RASTER_IMAGE.key.id,
             schema_version=RASTER_IMAGE.key.schema_version,
@@ -488,6 +502,7 @@ async def test_sdk_provider_enforces_image_count_and_local_image_limits() -> Non
             ],
             schema(),
             mistral_config(),
+            workspace_id=WORKSPACE_ID,
         )
 
     uow = InMemoryUnitOfWork()
@@ -516,6 +531,7 @@ async def test_sdk_provider_enforces_image_count_and_local_image_limits() -> Non
             ],
             schema(),
             mistral_config(),
+            workspace_id=WORKSPACE_ID,
         )
 
     uow = InMemoryUnitOfWork()
@@ -544,6 +560,7 @@ async def test_sdk_provider_enforces_image_count_and_local_image_limits() -> Non
             ],
             schema(),
             mistral_config(),
+            workspace_id=WORKSPACE_ID,
         )
 
 
@@ -575,6 +592,7 @@ async def test_sdk_provider_verifies_recorded_image_digest() -> None:
             ],
             schema(),
             mistral_config(),
+            workspace_id=WORKSPACE_ID,
         )
 
 
@@ -612,6 +630,7 @@ async def test_sdk_provider_bounds_reads_without_size_metadata(
             ],
             schema(),
             mistral_config(),
+            workspace_id=WORKSPACE_ID,
         )
 
     assert storage.last_stream is not None

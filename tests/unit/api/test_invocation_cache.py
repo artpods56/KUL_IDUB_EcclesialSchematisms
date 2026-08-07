@@ -44,6 +44,9 @@ from notarius_api.v1.routes.executions.runtime.invocation_cache import (
 from notarius_api.services.composition import build_workbench_components
 
 
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
+
+
 def _raise_storage_outage(bucket: str, path: str) -> bool:
     raise RuntimeError(f"Storage unavailable for {bucket}/{path}")
 
@@ -130,6 +133,7 @@ def test_external_node_default_policy_does_not_reuse_results(
 async def test_cache_evicts_an_entry_with_a_missing_artifact(tmp_path: Path) -> None:
     unit_of_work = InMemoryUnitOfWork()
     missing_artifact = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         id=UUID("00000000-0000-0000-0000-000000000301"),
         artifact_type="scalar.text",
         schema_version=1,
@@ -139,6 +143,7 @@ async def test_cache_evicts_an_entry_with_a_missing_artifact(tmp_path: Path) -> 
         sha256="a" * 64,
     )
     entry = InvocationCacheEntry(
+        workspace_id=WORKSPACE_ID,
         key_sha256="b" * 64,
         outputs={"text": missing_artifact.ref()},
     )
@@ -150,9 +155,11 @@ async def test_cache_evicts_an_entry_with_a_missing_artifact(tmp_path: Path) -> 
         unit_of_work=unit_of_work,
         storage=LocalFileObjectStore(tmp_path / "objects"),
     )
-    assert await cache.get(entry.key_sha256) is None
+    assert await cache.get(WORKSPACE_ID, entry.key_sha256) is None
     async with unit_of_work as entered:
-        assert await entered.invocation_cache.get(entry.key_sha256) is None
+        assert (
+            await entered.invocation_cache.get(WORKSPACE_ID, entry.key_sha256) is None
+        )
 
 
 @pytest.mark.asyncio
@@ -162,6 +169,7 @@ async def test_storage_outage_preserves_the_cache_entry(
 ) -> None:
     unit_of_work = InMemoryUnitOfWork()
     artifact = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         id=UUID("00000000-0000-0000-0000-000000000311"),
         artifact_type="image.raster",
         schema_version=1,
@@ -173,6 +181,7 @@ async def test_storage_outage_preserves_the_cache_entry(
         sha256="c" * 64,
     )
     entry = InvocationCacheEntry(
+        workspace_id=WORKSPACE_ID,
         key_sha256="d" * 64,
         outputs={"image": artifact.ref()},
     )
@@ -188,10 +197,10 @@ async def test_storage_outage_preserves_the_cache_entry(
         storage=storage,
     )
     with pytest.raises(InvocationCacheAccessError, match=str(artifact.id)):
-        await cache.get(entry.key_sha256)
+        await cache.get(WORKSPACE_ID, entry.key_sha256)
 
     async with unit_of_work as entered:
-        preserved = await entered.invocation_cache.get(entry.key_sha256)
+        preserved = await entered.invocation_cache.get(WORKSPACE_ID, entry.key_sha256)
     assert preserved is not None
     assert preserved.generation == entry.generation
 
@@ -218,17 +227,20 @@ async def test_cache_evicts_a_table_with_a_missing_chunk(tmp_path: Path) -> None
             rows=[{"row": index} for index in range(205)],
         ),
         ArtifactWriteContext(
-            node_context=NodeExecutionContext(node_id="table"),
+            node_context=NodeExecutionContext(
+                workspace_id=WORKSPACE_ID, node_id="table"
+            ),
             provenance=MaterializationProvenance(refs_by_input={}),
         ),
     )
     entry = InvocationCacheEntry(
+        workspace_id=WORKSPACE_ID,
         key_sha256="e" * 64,
         outputs={"table": ref},
     )
     async with unit_of_work as uow:
         assert await uow.invocation_cache.put_if_absent(entry)
-        artifact = await uow.artifacts.get(ref.artifact_id)
+        artifact = await uow.artifacts.get(WORKSPACE_ID, ref.artifact_id)
         await uow.commit()
     assert artifact is not None
     assert artifact.bucket is not None
@@ -239,9 +251,9 @@ async def test_cache_evicts_a_table_with_a_missing_chunk(tmp_path: Path) -> None
         unit_of_work=unit_of_work,
         storage=storage,
     )
-    assert await cache.get(entry.key_sha256) is None
+    assert await cache.get(WORKSPACE_ID, entry.key_sha256) is None
     async with unit_of_work as uow:
-        assert await uow.invocation_cache.get(entry.key_sha256) is None
+        assert await uow.invocation_cache.get(WORKSPACE_ID, entry.key_sha256) is None
 
 
 @pytest.mark.asyncio
@@ -267,8 +279,10 @@ async def test_cache_evicts_a_json_collection_with_a_corrupt_chunk(
             "bounds": None,
         },
         node_id="features",
+        workspace_id=UUID("00000000-0000-0000-0000-000000000901"),
     )
     artifact = ArtifactObject(
+        workspace_id=UUID("00000000-0000-0000-0000-000000000901"),
         artifact_type=artifact_type.id,
         schema_version=artifact_type.schema_version,
         content_type="application/geo+json",
@@ -283,6 +297,7 @@ async def test_cache_evicts_a_json_collection_with_a_corrupt_chunk(
         },
     )
     entry = InvocationCacheEntry(
+        workspace_id=WORKSPACE_ID,
         key_sha256="1" * 64,
         outputs={"features": artifact.ref()},
     )
@@ -307,9 +322,9 @@ async def test_cache_evicts_a_json_collection_with_a_corrupt_chunk(
         unit_of_work=unit_of_work,
         storage=storage,
     )
-    assert await cache.get(entry.key_sha256) is None
+    assert await cache.get(WORKSPACE_ID, entry.key_sha256) is None
     async with unit_of_work as uow:
-        assert await uow.invocation_cache.get(entry.key_sha256) is None
+        assert await uow.invocation_cache.get(WORKSPACE_ID, entry.key_sha256) is None
 
 
 @pytest.mark.asyncio

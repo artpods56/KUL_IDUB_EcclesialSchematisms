@@ -1,5 +1,6 @@
 from ipaddress import ip_address
 from typing import Annotated, Protocol, final, override
+from uuid import UUID
 
 from pydantic import (
     AnyHttpUrl,
@@ -148,6 +149,8 @@ class OpenAICompatibleProvider(Protocol):
         config: OpenAICompatibleConfig,
         api_key: SecretStr,
         /,
+        *,
+        workspace_id: UUID,
     ) -> OpenAICompatibleProviderResponse: ...
 
 
@@ -220,6 +223,7 @@ class OpenAICompatibleNode(
     ) -> OpenAICompatibleOutput:
         try:
             api_key = await self._node_secrets.resolve_secret(
+                workspace_id=context.workspace_id,
                 graph_id=context.secret_graph_id,
                 graph_revision=context.secret_graph_revision,
                 node_id=context.node_id,
@@ -239,6 +243,7 @@ class OpenAICompatibleNode(
                 inputs.json_schema,
                 config,
                 api_key,
+                workspace_id=context.workspace_id,
             )
             return OpenAICompatibleOutput(
                 completion=CompletionPayload(

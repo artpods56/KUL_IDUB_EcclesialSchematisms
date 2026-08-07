@@ -22,6 +22,7 @@ class NodeSecretResolverPort(Protocol):
     async def resolve_secret(
         self,
         *,
+        workspace_id: UUID,
         graph_id: UUID | None,
         graph_revision: int | None,
         node_id: str | None,
@@ -32,6 +33,7 @@ class NodeSecretResolverPort(Protocol):
     async def cache_revision(
         self,
         *,
+        workspace_id: UUID,
         graph_id: UUID | None,
         graph_revision: int | None,
         node_id: str | None,
@@ -44,25 +46,27 @@ class UnavailableNodeSecretResolver(NodeSecretResolverPort):
     async def resolve_secret(
         self,
         *,
+        workspace_id: UUID,
         graph_id: UUID | None,
         graph_revision: int | None,
         node_id: str | None,
         name: str,
         dependencies: Mapping[str, JsonValue],
     ) -> SecretStr:
-        del graph_id, graph_revision, node_id, name, dependencies
+        del workspace_id, graph_id, graph_revision, node_id, name, dependencies
         raise NodeSecretUnavailableError("Node secrets are unavailable in this runtime")
 
     async def cache_revision(
         self,
         *,
+        workspace_id: UUID,
         graph_id: UUID | None,
         graph_revision: int | None,
         node_id: str | None,
         name: str,
         dependencies: Mapping[str, JsonValue],
     ) -> str:
-        del graph_id, graph_revision, node_id, name, dependencies
+        del workspace_id, graph_id, graph_revision, node_id, name, dependencies
         raise NodeSecretUnavailableError("Node secrets are unavailable in this runtime")
 
 

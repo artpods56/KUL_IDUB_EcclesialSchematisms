@@ -29,6 +29,9 @@ from notarius_core.runtime.persistence import ArtifactWriteContext
 from notarius_storage import LocalFileObjectStore
 
 
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
+
+
 def test_prompt_plugin_declares_fixed_artifacts_nodes_and_port_contracts() -> None:
     registry = PluginRegistry()
     registry.install(IMAGES)
@@ -114,7 +117,7 @@ async def test_message_node_preserves_nested_image_ref_order() -> None:
     )
 
     output = await CreatePromptMessageNode().run(
-        NodeExecutionContext(node_id="message"),
+        NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="message"),
         PromptMessageConfig(role=PromptMessageRole.USER),
         PromptMessageInput(text="Read these pages", images=images),
     )
@@ -137,7 +140,7 @@ async def test_message_node_rejects_unordered_image_sequence_with_context() -> N
 
     with pytest.raises(ValueError, match=str(images.sequence_id)):
         await CreatePromptMessageNode().run(
-            NodeExecutionContext(node_id="message"),
+            NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="message"),
             PromptMessageConfig(role=PromptMessageRole.USER),
             PromptMessageInput(text="Read these pages", images=images),
         )
@@ -152,7 +155,7 @@ async def test_message_node_forbids_images_on_system_messages() -> None:
 
     with pytest.raises(ValidationError, match="System prompt messages cannot include"):
         await CreatePromptMessageNode().run(
-            NodeExecutionContext(node_id="system-message"),
+            NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="system-message"),
             PromptMessageConfig(role=PromptMessageRole.SYSTEM),
             PromptMessageInput(
                 text="Follow these rules",
@@ -185,7 +188,7 @@ async def test_prompt_inline_factories_round_trip_typed_payloads(
         resolver.source: resolver for resolver in registry.build_resolvers(context)
     }
     write_context = ArtifactWriteContext(
-        node_context=NodeExecutionContext(node_id="prompt"),
+        node_context=NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="prompt"),
         provenance=MaterializationProvenance(refs_by_input={}),
     )
     image_ref = ArtifactRef.from_key(
@@ -203,9 +206,14 @@ async def test_prompt_inline_factories_round_trip_typed_payloads(
         write_context,
     )
 
-    assert await resolvers[PROMPT_MESSAGE.key].resolve(message_ref) == message_payload
+    assert (
+        await resolvers[PROMPT_MESSAGE.key].resolve(message_ref, WORKSPACE_ID)
+        == message_payload
+    )
     async with uow as entered:
-        message_artifact = await entered.artifacts.get(message_ref.artifact_id)
+        message_artifact = await entered.artifacts.get(
+            WORKSPACE_ID, message_ref.artifact_id
+        )
     assert message_artifact is not None
     assert message_artifact.inline_payload is not None
     assert message_artifact.inline_payload["image_refs"] == [

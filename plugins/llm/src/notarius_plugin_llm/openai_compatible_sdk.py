@@ -1,6 +1,7 @@
 import json
 import os
 from typing import Final, cast, final, override
+from uuid import UUID
 
 from openai import (
     APIConnectionError,
@@ -82,6 +83,8 @@ class OpenAICompatibleSdkProvider(OpenAICompatibleProvider):
         config: OpenAICompatibleConfig,
         api_key: SecretStr,
         /,
+        *,
+        workspace_id: UUID,
     ) -> OpenAICompatibleProviderResponse:
         image_count = sum(len(message.image_refs) for message in messages)
         if image_count > OPENAI_COMPATIBLE_MAX_IMAGES:
@@ -139,6 +142,7 @@ class OpenAICompatibleSdkProvider(OpenAICompatibleProvider):
                 try:
                     image_url, image_bytes = await image_loader.data_url(
                         image_ref,
+                        workspace_id=workspace_id,
                         remaining_total_bytes=(
                             OPENAI_COMPATIBLE_MAX_TOTAL_IMAGE_BYTES
                             - total_image_bytes

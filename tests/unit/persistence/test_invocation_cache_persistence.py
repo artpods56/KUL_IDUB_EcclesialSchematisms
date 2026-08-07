@@ -5,7 +5,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, text
 
 from notarius_core.artifacts import ArtifactObject, ArtifactRefSequence
 from notarius_core.domain.invocation_cache import InvocationCacheEntry
@@ -15,12 +15,24 @@ from notarius_persistence.orm import metadata
 from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
+
+
 @pytest.fixture
 async def database(tmp_path: Path) -> AsyncIterator[Database]:
     database_path = tmp_path / "invocation-cache.sqlite3"
     created = create_database(f"sqlite+aiosqlite:///{database_path}")
     async with created.engine.begin() as connection:
         await connection.run_sync(metadata.create_all)
+        await connection.execute(
+            text(
+                "INSERT INTO workspaces "
+                "(id, slug, name, kind, created_at, updated_at) VALUES "
+                "(:id, 'cache-workspace', 'Cache workspace', 'shared', "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            ),
+            {"id": WORKSPACE_ID.hex},
+        )
     try:
         yield created
     finally:
@@ -29,6 +41,7 @@ async def database(tmp_path: Path) -> AsyncIterator[Database]:
 
 def _artifact(artifact_id: str, content_hash: str) -> ArtifactObject:
     return ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         id=UUID(artifact_id),
         artifact_type="scalar.integer",
         schema_version=1,
@@ -63,6 +76,7 @@ async def test_cache_entry_and_batch_artifacts_round_trip_in_a_fresh_session(
         metadata={"source_sequence_id": "source"},
     )
     entry = InvocationCacheEntry(
+        workspace_id=WORKSPACE_ID,
         key_sha256="d" * 64,
         outputs={"single": first.ref(), "sequence": sequence},
         generation=UUID("00000000-0000-0000-0000-000000000204"),
@@ -76,8 +90,9 @@ async def test_cache_entry_and_batch_artifacts_round_trip_in_a_fresh_session(
         await entered.commit()
 
     async with unit_of_work as entered:
-        loaded = await entered.invocation_cache.get(entry.key_sha256)
+        loaded = await entered.invocation_cache.get(WORKSPACE_ID, entry.key_sha256)
         artifacts = await entered.artifacts.get_many(
+            WORKSPACE_ID,
             {
                 first.id,
                 second.id,
@@ -100,6 +115,7 @@ async def test_concurrent_cache_publication_is_first_writer_wins(
 ) -> None:
     unit_of_work = SqlAlchemyUnitOfWork(database.sessions)
     first = InvocationCacheEntry(
+        workspace_id=WORKSPACE_ID,
         key_sha256="e" * 64,
         outputs={
             "first": _artifact(
@@ -109,6 +125,7 @@ async def test_concurrent_cache_publication_is_first_writer_wins(
         },
     )
     second = InvocationCacheEntry(
+        workspace_id=WORKSPACE_ID,
         key_sha256=first.key_sha256,
         outputs={
             "second": _artifact(
@@ -173,7 +190,7 @@ async def test_concurrent_cache_publication_is_first_writer_wins(
         )
 
     async with unit_of_work as entered:
-        loaded = await entered.invocation_cache.get(first.key_sha256)
+        loaded = await entered.invocation_cache.get(WORKSPACE_ID, first.key_sha256)
 
     assert insert_count == 2
     assert loaded is not None
@@ -186,14 +203,19 @@ async def test_stale_generation_cannot_remove_a_new_cache_entry(
     database: Database,
 ) -> None:
     unit_of_work = SqlAlchemyUnitOfWork(database.sessions)
-    stale = InvocationCacheEntry(key_sha256="f" * 64, outputs={})
-    fresh = InvocationCacheEntry(key_sha256=stale.key_sha256, outputs={})
+    stale = InvocationCacheEntry(
+        workspace_id=WORKSPACE_ID, key_sha256="f" * 64, outputs={}
+    )
+    fresh = InvocationCacheEntry(
+        workspace_id=WORKSPACE_ID, key_sha256=stale.key_sha256, outputs={}
+    )
 
     async with unit_of_work as entered:
         assert await entered.invocation_cache.put_if_absent(stale)
         await entered.commit()
     async with unit_of_work as entered:
         assert await entered.invocation_cache.remove_if_current(
+            WORKSPACE_ID,
             stale.key_sha256,
             stale.generation,
         )
@@ -203,12 +225,13 @@ async def test_stale_generation_cannot_remove_a_new_cache_entry(
         await entered.commit()
     async with unit_of_work as entered:
         assert not await entered.invocation_cache.remove_if_current(
+            WORKSPACE_ID,
             stale.key_sha256,
             stale.generation,
         )
         await entered.commit()
     async with unit_of_work as entered:
-        loaded = await entered.invocation_cache.get(stale.key_sha256)
+        loaded = await entered.invocation_cache.get(WORKSPACE_ID, stale.key_sha256)
 
     assert loaded is not None
     assert loaded.generation == fresh.generation

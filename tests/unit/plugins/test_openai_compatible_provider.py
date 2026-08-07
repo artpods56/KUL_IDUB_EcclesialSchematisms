@@ -2,7 +2,7 @@ import json
 from collections.abc import AsyncIterator, Callable
 from io import BytesIO
 from typing import cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -24,6 +24,10 @@ from notarius_plugin_llm.openai_compatible_sdk import (
     OPENAI_COMPATIBLE_MAX_IMAGES,
     OpenAICompatibleSdkProvider,
 )
+
+
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
+OTHER_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000902")
 
 
 class RequestRecorder:
@@ -107,6 +111,7 @@ class TransportRequestRecorder:
 class FakeStorage:
     def __init__(self) -> None:
         self.files: dict[tuple[str, str], bytes] = {}
+        self.load_calls: list[tuple[str, str]] = []
 
     async def save(self, command: SaveFileCommand) -> StoredFile:
         raise AssertionError(f"Unexpected save to {command.bucket}/{command.path}")
@@ -122,6 +127,7 @@ class FakeStorage:
         )
 
     async def load(self, bucket: str, path: str) -> BytesIO:
+        self.load_calls.append((bucket, path))
         return BytesIO(self.files[(bucket, path)])
 
     async def stat(self, bucket: str, path: str) -> StoredObjectInfo | None:
@@ -171,9 +177,11 @@ async def add_stored_image(
     storage: FakeStorage,
     *,
     name: str,
+    workspace_id: UUID,
     content: bytes = b"image-bytes",
 ) -> ArtifactObject:
     image = ArtifactObject(
+        workspace_id=workspace_id,
         id=uuid4(),
         artifact_type=RASTER_IMAGE.key.id,
         schema_version=RASTER_IMAGE.key.schema_version,
@@ -315,6 +323,7 @@ async def test_provider_posts_text_chat_completion_with_bearer_secret(
         None,
         config,
         SecretStr("secret-provider-key"),
+        workspace_id=WORKSPACE_ID,
     )
 
     assert len(recorder.requests) == 1
@@ -370,6 +379,7 @@ async def test_provider_requests_and_validates_structured_output(
         schema,
         config,
         SecretStr("secret-provider-key"),
+        workspace_id=WORKSPACE_ID,
     )
 
     request_payload = cast(JsonObject, json.loads(recorder.requests[0].content))
@@ -412,6 +422,7 @@ async def test_provider_rejects_a_structured_value_that_misses_the_schema(
             object_schema(),
             OpenAICompatibleConfig(),
             SecretStr("secret-provider-key"),
+            workspace_id=WORKSPACE_ID,
         )
 
     assert captured.value.__cause__ is None
@@ -432,6 +443,7 @@ async def test_provider_reports_refusal_without_exposing_refusal_text(
             None,
             OpenAICompatibleConfig(),
             SecretStr("secret-provider-key"),
+            workspace_id=WORKSPACE_ID,
         )
 
     assert refusal_text not in str(captured.value)
@@ -454,6 +466,7 @@ async def test_provider_does_not_follow_redirects_with_a_bearer_secret(
             None,
             OpenAICompatibleConfig(),
             SecretStr("secret-provider-key"),
+            workspace_id=WORKSPACE_ID,
         )
 
     assert len(recorder.requests) == 1
@@ -475,6 +488,7 @@ async def test_provider_error_never_contains_response_body_or_api_key(
             None,
             OpenAICompatibleConfig(),
             SecretStr(api_key),
+            workspace_id=WORKSPACE_ID,
         )
 
     assert api_key not in str(captured.value)
@@ -518,6 +532,7 @@ async def test_provider_status_errors_include_safe_actionable_guidance(
             object_schema(),
             OpenAICompatibleConfig(model="provider/model"),
             SecretStr(api_key),
+            workspace_id=WORKSPACE_ID,
         )
 
     message = str(captured.value)
@@ -550,6 +565,7 @@ async def test_provider_does_not_forward_openai_server_environment_headers(
         None,
         OpenAICompatibleConfig(),
         SecretStr("graph-provider-key"),
+        workspace_id=WORKSPACE_ID,
     )
 
     assert result.content == "A concise answer."
@@ -575,6 +591,7 @@ async def test_provider_sanitizes_sdk_timeout_and_closes_client(
             None,
             OpenAICompatibleConfig(),
             SecretStr("secret-provider-key"),
+            workspace_id=WORKSPACE_ID,
         )
 
     assert "secret-provider-key" not in str(captured.value)
@@ -598,6 +615,7 @@ async def test_provider_sanitizes_sdk_connection_error_and_closes_client(
             None,
             OpenAICompatibleConfig(),
             SecretStr("secret-provider-key"),
+            workspace_id=WORKSPACE_ID,
         )
 
     assert "secret-provider-key" not in str(captured.value)
@@ -631,6 +649,7 @@ async def test_provider_rejects_malformed_sdk_response_model(
             None,
             OpenAICompatibleConfig(),
             SecretStr("secret-provider-key"),
+            workspace_id=WORKSPACE_ID,
         )
 
     assert captured.value.__cause__ is None
@@ -642,7 +661,9 @@ async def test_provider_sends_verified_images_as_openai_content_parts(
 ) -> None:
     uow = InMemoryUnitOfWork()
     storage = FakeStorage()
-    image = await add_stored_image(uow, storage, name="page")
+    image = await add_stored_image(
+        uow, storage, name="page", workspace_id=WORKSPACE_ID
+    )
     recorder = RequestRecorder(completion_response())
     provider = sdk_provider(
         monkeypatch,
@@ -662,6 +683,7 @@ async def test_provider_sends_verified_images_as_openai_content_parts(
         None,
         OpenAICompatibleConfig(),
         SecretStr("secret-provider-key"),
+        workspace_id=WORKSPACE_ID,
     )
 
     request_payload = cast(JsonObject, json.loads(recorder.requests[0].content))
@@ -681,6 +703,44 @@ async def test_provider_sends_verified_images_as_openai_content_parts(
     ]
 
 
+async def test_provider_rejects_foreign_workspace_image_before_storage_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uow = InMemoryUnitOfWork()
+    storage = FakeStorage()
+    image = await add_stored_image(
+        uow, storage, name="private", workspace_id=WORKSPACE_ID
+    )
+    recorder = RequestRecorder(completion_response())
+    provider = sdk_provider(
+        monkeypatch,
+        recorder,
+        uow=uow,
+        storage=storage,
+    )
+
+    with pytest.raises(
+        OpenAICompatibleProviderError,
+        match=f"Prompt image artifact {image.id} was not found",
+    ):
+        await provider.complete(
+            [
+                PromptMessage(
+                    role=PromptMessageRole.USER,
+                    text="Read the image.",
+                    image_refs=[image.ref()],
+                )
+            ],
+            None,
+            OpenAICompatibleConfig(),
+            SecretStr("secret-provider-key"),
+            workspace_id=OTHER_WORKSPACE_ID,
+        )
+
+    assert storage.load_calls == []
+    assert recorder.requests == []
+
+
 async def test_provider_enforces_image_count_before_loading_artifacts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -688,6 +748,7 @@ async def test_provider_enforces_image_count_before_loading_artifacts(
     provider = sdk_provider(monkeypatch, recorder)
     image_refs = [
         ArtifactObject(
+            workspace_id=WORKSPACE_ID,
             id=uuid4(),
             artifact_type=RASTER_IMAGE.key.id,
             schema_version=RASTER_IMAGE.key.schema_version,
@@ -708,6 +769,7 @@ async def test_provider_enforces_image_count_before_loading_artifacts(
             None,
             OpenAICompatibleConfig(),
             SecretStr("secret-provider-key"),
+            workspace_id=WORKSPACE_ID,
         )
 
     assert recorder.requests == []
@@ -727,12 +789,14 @@ async def test_provider_enforces_aggregate_image_limit_before_request(
         uow,
         storage,
         name="first",
+        workspace_id=WORKSPACE_ID,
         content=b"12345",
     )
     second = await add_stored_image(
         uow,
         storage,
         name="second",
+        workspace_id=WORKSPACE_ID,
         content=b"67890",
     )
     recorder = RequestRecorder(completion_response())
@@ -758,6 +822,7 @@ async def test_provider_enforces_aggregate_image_limit_before_request(
             None,
             OpenAICompatibleConfig(),
             SecretStr("secret-provider-key"),
+            workspace_id=WORKSPACE_ID,
         )
 
     assert recorder.requests == []

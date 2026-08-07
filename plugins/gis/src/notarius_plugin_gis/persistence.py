@@ -193,7 +193,7 @@ class FeatureCollectionOutputWriter(ArtifactOutputWriter):
             collections=[JsonCollection(id="features", items=payload.features)],
             metadata=_json_metadata(manifest_metadata),
             node_id=context.node_context.node_id,
-            path_prefix=f"workspaces/{context.node_context.workspace_id}/",
+            workspace_id=context.node_context.workspace_id,
         )
 
         vector_projection: VectorProjectionMetadata | None = None

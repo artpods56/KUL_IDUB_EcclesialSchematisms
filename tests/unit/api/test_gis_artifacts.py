@@ -5,6 +5,7 @@ from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 from typing import cast
+from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
@@ -244,6 +245,7 @@ async def _feature_artifact(
             },
         ),
         node_id="features",
+        workspace_id=UUID("00000000-0000-0000-0000-000000000901"),
     )
     logical_payload = {
         "type": "FeatureCollection",

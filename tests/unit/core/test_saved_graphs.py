@@ -20,6 +20,9 @@ from notarius_core.domain.saved_graphs import (
 )
 
 
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
+
+
 def _node(
     node_id: str,
     *,
@@ -385,7 +388,11 @@ def test_saved_graph_document_rejects_edges_to_missing_nodes(
 @pytest.mark.parametrize("name", ["", "   ", "x" * 161])
 def test_saved_graph_rejects_invalid_names(name: str) -> None:
     with pytest.raises(ValueError, match="Saved graph name"):
-        SavedGraph(name=name, document=SavedGraphDocument())
+        SavedGraph(
+            workspace_id=WORKSPACE_ID,
+            name=name,
+            document=SavedGraphDocument(),
+        )
 
 
 def test_saved_graph_requires_positive_revision_and_aware_timestamps() -> None:
@@ -394,6 +401,7 @@ def test_saved_graph_requires_positive_revision_and_aware_timestamps() -> None:
 
     with pytest.raises(ValueError, match="revision must be at least 1"):
         SavedGraph(
+            workspace_id=WORKSPACE_ID,
             name="Draft",
             document=SavedGraphDocument(),
             revision=0,
@@ -403,6 +411,7 @@ def test_saved_graph_requires_positive_revision_and_aware_timestamps() -> None:
 
     with pytest.raises(ValueError, match="timestamps must be timezone-aware"):
         SavedGraph(
+            workspace_id=WORKSPACE_ID,
             name="Draft",
             document=SavedGraphDocument(),
             created_at=naive,
@@ -416,6 +425,7 @@ def test_saved_graph_replace_normalizes_name_and_advances_revision() -> None:
     updated_at = datetime(2026, 7, 14, 9, 45, tzinfo=UTC)
     replacement = SavedGraphDocument(nodes=(_node("draft-node"),))
     graph = SavedGraph(
+        workspace_id=WORKSPACE_ID,
         id=graph_id,
         name="Original",
         document=SavedGraphDocument(),
@@ -439,7 +449,11 @@ def test_saved_graph_replace_normalizes_name_and_advances_revision() -> None:
 
 
 def test_saved_graph_replace_rejects_stale_revision_without_mutating_graph() -> None:
-    graph = SavedGraph(name="Original", document=SavedGraphDocument())
+    graph = SavedGraph(
+        workspace_id=WORKSPACE_ID,
+        name="Original",
+        document=SavedGraphDocument(),
+    )
     original_updated_at = graph.updated_at
 
     with pytest.raises(SavedGraphRevisionConflictError) as raised:
@@ -459,7 +473,11 @@ def test_saved_graph_replace_rejects_stale_revision_without_mutating_graph() -> 
 
 
 def test_saved_graph_replace_preserves_timezone_aware_timestamp_invariant() -> None:
-    graph = SavedGraph(name="Draft", document=SavedGraphDocument())
+    graph = SavedGraph(
+        workspace_id=WORKSPACE_ID,
+        name="Draft",
+        document=SavedGraphDocument(),
+    )
 
     with pytest.raises(ValueError, match="timezone-aware"):
         graph.replace(

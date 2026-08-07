@@ -16,12 +16,17 @@ INVOCATION_CACHE_FINGERPRINT_VERSION = 2
 
 
 class InvocationCachePort(Protocol):
-    async def get(self, key_sha256: str) -> InvocationCacheEntry | None: ...
+    async def get(
+        self,
+        workspace_id: UUID,
+        key_sha256: str,
+    ) -> InvocationCacheEntry | None: ...
 
     async def put_if_absent(self, entry: InvocationCacheEntry) -> bool: ...
 
     async def remove_if_current(
         self,
+        workspace_id: UUID,
         key_sha256: str,
         generation: UUID,
     ) -> bool: ...
@@ -29,8 +34,12 @@ class InvocationCachePort(Protocol):
 
 @final
 class DisabledInvocationCache(InvocationCachePort):
-    async def get(self, key_sha256: str) -> InvocationCacheEntry | None:
-        del key_sha256
+    async def get(
+        self,
+        workspace_id: UUID,
+        key_sha256: str,
+    ) -> InvocationCacheEntry | None:
+        del workspace_id, key_sha256
         return None
 
     async def put_if_absent(self, entry: InvocationCacheEntry) -> bool:
@@ -39,10 +48,11 @@ class DisabledInvocationCache(InvocationCachePort):
 
     async def remove_if_current(
         self,
+        workspace_id: UUID,
         key_sha256: str,
         generation: UUID,
     ) -> bool:
-        del key_sha256, generation
+        del workspace_id, key_sha256, generation
         return False
 
 

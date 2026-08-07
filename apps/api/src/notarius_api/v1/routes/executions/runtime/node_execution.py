@@ -126,6 +126,7 @@ class NodeExecutionService:
                 opaque_secret_revisions[
                     secret_input.name
                 ] = await self._node_secrets.cache_revision(
+                    workspace_id=node_context.workspace_id,
                     graph_id=node_context.secret_graph_id,
                     graph_revision=node_context.secret_graph_revision,
                     node_id=node_context.node_id,

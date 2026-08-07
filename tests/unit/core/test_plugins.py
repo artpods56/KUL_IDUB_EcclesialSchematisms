@@ -1,6 +1,7 @@
 from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
+from uuid import UUID
 from typing import Annotated, cast, override
 
 import pytest
@@ -39,6 +40,9 @@ from notarius_core.plugins import (
 )
 from notarius_core.ports.node_secrets import NodeSecretUnavailableError
 from notarius_storage import LocalFileObjectStore
+
+
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
 
 
 def _stringify_integer(value: int) -> str:
@@ -280,7 +284,9 @@ async def test_function_node_registers_an_ordinary_runtime_node(tmp_path: Path) 
 
     registration = registry.node_registration("example.function", 1)
     node = registry.build_node("example.function", 1, runtime_context(tmp_path))
-    result = await node.run(NodeExecutionContext(), NoConfig(), EmptyInput())
+    result = await node.run(
+        NodeExecutionContext(workspace_id=WORKSPACE_ID), NoConfig(), EmptyInput()
+    )
 
     assert decorated is empty_function_node
     assert registration.node_class.config_contract.model is NoConfig
@@ -305,7 +311,7 @@ async def test_function_node_can_opt_into_execution_context(tmp_path: Path) -> N
     registry = PluginRegistry()
     registry.install(plugin)
     registry.freeze()
-    context = NodeExecutionContext(node_id="context-node")
+    context = NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="context-node")
 
     node = registry.build_node(
         "example.context-function",
@@ -323,22 +329,25 @@ async def test_function_node_can_opt_into_execution_context(tmp_path: Path) -> N
 async def test_node_context_progress_is_validated_and_survives_replacement() -> None:
     reporter = RecordingProgressReporter()
     context = NodeExecutionContext(
+        workspace_id=WORKSPACE_ID,
         node_id="mapped-node",
         node_path=("module-instance", "mapped-node"),
         progress_reporter=reporter,
     )
     mapped_context = replace(context, invocation_index=2)
 
-    await NodeExecutionContext().progress("No reporter is a no-op")
+    await NodeExecutionContext(workspace_id=WORKSPACE_ID).progress(
+        "No reporter is a no-op"
+    )
     await mapped_context.progress("  Preparing payload  ", current=2, total=4)
     await mapped_context.progress(
         "At the counter boundary",
         current=MAX_NODE_PROGRESS_COUNTER,
         total=MAX_NODE_PROGRESS_COUNTER,
     )
-    await NodeExecutionContext(progress_reporter=FailingProgressReporter()).progress(
-        "Best effort"
-    )
+    await NodeExecutionContext(
+        workspace_id=WORKSPACE_ID, progress_reporter=FailingProgressReporter()
+    ).progress("Best effort")
 
     assert reporter.reports == [
         (mapped_context, "Preparing payload", 2, 4),
@@ -428,6 +437,7 @@ async def test_default_runtime_node_secret_resolver_fails_closed(
 
     with pytest.raises(NodeSecretUnavailableError, match="unavailable"):
         await context.node_secrets.resolve_secret(
+            workspace_id=WORKSPACE_ID,
             graph_id=None,
             graph_revision=None,
             node_id=None,

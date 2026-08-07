@@ -197,6 +197,7 @@ class NodeSecretService(NodeSecretResolverPort):
     async def resolve_secret(
         self,
         *,
+        workspace_id: UUID,
         graph_id: UUID | None,
         graph_revision: int | None,
         node_id: str | None,
@@ -209,6 +210,7 @@ class NodeSecretService(NodeSecretResolverPort):
             node_id=node_id,
             name=name,
             dependencies=dependencies,
+            workspace_id=workspace_id,
         )
 
         key, key_id = self._resolved_encryption_key()
@@ -237,6 +239,7 @@ class NodeSecretService(NodeSecretResolverPort):
     async def cache_revision(
         self,
         *,
+        workspace_id: UUID,
         graph_id: UUID | None,
         graph_revision: int | None,
         node_id: str | None,
@@ -249,6 +252,7 @@ class NodeSecretService(NodeSecretResolverPort):
             node_id=node_id,
             name=name,
             dependencies=dependencies,
+            workspace_id=workspace_id,
         )
         _, active_key_id = self._resolved_encryption_key()
         if encrypted.key_id != active_key_id:
@@ -260,6 +264,7 @@ class NodeSecretService(NodeSecretResolverPort):
     async def _validated_secret_record(
         self,
         *,
+        workspace_id: UUID,
         graph_id: UUID | None,
         graph_revision: int | None,
         node_id: str | None,
@@ -272,6 +277,7 @@ class NodeSecretService(NodeSecretResolverPort):
             )
         async with self._unit_of_work_factory() as unit_of_work:
             graph_revision_snapshot = await unit_of_work.graphs.get_revision(
+                workspace_id,
                 graph_id,
                 graph_revision,
             )
@@ -294,7 +300,12 @@ class NodeSecretService(NodeSecretResolverPort):
                 raise NodeSecretUnavailableError(
                     "Configured node secret does not match the saved node configuration"
                 )
-            encrypted = await unit_of_work.node_secrets.get(graph_id, node_id, name)
+            encrypted = await unit_of_work.node_secrets.get(
+                workspace_id,
+                graph_id,
+                node_id,
+                name,
+            )
         if encrypted is None:
             raise NodeSecretUnavailableError("Required node secret is not configured")
         expected_dependency_sha256 = node_secret_dependency_sha256(binding.dependencies)

@@ -217,7 +217,7 @@ class ArtifactRepositoryPort(Protocol):
 
 @dataclass(slots=True)
 class InMemoryDataStore:
-    artifacts: dict[tuple[UUID, UUID], ArtifactObject] = field(default_factory=dict)
+    artifacts: dict[UUID, ArtifactObject] = field(default_factory=dict)
     materialized_outputs: dict[
         tuple[UUID, UUID, int, str],
         "MaterializedNodeOutputs",
@@ -226,7 +226,7 @@ class InMemoryDataStore:
         default_factory=dict
     )
     graph_executions: dict[
-        tuple[UUID, UUID],
+        UUID,
         "GraphExecution",
     ] = field(default_factory=dict)
     graph_execution_node_results: dict[
@@ -272,7 +272,11 @@ class InMemoryArtifactRepository(ArtifactRepositoryPort):
 
     @override
     async def add(self, artifact: ArtifactObject) -> None:
-        self._store.artifacts[(artifact.workspace_id, artifact.id)] = artifact
+        if artifact.id in self._store.artifacts:
+            raise ObjectAlreadyExistsError(
+                f"Artifact already exists: {artifact.id}"
+            )
+        self._store.artifacts[artifact.id] = artifact
 
     @override
     async def get(
@@ -280,7 +284,10 @@ class InMemoryArtifactRepository(ArtifactRepositoryPort):
         workspace_id: UUID,
         artifact_id: UUID,
     ) -> ArtifactObject | None:
-        return self._store.artifacts.get((workspace_id, artifact_id))
+        artifact = self._store.artifacts.get(artifact_id)
+        if artifact is None or artifact.workspace_id != workspace_id:
+            return None
+        return artifact
 
     @override
     async def get_many(
@@ -292,15 +299,18 @@ class InMemoryArtifactRepository(ArtifactRepositoryPort):
             artifact_id: artifact
             for artifact_id in artifact_ids
             if (
-                artifact := self._store.artifacts.get((workspace_id, artifact_id))
+                artifact := self._store.artifacts.get(artifact_id)
             ) is not None
+            and artifact.workspace_id == workspace_id
         }
 
     @override
     async def remove(self, workspace_id: UUID, artifact: ArtifactObject) -> None:
         if artifact.workspace_id != workspace_id:
             return
-        self._store.artifacts.pop((workspace_id, artifact.id), None)
+        stored = self._store.artifacts.get(artifact.id)
+        if stored is not None and stored.workspace_id == workspace_id:
+            self._store.artifacts.pop(artifact.id, None)
 
     @override
     async def list_by_type(
@@ -402,9 +412,7 @@ class InMemoryGraphExecutionHistoryRepository:
         self._store = store
 
     async def add(self, execution: "GraphExecution") -> None:
-        from notarius_core.domain.errors import ObjectAlreadyExistsError
-
-        execution_key = (execution.workspace_id, execution.execution_id)
+        execution_key = execution.execution_id
         if execution_key in self._store.graph_executions:
             raise ObjectAlreadyExistsError(
                 f"Graph execution already exists: {execution.execution_id}"
@@ -412,12 +420,10 @@ class InMemoryGraphExecutionHistoryRepository:
         self._store.graph_executions[execution_key] = _clone(execution)
 
     async def update(self, execution: "GraphExecution") -> None:
-        from notarius_core.domain.errors import NotFoundError
-
-        current = self._store.graph_executions.get(
-            (execution.workspace_id, execution.execution_id)
-        )
+        current = self._store.graph_executions.get(execution.execution_id)
         if current is None:
+            raise NotFoundError("Graph execution", str(execution.execution_id))
+        if current.workspace_id != execution.workspace_id:
             raise NotFoundError("Graph execution", str(execution.execution_id))
         if (
             current.graph_id != execution.graph_id
@@ -430,17 +436,13 @@ class InMemoryGraphExecutionHistoryRepository:
                 f"Graph execution {execution.execution_id} identity and request "
                 "fields are immutable"
             )
-        self._store.graph_executions[
-            (execution.workspace_id, execution.execution_id)
-        ] = _clone(execution)
+        self._store.graph_executions[execution.execution_id] = _clone(execution)
 
     async def add_node_result(self, result: "GraphExecutionNodeResult") -> None:
-        from notarius_core.domain.errors import NotFoundError, ObjectAlreadyExistsError
-
-        execution = self._store.graph_executions.get(
-            (result.workspace_id, result.execution_id)
-        )
+        execution = self._store.graph_executions.get(result.execution_id)
         if execution is None:
+            raise NotFoundError("Graph execution", str(result.execution_id))
+        if execution.workspace_id != result.workspace_id:
             raise NotFoundError("Graph execution", str(result.execution_id))
         if result.node_id not in execution.requested_node_ids:
             raise ValueError(
@@ -472,8 +474,8 @@ class InMemoryGraphExecutionHistoryRepository:
     ) -> "GraphExecutionDetail | None":
         from notarius_core.domain.execution_history import GraphExecutionDetail
 
-        execution = self._store.graph_executions.get((workspace_id, execution_id))
-        if execution is None:
+        execution = self._store.graph_executions.get(execution_id)
+        if execution is None or execution.workspace_id != workspace_id:
             return None
         node_results = sorted(
             (
@@ -700,3 +702,9 @@ class InMemoryUnitOfWork(UnitOfWorkPort):
         if state is None:
             raise RuntimeError("Unit of work is not entered")
         return state
+
+
+from notarius_core.domain.errors import (  # noqa: E402  # domain package imports artifacts
+    NotFoundError,
+    ObjectAlreadyExistsError,
+)

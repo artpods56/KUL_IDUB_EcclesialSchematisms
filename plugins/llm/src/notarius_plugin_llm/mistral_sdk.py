@@ -1,6 +1,7 @@
 import json
 import os
 from typing import Any, Final, Protocol, cast, final, override
+from uuid import UUID
 
 from mistralai.client.models.chatcompletionresponse import ChatCompletionResponse
 from mistralai.client.models.contentchunk import ContentChunk
@@ -89,9 +90,11 @@ class MistralSdkStructuredProvider(MistralStructuredProvider):
         json_schema: str,
         config: MistralStructuredConfig,
         /,
+        *,
+        workspace_id: UUID,
     ) -> MistralStructuredProviderResponse:
         schema_definition = parse_json_schema(json_schema)
-        sdk_messages = await self._sdk_messages(messages)
+        sdk_messages = await self._sdk_messages(messages, workspace_id=workspace_id)
         endpoint = self._endpoint
         if endpoint is None:
             api_key = os.getenv("MISTRAL_API_KEY")
@@ -207,6 +210,8 @@ class MistralSdkStructuredProvider(MistralStructuredProvider):
     async def _sdk_messages(
         self,
         messages: list[PromptMessage],
+        *,
+        workspace_id: UUID,
     ) -> list[MistralSdkMessage]:
         image_count = sum(len(message.image_refs) for message in messages)
         if image_count > MISTRAL_MAX_IMAGES:
@@ -248,6 +253,7 @@ class MistralSdkStructuredProvider(MistralStructuredProvider):
                 try:
                     image_url, image_bytes = await image_loader.data_url(
                         image_ref,
+                        workspace_id=workspace_id,
                         remaining_total_bytes=(
                             MISTRAL_MAX_TOTAL_IMAGE_BYTES - total_image_bytes
                         ),

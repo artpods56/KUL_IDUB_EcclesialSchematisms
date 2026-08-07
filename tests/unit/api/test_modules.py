@@ -85,6 +85,7 @@ class SecretGateNode(Node[SecretGateConfig, SecretGateInput, SecretGateOutput]):
         /,
     ) -> SecretGateOutput:
         secret = await self._node_secrets.resolve_secret(
+            workspace_id=context.workspace_id,
             graph_id=context.secret_graph_id,
             graph_revision=context.secret_graph_revision,
             node_id=context.node_id,

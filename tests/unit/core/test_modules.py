@@ -51,6 +51,7 @@ from notarius_core.runtime.resolvers import ResolverRegistry
 VALUE_TYPE = ArtifactTypeKey("example.value", 1)
 OTHER_TYPE = ArtifactTypeKey("example.other", 1)
 GRAPH_ID = UUID("00000000-0000-0000-0000-000000000123")
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
 
 
 def _binding(
@@ -127,6 +128,7 @@ def _document(
 def _definition() -> GraphModuleDefinition:
     return GraphModuleDefinition.from_saved_graph(
         SavedGraph(
+            workspace_id=WORKSPACE_ID,
             id=GRAPH_ID,
             revision=3,
             name="Example module",
@@ -138,6 +140,7 @@ def _definition() -> GraphModuleDefinition:
 def _optional_definition() -> GraphModuleDefinition:
     return GraphModuleDefinition.from_saved_graph(
         SavedGraph(
+            workspace_id=WORKSPACE_ID,
             id=GRAPH_ID,
             revision=4,
             name="Optional input module",
@@ -321,6 +324,7 @@ def test_graph_module_reference_rejects_ambiguous_virtual_identities(
 
 def test_graph_module_definition_derives_ordered_typed_public_ports() -> None:
     graph = SavedGraph(
+        workspace_id=WORKSPACE_ID,
         id=GRAPH_ID,
         revision=3,
         name="  Example module  ",
@@ -548,7 +552,7 @@ async def test_module_input_cannot_execute_outside_a_graph_module() -> None:
         match="public input 'source'.*inside a graph module",
     ):
         await ModuleInputNode().run(
-            NodeExecutionContext(node_id="module-input"),
+            NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="module-input"),
             ModuleInputConfig(public_name="source"),
             ModuleInputNode.input_contract.model(),
         )
@@ -559,7 +563,7 @@ async def test_module_output_preserves_the_boundary_artifact_ref() -> None:
     ref = ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE_TYPE)
 
     output = await ModuleOutputNode().run(
-        NodeExecutionContext(node_id="module-output"),
+        NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="module-output"),
         ModuleBoundaryConfig(public_name="result"),
         ModuleOutputNode.input_contract.model(value=ref),
     )
@@ -602,6 +606,7 @@ async def test_graph_module_node_delegates_and_preserves_refs_through_runtime() 
     node = GraphModuleNode(definition, executor)
     source = ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE_TYPE)
     context = NodeExecutionContext(
+        workspace_id=WORKSPACE_ID,
         node_id="module-instance",
         module_path=("parent-module",),
     )
@@ -629,7 +634,9 @@ async def test_graph_module_node_omits_absent_optional_inputs_from_execution() -
 
     result = await _runtime().run_node(
         node,
-        NodeExecutionContext(node_id="optional-module-instance"),
+        NodeExecutionContext(
+            workspace_id=WORKSPACE_ID, node_id="optional-module-instance"
+        ),
         {"required_source": source},
     )
 
@@ -649,7 +656,9 @@ async def test_graph_module_node_rejects_absent_required_input_with_context() ->
         match="graph.module.*required input 'required_source' was absent",
     ):
         await node.run(
-            NodeExecutionContext(node_id="optional-module-instance"),
+            NodeExecutionContext(
+                workspace_id=WORKSPACE_ID, node_id="optional-module-instance"
+            ),
             node.config_contract.model(),
             inputs,
         )
@@ -666,7 +675,7 @@ async def test_graph_module_node_preserves_inner_failure_as_contextual_cause() -
     ) as raised:
         await _runtime().run_node(
             node,
-            NodeExecutionContext(node_id="module-instance"),
+            NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="module-instance"),
             {"source": source},
         )
 

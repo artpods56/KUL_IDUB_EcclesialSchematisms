@@ -26,6 +26,9 @@ from notarius_plugin_llm.openai_compatible import (
 )
 
 
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
+
+
 class FakeNodeSecrets:
     def __init__(
         self,
@@ -43,6 +46,7 @@ class FakeNodeSecrets:
     async def resolve_secret(
         self,
         *,
+        workspace_id: UUID,
         graph_id: UUID | None,
         graph_revision: int | None,
         node_id: str | None,
@@ -50,6 +54,7 @@ class FakeNodeSecrets:
         dependencies: Mapping[str, JsonValue],
     ) -> SecretStr:
         self.graph_id = graph_id
+        assert workspace_id == WORKSPACE_ID
         self.graph_revision = graph_revision
         self.node_id = node_id
         self.name = name
@@ -61,13 +66,14 @@ class FakeNodeSecrets:
     async def cache_revision(
         self,
         *,
+        workspace_id: UUID,
         graph_id: UUID | None,
         graph_revision: int | None,
         node_id: str | None,
         name: str,
         dependencies: Mapping[str, JsonValue],
     ) -> str:
-        del graph_id, graph_revision, node_id, name, dependencies
+        del workspace_id, graph_id, graph_revision, node_id, name, dependencies
         return "0" * 64
 
 
@@ -91,11 +97,14 @@ class FakeProvider:
         config: OpenAICompatibleConfig,
         api_key: SecretStr,
         /,
+        *,
+        workspace_id: UUID,
     ) -> OpenAICompatibleProviderResponse:
         self.messages = messages
         self.json_schema = json_schema
         self.config = config
         self.api_key = api_key
+        assert workspace_id == WORKSPACE_ID
         if self._error is not None:
             raise self._error
         return self._response
@@ -171,6 +180,7 @@ async def test_node_resolves_bound_secret_and_builds_completion_artifact() -> No
 
     output = await node.run(
         NodeExecutionContext(
+            workspace_id=WORKSPACE_ID,
             secret_graph_id=graph_id,
             secret_graph_revision=3,
             node_id="completion-1",
@@ -221,6 +231,7 @@ async def test_node_does_not_use_materialization_graph_as_secret_context() -> No
 
     await node.run(
         NodeExecutionContext(
+            workspace_id=WORKSPACE_ID,
             graph_id=uuid4(),
             graph_revision=4,
             node_id="completion-1",
@@ -256,6 +267,7 @@ async def test_node_builds_schema_validated_completion_artifact() -> None:
 
     output = await node.run(
         NodeExecutionContext(
+            workspace_id=WORKSPACE_ID,
             secret_graph_id=uuid4(),
             secret_graph_revision=1,
             node_id="structured-1",
@@ -308,6 +320,7 @@ async def test_node_maps_provider_error_without_rendering_secret_or_body() -> No
     ) as captured:
         await node.run(
             NodeExecutionContext(
+                workspace_id=WORKSPACE_ID,
                 secret_graph_id=uuid4(),
                 secret_graph_revision=1,
                 node_id="completion-1",
@@ -350,6 +363,7 @@ async def test_node_surfaces_sanitized_provider_error_with_its_cause() -> None:
     ) as captured:
         await node.run(
             NodeExecutionContext(
+                workspace_id=WORKSPACE_ID,
                 secret_graph_id=uuid4(),
                 secret_graph_revision=1,
                 node_id="completion-1",
@@ -391,6 +405,7 @@ async def test_node_maps_secret_lookup_error_without_rendering_secret() -> None:
     ) as captured:
         await node.run(
             NodeExecutionContext(
+                workspace_id=WORKSPACE_ID,
                 secret_graph_id=uuid4(),
                 secret_graph_revision=1,
                 node_id="completion-1",
