@@ -228,8 +228,8 @@ async def test_cache_evicts_a_table_with_a_missing_chunk(tmp_path: Path) -> None
         ),
         ArtifactWriteContext(
             node_context=NodeExecutionContext(
-                workspace_id=WORKSPACE_ID, node_id="table"
                 node_id="table",
+                workspace_id=WORKSPACE_ID,
             ),
             provenance=MaterializationProvenance(refs_by_input={}),
         ),

@@ -53,6 +53,7 @@ _started: dict[str, asyncio.Event] = {}
 _release: dict[str, asyncio.Event] = {}
 _downstream_calls: list[str] = []
 _progress_contexts: list[NodeExecutionContext] = []
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
 
 
 async def _wait_at_gate(context: NodeExecutionContext) -> None:
@@ -205,10 +206,11 @@ class CancellationWrappingRunGraph(RunGraph):
     @override
     async def run(
         self,
+        workspace_id: UUID,
         request: RunRequest,
         control: RunExecutionControl | None = None,
     ) -> GraphExecutionResult:
-        del request, control
+        del workspace_id, request, control
         self.started.set()
         try:
             await asyncio.Event().wait()
@@ -225,10 +227,11 @@ class ControlledRunGraph(RunGraph):
     @override
     async def run(
         self,
+        workspace_id: UUID,
         request: RunRequest,
         control: RunExecutionControl | None = None,
     ) -> GraphExecutionResult:
-        del request, control
+        del workspace_id, request, control
         self.started.set()
         await self.release.wait()
         return GraphExecutionResult(
@@ -340,7 +343,7 @@ async def _terminal(
 ) -> RunExecutionSnapshot:
     async with asyncio.timeout(3):
         while True:
-            execution = await manager.get(execution_id)
+            execution = await manager.get(WORKSPACE_ID, execution_id)
             if execution.status in {"cancelled", "succeeded", "failed"}:
                 return execution
             await asyncio.sleep(0)
@@ -395,15 +398,19 @@ async def test_manager_reports_exact_node_and_cancellation_stops_downstream(
         ],
     )
 
-    execution = await manager.start(request)
+    execution = await manager.start(WORKSPACE_ID, request)
     await asyncio.wait_for(_started["first"].wait(), timeout=3)
-    assert (await manager.get(execution.execution_id)).active_node_id == "first"
+    assert (
+        await manager.get(WORKSPACE_ID, execution.execution_id)
+    ).active_node_id == "first"
     observed = await manager.wait_for_events(
+        WORKSPACE_ID,
         execution.execution_id,
         after_sequence=0,
         timeout=0,
     )
     quiet = await manager.wait_for_events(
+        WORKSPACE_ID,
         execution.execution_id,
         after_sequence=observed.events[-1].sequence,
         timeout=0,
@@ -413,9 +420,11 @@ async def test_manager_reports_exact_node_and_cancellation_stops_downstream(
 
     _release["first"].set()
     await asyncio.wait_for(_started["second"].wait(), timeout=3)
-    assert (await manager.get(execution.execution_id)).active_node_id == "second"
+    assert (
+        await manager.get(WORKSPACE_ID, execution.execution_id)
+    ).active_node_id == "second"
 
-    cancelling = await manager.cancel(execution.execution_id)
+    cancelling = await manager.cancel(WORKSPACE_ID, execution.execution_id)
     assert cancelling.status == "cancelling"
     cancelled = await _terminal(manager, execution.execution_id)
     assert cancelled.status == "cancelled"
@@ -424,6 +433,7 @@ async def test_manager_reports_exact_node_and_cancellation_stops_downstream(
     assert cancelled.error is None
     assert _downstream_calls == []
     terminal_events = await manager.wait_for_events(
+        WORKSPACE_ID,
         execution.execution_id,
         after_sequence=0,
         timeout=0,
@@ -443,21 +453,26 @@ async def test_cancel_is_idempotent_and_handles_cancel_before_task_start(
     tmp_path: Path,
 ) -> None:
     manager = _manager(tmp_path / "workbench")
-    execution = await manager.start(RunRequest(nodes=[]))
+    execution = await manager.start(WORKSPACE_ID, RunRequest(nodes=[]))
 
-    first = await manager.cancel(execution.execution_id)
-    second = await manager.cancel(execution.execution_id)
+    first = await manager.cancel(WORKSPACE_ID, execution.execution_id)
+    second = await manager.cancel(WORKSPACE_ID, execution.execution_id)
     assert first.status == "cancelling"
     assert second.status == "cancelling"
     terminal = await _terminal(manager, execution.execution_id)
     assert terminal.status == "cancelled"
-    assert (await manager.cancel(execution.execution_id)).status == "cancelled"
+    assert (
+        await manager.cancel(WORKSPACE_ID, execution.execution_id)
+    ).status == "cancelled"
 
+    other_workspace_id = UUID("00000000-0000-0000-0000-000000000902")
+    with pytest.raises(NotFoundError, match="Run execution"):
+        await manager.subscribe_events(other_workspace_id, execution.execution_id)
     missing_id = uuid4()
     with pytest.raises(NotFoundError, match=str(missing_id)):
-        await manager.get(missing_id)
+        await manager.get(WORKSPACE_ID, missing_id)
     with pytest.raises(NotFoundError, match=str(missing_id)):
-        await manager.cancel(missing_id)
+        await manager.cancel(WORKSPACE_ID, missing_id)
     await manager.shutdown()
 
 
@@ -467,6 +482,7 @@ async def test_manager_isolates_concurrent_execution_progress(tmp_path: Path) ->
     _gate("run-a")
     _gate("run-b")
     first = await manager.start(
+        WORKSPACE_ID,
         RunRequest(
             nodes=[
                 RunNodeRequest(
@@ -478,6 +494,7 @@ async def test_manager_isolates_concurrent_execution_progress(tmp_path: Path) ->
         )
     )
     second = await manager.start(
+        WORKSPACE_ID,
         RunRequest(
             nodes=[
                 RunNodeRequest(
@@ -490,15 +507,19 @@ async def test_manager_isolates_concurrent_execution_progress(tmp_path: Path) ->
     )
 
     await asyncio.gather(_started["run-a"].wait(), _started["run-b"].wait())
-    assert (await manager.get(first.execution_id)).active_node_id == "run-a"
-    assert (await manager.get(second.execution_id)).active_node_id == "run-b"
+    assert (
+        await manager.get(WORKSPACE_ID, first.execution_id)
+    ).active_node_id == "run-a"
+    assert (
+        await manager.get(WORKSPACE_ID, second.execution_id)
+    ).active_node_id == "run-b"
 
     _release["run-a"].set()
     assert (await _terminal(manager, first.execution_id)).status == "succeeded"
-    still_running = await manager.get(second.execution_id)
+    still_running = await manager.get(WORKSPACE_ID, second.execution_id)
     assert still_running.status == "running"
     assert still_running.active_node_id == "run-b"
-    await manager.cancel(second.execution_id)
+    await manager.cancel(WORKSPACE_ID, second.execution_id)
     assert (await _terminal(manager, second.execution_id)).status == "cancelled"
     await manager.shutdown()
 
@@ -509,6 +530,7 @@ async def test_manager_shutdown_cancels_and_awaits_active_tasks(tmp_path: Path) 
     _gate("run-a")
     _gate("run-b")
     first = await manager.start(
+        WORKSPACE_ID,
         RunRequest(
             nodes=[
                 RunNodeRequest(
@@ -520,6 +542,7 @@ async def test_manager_shutdown_cancels_and_awaits_active_tasks(tmp_path: Path) 
         )
     )
     second = await manager.start(
+        WORKSPACE_ID,
         RunRequest(
             nodes=[
                 RunNodeRequest(
@@ -534,16 +557,21 @@ async def test_manager_shutdown_cancels_and_awaits_active_tasks(tmp_path: Path) 
 
     await manager.shutdown()
 
-    assert (await manager.get(first.execution_id)).status == "cancelled"
-    assert (await manager.get(second.execution_id)).status == "cancelled"
+    assert (
+        await manager.get(WORKSPACE_ID, first.execution_id)
+    ).status == "cancelled"
+    assert (
+        await manager.get(WORKSPACE_ID, second.execution_id)
+    ).status == "cancelled"
     with pytest.raises(RuntimeError, match="shutting down"):
-        await manager.start(RunRequest(nodes=[]))
+        await manager.start(WORKSPACE_ID, RunRequest(nodes=[]))
 
 
 @pytest.mark.asyncio
 async def test_manager_preserves_failed_graph_result(tmp_path: Path) -> None:
     manager = _manager(tmp_path / "workbench")
     execution = await manager.start(
+        WORKSPACE_ID,
         RunRequest(
             nodes=[
                 RunNodeRequest(
@@ -575,6 +603,7 @@ async def test_manager_preserves_failed_graph_result(tmp_path: Path) -> None:
     assert failed.result.status == "failed"
     assert "controlled node failure" in (failed.result.node_results[0].error or "")
     batch = await manager.wait_for_events(
+        WORKSPACE_ID,
         execution.execution_id,
         after_sequence=0,
         timeout=0,
@@ -598,6 +627,7 @@ async def test_manager_replays_lifecycle_and_mapped_progress_events(
 ) -> None:
     manager = _manager(tmp_path / "workbench")
     execution = await manager.start(
+        WORKSPACE_ID,
         RunRequest(
             nodes=[
                 RunNodeRequest(
@@ -626,6 +656,7 @@ async def test_manager_replays_lifecycle_and_mapped_progress_events(
     assert (await _terminal(manager, execution.execution_id)).status == "succeeded"
 
     batch = await manager.wait_for_events(
+        WORKSPACE_ID,
         execution.execution_id,
         after_sequence=0,
         timeout=0,
@@ -653,6 +684,7 @@ async def test_manager_replays_lifecycle_and_mapped_progress_events(
     terminal_sequence = batch.events[-1].sequence
     await _progress_contexts[0].progress("Too late")
     after_terminal = await manager.wait_for_events(
+        WORKSPACE_ID,
         execution.execution_id,
         after_sequence=terminal_sequence,
         timeout=0,
@@ -667,15 +699,17 @@ async def test_manager_bounds_event_replay_and_detects_terminal_delivery(
     tmp_path: Path,
 ) -> None:
     manager = _manager(tmp_path / "workbench", event_capacity=2)
-    execution = await manager.start(RunRequest(nodes=[]))
+    execution = await manager.start(WORKSPACE_ID, RunRequest(nodes=[]))
     assert (await _terminal(manager, execution.execution_id)).status == "succeeded"
 
     replay = await manager.wait_for_events(
+        WORKSPACE_ID,
         execution.execution_id,
         after_sequence=0,
         timeout=0,
     )
     after_terminal = await manager.wait_for_events(
+        WORKSPACE_ID,
         execution.execution_id,
         after_sequence=replay.events[-1].sequence,
         timeout=0,
@@ -696,10 +730,10 @@ async def test_manager_bounds_event_replay_and_detects_terminal_delivery(
 async def test_cancellation_intent_wins_when_executor_wraps_cancelled_error() -> None:
     run_graph = CancellationWrappingRunGraph()
     manager = RunExecutionManager(run_graph)
-    execution = await manager.start(RunRequest(nodes=[]))
+    execution = await manager.start(WORKSPACE_ID, RunRequest(nodes=[]))
     await run_graph.started.wait()
 
-    await manager.cancel(execution.execution_id)
+    await manager.cancel(WORKSPACE_ID, execution.execution_id)
     terminal = await _terminal(manager, execution.execution_id)
 
     assert terminal.status == "cancelled"
@@ -713,16 +747,22 @@ async def test_manager_bounds_terminal_execution_retention(tmp_path: Path) -> No
     execution_ids: list[UUID] = []
     first_subscription = None
     for _ in range(3):
-        execution = await manager.start(RunRequest(nodes=[]))
+        execution = await manager.start(WORKSPACE_ID, RunRequest(nodes=[]))
         execution_ids.append(execution.execution_id)
         assert (await _terminal(manager, execution.execution_id)).status == "succeeded"
         if first_subscription is None:
-            first_subscription = await manager.subscribe_events(execution.execution_id)
+            first_subscription = await manager.subscribe_events(
+                WORKSPACE_ID, execution.execution_id
+            )
 
     with pytest.raises(NotFoundError, match=str(execution_ids[0])):
-        await manager.get(execution_ids[0])
-    assert (await manager.get(execution_ids[1])).status == "succeeded"
-    assert (await manager.get(execution_ids[2])).status == "succeeded"
+        await manager.get(WORKSPACE_ID, execution_ids[0])
+    assert (
+        await manager.get(WORKSPACE_ID, execution_ids[1])
+    ).status == "succeeded"
+    assert (
+        await manager.get(WORKSPACE_ID, execution_ids[2])
+    ).status == "succeeded"
     assert first_subscription is not None
     retained_events = await first_subscription.wait(after_sequence=0, timeout=0)
     assert retained_events.terminal is True
@@ -801,6 +841,7 @@ async def test_natural_completion_wins_cancel_race_without_durable_downgrade() -
     history.allow_complete.clear()
     manager = RunExecutionManager(run_graph, execution_history=history)
     execution = await manager.start(
+        WORKSPACE_ID,
         RunRequest(
             nodes=[],
             graph_id=uuid4(),
@@ -811,7 +852,9 @@ async def test_natural_completion_wins_cancel_race_without_durable_downgrade() -
     run_graph.release.set()
     await history.complete_entered.wait()
 
-    cancelling = asyncio.create_task(manager.cancel(execution.execution_id))
+    cancelling = asyncio.create_task(
+        manager.cancel(WORKSPACE_ID, execution.execution_id)
+    )
     await asyncio.sleep(0)
     assert not cancelling.done()
     history.allow_complete.set()
@@ -831,6 +874,7 @@ async def test_cancel_transition_wins_race_and_persists_one_terminal_result() ->
     history.allow_cancelling.clear()
     manager = RunExecutionManager(run_graph, execution_history=history)
     execution = await manager.start(
+        WORKSPACE_ID,
         RunRequest(
             nodes=[],
             graph_id=uuid4(),
@@ -839,7 +883,9 @@ async def test_cancel_transition_wins_race_and_persists_one_terminal_result() ->
     )
     await run_graph.started.wait()
 
-    cancelling = asyncio.create_task(manager.cancel(execution.execution_id))
+    cancelling = asyncio.create_task(
+        manager.cancel(WORKSPACE_ID, execution.execution_id)
+    )
     await history.cancelling_entered.wait()
     run_graph.release.set()
     await asyncio.sleep(0)
@@ -859,6 +905,7 @@ async def test_terminal_history_write_retries_before_exposing_terminal() -> None
     history.complete_failures_remaining = 1
     manager = RunExecutionManager(run_graph, execution_history=history)
     execution = await manager.start(
+        WORKSPACE_ID,
         RunRequest(
             nodes=[],
             graph_id=uuid4(),

@@ -1,11 +1,12 @@
 import asyncio
 import json
 from typing import cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, ValidationError
+
 
 from notarius_api.v1.routes.catalog.models import NodeRegistryResponse
 from notarius_api.v1.routes.executions.models import (
@@ -35,6 +36,7 @@ from notarius_core.operators.arithmetic import (
 from notarius_core.operators.text import TEXT_VALUE
 
 
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
 TEST_COMPOUND_RESULT_KEY = ArtifactTypeKey("test.compound_result", 1)
 
 
@@ -171,7 +173,7 @@ async def _stored_artifacts(
     key: ArtifactTypeKey,
 ) -> list[ArtifactObject]:
     async with uow as entered:
-        return await entered.artifacts.list_by_type(key)
+        return await entered.artifacts.list_by_type(WORKSPACE_ID, key)
 
 
 def test_registry_declares_scalar_arithmetic_nodes_and_test_compound_projections(

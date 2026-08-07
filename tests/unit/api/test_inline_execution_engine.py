@@ -58,6 +58,9 @@ from notarius_api.v1.routes.executions.runtime.node_execution import (
 )
 
 
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
+
+
 VALUE = ArtifactTypeSpec(
     key=ArtifactTypeKey("test.local_execution.value", 1),
     title="Local execution value",
@@ -71,7 +74,8 @@ class IntegerResolver:
     def __init__(self, values: Mapping[UUID, int]) -> None:
         self._values = dict(values)
 
-    async def resolve(self, ref: ArtifactRef) -> int:
+    async def resolve(self, ref: ArtifactRef, workspace_id: UUID) -> int:
+        del workspace_id
         return self._values[ref.artifact_id]
 
 
@@ -179,26 +183,33 @@ class SynchronizedAddNode(AddNode):
 
 class MemoryInvocationCache(InvocationCachePort):
     def __init__(self) -> None:
-        self.entries: dict[str, InvocationCacheEntry] = {}
+        self.entries: dict[tuple[UUID, str], InvocationCacheEntry] = {}
 
-    async def get(self, key_sha256: str) -> InvocationCacheEntry | None:
-        return self.entries.get(key_sha256)
+    async def get(
+        self,
+        workspace_id: UUID,
+        key_sha256: str,
+    ) -> InvocationCacheEntry | None:
+        return self.entries.get((workspace_id, key_sha256))
 
     async def put_if_absent(self, entry: InvocationCacheEntry) -> bool:
-        if entry.key_sha256 in self.entries:
+        key = (entry.workspace_id, entry.key_sha256)
+        if key in self.entries:
             return False
-        self.entries[entry.key_sha256] = entry
+        self.entries[key] = entry
         return True
 
     async def remove_if_current(
         self,
+        workspace_id: UUID,
         key_sha256: str,
         generation: UUID,
     ) -> bool:
-        entry = self.entries.get(key_sha256)
+        key = (workspace_id, key_sha256)
+        entry = self.entries.get(key)
         if entry is None or entry.generation != generation:
             return False
-        del self.entries[key_sha256]
+        del self.entries[key]
         return True
 
 
@@ -216,8 +227,9 @@ class StubEdgeValueResolver:
         incoming_edges: Sequence[CompiledEdge],
         outputs: dict[str, dict[str, ArtifactOutputValue]],
         workflow_run_id: UUID,
+        workspace_id: UUID,
     ) -> dict[str, object]:
-        del incoming_edges, outputs, workflow_run_id
+        del incoming_edges, outputs, workflow_run_id, workspace_id
         node_id = compiled_node.request.id
         self.calls.append(node_id)
         return dict(self.inputs_by_node[node_id])
@@ -318,6 +330,7 @@ async def test_inline_map_reuses_cache_and_preserves_sequence_envelope() -> None
 
     first = await engine.execute(
         PreparedGraphExecution(
+            workspace_id=WORKSPACE_ID,
             plan=plan,
             initial_outputs={},
             graph_id=None,
@@ -339,6 +352,7 @@ async def test_inline_map_reuses_cache_and_preserves_sequence_envelope() -> None
     edge_values.inputs_by_node["mapped"]["item"] = second_source
     second = await engine.execute(
         PreparedGraphExecution(
+            workspace_id=WORKSPACE_ID,
             plan=plan,
             initial_outputs={},
             graph_id=None,
@@ -413,6 +427,7 @@ async def test_map_execution_overlaps_items_and_aggregates_in_source_order() -> 
         )
     )
     execution = PreparedGraphExecution(
+        workspace_id=WORKSPACE_ID,
         plan=CompiledGraph(nodes=(compiled_node,), edges=(), pinned_outputs={}),
         initial_outputs={},
         graph_id=None,
@@ -497,6 +512,7 @@ async def test_map_execution_never_exceeds_configured_concurrency() -> None:
         )
     )
     execution = PreparedGraphExecution(
+        workspace_id=WORKSPACE_ID,
         plan=CompiledGraph(nodes=(compiled_node,), edges=(), pinned_outputs={}),
         initial_outputs={},
         graph_id=None,
@@ -587,6 +603,7 @@ async def test_map_execution_failure_cancels_items_and_skips_dependents() -> Non
         )
     )
     execution = PreparedGraphExecution(
+        workspace_id=WORKSPACE_ID,
         plan=CompiledGraph(
             nodes=(failed_node, downstream_node),
             edges=(dependency,),
@@ -689,6 +706,7 @@ async def test_inline_map_failure_skips_dependents_and_preserves_cause() -> None
 
     result = await engine.execute(
         PreparedGraphExecution(
+            workspace_id=WORKSPACE_ID,
             plan=plan,
             initial_outputs={},
             graph_id=None,
@@ -721,6 +739,7 @@ async def test_inline_map_failure_skips_dependents_and_preserves_cause() -> None
     ) as raised:
         await engine.execute(
             PreparedGraphExecution(
+                workspace_id=WORKSPACE_ID,
                 plan=plan,
                 initial_outputs={},
                 graph_id=None,
@@ -777,6 +796,7 @@ async def test_nested_execution_does_not_replace_outer_module_progress() -> None
 
     result = await engine.execute(
         PreparedGraphExecution(
+            workspace_id=WORKSPACE_ID,
             plan=CompiledGraph(
                 nodes=(compiled_node,),
                 edges=(),

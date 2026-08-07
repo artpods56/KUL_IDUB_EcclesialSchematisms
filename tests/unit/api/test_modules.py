@@ -4,6 +4,7 @@ from collections.abc import Iterator
 import json
 from pathlib import Path
 from typing import Annotated, cast, final, override
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,6 +19,7 @@ from notarius_core.artifacts import (
     NodeOutput,
 )
 from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
+from notarius_core.domain.identity import Workspace
 from notarius_core.operators.text import TEXT_VALUE
 from notarius_core.plugins import NodeSecretInput, Plugin
 from notarius_core.ports.node_secrets import NodeSecretResolverPort
@@ -152,6 +154,16 @@ async def _create_schema(database_url: str) -> None:
     try:
         async with database.engine.begin() as connection:
             await connection.run_sync(metadata.create_all)
+        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+            await unit_of_work.identity.add_workspace(
+                Workspace(
+                    id=UUID("00000000-0000-0000-0000-000000000007"),
+                    slug="local",
+                    name="Local workspace",
+                    kind="shared",
+                )
+            )
+            await unit_of_work.commit()
     finally:
         await database.dispose()
 

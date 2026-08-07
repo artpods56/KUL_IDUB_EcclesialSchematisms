@@ -55,6 +55,7 @@ PREFLIGHT_PLUGIN = Plugin(
     slug="test.graph-preflight",
     title="Graph preflight test",
 )
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
 
 
 @PREFLIGHT_PLUGIN.node(
@@ -113,9 +114,11 @@ class _RecordingSavedGraphs(SavedGraphService):
     @override
     async def get_revision(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         revision: int,
     ) -> SavedGraphRevision:
+        del workspace_id
         self.calls.append((graph_id, revision))
         return self._revisions[(graph_id, revision)]
 
@@ -134,6 +137,7 @@ def _fragment_case() -> tuple[SavedGraphRevision, RunRequest]:
         conversion_path=(SavedGraphConversion(id="test.convert", version=2),),
     )
     graph = SavedGraph(
+        workspace_id=WORKSPACE_ID,
         name="Saved fragment",
         document=SavedGraphDocument(
             nodes=(
@@ -219,6 +223,7 @@ def _fragment_case() -> tuple[SavedGraphRevision, RunRequest]:
 
 def _secret_revision() -> SavedGraphRevision:
     return SavedGraph(
+        workspace_id=WORKSPACE_ID,
         name="Saved secret binding",
         document=SavedGraphDocument(
             nodes=(
@@ -239,6 +244,7 @@ def _secret_revision() -> SavedGraphRevision:
 
 def _module_input_fragment(*, required: bool) -> tuple[SavedGraphRevision, RunRequest]:
     graph = SavedGraph(
+        workspace_id=WORKSPACE_ID,
         name="Module input fragment",
         document=SavedGraphDocument(
             nodes=(
@@ -291,7 +297,7 @@ async def test_saved_fragment_matches_exact_node_and_incoming_edge_state() -> No
         saved_graphs=saved_graphs,
     )
 
-    context = await preflight.validate(request)
+    context = await preflight.validate(WORKSPACE_ID, request)
 
     assert context.secret_node_ids == frozenset()
     assert saved_graphs.calls == [(graph.id, graph.revision)]
@@ -311,12 +317,16 @@ async def test_saved_fragment_rejects_node_and_edge_drift() -> None:
     changed_edge = matching.edges[0].model_copy(update={"conversion_path": []})
 
     with pytest.raises(GraphExecutionError, match="does not match saved graph"):
-        await preflight.validate(matching.model_copy(update={"nodes": [changed_node]}))
+        await preflight.validate(
+            WORKSPACE_ID, matching.model_copy(update={"nodes": [changed_node]})
+        )
     with pytest.raises(
         GraphExecutionError,
         match="1 missing and 1 unexpected or duplicated",
     ):
-        await preflight.validate(matching.model_copy(update={"edges": [changed_edge]}))
+        await preflight.validate(
+            WORKSPACE_ID, matching.model_copy(update={"edges": [changed_edge]})
+        )
 
 
 @pytest.mark.asyncio
@@ -331,6 +341,7 @@ async def test_saved_fragment_ignores_disabled_incoming_edges() -> None:
         }
     )
     disabled_graph = SavedGraphRevision(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph.graph_id,
         revision=graph.revision,
         name=graph.name,
@@ -344,14 +355,14 @@ async def test_saved_fragment_ignores_disabled_incoming_edges() -> None:
     active_node = submitted.nodes[0].model_copy(update={"input_plugs": []})
     active_request = submitted.model_copy(update={"nodes": [active_node], "edges": []})
 
-    await preflight.validate(active_request)
+    await preflight.validate(WORKSPACE_ID, active_request)
 
     with pytest.raises(
         GraphExecutionError,
         match="0 missing and 1 unexpected or duplicated",
     ):
         await preflight.validate(
-            active_request.model_copy(update={"edges": submitted.edges})
+            WORKSPACE_ID, active_request.model_copy(update={"edges": submitted.edges})
         )
 
 
@@ -363,7 +374,7 @@ async def test_optional_unpinned_module_input_edge_may_be_omitted() -> None:
         saved_graphs=_RecordingSavedGraphs(graph),
     )
 
-    context = await preflight.validate(request)
+    context = await preflight.validate(WORKSPACE_ID, request)
 
     assert context.secret_node_ids == frozenset()
 
@@ -380,7 +391,7 @@ async def test_required_unpinned_module_input_edge_must_not_be_omitted() -> None
         GraphExecutionError,
         match="1 missing and 0 unexpected or duplicated",
     ):
-        await preflight.validate(request)
+        await preflight.validate(WORKSPACE_ID, request)
 
 
 @pytest.mark.asyncio
@@ -412,7 +423,7 @@ async def test_dirty_secret_context_checks_only_saved_secret_dependencies() -> N
         ],
     )
 
-    context = await preflight.validate(request)
+    context = await preflight.validate(WORKSPACE_ID, request)
 
     assert context.secret_node_ids == frozenset({"secret"})
     assert saved_graphs.calls == [(graph.id, graph.revision)]
@@ -432,6 +443,7 @@ async def test_secret_context_rejects_changed_dependency_binding() -> None:
         match="saved configuration required by secret input 'api_key'",
     ):
         await preflight.validate(
+            WORKSPACE_ID,
             RunRequest(
                 secret_graph_id=graph.id,
                 secret_graph_revision=graph.revision,
@@ -466,6 +478,7 @@ async def test_secret_nodes_require_explicit_secret_context_before_graph_lookup(
         match="saved secret graph context.*'alpha', 'zeta'",
     ):
         await preflight.validate(
+            WORKSPACE_ID,
             RunRequest(
                 graph_id=graph.id,
                 graph_revision=graph.revision,
@@ -496,6 +509,7 @@ async def test_saved_context_requires_configured_saved_graph_service() -> None:
         match="Saved graph context is not configured for this workbench",
     ):
         await preflight.validate(
+            WORKSPACE_ID,
             RunRequest(
                 graph_id=graph.id,
                 graph_revision=graph.revision,
