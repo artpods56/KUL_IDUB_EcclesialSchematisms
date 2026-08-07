@@ -209,6 +209,206 @@ describe("authored graph document", () => {
     expect(serialized).not.toContain("other-user");
   });
 
+  it("projects cloneable runtime fields at every structural command boundary", () => {
+    const runtimeFields = [
+      "selected",
+      "execution",
+      "dimensions",
+      "internals",
+      "callbackLike",
+      "progress",
+      "run",
+      "result",
+      "presence",
+      "privateFieldDraft",
+    ];
+    const expectNoRuntimeFields = (value: object) => {
+      for (const field of runtimeFields) {
+        expect(value).not.toHaveProperty(field);
+      }
+    };
+    const runtimeNode = {
+      ...node("added-node"),
+      selected: true,
+      execution: { status: "failed" },
+      dimensions: { width: 480, height: 220 },
+      internals: { handleBounds: { source: [] } },
+      callbackLike: { name: "onConfigChange" },
+      progress: { entries: [] },
+      run: { status: "succeeded" },
+      result: { payload: "runtime result" },
+      presence: { userId: "other-user" },
+      privateFieldDraft: "draft-only value",
+      layout: {
+        width: 480,
+        body_height: 220,
+        appendix_height: 80,
+        selected: true,
+        internals: { measured: true },
+      },
+      input_plugs: [{
+        id: "added-plug",
+        port: "items",
+        selected: true,
+        callbackLike: { name: "onPlugChange" },
+      }],
+      artifact_type_bindings: [{
+        variable: "T",
+        artifact_type: {
+          id: "artifact.t",
+          schema_version: 2,
+          selected: true,
+          execution: { status: "failed" },
+        },
+      }],
+    };
+    const runtimeEdge = {
+      ...edge,
+      id: "added-edge",
+      selected: true,
+      dimensions: { width: 480, height: 220 },
+      internals: { sourceX: 1 },
+      callbackLike: { name: "onEdgeChange" },
+      execution: { status: "failed" },
+      progress: { entries: [] },
+      run: { status: "succeeded" },
+      result: { payload: "runtime result" },
+      presence: { userId: "other-user" },
+      privateFieldDraft: "draft-only value",
+      projection: { path: ["value"], selected: true },
+      conversion_path: [{ id: "convert", version: 1, selected: true }],
+      route_offset: { x: 4, y: 8, selected: true },
+    };
+
+    let result = applyGraphCommand(document(), {
+      kind: "add_node",
+      node: runtimeNode as never,
+    });
+    const addedNode = result.nodes.find((candidate) => candidate.id === "added-node");
+    expect(addedNode).toBeDefined();
+    expectNoRuntimeFields(addedNode as object);
+    expect(addedNode?.layout).toEqual({
+      width: 480,
+      body_height: 220,
+      appendix_height: 80,
+    });
+    expect(addedNode?.input_plugs).toEqual([{ id: "added-plug", port: "items" }]);
+    expect(addedNode?.artifact_type_bindings).toEqual([{
+      variable: "T",
+      artifact_type: { id: "artifact.t", schema_version: 2 },
+    }]);
+    expectNoRuntimeFields(addedNode?.layout as object);
+    expectNoRuntimeFields(addedNode?.input_plugs?.[0] as object);
+    expectNoRuntimeFields(addedNode?.artifact_type_bindings?.[0] as object);
+    expectNoRuntimeFields(addedNode?.artifact_type_bindings?.[0]?.artifact_type as object);
+
+    result = applyGraphCommand(result, {
+      kind: "add_edge",
+      edge: runtimeEdge as never,
+    });
+    const addedEdge = result.edges.find((candidate) => candidate.id === "added-edge");
+    expect(addedEdge).toBeDefined();
+    expectNoRuntimeFields(addedEdge as object);
+    expect(addedEdge?.projection).toEqual({ path: ["value"] });
+    expect(addedEdge?.conversion_path).toEqual([{ id: "convert", version: 1 }]);
+    expect(addedEdge?.route_offset).toEqual({ x: 4, y: 8 });
+    expectNoRuntimeFields(addedEdge?.projection as object);
+    expectNoRuntimeFields(addedEdge?.conversion_path?.[0] as object);
+    expectNoRuntimeFields(addedEdge?.route_offset as object);
+
+    result = applyGraphCommand(result, {
+      kind: "update_edge",
+      edge_id: "edge-1",
+      update: {
+        projection: { path: ["updated"], selected: true } as never,
+        conversion_path: [{ id: "updated", version: 2, execution: { status: "failed" } }] as never,
+        route_offset: { x: 12, y: 14, dimensions: { width: 2 } } as never,
+        enabled: false,
+      },
+    });
+    const updatedEdge = result.edges.find((candidate) => candidate.id === "edge-1");
+    expect(updatedEdge?.projection).toEqual({ path: ["updated"] });
+    expect(updatedEdge?.conversion_path).toEqual([{ id: "updated", version: 2 }]);
+    expect(updatedEdge?.route_offset).toEqual({ x: 12, y: 14 });
+    expectNoRuntimeFields(updatedEdge as object);
+    expectNoRuntimeFields(updatedEdge?.projection as object);
+    expectNoRuntimeFields(updatedEdge?.conversion_path?.[0] as object);
+    expectNoRuntimeFields(updatedEdge?.route_offset as object);
+
+    result = applyGraphCommand(result, {
+      kind: "update_node_layout",
+      node_id: "source",
+      layout: {
+        width: 500,
+        body_height: 240,
+        appendix_height: 90,
+        selected: true,
+        callbackLike: { name: "onLayoutChange" },
+      } as never,
+    });
+    result = applyGraphCommand(result, {
+      kind: "add_input_plug",
+      node_id: "source",
+      plug: {
+        id: "source-plug",
+        port: "items",
+        dimensions: { width: 1 },
+        callbackLike: { name: "onPlugChange" },
+      } as never,
+    });
+    result = applyGraphCommand(result, {
+      kind: "bind_artifact_type",
+      node_id: "source",
+      variable: "Bound",
+      artifact_type: {
+        id: "artifact.bound",
+        schema_version: 4,
+        selected: true,
+        presence: { userId: "other-user" },
+      } as never,
+    });
+    result = applyGraphCommand(result, {
+      kind: "update_node_configuration_and_input_plugs",
+      node_id: "source",
+      config: { nested: { arbitrary: "content" } },
+      input_plugs: [{
+        id: "compound-plug",
+        port: "items",
+        selected: true,
+        execution: { status: "failed" },
+      }] as never,
+    });
+    const source = result.nodes.find((candidate) => candidate.id === "source");
+    expect(source?.layout).toEqual({ width: 500, body_height: 240, appendix_height: 90 });
+    expect(source?.input_plugs).toEqual([{ id: "compound-plug", port: "items" }]);
+    expect(source?.artifact_type_bindings).toContainEqual({
+      variable: "Bound",
+      artifact_type: { id: "artifact.bound", schema_version: 4 },
+    });
+    expectNoRuntimeFields(source?.layout as object);
+    expectNoRuntimeFields(source?.input_plugs?.[0] as object);
+    expectNoRuntimeFields(source?.artifact_type_bindings?.find((binding) => binding.variable === "Bound") as object);
+
+    const replacement = {
+      name: "Replacement",
+      nodes: [runtimeNode],
+      edges: [runtimeEdge],
+    };
+    result = applyGraphCommand(result, {
+      kind: "replace_document",
+      document: replacement as never,
+    });
+    expectNoRuntimeFields(result.nodes[0] as object);
+    expectNoRuntimeFields(result.nodes[0]?.layout as object);
+    expectNoRuntimeFields(result.nodes[0]?.input_plugs?.[0] as object);
+    expectNoRuntimeFields(result.nodes[0]?.artifact_type_bindings?.[0] as object);
+    expectNoRuntimeFields(result.nodes[0]?.artifact_type_bindings?.[0]?.artifact_type as object);
+    expectNoRuntimeFields(result.edges[0] as object);
+    expectNoRuntimeFields(result.edges[0]?.projection as object);
+    expectNoRuntimeFields(result.edges[0]?.conversion_path?.[0] as object);
+    expectNoRuntimeFields(result.edges[0]?.route_offset as object);
+  });
+
   it("applies a compound node removal and its incident edges atomically", () => {
     const result = applyGraphCommand(document(), {
       kind: "remove_nodes",

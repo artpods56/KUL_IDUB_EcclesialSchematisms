@@ -6,6 +6,8 @@ import type {
 
 import {
   applyGraphCommand,
+  authoredGraphDocument,
+  createSavedGraphRequest,
   executionInvalidatedNodeIds,
   type AuthoredGraphDocument,
   type GraphCommand,
@@ -60,8 +62,9 @@ export function reduceWorkbenchAuthoringState(
   action: WorkbenchAuthoringAction,
 ): WorkbenchAuthoringState {
   if (action.kind === "replace_document") {
+    const document = authoredGraphDocument(createSavedGraphRequest(action.document));
     return {
-      document: action.document,
+      document,
       nodeOverlays: action.nodeOverlays,
       error: null,
     };

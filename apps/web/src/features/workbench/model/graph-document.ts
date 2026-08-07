@@ -22,6 +22,19 @@ export type AuthoredGraphEdge = SavedGraphEdge;
 
 type SavedGraphNodeInput = NonNullable<CreateSavedGraphRequest["nodes"]>[number];
 type SavedGraphEdgeInput = NonNullable<CreateSavedGraphRequest["edges"]>[number];
+type SavedGraphEdgeUpdate = Partial<
+  Pick<
+    AuthoredGraphEdge,
+    | "collection_mode"
+    | "enabled"
+    | "projection"
+    | "conversion_path"
+    | "route_offset"
+    | "to_plug"
+    | "from_port"
+    | "to_port"
+  >
+>;
 
 export type GraphCommand =
   | {
@@ -96,19 +109,7 @@ export type GraphCommand =
   | {
       readonly kind: "update_edge";
       readonly edge_id: string;
-      readonly update: Partial<
-        Pick<
-          AuthoredGraphEdge,
-          | "collection_mode"
-          | "enabled"
-          | "projection"
-          | "conversion_path"
-          | "route_offset"
-          | "to_plug"
-          | "from_port"
-          | "to_port"
-        >
-      >;
+      readonly update: SavedGraphEdgeUpdate;
     }
   | {
       readonly kind: "remove_edges";
@@ -141,31 +142,48 @@ export function createSavedGraphRequest(
 
 function projectSavedGraphNode(node: SavedGraphNodeInput | SavedGraphNode): SavedGraphNode {
   return {
-    artifact_type_bindings: (node.artifact_type_bindings ?? []).map((binding) => ({
-      variable: binding.variable,
-      artifact_type: {
-        id: binding.artifact_type.id,
-        schema_version: binding.artifact_type.schema_version,
-      },
-    })),
+    artifact_type_bindings: (node.artifact_type_bindings ?? []).map(
+      projectArtifactTypeBinding,
+    ),
     config: structuredClone(node.config ?? {}),
     id: node.id,
-    input_plugs: (node.input_plugs ?? []).map((plug) => ({
-      id: plug.id,
-      port: plug.port,
-    })),
-    layout: node.layout === null || node.layout === undefined
-      ? null
-      : {
-          appendix_height: node.layout.appendix_height ?? null,
-          body_height: node.layout.body_height ?? null,
-          width: node.layout.width ?? null,
-        },
+    input_plugs: (node.input_plugs ?? []).map(projectSavedGraphInputPlug),
+    layout: projectSavedGraphLayout(node.layout),
     operator_id: node.operator_id,
     operator_version: node.operator_version,
     position: {
       x: node.position.x,
       y: node.position.y,
+    },
+  };
+}
+
+function projectSavedGraphLayout(
+  layout: SavedGraphNode["layout"],
+): SavedGraphNode["layout"] {
+  return layout === null || layout === undefined
+    ? null
+    : {
+        appendix_height: layout.appendix_height ?? null,
+        body_height: layout.body_height ?? null,
+        width: layout.width ?? null,
+      };
+}
+
+function projectSavedGraphInputPlug(
+  plug: NonNullable<SavedGraphNode["input_plugs"]>[number],
+): NonNullable<SavedGraphNode["input_plugs"]>[number] {
+  return { id: plug.id, port: plug.port };
+}
+
+function projectArtifactTypeBinding(
+  binding: NonNullable<SavedGraphNode["artifact_type_bindings"]>[number],
+): NonNullable<SavedGraphNode["artifact_type_bindings"]>[number] {
+  return {
+    variable: binding.variable,
+    artifact_type: {
+      id: binding.artifact_type.id,
+      schema_version: binding.artifact_type.schema_version,
     },
   };
 }
@@ -191,6 +209,46 @@ function projectSavedGraphEdge(edge: SavedGraphEdgeInput | SavedGraphEdge): Save
     to_plug: edge.to_plug ?? null,
     to_port: edge.to_port,
   };
+}
+
+function projectSavedGraphEdgeUpdate(
+  update: SavedGraphEdgeUpdate,
+): SavedGraphEdgeUpdate {
+  const projected = {} as {
+    -readonly [Key in keyof SavedGraphEdgeUpdate]: SavedGraphEdgeUpdate[Key];
+  };
+  if (Object.prototype.hasOwnProperty.call(update, "collection_mode")) {
+    projected.collection_mode = update.collection_mode;
+  }
+  if (Object.prototype.hasOwnProperty.call(update, "enabled")) {
+    projected.enabled = update.enabled;
+  }
+  if (Object.prototype.hasOwnProperty.call(update, "projection")) {
+    projected.projection = update.projection === null || update.projection === undefined
+      ? null
+      : { path: [...update.projection.path] };
+  }
+  if (Object.prototype.hasOwnProperty.call(update, "conversion_path")) {
+    projected.conversion_path = (update.conversion_path ?? []).map(({ id, version }) => ({
+      id,
+      version,
+    }));
+  }
+  if (Object.prototype.hasOwnProperty.call(update, "route_offset")) {
+    projected.route_offset = update.route_offset === null || update.route_offset === undefined
+      ? null
+      : { x: update.route_offset.x, y: update.route_offset.y };
+  }
+  if (Object.prototype.hasOwnProperty.call(update, "to_plug")) {
+    projected.to_plug = update.to_plug ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(update, "from_port")) {
+    projected.from_port = update.from_port;
+  }
+  if (Object.prototype.hasOwnProperty.call(update, "to_port")) {
+    projected.to_port = update.to_port;
+  }
+  return projected;
 }
 
 function executionDescendants(
@@ -304,6 +362,7 @@ export function applyGraphCommand(
   document: AuthoredGraphDocument,
   command: GraphCommand,
 ): AuthoredGraphDocument {
+  document = authoredGraphDocument(createSavedGraphRequest(document));
   switch (command.kind) {
     case "rename_graph":
       return { ...document, name: command.name };
@@ -313,7 +372,7 @@ export function applyGraphCommand(
       }
       return {
         ...document,
-        nodes: [...document.nodes, structuredClone(command.node)],
+        nodes: [...document.nodes, projectSavedGraphNode(command.node)],
       };
     case "remove_nodes": {
       const removed = new Set(command.node_ids);
@@ -351,14 +410,14 @@ export function applyGraphCommand(
     case "update_node_layout":
       return updateNode(document, command.node_id, (node) => ({
         ...node,
-        layout: structuredClone(command.layout),
+        layout: projectSavedGraphLayout(command.layout),
       }));
     case "add_input_plug":
       return updateNode(document, command.node_id, (node) => ({
         ...node,
         input_plugs: [
           ...(node.input_plugs ?? []),
-          structuredClone(command.plug),
+          projectSavedGraphInputPlug(command.plug),
         ],
       }));
     case "remove_input_plug": {
@@ -400,7 +459,7 @@ export function applyGraphCommand(
       const next = updateNode(document, command.node_id, (node) => ({
         ...node,
         config: structuredClone(command.config),
-        input_plugs: structuredClone(command.input_plugs),
+        input_plugs: command.input_plugs.map(projectSavedGraphInputPlug),
       }));
       const retainedPlugIds = new Set(command.input_plugs.map((plug) => plug.id));
       return {
@@ -423,7 +482,10 @@ export function applyGraphCommand(
           ),
           {
             variable: command.variable,
-            artifact_type: structuredClone(command.artifact_type),
+            artifact_type: projectArtifactTypeBinding({
+              variable: command.variable,
+              artifact_type: command.artifact_type,
+            }).artifact_type,
           },
         ],
       }));
@@ -440,7 +502,7 @@ export function applyGraphCommand(
       }
       return {
         ...document,
-        edges: [...document.edges, structuredClone(command.edge)],
+        edges: [...document.edges, projectSavedGraphEdge(command.edge)],
       };
     case "update_edge": {
       edgeOrThrow(document, command.edge_id);
@@ -448,7 +510,7 @@ export function applyGraphCommand(
         ...document,
         edges: document.edges.map((edge) =>
           edge.id === command.edge_id
-            ? { ...edge, ...structuredClone(command.update) }
+            ? { ...edge, ...projectSavedGraphEdgeUpdate(command.update) }
             : edge,
         ),
       };

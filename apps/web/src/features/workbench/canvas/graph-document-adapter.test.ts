@@ -175,6 +175,36 @@ describe("Workbench authored document adapter", () => {
     expect(result.error).toContain("missing edge missing-edge");
   });
 
+  it("normalizes replacement documents before they enter adapter state", () => {
+    const replacement = {
+      name: "Replacement",
+      nodes: [{
+        ...source,
+        selected: true,
+        dimensions: { width: 480, height: 220 },
+        callbackLike: { name: "onNodeChange" },
+      }],
+      edges: [{
+        ...edge,
+        selected: true,
+        internals: { sourceX: 1 },
+        callbackLike: { name: "onEdgeChange" },
+      }],
+    };
+    const result = reduceWorkbenchAuthoringState(state(), {
+      kind: "replace_document",
+      document: replacement as never,
+      nodeOverlays: {},
+    });
+
+    expect(result.document.nodes[0]).not.toHaveProperty("selected");
+    expect(result.document.nodes[0]).not.toHaveProperty("dimensions");
+    expect(result.document.nodes[0]).not.toHaveProperty("callbackLike");
+    expect(result.document.edges[0]).not.toHaveProperty("selected");
+    expect(result.document.edges[0]).not.toHaveProperty("internals");
+    expect(result.document.edges[0]).not.toHaveProperty("callbackLike");
+  });
+
   it("clears an authoring error when the user dismisses it", () => {
     const errored = reduceWorkbenchAuthoringState(state(), {
       kind: "apply_commands",
