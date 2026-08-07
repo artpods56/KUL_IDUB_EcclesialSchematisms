@@ -10,9 +10,9 @@ beforeEach(() => {
   redirect.mockClear();
 });
 
-it("redirects the root route to the canonical blank graph", () => {
+it("redirects the root route to the workspace directory", () => {
   Home();
 
   expect(redirect).toHaveBeenCalledOnce();
-  expect(redirect).toHaveBeenCalledWith("/workspaces/local/graphs/new");
+  expect(redirect).toHaveBeenCalledWith("/workspaces");
 });

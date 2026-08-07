@@ -4,6 +4,7 @@ import * as React from "react";
 import { SWRConfig } from "swr";
 import { ApiError, request } from "@/lib/api/client";
 import { ThemeProvider } from "@/components/theme";
+import { AuthSessionBoundary } from "@/features/auth/AuthSessionBoundary";
 
 const apiFetcher = (path: string) => request<unknown>("GET", path);
 
@@ -25,7 +26,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
           errorRetryCount: 2,
         }}
       >
-        {children}
+        <AuthSessionBoundary>{children}</AuthSessionBoundary>
       </SWRConfig>
     </ThemeProvider>
   );

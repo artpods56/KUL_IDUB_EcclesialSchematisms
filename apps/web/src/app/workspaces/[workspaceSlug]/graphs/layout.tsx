@@ -10,6 +10,7 @@ import {
   NEW_GRAPH_ROUTE_ID,
   isSupportedWorkbenchGraphRoute,
 } from "@/features/workbench/routes";
+import { useWorkspaceContext } from "@/features/workspaces/WorkspaceLayout";
 
 interface GraphsLayoutProps {
   children: ReactNode;
@@ -20,8 +21,12 @@ export default function GraphsLayout({ children }: GraphsLayoutProps) {
     workspaceSlug: string;
     graphId: string;
   }>();
+  const { workspace } = useWorkspaceContext();
 
-  if (!isSupportedWorkbenchGraphRoute(workspaceSlug, graphId)) {
+  if (
+    workspace.slug !== "local" ||
+    !isSupportedWorkbenchGraphRoute(workspaceSlug, graphId)
+  ) {
     return children;
   }
 

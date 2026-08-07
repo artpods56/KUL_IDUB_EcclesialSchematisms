@@ -2,6 +2,17 @@ import type { components, paths } from "./generated/notarius";
 
 type Schemas = components["schemas"];
 
+export type Session = Schemas["SessionResponse"];
+export type User = Schemas["UserResponse"];
+export type Workspace = Schemas["WorkspaceResponse"];
+export type WorkspaceCreateRequest = Schemas["WorkspaceCreateRequest"];
+export type WorkspaceMember = Schemas["WorkspaceMemberResponse"];
+export type WorkspaceMemberRequest = Schemas["WorkspaceMemberRequest"];
+export type WorkspaceMemberRoleRequest =
+  Schemas["WorkspaceMemberRoleRequest"];
+export type WorkspaceCapability = Schemas["WorkspaceCapability"];
+export type WorkspaceRole = Schemas["WorkspaceRole"];
+
 export type ArtifactTypeKey =
   Schemas["ArtifactTypeKeyResponse"];
 export type ArtifactTypeSpec =

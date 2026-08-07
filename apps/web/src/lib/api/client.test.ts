@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, readBrowserCookie, request } from "./client";
+import { ApiError, onUnauthorized, readBrowserCookie, request } from "./client";
 
 const csrfSentinel = "csrf-sentinel-value";
 
@@ -133,5 +133,42 @@ describe("browser API transport", () => {
     expect((error as ApiError).detail).not.toContain(csrfSentinel);
     expect(bytesRead).toBeLessThan(10_000);
     expect(cancelled).toBe(true);
+  });
+
+  it("signals post-auth 401 before consuming a delayed error body", async () => {
+    let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let notified = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        bodyController = controller;
+        controller.enqueue(new TextEncoder().encode("{"));
+      },
+      pull() {
+        return new Promise<void>(() => {});
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(body, {
+      status: 401,
+      statusText: "Unauthorized",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const waitForNotification = new Promise<void>((resolve) => {
+      const unsubscribe = onUnauthorized(() => {
+        notified = true;
+        unsubscribe();
+        resolve();
+      });
+    });
+
+    const pendingRequest = request("GET", "/v1/protected");
+    await expect(Promise.race([
+      waitForNotification,
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("unauthorized notification was delayed")), 100);
+      }),
+    ])).resolves.toBeUndefined();
+    expect(notified).toBe(true);
+    bodyController?.error(new Error("stop test stream"));
+    await expect(pendingRequest).rejects.toBeInstanceOf(ApiError);
   });
 });
