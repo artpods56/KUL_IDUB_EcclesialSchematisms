@@ -79,10 +79,12 @@ class NodeExecutionService:
             incoming_edges,
             outputs,
             task_runner.workflow_run_id,
+            execution.workspace_id,
         )
         node_context = NodeExecutionContext(
             workflow_run_id=task_runner.workflow_run_id,
             node_run_id=node_run_id,
+            workspace_id=execution.workspace_id,
             graph_id=execution.graph_id,
             graph_revision=execution.graph_revision,
             secret_graph_id=(

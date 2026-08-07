@@ -16,6 +16,7 @@ from .models import (
     SavedGraphResponse,
     UpdateSavedGraphRequest,
 )
+from notarius_api.v1.routes.workspace_scope import LegacyWorkspaceDependency
 
 
 router = APIRouter(prefix="/graphs", tags=["saved graphs"])
@@ -24,8 +25,9 @@ router = APIRouter(prefix="/graphs", tags=["saved graphs"])
 @router.get("", response_model=SavedGraphListResponse)
 async def list_saved_graphs(
     service: SavedGraphDependency,
+    workspace_id: LegacyWorkspaceDependency,
 ) -> SavedGraphListResponse:
-    graphs = await service.list()
+    graphs = await service.list(workspace_id)
     return SavedGraphListResponse.from_graphs(graphs)
 
 
@@ -37,8 +39,11 @@ async def list_saved_graphs(
 async def create_saved_graph(
     request: CreateSavedGraphRequest,
     service: SavedGraphDependency,
+    workspace_id: LegacyWorkspaceDependency,
 ) -> SavedGraphResponse:
     graph = await service.create(
+        workspace_id=workspace_id,
+        created_by_user_id=None,
         name=request.name,
         document=request.to_document(),
     )
@@ -49,9 +54,10 @@ async def create_saved_graph(
 async def get_saved_graph(
     graph_id: UUID,
     service: SavedGraphDependency,
+    workspace_id: LegacyWorkspaceDependency,
 ) -> SavedGraphResponse:
     try:
-        graph = await service.get(graph_id)
+        graph = await service.get(workspace_id, graph_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return SavedGraphResponse.from_graph(graph)
@@ -62,10 +68,12 @@ async def update_saved_graph(
     graph_id: UUID,
     request: UpdateSavedGraphRequest,
     service: SavedGraphDependency,
+    workspace_id: LegacyWorkspaceDependency,
 ) -> SavedGraphResponse:
     try:
         graph = await service.replace(
             graph_id,
+            workspace_id=workspace_id,
             name=request.name,
             document=request.to_document(),
             expected_revision=request.expected_revision,
@@ -81,10 +89,15 @@ async def update_saved_graph(
 async def delete_saved_graph(
     graph_id: UUID,
     service: SavedGraphDependency,
+    workspace_id: LegacyWorkspaceDependency,
     expected_revision: Annotated[int, Query(ge=1)],
 ) -> Response:
     try:
-        await service.delete(graph_id, expected_revision=expected_revision)
+        await service.delete(
+            graph_id,
+            workspace_id=workspace_id,
+            expected_revision=expected_revision,
+        )
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SavedGraphRevisionConflictError as exc:

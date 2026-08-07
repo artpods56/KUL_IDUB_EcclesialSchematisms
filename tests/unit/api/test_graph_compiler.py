@@ -1,7 +1,7 @@
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Never
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -25,6 +25,9 @@ from notarius_api.v1.routes.executions.models import (
 )
 from notarius_api.v1.routes.catalog.services import GraphModuleCatalog
 from notarius_api.v1.routes.executions.runtime.compiler import GraphCompiler
+
+
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
 
 
 class _UnusedModuleExecutor:
@@ -98,7 +101,11 @@ async def test_compiler_orders_nodes_and_resolves_declared_conversions(
         ],
     )
 
-    compiled = await _compiler(tmp_path).compile(request, _UnusedModuleExecutor())
+    compiled = await _compiler(tmp_path).compile(
+        request,
+        _UnusedModuleExecutor(),
+        workspace_id=WORKSPACE_ID,
+    )
 
     assert [node.request.id for node in compiled.nodes] == ["number", "replace"]
     assert compiled.nodes[0].registration is not None
@@ -154,7 +161,11 @@ async def test_compiler_derives_map_invocation_from_the_incoming_edge(
         ],
     )
 
-    compiled = await _compiler(tmp_path).compile(request, _UnusedModuleExecutor())
+    compiled = await _compiler(tmp_path).compile(
+        request,
+        _UnusedModuleExecutor(),
+        workspace_id=WORKSPACE_ID,
+    )
 
     replace = next(node for node in compiled.nodes if node.request.id == "replace")
     assert replace.invocation.mode is InvocationMode.MAP
@@ -196,7 +207,11 @@ async def test_compiler_accepts_an_external_edge_only_with_its_exact_pin(
         ],
     )
 
-    compiled = await _compiler(tmp_path).compile(request, _UnusedModuleExecutor())
+    compiled = await _compiler(tmp_path).compile(
+        request,
+        _UnusedModuleExecutor(),
+        workspace_id=WORKSPACE_ID,
+    )
 
     assert compiled.pinned_outputs == {("upstream", "text"): pinned_ref}
     assert [node.request.id for node in compiled.nodes] == ["replace"]

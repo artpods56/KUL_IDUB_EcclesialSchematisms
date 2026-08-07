@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from contextvars import ContextVar
+from uuid import UUID
 
 from notarius_core.artifacts import ArtifactRef
 from notarius_core.domain.modules import MODULE_BOUNDARY_PORT, GraphModuleDefinition
@@ -56,6 +57,7 @@ class RunGraph:
 
     async def run(
         self,
+        workspace_id: UUID,
         request: RunRequest,
         control: RunExecutionControl | None = None,
     ) -> GraphExecutionResult:
@@ -63,6 +65,7 @@ class RunGraph:
         try:
             return await self._execute(
                 request,
+                workspace_id=workspace_id,
                 module_path=(),
                 node_path=(),
                 invocation_path=(),
@@ -187,6 +190,7 @@ class RunGraph:
         )
         execution = await self._execute(
             request,
+            workspace_id=context.workspace_id,
             module_path=(*context.module_path, graph_path_item),
             node_path=context.node_path,
             invocation_path=context.invocation_path,
@@ -223,6 +227,7 @@ class RunGraph:
         self,
         request: RunRequest,
         *,
+        workspace_id: UUID,
         module_path: tuple[str, ...],
         node_path: tuple[str, ...],
         invocation_path: tuple[int, ...],
@@ -233,25 +238,32 @@ class RunGraph:
     ) -> GraphExecutionResult:
         if control is not None:
             control.check_cancelled()
-        run_context = await self._preflight.validate(request)
-        plan = await self._compiler.compile(request, self)
+        run_context = await self._preflight.validate(workspace_id, request)
+        plan = await self._compiler.compile(
+            request,
+            self,
+            workspace_id=workspace_id,
+        )
         if (
             validate_materialized_pins
             and request.graph_id is not None
             and request.graph_revision is not None
         ):
             await self._materializations.validate_latest_pins(
+                workspace_id,
                 request.graph_id,
                 request.graph_revision,
                 plan.pinned_outputs,
             )
         initial_outputs = await self._materializations.resolve_pinned_outputs(
+            workspace_id,
             plan.pinned_outputs
         )
         execution = await self._engine.execute(
             PreparedGraphExecution(
                 plan=plan,
                 initial_outputs=initial_outputs,
+                workspace_id=workspace_id,
                 graph_id=request.graph_id,
                 graph_revision=request.graph_revision,
                 secret_graph_id=request.secret_graph_id,
@@ -272,6 +284,7 @@ class RunGraph:
             and request.graph_revision is not None
         ):
             await self._materializations.persist_execution(
+                workspace_id,
                 request.graph_id,
                 request.graph_revision,
                 execution,

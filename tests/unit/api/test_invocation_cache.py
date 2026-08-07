@@ -229,6 +229,7 @@ async def test_cache_evicts_a_table_with_a_missing_chunk(tmp_path: Path) -> None
         ArtifactWriteContext(
             node_context=NodeExecutionContext(
                 workspace_id=WORKSPACE_ID, node_id="table"
+                node_id="table",
             ),
             provenance=MaterializationProvenance(refs_by_input={}),
         ),
@@ -354,7 +355,8 @@ async def test_sql_cache_survives_fresh_workbench_components(tmp_path: Path) -> 
             unit_of_work=SqlAlchemyUnitOfWork(database.sessions),
         )
         first_response = await first_components.presenter.run_response(
-            await first_components.run_graph.run(request)
+            WORKSPACE_ID,
+            await first_components.run_graph.run(WORKSPACE_ID, request),
         )
         first_value = first_response.node_runs[0].outputs[0].value
         assert isinstance(first_value, ArtifactRef)
@@ -366,7 +368,8 @@ async def test_sql_cache_survives_fresh_workbench_components(tmp_path: Path) -> 
             unit_of_work=SqlAlchemyUnitOfWork(database.sessions),
         )
         repeated_response = await fresh_components.presenter.run_response(
-            await fresh_components.run_graph.run(request)
+            WORKSPACE_ID,
+            await fresh_components.run_graph.run(WORKSPACE_ID, request),
         )
         repeated_value = repeated_response.node_runs[0].outputs[0].value
         assert isinstance(repeated_value, ArtifactRef)

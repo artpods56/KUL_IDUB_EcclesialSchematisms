@@ -1,5 +1,6 @@
 from collections import Counter, deque
 from typing import Any
+from uuid import UUID
 
 from notarius_core.artifacts import (
     ArtifactFieldProjection,
@@ -90,6 +91,8 @@ class GraphCompiler:
         self,
         request: RunRequest,
         module_executor: GraphModuleExecutorPort,
+        *,
+        workspace_id: UUID,
     ) -> CompiledGraph:
         ordered_requests = _topological_order(request.nodes, request.edges)
         pinned_outputs = _pinned_outputs_by_endpoint(
@@ -104,6 +107,7 @@ class GraphCompiler:
             node, registration = await self._build_node(
                 node_request,
                 module_executor,
+                workspace_id=workspace_id,
             )
             nodes_by_id[node_request.id] = node
             registrations_by_id[node_request.id] = registration
@@ -167,6 +171,8 @@ class GraphCompiler:
         self,
         request: RunNodeRequest,
         module_executor: GraphModuleExecutorPort,
+        *,
+        workspace_id: UUID,
     ) -> tuple[Node[Any, Any, Any], NodeRegistration | None]:
         try:
             module_reference = GraphModuleReference.try_from_operator_identity(
@@ -177,7 +183,10 @@ class GraphCompiler:
             raise GraphExecutionError(str(exc)) from exc
         if module_reference is not None:
             try:
-                definition = await self._module_catalog.get_definition(module_reference)
+                definition = await self._module_catalog.get_definition(
+                    module_reference,
+                    workspace_id=workspace_id,
+                )
             except GraphModuleCatalogError as exc:
                 raise GraphExecutionError(str(exc)) from exc
             return GraphModuleNode(definition, module_executor), None

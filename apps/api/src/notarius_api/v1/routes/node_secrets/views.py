@@ -20,6 +20,7 @@ from notarius_api.v1.routes.node_secrets.services import (
     NodeSecretDeclarationError,
     NodeSecretValueError,
 )
+from notarius_api.v1.routes.workspace_scope import LegacyWorkspaceDependency
 
 
 router = APIRouter(prefix="/graphs", tags=["node secrets"])
@@ -32,9 +33,10 @@ router = APIRouter(prefix="/graphs", tags=["node secrets"])
 async def get_node_secret_status(
     graph_id: UUID,
     service: NodeSecretDependency,
+    workspace_id: LegacyWorkspaceDependency,
 ) -> GraphNodeSecretsResponse:
     try:
-        state = await service.status(graph_id)
+        state = await service.status(workspace_id, graph_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return GraphNodeSecretsResponse.from_state(state)
@@ -50,10 +52,12 @@ async def configure_node_secret(
     name: str,
     request: ConfigureNodeSecretRequest,
     service: NodeSecretDependency,
+    workspace_id: LegacyWorkspaceDependency,
 ) -> NodeSecretStatusResponse:
     try:
         state = await service.configure(
             graph_id=graph_id,
+            workspace_id=workspace_id,
             node_id=node_id,
             name=name,
             value=request.value,
@@ -81,11 +85,13 @@ async def delete_node_secret(
     node_id: str,
     name: str,
     service: NodeSecretDependency,
+    workspace_id: LegacyWorkspaceDependency,
     expected_graph_revision: Annotated[int, Query(ge=1)],
 ) -> Response:
     try:
         await service.remove(
             graph_id=graph_id,
+            workspace_id=workspace_id,
             node_id=node_id,
             name=name,
             expected_graph_revision=expected_graph_revision,

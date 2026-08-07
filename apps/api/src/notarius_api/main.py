@@ -51,6 +51,7 @@ from notarius_api.v1.routes.workspaces.views import (
     router as workspaces_router,
     workspace_failure_metadata,
 )
+from notarius_api.v1.routes.workspace_scope import LEGACY_WORKSPACE_ID
 
 
 logger = logging.getLogger(__name__)
@@ -278,8 +279,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             saved_graphs=saved_graphs,
             node_secrets=node_secrets,
         )
-        await components.execution_history.interrupt_active()
+        await components.execution_history.interrupt_active(LEGACY_WORKSPACE_ID)
         app.state.workbench_plugin_registry = components.plugin_registry
+        app.state.legacy_workspace_id = LEGACY_WORKSPACE_ID
         app.state.image_uploads = components.uploads
         app.state.graph_modules = components.modules
         app.state.run_graph = components.run_graph

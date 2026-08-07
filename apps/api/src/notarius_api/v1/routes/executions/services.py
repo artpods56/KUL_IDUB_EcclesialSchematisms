@@ -16,6 +16,7 @@ from notarius_core.domain.execution_history import (
     GraphExecutionScope,
     GraphExecutionStatus,
 )
+from notarius_core.domain.errors import NotFoundError
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
 from notarius_core.domain.saved_graphs import SavedGraphRevision
 from notarius_core.operators.tables import TABLE_DATA
@@ -56,6 +57,7 @@ class ExecutionHistoryService:
     async def create_queued(
         self,
         *,
+        workspace_id: UUID,
         execution_id: UUID,
         graph_id: UUID,
         graph_revision: int,
@@ -66,8 +68,13 @@ class ExecutionHistoryService:
             raise RuntimeError(
                 "Saved graph context is not configured for execution history"
             )
-        await self._saved_graphs.get_revision(graph_id, graph_revision)
+        await self._saved_graphs.get_revision(
+            workspace_id,
+            graph_id,
+            graph_revision,
+        )
         execution = GraphExecution(
+            workspace_id=workspace_id,
             execution_id=execution_id,
             graph_id=graph_id,
             graph_revision=graph_revision,
@@ -80,14 +87,26 @@ class ExecutionHistoryService:
             await unit_of_work.commit()
         return execution
 
-    async def mark_running(self, execution: GraphExecution) -> None:
+    async def mark_running(
+        self,
+        workspace_id: UUID,
+        execution: GraphExecution,
+    ) -> None:
+        if execution.workspace_id != workspace_id:
+            raise NotFoundError("Graph execution", str(execution.execution_id))
         execution.status = "running"
         execution.started_at = datetime.now(UTC)
         async with self._unit_of_work as unit_of_work:
             await unit_of_work.execution_history.update(execution)
             await unit_of_work.commit()
 
-    async def mark_cancelling(self, execution: GraphExecution) -> None:
+    async def mark_cancelling(
+        self,
+        workspace_id: UUID,
+        execution: GraphExecution,
+    ) -> None:
+        if execution.workspace_id != workspace_id:
+            raise NotFoundError("Graph execution", str(execution.execution_id))
         execution.status = "cancelling"
         async with self._unit_of_work as unit_of_work:
             await unit_of_work.execution_history.update(execution)
@@ -95,12 +114,15 @@ class ExecutionHistoryService:
 
     async def complete(
         self,
+        workspace_id: UUID,
         execution: GraphExecution,
         *,
         status: GraphExecutionStatus,
         result: "GraphExecutionResult | None",
         error: str | None,
     ) -> None:
+        if execution.workspace_id != workspace_id:
+            raise NotFoundError("Graph execution", str(execution.execution_id))
         if status not in {"cancelled", "succeeded", "failed"}:
             raise ValueError(f"Execution completion status {status!r} is not terminal")
         completed_at = datetime.now(UTC)
@@ -116,6 +138,7 @@ class ExecutionHistoryService:
                 for position, node_result in enumerate(result.node_results):
                     await unit_of_work.execution_history.add_node_result(
                         GraphExecutionNodeResult(
+                            workspace_id=workspace_id,
                             execution_id=execution.execution_id,
                             node_id=node_result.node_id,
                             position=position,
@@ -129,17 +152,22 @@ class ExecutionHistoryService:
 
     async def get_for_graph(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         execution_id: UUID,
     ) -> GraphExecutionDetail | None:
         async with self._unit_of_work as unit_of_work:
-            detail = await unit_of_work.execution_history.get(execution_id)
+            detail = await unit_of_work.execution_history.get(
+                workspace_id,
+                execution_id,
+            )
         if detail is None or detail.execution.graph_id != graph_id:
             return None
         return detail
 
     async def list_for_graph(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         *,
         limit: int,
@@ -150,6 +178,7 @@ class ExecutionHistoryService:
     ) -> GraphExecutionPage:
         async with self._unit_of_work as unit_of_work:
             return await unit_of_work.execution_history.list_for_graph(
+                workspace_id,
                 graph_id,
                 limit=limit,
                 cursor=cursor,
@@ -158,9 +187,10 @@ class ExecutionHistoryService:
                 node_id=node_id,
             )
 
-    async def interrupt_active(self) -> int:
+    async def interrupt_active(self, workspace_id: UUID) -> int:
         async with self._unit_of_work as unit_of_work:
             interrupted = await unit_of_work.execution_history.interrupt_active(
+                workspace_id=workspace_id,
                 finished_at=datetime.now(UTC),
                 error=(
                     "Execution was interrupted because the API process stopped "
@@ -186,6 +216,7 @@ class MaterializationService:
 
     async def saved_graph_revision(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         graph_revision: int,
     ) -> SavedGraphRevision:
@@ -195,10 +226,15 @@ class MaterializationService:
             raise GraphExecutionError(
                 "Saved graph context is not configured for this workbench"
             )
-        return await self._saved_graphs.get_revision(graph_id, graph_revision)
+        return await self._saved_graphs.get_revision(
+            workspace_id,
+            graph_id,
+            graph_revision,
+        )
 
     async def validate_latest_pins(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         graph_revision: int,
         submitted_pins: Mapping[tuple[str, str], ArtifactOutputValue],
@@ -207,6 +243,7 @@ class MaterializationService:
             return
         async with self._unit_of_work as unit_of_work:
             materializations = await unit_of_work.materialized_outputs.list_for_graph(
+                workspace_id,
                 graph_id,
                 graph_revision,
             )
@@ -223,7 +260,8 @@ class MaterializationService:
                 else None
             )
             if materialized_value is None or not await self._artifacts.is_accessible(
-                materialized_value
+                workspace_id,
+                materialized_value,
             ):
                 raise GraphExecutionError(
                     f"Cannot reuse upstream output {from_node!r}.{from_port!r}: "
@@ -241,19 +279,25 @@ class MaterializationService:
 
     async def resolve_pinned_outputs(
         self,
+        workspace_id: UUID,
         pinned_outputs: Mapping[tuple[str, str], ArtifactOutputValue],
     ) -> dict[str, dict[str, ArtifactOutputValue]]:
         outputs: dict[str, dict[str, ArtifactOutputValue]] = {}
         for (from_node, from_port), value in pinned_outputs.items():
             context = f"Pinned output {from_node!r}.{from_port!r}"
-            await self._artifacts.validate_refs(value, context=context)
-            if not await self._artifacts.is_accessible(value):
+            await self._artifacts.validate_refs(
+                workspace_id,
+                value,
+                context=context,
+            )
+            if not await self._artifacts.is_accessible(workspace_id, value):
                 raise GraphExecutionError(f"{context} is not accessible")
             outputs.setdefault(from_node, {})[from_port] = value
         return outputs
 
     async def persist_execution(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         graph_revision: int,
         execution: "GraphExecutionResult",
@@ -269,6 +313,7 @@ class MaterializationService:
             for node_result in successful_results:
                 await unit_of_work.materialized_outputs.upsert(
                     MaterializedNodeOutputs(
+                        workspace_id=workspace_id,
                         graph_id=graph_id,
                         graph_revision=graph_revision,
                         node_id=node_result.node_id,
@@ -281,12 +326,14 @@ class MaterializationService:
 
     async def list_for_graph(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         graph_revision: int,
     ) -> list[MaterializedNodeOutputs]:
-        await self.saved_graph_revision(graph_id, graph_revision)
+        await self.saved_graph_revision(workspace_id, graph_id, graph_revision)
         async with self._unit_of_work as unit_of_work:
             return await unit_of_work.materialized_outputs.list_for_graph(
+                workspace_id,
                 graph_id,
                 graph_revision,
             )
@@ -298,7 +345,11 @@ class RunResultPresenter:
     def __init__(self, artifacts: ArtifactService) -> None:
         self._artifacts = artifacts
 
-    async def run_response(self, execution: "GraphExecutionResult") -> RunResponse:
+    async def run_response(
+        self,
+        workspace_id: UUID,
+        execution: "GraphExecutionResult",
+    ) -> RunResponse:
         return RunResponse(
             status=execution.status,
             node_runs=[
@@ -307,7 +358,11 @@ class RunResultPresenter:
                     status=node_result.status,
                     error=node_result.error,
                     outputs=[
-                        await self.port_output_response(port_name, value)
+                        await self.port_output_response(
+                            workspace_id,
+                            port_name,
+                            value,
+                        )
                         for port_name, value in node_result.outputs.items()
                     ],
                 )
@@ -321,7 +376,10 @@ class RunResultPresenter:
     ) -> RunExecutionResponse:
         result = None
         if execution.result is not None:
-            result = await self.run_response(execution.result)
+            result = await self.run_response(
+                execution.workspace_id,
+                execution.result,
+            )
         return RunExecutionResponse(
             execution_id=execution.execution_id,
             status=execution.status,
@@ -332,6 +390,7 @@ class RunResultPresenter:
 
     async def materializations_response(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         graph_revision: int,
         materializations: Sequence[MaterializedNodeOutputs],
@@ -340,9 +399,13 @@ class RunResultPresenter:
         for materialization in materializations:
             accessible_outputs: list[RunPortOutputResponse] = []
             for port_name, value in materialization.outputs.items():
-                if await self._artifacts.is_accessible(value):
+                if await self._artifacts.is_accessible(workspace_id, value):
                     accessible_outputs.append(
-                        await self.port_output_response(port_name, value)
+                        await self.port_output_response(
+                            workspace_id,
+                            port_name,
+                            value,
+                        )
                     )
             if materialization.outputs and not accessible_outputs:
                 continue
@@ -362,6 +425,7 @@ class RunResultPresenter:
 
     async def port_output_response(
         self,
+        workspace_id: UUID,
         port_name: str,
         value: ArtifactOutputValue,
     ) -> RunPortOutputResponse:
@@ -375,14 +439,17 @@ class RunResultPresenter:
             port=port_name,
             kind=kind,
             value=value,
-            artifacts=[await self.artifact_summary(ref) for ref in refs],
+            artifacts=[
+                await self.artifact_summary(workspace_id, ref) for ref in refs
+            ],
         )
 
     async def artifact_summary(
         self,
+        workspace_id: UUID,
         ref: ArtifactRef,
     ) -> ArtifactSummaryResponse:
-        artifact = await self._artifacts.get(ref.artifact_id)
+        artifact = await self._artifacts.get(workspace_id, ref.artifact_id)
         if artifact is None:
             return ArtifactSummaryResponse(
                 artifact_id=ref.artifact_id,

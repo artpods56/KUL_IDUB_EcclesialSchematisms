@@ -3,6 +3,7 @@ import base64
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import ClassVar, override
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,6 +17,7 @@ from notarius_core.domain.saved_graphs import (
     SavedGraphDocument,
     SavedGraphNode,
 )
+from notarius_core.domain.identity import Workspace
 from notarius_core.domain.errors import SavedGraphRevisionConflictError
 from notarius_core.nodes import Node, NodeExecutionContext
 from notarius_core.plugins import NodeSecretInput, Plugin, PluginRegistry
@@ -60,6 +62,7 @@ class EmptyOutput(NodeOutput):
 
 
 SECRET_TEST_PLUGIN = Plugin(slug="test.node-secrets", title="Node secrets test")
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
 
 
 @SECRET_TEST_PLUGIN.node(
@@ -123,6 +126,16 @@ async def node_secret_setup(
     database = create_database(database_url)
     async with database.engine.begin() as connection:
         await connection.run_sync(metadata.create_all)
+    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        await unit_of_work.identity.add_workspace(
+            Workspace(
+                id=WORKSPACE_ID,
+                slug="local",
+                name="Local workspace",
+                kind="shared",
+            )
+        )
+        await unit_of_work.commit()
     registry = PluginRegistry()
     registry.install(SECRET_TEST_PLUGIN)
     registry.freeze()
@@ -143,6 +156,8 @@ async def node_secret_setup(
 
 async def _saved_secret_graph(saved_graphs: SavedGraphService):
     return await saved_graphs.create(
+        workspace_id=WORKSPACE_ID,
+        created_by_user_id=None,
         name="Shared extraction",
         document=_secret_document(),
     )
@@ -186,14 +201,16 @@ async def test_configured_secret_is_encrypted_and_resolves_only_for_binding(
     plaintext = "provider-key-that-must-never-be-returned"
 
     configured = await service.configure(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph.id,
         node_id="llm",
         name="api_key",
         value=SecretStr(plaintext),
         expected_graph_revision=graph.revision,
     )
-    status = await service.status(graph.id)
+    status = await service.status(WORKSPACE_ID, graph.id)
     resolved = await service.resolve_secret(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph.id,
         graph_revision=graph.revision,
         node_id="llm",
@@ -210,6 +227,7 @@ async def test_configured_secret_is_encrypted_and_resolves_only_for_binding(
         encryption_key=_encryption_key(),
     )
     visitor_resolved = await visitor_service.resolve_secret(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph.id,
         graph_revision=graph.revision,
         node_id="llm",
@@ -232,6 +250,7 @@ async def test_configured_secret_is_encrypted_and_resolves_only_for_binding(
 
     with pytest.raises(NodeSecretUnavailableError, match="does not match"):
         await service.resolve_secret(
+            workspace_id=WORKSPACE_ID,
             graph_id=graph.id,
             graph_revision=graph.revision,
             node_id="llm",
@@ -252,6 +271,7 @@ async def test_secret_cache_revision_is_stable_and_changes_on_replacement(
     _, service, saved_graphs, _ = node_secret_setup
     graph = await _saved_secret_graph(saved_graphs)
     await service.configure(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph.id,
         node_id="llm",
         name="api_key",
@@ -260,6 +280,7 @@ async def test_secret_cache_revision_is_stable_and_changes_on_replacement(
     )
 
     first = await service.cache_revision(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph.id,
         graph_revision=graph.revision,
         node_id="llm",
@@ -267,6 +288,7 @@ async def test_secret_cache_revision_is_stable_and_changes_on_replacement(
         dependencies={"base_url": "https://llm.example/v1"},
     )
     repeated = await service.cache_revision(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph.id,
         graph_revision=graph.revision,
         node_id="llm",
@@ -275,6 +297,7 @@ async def test_secret_cache_revision_is_stable_and_changes_on_replacement(
     )
 
     await service.configure(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph.id,
         node_id="llm",
         name="api_key",
@@ -282,6 +305,7 @@ async def test_secret_cache_revision_is_stable_and_changes_on_replacement(
         expected_graph_revision=graph.revision,
     )
     replaced = await service.cache_revision(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph.id,
         graph_revision=graph.revision,
         node_id="llm",
@@ -309,6 +333,7 @@ async def test_unrelated_graph_edits_retain_and_resolve_secret(
     graph = await _saved_secret_graph(saved_graphs)
     plaintext = "retained-across-unrelated-edits"
     await service.configure(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph.id,
         node_id="llm",
         name="api_key",
@@ -318,6 +343,7 @@ async def test_unrelated_graph_edits_retain_and_resolve_secret(
 
     updated = await saved_graphs.replace(
         graph.id,
+        workspace_id=WORKSPACE_ID,
         name="Renamed extraction",
         document=_secret_document(
             model="different-model",
@@ -327,8 +353,9 @@ async def test_unrelated_graph_edits_retain_and_resolve_secret(
         expected_revision=1,
     )
 
-    status = await service.status(updated.id)
+    status = await service.status(WORKSPACE_ID, updated.id)
     resolved = await service.resolve_secret(
+        workspace_id=WORKSPACE_ID,
         graph_id=updated.id,
         graph_revision=updated.revision,
         node_id="llm",
@@ -359,6 +386,7 @@ async def test_unavailable_operator_keeps_secret_dormant_until_supported_again(
     database, supported_secrets, supported_graphs, _ = node_secret_setup
     graph = await _saved_secret_graph(supported_graphs)
     await supported_secrets.configure(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph.id,
         node_id="llm",
         name="api_key",
@@ -379,12 +407,13 @@ async def test_unavailable_operator_keeps_secret_dormant_until_supported_again(
 
     updated = await unavailable_graphs.replace(
         graph.id,
+        workspace_id=WORKSPACE_ID,
         name="Saved while plugin unavailable",
         document=_secret_document(model="edited-while-dormant"),
         expected_revision=graph.revision,
     )
 
-    status = await unavailable_secrets.status(updated.id)
+    status = await unavailable_secrets.status(WORKSPACE_ID, updated.id)
     async with database.engine.connect() as connection:
         stored_count = await connection.scalar(
             text("SELECT COUNT(*) FROM node_secrets WHERE graph_id = :graph_id"),
@@ -394,6 +423,7 @@ async def test_unavailable_operator_keeps_secret_dormant_until_supported_again(
     assert stored_count == 1
     with pytest.raises(NodeSecretDeclarationError, match="unavailable operator"):
         await unavailable_secrets.resolve_secret(
+            workspace_id=WORKSPACE_ID,
             graph_id=updated.id,
             graph_revision=updated.revision,
             node_id="llm",
@@ -401,8 +431,9 @@ async def test_unavailable_operator_keeps_secret_dormant_until_supported_again(
             dependencies={"base_url": "https://llm.example/v1"},
         )
 
-    restored_status = await supported_secrets.status(updated.id)
+    restored_status = await supported_secrets.status(WORKSPACE_ID, updated.id)
     restored = await supported_secrets.resolve_secret(
+        workspace_id=WORKSPACE_ID,
         graph_id=updated.id,
         graph_revision=updated.revision,
         node_id="llm",
@@ -427,6 +458,7 @@ async def test_secret_resolution_uses_the_pinned_saved_graph_revision(
     graph = await _saved_secret_graph(saved_graphs)
     original_revision = graph.revision
     await service.configure(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph.id,
         node_id="llm",
         name="api_key",
@@ -435,12 +467,14 @@ async def test_secret_resolution_uses_the_pinned_saved_graph_revision(
     )
     updated = await saved_graphs.replace(
         graph.id,
+        workspace_id=WORKSPACE_ID,
         name=graph.name,
         document=_secret_document(model="new-model"),
         expected_revision=original_revision,
     )
 
     resolved = await service.resolve_secret(
+        workspace_id=WORKSPACE_ID,
         graph_id=updated.id,
         graph_revision=original_revision,
         node_id="llm",
@@ -463,6 +497,7 @@ async def test_changing_dependency_deletes_secret_and_changing_back_does_not_rev
     database, service, saved_graphs, _ = node_secret_setup
     graph = await _saved_secret_graph(saved_graphs)
     await service.configure(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph.id,
         node_id="llm",
         name="api_key",
@@ -471,12 +506,13 @@ async def test_changing_dependency_deletes_secret_and_changing_back_does_not_rev
     )
     updated = await saved_graphs.replace(
         graph.id,
+        workspace_id=WORKSPACE_ID,
         name=graph.name,
         document=_secret_document(base_url="https://changed.example/v1"),
         expected_revision=1,
     )
 
-    status = await service.status(updated.id)
+    status = await service.status(WORKSPACE_ID, updated.id)
     async with database.engine.connect() as connection:
         stored_count = await connection.scalar(
             text("SELECT COUNT(*) FROM node_secrets WHERE graph_id = :graph_id"),
@@ -488,6 +524,7 @@ async def test_changing_dependency_deletes_secret_and_changing_back_does_not_rev
     assert stored_count == 0
     with pytest.raises(NodeSecretUnavailableError, match="not configured"):
         await service.resolve_secret(
+            workspace_id=WORKSPACE_ID,
             graph_id=updated.id,
             graph_revision=updated.revision,
             node_id="llm",
@@ -497,16 +534,18 @@ async def test_changing_dependency_deletes_secret_and_changing_back_does_not_rev
 
     changed_back = await saved_graphs.replace(
         graph.id,
+        workspace_id=WORKSPACE_ID,
         name=graph.name,
         document=_secret_document(),
         expected_revision=2,
     )
-    changed_back_status = await service.status(changed_back.id)
+    changed_back_status = await service.status(WORKSPACE_ID, changed_back.id)
 
     assert changed_back_status.graph_revision == 3
     assert changed_back_status.secrets[0].configured is False
     with pytest.raises(NodeSecretUnavailableError, match="not configured"):
         await service.resolve_secret(
+            workspace_id=WORKSPACE_ID,
             graph_id=changed_back.id,
             graph_revision=changed_back.revision,
             node_id="llm",
@@ -527,6 +566,7 @@ async def test_removing_and_readding_node_id_does_not_revive_secret(
     database, service, saved_graphs, _ = node_secret_setup
     graph = await _saved_secret_graph(saved_graphs)
     await service.configure(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph.id,
         node_id="llm",
         name="api_key",
@@ -536,6 +576,7 @@ async def test_removing_and_readding_node_id_does_not_revive_secret(
 
     await saved_graphs.replace(
         graph.id,
+        workspace_id=WORKSPACE_ID,
         name=graph.name,
         document=SavedGraphDocument(),
         expected_revision=1,
@@ -547,17 +588,19 @@ async def test_removing_and_readding_node_id_does_not_revive_secret(
         )
     readded = await saved_graphs.replace(
         graph.id,
+        workspace_id=WORKSPACE_ID,
         name=graph.name,
         document=_secret_document(),
         expected_revision=2,
     )
-    status = await service.status(readded.id)
+    status = await service.status(WORKSPACE_ID, readded.id)
 
     assert stored_count == 0
     assert status.graph_revision == 3
     assert status.secrets[0].configured is False
     with pytest.raises(NodeSecretUnavailableError, match="not configured"):
         await service.resolve_secret(
+            workspace_id=WORKSPACE_ID,
             graph_id=readded.id,
             graph_revision=readded.revision,
             node_id="llm",
@@ -580,6 +623,7 @@ async def test_configure_rejects_stale_revision_and_undeclared_slot(
 
     with pytest.raises(SavedGraphRevisionConflictError):
         await service.configure(
+            workspace_id=WORKSPACE_ID,
             graph_id=graph.id,
             node_id="llm",
             name="api_key",
@@ -588,6 +632,7 @@ async def test_configure_rejects_stale_revision_and_undeclared_slot(
         )
     with pytest.raises(NodeSecretDeclarationError, match="does not declare"):
         await service.configure(
+            workspace_id=WORKSPACE_ID,
             graph_id=graph.id,
             node_id="llm",
             name="admin_token",
@@ -608,6 +653,7 @@ async def test_status_is_false_and_resolution_fails_with_different_server_key(
     database, service, saved_graphs, registry = node_secret_setup
     graph = await _saved_secret_graph(saved_graphs)
     await service.configure(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph.id,
         node_id="llm",
         name="api_key",
@@ -620,11 +666,12 @@ async def test_status_is_false_and_resolution_fails_with_different_server_key(
         encryption_key=_encryption_key(b"z"),
     )
 
-    status = await wrong_key_service.status(graph.id)
+    status = await wrong_key_service.status(WORKSPACE_ID, graph.id)
 
     assert status.secrets[0].configured is False
     with pytest.raises(NodeSecretUnavailableError, match="cannot be decrypted"):
         await wrong_key_service.resolve_secret(
+            workspace_id=WORKSPACE_ID,
             graph_id=graph.id,
             graph_revision=graph.revision,
             node_id="llm",
@@ -633,6 +680,7 @@ async def test_status_is_false_and_resolution_fails_with_different_server_key(
         )
     with pytest.raises(NodeSecretUnavailableError, match="cannot be decrypted"):
         await wrong_key_service.cache_revision(
+            workspace_id=WORKSPACE_ID,
             graph_id=graph.id,
             graph_revision=graph.revision,
             node_id="llm",
@@ -653,6 +701,7 @@ async def test_operator_version_mismatch_cannot_reuse_stored_secret(
     database, service, saved_graphs, _ = node_secret_setup
     graph = await _saved_secret_graph(saved_graphs)
     await service.configure(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph.id,
         node_id="llm",
         name="api_key",
@@ -668,11 +717,12 @@ async def test_operator_version_mismatch_cannot_reuse_stored_secret(
             {"graph_id": graph.id.hex},
         )
 
-    status = await service.status(graph.id)
+    status = await service.status(WORKSPACE_ID, graph.id)
 
     assert status.secrets[0].configured is False
     with pytest.raises(NodeSecretUnavailableError, match="does not match"):
         await service.resolve_secret(
+            workspace_id=WORKSPACE_ID,
             graph_id=graph.id,
             graph_revision=graph.revision,
             node_id="llm",
@@ -700,6 +750,7 @@ async def test_missing_encryption_key_fails_closed_and_secret_size_is_bounded(
 
     with pytest.raises(NodeSecretConfigurationError, match="required"):
         await missing_key_service.configure(
+            workspace_id=WORKSPACE_ID,
             graph_id=graph.id,
             node_id="llm",
             name="api_key",
@@ -712,6 +763,7 @@ async def test_missing_encryption_key_fails_closed_and_secret_size_is_bounded(
             plugin_registry=registry,
             encryption_key=_encryption_key(),
         ).configure(
+            workspace_id=WORKSPACE_ID,
             graph_id=graph.id,
             node_id="llm",
             name="api_key",
@@ -741,6 +793,7 @@ async def test_saved_run_passes_validated_graph_context_to_node(
     SecretTestNode.captured_contexts.clear()
 
     execution = await components.run_graph.run(
+        WORKSPACE_ID,
         RunRequest(
             graph_id=graph.id,
             graph_revision=graph.revision,
@@ -793,6 +846,7 @@ async def test_dirty_run_uses_saved_secret_binding_without_materialization_conte
     PlainTestNode.captured_contexts.clear()
 
     execution = await components.run_graph.run(
+        WORKSPACE_ID,
         RunRequest(
             secret_graph_id=graph.id,
             secret_graph_revision=graph.revision,
@@ -816,9 +870,11 @@ async def test_dirty_run_uses_saved_secret_binding_without_materialization_conte
         )
     )
     materializations = await components.presenter.materializations_response(
+        WORKSPACE_ID,
         graph.id,
         graph.revision,
         await components.materializations.list_for_graph(
+            WORKSPACE_ID,
             graph.id,
             graph.revision,
         ),
@@ -860,6 +916,7 @@ async def test_secret_bearing_run_requires_explicit_secret_graph_context(
         match="saved secret graph context.*'llm'",
     ):
         await components.run_graph.run(
+            WORKSPACE_ID,
             RunRequest(
                 nodes=[
                     RunNodeRequest(
@@ -896,6 +953,8 @@ async def test_dirty_run_rejects_invalid_saved_secret_binding(
     _, _, saved_graphs, registry = node_secret_setup
     if binding_case == "operator":
         graph = await saved_graphs.create(
+            workspace_id=WORKSPACE_ID,
+            created_by_user_id=None,
             name="Different operator",
             document=SavedGraphDocument(
                 nodes=(
@@ -926,6 +985,7 @@ async def test_dirty_run_rejects_invalid_saved_secret_binding(
 
     with pytest.raises(GraphExecutionError, match=message):
         await components.run_graph.run(
+            WORKSPACE_ID,
             RunRequest(
                 secret_graph_id=graph.id,
                 secret_graph_revision=graph.revision,
@@ -948,6 +1008,16 @@ def test_node_secret_routes_never_return_secret_value(tmp_path: Path) -> None:
     async def prepare() -> tuple[NodeSecretService, WorkbenchComponents, str]:
         async with database.engine.begin() as connection:
             await connection.run_sync(metadata.create_all)
+        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+            await unit_of_work.identity.add_workspace(
+                Workspace(
+                    id=WORKSPACE_ID,
+                    slug="local",
+                    name="Local workspace",
+                    kind="shared",
+                )
+            )
+            await unit_of_work.commit()
         registry = PluginRegistry()
         registry.install(SECRET_TEST_PLUGIN)
         registry.freeze()

@@ -43,7 +43,11 @@ class GraphRunPreflight:
         self._plugin_registry = plugin_registry
         self._saved_graphs = saved_graphs
 
-    async def validate(self, request: RunRequest) -> GraphRunContext:
+    async def validate(
+        self,
+        workspace_id: UUID,
+        request: RunRequest,
+    ) -> GraphRunContext:
         submitted_secret_nodes: set[str] = set()
         for node in request.nodes:
             registration = self._registrations.get(
@@ -63,6 +67,7 @@ class GraphRunPreflight:
         saved_graph_context: SavedGraphRevision | None = None
         if request.graph_id is not None and request.graph_revision is not None:
             saved_graph_context = await self._saved_graph_revision(
+                workspace_id,
                 request.graph_id,
                 request.graph_revision,
             )
@@ -84,6 +89,7 @@ class GraphRunPreflight:
             secret_graph = saved_graph_context
             if secret_graph is None:
                 secret_graph = await self._saved_graph_revision(
+                    workspace_id,
                     request.secret_graph_id,
                     request.secret_graph_revision,
                 )
@@ -96,6 +102,7 @@ class GraphRunPreflight:
 
     async def _saved_graph_revision(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         graph_revision: int,
     ) -> SavedGraphRevision:
@@ -103,7 +110,11 @@ class GraphRunPreflight:
             raise GraphExecutionError(
                 "Saved graph context is not configured for this workbench"
             )
-        return await self._saved_graphs.get_revision(graph_id, graph_revision)
+        return await self._saved_graphs.get_revision(
+            workspace_id,
+            graph_id,
+            graph_revision,
+        )
 
 
 def _validate_saved_graph_fragment(

@@ -49,6 +49,7 @@ from notarius_api.v1.routes.executions.runtime.models import CompiledEdge, Compi
 
 
 SOURCE_RESPONSE = ArtifactTypeKey("test.edge_values.response", 1)
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
 RETRY_COUNT_PROJECTION = ArtifactFieldProjection(
     path=("customer", "retry_count"),
     target=INTEGER_VALUE.key,
@@ -193,6 +194,7 @@ async def test_instance_plugs_follow_declared_order_and_ignore_other_targets(
             "unrelated-source": {"value": unrelated_ref},
         },
         uuid4(),
+        WORKSPACE_ID,
     )
 
     assert inputs["items"] == [second_ref, first_ref]
@@ -205,6 +207,7 @@ async def test_projection_precedes_conversion_and_preserves_sequence_context(
     unit_of_work = InMemoryUnitOfWork()
     edge_values, artifacts = _edge_value_resolver(unit_of_work, tmp_path)
     first_source = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         artifact_type=SOURCE_RESPONSE.id,
         schema_version=SOURCE_RESPONSE.schema_version,
         content_type="application/json",
@@ -212,6 +215,7 @@ async def test_projection_precedes_conversion_and_preserves_sequence_context(
         inline_payload={"customer": {"retry_count": 7}},
     )
     second_source = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         artifact_type=SOURCE_RESPONSE.id,
         schema_version=SOURCE_RESPONSE.schema_version,
         content_type="application/json",
@@ -258,6 +262,7 @@ async def test_projection_precedes_conversion_and_preserves_sequence_context(
         (edge,),
         {"source": {"response": source_sequence}},
         uuid4(),
+        WORKSPACE_ID,
     )
 
     converted = inputs["text"]
@@ -279,11 +284,17 @@ async def test_projection_precedes_conversion_and_preserves_sequence_context(
     assert isinstance(projected_sequence_id, str)
     assert UUID(projected_sequence_id) != source_sequence.sequence_id
 
-    final_artifact = await artifacts.get(converted.item_refs[0].artifact_id)
+    final_artifact = await artifacts.get(
+        WORKSPACE_ID,
+        converted.item_refs[0].artifact_id,
+    )
     assert final_artifact is not None
     projected_artifact_id = final_artifact.metadata["source_artifact_id"]
     assert isinstance(projected_artifact_id, str)
-    projected_artifact = await artifacts.get(UUID(projected_artifact_id))
+    projected_artifact = await artifacts.get(
+        WORKSPACE_ID,
+        UUID(projected_artifact_id),
+    )
     assert projected_artifact is not None
     assert projected_artifact.id != first_source.id
     assert projected_artifact.metadata["source_artifact_id"] == str(first_source.id)
@@ -316,6 +327,7 @@ async def test_conversion_failure_identifies_step_item_artifact_and_edge(
     unit_of_work = InMemoryUnitOfWork()
     edge_values, _artifacts = _edge_value_resolver(unit_of_work, tmp_path)
     source = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         artifact_type=INTEGER_VALUE.key.id,
         schema_version=INTEGER_VALUE.key.schema_version,
         content_type="application/json",
@@ -360,6 +372,7 @@ async def test_conversion_failure_identifies_step_item_artifact_and_edge(
                 }
             },
             uuid4(),
+            WORKSPACE_ID,
         )
 
     message = str(captured.value)

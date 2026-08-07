@@ -23,7 +23,7 @@ from notarius_core.artifacts import (
     NodeOutput,
 )
 from notarius_core.application.saved_graphs import SavedGraphService
-from notarius_core.domain.identity import ActorContext
+from notarius_core.domain.identity import ActorContext, Workspace
 from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
 from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
 from notarius_core.operators.arithmetic import INTEGER_VALUE
@@ -302,6 +302,16 @@ async def _create_schema(database_url: str) -> None:
     try:
         async with database.engine.begin() as connection:
             await connection.run_sync(metadata.create_all)
+        async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
+            await unit_of_work.identity.add_workspace(
+                Workspace(
+                    id=UUID("00000000-0000-0000-0000-000000000007"),
+                    slug="local",
+                    name="Local workspace",
+                    kind="shared",
+                )
+            )
+            await unit_of_work.commit()
     finally:
         await database.dispose()
 

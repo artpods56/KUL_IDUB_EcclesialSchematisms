@@ -6,6 +6,7 @@ from .dependencies import (
     PluginRegistryDependency,
 )
 from .models import NodeRegistryResponse
+from notarius_api.v1.routes.workspace_scope import LegacyWorkspaceDependency
 
 
 router = APIRouter(tags=["workbench"])
@@ -16,8 +17,9 @@ async def list_nodes(
     registry: PluginRegistryDependency,
     modules: GraphModuleCatalogDependency,
     module_executor: GraphModuleExecutorDependency,
+    workspace_id: LegacyWorkspaceDependency,
 ) -> NodeRegistryResponse:
-    module_listing = await modules.list()
+    module_listing = await modules.list(workspace_id)
     return NodeRegistryResponse.from_registry(
         registry,
         module_listing,

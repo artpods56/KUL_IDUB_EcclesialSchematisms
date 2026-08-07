@@ -58,6 +58,7 @@ class GraphNodeSecretState:
 
 @dataclass(frozen=True, slots=True)
 class _NodeSecretBinding:
+    workspace_id: UUID
     graph_id: UUID
     node_id: str
     operator_id: str
@@ -78,12 +79,19 @@ class NodeSecretService(NodeSecretResolverPort):
         self._plugin_registry = plugin_registry
         self._encryption_key = encryption_key
 
-    async def status(self, graph_id: UUID) -> GraphNodeSecretState:
+    async def status(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> GraphNodeSecretState:
         async with self._unit_of_work_factory() as unit_of_work:
-            graph = await unit_of_work.graphs.get(graph_id)
+            graph = await unit_of_work.graphs.get(workspace_id, graph_id)
             if graph is None:
                 raise NotFoundError("Saved graph", str(graph_id))
-            stored = await unit_of_work.node_secrets.list_for_graph(graph_id)
+            stored = await unit_of_work.node_secrets.list_for_graph(
+                workspace_id,
+                graph_id,
+            )
         stored_by_key = {(secret.node_id, secret.name): secret for secret in stored}
         active_key_id = self._active_key_id()
 
@@ -126,6 +134,7 @@ class NodeSecretService(NodeSecretResolverPort):
     async def configure(
         self,
         *,
+        workspace_id: UUID,
         graph_id: UUID,
         node_id: str,
         name: str,
@@ -134,10 +143,11 @@ class NodeSecretService(NodeSecretResolverPort):
     ) -> NodeSecretState:
         async with self._unit_of_work_factory() as unit_of_work:
             await unit_of_work.graphs.lock_revision(
+                workspace_id,
                 graph_id,
                 expected_graph_revision,
             )
-            graph = await unit_of_work.graphs.get(graph_id)
+            graph = await unit_of_work.graphs.get(workspace_id, graph_id)
             if graph is None:
                 raise NotFoundError("Saved graph", str(graph_id))
             graph.ensure_revision(expected_graph_revision)
@@ -157,6 +167,7 @@ class NodeSecretService(NodeSecretResolverPort):
             ciphertext = AESGCM(key).encrypt(nonce, plaintext_bytes, aad)
             now = datetime.now(UTC)
             encrypted = EncryptedNodeSecret(
+                workspace_id=binding.workspace_id,
                 graph_id=binding.graph_id,
                 node_id=binding.node_id,
                 name=binding.declaration.name,
@@ -176,6 +187,7 @@ class NodeSecretService(NodeSecretResolverPort):
     async def remove(
         self,
         *,
+        workspace_id: UUID,
         graph_id: UUID,
         node_id: str,
         name: str,
@@ -183,15 +195,21 @@ class NodeSecretService(NodeSecretResolverPort):
     ) -> None:
         async with self._unit_of_work_factory() as unit_of_work:
             await unit_of_work.graphs.lock_revision(
+                workspace_id,
                 graph_id,
                 expected_graph_revision,
             )
-            graph = await unit_of_work.graphs.get(graph_id)
+            graph = await unit_of_work.graphs.get(workspace_id, graph_id)
             if graph is None:
                 raise NotFoundError("Saved graph", str(graph_id))
             graph.ensure_revision(expected_graph_revision)
             self._binding(graph, node_id, name)
-            await unit_of_work.node_secrets.remove(graph_id, node_id, name)
+            await unit_of_work.node_secrets.remove(
+                workspace_id,
+                graph_id,
+                node_id,
+                name,
+            )
             await unit_of_work.commit()
 
     async def resolve_secret(
@@ -206,11 +224,11 @@ class NodeSecretService(NodeSecretResolverPort):
     ) -> SecretStr:
         binding, encrypted = await self._validated_secret_record(
             graph_id=graph_id,
+            workspace_id=workspace_id,
             graph_revision=graph_revision,
             node_id=node_id,
             name=name,
             dependencies=dependencies,
-            workspace_id=workspace_id,
         )
 
         key, key_id = self._resolved_encryption_key()
@@ -248,11 +266,11 @@ class NodeSecretService(NodeSecretResolverPort):
     ) -> str:
         _, encrypted = await self._validated_secret_record(
             graph_id=graph_id,
+            workspace_id=workspace_id,
             graph_revision=graph_revision,
             node_id=node_id,
             name=name,
             dependencies=dependencies,
-            workspace_id=workspace_id,
         )
         _, active_key_id = self._resolved_encryption_key()
         if encrypted.key_id != active_key_id:
@@ -271,7 +289,12 @@ class NodeSecretService(NodeSecretResolverPort):
         name: str,
         dependencies: Mapping[str, JsonValue],
     ) -> tuple[_NodeSecretBinding, EncryptedNodeSecret]:
-        if graph_id is None or graph_revision is None or node_id is None:
+        if (
+            workspace_id is None
+            or graph_id is None
+            or graph_revision is None
+            or node_id is None
+        ):
             raise NodeSecretUnavailableError(
                 "A saved graph context is required to resolve a node secret"
             )
@@ -358,6 +381,7 @@ class NodeSecretService(NodeSecretResolverPort):
             node.config_dict()
         ).model_dump(mode="json")
         return _NodeSecretBinding(
+            workspace_id=graph.workspace_id,
             graph_id=graph.id,
             node_id=node.id,
             operator_id=node.operator_id,
@@ -394,6 +418,7 @@ class NodeSecretService(NodeSecretResolverPort):
     def _additional_authenticated_data(cls, binding: _NodeSecretBinding) -> bytes:
         identity = {
             "version": 1,
+            "workspace_id": str(binding.workspace_id),
             "graph_id": str(binding.graph_id),
             "node_id": binding.node_id,
             "operator_id": binding.operator_id,

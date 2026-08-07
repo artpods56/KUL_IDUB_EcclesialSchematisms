@@ -45,6 +45,7 @@ class EdgeValueResolver:
         incoming_edges: Sequence[CompiledEdge],
         outputs: Mapping[str, Mapping[str, ArtifactOutputValue]],
         workflow_run_id: UUID,
+        workspace_id: UUID,
     ) -> dict[str, object]:
         values: dict[str, object] = {}
         node_request = compiled_node.request
@@ -86,12 +87,14 @@ class EdgeValueResolver:
                         value,
                         edge,
                         workflow_run_id,
+                        workspace_id,
                     )
                 if edge.conversion_path:
                     value = await self._convert_value(
                         value,
                         edge,
                         workflow_run_id,
+                        workspace_id,
                     )
                 port_values.append(value)
 
@@ -111,6 +114,7 @@ class EdgeValueResolver:
         value: ArtifactOutputValue,
         edge: CompiledEdge,
         workflow_run_id: UUID,
+        workspace_id: UUID,
     ) -> ArtifactOutputValue:
         projection = edge.projection
         if projection is None:
@@ -120,6 +124,7 @@ class EdgeValueResolver:
                 value,
                 edge,
                 workflow_run_id,
+                workspace_id,
                 item_index=None,
             )
 
@@ -128,6 +133,7 @@ class EdgeValueResolver:
                 ref,
                 edge,
                 workflow_run_id,
+                workspace_id,
                 item_index=index,
             )
             for index, ref in enumerate(value.item_refs)
@@ -154,13 +160,14 @@ class EdgeValueResolver:
         ref: ArtifactRef,
         edge: CompiledEdge,
         workflow_run_id: UUID,
+        workspace_id: UUID,
         *,
         item_index: int | None,
     ) -> ArtifactRef:
         projection = edge.projection
         if projection is None:
             raise GraphExecutionError("A compiled projection is required")
-        artifact = await self._artifacts.get(ref.artifact_id)
+        artifact = await self._artifacts.get(workspace_id, ref.artifact_id)
         if artifact is None:
             raise GraphExecutionError(
                 f"Cannot project missing source artifact {ref.artifact_id} for "
@@ -200,6 +207,7 @@ class EdgeValueResolver:
                 node_context=NodeExecutionContext(
                     workflow_run_id=workflow_run_id,
                     node_run_id=uuid4(),
+                    workspace_id=workspace_id,
                     node_id=edge.request.from_node,
                 ),
                 provenance=MaterializationProvenance(
@@ -229,6 +237,7 @@ class EdgeValueResolver:
         value: ArtifactOutputValue,
         edge: CompiledEdge,
         workflow_run_id: UUID,
+        workspace_id: UUID,
     ) -> ArtifactOutputValue:
         conversions = edge.conversion_path
         if not conversions:
@@ -239,6 +248,7 @@ class EdgeValueResolver:
                 value,
                 edge,
                 workflow_run_id,
+                workspace_id,
                 item_index=None,
             )
 
@@ -247,6 +257,7 @@ class EdgeValueResolver:
                 ref,
                 edge,
                 workflow_run_id,
+                workspace_id,
                 item_index=index,
             )
             for index, ref in enumerate(value.item_refs)
@@ -272,6 +283,7 @@ class EdgeValueResolver:
         ref: ArtifactRef,
         edge: CompiledEdge,
         workflow_run_id: UUID,
+        workspace_id: UUID,
         *,
         item_index: int | None,
     ) -> ArtifactRef:
@@ -339,6 +351,7 @@ class EdgeValueResolver:
                     node_context=NodeExecutionContext(
                         workflow_run_id=workflow_run_id,
                         node_run_id=uuid4(),
+                        workspace_id=workspace_id,
                         node_id=edge.request.from_node,
                     ),
                     provenance=MaterializationProvenance(

@@ -21,6 +21,7 @@ class PreparedGraphExecution:
 
     plan: CompiledGraph
     initial_outputs: Mapping[str, Mapping[str, ArtifactOutputValue]]
+    workspace_id: UUID
     graph_id: UUID | None
     graph_revision: int | None
     secret_graph_id: UUID | None

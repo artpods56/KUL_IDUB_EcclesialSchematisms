@@ -35,56 +35,77 @@ class SavedGraphService:
     async def create(
         self,
         *,
+        workspace_id: UUID,
+        created_by_user_id: UUID | None,
         name: str,
         document: SavedGraphDocument,
     ) -> SavedGraph:
-        graph = SavedGraph(name=name, document=document)
+        graph = SavedGraph(
+            workspace_id=workspace_id,
+            created_by_user_id=created_by_user_id,
+            name=name,
+            document=document,
+        )
         async with self._unit_of_work_factory() as unit_of_work:
             await unit_of_work.graphs.add(graph)
             await unit_of_work.graphs.add_revision(graph.snapshot())
             await unit_of_work.commit()
         return graph
 
-    async def get(self, graph_id: UUID) -> SavedGraph:
+    async def get(self, workspace_id: UUID, graph_id: UUID) -> SavedGraph:
         async with self._unit_of_work_factory() as unit_of_work:
-            graph = await unit_of_work.graphs.get(graph_id)
+            graph = await unit_of_work.graphs.get(workspace_id, graph_id)
         if graph is None:
             raise NotFoundError("Saved graph", str(graph_id))
         return graph
 
     async def get_revision(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         revision: int,
     ) -> SavedGraphRevision:
         async with self._unit_of_work_factory() as unit_of_work:
-            snapshot = await unit_of_work.graphs.get_revision(graph_id, revision)
+            snapshot = await unit_of_work.graphs.get_revision(
+                workspace_id,
+                graph_id,
+                revision,
+            )
         if snapshot is None:
             raise NotFoundError("Saved graph revision", f"{graph_id}@{revision}")
         return snapshot
 
-    async def list_revisions(self, graph_id: UUID) -> list[SavedGraphRevision]:
+    async def list_revisions(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> list[SavedGraphRevision]:
         async with self._unit_of_work_factory() as unit_of_work:
-            graph = await unit_of_work.graphs.get(graph_id)
+            graph = await unit_of_work.graphs.get(workspace_id, graph_id)
             if graph is None:
                 raise NotFoundError("Saved graph", str(graph_id))
-            return await unit_of_work.graphs.list_revisions(graph_id)
+            return await unit_of_work.graphs.list_revisions(workspace_id, graph_id)
 
-    async def list(self) -> list[SavedGraph]:
+    async def list(self, workspace_id: UUID) -> list[SavedGraph]:
         async with self._unit_of_work_factory() as unit_of_work:
-            return await unit_of_work.graphs.list()
+            return await unit_of_work.graphs.list(workspace_id)
 
     async def replace(
         self,
         graph_id: UUID,
         *,
+        workspace_id: UUID,
         name: str,
         document: SavedGraphDocument,
         expected_revision: int,
     ) -> SavedGraph:
         async with self._unit_of_work_factory() as unit_of_work:
-            await unit_of_work.graphs.lock_revision(graph_id, expected_revision)
-            graph = await unit_of_work.graphs.get(graph_id)
+            await unit_of_work.graphs.lock_revision(
+                workspace_id,
+                graph_id,
+                expected_revision,
+            )
+            graph = await unit_of_work.graphs.get(workspace_id, graph_id)
             if graph is None:
                 raise NotFoundError("Saved graph", str(graph_id))
             graph.ensure_revision(expected_revision)
@@ -131,7 +152,10 @@ class SavedGraphService:
                         )
                     )
 
-            stored_secrets = await unit_of_work.node_secrets.list_for_graph(graph_id)
+            stored_secrets = await unit_of_work.node_secrets.list_for_graph(
+                workspace_id,
+                graph_id,
+            )
             for secret in stored_secrets:
                 binding = (
                     secret.node_id,
@@ -150,6 +174,7 @@ class SavedGraphService:
                 if dormant_node in dormant_secret_nodes:
                     continue
                 await unit_of_work.node_secrets.remove(
+                    workspace_id,
                     graph_id,
                     secret.node_id,
                     secret.name,
@@ -170,14 +195,24 @@ class SavedGraphService:
                 ) from exc
         return graph
 
-    async def delete(self, graph_id: UUID, *, expected_revision: int) -> None:
+    async def delete(
+        self,
+        graph_id: UUID,
+        *,
+        workspace_id: UUID,
+        expected_revision: int,
+    ) -> None:
         async with self._unit_of_work_factory() as unit_of_work:
-            await unit_of_work.graphs.lock_revision(graph_id, expected_revision)
-            graph = await unit_of_work.graphs.get(graph_id)
+            await unit_of_work.graphs.lock_revision(
+                workspace_id,
+                graph_id,
+                expected_revision,
+            )
+            graph = await unit_of_work.graphs.get(workspace_id, graph_id)
             if graph is None:
                 raise NotFoundError("Saved graph", str(graph_id))
             graph.ensure_revision(expected_revision)
-            await unit_of_work.graphs.remove(graph)
+            await unit_of_work.graphs.remove(workspace_id, graph)
             try:
                 await unit_of_work.commit()
             except ConcurrentWriteError as exc:

@@ -65,19 +65,25 @@ class GraphModuleCatalog:
         self._saved_graphs = saved_graphs
         self._plugin_registry = plugin_registry
 
-    async def list(self) -> GraphModuleCatalogListing:
+    async def list(self, workspace_id: UUID) -> GraphModuleCatalogListing:
         if self._saved_graphs is None:
             return GraphModuleCatalogListing(entries=[], unavailable=[])
         entries: list[GraphModuleCatalogEntry] = []
         unavailable: list[UnavailableGraphModule] = []
-        for graph in await self._saved_graphs.list():
-            for revision in await self._saved_graphs.list_revisions(graph.id):
+        for graph in await self._saved_graphs.list(workspace_id):
+            for revision in await self._saved_graphs.list_revisions(
+                workspace_id,
+                graph.id,
+            ):
                 is_tip = revision.revision == graph.revision
                 try:
                     definition = GraphModuleDefinition.from_saved_graph_revision(
                         revision
                     )
-                    await self._validate_optional_input_targets(definition)
+                    await self._validate_optional_input_targets(
+                        definition,
+                        workspace_id=workspace_id,
+                    )
                 except GraphModuleDefinitionError as exc:
                     if is_tip and document_has_module_boundary(revision.document):
                         unavailable.append(
@@ -100,18 +106,29 @@ class GraphModuleCatalog:
     async def get_definition(
         self,
         reference: GraphModuleReference,
+        *,
+        workspace_id: UUID,
     ) -> GraphModuleDefinition:
         if self._saved_graphs is None:
             raise GraphModuleCatalogError(
                 "Saved graph modules are not configured for this workbench"
             )
-        revision = await self._saved_graphs.get_revision(
-            reference.graph_id,
-            reference.revision,
-        )
         try:
+            revision = await self._saved_graphs.get_revision(
+                workspace_id,
+                reference.graph_id,
+                reference.revision,
+            )
             definition = GraphModuleDefinition.from_saved_graph_revision(revision)
-            await self._validate_optional_input_targets(definition)
+            await self._validate_optional_input_targets(
+                definition,
+                workspace_id=workspace_id,
+            )
+        except NotFoundError as exc:
+            raise GraphModuleCatalogError(
+                f"Saved graph {reference.graph_id} revision {reference.revision} "
+                "was not found in the requested workspace"
+            ) from exc
         except GraphModuleDefinitionError as exc:
             raise GraphModuleCatalogError(
                 f"Saved graph {reference.graph_id} revision {reference.revision} "
@@ -122,6 +139,8 @@ class GraphModuleCatalog:
     async def _validate_optional_input_targets(
         self,
         definition: GraphModuleDefinition,
+        *,
+        workspace_id: UUID,
     ) -> None:
         nodes_by_id = {node.id: node for node in definition.document.nodes}
         for public_port in definition.input_ports:
@@ -156,6 +175,7 @@ class GraphModuleCatalog:
                         )
                     try:
                         target_revision = await self._saved_graphs.get_revision(
+                            workspace_id,
                             target_reference.graph_id,
                             target_reference.revision,
                         )

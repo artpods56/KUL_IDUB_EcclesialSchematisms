@@ -7,6 +7,7 @@ from pydantic import SecretStr
 
 from notarius_core.application.saved_graphs import SavedGraphService
 from notarius_core.domain.execution_history import GraphExecution
+from notarius_core.domain.identity import Workspace
 from notarius_core.domain.saved_graphs import SavedGraphDocument
 from notarius_persistence.database import create_database
 from notarius_persistence.orm import metadata
@@ -26,6 +27,9 @@ from notarius_api.v1.routes.executions.models import (
 )
 from notarius_api.v1.routes.saved_graphs.models import SavedGraphResponse
 from notarius_api.settings import Settings
+
+
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
 
 
 def _saved_text_graph_payload(name: str, text: str) -> dict[str, object]:
@@ -277,7 +281,19 @@ async def _seed_active_execution(database_url: str) -> tuple[UUID, UUID]:
     try:
         async with database.engine.begin() as connection:
             await connection.run_sync(metadata.create_all)
+        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+            await unit_of_work.identity.add_workspace(
+                Workspace(
+                    id=WORKSPACE_ID,
+                    slug="local",
+                    name="Local workspace",
+                    kind="shared",
+                )
+            )
+            await unit_of_work.commit()
         graph = await saved_graphs.create(
+            workspace_id=WORKSPACE_ID,
+            created_by_user_id=None,
             name="Interrupted",
             document=SavedGraphDocument(),
         )
@@ -285,6 +301,7 @@ async def _seed_active_execution(database_url: str) -> tuple[UUID, UUID]:
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
             await unit_of_work.execution_history.add(
                 GraphExecution(
+                    workspace_id=WORKSPACE_ID,
                     execution_id=execution_id,
                     graph_id=graph.id,
                     graph_revision=graph.revision,

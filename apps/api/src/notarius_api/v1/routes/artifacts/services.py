@@ -305,9 +305,13 @@ class ArtifactService:
     async def close(self) -> None:
         await self._wms_client.aclose()
 
-    async def get(self, artifact_id: UUID) -> ArtifactObject | None:
+    async def get(
+        self,
+        workspace_id: UUID,
+        artifact_id: UUID,
+    ) -> ArtifactObject | None:
         async with self._unit_of_work as unit_of_work:
-            return await unit_of_work.artifacts.get(artifact_id)
+            return await unit_of_work.artifacts.get(workspace_id, artifact_id)
 
     async def load_content(self, artifact: ArtifactObject) -> bytes:
         if (
@@ -460,8 +464,10 @@ class ArtifactService:
         self,
         artifact: ArtifactObject,
         rows: list[ArtifactExactMatchRow],
+        *,
+        workspace_id: UUID,
     ) -> GeoFeatureQueryResponse:
-        descriptor = await self.load_geo_render(artifact)
+        descriptor = await self.load_geo_render(artifact, workspace_id=workspace_id)
         source_ids = list(
             dict.fromkeys(
                 layer.source.artifact_id
@@ -477,7 +483,10 @@ class ArtifactService:
                 source_artifact_ids=[],
             )
         async with self._unit_of_work as unit_of_work:
-            source_artifacts = await unit_of_work.artifacts.get_many(source_ids)
+            source_artifacts = await unit_of_work.artifacts.get_many(
+                workspace_id,
+                source_ids,
+            )
         total_features = 0
         ordered_sources: list[ArtifactObject] = []
         for source_id in source_ids:
@@ -627,7 +636,12 @@ class ArtifactService:
                 f"Could not load PMTiles projection for artifact {artifact.id}"
             ) from exc
 
-    async def load_geo_render(self, artifact: ArtifactObject) -> GeoRenderResponse:
+    async def load_geo_render(
+        self,
+        artifact: ArtifactObject,
+        *,
+        workspace_id: UUID,
+    ) -> GeoRenderResponse:
         if artifact.schema_version != 1:
             raise WorkbenchOperationError(
                 f"Artifact {artifact.id} is not a supported geo artifact"
@@ -671,7 +685,10 @@ class ArtifactService:
                     layers=[layer],
                 )
             if artifact.artifact_type == GEO_MAP_LAYER_ARTIFACT_TYPE:
-                layer = await self._resolve_render_layer(artifact)
+                layer = await self._resolve_render_layer(
+                    artifact,
+                    workspace_id=workspace_id,
+                )
                 layers = [] if layer is None else [layer]
                 return GeoRenderResponse(
                     artifact_id=artifact.id,
@@ -686,10 +703,14 @@ class ArtifactService:
                     document.layers,
                     expected_type=GEO_MAP_LAYER_ARTIFACT_TYPE,
                     context=f"Map document artifact {artifact.id}",
+                    workspace_id=workspace_id,
                 )
                 layers: list[GeoRenderLayerResponse] = []
                 for layer_artifact in layer_artifacts:
-                    layer = await self._resolve_render_layer(layer_artifact)
+                    layer = await self._resolve_render_layer(
+                        layer_artifact,
+                        workspace_id=workspace_id,
+                    )
                     if layer is not None:
                         layers.append(layer)
                 effective_bounds = document.initial_bounds
@@ -814,6 +835,8 @@ class ArtifactService:
     async def _resolve_render_layer(
         self,
         layer_artifact: ArtifactObject,
+        *,
+        workspace_id: UUID,
     ) -> GeoRenderLayerResponse | None:
         if (
             layer_artifact.artifact_type != GEO_MAP_LAYER_ARTIFACT_TYPE
@@ -829,6 +852,7 @@ class ArtifactService:
                     [layer.source.artifact],
                     expected_type=GEO_FEATURE_COLLECTION_ARTIFACT_TYPE,
                     context=f"Map layer artifact {layer_artifact.id}",
+                    workspace_id=workspace_id,
                 )
             )[0]
             if layer.style.kind == "raster":
@@ -849,6 +873,7 @@ class ArtifactService:
                     [layer.source.artifact],
                     expected_type=GEO_RASTER_SCAN_ARTIFACT_TYPE,
                     context=f"Map layer artifact {layer_artifact.id}",
+                    workspace_id=workspace_id,
                 )
             )[0]
             if layer.style.kind != "raster":
@@ -890,6 +915,7 @@ class ArtifactService:
         *,
         expected_type: str,
         context: str,
+        workspace_id: UUID,
     ) -> list[ArtifactObject]:
         for ref in refs:
             if ref.artifact_type != expected_type or ref.schema_version != 1:
@@ -899,7 +925,7 @@ class ArtifactService:
                 )
         ids = [ref.artifact_id for ref in refs]
         async with self._unit_of_work as unit_of_work:
-            artifacts = await unit_of_work.artifacts.get_many(ids)
+            artifacts = await unit_of_work.artifacts.get_many(workspace_id, ids)
         resolved: list[ArtifactObject] = []
         for ref in refs:
             artifact = artifacts.get(ref.artifact_id)
@@ -923,6 +949,8 @@ class ArtifactService:
     async def load_raster_tilejson(
         self,
         artifact: ArtifactObject,
+        *,
+        workspace_id: UUID,
     ) -> GeoRasterTileJsonResponse:
         if artifact.schema_version != 1:
             raise WorkbenchOperationError(
@@ -954,6 +982,7 @@ class ArtifactService:
                     [layer.source.artifact],
                     expected_type=GEO_RASTER_SCAN_ARTIFACT_TYPE,
                     context=f"Map layer artifact {artifact.id}",
+                    workspace_id=workspace_id,
                 )
             )[0]
             projection = GeoRasterProjectionMetadata.model_validate(
@@ -980,6 +1009,7 @@ class ArtifactService:
         self,
         artifact: ArtifactObject,
         *,
+        workspace_id: UUID,
         z: int,
         x: int,
         y: int,
@@ -1009,6 +1039,7 @@ class ArtifactService:
                         [layer.source.artifact],
                         expected_type=GEO_RASTER_SCAN_ARTIFACT_TYPE,
                         context=f"Map layer artifact {artifact.id}",
+                        workspace_id=workspace_id,
                     )
                 )[0]
                 projection = GeoRasterProjectionMetadata.model_validate(
@@ -1291,10 +1322,14 @@ class ArtifactService:
             ],
         )
 
-    async def is_accessible(self, value: ArtifactOutputValue) -> bool:
+    async def is_accessible(
+        self,
+        workspace_id: UUID,
+        value: ArtifactOutputValue,
+    ) -> bool:
         refs = value.item_refs if isinstance(value, ArtifactRefSequence) else (value,)
         for ref in refs:
-            artifact = await self.get(ref.artifact_id)
+            artifact = await self.get(workspace_id, ref.artifact_id)
             if artifact is None or artifact.ref() != ref:
                 return False
             if (
@@ -1324,6 +1359,7 @@ class ArtifactService:
 
     async def validate_refs(
         self,
+        workspace_id: UUID,
         value: ArtifactOutputValue,
         *,
         context: str,
@@ -1335,7 +1371,7 @@ class ArtifactService:
                 if isinstance(value, ArtifactRefSequence)
                 else ""
             )
-            artifact = await self.get(ref.artifact_id)
+            artifact = await self.get(workspace_id, ref.artifact_id)
             if artifact is None:
                 raise WorkbenchOperationError(
                     f"{context}{item_context} references missing artifact "

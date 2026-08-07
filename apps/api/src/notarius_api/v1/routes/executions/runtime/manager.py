@@ -31,6 +31,7 @@ _TERMINAL_STATUSES = frozenset({"cancelled", "succeeded", "failed"})
 
 @dataclass(frozen=True, slots=True)
 class RunExecutionSnapshot:
+    workspace_id: UUID
     execution_id: UUID
     status: RunExecutionStatus
     active_node_id: str | None
@@ -185,6 +186,7 @@ class RunExecutionEventSubscription:
 
 @dataclass(slots=True)
 class _RunExecutionRecord:
+    workspace_id: UUID
     execution_id: UUID
     control: RunExecutionControl
     journal: _RunExecutionEventJournal
@@ -198,6 +200,7 @@ class _RunExecutionRecord:
 
     def snapshot(self) -> RunExecutionSnapshot:
         return RunExecutionSnapshot(
+            workspace_id=self.workspace_id,
             execution_id=self.execution_id,
             status=self.status,
             active_node_id=self.control.active_node_id,
@@ -230,7 +233,11 @@ class RunExecutionManager:
         self._lock = asyncio.Lock()
         self._shutting_down = False
 
-    async def start(self, request: RunRequest) -> RunExecutionSnapshot:
+    async def start(
+        self,
+        workspace_id: UUID,
+        request: RunRequest,
+    ) -> RunExecutionSnapshot:
         async with self._lock:
             if self._shutting_down:
                 raise RuntimeError("Run execution manager is shutting down")
@@ -249,6 +256,7 @@ class RunExecutionManager:
                     seen_node_ids.add(node.id)
                     requested_node_ids.append(node.id)
                 history_execution = await self._execution_history.create_queued(
+                    workspace_id=workspace_id,
                     execution_id=execution_id,
                     graph_id=request.graph_id,
                     graph_revision=request.graph_revision,
@@ -258,6 +266,7 @@ class RunExecutionManager:
             journal = _RunExecutionEventJournal(execution_id, self._event_capacity)
             control = RunExecutionControl(journal)
             record = _RunExecutionRecord(
+                workspace_id=workspace_id,
                 execution_id=execution_id,
                 control=control,
                 journal=journal,
@@ -278,21 +287,26 @@ class RunExecutionManager:
             )
             return record.snapshot()
 
-    async def get(self, execution_id: UUID) -> RunExecutionSnapshot:
+    async def get(
+        self,
+        workspace_id: UUID,
+        execution_id: UUID,
+    ) -> RunExecutionSnapshot:
         async with self._lock:
             record = self._executions.get(execution_id)
-            if record is None:
+            if record is None or record.workspace_id != workspace_id:
                 raise NotFoundError("Run execution", str(execution_id))
             return record.snapshot()
 
     async def wait_for_events(
         self,
+        workspace_id: UUID,
         execution_id: UUID,
         *,
         after_sequence: int = 0,
         timeout: float = 15,
     ) -> RunExecutionEventBatch:
-        subscription = await self.subscribe_events(execution_id)
+        subscription = await self.subscribe_events(workspace_id, execution_id)
         return await subscription.wait(
             after_sequence=after_sequence,
             timeout=timeout,
@@ -300,19 +314,24 @@ class RunExecutionManager:
 
     async def subscribe_events(
         self,
+        workspace_id: UUID,
         execution_id: UUID,
         /,
     ) -> RunExecutionEventSubscription:
         async with self._lock:
             record = self._executions.get(execution_id)
-            if record is None:
+            if record is None or record.workspace_id != workspace_id:
                 raise NotFoundError("Run execution", str(execution_id))
             return RunExecutionEventSubscription(record.journal)
 
-    async def cancel(self, execution_id: UUID) -> RunExecutionSnapshot:
+    async def cancel(
+        self,
+        workspace_id: UUID,
+        execution_id: UUID,
+    ) -> RunExecutionSnapshot:
         async with self._lock:
             record = self._executions.get(execution_id)
-            if record is None:
+            if record is None or record.workspace_id != workspace_id:
                 raise NotFoundError("Run execution", str(execution_id))
             if record.status in _TERMINAL_STATUSES:
                 return record.snapshot()
@@ -328,6 +347,7 @@ class RunExecutionManager:
                 ):
                     try:
                         await self._execution_history.mark_cancelling(
+                            workspace_id,
                             record.history_execution
                         )
                     except Exception as exc:
@@ -385,12 +405,19 @@ class RunExecutionManager:
                     record.history_execution is not None
                     and self._execution_history is not None
                 ):
-                    await self._execution_history.mark_running(record.history_execution)
+                    await self._execution_history.mark_running(
+                        record.workspace_id,
+                        record.history_execution,
+                    )
                 record.control.publish_execution_status(
                     "running",
                     record.control.active_node_id,
                 )
-            result = await self._run_graph.run(request, control=record.control)
+            result = await self._run_graph.run(
+                record.workspace_id,
+                request,
+                control=record.control,
+            )
         except asyncio.CancelledError:
             await self._complete(record, status="cancelled")
         except Exception as exc:
@@ -455,6 +482,7 @@ class RunExecutionManager:
                 for attempt in range(2):
                     try:
                         await self._execution_history.complete(
+                            record.workspace_id,
                             record.history_execution,
                             status=status,
                             result=result,
@@ -464,6 +492,7 @@ class RunExecutionManager:
                         history_failure = exc
                         try:
                             persisted = await self._execution_history.get_for_graph(
+                                record.workspace_id,
                                 record.history_execution.graph_id,
                                 record.execution_id,
                             )

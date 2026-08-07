@@ -35,6 +35,7 @@ from .models import (
     RunRequest,
     RunResponse,
 )
+from notarius_api.v1.routes.workspace_scope import LegacyWorkspaceDependency
 
 
 router = APIRouter(tags=["executions"])
@@ -53,10 +54,11 @@ async def run_graph(
     request: RunRequest,
     service: RunGraphDependency,
     presenter: RunResultPresenterDependency,
+    workspace_id: LegacyWorkspaceDependency,
 ) -> RunResponse:
     try:
-        execution = await service.run(request)
-        return await presenter.run_response(execution)
+        execution = await service.run(workspace_id, request)
+        return await presenter.run_response(workspace_id, execution)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SavedGraphRevisionConflictError as exc:
@@ -76,9 +78,10 @@ async def start_graph_execution(
     request: RunRequest,
     manager: RunExecutionManagerDependency,
     presenter: RunResultPresenterDependency,
+    workspace_id: LegacyWorkspaceDependency,
 ) -> RunExecutionResponse:
     try:
-        execution = await manager.start(request)
+        execution = await manager.start(workspace_id, request)
         return await presenter.execution_response(execution)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -96,9 +99,10 @@ async def get_graph_execution(
     execution_id: UUID,
     manager: RunExecutionManagerDependency,
     presenter: RunResultPresenterDependency,
+    workspace_id: LegacyWorkspaceDependency,
 ) -> RunExecutionResponse:
     try:
-        execution = await manager.get(execution_id)
+        execution = await manager.get(workspace_id, execution_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return await presenter.execution_response(execution)
@@ -118,6 +122,7 @@ async def stream_graph_execution_events(
     execution_id: UUID,
     request: Request,
     manager: RunExecutionManagerDependency,
+    workspace_id: LegacyWorkspaceDependency,
     last_event_id: Annotated[
         str | None,
         Header(alias="Last-Event-ID"),
@@ -154,7 +159,7 @@ async def stream_graph_execution_events(
             )
 
     try:
-        subscription = await manager.subscribe_events(execution_id)
+        subscription = await manager.subscribe_events(workspace_id, execution_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -200,9 +205,10 @@ async def cancel_graph_execution(
     execution_id: UUID,
     manager: RunExecutionManagerDependency,
     presenter: RunResultPresenterDependency,
+    workspace_id: LegacyWorkspaceDependency,
 ) -> RunExecutionResponse:
     try:
-        execution = await manager.cancel(execution_id)
+        execution = await manager.cancel(workspace_id, execution_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return await presenter.execution_response(execution)
@@ -217,13 +223,16 @@ async def get_graph_materializations(
     graph_revision: Annotated[int, Query(ge=1)],
     service: MaterializationDependency,
     presenter: RunResultPresenterDependency,
+    workspace_id: LegacyWorkspaceDependency,
 ) -> GraphMaterializationsResponse:
     try:
         materializations = await service.list_for_graph(
+            workspace_id,
             graph_id,
             graph_revision,
         )
         return await presenter.materializations_response(
+            workspace_id,
             graph_id,
             graph_revision,
             materializations,
@@ -244,6 +253,7 @@ async def list_graph_executions(
     graph_id: UUID,
     service: ExecutionHistoryDependency,
     saved_graphs: SavedGraphDependency,
+    workspace_id: LegacyWorkspaceDependency,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     cursor: Annotated[str | None, Query()] = None,
     graph_revision: Annotated[int | None, Query(ge=1)] = None,
@@ -254,7 +264,7 @@ async def list_graph_executions(
     node_id: Annotated[ExecutionNodeFilter | None, Query()] = None,
 ) -> GraphExecutionListResponse:
     try:
-        await saved_graphs.get(graph_id)
+        await saved_graphs.get(workspace_id, graph_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -266,6 +276,7 @@ async def list_graph_executions(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     page = await service.list_for_graph(
+        workspace_id,
         graph_id,
         limit=limit,
         cursor=decoded_cursor,
@@ -285,8 +296,9 @@ async def get_graph_execution_history(
     execution_id: UUID,
     service: ExecutionHistoryDependency,
     presenter: RunResultPresenterDependency,
+    workspace_id: LegacyWorkspaceDependency,
 ) -> GraphExecutionDetailResponse:
-    detail = await service.get_for_graph(graph_id, execution_id)
+    detail = await service.get_for_graph(workspace_id, graph_id, execution_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="Graph execution not found")
 
@@ -294,7 +306,7 @@ async def get_graph_execution_history(
         GraphExecutionNodeResultResponse.from_result(
             node_result,
             outputs=[
-                await presenter.port_output_response(port_name, value)
+                await presenter.port_output_response(workspace_id, port_name, value)
                 for port_name, value in node_result.outputs.items()
             ],
         )
