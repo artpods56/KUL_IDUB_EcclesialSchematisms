@@ -38,9 +38,15 @@ from notarius_core.domain.identity import (
     WorkspaceRole,
 )
 
+from notarius_core.application.identity import IdentityService
+from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
+
+from notarius_api.app_state import AppIdentity
+from notarius_api.v1.routes.artifacts.dependencies import artifact_service
 from notarius_api.v1.routes.artifacts.services import ArtifactService
 from notarius_api.v1.routes.artifacts.views import router as artifacts_router
 from notarius_api.v1.routes.auth.dependencies import browser_actor
+from notarius_api.v1.routes.auth.services import AuthService
 from notarius_storage import LocalFileObjectStore
 
 
@@ -121,8 +127,15 @@ def geo_artifact_client(
     storage = TrackingStorage(LocalFileObjectStore(tmp_path / "objects"))
     application = FastAPI()
     service = ArtifactService(unit_of_work, storage)
-    application.state.artifacts = service
-    application.state.identity_service = _AllowAllIdentityService()
+    def unused_identity_uow() -> SqlAlchemyUnitOfWork:
+        raise RuntimeError("identity unit of work is unused in geo artifact tests")
+
+    application.state.identity = AppIdentity(
+        identity_uow_factory=unused_identity_uow,
+        identity_service=cast(IdentityService, _AllowAllIdentityService()),
+        auth_service=cast(AuthService, object()),
+    )
+    application.dependency_overrides[artifact_service] = lambda: service
     application.dependency_overrides[browser_actor] = lambda: ActorContext(
         user_id=TEST_USER_ID,
         credential_reference="test-session",

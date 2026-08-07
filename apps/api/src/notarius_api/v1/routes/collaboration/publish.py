@@ -11,6 +11,7 @@ from notarius_core.domain.collaboration import (
 )
 from notarius_core.domain.identity import ActorContext
 
+from notarius_api.app_state import get_identity, get_resources
 from notarius_api.v1.routes.collaboration.hub import (
     CLOSE_ACCESS_REVOKED,
     CLOSE_GRAPH_DELETED,
@@ -32,17 +33,14 @@ from notarius_api.v1.routes.saved_graphs.models import CollaborativeHeadResponse
 
 
 def graph_room_hub_from_request(request: Request) -> GraphRoomHub:
-    hub = getattr(request.app.state, "graph_room_hub", None)
-    if not isinstance(hub, GraphRoomHub):
-        raise RuntimeError("Graph room hub is not configured")
-    return hub
+    return get_resources(request.app).graph_room_hub
 
 
 async def actor_presentation_for(
     app: FastAPI,
     actor: ActorContext,
 ) -> ActorPresentation:
-    factory = app.state.identity_uow_factory
+    factory = get_identity(app).identity_uow_factory
     async with factory() as unit_of_work:
         user = await unit_of_work.identity.get_user(actor.user_id)
     display_name = "collaborator"

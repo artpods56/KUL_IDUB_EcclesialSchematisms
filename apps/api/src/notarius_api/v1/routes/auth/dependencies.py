@@ -10,6 +10,7 @@ from notarius_core.domain.identity import (
     WorkspaceCapability,
 )
 
+from notarius_api.app_state import get_identity
 from notarius_api.v1.routes.auth.services import SESSION_COOKIE
 
 
@@ -24,7 +25,7 @@ async def browser_actor(
     request: Request,
     _session_cookie: Annotated[str | None, Security(session_cookie_scheme)],
 ) -> ActorContext:
-    auth = request.app.state.auth_service
+    auth = get_identity(request.app).auth_service
     if "authorization" in request.headers:
         error = HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -62,7 +63,7 @@ def require_workspace_capability(capability: WorkspaceCapability):
         workspace_id: UUID,
         actor: Annotated[ActorContext, Depends(browser_actor)],
     ) -> WorkspaceAccess:
-        return await request.app.state.identity_service.authorize(
+        return await get_identity(request.app).identity_service.authorize(
             actor=actor,
             workspace_id=workspace_id,
             capability=capability,

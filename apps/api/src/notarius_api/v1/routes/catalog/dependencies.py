@@ -5,14 +5,13 @@ from fastapi import Depends, Request
 from notarius_core.plugins import PluginRegistry
 from notarius_core.ports.modules import GraphModuleExecutorPort
 
+from notarius_api.app_state import get_resources
+
 from .services import GraphModuleCatalog
 
 
 def plugin_registry(request: Request) -> PluginRegistry:
-    registry = getattr(request.app.state, "workbench_plugin_registry", None)
-    if not isinstance(registry, PluginRegistry):
-        raise RuntimeError("Workbench plugin registry is not initialized")
-    return registry
+    return get_resources(request.app).plugin_registry
 
 
 PluginRegistryDependency = Annotated[
@@ -22,10 +21,7 @@ PluginRegistryDependency = Annotated[
 
 
 def graph_module_catalog(request: Request) -> GraphModuleCatalog:
-    catalog = getattr(request.app.state, "graph_modules", None)
-    if not isinstance(catalog, GraphModuleCatalog):
-        raise RuntimeError("Graph module catalog is not initialized")
-    return catalog
+    return get_resources(request.app).graph_modules
 
 
 GraphModuleCatalogDependency = Annotated[
@@ -35,10 +31,7 @@ GraphModuleCatalogDependency = Annotated[
 
 
 def graph_module_executor(request: Request) -> GraphModuleExecutorPort:
-    executor = getattr(request.app.state, "run_graph", None)
-    if not isinstance(executor, GraphModuleExecutorPort):
-        raise RuntimeError("Graph module executor is not initialized")
-    return executor
+    return get_resources(request.app).run_graph
 
 
 GraphModuleExecutorDependency = Annotated[

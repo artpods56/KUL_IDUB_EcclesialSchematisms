@@ -852,7 +852,7 @@ def test_viewer_discovers_active_execution_on_room_ready_and_cannot_cancel(
     client, switcher, application = room_app_client
     graph_id, revision = _create_graph_with_revision(client)
 
-    original_run = application.state.run_graph.run
+    original_run = application.state.resources.run_graph.run
 
     async def blocking_run(*args, **kwargs):
         del args, kwargs
@@ -861,7 +861,7 @@ def test_viewer_discovers_active_execution_on_room_ready_and_cannot_cancel(
         except asyncio.CancelledError:
             raise
 
-    application.state.run_graph.run = blocking_run
+    application.state.resources.run_graph.run = blocking_run
     try:
         started = _start_saved_execution(
             client,
@@ -890,7 +890,7 @@ def test_viewer_discovers_active_execution_on_room_ready_and_cannot_cancel(
         assert cancel.status_code == 200
         assert cancel.json()["status"] in {"cancelling", "cancelled"}
     finally:
-        application.state.run_graph.run = original_run
+        application.state.resources.run_graph.run = original_run
 
 
 def test_second_saved_execution_conflicts_while_active(
@@ -900,7 +900,7 @@ def test_second_saved_execution_conflicts_while_active(
     del switcher
     graph_id, revision = _create_graph_with_revision(client)
 
-    original_run = application.state.run_graph.run
+    original_run = application.state.resources.run_graph.run
 
     async def blocking_run(*args, **kwargs):
         del args, kwargs
@@ -909,7 +909,7 @@ def test_second_saved_execution_conflicts_while_active(
         except asyncio.CancelledError:
             raise
 
-    application.state.run_graph.run = blocking_run
+    application.state.resources.run_graph.run = blocking_run
     try:
         first = _start_saved_execution(
             client,
@@ -935,7 +935,7 @@ def test_second_saved_execution_conflicts_while_active(
         )
         assert cancel.status_code == 200
     finally:
-        application.state.run_graph.run = original_run
+        application.state.resources.run_graph.run = original_run
 
 
 def test_two_sessions_see_execution_cancel(
@@ -944,7 +944,7 @@ def test_two_sessions_see_execution_cancel(
     client, switcher, application = room_app_client
     graph_id, revision = _create_graph_with_revision(client)
 
-    original_run = application.state.run_graph.run
+    original_run = application.state.resources.run_graph.run
 
     async def blocking_run(*args, **kwargs):
         del args, kwargs
@@ -953,7 +953,7 @@ def test_two_sessions_see_execution_cancel(
         except asyncio.CancelledError:
             raise
 
-    application.state.run_graph.run = blocking_run
+    application.state.resources.run_graph.run = blocking_run
     try:
         with _connect(client, graph_id) as owner_ws:
             owner_ws.receive_json()
@@ -992,4 +992,4 @@ def test_two_sessions_see_execution_cancel(
                 assert owner_cleared["status"] == "cancelled"
                 assert editor_cleared["status"] == "cancelled"
     finally:
-        application.state.run_graph.run = original_run
+        application.state.resources.run_graph.run = original_run

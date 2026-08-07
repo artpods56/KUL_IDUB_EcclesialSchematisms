@@ -4,35 +4,24 @@ from fastapi import Depends, Request, WebSocket
 
 from notarius_core.application.collaboration import CollaborationService
 
+from notarius_api.app_state import get_resources
 from notarius_api.v1.routes.collaboration.hub import GraphRoomHub
 
 
 def graph_room_hub(request: Request) -> GraphRoomHub:
-    hub = getattr(request.app.state, "graph_room_hub", None)
-    if not isinstance(hub, GraphRoomHub):
-        raise RuntimeError("Graph room hub is not configured")
-    return hub
+    return get_resources(request.app).graph_room_hub
 
 
 def collaboration_service(request: Request) -> CollaborationService:
-    service = getattr(request.app.state, "collaboration", None)
-    if not isinstance(service, CollaborationService):
-        raise RuntimeError("Collaboration service is not configured")
-    return service
+    return get_resources(request.app).collaboration
 
 
 def graph_room_hub_ws(websocket: WebSocket) -> GraphRoomHub:
-    hub = getattr(websocket.app.state, "graph_room_hub", None)
-    if not isinstance(hub, GraphRoomHub):
-        raise RuntimeError("Graph room hub is not configured")
-    return hub
+    return get_resources(websocket.app).graph_room_hub
 
 
 def collaboration_service_ws(websocket: WebSocket) -> CollaborationService:
-    service = getattr(websocket.app.state, "collaboration", None)
-    if not isinstance(service, CollaborationService):
-        raise RuntimeError("Collaboration service is not configured")
-    return service
+    return get_resources(websocket.app).collaboration
 
 
 GraphRoomHubDependency = Annotated[GraphRoomHub, Depends(graph_room_hub)]

@@ -2,14 +2,13 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from notarius_api.app_state import get_resources
+
 from .services import ArtifactService
 
 
 def artifact_service(request: Request) -> ArtifactService:
-    service = getattr(request.app.state, "artifacts", None)
-    if not isinstance(service, ArtifactService):
-        raise RuntimeError("Artifact service is not initialized")
-    return service
+    return get_resources(request.app).artifacts
 
 
 ArtifactDependency = Annotated[

@@ -2,14 +2,13 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from notarius_api.app_state import get_resources
+
 from .services import ImageUploadService
 
 
 def image_upload_service(request: Request) -> ImageUploadService:
-    service = getattr(request.app.state, "image_uploads", None)
-    if not isinstance(service, ImageUploadService):
-        raise RuntimeError("Image upload service is not initialized")
-    return service
+    return get_resources(request.app).uploads
 
 
 ImageUploadDependency = Annotated[

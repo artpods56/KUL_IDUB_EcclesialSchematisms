@@ -65,28 +65,18 @@ def test_application_lifespan_builds_and_releases_workbench_components(
         )
     )
     install_browser_actor_override(application)
-    leaf_state_names = (
-        "workbench_plugin_registry",
-        "image_uploads",
-        "graph_modules",
-        "run_graph",
-        "execution_manager",
-        "execution_history",
-        "materializations",
-        "run_result_presenter",
-        "artifacts",
-    )
-    assert all(not hasattr(application.state, name) for name in leaf_state_names)
+    assert not hasattr(application.state, "resources")
+    assert hasattr(application.state, "identity")
 
     with TestClient(application) as client:
         response = client.get("/health")
 
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
-        assert all(hasattr(application.state, name) for name in leaf_state_names)
-        assert application.state.workbench_plugin_registry.plugins
+        assert hasattr(application.state, "resources")
+        assert application.state.resources.plugin_registry.plugins
 
-    assert all(not hasattr(application.state, name) for name in leaf_state_names)
+    assert not hasattr(application.state, "resources")
 
 
 def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(

@@ -1,13 +1,10 @@
 """Concrete MCP operations backed by application services on the API owner."""
 
-from typing import cast
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI
 from pydantic import JsonValue, ValidationError
 
-from notarius_core.application.collaboration import CollaborationService
-from notarius_core.application.saved_graphs import SavedGraphService
 from notarius_core.domain.collaboration import (
     GRAPH_COMMAND_ADAPTER,
     CollaborativeGraphHead,
@@ -42,6 +39,7 @@ from notarius_mcp.models import (
 )
 from notarius_mcp.operations import McpCallerContext, McpOperationError
 
+from notarius_api.app_state import get_resources
 from notarius_api.mcp.document import document_from_mcp_request
 from notarius_api.v1.routes.catalog.models import (
     NodeRegistryResponse as ApiNodeRegistryResponse,
@@ -66,14 +64,12 @@ class ApiGraphWorkspaceOperations:
 
     async def get_registry(self, caller: McpCallerContext) -> NodeRegistryResponse:
         self._require_scope(caller, WorkspaceCapability.VIEW_GRAPH)
-        registry = self._app.state.workbench_plugin_registry
-        modules = self._app.state.graph_modules
-        module_executor = self._app.state.run_graph
-        module_listing = await modules.list(caller.workspace_id)
+        resources = get_resources(self._app)
+        module_listing = await resources.graph_modules.list(caller.workspace_id)
         api_response = ApiNodeRegistryResponse.from_registry(
-            registry,
+            resources.plugin_registry,
             module_listing,
-            module_executor,
+            resources.run_graph,
         )
         return NodeRegistryResponse.model_validate(
             api_response.model_dump(mode="json")
@@ -81,8 +77,7 @@ class ApiGraphWorkspaceOperations:
 
     async def list_graphs(self, caller: McpCallerContext) -> SavedGraphListResponse:
         self._require_scope(caller, WorkspaceCapability.VIEW_GRAPH)
-        service = cast(SavedGraphService, self._app.state.saved_graphs)
-        graphs = await service.list(caller.workspace_id)
+        graphs = await get_resources(self._app).saved_graphs.list(caller.workspace_id)
         api_response = ApiSavedGraphListResponse.from_graphs(graphs)
         return SavedGraphListResponse.model_validate(
             api_response.model_dump(mode="json")
@@ -94,7 +89,7 @@ class ApiGraphWorkspaceOperations:
         graph_id: UUID,
     ) -> CollaborativeHeadResponse:
         self._require_scope(caller, WorkspaceCapability.VIEW_GRAPH)
-        collaboration = cast(CollaborationService, self._app.state.collaboration)
+        collaboration = get_resources(self._app).collaboration
         try:
             head = await collaboration.get_head(
                 actor=self._actor(caller),
@@ -114,7 +109,7 @@ class ApiGraphWorkspaceOperations:
         request: CreateSavedGraphRequest,
     ) -> SavedGraphResponse:
         self._require_scope(caller, WorkspaceCapability.CREATE_GRAPH)
-        collaboration = cast(CollaborationService, self._app.state.collaboration)
+        collaboration = get_resources(self._app).collaboration
         try:
             graph, _, _ = await collaboration.bootstrap_graph(
                 actor=self._actor(caller),
@@ -137,7 +132,7 @@ class ApiGraphWorkspaceOperations:
         request: UpdateSavedGraphRequest,
     ) -> SavedGraphResponse:
         self._require_scope(caller, WorkspaceCapability.EDIT_GRAPH)
-        collaboration = cast(CollaborationService, self._app.state.collaboration)
+        collaboration = get_resources(self._app).collaboration
         try:
             graph, head = await collaboration.replace_complete_document(
                 actor=self._actor(caller),
@@ -175,7 +170,7 @@ class ApiGraphWorkspaceOperations:
                 status_code=422,
                 message="Graph command payload is invalid.",
             ) from exc
-        collaboration = cast(CollaborationService, self._app.state.collaboration)
+        collaboration = get_resources(self._app).collaboration
         actor = self._actor(caller)
         try:
             head, receipt = await collaboration.accept_command(
@@ -225,10 +220,7 @@ class ApiGraphWorkspaceOperations:
         )
 
     def _hub(self) -> GraphRoomHub:
-        hub = getattr(self._app.state, "graph_room_hub", None)
-        if not isinstance(hub, GraphRoomHub):
-            raise RuntimeError("Graph room hub is not configured")
-        return hub
+        return get_resources(self._app).graph_room_hub
 
     async def _publish_accepted_command(
         self,

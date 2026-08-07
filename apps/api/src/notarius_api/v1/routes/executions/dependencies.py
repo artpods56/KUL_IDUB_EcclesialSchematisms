@@ -2,6 +2,8 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from notarius_api.app_state import get_resources
+
 from .runtime.manager import RunExecutionManager
 from .runtime.run_graph import RunGraph
 from .services import (
@@ -12,20 +14,14 @@ from .services import (
 
 
 def run_graph_service(request: Request) -> RunGraph:
-    service = getattr(request.app.state, "run_graph", None)
-    if not isinstance(service, RunGraph):
-        raise RuntimeError("Run graph service is not initialized")
-    return service
+    return get_resources(request.app).run_graph
 
 
 RunGraphDependency = Annotated[RunGraph, Depends(run_graph_service)]
 
 
 def run_execution_manager(request: Request) -> RunExecutionManager:
-    manager = getattr(request.app.state, "execution_manager", None)
-    if not isinstance(manager, RunExecutionManager):
-        raise RuntimeError("Run execution manager is not initialized")
-    return manager
+    return get_resources(request.app).execution_manager
 
 
 RunExecutionManagerDependency = Annotated[
@@ -35,10 +31,7 @@ RunExecutionManagerDependency = Annotated[
 
 
 def execution_history_service(request: Request) -> ExecutionHistoryService:
-    service = getattr(request.app.state, "execution_history", None)
-    if not isinstance(service, ExecutionHistoryService):
-        raise RuntimeError("Execution history service is not initialized")
-    return service
+    return get_resources(request.app).execution_history
 
 
 ExecutionHistoryDependency = Annotated[
@@ -48,10 +41,7 @@ ExecutionHistoryDependency = Annotated[
 
 
 def materialization_service(request: Request) -> MaterializationService:
-    service = getattr(request.app.state, "materializations", None)
-    if not isinstance(service, MaterializationService):
-        raise RuntimeError("Materialization service is not initialized")
-    return service
+    return get_resources(request.app).materializations
 
 
 MaterializationDependency = Annotated[
@@ -61,10 +51,7 @@ MaterializationDependency = Annotated[
 
 
 def run_result_presenter(request: Request) -> RunResultPresenter:
-    presenter = getattr(request.app.state, "run_result_presenter", None)
-    if not isinstance(presenter, RunResultPresenter):
-        raise RuntimeError("Run result presenter is not initialized")
-    return presenter
+    return get_resources(request.app).presenter
 
 
 RunResultPresenterDependency = Annotated[

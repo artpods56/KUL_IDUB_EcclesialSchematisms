@@ -16,6 +16,7 @@ from notarius_core.domain.identity import (
     WorkspaceRole,
 )
 
+from notarius_api.app_state import get_identity
 from notarius_api.v1.routes.auth.dependencies import browser_actor
 from notarius_api.v1.routes.auth.models import (
     PersonalAccessTokenCreatedResponse,
@@ -127,7 +128,7 @@ async def list_workspaces(
     request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
 ) -> list[WorkspaceResponse]:
-    rows = await request.app.state.identity_service.list_workspaces(actor=actor)
+    rows = await get_identity(request.app).identity_service.list_workspaces(actor=actor)
     return [
         WorkspaceResponse(
             id=workspace.id,
@@ -149,7 +150,7 @@ async def create_workspace(
     request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
 ) -> WorkspaceResponse:
-    workspace = await request.app.state.identity_service.create_shared_workspace(
+    workspace = await get_identity(request.app).identity_service.create_shared_workspace(
         actor=actor,
         slug=payload.slug,
         name=payload.name,
@@ -170,7 +171,7 @@ async def list_members(
     request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
 ) -> list[WorkspaceMemberResponse]:
-    rows = await request.app.state.identity_service.list_members(
+    rows = await get_identity(request.app).identity_service.list_members(
         actor=actor,
         workspace_id=workspace_id,
     )
@@ -197,7 +198,7 @@ async def add_member(
     request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
 ) -> WorkspaceMemberResponse:
-    membership = await request.app.state.identity_service.add_or_reactivate_member(
+    membership = await get_identity(request.app).identity_service.add_or_reactivate_member(
         actor=actor,
         workspace_id=workspace_id,
         user_id=payload.user_id,
@@ -222,7 +223,7 @@ async def change_member_role(
     request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
 ) -> WorkspaceMemberResponse:
-    membership = await request.app.state.identity_service.change_member_role(
+    membership = await get_identity(request.app).identity_service.change_member_role(
         actor=actor,
         workspace_id=workspace_id,
         user_id=user_id,
@@ -244,7 +245,7 @@ async def remove_member(
     request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
 ) -> Response:
-    await request.app.state.identity_service.remove_member(
+    await get_identity(request.app).identity_service.remove_member(
         actor=actor,
         workspace_id=workspace_id,
         user_id=user_id,
@@ -267,7 +268,7 @@ async def list_personal_access_tokens(
     request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
 ) -> list[PersonalAccessTokenResponse]:
-    tokens = await request.app.state.identity_service.list_personal_access_tokens(
+    tokens = await get_identity(request.app).identity_service.list_personal_access_tokens(
         actor=actor,
         workspace_id=workspace_id,
     )
@@ -301,7 +302,7 @@ async def create_personal_access_token(
             status_code=422,
             detail="Personal access token scope is not available",
         )
-    auth: AuthService = request.app.state.auth_service
+    auth: AuthService = get_identity(request.app).auth_service
     if not await auth.allow_pat_creation(str(actor.user_id)):
         raise HTTPException(status_code=429, detail="Too many token creation attempts")
     token, raw_token = auth.issue_personal_access_token(
@@ -311,7 +312,7 @@ async def create_personal_access_token(
         scopes=scopes,
         expires_at=payload.expires_at,
     )
-    created = await request.app.state.identity_service.create_personal_access_token(
+    created = await get_identity(request.app).identity_service.create_personal_access_token(
         actor=actor,
         token=token,
     )
@@ -340,7 +341,7 @@ async def revoke_personal_access_token(
     request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
 ) -> Response:
-    await request.app.state.identity_service.revoke_personal_access_token(
+    await get_identity(request.app).identity_service.revoke_personal_access_token(
         actor=actor,
         workspace_id=workspace_id,
         token_id=token_id,
@@ -353,7 +354,7 @@ async def _member_response(
     user_id: UUID,
     membership: WorkspaceMembership,
 ) -> WorkspaceMemberResponse:
-    async with request.app.state.identity_uow_factory() as unit_of_work:
+    async with get_identity(request.app).identity_uow_factory() as unit_of_work:
         user = await unit_of_work.identity.get_user(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")

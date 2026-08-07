@@ -12,6 +12,7 @@ from notarius_mcp.operations import McpCallerContext
 from notarius_mcp.request_context import bind_mcp_request, reset_mcp_request
 from notarius_mcp.server import create_streamable_http_app
 
+from notarius_api.app_state import get_identity
 from notarius_api.mcp.operations import ApiGraphWorkspaceOperations
 from notarius_api.v1.routes.auth.services import AuthService
 
@@ -28,7 +29,7 @@ class _McpPatMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        auth: AuthService = self._api_app.state.auth_service
+        auth: AuthService = get_identity(self._api_app).auth_service
         try:
             access = await auth.require_mcp_access(request)
         except HTTPException as error:

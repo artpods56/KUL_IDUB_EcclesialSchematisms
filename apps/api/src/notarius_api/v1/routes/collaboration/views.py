@@ -23,6 +23,7 @@ from notarius_core.domain.identity import (
     WorkspaceCapability,
 )
 
+from notarius_api.app_state import get_identity, get_resources
 from notarius_api.v1.routes.auth.dependencies import browser_actor
 from notarius_api.v1.routes.auth.services import SESSION_COOKIE
 from notarius_api.v1.routes.collaboration.dependencies import (
@@ -107,7 +108,7 @@ async def graph_room(
 ) -> None:
     _require_websocket_origin(websocket)
     try:
-        access = await websocket.app.state.identity_service.authorize(
+        access = await get_identity(websocket.app).identity_service.authorize(
             actor=actor,
             workspace_id=workspace_id,
             capability=WorkspaceCapability.JOIN_GRAPH_ROOM,
@@ -159,7 +160,9 @@ async def graph_room(
         workspace_id=workspace_id,
         graph_id=graph_id,
     )
-    active_execution = await websocket.app.state.execution_manager.active_execution_summary(
+    active_execution = await get_resources(
+        websocket.app
+    ).execution_manager.active_execution_summary(
         workspace_id,
         graph_id,
     )
@@ -262,7 +265,7 @@ async def _revalidate_and_heartbeat(
     if session.closed:
         return False
     try:
-        access = await websocket.app.state.identity_service.authorize(
+        access = await get_identity(websocket.app).identity_service.authorize(
             actor=actor,
             workspace_id=session.workspace_id,
             capability=WorkspaceCapability.JOIN_GRAPH_ROOM,
@@ -299,7 +302,7 @@ async def _handle_presence_update(
     message: PresenceUpdateSubmitMessage,
 ) -> None:
     try:
-        access = await session.websocket.app.state.identity_service.authorize(
+        access = await get_identity(session.websocket.app).identity_service.authorize(
             actor=actor,
             workspace_id=session.workspace_id,
             capability=WorkspaceCapability.PUBLISH_PRESENCE,

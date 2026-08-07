@@ -350,7 +350,7 @@ def test_http_create_bootstraps_collaborative_head(
     assert created["revision"] == 1
 
     head = asyncio.run(
-        builtin_client.app.state.collaboration.initialize_head_for_existing_graph(
+        builtin_client.app.state.resources.collaboration.initialize_head_for_existing_graph(
             workspace_id=WORKSPACE_ID,
             graph_id=graph_id,
         )
@@ -371,7 +371,7 @@ def test_http_replace_resets_collaborative_epoch_when_checkpointed(
     ).json()
     graph_id = UUID(created["id"])
     prior_head = asyncio.run(
-        builtin_client.app.state.collaboration.initialize_head_for_existing_graph(
+        builtin_client.app.state.resources.collaboration.initialize_head_for_existing_graph(
             workspace_id=WORKSPACE_ID,
             graph_id=graph_id,
         )
@@ -390,7 +390,7 @@ def test_http_replace_resets_collaborative_epoch_when_checkpointed(
     assert response.json()["name"] == "After replace"
 
     head = asyncio.run(
-        builtin_client.app.state.collaboration.initialize_head_for_existing_graph(
+        builtin_client.app.state.resources.collaboration.initialize_head_for_existing_graph(
             workspace_id=WORKSPACE_ID,
             graph_id=graph_id,
         )
@@ -410,7 +410,7 @@ def test_http_replace_rejects_uncheckpointed_head(
         json=_graph_payload("Live draft"),
     ).json()
     graph_id = UUID(created["id"])
-    collaboration = builtin_client.app.state.collaboration
+    collaboration = builtin_client.app.state.resources.collaboration
     head = asyncio.run(
         collaboration.initialize_head_for_existing_graph(
             workspace_id=WORKSPACE_ID,
@@ -464,7 +464,7 @@ def test_http_delete_removes_collaborative_head(
 
     with pytest.raises(NotFoundError):
         asyncio.run(
-            builtin_client.app.state.collaboration.initialize_head_for_existing_graph(
+            builtin_client.app.state.resources.collaboration.initialize_head_for_existing_graph(
                 workspace_id=WORKSPACE_ID,
                 graph_id=graph_id,
             )

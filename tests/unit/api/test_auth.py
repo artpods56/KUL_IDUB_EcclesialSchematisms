@@ -319,7 +319,7 @@ def test_expired_callback_consumes_transaction_and_releases_reservation(
         }
     )
     application = create_app(settings)
-    auth: AuthService = application.state.auth_service
+    auth: AuthService = application.state.identity.auth_service
     transaction_id = UUID(int=701)
     asyncio.run(
         _seed_oidc_transaction(
@@ -379,7 +379,7 @@ def test_callback_failure_before_consumption_preserves_transaction_and_slot(
         }
     )
     application = create_app(settings)
-    auth: AuthService = application.state.auth_service
+    auth: AuthService = application.state.identity.auth_service
     transaction_id = UUID(int=703)
     asyncio.run(
         _seed_oidc_transaction(
@@ -445,7 +445,7 @@ def test_callback_failure_after_consumption_clears_transaction_and_releases_slot
         }
     )
     application = create_app(settings)
-    auth: AuthService = application.state.auth_service
+    auth: AuthService = application.state.identity.auth_service
     transaction_id = UUID(int=705)
     asyncio.run(
         _seed_oidc_transaction(
@@ -584,7 +584,7 @@ def test_callback_validation_is_bounded_and_consumes_transaction(
         }
     )
     application = create_app(settings)
-    auth = application.state.auth_service
+    auth = application.state.identity.auth_service
     transaction_id = UUID(int=42)
     transaction = OidcLoginTransaction(
         id=transaction_id,

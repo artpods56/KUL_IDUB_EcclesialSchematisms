@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from notarius_core.domain.identity import ActorContext
 
+from notarius_api.app_state import get_identity
 from notarius_api.v1.routes.auth.dependencies import browser_actor
 from notarius_api.v1.routes.auth.models import SessionResponse
 from notarius_api.v1.routes.auth.services import (
@@ -27,7 +28,7 @@ async def oidc_login(
     request: Request,
     return_path: Annotated[str, Query(max_length=2048)] = "/",
 ) -> Response:
-    auth: AuthService = request.app.state.auth_service
+    auth: AuthService = get_identity(request.app).auth_service
     abuse_keys = auth.browser_abuse_keys(request)
     if not await auth.allow_login_start(
         abuse_keys.browser_key,
@@ -81,7 +82,7 @@ async def oidc_callback(
     code: Annotated[str | None, Query(max_length=4096)] = None,
     error: Annotated[str | None, Query(max_length=256)] = None,
 ) -> Response:
-    auth: AuthService = request.app.state.auth_service
+    auth: AuthService = get_identity(request.app).auth_service
     abuse_keys = auth.browser_abuse_keys(request)
     transaction_id_value = request.cookies.get(OIDC_TRANSACTION_COOKIE)
     if not await auth.allow_callback(
@@ -158,7 +159,7 @@ async def get_session(
     request: Request,
     _actor: Annotated[ActorContext, Depends(browser_actor)],
 ) -> SessionResponse:
-    session = await request.app.state.auth_service.current_session(request)
+    session = await get_identity(request.app).auth_service.current_session(request)
     return SessionResponse(
         id=session.id,
         user_id=session.user_id,
@@ -175,7 +176,7 @@ async def delete_session(
     request: Request,
     _actor: Annotated[ActorContext, Depends(browser_actor)],
 ) -> Response:
-    auth: AuthService = request.app.state.auth_service
+    auth: AuthService = get_identity(request.app).auth_service
     await auth.logout(request)
     response = Response(status_code=204)
     auth.clear_session_cookies(response)
@@ -187,8 +188,9 @@ async def list_sessions(
     request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
 ) -> list[SessionResponse]:
-    sessions = await request.app.state.auth_service.list_sessions(actor=actor)
-    current = await request.app.state.auth_service.current_session(request)
+    auth = get_identity(request.app).auth_service
+    sessions = await auth.list_sessions(actor=actor)
+    current = await auth.current_session(request)
     return [
         SessionResponse(
             id=session.id,
@@ -213,11 +215,12 @@ async def revoke_session(
         parsed_session_id = UUID(session_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Session not found") from exc
-    session = await request.app.state.auth_service.revoke_session(
+    auth = get_identity(request.app).auth_service
+    session = await auth.revoke_session(
         actor=actor,
         session_id=parsed_session_id,
     )
     response = Response(status_code=204)
-    if session.id == (await request.app.state.auth_service.current_session(request)).id:
-        request.app.state.auth_service.clear_session_cookies(response)
+    if session.id == (await auth.current_session(request)).id:
+        auth.clear_session_cookies(response)
     return response

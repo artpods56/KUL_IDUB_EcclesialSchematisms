@@ -31,6 +31,7 @@ from notarius_persistence.unit_of_work import (
 )
 from notarius_storage import create_file_storage
 
+from notarius_api.app_state import AppIdentity, AppResources, get_identity
 from notarius_api.builtins import builtin_plugins
 from notarius_api.mcp import create_mounted_mcp_app
 from notarius_api.plugin_discovery import build_plugin_registry
@@ -78,7 +79,7 @@ async def _request_validation_error_handler(
     is_oidc_callback = request.url.path.endswith("/auth/oidc/callback")
     is_oidc_login = request.url.path.endswith("/auth/oidc/login")
     if is_oidc_login:
-        login_auth: AuthService = request.app.state.auth_service
+        login_auth: AuthService = get_identity(request.app).auth_service
         abuse_keys = login_auth.browser_abuse_keys(request)
         allowed = await login_auth.allow_login_start(
             abuse_keys.browser_key,
@@ -103,7 +104,7 @@ async def _request_validation_error_handler(
             ),
         )
     if is_oidc_callback:
-        auth: AuthService = request.app.state.auth_service
+        auth: AuthService = get_identity(request.app).auth_service
         abuse_keys = auth.browser_abuse_keys(request)
         allowed = await auth.allow_callback(
             abuse_keys.browser_key,
@@ -199,7 +200,7 @@ async def _audit_workspace_failure(
     if metadata is None:
         return
     operation, workspace_id, resource_type, resource_id = metadata
-    await request.app.state.auth_service.audit_request_failure(
+    await get_identity(request.app).auth_service.audit_request_failure(
         request,
         operation=operation,
         error_code=error_code,
@@ -215,7 +216,7 @@ async def _audit_auth_failure(request: Request, error_code: str) -> None:
     if request.url.path.startswith("/v1/auth/") and not request.url.path.endswith(
         ("/oidc/login", "/oidc/callback")
     ):
-        await request.app.state.auth_service.audit_request_failure(
+        await get_identity(request.app).auth_service.audit_request_failure(
             request,
             operation="auth.session.request",
             error_code=error_code,
@@ -306,21 +307,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await components.execution_history.interrupt_all_active()
                 # Migration 0009 backfills heads; refuse to serve if any graph still lacks one.
                 await collaboration.verify_every_graph_has_head()
-                components.execution_manager.bind_room_publisher(
-                    ActiveExecutionRoomPublisher(app.state.graph_room_hub)
+                resources = AppResources(
+                    plugin_registry=components.plugin_registry,
+                    uploads=components.uploads,
+                    graph_modules=components.modules,
+                    run_graph=components.run_graph,
+                    execution_manager=components.execution_manager,
+                    execution_history=components.execution_history,
+                    materializations=components.materializations,
+                    presenter=components.presenter,
+                    artifacts=components.artifacts,
+                    saved_graphs=saved_graphs,
+                    collaboration=collaboration,
+                    node_secrets=node_secrets,
+                    graph_room_hub=graph_room_hub,
                 )
-                app.state.workbench_plugin_registry = components.plugin_registry
-                app.state.image_uploads = components.uploads
-                app.state.graph_modules = components.modules
-                app.state.run_graph = components.run_graph
-                app.state.execution_manager = components.execution_manager
-                app.state.execution_history = components.execution_history
-                app.state.materializations = components.materializations
-                app.state.run_result_presenter = components.presenter
-                app.state.artifacts = components.artifacts
-                app.state.saved_graphs = saved_graphs
-                app.state.collaboration = collaboration
-                app.state.node_secrets = node_secrets
+                resources.execution_manager.bind_room_publisher(
+                    ActiveExecutionRoomPublisher(resources.graph_room_hub)
+                )
+                app.state.resources = resources
 
                 async def cleanup_expired_auth_data() -> None:
                     while True:
@@ -345,21 +350,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 finally:
                     cleanup_task.cancel()
                     await asyncio.gather(cleanup_task, return_exceptions=True)
-                    await app.state.graph_room_hub.shutdown()
-                    await components.execution_manager.shutdown()
-                    await components.artifacts.close()
-                    del app.state.node_secrets
-                    del app.state.collaboration
-                    del app.state.saved_graphs
-                    del app.state.artifacts
-                    del app.state.run_result_presenter
-                    del app.state.materializations
-                    del app.state.run_graph
-                    del app.state.execution_manager
-                    del app.state.execution_history
-                    del app.state.graph_modules
-                    del app.state.image_uploads
-                    del app.state.workbench_plugin_registry
+                    await resources.cleanup()
+                    del app.state.resources
                     await database.dispose()
         finally:
             if owner_lease is not None:
@@ -385,7 +377,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if "/auth/oidc/" in request.url.path:
             browser_key = getattr(request.state, "auth_browser_key", None)
             if isinstance(browser_key, str):
-                request.app.state.auth_service.set_browser_abuse_cookie(
+                get_identity(request.app).auth_service.set_browser_abuse_cookie(
                     response,
                     browser_key,
                 )
@@ -402,15 +394,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         unit_of_work_factory=identity_uow_factory,
         identity_service=identity_service,
     )
-    application.state.settings = resolved_settings
-    application.state.identity_uow_factory = identity_uow_factory
-    application.state.identity_service = identity_service
-    application.state.auth_service = auth_service
-    application.state.graph_room_hub = GraphRoomHub(
+    graph_room_hub = GraphRoomHub(
         presence_ttl_seconds=resolved_settings.graph_room_presence_ttl_seconds,
         presence_max_updates_per_second=(
             resolved_settings.graph_room_presence_max_updates_per_second
         ),
+    )
+    application.state.settings = resolved_settings
+    application.state.identity = AppIdentity(
+        identity_uow_factory=identity_uow_factory,
+        identity_service=identity_service,
+        auth_service=auth_service,
     )
     application.add_middleware(
         CORSMiddleware,
