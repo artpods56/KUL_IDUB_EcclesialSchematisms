@@ -156,10 +156,11 @@ function persistedLayout(value: unknown): WorkflowNodeLayout | null {
 }
 
 export function artifactViewerStorageKey(
-  workspaceSlug: string,
+  userId: string,
+  workspaceId: string,
   graphId: string,
 ): string {
-  return `ns-workbench-presentation:v1:${encodeURIComponent(workspaceSlug)}:${graphId}`;
+  return `ns-workbench-presentation:v2:${encodeURIComponent(userId)}:${encodeURIComponent(workspaceId)}:${encodeURIComponent(graphId)}`;
 }
 
 export function serializeArtifactViewerDocument(

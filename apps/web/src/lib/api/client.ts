@@ -5,6 +5,13 @@ const MAX_ERROR_BODY_CHARACTERS = 4_096;
 const MAX_ERROR_DETAIL_CHARACTERS = 2_048;
 const MAX_ERROR_TOKEN_READ_AHEAD = 4_096;
 
+const unauthorizedListeners = new Set<() => void>();
+
+export function onUnauthorized(listener: () => void): () => void {
+  unauthorizedListeners.add(listener);
+  return () => unauthorizedListeners.delete(listener);
+}
+
 export function readBrowserCookie(name: string): string | undefined {
   if (typeof document === "undefined") return undefined;
 
@@ -158,6 +165,9 @@ export async function request<T>(
 
   const res = await fetch(`${API_BASE}${path}`, init);
   if (!res.ok) {
+    if (res.status === 401 && path !== "/v1/auth/session") {
+      for (const listener of unauthorizedListeners) listener();
+    }
     const detail = await responseErrorDetail(res, csrfToken);
     throw new ApiError(res.status, detail);
   }

@@ -160,6 +160,8 @@ import {
 import { tokens } from "@/lib/stylex/tokens.stylex";
 
 interface WorkbenchProps {
+  userId: string;
+  workspaceId: string;
   workspaceSlug: string;
   initialGraphId: string | null;
 }
@@ -187,6 +189,8 @@ interface ActiveArtifactViewerActivity {
 }
 
 export function Workbench({
+  userId,
+  workspaceId,
   workspaceSlug,
   initialGraphId,
 }: WorkbenchProps) {
@@ -834,7 +838,7 @@ export function Workbench({
   const removeArtifactViewerDocument = React.useCallback((graphId: string) => {
     try {
       window.localStorage.removeItem(
-        artifactViewerStorageKey(workspaceSlug, graphId),
+        artifactViewerStorageKey(userId, workspaceId, graphId),
       );
       setArtifactViewerPersistenceError(null);
     } catch {
@@ -842,7 +846,7 @@ export function Workbench({
         "Artifact Viewer layout could not be removed from browser storage.",
       );
     }
-  }, [workspaceSlug]);
+  }, [userId, workspaceId]);
   const uploading = nodes.some(
     (node) => node.data.execution.status === "uploading",
   );
@@ -926,7 +930,7 @@ export function Workbench({
       if (!artifactViewersInitializedRef.current) {
         try {
           const serialized = window.localStorage.getItem(
-            artifactViewerStorageKey(workspaceSlug, graphId!),
+            artifactViewerStorageKey(userId, workspaceId, graphId!),
           );
           const hydrated = serialized
             ? hydrateArtifactViewerDocument(serialized, graphId!)
@@ -975,7 +979,7 @@ export function Workbench({
 
       try {
         const serialized = window.localStorage.getItem(
-          artifactViewerStorageKey(workspaceSlug, graphId),
+          artifactViewerStorageKey(userId, workspaceId, graphId),
         );
         const hydrated = serialized
           ? hydrateArtifactViewerDocument(serialized, graphId)
@@ -1001,7 +1005,7 @@ export function Workbench({
       }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [activeGraph?.id, artifactViewers.graphId, workspaceSlug]);
+  }, [activeGraph?.id, artifactViewers.graphId, userId, workspaceId]);
 
   React.useEffect(() => {
     const graphId = activeGraph?.id;
@@ -1015,7 +1019,7 @@ export function Workbench({
     const timer = window.setTimeout(() => {
       try {
         window.localStorage.setItem(
-          artifactViewerStorageKey(workspaceSlug, graphId),
+          artifactViewerStorageKey(userId, workspaceId, graphId),
           serializeArtifactViewerDocument(
             artifactViewers.nodes,
             artifactViewers.edges,
@@ -1036,7 +1040,8 @@ export function Workbench({
     artifactViewers.bindings,
     artifactViewers.graphId,
     artifactViewers.nodes,
-    workspaceSlug,
+    userId,
+    workspaceId,
   ]);
 
   const graphOperationBusy = persistenceOperationBusy || running;
