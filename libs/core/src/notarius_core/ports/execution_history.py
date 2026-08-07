@@ -46,6 +46,13 @@ class GraphExecutionHistoryRepositoryPort(Protocol):
         error: str,
     ) -> int: ...
 
+    async def interrupt_all_active(
+        self,
+        *,
+        finished_at: datetime,
+        error: str,
+    ) -> int: ...
+
 
 class ExecutionHistoryUnitOfWorkPort(UnitOfWorkPort, Protocol):
     @property

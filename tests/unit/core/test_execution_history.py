@@ -161,3 +161,54 @@ async def test_in_memory_execution_identity_is_global_but_reads_are_workspace_sc
                     status="queued",
                 )
             )
+
+
+@pytest.mark.asyncio
+async def test_in_memory_interrupt_all_active_recovers_every_workspace() -> None:
+    unit_of_work = InMemoryUnitOfWork()
+    created_at = datetime(2026, 7, 18, 12, 0, tzinfo=UTC)
+    executions = tuple(
+        GraphExecution(
+            workspace_id=workspace_id,
+            execution_id=UUID(f"00000000-0000-0000-0000-{index:012d}"),
+            graph_id=UUID(f"00000000-0000-0000-0000-{index + 100:012d}"),
+            graph_revision=1,
+            status=status,
+            created_at=created_at,
+            started_at=(created_at if status != "queued" else None),
+            finished_at=(created_at if status == "succeeded" else None),
+        )
+        for index, (workspace_id, status) in enumerate(
+            (
+                (WORKSPACE_ONE, "queued"),
+                (WORKSPACE_TWO, "running"),
+                (WORKSPACE_ONE, "cancelling"),
+                (WORKSPACE_TWO, "succeeded"),
+            ),
+            start=1,
+        )
+    )
+    async with unit_of_work as entered:
+        for execution in executions:
+            await entered.execution_history.add(execution)
+        interrupted = await entered.execution_history.interrupt_all_active(
+            finished_at=created_at.replace(hour=13),
+            error="startup recovery",
+        )
+        await entered.commit()
+
+    assert interrupted == 3
+    async with unit_of_work as entered:
+        details = [
+            await entered.execution_history.get(
+                execution.workspace_id,
+                execution.execution_id,
+            )
+            for execution in executions
+        ]
+    assert [detail.execution.status for detail in details if detail is not None] == [
+        "failed",
+        "failed",
+        "failed",
+        "succeeded",
+    ]

@@ -603,6 +603,29 @@ class InMemoryGraphExecutionHistoryRepository:
             interrupted += 1
         return interrupted
 
+    async def interrupt_all_active(
+        self,
+        *,
+        finished_at: datetime,
+        error: str,
+    ) -> int:
+        if finished_at.tzinfo is None:
+            raise ValueError(
+                "Graph execution interruption timestamp must be timezone-aware"
+            )
+        interrupted = 0
+        for execution_key, execution in list(self._store.graph_executions.items()):
+            if execution.status not in {"queued", "running", "cancelling"}:
+                continue
+            self._store.graph_executions[execution_key] = replace(
+                execution,
+                status="failed",
+                finished_at=finished_at,
+                error=error,
+            )
+            interrupted += 1
+        return interrupted
+
 
 @dataclass(frozen=True, slots=True)
 class _InMemoryUnitOfWorkState:

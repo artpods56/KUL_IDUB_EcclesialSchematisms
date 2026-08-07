@@ -200,6 +200,18 @@ class ExecutionHistoryService:
             await unit_of_work.commit()
         return interrupted
 
+    async def interrupt_all_active(self) -> int:
+        async with self._unit_of_work as unit_of_work:
+            interrupted = await unit_of_work.execution_history.interrupt_all_active(
+                finished_at=datetime.now(UTC),
+                error=(
+                    "Execution was interrupted because the API process stopped "
+                    "before reporting a terminal result"
+                ),
+            )
+            await unit_of_work.commit()
+        return interrupted
+
 
 class MaterializationService:
     """Owns persisted graph-output snapshots and submitted pinned outputs."""
