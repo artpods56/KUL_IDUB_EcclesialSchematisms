@@ -46,7 +46,10 @@ api-all: db-upgrade
 	uv run --exact --no-dev --extra llm --extra gis --extra ocr --extra sql uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
 
 mcp:
-	uv run --package notarius-mcp notarius-mcp
+	@echo "MCP is mounted on the API at /mcp (stateless Streamable HTTP)."
+	@echo "Start the API (make api), create a workspace-bound PAT, then connect"
+	@echo "an MCP client to http://127.0.0.1:8000/mcp with Authorization: Bearer <token>."
+	@exit 1
 
 prefect:
 	.venv/bin/prefect server start

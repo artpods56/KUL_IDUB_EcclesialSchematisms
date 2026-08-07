@@ -32,6 +32,7 @@ from notarius_persistence.unit_of_work import (
 from notarius_storage import create_file_storage
 
 from notarius_api.builtins import builtin_plugins
+from notarius_api.mcp import create_mounted_mcp_app
 from notarius_api.plugin_discovery import build_plugin_registry
 from notarius_api.services.composition import build_workbench_components
 from notarius_api.settings import Settings, get_settings
@@ -227,122 +228,128 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     database = create_database(resolved_settings.resolved_database_url)
 
+    # Placeholder replaced after the FastAPI app exists so PAT middleware can
+    # close over the parent application state.
+    mcp_http_app_holder: dict[str, object] = {}
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        registry = build_plugin_registry(builtin_plugins())
-        s3_access_key_id: str | None = None
-        if resolved_settings.s3_access_key_id is not None:
-            configured_access_key_id = (
-                resolved_settings.s3_access_key_id.get_secret_value().strip()
+        mcp_http_app = mcp_http_app_holder["app"]
+        async with mcp_http_app.lifespan(app):  # type: ignore[attr-defined]
+            registry = build_plugin_registry(builtin_plugins())
+            s3_access_key_id: str | None = None
+            if resolved_settings.s3_access_key_id is not None:
+                configured_access_key_id = (
+                    resolved_settings.s3_access_key_id.get_secret_value().strip()
+                )
+                if configured_access_key_id != "":
+                    s3_access_key_id = configured_access_key_id
+            s3_secret_access_key: str | None = None
+            if resolved_settings.s3_secret_access_key is not None:
+                configured_secret_access_key = (
+                    resolved_settings.s3_secret_access_key.get_secret_value()
+                )
+                if configured_secret_access_key != "":
+                    s3_secret_access_key = configured_secret_access_key
+            s3_endpoint_url = resolved_settings.s3_endpoint_url
+            if s3_endpoint_url == "":
+                s3_endpoint_url = None
+            storage = create_file_storage(
+                backend=resolved_settings.storage_backend,
+                local_root=resolved_settings.workspace / "objects",
+                s3_endpoint_url=s3_endpoint_url,
+                s3_region=resolved_settings.s3_region,
+                s3_access_key_id=s3_access_key_id,
+                s3_secret_access_key=s3_secret_access_key,
+                s3_force_path_style=resolved_settings.s3_force_path_style,
             )
-            if configured_access_key_id != "":
-                s3_access_key_id = configured_access_key_id
-        s3_secret_access_key: str | None = None
-        if resolved_settings.s3_secret_access_key is not None:
-            configured_secret_access_key = (
-                resolved_settings.s3_secret_access_key.get_secret_value()
+            saved_graphs = SavedGraphService(
+                lambda: SqlAlchemySavedGraphUnitOfWork(database.sessions),
+                registry,
             )
-            if configured_secret_access_key != "":
-                s3_secret_access_key = configured_secret_access_key
-        s3_endpoint_url = resolved_settings.s3_endpoint_url
-        if s3_endpoint_url == "":
-            s3_endpoint_url = None
-        storage = create_file_storage(
-            backend=resolved_settings.storage_backend,
-            local_root=resolved_settings.workspace / "objects",
-            s3_endpoint_url=s3_endpoint_url,
-            s3_region=resolved_settings.s3_region,
-            s3_access_key_id=s3_access_key_id,
-            s3_secret_access_key=s3_secret_access_key,
-            s3_force_path_style=resolved_settings.s3_force_path_style,
-        )
-        saved_graphs = SavedGraphService(
-            lambda: SqlAlchemySavedGraphUnitOfWork(database.sessions),
-            registry,
-        )
-        collaboration = CollaborationService(
-            lambda: SqlAlchemyUnitOfWork(database.sessions),
-            registry,
-            command_hmac_key=resolved_settings.resolved_command_hmac_key(),
-            command_hmac_key_version=resolved_settings.command_hmac_key_version,
-            saved_graphs=saved_graphs,
-        )
-        node_secrets = NodeSecretService(
-            unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
-            plugin_registry=registry,
-            encryption_key=resolved_settings.credential_encryption_key,
-        )
-        components = build_workbench_components(
-            plugin_registry=registry,
-            workspace=resolved_settings.workspace,
-            unit_of_work=SqlAlchemyUnitOfWork(database.sessions),
-            storage=storage,
-            execution_backend=resolved_settings.execution_backend,
-            map_max_concurrency=resolved_settings.map_max_concurrency,
-            prefect_task_retries=resolved_settings.prefect_task_retries,
-            prefect_task_retry_delay_seconds=(
-                resolved_settings.prefect_task_retry_delay_seconds
-            ),
-            storage_backend=resolved_settings.storage_backend,
-            bucket=resolved_settings.storage_bucket,
-            saved_graphs=saved_graphs,
-            node_secrets=node_secrets,
-        )
-        await components.execution_history.interrupt_all_active()
-        # Migration 0009 backfills heads; refuse to serve if any graph still lacks one.
-        await collaboration.verify_every_graph_has_head()
-        components.execution_manager.bind_room_publisher(
-            ActiveExecutionRoomPublisher(app.state.graph_room_hub)
-        )
-        app.state.workbench_plugin_registry = components.plugin_registry
-        app.state.image_uploads = components.uploads
-        app.state.graph_modules = components.modules
-        app.state.run_graph = components.run_graph
-        app.state.execution_manager = components.execution_manager
-        app.state.execution_history = components.execution_history
-        app.state.materializations = components.materializations
-        app.state.run_result_presenter = components.presenter
-        app.state.artifacts = components.artifacts
-        app.state.saved_graphs = saved_graphs
-        app.state.collaboration = collaboration
-        app.state.node_secrets = node_secrets
+            collaboration = CollaborationService(
+                lambda: SqlAlchemyUnitOfWork(database.sessions),
+                registry,
+                command_hmac_key=resolved_settings.resolved_command_hmac_key(),
+                command_hmac_key_version=resolved_settings.command_hmac_key_version,
+                saved_graphs=saved_graphs,
+            )
+            node_secrets = NodeSecretService(
+                unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
+                plugin_registry=registry,
+                encryption_key=resolved_settings.credential_encryption_key,
+            )
+            components = build_workbench_components(
+                plugin_registry=registry,
+                workspace=resolved_settings.workspace,
+                unit_of_work=SqlAlchemyUnitOfWork(database.sessions),
+                storage=storage,
+                execution_backend=resolved_settings.execution_backend,
+                map_max_concurrency=resolved_settings.map_max_concurrency,
+                prefect_task_retries=resolved_settings.prefect_task_retries,
+                prefect_task_retry_delay_seconds=(
+                    resolved_settings.prefect_task_retry_delay_seconds
+                ),
+                storage_backend=resolved_settings.storage_backend,
+                bucket=resolved_settings.storage_bucket,
+                saved_graphs=saved_graphs,
+                node_secrets=node_secrets,
+            )
+            await components.execution_history.interrupt_all_active()
+            # Migration 0009 backfills heads; refuse to serve if any graph still lacks one.
+            await collaboration.verify_every_graph_has_head()
+            components.execution_manager.bind_room_publisher(
+                ActiveExecutionRoomPublisher(app.state.graph_room_hub)
+            )
+            app.state.workbench_plugin_registry = components.plugin_registry
+            app.state.image_uploads = components.uploads
+            app.state.graph_modules = components.modules
+            app.state.run_graph = components.run_graph
+            app.state.execution_manager = components.execution_manager
+            app.state.execution_history = components.execution_history
+            app.state.materializations = components.materializations
+            app.state.run_result_presenter = components.presenter
+            app.state.artifacts = components.artifacts
+            app.state.saved_graphs = saved_graphs
+            app.state.collaboration = collaboration
+            app.state.node_secrets = node_secrets
 
-        async def cleanup_expired_auth_data() -> None:
-            while True:
-                await asyncio.sleep(resolved_settings.auth_cleanup_interval_seconds)
-                try:
-                    await auth_service.cleanup_expired()
-                except asyncio.CancelledError:
-                    raise
-                except Exception as error:
-                    logger.warning(
-                        "auth_cleanup_failed operation=cleanup_expired error_class=%s",
-                        type(error).__name__,
-                    )
-                    continue
+            async def cleanup_expired_auth_data() -> None:
+                while True:
+                    await asyncio.sleep(resolved_settings.auth_cleanup_interval_seconds)
+                    try:
+                        await auth_service.cleanup_expired()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as error:
+                        logger.warning(
+                            "auth_cleanup_failed operation=cleanup_expired error_class=%s",
+                            type(error).__name__,
+                        )
+                        continue
 
-        cleanup_task = asyncio.create_task(cleanup_expired_auth_data())
-        try:
-            yield
-        finally:
-            cleanup_task.cancel()
-            await asyncio.gather(cleanup_task, return_exceptions=True)
-            await app.state.graph_room_hub.shutdown()
-            await components.execution_manager.shutdown()
-            await components.artifacts.close()
-            del app.state.node_secrets
-            del app.state.collaboration
-            del app.state.saved_graphs
-            del app.state.artifacts
-            del app.state.run_result_presenter
-            del app.state.materializations
-            del app.state.run_graph
-            del app.state.execution_manager
-            del app.state.execution_history
-            del app.state.graph_modules
-            del app.state.image_uploads
-            del app.state.workbench_plugin_registry
-            await database.dispose()
+            cleanup_task = asyncio.create_task(cleanup_expired_auth_data())
+            try:
+                yield
+            finally:
+                cleanup_task.cancel()
+                await asyncio.gather(cleanup_task, return_exceptions=True)
+                await app.state.graph_room_hub.shutdown()
+                await components.execution_manager.shutdown()
+                await components.artifacts.close()
+                del app.state.node_secrets
+                del app.state.collaboration
+                del app.state.saved_graphs
+                del app.state.artifacts
+                del app.state.run_result_presenter
+                del app.state.materializations
+                del app.state.run_graph
+                del app.state.execution_manager
+                del app.state.execution_history
+                del app.state.graph_modules
+                del app.state.image_uploads
+                del app.state.workbench_plugin_registry
+                await database.dispose()
 
     application = FastAPI(
         title="Notarius API",
@@ -352,6 +359,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redoc_url=None,
         openapi_url=None,
     )
+    mcp_http_app = create_mounted_mcp_app(application)
+    mcp_http_app_holder["app"] = mcp_http_app
+    application.mount("/mcp", mcp_http_app)
 
     async def browser_abuse_cookie_boundary(
         request: Request,

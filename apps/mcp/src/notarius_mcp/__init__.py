@@ -1,4 +1,3 @@
-from notarius_mcp.client import NotariusApiClient, NotariusApiError
 from notarius_mcp.models import (
     ArtifactConversionKeyResponse,
     ArtifactConversionSpecResponse,
@@ -7,8 +6,10 @@ from notarius_mcp.models import (
     ArtifactTypeKeyRequest,
     ArtifactTypeKeyResponse,
     ArtifactTypeSpecResponse,
+    CollaborativeHeadResponse,
     CreateSavedGraphRequest,
     FieldProjectionResponse,
+    GraphCommandReceiptResponse,
     GraphPointRequest,
     GraphPointResponse,
     NodeInspection,
@@ -35,9 +36,16 @@ from notarius_mcp.models import (
     SavedGraphResponse,
     SavedGraphSummaryResponse,
     SavedGraphWriteRequest,
+    SubmitGraphCommandResponse,
     UnavailableGraphModuleResponse,
     UpdateSavedGraphRequest,
 )
+from notarius_mcp.operations import (
+    GraphWorkspaceOperations,
+    McpCallerContext,
+    McpOperationError,
+)
+from notarius_mcp.server import create_streamable_http_app, mcp
 
 
 __all__ = [
@@ -48,18 +56,21 @@ __all__ = [
     "ArtifactTypeKeyRequest",
     "ArtifactTypeKeyResponse",
     "ArtifactTypeSpecResponse",
+    "CollaborativeHeadResponse",
     "CreateSavedGraphRequest",
     "FieldProjectionResponse",
+    "GraphCommandReceiptResponse",
     "GraphPointRequest",
     "GraphPointResponse",
+    "GraphWorkspaceOperations",
+    "McpCallerContext",
+    "McpOperationError",
     "NodeInspection",
     "NodeRegistryResponse",
     "NodeSearchResult",
     "NodeSearchSummary",
     "NodeSecretInputResponse",
     "NodeSpecResponse",
-    "NotariusApiClient",
-    "NotariusApiError",
     "PluginSpecResponse",
     "PortResponse",
     "SavedGraphConversionRequest",
@@ -78,6 +89,9 @@ __all__ = [
     "SavedGraphResponse",
     "SavedGraphSummaryResponse",
     "SavedGraphWriteRequest",
+    "SubmitGraphCommandResponse",
     "UnavailableGraphModuleResponse",
     "UpdateSavedGraphRequest",
+    "create_streamable_http_app",
+    "mcp",
 ]

@@ -1203,6 +1203,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "notarius-core" },
+    { name = "notarius-mcp" },
     { name = "notarius-persistence" },
     { name = "notarius-storage" },
     { name = "pillow" },
@@ -1222,6 +1223,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.123.0" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "notarius-core", editable = "libs/core" },
+    { name = "notarius-mcp", editable = "apps/mcp" },
     { name = "notarius-persistence", editable = "libs/persistence" },
     { name = "notarius-storage", editable = "libs/storage" },
     { name = "pillow" },
@@ -1263,19 +1265,15 @@ version = "0.1.0"
 source = { editable = "apps/mcp" }
 dependencies = [
     { name = "fastmcp" },
-    { name = "httpx" },
     { name = "mcp" },
     { name = "pydantic" },
-    { name = "pydantic-settings" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fastmcp", specifier = "==3.4.0" },
-    { name = "httpx", specifier = ">=0.28.1" },
     { name = "mcp", specifier = ">=1.24,<2" },
     { name = "pydantic" },
-    { name = "pydantic-settings", specifier = ">=2.12.0" },
 ]
 
 [[package]]

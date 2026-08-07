@@ -3,16 +3,16 @@ from contextlib import asynccontextmanager
 from typing import Annotated, ClassVar, Literal
 from uuid import UUID
 
-import httpx
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
+from starlette.applications import Starlette
 
-from notarius_mcp.client import NotariusApiClient, NotariusApiError
 from notarius_mcp.models import (
     ArtifactTypeBindingRequest,
     ArtifactTypeKeyRequest,
+    CollaborativeHeadResponse,
     CreateSavedGraphRequest,
     GraphPointRequest,
     Identifier,
@@ -27,9 +27,11 @@ from notarius_mcp.models import (
     SavedGraphNodeRequest,
     SavedGraphProjectionRequest,
     SavedGraphResponse,
+    SubmitGraphCommandResponse,
     UpdateSavedGraphRequest,
 )
-from notarius_mcp.settings import Settings
+from notarius_mcp.operations import McpOperationError
+from notarius_mcp.request_context import current_mcp_binding
 
 
 _READ_ANNOTATIONS = ToolAnnotations(
@@ -47,6 +49,12 @@ _CREATE_ANNOTATIONS = ToolAnnotations(
 _REPLACE_ANNOTATIONS = ToolAnnotations(
     readOnlyHint=False,
     destructiveHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+)
+_COMMAND_ANNOTATIONS = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,
     idempotentHint=True,
     openWorldHint=False,
 )
@@ -96,80 +104,39 @@ class SavedGraphDraft(ToolInputModel):
 
 
 @asynccontextmanager
-async def _api_lifespan(
+async def _empty_lifespan(
     _server: FastMCP[dict[str, object]],
 ) -> AsyncIterator[dict[str, object]]:
-    settings = Settings()
-    async with httpx.AsyncClient(
-        base_url=str(settings.api_url),
-        timeout=httpx.Timeout(settings.timeout_seconds),
-    ) as http_client:
-        yield {
-            "api_client": NotariusApiClient(
-                http_client,
-                workspace_id=settings.workspace_id,
-            )
-        }
+    # Caller identity is request-scoped via ContextVar, never lifespan state.
+    yield {}
 
 
-def _api_client(context: Context) -> NotariusApiClient:
-    client = context.lifespan_context.get("api_client")
-    if not isinstance(client, NotariusApiClient):
-        raise ToolError("The Notarius API client is unavailable.")
-    return client
-
-
-def _as_tool_error(error: NotariusApiError, operation: str) -> ToolError:
-    request_context = f"{error.method} {error.path}"
-    if error.status_code is None:
+def _as_tool_error(error: McpOperationError, operation: str) -> ToolError:
+    if error.status_code == 401:
         return ToolError(
-            f"Could not reach the Notarius API while attempting to {operation} "
-            f"({request_context})."
+            f"Authentication failed while attempting to {operation}."
+        )
+    if error.status_code == 403:
+        return ToolError(
+            f"The current personal access token lacks permission to {operation}."
         )
     if error.status_code == 404:
         return ToolError(
             f"The requested Notarius resource was not found while attempting to "
-            f"{operation} ({request_context}, status 404)."
+            f"{operation}."
         )
     if error.status_code == 409:
         return ToolError(
-            f"The graph revision changed before it could be replaced "
-            f"({request_context}, status 409). Call get_graph and reconcile your "
-            "changes before trying again."
+            f"The collaborative head changed before the operation could complete "
+            f"while attempting to {operation}. Call get_live_head and reconcile "
+            "before trying again."
         )
     if error.status_code == 422:
-        issues: list[str] = []
-        if isinstance(error.detail, list):
-            for issue in error.detail[:5]:
-                if not isinstance(issue, dict):
-                    continue
-                message = issue.get("msg")
-                location = issue.get("loc")
-                if not isinstance(message, str) or not isinstance(location, list):
-                    continue
-                safe_location = ".".join(
-                    str(part)
-                    for part in location
-                    if isinstance(part, (str, int))
-                )
-                issues.append(
-                    f"{safe_location}: {message}" if safe_location else message
-                )
-        issue_summary = "; ".join(issues)
-        suffix = f" Validation issues: {issue_summary}" if issue_summary else ""
         return ToolError(
-            f"The Notarius API rejected the structurally invalid request while "
-            f"attempting to {operation} ({request_context}, status 422).{suffix}"
+            f"The request was structurally invalid while attempting to {operation}."
+            + (f" {error.message}" if error.message else "")
         )
-    if 200 <= error.status_code < 300:
-        return ToolError(
-            f"The Notarius API returned an invalid response while attempting to "
-            f"{operation} ({request_context}, status {error.status_code})."
-        )
-    return ToolError(
-        f"The Notarius API request failed while attempting to {operation} "
-        f"({request_context}, status {error.status_code})."
-    )
+    return ToolError(f"Could not {operation}.")
 
 
 def _normalize_graph_draft(graph: SavedGraphDraft) -> CreateSavedGraphRequest:
@@ -270,13 +237,14 @@ mcp: FastMCP[dict[str, object]] = FastMCP(
     instructions=(
         "Call search_nodes and inspect_node before authoring, and use exact operator "
         "versions, ports, artifact types, projections, and conversions. Call "
-        "get_graph immediately before replace_graph and pass its revision. For "
-        "instance-plug inputs, use the same identifier in node configuration and "
-        "the edge's to_plug. Create and replace save structurally valid drafts only; "
-        "they do not prove executability. Never put credentials or secrets in graph "
-        "configuration."
+        "get_live_head immediately before submit_graph_command or replace_graph and "
+        "pass the observed room epoch and collaboration sequence. Workspace identity "
+        "comes from the personal access token and must not be supplied as a tool "
+        "argument. Create and replace save structurally valid drafts only; they do "
+        "not prove executability. Never put credentials or secrets in graph "
+        "configuration or tool arguments."
     ),
-    lifespan=_api_lifespan,
+    lifespan=_empty_lifespan,
     strict_input_validation=True,
     mask_error_details=True,
 )
@@ -293,9 +261,11 @@ async def search_nodes(
     limit: Annotated[int, Field(ge=1, le=100)] = 20,
 ) -> NodeSearchResult:
     """Search the live node catalog without returning its large JSON schemas."""
+    del context
+    binding = current_mcp_binding()
     try:
-        registry = await _api_client(context).get_registry()
-    except NotariusApiError as exc:
+        registry = await binding.operations.get_registry(binding.caller)
+    except McpOperationError as exc:
         raise _as_tool_error(exc, "search the node catalog") from exc
 
     normalized_query = query.strip().casefold()
@@ -357,9 +327,11 @@ async def inspect_node(
     operator_version: Annotated[int, Field(ge=1)],
 ) -> NodeInspection:
     """Inspect one exact node and the artifact metadata needed to route edges."""
+    del context
+    binding = current_mcp_binding()
     try:
-        registry = await _api_client(context).get_registry()
-    except NotariusApiError as exc:
+        registry = await binding.operations.get_registry(binding.caller)
+    except McpOperationError as exc:
         raise _as_tool_error(exc, "inspect a catalog node") from exc
 
     matches = [
@@ -387,20 +359,27 @@ async def inspect_node(
 
 @mcp.tool(annotations=_READ_ANNOTATIONS)
 async def list_graphs(context: Context) -> SavedGraphListResponse:
-    """List saved graphs in the order returned by the Notarius API."""
+    """List saved graphs in the token-bound workspace."""
+    del context
+    binding = current_mcp_binding()
     try:
-        return await _api_client(context).list_graphs()
-    except NotariusApiError as exc:
+        return await binding.operations.list_graphs(binding.caller)
+    except McpOperationError as exc:
         raise _as_tool_error(exc, "list saved graphs") from exc
 
 
 @mcp.tool(annotations=_READ_ANNOTATIONS)
-async def get_graph(context: Context, graph_id: UUID) -> SavedGraphResponse:
-    """Get the current revision and complete document for one saved graph."""
+async def get_live_head(
+    context: Context,
+    graph_id: UUID,
+) -> CollaborativeHeadResponse:
+    """Get the collaborative live head for one graph in the token-bound workspace."""
+    del context
+    binding = current_mcp_binding()
     try:
-        return await _api_client(context).get_graph(graph_id)
-    except NotariusApiError as exc:
-        raise _as_tool_error(exc, "get a saved graph") from exc
+        return await binding.operations.get_live_head(binding.caller, graph_id)
+    except McpOperationError as exc:
+        raise _as_tool_error(exc, "get a collaborative live head") from exc
 
 
 @mcp.tool(annotations=_CREATE_ANNOTATIONS)
@@ -408,14 +387,16 @@ async def create_graph(
     context: Context,
     graph: SavedGraphDraft,
 ) -> SavedGraphResponse:
-    """Create a structurally valid saved graph draft, not an execution validation."""
+    """Create a structurally valid saved graph through sequence-1 bootstrap."""
+    del context
     try:
         request = _normalize_graph_draft(graph)
     except ValidationError as exc:
         raise _graph_validation_tool_error(exc, "create the graph draft") from exc
+    binding = current_mcp_binding()
     try:
-        return await _api_client(context).create_graph(request)
-    except NotariusApiError as exc:
+        return await binding.operations.create_graph(binding.caller, request)
+    except McpOperationError as exc:
         raise _as_tool_error(exc, "create a saved graph draft") from exc
 
 
@@ -426,7 +407,8 @@ async def replace_graph(
     expected_revision: Annotated[int, Field(ge=1)],
     graph: SavedGraphDraft,
 ) -> SavedGraphResponse:
-    """Replace a saved graph draft only when its current revision still matches."""
+    """Replace a checkpointed graph through collaboration-aware epoch reset."""
+    del context
     try:
         normalized_graph = _normalize_graph_draft(graph)
         request = UpdateSavedGraphRequest(
@@ -437,20 +419,56 @@ async def replace_graph(
         )
     except ValidationError as exc:
         raise _graph_validation_tool_error(exc, "replace the graph draft") from exc
+    binding = current_mcp_binding()
     try:
-        return await _api_client(context).replace_graph(graph_id, request)
-    except NotariusApiError as exc:
+        return await binding.operations.replace_graph(
+            binding.caller,
+            graph_id,
+            request,
+        )
+    except McpOperationError as exc:
         raise _as_tool_error(exc, "replace a saved graph draft") from exc
 
 
-def main() -> None:
-    mcp.run(transport="stdio")
+@mcp.tool(annotations=_COMMAND_ANNOTATIONS)
+async def submit_graph_command(
+    context: Context,
+    graph_id: UUID,
+    command_id: UUID,
+    room_epoch: UUID,
+    observed_sequence: Annotated[int, Field(ge=0)],
+    command: dict[str, JsonValue],
+) -> SubmitGraphCommandResponse:
+    """Submit one semantic collaboration command against the observed live head."""
+    del context
+    binding = current_mcp_binding()
+    try:
+        return await binding.operations.submit_command(
+            binding.caller,
+            graph_id=graph_id,
+            command_id=command_id,
+            room_epoch=room_epoch,
+            observed_sequence=observed_sequence,
+            command=command,
+        )
+    except McpOperationError as exc:
+        raise _as_tool_error(exc, "submit a graph command") from exc
+
+
+def create_streamable_http_app(*, path: str = "/") -> Starlette:
+    """Build the mountable stateless Streamable HTTP ASGI application."""
+
+    return mcp.http_app(
+        path=path,
+        transport="streamable-http",
+        stateless_http=True,
+    )
 
 
 __all__ = [
     "SavedGraphDraft",
     "SavedGraphEdgeDraft",
     "SavedGraphNodeDraft",
-    "main",
+    "create_streamable_http_app",
     "mcp",
 ]

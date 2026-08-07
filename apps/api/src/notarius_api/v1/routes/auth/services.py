@@ -79,6 +79,16 @@ class IssuedSession:
 
 
 @dataclass(frozen=True, slots=True)
+class McpAccess:
+    """Request-scoped MCP caller resolved from a workspace-bound PAT."""
+
+    actor: ActorContext
+    workspace_id: UUID
+    scopes: frozenset[WorkspaceCapability]
+    token_id: UUID = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderMetadata:
     issuer: str
     authorization_endpoint: str
@@ -367,6 +377,89 @@ class AuthService:
             expires_at=expires_at,
         )
         return token, f"{public_prefix}.{secret}"
+
+    async def require_mcp_access(self, request: Request) -> McpAccess:
+        """Resolve a workspace-bound PAT for the mounted `/mcp` surface.
+
+        Rejects cookie+bearer ambiguity, expired/revoked tokens, disabled users,
+        and membership loss. Effective scopes are the intersection of PAT scopes
+        and the caller's current workspace membership capabilities.
+        """
+
+        if request.cookies.get(SESSION_COOKIE) is not None:
+            await self._raise_mcp_authentication_required(
+                request,
+                error_code="ambiguous_authentication",
+            )
+        authorization = request.headers.get("authorization")
+        if authorization is None:
+            await self._raise_mcp_authentication_required(
+                request,
+                error_code="missing_authorization",
+            )
+        scheme, separator, credential = authorization.partition(" ")
+        if not separator or scheme.lower() != "bearer" or not credential.strip():
+            await self._raise_mcp_authentication_required(
+                request,
+                error_code="invalid_authorization",
+            )
+        try:
+            public_prefix, secret = self._parse_personal_access_token(credential.strip())
+        except HTTPException:
+            await self._raise_mcp_authentication_required(
+                request,
+                error_code="invalid_authorization",
+            )
+        digest = self.digest_secret(secret)
+        async with self._unit_of_work_factory() as unit_of_work:
+            token = await unit_of_work.identity.get_personal_access_token_by_digest(
+                digest
+            )
+            now = datetime.now(UTC)
+            if (
+                token is None
+                or token.is_revoked
+                or token.expires_at <= now
+                or token.public_prefix != public_prefix
+            ):
+                await self._raise_mcp_authentication_required(
+                    request,
+                    error_code="authentication_required",
+                )
+            user = await unit_of_work.identity.get_user(token.user_id)
+            if user is None or not user.active:
+                await self._raise_mcp_authentication_required(
+                    request,
+                    error_code="authentication_required",
+                )
+            membership = await unit_of_work.identity.get_membership(
+                workspace_id=token.workspace_id,
+                user_id=token.user_id,
+            )
+            if membership is None or not membership.is_active:
+                await self._raise_mcp_authentication_required(
+                    request,
+                    error_code="authentication_required",
+                )
+            effective_scopes = frozenset(token.scopes) & membership.capabilities
+            if not effective_scopes:
+                await self._raise_mcp_authentication_required(
+                    request,
+                    error_code="authentication_required",
+                )
+            token.last_used_at = now
+            await unit_of_work.commit()
+        access = McpAccess(
+            actor=ActorContext(
+                user_id=token.user_id,
+                credential_reference=f"pat:{token.id}",
+            ),
+            workspace_id=token.workspace_id,
+            scopes=effective_scopes,
+            token_id=token.id,
+        )
+        request.state.mcp_access = access
+        return access
 
     async def require_browser_actor(self, request: Request) -> ActorContext:
         cookie_value = request.cookies.get(SESSION_COOKIE)
@@ -1018,6 +1111,15 @@ class AuthService:
         return session_id, secret
 
     @staticmethod
+    def _parse_personal_access_token(value: str) -> tuple[str, str]:
+        public_prefix, separator, secret = value.partition(".")
+        if not separator or not public_prefix or not secret:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        if not public_prefix.startswith("nrt_"):
+            raise HTTPException(status_code=401, detail="Authentication required")
+        return public_prefix, secret
+
+    @staticmethod
     def _session_id_from_cookie(value: str | None) -> UUID | None:
         if value is None:
             return None
@@ -1058,6 +1160,27 @@ class AuthService:
             )
         raise HTTPException(status_code=401, detail="Authentication required")
 
+    async def _raise_mcp_authentication_required(
+        self,
+        request: Request,
+        *,
+        error_code: str,
+    ) -> NoReturn:
+        abuse_keys = self.browser_abuse_keys(request)
+        if not await self._abuse_control.allow_session_failure(abuse_keys.network_key):
+            await self.audit_unauthenticated_failure(
+                operation="mcp.pat.verify",
+                error_code="rate_limited",
+            )
+            raise HTTPException(
+                status_code=429, detail="Too many authentication attempts"
+            )
+        await self.audit_unauthenticated_failure(
+            operation="mcp.pat.verify",
+            error_code=error_code,
+        )
+        raise HTTPException(status_code=401, detail="Authentication required")
+
     def _wrapping_key(self) -> bytes:
         self._require_oidc_configuration()
         configured_key = self._settings.oidc_auth_wrapping_key
@@ -1093,6 +1216,7 @@ __all__ = [
     "AuthService",
     "CSRF_COOKIE",
     "IssuedSession",
+    "McpAccess",
     "OIDC_TRANSACTION_COOKIE",
     "OidcProtocolError",
     "SESSION_COOKIE",

@@ -457,6 +457,31 @@ class SavedGraphListResponse(ResponseModel):
     graphs: list[SavedGraphSummaryResponse]
 
 
+class CollaborativeHeadResponse(ResponseModel):
+    graph_id: UUID
+    room_epoch: UUID
+    collaboration_sequence: int = Field(ge=0, strict=True)
+    checkpoint_sequence: int = Field(ge=0, strict=True)
+    checkpoint_revision: int = Field(ge=0, strict=True)
+    name: str = Field(min_length=1, max_length=160)
+    updated_at: datetime
+    nodes: list[SavedGraphNodeResponse] = Field(default_factory=list)
+    edges: list[SavedGraphEdgeResponse] = Field(default_factory=list)
+
+
+class GraphCommandReceiptResponse(ResponseModel):
+    command_id: UUID
+    outcome: Literal["accepted", "idempotent_replay"]
+    accepted_sequence: int = Field(ge=0, strict=True)
+    room_epoch: UUID
+    deduplicated: bool
+
+
+class SubmitGraphCommandResponse(ResponseModel):
+    head: CollaborativeHeadResponse
+    receipt: GraphCommandReceiptResponse
+
+
 __all__ = [
     "ArtifactConversionKeyResponse",
     "ArtifactConversionSpecResponse",
@@ -465,8 +490,10 @@ __all__ = [
     "ArtifactTypeKeyRequest",
     "ArtifactTypeKeyResponse",
     "ArtifactTypeSpecResponse",
+    "CollaborativeHeadResponse",
     "CreateSavedGraphRequest",
     "FieldProjectionResponse",
+    "GraphCommandReceiptResponse",
     "GraphPointRequest",
     "GraphPointResponse",
     "Identifier",
@@ -497,6 +524,7 @@ __all__ = [
     "SavedGraphResponse",
     "SavedGraphSummaryResponse",
     "SavedGraphWriteRequest",
+    "SubmitGraphCommandResponse",
     "UnavailableGraphModuleResponse",
     "UpdateSavedGraphRequest",
 ]

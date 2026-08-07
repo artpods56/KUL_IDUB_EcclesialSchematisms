@@ -133,18 +133,15 @@ and S3-compatible storage before introducing multiple API replicas.
 
 ## MCP on the VPS
 
-The API image also contains the Notarius MCP package. Run its stdio server over
-an SSH session when needed:
+Streamable HTTP MCP is mounted on the API process at `/mcp` under the same
+HTTPS gateway as `/api/v1`. Create a workspace-bound personal access token in
+the browser UI, then point an MCP client at:
 
-```bash
-docker compose \
-  --env-file .env.production \
-  -f infra/docker/compose.yaml \
-  exec -T api .venv/bin/notarius-mcp
-```
+`https://<notarius-test-host>:8080/mcp`
 
-Inside the API container, `NOTARIUS_MCP_API_URL` points to
-`http://127.0.0.1:8000`; the MCP server does not need a public API route.
+with `Authorization: Bearer <token>`. First delivery is stateless: every request
+re-resolves the PAT. There is no separate stdio MCP process or ambient API
+credential.
 
 ## Stop or upgrade
 

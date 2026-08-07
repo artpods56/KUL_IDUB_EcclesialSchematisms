@@ -12,6 +12,7 @@ dependencies = [
     "fastapi>=0.123.0",
     "httpx>=0.28.0",
     "notarius-core",
+    "notarius-mcp",
     "notarius-persistence",
     "notarius-storage",
     "pillow",
@@ -29,6 +30,7 @@ notarius-admin = "notarius_api.admin:main"
 
 [tool.uv.sources]
 notarius-core = { workspace = true }
+notarius-mcp = { workspace = true }
 notarius-persistence = { workspace = true }
 notarius-storage = { workspace = true }
 

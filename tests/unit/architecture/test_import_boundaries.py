@@ -33,14 +33,16 @@ FORBIDDEN_API_PLUGIN_IMPORTS = (
     "notarius_plugin_sql",
 )
 FORBIDDEN_MCP_IMPORTS = (
+    "aiosqlite",
+    "fastapi",
     "notarius_api",
-    "notarius_core",
     "notarius_persistence",
     "notarius_plugin_gis",
     "notarius_plugin_llm",
     "notarius_plugin_ocr",
     "notarius_plugin_sql",
     "notarius_storage",
+    "sqlalchemy",
 )
 LEGACY_NAMESPACE = "proto" + "type"
 API_ROUTE_AREAS = (

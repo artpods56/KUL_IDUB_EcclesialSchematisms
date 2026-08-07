@@ -43,9 +43,10 @@ flowchart LR
 
 - `apps/web` owns the canvas, node rendering, schema-driven controls, and edge
   projection/conversion/mapping editor.
-- `apps/mcp` owns the FastMCP stdio adapter for agent graph discovery and
-  revision-safe graph authoring. It uses the public HTTP API and does not import
-  the API host, core runtime, persistence, storage, or plugin implementations.
+- `apps/mcp` owns the mountable FastMCP Streamable HTTP tools for agent graph
+  discovery and collaboration-aware authoring. The API mounts it at `/mcp` and
+  injects request-scoped PAT actor context; the package does not import
+  FastAPI routes, persistence, storage, or plugin implementations.
 - `apps/api` owns plugin discovery, runtime composition, and the HTTP adapters
   for execution and saved-graph CRUD under `/v1`.
 - `libs/core/src/notarius_core` owns artifacts, nodes, ports, projections,
@@ -252,46 +253,40 @@ Notarius HTTP API:
   schema.
 - `inspect_node` returns the complete schema and port contract for one exact
   operator id and version.
-- `list_graphs` and `get_graph` inspect the saved-graph catalog.
-- `create_graph` saves a new structurally valid graph draft.
-- `replace_graph` replaces a graph using its expected revision, so concurrent
-  changes produce a conflict instead of being silently overwritten.
+- `list_graphs` and `get_live_head` inspect the catalog and collaborative head.
+- `submit_graph_command` applies one semantic collaboration command.
+- `create_graph` bootstraps a new graph at sequence 1.
+- `replace_graph` performs collaboration-aware epoch reset of a checkpointed
+  head.
 
-Keep the API running, then launch the stdio server with:
+MCP is mounted on the API at `/mcp` (stateless Streamable HTTP). Create a
+workspace-bound personal access token in the browser, then point an MCP client
+at `http://127.0.0.1:8000/mcp` (or the gateway `/mcp`) with
+`Authorization: Bearer <token>`. Workspace identity comes from the PAT and is
+not a tool argument.
 
-```bash
-make mcp
-```
-
-The server reads `NOTARIUS_MCP_API_URL`, which defaults to
-`http://127.0.0.1:8000`. It neither connects to the database nor imports the
-graph runtime directly. Saving a graph through these tools validates its
-document structure; it does not claim that an incomplete draft is executable.
-
-The repository includes `.codex/config.toml`, equivalent to:
+The repository includes `.codex/config.toml` for an HTTP MCP client once a PAT
+is available:
 
 ```toml
 [mcp_servers.notarius]
-command = "uv"
-args = ["run", "--package", "notarius-mcp", "notarius-mcp"]
-cwd = "."
+url = "http://127.0.0.1:8000/mcp"
 default_tools_approval_mode = "auto"
 startup_timeout_sec = 30
 tool_timeout_sec = 60
-
-[mcp_servers.notarius.env]
-NOTARIUS_MCP_API_URL = "http://127.0.0.1:8000"
 
 [mcp_servers.notarius.tools.create_graph]
 approval_mode = "prompt"
 
 [mcp_servers.notarius.tools.replace_graph]
 approval_mode = "prompt"
+
+[mcp_servers.notarius.tools.submit_graph_command]
+approval_mode = "prompt"
 ```
 
-Once the repository is trusted, reopen the Codex task so it discovers the
-project MCP server. Read tools run directly; graph creation and replacement
-have explicit prompt policies.
+Supply the PAT through the client's Authorization configuration for that
+server. Read tools run directly; mutating tools keep explicit prompt policies.
 
 `make api` applies pending Alembic migrations before starting FastAPI. Saved
 graphs, artifact metadata, and materialization bindings are stored in SQLite at
