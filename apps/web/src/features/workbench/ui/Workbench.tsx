@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import * as stylex from "@stylexjs/stylex";
 import { Toast } from "@base-ui/react/toast";
 import {
@@ -47,8 +48,13 @@ import { SavedGraphBrowser } from "./SavedGraphBrowser";
 import { useNodeSecrets } from "./useNodeSecrets";
 import {
   useSavedGraphLifecycle,
+  type GraphRoomPersistenceAdapter,
 } from "./useSavedGraphLifecycle";
 import { useRunExecution } from "./useRunExecution";
+import {
+  useGraphRoomSession,
+  type RoomGraphCommand,
+} from "../room";
 import {
   WorkflowCanvas,
   applyEdgeChanges,
@@ -852,6 +858,19 @@ export function Workbench({
   const uploading = nodes.some(
     (node) => node.data.execution.status === "uploading",
   );
+  const roomPersistenceRef = React.useRef<GraphRoomPersistenceAdapter>({
+    canPersist: false,
+    persistDocument: async () => {
+      throw new Error("Graph room is not ready.");
+    },
+  });
+  const roomPersistence = React.useMemo<GraphRoomPersistenceAdapter>(() => ({
+    get canPersist() {
+      return roomPersistenceRef.current.canPersist;
+    },
+    persistDocument: (draft) =>
+      roomPersistenceRef.current.persistDocument(draft),
+  }), []);
   const {
     activeGraph,
     graphName,
@@ -877,6 +896,8 @@ export function Workbench({
     saveCurrentGraph,
     openSavedGraph,
     removeSavedGraph,
+    syncFromCollaborativeHead,
+    purgeLocalGraphState,
     isGraphSnapshotCurrent,
   } = useSavedGraphLifecycle({
     workspaceId,
@@ -898,7 +919,81 @@ export function Workbench({
     requestCanvasRefit,
     refreshNodeRegistry: requestNodeRegistryRefresh,
     onGraphDeleted: removeArtifactViewerDocument,
+    roomPersistence,
   });
+  const router = useRouter();
+  const isDirtyRef = React.useRef(isDirty);
+  const activeGraphIdRef = React.useRef(activeGraph?.id ?? null);
+  React.useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
+  React.useEffect(() => {
+    activeGraphIdRef.current = activeGraph?.id ?? null;
+  }, [activeGraph?.id]);
+  const graphRoom = useGraphRoomSession({
+    workspaceId,
+    graphId: activeGraph?.id ?? null,
+    onReady: (ready) => {
+      // Avoid clobbering in-progress local edits before the first room save.
+      if (!isDirtyRef.current) {
+        syncFromCollaborativeHead(ready.head);
+      }
+    },
+    onRehydrate: (head) => {
+      syncFromCollaborativeHead(head);
+    },
+    onTerminalClose: (reason) => {
+      const graphId = activeGraphIdRef.current;
+      if (reason === "access_revoked" || reason === "graph_deleted") {
+        if (graphId) {
+          removeArtifactViewerDocument(graphId);
+        }
+        purgeLocalGraphState();
+        router.replace(`/workspaces/${encodeURIComponent(workspaceSlug)}`);
+        return;
+      }
+      if (reason === "permissions_changed") {
+        // Stopped traffic; leave remount/reload to the operator.
+        // Protected caches are cleared so stale authority is not reused.
+        if (graphId) {
+          removeArtifactViewerDocument(graphId);
+        }
+        purgeLocalGraphState();
+      }
+    },
+  });
+  React.useEffect(() => {
+    const graphId = activeGraph?.id;
+    roomPersistenceRef.current = {
+      canPersist: graphRoom.canSubmitCommands && graphId !== undefined,
+      persistDocument: async (draft) => {
+        if (!graphId) {
+          throw new Error("Graph room requires a saved graph id.");
+        }
+        const command = {
+          kind: "replace_document",
+          name: draft.name,
+          document: {
+            schema_version: 3,
+            nodes: draft.nodes ?? [],
+            edges: draft.edges ?? [],
+          },
+        } as RoomGraphCommand;
+        const { head } = await graphRoom.submitCommand(command);
+        return {
+          id: graphId,
+          revision: head.checkpoint_revision,
+          name: head.name,
+          nodes: head.nodes ?? [],
+          edges: head.edges ?? [],
+        };
+      },
+    };
+  }, [
+    activeGraph?.id,
+    graphRoom.canSubmitCommands,
+    graphRoom.submitCommand,
+  ]);
   const {
     running,
     runningScope,

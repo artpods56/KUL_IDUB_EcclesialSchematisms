@@ -10,6 +10,8 @@ import {
   getGraphMaterializations,
   getSavedGraph,
   updateSavedGraph,
+  type CollaborativeHead,
+  type CreateSavedGraphRequest,
   type NodeRegistry,
   type RunNodeResult,
   type SavedGraphNode,
@@ -40,6 +42,20 @@ export interface ActiveSavedGraph {
   nodes: readonly SavedGraphNode[];
 }
 
+/** Prefer room/command persistence when the graph room can accept edits. */
+export interface GraphRoomPersistenceAdapter {
+  readonly canPersist: boolean;
+  persistDocument: (
+    draft: CreateSavedGraphRequest,
+  ) => Promise<{
+    id: string;
+    revision: number;
+    name: string;
+    nodes: readonly SavedGraphNode[];
+    edges: NonNullable<CreateSavedGraphRequest["edges"]>;
+  }>;
+}
+
 interface UseSavedGraphLifecycleOptions {
   workspaceId: string;
   workspaceSlug: string;
@@ -67,6 +83,7 @@ interface UseSavedGraphLifecycleOptions {
   requestCanvasRefit: () => void;
   refreshNodeRegistry: () => void | Promise<unknown>;
   onGraphDeleted?: (graphId: string) => void;
+  roomPersistence?: GraphRoomPersistenceAdapter | null;
 }
 
 export interface UseSavedGraphLifecycleResult {
@@ -94,6 +111,8 @@ export interface UseSavedGraphLifecycleResult {
   saveCurrentGraph: () => Promise<void>;
   openSavedGraph: (graphId: string) => Promise<void>;
   removeSavedGraph: (graph: SavedGraphSummary) => Promise<void>;
+  syncFromCollaborativeHead: (head: CollaborativeHead) => void;
+  purgeLocalGraphState: () => void;
   isGraphSnapshotCurrent: (
     graph: ActiveSavedGraph | null,
     fingerprint: string,
@@ -122,6 +141,7 @@ export function useSavedGraphLifecycle({
   requestCanvasRefit,
   refreshNodeRegistry,
   onGraphDeleted,
+  roomPersistence = null,
 }: UseSavedGraphLifecycleOptions): UseSavedGraphLifecycleResult {
   const router = useRouter();
   const {
@@ -255,12 +275,17 @@ export function useSavedGraphLifecycle({
     setSaving(true);
     setPersistenceError(null);
     try {
-      const savedGraph = activeGraph
-        ? await updateSavedGraph(workspaceId, activeGraph.id, {
-            ...submittedDraft,
-            expected_revision: activeGraph.revision,
-          })
-        : await createSavedGraph(workspaceId, submittedDraft);
+      const useRoom =
+        activeGraph !== null &&
+        roomPersistence?.canPersist === true;
+      const savedGraph = useRoom
+        ? await roomPersistence.persistDocument(submittedDraft)
+        : activeGraph
+          ? await updateSavedGraph(workspaceId, activeGraph.id, {
+              ...submittedDraft,
+              expected_revision: activeGraph.revision,
+            })
+          : await createSavedGraph(workspaceId, submittedDraft);
       if (!mountedRef.current) return;
       void mutateSavedGraphs();
       void refreshNodeRegistry();
@@ -330,10 +355,59 @@ export function useSavedGraphLifecycle({
     openingGraphId,
     refreshNodeRegistry,
     refreshNodeSecretStatuses,
+    roomPersistence,
     router,
     saving,
     workspaceId,
     workspaceSlug,
+  ]);
+
+  const syncFromCollaborativeHead = React.useCallback((
+    head: CollaborativeHead,
+  ) => {
+    const responseDocument = authoredGraphDocument({
+      name: head.name,
+      nodes: head.nodes ?? [],
+      edges: head.edges ?? [],
+    });
+    const nextActiveGraph = {
+      id: head.graph_id,
+      revision: head.checkpoint_revision,
+      nodes: head.nodes ?? [],
+    };
+    approvedRouteGraphIdRef.current = head.graph_id;
+    activeGraphRef.current = nextActiveGraph;
+    setActiveGraph(nextActiveGraph);
+    setSavedFingerprint(
+      savedGraphFingerprint(createSavedGraphRequest(responseDocument)),
+    );
+    setPersistenceError(null);
+    replaceDocument(responseDocument);
+  }, [replaceDocument]);
+
+  const purgeLocalGraphState = React.useCallback(() => {
+    documentGenerationRef.current += 1;
+    openRequestRef.current?.abort();
+    activeGraphRef.current = null;
+    setActiveGraph(null);
+    setSavedFingerprint(null);
+    setPersistenceError(null);
+    setGraphBrowserOpen(false);
+    clearGraphSecretStatuses();
+    clearPendingConnectionRoute();
+    clearRunError();
+    closeNodeLibrary();
+    replaceDocument({
+      name: NEW_GRAPH_NAME,
+      nodes: [],
+      edges: [],
+    });
+  }, [
+    clearGraphSecretStatuses,
+    clearPendingConnectionRoute,
+    clearRunError,
+    closeNodeLibrary,
+    replaceDocument,
   ]);
 
   const openSavedGraph = React.useCallback(async (
@@ -682,6 +756,8 @@ export function useSavedGraphLifecycle({
     saveCurrentGraph,
     openSavedGraph,
     removeSavedGraph,
+    syncFromCollaborativeHead,
+    purgeLocalGraphState,
     isGraphSnapshotCurrent,
   };
 }
