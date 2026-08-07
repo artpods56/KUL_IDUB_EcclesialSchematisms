@@ -336,6 +336,200 @@ async def test_personal_membership_stays_owner_and_membership_changes_are_audite
     assert disabled_event["resource_id"] == str(member.user.id)
 
 
+def _workspace_pat(
+    *,
+    user_id: UUID,
+    workspace_id: UUID,
+    label: str,
+    scopes: tuple[WorkspaceCapability, ...],
+    secret_digest: bytes,
+) -> PersonalAccessToken:
+    return PersonalAccessToken(
+        user_id=user_id,
+        workspace_id=workspace_id,
+        public_prefix=f"nrt_{label}"[:32],
+        secret_digest=secret_digest,
+        label=label,
+        scopes=scopes,
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+
+
+@pytest.mark.asyncio
+async def test_membership_and_role_changes_revoke_affected_workspace_pats(
+    database: Database,
+) -> None:
+    service = _service(database)
+    await service.bootstrap_oidc_owner(
+        issuer="https://issuer.example.test",
+        subject="owner-subject",
+    )
+    owner = await service.provision_oidc_identity(
+        issuer="https://issuer.example.test",
+        subject="owner-subject",
+        email="owner@example.test",
+        display_name="Owner",
+    )
+    member = await service.provision_oidc_identity(
+        issuer="https://issuer.example.test",
+        subject="member-subject",
+        email="member@example.test",
+        display_name="Member",
+    )
+    shared = await service.create_shared_workspace(
+        actor=ActorContext(
+            user_id=owner.user.id,
+            credential_reference="session-owner",
+        ),
+        slug="pat-revocation-team",
+        name="PAT revocation team",
+    )
+    owner_actor = ActorContext(
+        user_id=owner.user.id,
+        credential_reference="session-owner",
+    )
+    await service.add_or_reactivate_member(
+        actor=owner_actor,
+        workspace_id=shared.id,
+        user_id=member.user.id,
+        role=WorkspaceRole.EDITOR,
+    )
+
+    editor_only_token = _workspace_pat(
+        user_id=member.user.id,
+        workspace_id=shared.id,
+        label="editor-only",
+        scopes=(WorkspaceCapability.EDIT_GRAPH,),
+        secret_digest=b"pat-editor-only-digest",
+    )
+    viewer_compatible_token = _workspace_pat(
+        user_id=member.user.id,
+        workspace_id=shared.id,
+        label="viewer-compatible",
+        scopes=(WorkspaceCapability.VIEW_GRAPH,),
+        secret_digest=b"pat-viewer-compatible-digest",
+    )
+    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        await unit_of_work.identity.add_personal_access_token(editor_only_token)
+        await unit_of_work.identity.add_personal_access_token(viewer_compatible_token)
+        await unit_of_work.commit()
+
+    await service.change_member_role(
+        actor=owner_actor,
+        workspace_id=shared.id,
+        user_id=member.user.id,
+        role=WorkspaceRole.VIEWER,
+    )
+    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        demoted_editor_token = (
+            await unit_of_work.identity.get_personal_access_token_for_user_workspace(
+                token_id=editor_only_token.id,
+                user_id=member.user.id,
+                workspace_id=shared.id,
+            )
+        )
+        demoted_viewer_token = (
+            await unit_of_work.identity.get_personal_access_token_for_user_workspace(
+                token_id=viewer_compatible_token.id,
+                user_id=member.user.id,
+                workspace_id=shared.id,
+            )
+        )
+        demotion_events = await unit_of_work.security_audit.list_for_workspace(
+            shared.id,
+            limit=20,
+        )
+    assert demoted_editor_token is not None and demoted_editor_token.is_revoked
+    assert demoted_viewer_token is not None and not demoted_viewer_token.is_revoked
+    assert any(
+        event.operation == "credential.pat.revoke"
+        and event.resource_id == str(editor_only_token.id)
+        and event.user_id == owner.user.id
+        for event in demotion_events
+    )
+
+    removal_token = _workspace_pat(
+        user_id=member.user.id,
+        workspace_id=shared.id,
+        label="remove-member",
+        scopes=(WorkspaceCapability.VIEW_GRAPH,),
+        secret_digest=b"pat-remove-member-digest",
+    )
+    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        await unit_of_work.identity.add_personal_access_token(removal_token)
+        await unit_of_work.commit()
+
+    await service.remove_member(
+        actor=owner_actor,
+        workspace_id=shared.id,
+        user_id=member.user.id,
+    )
+    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        removed_token = (
+            await unit_of_work.identity.get_personal_access_token_for_user_workspace(
+                token_id=removal_token.id,
+                user_id=member.user.id,
+                workspace_id=shared.id,
+            )
+        )
+        still_revoked_editor_token = (
+            await unit_of_work.identity.get_personal_access_token_for_user_workspace(
+                token_id=editor_only_token.id,
+                user_id=member.user.id,
+                workspace_id=shared.id,
+            )
+        )
+        removal_events = await unit_of_work.security_audit.list_for_workspace(
+            shared.id,
+            limit=30,
+        )
+    assert removed_token is not None and removed_token.is_revoked
+    assert (
+        still_revoked_editor_token is not None and still_revoked_editor_token.is_revoked
+    )
+    assert any(
+        event.operation == "credential.pat.revoke"
+        and event.resource_id == str(removal_token.id)
+        for event in removal_events
+    )
+
+    editor_revoked_at = still_revoked_editor_token.revoked_at
+    viewer_revoked_at = removed_token.revoked_at
+    assert editor_revoked_at is not None
+    assert viewer_revoked_at is not None
+
+    await service.add_or_reactivate_member(
+        actor=owner_actor,
+        workspace_id=shared.id,
+        user_id=member.user.id,
+        role=WorkspaceRole.EDITOR,
+    )
+    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        restored_editor_token = (
+            await unit_of_work.identity.get_personal_access_token_for_user_workspace(
+                token_id=editor_only_token.id,
+                user_id=member.user.id,
+                workspace_id=shared.id,
+            )
+        )
+        restored_removal_token = (
+            await unit_of_work.identity.get_personal_access_token_for_user_workspace(
+                token_id=removal_token.id,
+                user_id=member.user.id,
+                workspace_id=shared.id,
+            )
+        )
+        membership = await unit_of_work.identity.get_membership(
+            workspace_id=shared.id,
+            user_id=member.user.id,
+        )
+    assert membership is not None and membership.is_active
+    assert restored_editor_token is not None and restored_editor_token.is_revoked
+    assert restored_editor_token.revoked_at == editor_revoked_at
+    assert restored_removal_token is not None and restored_removal_token.is_revoked
+    assert restored_removal_token.revoked_at == viewer_revoked_at
+
+
 @pytest.mark.asyncio
 async def test_concurrent_owner_removals_preserve_one_shared_owner(
     database: Database,

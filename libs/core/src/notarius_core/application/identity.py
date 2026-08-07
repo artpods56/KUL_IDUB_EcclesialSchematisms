@@ -489,6 +489,13 @@ class IdentityService:
                     replacement_role=role,
                 )
                 membership.change_role(role)
+                await self._revoke_workspace_pats_exceeding_capabilities(
+                    unit_of_work,
+                    actor=actor,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
+                    remaining_capabilities=membership.capabilities,
+                )
             else:
                 membership.reactivate(role=role)
             await unit_of_work.security_audit.add(
@@ -541,6 +548,13 @@ class IdentityService:
                 replacement_role=role,
             )
             membership.change_role(role)
+            await self._revoke_workspace_pats_exceeding_capabilities(
+                unit_of_work,
+                actor=actor,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                remaining_capabilities=membership.capabilities,
+            )
             await unit_of_work.security_audit.add(
                 SecurityAuditEvent(
                     actor_kind=SecurityAuditActorKind.AUTHENTICATED,
@@ -589,6 +603,13 @@ class IdentityService:
                 removing=True,
             )
             membership.revoke()
+            await self._revoke_workspace_pats_exceeding_capabilities(
+                unit_of_work,
+                actor=actor,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                remaining_capabilities=membership.capabilities,
+            )
             await unit_of_work.security_audit.add(
                 SecurityAuditEvent(
                     actor_kind=SecurityAuditActorKind.AUTHENTICATED,
@@ -612,6 +633,8 @@ class IdentityService:
             for session in await unit_of_work.identity.list_auth_sessions_for_user(
                 user_id
             ):
+                if session.is_revoked:
+                    continue
                 session.revoke()
                 await unit_of_work.security_audit.add(
                     SecurityAuditEvent(
@@ -627,16 +650,10 @@ class IdentityService:
             ) in await unit_of_work.identity.list_personal_access_tokens_for_user(
                 user_id
             ):
-                token.revoke()
-                await unit_of_work.security_audit.add(
-                    SecurityAuditEvent(
-                        actor_kind=SecurityAuditActorKind.SYSTEM,
-                        operation="credential.pat.revoke",
-                        outcome=SecurityAuditOutcome.SUCCESS,
-                        workspace_id=token.workspace_id,
-                        resource_type="personal_access_token",
-                        resource_id=str(token.id),
-                    )
+                await self._revoke_personal_access_token(
+                    unit_of_work,
+                    token,
+                    actor_kind=SecurityAuditActorKind.SYSTEM,
                 )
             await unit_of_work.security_audit.add(
                 SecurityAuditEvent(
@@ -649,6 +666,57 @@ class IdentityService:
             )
             await unit_of_work.commit()
         return user
+
+    async def _revoke_personal_access_token(
+        self,
+        unit_of_work: IdentityUnitOfWorkPort,
+        token: PersonalAccessToken,
+        *,
+        actor_kind: SecurityAuditActorKind,
+        actor: ActorContext | None = None,
+    ) -> None:
+        if token.is_revoked:
+            return
+        token.revoke()
+        await unit_of_work.security_audit.add(
+            SecurityAuditEvent(
+                actor_kind=actor_kind,
+                user_id=None if actor is None else actor.user_id,
+                credential_reference=(
+                    None if actor is None else actor.credential_reference
+                ),
+                workspace_id=token.workspace_id,
+                resource_type="personal_access_token",
+                resource_id=str(token.id),
+                operation="credential.pat.revoke",
+                outcome=SecurityAuditOutcome.SUCCESS,
+            )
+        )
+
+    async def _revoke_workspace_pats_exceeding_capabilities(
+        self,
+        unit_of_work: IdentityUnitOfWorkPort,
+        *,
+        actor: ActorContext,
+        user_id: UUID,
+        workspace_id: UUID,
+        remaining_capabilities: frozenset[WorkspaceCapability],
+    ) -> None:
+        tokens = (
+            await unit_of_work.identity.list_personal_access_tokens_for_user_workspace(
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
+        )
+        for token in tokens:
+            if set(token.scopes).issubset(remaining_capabilities):
+                continue
+            await self._revoke_personal_access_token(
+                unit_of_work,
+                token,
+                actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                actor=actor,
+            )
 
     async def _consume_local_bootstrap_if_needed(
         self,
