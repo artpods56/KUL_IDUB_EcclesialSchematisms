@@ -1,0 +1,134 @@
+import tomllib
+from io import BytesIO
+from pathlib import Path
+
+from notarius_core.artifacts import InMemoryUnitOfWork
+from notarius_core.operators.arithmetic import ARITHMETIC
+from notarius_core.operators.prompts import PROMPTS
+from notarius_core.operators.schemas import SCHEMAS
+from notarius_core.operators.sequences import SEQUENCES
+from notarius_core.operators.images import IMAGES
+from notarius_core.operators.text import TEXT, TEXT_VALUE
+from notarius_core.plugins import PluginOrigin, PluginRegistry, PluginRuntimeContext
+from notarius_core.ports.storage import SaveFileCommand, StoredFile, StoredObjectInfo
+from notarius_core.runtime.persistence import InlineModelOutputWriter
+from notarius_core.runtime.resolvers import InlineModelResolver
+from notarius_plugin_llm import LLM
+from notarius_plugin_llm.artifacts import (
+    COMPLETION,
+    STRUCTURED_RESPONSE,
+    StructuredResponsePayload,
+)
+from notarius_plugin_llm.mistral import MistralStructuredNode
+
+
+class EmptyStorage:
+    async def save(self, command: SaveFileCommand) -> StoredFile:
+        raise AssertionError(f"Unexpected save to {command.bucket}/{command.path}")
+
+    async def move(
+        self,
+        bucket: str,
+        source_path: str,
+        destination_path: str,
+    ) -> None:
+        raise AssertionError(
+            f"Unexpected move in {bucket}: {source_path} to {destination_path}"
+        )
+
+    async def load(self, bucket: str, path: str) -> BytesIO:
+        raise AssertionError(f"Unexpected load from {bucket}/{path}")
+
+    async def stat(self, bucket: str, path: str) -> StoredObjectInfo | None:
+        raise AssertionError(f"Unexpected stat for {bucket}/{path}")
+
+    async def load_range(
+        self,
+        bucket: str,
+        path: str,
+        start: int,
+        end_exclusive: int,
+    ) -> bytes:
+        raise AssertionError(
+            f"Unexpected range load from {bucket}/{path}: {start}:{end_exclusive}"
+        )
+
+    async def delete(self, bucket: str, path: str) -> None:
+        raise AssertionError(f"Unexpected delete from {bucket}/{path}")
+
+    def exists(self, bucket: str, path: str) -> bool:
+        return False
+
+
+def test_llm_plugin_declares_complete_runtime_contributions(tmp_path: Path) -> None:
+    registry = PluginRegistry()
+    for builtin in (IMAGES, SEQUENCES, ARITHMETIC, TEXT, SCHEMAS, PROMPTS):
+        registry.install(builtin, origin=PluginOrigin.BUILTIN)
+    registry.install(LLM, origin=PluginOrigin.EXTERNAL)
+    context = PluginRuntimeContext(
+        workspace=tmp_path,
+        uploads_dir=tmp_path / "uploads",
+        storage=EmptyStorage(),
+        uow=InMemoryUnitOfWork(),
+        bucket="artifacts",
+    )
+
+    assert LLM.slug == "external.llm"
+    assert LLM.title == "LLM"
+    registry.freeze()
+
+    llm_plugin = next(plugin for plugin in registry.plugins if plugin.slug == LLM.slug)
+    llm_registration = next(
+        registration
+        for registration in registry.nodes
+        if registration.key == ("llm.mistral.structured", 2)
+    )
+    assert llm_plugin.origin is PluginOrigin.EXTERNAL
+    assert llm_registration.node_class is MistralStructuredNode
+    assert llm_registration.node_class.plugin_slug == "external.llm"
+    assert STRUCTURED_RESPONSE.key in {
+        artifact_type.key for artifact_type in registry.artifact_types
+    }
+    assert STRUCTURED_RESPONSE.payload_schema == (
+        StructuredResponsePayload.model_json_schema()
+    )
+    completion = next(
+        artifact_type
+        for artifact_type in registry.artifact_types
+        if artifact_type.key == COMPLETION.key
+    )
+    content_projection = next(
+        projection
+        for projection in completion.field_projections
+        if projection.path == ("content",)
+    )
+    assert content_projection.target == TEXT_VALUE.key
+    assert isinstance(
+        registry.build_node("llm.mistral.structured", 2, context),
+        MistralStructuredNode,
+    )
+
+    resolvers = registry.build_resolvers(context)
+    writers = registry.build_writers(context)
+
+    llm_resolver = next(
+        resolver for resolver in resolvers if resolver.source == STRUCTURED_RESPONSE.key
+    )
+    llm_writer = next(
+        writer for writer in writers if writer.artifact_type == STRUCTURED_RESPONSE.key
+    )
+    assert isinstance(llm_resolver, InlineModelResolver)
+    assert llm_resolver.target is StructuredResponsePayload
+    assert isinstance(llm_writer, InlineModelOutputWriter)
+
+
+def test_llm_package_metadata_declares_plugin_entry_point() -> None:
+    project_root = Path(__file__).parents[3]
+    metadata = tomllib.loads(
+        (project_root / "plugins" / "llm" / "pyproject.toml").read_text()
+    )
+
+    assert metadata["project"]["name"] == "notarius-plugin-llm"
+    assert metadata["project"]["entry-points"]["notarius.plugins"] == {
+        "llm": "notarius_plugin_llm.plugin:LLM"
+    }

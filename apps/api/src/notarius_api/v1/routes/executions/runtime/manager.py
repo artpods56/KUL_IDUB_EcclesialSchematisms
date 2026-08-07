@@ -1,0 +1,720 @@
+"""In-process ownership and observation of asynchronous graph executions."""
+
+import asyncio
+import logging
+from collections import deque
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Literal, Protocol
+from uuid import UUID, uuid4
+
+from notarius_core.domain.execution_history import GraphExecution
+from notarius_core.domain.errors import NotFoundError
+from notarius_core.nodes import NodeExecutionContext
+
+from notarius_api.v1.routes.collaboration.models import (
+    ActiveExecutionLifecycleStatus,
+    ActiveExecutionSummary,
+    ActorPresentation,
+    TerminalExecutionStatus,
+)
+
+from ..models import (
+    ExecutionStatusEvent,
+    NodeExecutionEventStatus,
+    NodeProgressEvent,
+    NodeStatusEvent,
+    RunExecutionEvent,
+    RunExecutionStatus,
+    RunRequest,
+)
+from ..services import ExecutionHistoryService
+from .control import RunExecutionControl
+from .models import GraphExecutionResult
+from .run_graph import RunGraph
+
+
+logger = logging.getLogger(__name__)
+
+_TERMINAL_STATUSES = frozenset({"cancelled", "succeeded", "failed"})
+_ACTIVE_STATUSES = frozenset({"queued", "running", "cancelling"})
+
+
+class ActiveExecutionPublisher(Protocol):
+    async def publish_active(
+        self,
+        *,
+        workspace_id: UUID,
+        graph_id: UUID,
+        execution: ActiveExecutionSummary,
+    ) -> None: ...
+
+    async def publish_cleared(
+        self,
+        *,
+        workspace_id: UUID,
+        graph_id: UUID,
+        execution_id: UUID,
+        status: TerminalExecutionStatus,
+        graph_revision: int,
+        error: str | None,
+    ) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class RunExecutionSnapshot:
+    workspace_id: UUID
+    execution_id: UUID
+    status: RunExecutionStatus
+    active_node_id: str | None
+    result: GraphExecutionResult | None
+    error: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class RunExecutionEventBatch:
+    events: tuple[RunExecutionEvent, ...]
+    terminal: bool
+
+
+class _RunExecutionEventJournal:
+    """Bounded replay journal that never waits for stream subscribers."""
+
+    def __init__(self, execution_id: UUID, capacity: int) -> None:
+        self._execution_id = execution_id
+        self._events: deque[RunExecutionEvent] = deque(maxlen=capacity)
+        self._next_sequence = 1
+        self._terminal_sequence: int | None = None
+        self._sealed = False
+        self._changed = asyncio.Event()
+
+    def publish_execution_status(
+        self,
+        status: RunExecutionStatus,
+        active_node_id: str | None,
+        /,
+    ) -> None:
+        if self._sealed:
+            return
+        event = ExecutionStatusEvent(
+            sequence=self._next_sequence,
+            execution_id=self._execution_id,
+            occurred_at=datetime.now(UTC),
+            status=status,
+            active_node_id=active_node_id,
+        )
+        self._append(event)
+        if status in _TERMINAL_STATUSES:
+            self._terminal_sequence = event.sequence
+            self._sealed = True
+
+    def publish_node_status(
+        self,
+        *,
+        status: NodeExecutionEventStatus,
+        node_path: tuple[str, ...],
+        node_id: str,
+        node_run_id: UUID | None,
+        invocation_index: int | None,
+        invocation_path: tuple[int, ...],
+    ) -> None:
+        if self._sealed:
+            return
+        self._append(
+            NodeStatusEvent(
+                sequence=self._next_sequence,
+                execution_id=self._execution_id,
+                occurred_at=datetime.now(UTC),
+                status=status,
+                node_path=list(node_path),
+                node_id=node_id,
+                node_run_id=node_run_id,
+                invocation_index=invocation_index,
+                invocation_path=list(invocation_path),
+            )
+        )
+
+    async def report_progress(
+        self,
+        context: NodeExecutionContext,
+        message: str,
+        *,
+        current: int | None,
+        total: int | None,
+    ) -> None:
+        if self._sealed:
+            return
+        node_id = context.node_id
+        if node_id is None:
+            raise RuntimeError("Managed node progress requires a node ID")
+        node_path = context.node_path
+        if not node_path:
+            node_path = (node_id,)
+        self._append(
+            NodeProgressEvent(
+                sequence=self._next_sequence,
+                execution_id=self._execution_id,
+                occurred_at=datetime.now(UTC),
+                node_path=list(node_path),
+                node_id=node_id,
+                node_run_id=context.node_run_id,
+                invocation_index=context.invocation_index,
+                invocation_path=list(context.invocation_path),
+                message=message,
+                current=current,
+                total=total,
+            )
+        )
+
+    async def wait_after(
+        self,
+        sequence: int,
+        timeout: float,
+        /,
+    ) -> RunExecutionEventBatch:
+        while True:
+            events = tuple(event for event in self._events if event.sequence > sequence)
+            delivered_sequence = events[-1].sequence if events else sequence
+            terminal = (
+                self._terminal_sequence is not None
+                and self._terminal_sequence <= delivered_sequence
+            )
+            if events or terminal:
+                return RunExecutionEventBatch(events=events, terminal=terminal)
+
+            changed = self._changed
+            try:
+                async with asyncio.timeout(timeout):
+                    await changed.wait()
+            except TimeoutError:
+                return RunExecutionEventBatch(events=(), terminal=False)
+
+    def _append(self, event: RunExecutionEvent) -> None:
+        self._events.append(event)
+        self._next_sequence += 1
+        changed = self._changed
+        self._changed = asyncio.Event()
+        changed.set()
+
+
+@dataclass(frozen=True, slots=True)
+class RunExecutionEventSubscription:
+    """Stable event-journal handle retained independently of manager eviction."""
+
+    _journal: _RunExecutionEventJournal = field(repr=False)
+
+    async def wait(
+        self,
+        *,
+        after_sequence: int = 0,
+        timeout: float = 15,
+    ) -> RunExecutionEventBatch:
+        if after_sequence < 0:
+            raise ValueError("Execution event sequence must not be negative")
+        if timeout < 0:
+            raise ValueError("Execution event wait timeout must not be negative")
+        return await self._journal.wait_after(after_sequence, timeout)
+
+
+@dataclass(slots=True)
+class _RunExecutionRecord:
+    workspace_id: UUID
+    execution_id: UUID
+    control: RunExecutionControl
+    journal: _RunExecutionEventJournal
+    history_execution: GraphExecution | None = None
+    starter: ActorPresentation | None = None
+    overlays_compatible: bool = True
+    transition_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    status: RunExecutionStatus = "queued"
+    task: asyncio.Task[None] | None = None
+    result: GraphExecutionResult | None = None
+    error: str | None = None
+    retained_terminal: bool = False
+
+    def snapshot(self) -> RunExecutionSnapshot:
+        return RunExecutionSnapshot(
+            workspace_id=self.workspace_id,
+            execution_id=self.execution_id,
+            status=self.status,
+            active_node_id=self.control.active_node_id,
+            result=self.result,
+            error=self.error,
+        )
+
+    def active_summary(self) -> ActiveExecutionSummary | None:
+        if (
+            self.history_execution is None
+            or self.starter is None
+            or self.status not in _ACTIVE_STATUSES
+        ):
+            return None
+        status: ActiveExecutionLifecycleStatus
+        if self.status == "queued":
+            status = "queued"
+        elif self.status == "running":
+            status = "running"
+        else:
+            status = "cancelling"
+        return ActiveExecutionSummary(
+            execution_id=self.execution_id,
+            graph_revision=self.history_execution.graph_revision,
+            status=status,
+            scope=self.history_execution.scope,
+            requested_node_ids=list(self.history_execution.requested_node_ids),
+            starter=self.starter,
+            active_node_id=self.control.active_node_id,
+            overlays_compatible=self.overlays_compatible,
+            cancellable=self.status in {"queued", "running"},
+        )
+
+
+class RunExecutionManager:
+    """Own background graph tasks and retain a bounded set of terminal results."""
+
+    def __init__(
+        self,
+        run_graph: RunGraph,
+        *,
+        execution_history: ExecutionHistoryService | None = None,
+        terminal_retention: int = 100,
+        event_capacity: int = 256,
+    ) -> None:
+        if terminal_retention < 1:
+            raise ValueError("Execution terminal retention must be at least one")
+        if event_capacity < 1:
+            raise ValueError("Execution event capacity must be at least one")
+        self._run_graph = run_graph
+        self._execution_history = execution_history
+        self._terminal_retention = terminal_retention
+        self._event_capacity = event_capacity
+        self._executions: dict[UUID, _RunExecutionRecord] = {}
+        self._terminal_order: deque[UUID] = deque()
+        self._lock = asyncio.Lock()
+        self._shutting_down = False
+        self._room_publisher: ActiveExecutionPublisher | None = None
+
+    def bind_room_publisher(self, publisher: ActiveExecutionPublisher) -> None:
+        self._room_publisher = publisher
+
+    async def active_execution_summary(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> ActiveExecutionSummary | None:
+        async with self._lock:
+            for record in self._executions.values():
+                if record.workspace_id != workspace_id:
+                    continue
+                history = record.history_execution
+                if history is None or history.graph_id != graph_id:
+                    continue
+                summary = record.active_summary()
+                if summary is not None:
+                    return summary
+            return None
+
+    async def start(
+        self,
+        workspace_id: UUID,
+        request: RunRequest,
+        *,
+        starter: ActorPresentation | None = None,
+        overlays_compatible: bool = True,
+    ) -> RunExecutionSnapshot:
+        async with self._lock:
+            if self._shutting_down:
+                raise RuntimeError("Run execution manager is shutting down")
+            execution_id = uuid4()
+            history_execution: GraphExecution | None = None
+            if request.graph_id is not None and request.graph_revision is not None:
+                if self._execution_history is None:
+                    raise RuntimeError(
+                        "Saved graph execution history is not configured"
+                    )
+                requested_node_ids: list[str] = []
+                seen_node_ids: set[str] = set()
+                for node in request.nodes:
+                    if node.id in seen_node_ids:
+                        continue
+                    seen_node_ids.add(node.id)
+                    requested_node_ids.append(node.id)
+                history_execution = await self._execution_history.create_queued(
+                    workspace_id=workspace_id,
+                    execution_id=execution_id,
+                    graph_id=request.graph_id,
+                    graph_revision=request.graph_revision,
+                    scope=request.scope,
+                    requested_node_ids=tuple(requested_node_ids),
+                )
+            journal = _RunExecutionEventJournal(execution_id, self._event_capacity)
+            control = RunExecutionControl(journal)
+            record = _RunExecutionRecord(
+                workspace_id=workspace_id,
+                execution_id=execution_id,
+                control=control,
+                journal=journal,
+                history_execution=history_execution,
+                starter=starter,
+                overlays_compatible=overlays_compatible,
+            )
+            self._executions[execution_id] = record
+            control.publish_execution_status("queued", None)
+            task = asyncio.create_task(
+                self._run(execution_id, request.model_copy(deep=True)),
+                name=f"notarius-run-{execution_id}",
+            )
+            record.task = task
+            task.add_done_callback(
+                lambda completed, owned_id=execution_id: self._task_done(
+                    owned_id,
+                    completed,
+                )
+            )
+            snapshot = record.snapshot()
+            await self._publish_active(record)
+            return snapshot
+
+    async def get(
+        self,
+        workspace_id: UUID,
+        execution_id: UUID,
+    ) -> RunExecutionSnapshot:
+        async with self._lock:
+            record = self._executions.get(execution_id)
+            if record is None or record.workspace_id != workspace_id:
+                raise NotFoundError("Run execution", str(execution_id))
+            return record.snapshot()
+
+    async def wait_for_events(
+        self,
+        workspace_id: UUID,
+        execution_id: UUID,
+        *,
+        after_sequence: int = 0,
+        timeout: float = 15,
+    ) -> RunExecutionEventBatch:
+        subscription = await self.subscribe_events(workspace_id, execution_id)
+        return await subscription.wait(
+            after_sequence=after_sequence,
+            timeout=timeout,
+        )
+
+    async def subscribe_events(
+        self,
+        workspace_id: UUID,
+        execution_id: UUID,
+        /,
+    ) -> RunExecutionEventSubscription:
+        async with self._lock:
+            record = self._executions.get(execution_id)
+            if record is None or record.workspace_id != workspace_id:
+                raise NotFoundError("Run execution", str(execution_id))
+            return RunExecutionEventSubscription(record.journal)
+
+    async def cancel(
+        self,
+        workspace_id: UUID,
+        execution_id: UUID,
+    ) -> RunExecutionSnapshot:
+        async with self._lock:
+            record = self._executions.get(execution_id)
+            if record is None or record.workspace_id != workspace_id:
+                raise NotFoundError("Run execution", str(execution_id))
+            if record.status in _TERMINAL_STATUSES:
+                return record.snapshot()
+            if record.status == "cancelling":
+                return record.snapshot()
+            record.control.request_cancel()
+            async with record.transition_lock:
+                if record.status in _TERMINAL_STATUSES:
+                    return record.snapshot()
+                if (
+                    record.history_execution is not None
+                    and self._execution_history is not None
+                ):
+                    try:
+                        await self._execution_history.mark_cancelling(
+                            workspace_id,
+                            record.history_execution
+                        )
+                    except Exception as exc:
+                        record.error = (
+                            "Execution history could not record cancellation: "
+                            f"{_render_exception_chain(exc)}"
+                        )
+                record.status = "cancelling"
+                record.control.publish_execution_status(
+                    "cancelling",
+                    record.control.active_node_id,
+                )
+                task = record.task
+                snapshot = record.snapshot()
+                await self._publish_active(record)
+            if task is not None:
+                task.cancel()
+            return snapshot
+
+    async def shutdown(self) -> None:
+        async with self._lock:
+            self._shutting_down = True
+            active_records = [
+                record
+                for record in self._executions.values()
+                if record.status not in _TERMINAL_STATUSES
+            ]
+            tasks = [
+                record.task for record in active_records if record.task is not None
+            ]
+            for record in active_records:
+                record.control.request_cancel()
+                if record.status != "cancelling":
+                    record.status = "cancelling"
+                    record.control.publish_execution_status(
+                        "cancelling",
+                        record.control.active_node_id,
+                    )
+            for task in tasks:
+                task.cancel()
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        for record in active_records:
+            if record.status not in _TERMINAL_STATUSES:
+                await self._complete(record, status="cancelled")
+
+    async def _run(self, execution_id: UUID, request: RunRequest) -> None:
+        record = self._executions[execution_id]
+        try:
+            record.control.check_cancelled()
+            async with record.transition_lock:
+                record.control.check_cancelled()
+                record.status = "running"
+                if (
+                    record.history_execution is not None
+                    and self._execution_history is not None
+                ):
+                    await self._execution_history.mark_running(
+                        record.workspace_id,
+                        record.history_execution,
+                    )
+                record.control.publish_execution_status(
+                    "running",
+                    record.control.active_node_id,
+                )
+                await self._publish_active(record)
+            result = await self._run_graph.run(
+                record.workspace_id,
+                request,
+                control=record.control,
+            )
+        except asyncio.CancelledError:
+            await self._complete(record, status="cancelled")
+        except Exception as exc:
+            if record.control.cancel_requested or _contains_cancellation(exc):
+                await self._complete(record, status="cancelled")
+            else:
+                await self._complete(
+                    record,
+                    status="failed",
+                    error=_render_exception_chain(exc),
+                )
+        else:
+            if record.control.cancel_requested:
+                await self._complete(record, status="cancelled", result=result)
+            elif result.status == "failed":
+                await self._complete(record, status="failed", result=result)
+            else:
+                await self._complete(record, status="succeeded", result=result)
+
+    def _task_done(self, execution_id: UUID, task: asyncio.Task[None]) -> None:
+        record = self._executions.get(execution_id)
+        if record is None or record.status in _TERMINAL_STATUSES:
+            return
+        if record.control.cancel_requested or task.cancelled():
+            asyncio.create_task(self._complete(record, status="cancelled"))
+            return
+        exception = task.exception()
+        if exception is None:
+            asyncio.create_task(
+                self._complete(
+                    record,
+                    status="failed",
+                    error="Run execution ended without a terminal result",
+                )
+            )
+            return
+        asyncio.create_task(
+            self._complete(
+                record,
+                status="failed",
+                error=_render_exception_chain(exception),
+            )
+        )
+
+    async def _complete(
+        self,
+        record: _RunExecutionRecord,
+        *,
+        status: Literal["cancelled", "succeeded", "failed"],
+        result: GraphExecutionResult | None = None,
+        error: str | None = None,
+    ) -> None:
+        async with record.transition_lock:
+            if record.status in _TERMINAL_STATUSES:
+                return
+            history_error: str | None = None
+            if (
+                record.history_execution is not None
+                and self._execution_history is not None
+            ):
+                history_failure: Exception | None = None
+                for attempt in range(2):
+                    try:
+                        await self._execution_history.complete(
+                            record.workspace_id,
+                            record.history_execution,
+                            status=status,
+                            result=result,
+                            error=error,
+                        )
+                    except Exception as exc:
+                        history_failure = exc
+                        try:
+                            persisted = await self._execution_history.get_for_graph(
+                                record.workspace_id,
+                                record.history_execution.graph_id,
+                                record.execution_id,
+                            )
+                        except Exception as reconciliation_exc:
+                            history_failure = reconciliation_exc
+                        else:
+                            expected_workflow_run_id = (
+                                result.workflow_run_id if result is not None else None
+                            )
+                            if (
+                                persisted is not None
+                                and persisted.execution.status == status
+                                and persisted.execution.workflow_run_id
+                                == expected_workflow_run_id
+                                and persisted.execution.error == error
+                            ):
+                                history_failure = None
+                                break
+                        if attempt == 0:
+                            await asyncio.sleep(0)
+                    else:
+                        history_failure = None
+                        break
+                if history_failure is not None:
+                    history_error = (
+                        "Execution history could not record the terminal result: "
+                        f"{_render_exception_chain(history_failure)}"
+                    )
+            active_node_id = record.control.active_node_id
+            if active_node_id is not None:
+                record.control.finish_outer_node(active_node_id)
+            record.status = status
+            record.task = None
+            record.result = result
+            if history_error is None:
+                record.error = error
+            elif error is None:
+                record.error = history_error
+            else:
+                record.error = f"{error} <- caused by {history_error}"
+            record.control.publish_execution_status(status, None)
+            await self._publish_cleared(record, status=status)
+            if record.retained_terminal:
+                return
+            record.retained_terminal = True
+            self._terminal_order.append(record.execution_id)
+            while len(self._terminal_order) > self._terminal_retention:
+                expired_id = self._terminal_order.popleft()
+                self._executions.pop(expired_id, None)
+
+    async def _publish_active(self, record: _RunExecutionRecord) -> None:
+        publisher = self._room_publisher
+        history = record.history_execution
+        summary = record.active_summary()
+        if publisher is None or history is None or summary is None:
+            return
+        try:
+            await publisher.publish_active(
+                workspace_id=record.workspace_id,
+                graph_id=history.graph_id,
+                execution=summary,
+            )
+        except Exception:
+            logger.exception(
+                "active_execution_publish_failed workspace_id=%s graph_id=%s "
+                "execution_id=%s",
+                record.workspace_id,
+                history.graph_id,
+                record.execution_id,
+            )
+
+    async def _publish_cleared(
+        self,
+        record: _RunExecutionRecord,
+        *,
+        status: Literal["cancelled", "succeeded", "failed"],
+    ) -> None:
+        publisher = self._room_publisher
+        history = record.history_execution
+        if publisher is None or history is None:
+            return
+        try:
+            await publisher.publish_cleared(
+                workspace_id=record.workspace_id,
+                graph_id=history.graph_id,
+                execution_id=record.execution_id,
+                status=status,
+                graph_revision=history.graph_revision,
+                error=record.error,
+            )
+        except Exception:
+            logger.exception(
+                "active_execution_clear_publish_failed workspace_id=%s graph_id=%s "
+                "execution_id=%s",
+                record.workspace_id,
+                history.graph_id,
+                record.execution_id,
+            )
+
+
+def _contains_cancellation(exception: BaseException) -> bool:
+    seen: set[int] = set()
+    current: BaseException | None = exception
+    while current is not None and id(current) not in seen:
+        if isinstance(current, asyncio.CancelledError):
+            return True
+        seen.add(id(current))
+        if current.__cause__ is not None:
+            current = current.__cause__
+            continue
+        current = None if current.__suppress_context__ else current.__context__
+    return False
+
+
+def _render_exception_chain(exception: BaseException) -> str:
+    rendered: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = exception
+    while current is not None and id(current) not in seen and len(rendered) < 12:
+        seen.add(id(current))
+        rendered.append(f"{type(current).__name__}: {current}")
+        if current.__cause__ is not None:
+            current = current.__cause__
+            continue
+        current = None if current.__suppress_context__ else current.__context__
+    return " <- caused by ".join(rendered)
+
+
+__all__ = [
+    "RunExecutionEventBatch",
+    "RunExecutionEventSubscription",
+    "RunExecutionManager",
+    "RunExecutionSnapshot",
+    "RunExecutionStatus",
+]

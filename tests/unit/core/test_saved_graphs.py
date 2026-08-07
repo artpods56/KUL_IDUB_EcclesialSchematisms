@@ -1,0 +1,488 @@
+from datetime import UTC, datetime
+from typing import cast
+from uuid import UUID
+
+import pytest
+from pydantic import ValidationError
+
+from notarius_core.artifacts import ArtifactTypeKey
+from notarius_core.domain.errors import SavedGraphRevisionConflictError
+from notarius_core.domain.saved_graphs import (
+    GraphPoint,
+    SavedGraph,
+    SavedGraphArtifactTypeBinding,
+    SavedGraphDocument,
+    SavedGraphConversion,
+    SavedGraphEdge,
+    SavedGraphInputPlug,
+    SavedGraphNode,
+    SavedGraphNodeLayout,
+)
+
+
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
+
+
+def _node(
+    node_id: str,
+    *,
+    input_plugs: tuple[SavedGraphInputPlug, ...] = (),
+    artifact_type_bindings: tuple[SavedGraphArtifactTypeBinding, ...] = (),
+) -> SavedGraphNode:
+    return SavedGraphNode(
+        id=node_id,
+        operator_id="example.operator",
+        operator_version=1,
+        config={},
+        position=GraphPoint(x=10.0, y=20.0),
+        input_plugs=input_plugs,
+        artifact_type_bindings=artifact_type_bindings,
+    )
+
+
+def _edge(
+    edge_id: str,
+    *,
+    from_node: str = "source",
+    to_node: str = "target",
+) -> SavedGraphEdge:
+    return SavedGraphEdge(
+        id=edge_id,
+        from_node=from_node,
+        from_port="result",
+        to_node=to_node,
+        to_port="value",
+    )
+
+
+def test_saved_graph_document_allows_drafts_without_executable_connections() -> None:
+    empty_draft = SavedGraphDocument()
+    incomplete_draft = SavedGraphDocument(
+        nodes=(
+            SavedGraphNode(
+                id="unconnected",
+                operator_id="plugin.that-is-not-installed",
+                operator_version=99,
+                config={"unfinished": True},
+                position=GraphPoint(x=0.0, y=0.0),
+            ),
+        )
+    )
+
+    assert empty_draft.nodes == ()
+    assert empty_draft.edges == ()
+    assert incomplete_draft.nodes[0].operator_id == "plugin.that-is-not-installed"
+    assert incomplete_draft.edges == ()
+
+
+def test_saved_graph_document_migrates_v1_singular_conversion_in_memory() -> None:
+    edge_payload = _edge("converted").model_dump(mode="json")
+    edge_payload.pop("conversion_path")
+    edge_payload["conversion"] = {"id": "example.convert", "version": 3}
+    document = SavedGraphDocument.model_validate(
+        {
+            "schema_version": 1,
+            "nodes": [
+                _node("source").model_dump(mode="json"),
+                _node("target").model_dump(mode="json"),
+            ],
+            "edges": [edge_payload],
+        }
+    )
+
+    assert document.schema_version == 3
+    assert document.edges[0].conversion_path == (
+        SavedGraphConversion(id="example.convert", version=3),
+    )
+    assert document.nodes[1].input_plugs == ()
+    assert document.edges[0].to_plug is None
+    assert "conversion" not in document.model_dump(mode="json")["edges"][0]
+
+
+def test_saved_graph_edge_defaults_enabled_for_legacy_payloads() -> None:
+    payload = _edge("legacy").model_dump(mode="json")
+    payload.pop("enabled")
+
+    edge = SavedGraphEdge.model_validate(payload)
+
+    assert edge.enabled is True
+    assert edge.model_dump(mode="json")["enabled"] is True
+
+
+def test_saved_graph_document_migrates_v2_bindings_to_v3() -> None:
+    document = SavedGraphDocument.model_validate(
+        {
+            "schema_version": 2,
+            "nodes": [
+                {
+                    **_node("collect").model_dump(mode="json"),
+                    "artifact_type_bindings": [
+                        {
+                            "variable": "T",
+                            "artifact_type": {
+                                "id": "example.value",
+                                "schema_version": 2,
+                            },
+                        }
+                    ],
+                }
+            ],
+            "edges": [],
+        }
+    )
+
+    assert document.schema_version == 3
+    assert document.nodes[0].artifact_type_binding_map() == {
+        "T": ArtifactTypeKey("example.value", 2)
+    }
+
+
+def test_saved_graph_node_layout_round_trips_and_rejects_empty_or_out_of_range() -> None:
+    layout = SavedGraphNodeLayout(width=420, body_height=180, appendix_height=320)
+    node = SavedGraphNode(
+        id="resized",
+        operator_id="example.operator",
+        operator_version=1,
+        config={},
+        position=GraphPoint(x=0.0, y=0.0),
+        layout=layout,
+    )
+
+    payload = node.model_dump(mode="json")
+    assert payload["layout"] == {
+        "width": 420.0,
+        "body_height": 180.0,
+        "appendix_height": 320.0,
+    }
+    assert SavedGraphNode.model_validate(payload) == node
+
+    with pytest.raises(ValidationError, match="at least one of width"):
+        SavedGraphNodeLayout()
+    with pytest.raises(ValidationError):
+        SavedGraphNodeLayout(width=100)
+    with pytest.raises(ValidationError):
+        SavedGraphNodeLayout(body_height=10)
+    with pytest.raises(ValidationError):
+        SavedGraphNodeLayout(appendix_height=10)
+    # Past the shared browser/GPU compositing ceiling.
+    with pytest.raises(ValidationError):
+        SavedGraphNodeLayout(width=16_385)
+    assert SavedGraphNodeLayout(body_height=900).body_height == 900.0
+
+
+def test_saved_graph_node_config_is_deeply_immutable_and_serializable() -> None:
+    node = SavedGraphNode(
+        id="configured",
+        operator_id="example.operator",
+        operator_version=1,
+        config={"nested": {"enabled": True}, "values": [1, 2]},
+        position=GraphPoint(x=0.0, y=0.0),
+    )
+
+    with pytest.raises(TypeError):
+        cast(dict[str, object], node.config)["new"] = "value"
+    with pytest.raises(TypeError):
+        cast(dict[str, object], node.config["nested"])["enabled"] = False
+
+    assert node.config_dict() == {
+        "nested": {"enabled": True},
+        "values": [1, 2],
+    }
+    assert node.model_dump(mode="json")["config"] == node.config_dict()
+
+
+def test_saved_graph_node_serializes_validated_artifact_type_bindings() -> None:
+    binding = SavedGraphArtifactTypeBinding(
+        variable="T",
+        artifact_type=ArtifactTypeKey("image.raster", 1),
+    )
+    node = _node("collect", artifact_type_bindings=(binding,))
+
+    payload = node.model_dump(mode="json")
+
+    assert payload["artifact_type_bindings"] == [
+        {
+            "variable": "T",
+            "artifact_type": {
+                "id": "image.raster",
+                "schema_version": 1,
+            },
+        }
+    ]
+    assert SavedGraphNode.model_validate(payload) == node
+    assert node.artifact_type_binding_map() == {
+        "T": ArtifactTypeKey("image.raster", 1)
+    }
+
+
+def test_saved_graph_node_requires_unique_artifact_type_binding_variables() -> None:
+    first = SavedGraphArtifactTypeBinding(
+        variable="T",
+        artifact_type=ArtifactTypeKey("example.first", 1),
+    )
+    second = SavedGraphArtifactTypeBinding(
+        variable="T",
+        artifact_type=ArtifactTypeKey("example.second", 1),
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="artifact type binding variables must be unique",
+    ):
+        _node("collect", artifact_type_bindings=(first, second))
+
+
+@pytest.mark.parametrize(
+    "artifact_type",
+    [
+        ArtifactTypeKey("", 1),
+        ArtifactTypeKey("example.value", 0),
+    ],
+)
+def test_saved_graph_artifact_type_binding_rejects_invalid_concrete_key(
+    artifact_type: ArtifactTypeKey,
+) -> None:
+    with pytest.raises(ValidationError, match="bound artifact type"):
+        SavedGraphArtifactTypeBinding(
+            variable="T",
+            artifact_type=artifact_type,
+        )
+
+
+def test_saved_graph_document_requires_unique_node_ids() -> None:
+    with pytest.raises(ValidationError, match="node ids must be unique"):
+        SavedGraphDocument(nodes=(_node("duplicate"), _node("duplicate")))
+
+
+def test_saved_graph_document_requires_unique_edge_ids() -> None:
+    with pytest.raises(ValidationError, match="edge ids must be unique"):
+        SavedGraphDocument(
+            nodes=(_node("source"), _node("target")),
+            edges=(_edge("duplicate"), _edge("duplicate")),
+        )
+
+
+def test_saved_graph_document_preserves_ordered_input_plugs() -> None:
+    plugs = (
+        SavedGraphInputPlug(id="second", port="items"),
+        SavedGraphInputPlug(id="first", port="items"),
+    )
+
+    document = SavedGraphDocument(nodes=(_node("collect", input_plugs=plugs),))
+
+    assert document.nodes[0].input_plugs == plugs
+    assert document.model_dump(mode="json")["nodes"][0]["input_plugs"] == [
+        {"id": "second", "port": "items"},
+        {"id": "first", "port": "items"},
+    ]
+
+
+def test_saved_graph_document_requires_unique_input_plug_ids_per_node() -> None:
+    duplicate_plugs = (
+        SavedGraphInputPlug(id="item", port="items"),
+        SavedGraphInputPlug(id="item", port="items"),
+    )
+
+    with pytest.raises(ValidationError, match="input plug ids must be unique"):
+        SavedGraphDocument(nodes=(_node("collect", input_plugs=duplicate_plugs),))
+
+
+def test_saved_graph_document_requires_edges_to_reference_target_input_plugs() -> None:
+    target = _node(
+        "target",
+        input_plugs=(SavedGraphInputPlug(id="item", port="items"),),
+    )
+
+    with pytest.raises(ValidationError, match="missing input plug absent"):
+        SavedGraphDocument(
+            nodes=(_node("source"), target),
+            edges=(
+                _edge("plugged").model_copy(
+                    update={"to_port": "items", "to_plug": "absent"}
+                ),
+            ),
+        )
+
+
+def test_saved_graph_document_requires_edge_port_to_match_input_plug_port() -> None:
+    target = _node(
+        "target",
+        input_plugs=(SavedGraphInputPlug(id="item", port="items"),),
+    )
+
+    with pytest.raises(ValidationError, match="belongs to port items"):
+        SavedGraphDocument(
+            nodes=(_node("source"), target),
+            edges=(_edge("plugged").model_copy(update={"to_plug": "item"}),),
+        )
+
+
+def test_saved_graph_document_allows_at_most_one_edge_per_input_plug() -> None:
+    target = _node(
+        "target",
+        input_plugs=(SavedGraphInputPlug(id="item", port="items"),),
+    )
+    plugged_edge = _edge("first").model_copy(
+        update={"to_port": "items", "to_plug": "item"}
+    )
+
+    with pytest.raises(ValidationError, match="accepts at most one edge"):
+        SavedGraphDocument(
+            nodes=(_node("source"), target),
+            edges=(
+                plugged_edge,
+                plugged_edge.model_copy(update={"id": "second"}),
+            ),
+        )
+
+
+def test_disabled_edge_still_reserves_its_target_input_plug() -> None:
+    target = _node(
+        "target",
+        input_plugs=(SavedGraphInputPlug(id="item", port="items"),),
+    )
+    disabled_edge = _edge("disabled").model_copy(
+        update={"enabled": False, "to_port": "items", "to_plug": "item"}
+    )
+    replacement_edge = _edge("replacement", from_node="other-source").model_copy(
+        update={"to_port": "items", "to_plug": "item"}
+    )
+
+    with pytest.raises(ValidationError, match="accepts at most one edge"):
+        SavedGraphDocument(
+            nodes=(_node("source"), _node("other-source"), target),
+            edges=(disabled_edge, replacement_edge),
+        )
+
+
+def test_disabled_edge_still_requires_structurally_valid_endpoints() -> None:
+    disabled_edge = _edge("disabled", to_node="absent").model_copy(
+        update={"enabled": False}
+    )
+
+    with pytest.raises(ValidationError, match="missing target node absent"):
+        SavedGraphDocument(
+            nodes=(_node("source"),),
+            edges=(disabled_edge,),
+        )
+
+
+@pytest.mark.parametrize(
+    ("edge", "message"),
+    [
+        (_edge("missing-source", from_node="absent"), "missing source node absent"),
+        (_edge("missing-target", to_node="absent"), "missing target node absent"),
+    ],
+)
+def test_saved_graph_document_rejects_edges_to_missing_nodes(
+    edge: SavedGraphEdge,
+    message: str,
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        SavedGraphDocument(
+            nodes=(_node("source"), _node("target")),
+            edges=(edge,),
+        )
+
+
+@pytest.mark.parametrize("name", ["", "   ", "x" * 161])
+def test_saved_graph_rejects_invalid_names(name: str) -> None:
+    with pytest.raises(ValueError, match="Saved graph name"):
+        SavedGraph(
+            workspace_id=WORKSPACE_ID,
+            name=name,
+            document=SavedGraphDocument(),
+        )
+
+
+def test_saved_graph_requires_positive_revision_and_aware_timestamps() -> None:
+    aware = datetime(2026, 7, 14, 8, 30, tzinfo=UTC)
+    naive = datetime(2026, 7, 14, 8, 30)
+
+    with pytest.raises(ValueError, match="revision must be at least 1"):
+        SavedGraph(
+            workspace_id=WORKSPACE_ID,
+            name="Draft",
+            document=SavedGraphDocument(),
+            revision=0,
+            created_at=aware,
+            updated_at=aware,
+        )
+
+    with pytest.raises(ValueError, match="timestamps must be timezone-aware"):
+        SavedGraph(
+            workspace_id=WORKSPACE_ID,
+            name="Draft",
+            document=SavedGraphDocument(),
+            created_at=naive,
+            updated_at=aware,
+        )
+
+
+def test_saved_graph_replace_normalizes_name_and_advances_revision() -> None:
+    graph_id = UUID("00000000-0000-0000-0000-000000000001")
+    created_at = datetime(2026, 7, 14, 8, 30, tzinfo=UTC)
+    updated_at = datetime(2026, 7, 14, 9, 45, tzinfo=UTC)
+    replacement = SavedGraphDocument(nodes=(_node("draft-node"),))
+    graph = SavedGraph(
+        workspace_id=WORKSPACE_ID,
+        id=graph_id,
+        name="Original",
+        document=SavedGraphDocument(),
+        created_at=created_at,
+        updated_at=created_at,
+    )
+
+    graph.replace(
+        name="  Renamed draft  ",
+        document=replacement,
+        expected_revision=1,
+        updated_at=updated_at,
+    )
+
+    assert graph.id == graph_id
+    assert graph.name == "Renamed draft"
+    assert graph.document == replacement
+    assert graph.revision == 2
+    assert graph.created_at == created_at
+    assert graph.updated_at == updated_at
+
+
+def test_saved_graph_replace_rejects_stale_revision_without_mutating_graph() -> None:
+    graph = SavedGraph(
+        workspace_id=WORKSPACE_ID,
+        name="Original",
+        document=SavedGraphDocument(),
+    )
+    original_updated_at = graph.updated_at
+
+    with pytest.raises(SavedGraphRevisionConflictError) as raised:
+        graph.replace(
+            name="Changed",
+            document=SavedGraphDocument(nodes=(_node("new-node"),)),
+            expected_revision=2,
+        )
+
+    assert raised.value.graph_id == graph.id
+    assert raised.value.expected_revision == 2
+    assert raised.value.actual_revision == 1
+    assert graph.name == "Original"
+    assert graph.document == SavedGraphDocument()
+    assert graph.revision == 1
+    assert graph.updated_at == original_updated_at
+
+
+def test_saved_graph_replace_preserves_timezone_aware_timestamp_invariant() -> None:
+    graph = SavedGraph(
+        workspace_id=WORKSPACE_ID,
+        name="Draft",
+        document=SavedGraphDocument(),
+    )
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        graph.replace(
+            name="Draft",
+            document=SavedGraphDocument(),
+            expected_revision=1,
+            updated_at=datetime(2026, 7, 14, 10, 0),
+        )

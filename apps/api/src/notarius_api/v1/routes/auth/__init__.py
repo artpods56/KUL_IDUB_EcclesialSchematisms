@@ -1,0 +1,1 @@
+"""Browser authentication capability slice."""

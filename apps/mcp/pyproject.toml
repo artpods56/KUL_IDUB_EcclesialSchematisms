@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "notarius-mcp"
+version = "0.1.0"
+requires-python = "==3.12.9"
+dependencies = [
+    "fastmcp==3.4.0",
+    "mcp>=1.24,<2",
+    "pydantic",
+]
+
+[tool.basedpyright]
+extends = "../../pyproject.toml"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "notarius-core"
+version = "0.1.0"
+requires-python = "==3.12.9"
+dependencies = [
+    "jsonschema>=4.23.0",
+    "openpyxl>=3.1.5",
+    "pydantic",
+    "rapidfuzz>=3.14.3",
+    "referencing>=0.36.2",
+    "Unidecode>=1.4.0",
+]
+
+[tool.basedpyright]
+extends = "../../pyproject.toml"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

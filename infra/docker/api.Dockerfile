@@ -1,0 +1,41 @@
+FROM ghcr.io/astral-sh/uv:python3.12-trixie-slim AS source
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
+
+COPY pyproject.toml uv.lock alembic.ini ./
+COPY libs/core ./libs/core
+COPY libs/persistence ./libs/persistence
+COPY libs/storage ./libs/storage
+COPY plugins/llm ./plugins/llm
+COPY plugins/ocr ./plugins/ocr
+COPY plugins/gis ./plugins/gis
+COPY plugins/sql ./plugins/sql
+COPY apps/api ./apps/api
+COPY apps/mcp ./apps/mcp
+COPY infra/db ./infra/db
+
+EXPOSE 8000
+
+CMD [".venv/bin/uvicorn", "notarius_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+
+FROM source AS api-ocr
+
+RUN uv sync --locked --no-dev --extra ocr
+
+FROM source AS api-plugins
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends gdal-bin \
+    && rm -rf /var/lib/apt/lists/*
+RUN ogrinfo --format PMTiles
+RUN gdal2tiles.py --version
+RUN uv sync --locked --no-dev --extra gis --extra llm --extra ocr --extra sql
+
+FROM source AS api
+
+RUN uv sync --locked --no-dev --package notarius-api

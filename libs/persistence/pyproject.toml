@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "notarius-persistence"
+version = "0.1.0"
+requires-python = "==3.12.9"
+dependencies = [
+    "aiosqlite>=0.22.1",
+    "alembic>=1.18.5",
+    "asyncpg>=0.30.0",
+    "notarius-core",
+    "sqlalchemy[asyncio]>=2.0.51",
+]
+
+[tool.uv.sources]
+notarius-core = { workspace = true }
+
+[tool.basedpyright]
+extends = "../../pyproject.toml"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

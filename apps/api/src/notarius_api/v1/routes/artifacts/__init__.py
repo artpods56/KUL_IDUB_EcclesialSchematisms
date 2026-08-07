@@ -1,0 +1,1 @@
+"""Artifact HTTP API slice."""
