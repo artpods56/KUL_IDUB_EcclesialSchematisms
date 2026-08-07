@@ -6,6 +6,7 @@ import {
   getArtifactTablePage,
   getGraphExecution,
   listGraphExecutions,
+  artifactContentUrl,
   uploadFile,
 } from "./workbench";
 
@@ -29,7 +30,7 @@ describe("execution history API", () => {
     }, controller.signal);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/v1/graphs/graph%2F1/executions?limit=50&cursor=timestamp%2Bexecution%2Fid&graph_revision=7&status=failed&node_id=extract%2F1",
+      "/api/v1/graphs/graph%2F1/executions?limit=50&cursor=timestamp%2Bexecution%2Fid&graph_revision=7&status=failed&node_id=extract%2F1",
       expect.objectContaining({ method: "GET", signal: controller.signal }),
     );
   });
@@ -44,7 +45,7 @@ describe("execution history API", () => {
     await getGraphExecution("graph/1", "execution/1");
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/v1/graphs/graph%2F1/executions/execution%2F1",
+      "/api/v1/graphs/graph%2F1/executions/execution%2F1",
       expect.objectContaining({ method: "GET" }),
     );
   });
@@ -76,7 +77,7 @@ describe("table artifact API", () => {
     );
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/v1/artifacts/artifact%2F1/table/page?offset=50&limit=25&max_cell_characters=256&column_ids=geometry%2Fwkt&column_ids=source+name",
+      "/api/v1/artifacts/artifact%2F1/table/page?offset=50&limit=25&max_cell_characters=256&column_ids=geometry%2Fwkt&column_ids=source+name",
       expect.objectContaining({ method: "GET" }),
     );
   });
@@ -96,7 +97,7 @@ describe("table artifact API", () => {
     await getArtifactTableCell("artifact/1", 3, "geometry/wkt");
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/v1/artifacts/artifact%2F1/table/cell?row_index=3&column_id=geometry%2Fwkt",
+      "/api/v1/artifacts/artifact%2F1/table/cell?row_index=3&column_id=geometry%2Fwkt",
       expect.objectContaining({ method: "GET" }),
     );
   });
@@ -120,7 +121,7 @@ describe("GIS artifact API", () => {
     await getArtifactGeoRender("artifact/1", controller.signal);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/v1/artifacts/artifact%2F1/geo/render",
+      "/api/v1/artifacts/artifact%2F1/geo/render",
       expect.objectContaining({ method: "GET", signal: controller.signal }),
     );
   });
@@ -141,7 +142,7 @@ describe("file upload API", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("http://localhost:8000/v1/uploads");
+    expect(url).toBe("/api/v1/uploads");
     expect(init.method).toBe("POST");
     expect(init.headers).toEqual({ Accept: "application/json" });
     expect(init.body).toBeInstanceOf(FormData);
@@ -149,5 +150,21 @@ describe("file upload API", () => {
     expect(uploaded.name).toBe("scan.tif");
     expect(uploaded.type).toBe("image/tiff");
     expect(uploaded.size).toBe(3);
+  });
+});
+
+describe("artifact content URLs", () => {
+  it("resolves relative and API-owned paths under the same-origin API base", () => {
+    expect(artifactContentUrl("./artifacts/artifact-1/content"))
+      .toBe("/api/v1/artifacts/artifact-1/content");
+    expect(artifactContentUrl("/v1/artifacts/artifact-1/content"))
+      .toBe("/api/v1/artifacts/artifact-1/content");
+  });
+
+  it("preserves absolute HTTP and custom-scheme URLs", () => {
+    expect(artifactContentUrl("https://private.example/artifact"))
+      .toBe("https://private.example/artifact");
+    expect(artifactContentUrl("pmtiles://private.example/archive.pmtiles"))
+      .toBe("pmtiles://private.example/archive.pmtiles");
   });
 });

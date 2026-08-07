@@ -278,6 +278,7 @@ function projectionFieldType(
 async function fetchJsonPayload(request: JsonPayloadRequest): Promise<unknown> {
   const response = await fetch(request.url, {
     headers: { Accept: "application/json" },
+    credentials: "same-origin",
   });
   if (!response.ok) {
     throw new Error(

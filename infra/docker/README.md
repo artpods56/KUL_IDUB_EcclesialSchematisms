@@ -21,16 +21,15 @@ openssl rand -base64 32
 ```
 
 Put the generated encryption key in `NOTARIUS_CREDENTIAL_ENCRYPTION_KEY`, then
-set the real public origin in both `NEXT_PUBLIC_NOTARIUS_API_URL` and
-`NOTARIUS_CORS_ORIGINS`.
+set the real public origin in `NOTARIUS_CORS_ORIGINS`.
 
 `NOTARIUS_DOCKER_DATABASE_URL` is deliberately separate from the local
 `NOTARIUS_DATABASE_URL`. This prevents a development `.env` file with a relative
 SQLite path from sending migrations to a container-local, non-persistent file.
 
-The browser API URL is a build argument. Rebuild the web image whenever that
-URL changes. Keep `.env.production` outside version control and restrict it to
-the deployment user:
+The browser uses the same-origin `/api` path; the public gateway owns its
+forwarding to FastAPI. Keep `.env.production` outside version control and
+restrict it to the deployment user:
 
 ```bash
 chmod 600 .env.production
@@ -81,8 +80,7 @@ Then open `http://127.0.0.1:4200`.
 
 ## Nginx routing contract
 
-With `NEXT_PUBLIC_NOTARIUS_API_URL=https://notarius.example.com/api`, configure
-Nginx so:
+Configure Nginx so:
 
 - `/` proxies to `http://127.0.0.1:3000`.
 - `/api/` proxies to `http://127.0.0.1:8000/`.

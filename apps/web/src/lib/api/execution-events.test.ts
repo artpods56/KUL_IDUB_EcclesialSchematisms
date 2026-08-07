@@ -40,7 +40,7 @@ describe("live execution event API", () => {
     });
     const source = FakeEventSource.instances[0];
     expect(source?.url).toBe(
-      "http://localhost:8000/v1/executions/execution%2F1/events",
+      "/api/v1/executions/execution%2F1/events",
     );
 
     source?.dispatchEvent(new Event("open"));

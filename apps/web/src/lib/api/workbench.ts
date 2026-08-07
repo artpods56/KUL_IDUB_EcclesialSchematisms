@@ -1,4 +1,4 @@
-import { API_BASE, ApiError, request } from "./client";
+import { API_BASE, request } from "./client";
 import type {
   AppliedNodeSecret,
   ApplyNodeSecretRequest,
@@ -374,27 +374,10 @@ export async function uploadFile(
 ): Promise<UploadResponse> {
   const body = new FormData();
   body.append("file", file, file.name);
-  const response = await fetch(`${API_BASE}/v1/uploads`, {
-    method: "POST",
-    headers: { Accept: "application/json" },
+  return request<UploadResponse>("POST", "/v1/uploads", {
     body,
     signal,
   });
-  if (!response.ok) {
-    let detail = `${response.status} ${response.statusText}`;
-    try {
-      const payload: unknown = await response.json();
-      if (typeof payload === "string") {
-        detail = payload;
-      } else if (typeof payload === "object" && payload !== null && "detail" in payload) {
-        detail = String(payload.detail);
-      }
-    } catch {
-      /* keep the status detail when the API did not return JSON */
-    }
-    throw new ApiError(response.status, detail);
-  }
-  return (await response.json()) as UploadResponse;
 }
 
 export function runGraph(requestBody: RunRequest) {
@@ -480,7 +463,16 @@ export function artifactContentUrl(
   contentUrl: string | null | undefined,
 ): string | null {
   if (!contentUrl) return null;
-  return new URL(contentUrl, `${API_BASE}/v1/`).toString();
+
+  if (/^[a-z][a-z\d+.-]*:/i.test(contentUrl)) return contentUrl;
+  if (contentUrl.startsWith("/api/")) return contentUrl;
+  if (contentUrl.startsWith("/v1/")) return `${API_BASE}${contentUrl}`;
+
+  const resolved = new URL(
+    contentUrl,
+    "https://notarius.invalid/api/v1/",
+  );
+  return `${resolved.pathname}${resolved.search}${resolved.hash}`;
 }
 
 export function getArtifactTablePage(

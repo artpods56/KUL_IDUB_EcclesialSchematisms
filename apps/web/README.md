@@ -82,7 +82,8 @@ Requirements:
 
 1. Node 20+ and npm.
 2. Python 3.12.9 with the repository uv workspace synced.
-3. The Notarius API running on `http://localhost:8000`.
+3. The Notarius API running on `http://127.0.0.1:8000` (the Next.js dev
+   server proxies browser `/api` requests to it).
 4. `make install-ocr` and `make api-ocr` used from the repository root when OCR
    operators should be available.
 5. `MISTRAL_API_KEY` configured in the API process environment only when using

@@ -109,8 +109,6 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/web.Dockerfile
-      args:
-        NEXT_PUBLIC_NOTARIUS_API_URL: ${NEXT_PUBLIC_NOTARIUS_API_URL:-http://localhost:8000}
     init: true
     logging: *default-logging
     restart: unless-stopped

@@ -73,7 +73,7 @@ Already shared with production (leave as is): `components/canvas/config-schema.t
 ## Verification
 
 1. `cd apps/web && npx tsc --noEmit && npx eslint src`.
-2. Run the API (`uv run uvicorn notarius_api.main:app --port 8791` from repo root) and web (`NEXT_PUBLIC_NOTARIUS_API_URL=http://127.0.0.1:8791 npm run dev` in `apps/web`), open the workbench, and check:
+2. Run the API (`uv run uvicorn notarius_api.main:app --port 8791` from repo root) and web (`NOTARIUS_API_UPSTREAM=http://127.0.0.1:8791 npm run dev` in `apps/web`), open the workbench, and check:
    - add nodes from the palette; port tabs render, connections still validate (type + shape) and edge pills/projection editing still work;
    - port tab click → type inspector with schema tree (try any installed plugin compound output; automated projection coverage uses `test.compound_result@1` rather than a production arithmetic tutorial node);
    - "?" and "x" in the top-left work; "x" removes the node;

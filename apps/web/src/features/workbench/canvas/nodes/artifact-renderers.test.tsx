@@ -613,7 +613,7 @@ describe("Table artifact rendering", () => {
         }));
       }
       if (url.includes("/table/cell?")) {
-        const columnId = new URL(url).searchParams.get("column_id");
+        const columnId = new URL(url, "http://test.local").searchParams.get("column_id");
         return cellsReady.then(() =>
           new Response(JSON.stringify({
             row_index: 7,
@@ -752,7 +752,7 @@ describe("Table artifact rendering", () => {
         }));
       }
       if (url.includes("/table/cell?")) {
-        const rowIndex = Number(new URL(url).searchParams.get("row_index"));
+        const rowIndex = Number(new URL(url, "http://test.local").searchParams.get("row_index"));
         if (rowIndex === 0) {
           return new Promise<Response>((_, reject) => {
             const rejectAborted = () =>
@@ -893,7 +893,7 @@ describe("GIS map artifact rendering", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toBe(
-      "http://localhost:8000/v1/artifacts/map-artifact/geo/render",
+      "/api/v1/artifacts/map-artifact/geo/render",
     );
     expect(String(fetchMock.mock.calls[0][0])).not.toContain("/content");
     expect(String(fetchMock.mock.calls[0][0])).not.toContain("/geo/page");
@@ -931,11 +931,11 @@ describe("GIS map artifact rendering", () => {
     const { sources, layers } = map.options.style;
     expect(sources["notarius-geo-source-parcels"]).toMatchObject({
       type: "vector",
-      url: "pmtiles://http://localhost:8000/v1/artifacts/features-artifact/geo/vector.pmtiles",
+      url: "pmtiles:///api/v1/artifacts/features-artifact/geo/vector.pmtiles",
     });
     expect(sources["notarius-geo-source-elevation"]).toMatchObject({
       type: "raster",
-      url: "http://localhost:8000/v1/artifacts/raster-artifact/geo/raster/tilejson.json",
+      url: "/api/v1/artifacts/raster-artifact/geo/raster/tilejson.json",
     });
     expect(layers.map((layer) => layer.id)).toEqual([
       "notarius-openstreetmap-raster",
