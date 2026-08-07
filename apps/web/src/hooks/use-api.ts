@@ -12,12 +12,20 @@ import {
 
 /** Keyed SWR hooks over the Notarius API (global fetcher is `apiFetcher`). */
 
-export function useNodeRegistry() {
-  return useSWR<NodeRegistry>("/v1/nodes");
+export function useNodeRegistry(workspaceId?: string) {
+  return useSWR<NodeRegistry>(
+    workspaceId
+      ? `/v1/workspaces/${encodeURIComponent(workspaceId)}/nodes`
+      : null,
+  );
 }
 
-export function useSavedGraphs() {
-  return useSWR<SavedGraphList>("/v1/graphs");
+export function useSavedGraphs(workspaceId?: string) {
+  return useSWR<SavedGraphList>(
+    workspaceId
+      ? `/v1/workspaces/${encodeURIComponent(workspaceId)}/graphs`
+      : null,
+  );
 }
 
 export function useWorkspaces(userId: string | undefined) {

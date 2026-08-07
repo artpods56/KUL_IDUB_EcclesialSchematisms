@@ -33,14 +33,14 @@ describe("live execution event API", () => {
     const errors: Array<Event | Error> = [];
     const onOpen = vi.fn();
 
-    const subscription = subscribeRunExecutionEvents("execution/1", {
+    const subscription = subscribeRunExecutionEvents("workspace-1", "execution/1", {
       onEvent: (event) => events.push(event),
       onError: (error) => errors.push(error),
       onOpen,
     });
     const source = FakeEventSource.instances[0];
     expect(source?.url).toBe(
-      "/api/v1/executions/execution%2F1/events",
+      "/api/v1/workspaces/workspace-1/executions/execution%2F1/events",
     );
 
     source?.dispatchEvent(new Event("open"));
@@ -108,7 +108,7 @@ describe("live execution event API", () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     const events: RunExecutionEvent[] = [];
     const errors: Array<Event | Error> = [];
-    subscribeRunExecutionEvents("execution-1", {
+    subscribeRunExecutionEvents("workspace-1", "execution-1", {
       onEvent: (event) => events.push(event),
       onError: (error) => errors.push(error),
     });
@@ -193,7 +193,7 @@ describe("live execution event API", () => {
     vi.stubGlobal("EventSource", FailingEventSource);
     const onError = vi.fn();
 
-    const subscription = subscribeRunExecutionEvents("execution-1", {
+    const subscription = subscribeRunExecutionEvents("workspace-1", "execution-1", {
       onEvent: vi.fn(),
       onError,
     });

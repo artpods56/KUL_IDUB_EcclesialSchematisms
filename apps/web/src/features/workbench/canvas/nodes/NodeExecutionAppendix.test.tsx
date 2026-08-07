@@ -20,10 +20,15 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const apiMocks = vi.hoisted(() => ({
   getGraphExecution: vi.fn<
-    (graphId: string, executionId: string) => Promise<GraphExecutionDetail>
+    (
+      workspaceId: string,
+      graphId: string,
+      executionId: string,
+    ) => Promise<GraphExecutionDetail>
   >(),
   listGraphExecutions: vi.fn<
     (
+      workspaceId: string,
       graphId: string,
       options: { limit: number; nodeId: string },
     ) => Promise<GraphExecutionList>
@@ -297,7 +302,7 @@ describe("NodeExecutionAppendix", () => {
       items: [first, second, third],
       next_cursor: null,
     });
-    apiMocks.getGraphExecution.mockImplementation((_graphId, executionId) => {
+    apiMocks.getGraphExecution.mockImplementation((_workspaceId, _graphId, executionId) => {
       if (executionId === first.execution_id) {
         return Promise.resolve(detail(first, [
           nodeResult("node-a", [output("target", ["target-1", "target-2"])]),
@@ -318,12 +323,13 @@ describe("NodeExecutionAppendix", () => {
       expanded: true,
       execution: { status: "succeeded" },
       run: runWithArtifacts("node-a", ["temporary-1"]),
-      historyContext: { graphId: "graph-1", isDirty: true },
+      historyContext: { workspaceId: "workspace-1", graphId: "graph-1", isDirty: true },
       onOpenHistory,
     });
 
     await vi.waitFor(() => {
       expect(apiMocks.listGraphExecutions).toHaveBeenCalledWith(
+        "workspace-1",
         "graph-1",
         { limit: 5, nodeId: "node-a" },
       );
@@ -356,7 +362,7 @@ describe("NodeExecutionAppendix", () => {
       expanded: true,
       execution: { status: "succeeded" },
       run: runWithArtifacts("node-a", ["temporary-1", "temporary-2"]),
-      historyContext: { graphId: null, isDirty: true },
+      historyContext: { workspaceId: "workspace-1", graphId: null, isDirty: true },
     });
 
     expect(apiMocks.listGraphExecutions).not.toHaveBeenCalled();
@@ -379,7 +385,7 @@ describe("NodeExecutionAppendix", () => {
     });
     const { rerender } = await renderAppendix({
       expanded: true,
-      historyContext: { graphId: "graph-1", isDirty: false },
+      historyContext: { workspaceId: "workspace-1", graphId: "graph-1", isDirty: false },
     });
     await vi.waitFor(() => {
       expect(apiMocks.listGraphExecutions).toHaveBeenCalledTimes(1);

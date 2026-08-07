@@ -34,6 +34,7 @@ import {
   type GeoRenderRasterStyle,
   type GeoRenderVectorStyle,
 } from "@/lib/api";
+import { useWorkspaceContext } from "@/features/workspaces/WorkspaceLayout";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import type {
   ArtifactInteractionScalar,
@@ -535,12 +536,12 @@ function ensurePmtilesProtocol() {
   pmtilesProtocolRegistered = true;
 }
 
-function absoluteApiUrl(path: string): string {
-  return artifactContentUrl(path) ?? path;
+function absoluteApiUrl(workspaceId: string, path: string): string {
+  return artifactContentUrl(workspaceId, path) ?? path;
 }
 
-function pmtilesUrl(path: string): string {
-  return `pmtiles://${absoluteApiUrl(path)}`;
+function pmtilesUrl(workspaceId: string, path: string): string {
+  return `pmtiles://${absoluteApiUrl(workspaceId, path)}`;
 }
 
 function sourceId(layer: GeoRenderLayer): string {
@@ -798,6 +799,7 @@ function applyInteractionOverrides(
 }
 
 function createGeoMapStyle(
+  workspaceId: string,
   descriptor: GeoRenderDescriptor,
   layers: readonly GeoRenderLayer[],
 ): maplibregl.StyleSpecification {
@@ -826,7 +828,7 @@ function createGeoMapStyle(
     ) {
       sources[id] = {
         type: "vector",
-        url: pmtilesUrl(layer.source.archive_url),
+        url: pmtilesUrl(workspaceId, layer.source.archive_url),
         minzoom: layer.source.min_zoom,
         maxzoom: layer.source.max_zoom,
       };
@@ -897,7 +899,7 @@ function createGeoMapStyle(
     if (layer.source.kind === "vector" && layer.style.kind === "vector") {
       sources[id] = {
         type: "vector",
-        url: pmtilesUrl(layer.source.archive_url),
+        url: pmtilesUrl(workspaceId, layer.source.archive_url),
         minzoom: layer.source.min_zoom,
         maxzoom: layer.source.max_zoom,
       };
@@ -997,7 +999,7 @@ function createGeoMapStyle(
     if (layer.source.kind === "raster" && layer.style.kind === "raster") {
       sources[id] = {
         type: "raster",
-        url: absoluteApiUrl(layer.source.tilejson_url),
+        url: absoluteApiUrl(workspaceId, layer.source.tilejson_url),
         tileSize: 256,
         attribution: layer.source.attribution ?? undefined,
       };
@@ -1909,6 +1911,8 @@ function GeoMapPreview({
   onUnload: () => void;
   interaction?: ArtifactViewerInteractionContext;
 }) {
+  const { workspace } = useWorkspaceContext();
+  const workspaceId = workspace.id;
   const containerRef = React.useRef<HTMLDivElement>(null);
   const mapRef = React.useRef<maplibregl.Map | null>(null);
   const [layers, setLayers] = React.useState(() => descriptor.layers.map(cloneLayer));
@@ -1938,6 +1942,7 @@ function GeoMapPreview({
   const focusKey = focusRows.length
     ? [
         "geo-artifact-focus",
+        workspaceId,
         descriptor.artifact_id,
         focusSignature,
       ] as const
@@ -1947,8 +1952,8 @@ function GeoMapPreview({
     error: focusError,
     isValidating: focusLoading,
     mutate: retryFocus,
-  } = useSWR(focusKey, ([, artifactId]) =>
-    queryArtifactGeoFeatures(artifactId, {
+  } = useSWR(focusKey, ([, keyWorkspaceId, artifactId]) =>
+    queryArtifactGeoFeatures(keyWorkspaceId, artifactId, {
       rows: focusRows.map((values) => ({ values })),
     }),
   );
@@ -2002,7 +2007,7 @@ function GeoMapPreview({
     try {
       const mapOptions: maplibregl.MapOptions = {
         container: containerRef.current,
-        style: createGeoMapStyle(descriptor, layersRef.current),
+        style: createGeoMapStyle(workspaceId, descriptor, layersRef.current),
         attributionControl: true,
       };
       const initialBounds = normalizedMapBounds(descriptor.initial_bounds);
@@ -2483,16 +2488,18 @@ function GeoMapRendererState({
   availableHeight?: number;
   interaction?: ArtifactViewerInteractionContext;
 }) {
+  const { workspace } = useWorkspaceContext();
   const [loadRequested, setLoadRequested] = React.useState(false);
   const renderKey = loadRequested
-    ? ["geo-artifact-render", artifact.artifact_id] as const
+    ? ["geo-artifact-render", workspace.id, artifact.artifact_id] as const
     : null;
   const {
     data: descriptor,
     error,
     isLoading,
     mutate,
-  } = useSWR(renderKey, ([, artifactId]) => getArtifactGeoRender(artifactId));
+  } = useSWR(renderKey, ([, workspaceId, artifactId]) =>
+    getArtifactGeoRender(workspaceId, artifactId));
 
   if (!loadRequested) {
     return (

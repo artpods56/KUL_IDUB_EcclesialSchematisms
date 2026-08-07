@@ -12,6 +12,21 @@ vi.mock("@stylexjs/stylex", () => ({
   props: () => ({}),
 }));
 
+vi.mock("@/features/workspaces/WorkspaceLayout", () => ({
+  useWorkspaceContext: () => ({
+    workspace: {
+      id: "workspace-1",
+      slug: "local",
+      name: "Local",
+      kind: "personal",
+      role: "owner",
+      capabilities: [],
+    },
+    workspaces: [],
+    refreshWorkspaces: async () => undefined,
+  }),
+}));
+
 import type {
   ArtifactSummary,
   ArtifactTypeSpec,
@@ -101,11 +116,11 @@ describe("artifact payload loading policy", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls.some((call) =>
-      String(call[0]).includes("/v1/artifacts/table-artifact/table/schema")
+      String(call[0]).includes("/v1/workspaces/workspace-1/artifacts/table-artifact/table/schema")
     )).toBe(true);
     expect(fetchMock.mock.calls.some((call) =>
       String(call[0]).includes(
-      "/v1/artifacts/table-artifact/table/page?",
+      "/v1/workspaces/workspace-1/artifacts/table-artifact/table/page?",
       )
     )).toBe(true);
     expect(fetchMock.mock.calls.every(
@@ -214,7 +229,7 @@ describe("artifact payload loading policy", () => {
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0][0])).toContain("/artifacts/first/content");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/workspaces/workspace-1/artifacts/first/content");
     expect(container.textContent).toContain(
       "Field projection is disabled because this sequence is too large",
     );

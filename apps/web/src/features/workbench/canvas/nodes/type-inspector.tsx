@@ -5,6 +5,7 @@ import * as stylex from "@stylexjs/stylex";
 import { Popover } from "@base-ui/react/popover";
 
 import { useNodeRegistry } from "@/hooks/use-api";
+import { useWorkspaceContext } from "@/features/workspaces/WorkspaceLayout";
 import type { Port } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import { artifactTypeColor } from "../nodes.css";
@@ -280,11 +281,12 @@ export function PortTypePopover({
   artifactTypeBindings?: WorkflowArtifactTypeBindings;
   children: React.ReactNode;
 }) {
+  const { workspace } = useWorkspaceContext();
   const {
     data: registry,
     error: registryError,
     isLoading: registryLoading,
-  } = useNodeRegistry();
+  } = useNodeRegistry(workspace.id);
   const artifactType = resolvedPortArtifactType(port, artifactTypeBindings);
   const variable = portArtifactTypeVariable(port);
   const spec = artifactType

@@ -25,10 +25,7 @@ export default function GraphsLayout({ children }: GraphsLayoutProps) {
   const { workspace } = useWorkspaceContext();
   const { session } = useAuthSession();
 
-  if (
-    workspace.slug !== "local" ||
-    !isSupportedWorkbenchGraphRoute(workspaceSlug, graphId)
-  ) {
+  if (!isSupportedWorkbenchGraphRoute(workspaceSlug, graphId)) {
     return children;
   }
 

@@ -379,17 +379,19 @@ function statusStyle(status: GraphExecutionStatus) {
 type ExecutionHistoryPageKey = readonly [
   "graph-execution-history",
   string,
+  string,
   string | null,
   string | null,
 ];
 
 async function loadExecutionHistoryPage([
   ,
+  workspaceId,
   graphId,
   nodeId,
   cursor,
 ]: ExecutionHistoryPageKey): Promise<GraphExecutionList> {
-  return listGraphExecutions(graphId, {
+  return listGraphExecutions(workspaceId, graphId, {
     limit: PAGE_SIZE,
     cursor: cursor ?? undefined,
     nodeId: nodeId ?? undefined,
@@ -400,17 +402,20 @@ type ExecutionDetailKey = readonly [
   "graph-execution-detail",
   string,
   string,
+  string,
 ];
 
 async function loadExecutionDetail([
   ,
+  workspaceId,
   graphId,
   executionId,
 ]: ExecutionDetailKey): Promise<GraphExecutionDetail> {
-  return getGraphExecution(graphId, executionId);
+  return getGraphExecution(workspaceId, graphId, executionId);
 }
 
 export interface ExecutionHistoryDrawerProps {
+  workspaceId: string;
   graphId: string | null;
   graphName: string;
   nodeId: string | null;
@@ -422,6 +427,7 @@ export interface ExecutionHistoryDrawerProps {
 }
 
 export function ExecutionHistoryDrawer({
+  workspaceId,
   graphId,
   graphName,
   nodeId,
@@ -431,7 +437,7 @@ export function ExecutionHistoryDrawer({
   isDirty,
   onClose,
 }: ExecutionHistoryDrawerProps) {
-  const { data: registry } = useNodeRegistry();
+  const { data: registry } = useNodeRegistry(workspaceId);
   const [selectedExecutionId, setSelectedExecutionId] =
     React.useState<string | null>(initialExecutionId);
   const historyKey = React.useCallback(
@@ -442,12 +448,13 @@ export function ExecutionHistoryDrawer({
       if (!graphId || (previousPage && !previousPage.next_cursor)) return null;
       return [
         "graph-execution-history",
+        workspaceId,
         graphId,
         nodeId,
         index === 0 ? null : previousPage?.next_cursor ?? null,
       ];
     },
-    [graphId, nodeId],
+    [graphId, nodeId, workspaceId],
   );
   const {
     data: historyPages,
@@ -483,7 +490,12 @@ export function ExecutionHistoryDrawer({
       : items[0]?.execution_id ?? null;
   const detailKey: ExecutionDetailKey | null =
     graphId && effectiveSelectedExecutionId
-      ? ["graph-execution-detail", graphId, effectiveSelectedExecutionId]
+      ? [
+          "graph-execution-detail",
+          workspaceId,
+          graphId,
+          effectiveSelectedExecutionId,
+        ]
       : null;
   const {
     data: detail,

@@ -22,11 +22,21 @@ import { renderHook } from "./test/renderHook";
 import { useRunExecution } from "./useRunExecution";
 
 const apiMocks = vi.hoisted(() => ({
-  cancelRunExecution: vi.fn<(executionId: string) => Promise<RunExecution>>(),
+  cancelRunExecution: vi.fn<(
+    workspaceId: string,
+    executionId: string,
+  ) => Promise<RunExecution>>(),
   getGraphMaterializations: vi.fn(),
-  getRunExecution: vi.fn<(executionId: string) => Promise<RunExecution>>(),
-  startRunExecution: vi.fn<(request: RunRequest) => Promise<RunExecution>>(),
+  getRunExecution: vi.fn<(
+    workspaceId: string,
+    executionId: string,
+  ) => Promise<RunExecution>>(),
+  startRunExecution: vi.fn<(
+    workspaceId: string,
+    request: RunRequest,
+  ) => Promise<RunExecution>>(),
   subscribeRunExecutionEvents: vi.fn<(
+    workspaceId: string,
     executionId: string,
     handlers: RunExecutionEventHandlers,
   ) => RunExecutionEventSubscription>(),
@@ -112,6 +122,7 @@ function hookHarness(
     runError = message;
   });
   const hookOptions: HookOptions = {
+    workspaceId: "workspace-1",
     registryAvailable: true,
     nodes,
     edges: [],
@@ -191,7 +202,7 @@ describe("useRunExecution", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     apiMocks.subscribeRunExecutionEvents.mockImplementation(
-      (subscribedExecutionId, handlers) => {
+      (_workspaceId, subscribedExecutionId, handlers) => {
         const subscription = { close: vi.fn() };
         liveSubscriptions.push({
           executionId: subscribedExecutionId,
@@ -367,7 +378,7 @@ describe("useRunExecution", () => {
       live.handlers.onEvent(executionStatusEvent(4, "succeeded"));
       await runPromise;
     });
-    expect(apiMocks.getRunExecution).toHaveBeenCalledWith(executionId);
+    expect(apiMocks.getRunExecution).toHaveBeenCalledWith("workspace-1", executionId);
     expect(live.subscription.close).toHaveBeenCalled();
     expect(harness.nodes()[0]?.data.progress?.entries).toHaveLength(1);
   });
@@ -725,6 +736,7 @@ describe("useRunExecution", () => {
     });
 
     expect(apiMocks.startRunExecution).toHaveBeenCalledWith(
+      "workspace-1",
       expect.objectContaining({
         scope: "selected-with-dependencies",
       }),
@@ -789,6 +801,7 @@ describe("useRunExecution", () => {
     });
 
     expect(apiMocks.startRunExecution).toHaveBeenCalledWith(
+      "workspace-1",
       expect.objectContaining({
         graph_id: "graph-1",
         graph_revision: 7,
@@ -812,7 +825,7 @@ describe("useRunExecution", () => {
       await hook.result.current.runWorkflow("all");
     });
 
-    const request = apiMocks.startRunExecution.mock.calls[0]?.[0];
+    const request = apiMocks.startRunExecution.mock.calls[0]?.[1];
     expect(request).not.toHaveProperty("graph_id");
     expect(request).not.toHaveProperty("graph_revision");
   });

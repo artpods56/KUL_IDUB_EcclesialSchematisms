@@ -86,6 +86,21 @@ vi.mock("@stylexjs/stylex", () => ({
   props: () => ({}),
 }));
 
+vi.mock("@/features/workspaces/WorkspaceLayout", () => ({
+  useWorkspaceContext: () => ({
+    workspace: {
+      id: "workspace-1",
+      slug: "local",
+      name: "Local",
+      kind: "personal",
+      role: "owner",
+      capabilities: [],
+    },
+    workspaces: [],
+    refreshWorkspaces: async () => undefined,
+  }),
+}));
+
 import type {
   ArtifactSummary,
   GeoRenderDescriptor,
@@ -893,7 +908,7 @@ describe("GIS map artifact rendering", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toBe(
-      "/api/v1/artifacts/map-artifact/geo/render",
+      "/api/v1/workspaces/workspace-1/artifacts/map-artifact/geo/render",
     );
     expect(String(fetchMock.mock.calls[0][0])).not.toContain("/content");
     expect(String(fetchMock.mock.calls[0][0])).not.toContain("/geo/page");

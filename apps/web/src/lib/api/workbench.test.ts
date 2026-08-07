@@ -12,6 +12,8 @@ import {
 
 afterEach(() => vi.unstubAllGlobals());
 
+const WORKSPACE_ID = "workspace/1";
+
 describe("execution history API", () => {
   it("serializes list filters and opaque cursors", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(
@@ -21,7 +23,7 @@ describe("execution history API", () => {
     vi.stubGlobal("fetch", fetchMock);
     const controller = new AbortController();
 
-    await listGraphExecutions("graph/1", {
+    await listGraphExecutions(WORKSPACE_ID, "graph/1", {
       limit: 50,
       cursor: "timestamp+execution/id",
       graphRevision: 7,
@@ -30,7 +32,7 @@ describe("execution history API", () => {
     }, controller.signal);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/graphs/graph%2F1/executions?limit=50&cursor=timestamp%2Bexecution%2Fid&graph_revision=7&status=failed&node_id=extract%2F1",
+      "/api/v1/workspaces/workspace%2F1/graphs/graph%2F1/executions?limit=50&cursor=timestamp%2Bexecution%2Fid&graph_revision=7&status=failed&node_id=extract%2F1",
       expect.objectContaining({ method: "GET", signal: controller.signal }),
     );
   });
@@ -42,10 +44,10 @@ describe("execution history API", () => {
     ));
     vi.stubGlobal("fetch", fetchMock);
 
-    await getGraphExecution("graph/1", "execution/1");
+    await getGraphExecution(WORKSPACE_ID, "graph/1", "execution/1");
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/graphs/graph%2F1/executions/execution%2F1",
+      "/api/v1/workspaces/workspace%2F1/graphs/graph%2F1/executions/execution%2F1",
       expect.objectContaining({ method: "GET" }),
     );
   });
@@ -69,6 +71,7 @@ describe("table artifact API", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await getArtifactTablePage(
+      WORKSPACE_ID,
       "artifact/1",
       50,
       25,
@@ -77,7 +80,7 @@ describe("table artifact API", () => {
     );
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/artifacts/artifact%2F1/table/page?offset=50&limit=25&max_cell_characters=256&column_ids=geometry%2Fwkt&column_ids=source+name",
+      "/api/v1/workspaces/workspace%2F1/artifacts/artifact%2F1/table/page?offset=50&limit=25&max_cell_characters=256&column_ids=geometry%2Fwkt&column_ids=source+name",
       expect.objectContaining({ method: "GET" }),
     );
   });
@@ -94,10 +97,10 @@ describe("table artifact API", () => {
     ));
     vi.stubGlobal("fetch", fetchMock);
 
-    await getArtifactTableCell("artifact/1", 3, "geometry/wkt");
+    await getArtifactTableCell(WORKSPACE_ID, "artifact/1", 3, "geometry/wkt");
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/artifacts/artifact%2F1/table/cell?row_index=3&column_id=geometry%2Fwkt",
+      "/api/v1/workspaces/workspace%2F1/artifacts/artifact%2F1/table/cell?row_index=3&column_id=geometry%2Fwkt",
       expect.objectContaining({ method: "GET" }),
     );
   });
@@ -118,10 +121,10 @@ describe("GIS artifact API", () => {
     vi.stubGlobal("fetch", fetchMock);
     const controller = new AbortController();
 
-    await getArtifactGeoRender("artifact/1", controller.signal);
+    await getArtifactGeoRender(WORKSPACE_ID, "artifact/1", controller.signal);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/artifacts/artifact%2F1/geo/render",
+      "/api/v1/workspaces/workspace%2F1/artifacts/artifact%2F1/geo/render",
       expect.objectContaining({ method: "GET", signal: controller.signal }),
     );
   });
@@ -138,11 +141,11 @@ describe("file upload API", () => {
       type: "image/tiff",
     });
 
-    await uploadFile(file);
+    await uploadFile(WORKSPACE_ID, file);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("/api/v1/uploads");
+    expect(url).toBe("/api/v1/workspaces/workspace%2F1/uploads");
     expect(init.method).toBe("POST");
     expect(init.headers).toEqual({ Accept: "application/json" });
     expect(init.body).toBeInstanceOf(FormData);
@@ -154,17 +157,17 @@ describe("file upload API", () => {
 });
 
 describe("artifact content URLs", () => {
-  it("resolves relative and API-owned paths under the same-origin API base", () => {
-    expect(artifactContentUrl("./artifacts/artifact-1/content"))
-      .toBe("/api/v1/artifacts/artifact-1/content");
-    expect(artifactContentUrl("/v1/artifacts/artifact-1/content"))
-      .toBe("/api/v1/artifacts/artifact-1/content");
+  it("resolves relative and API-owned paths under the workspace-scoped API base", () => {
+    expect(artifactContentUrl(WORKSPACE_ID, "./artifacts/artifact-1/content"))
+      .toBe("/api/v1/workspaces/workspace%2F1/artifacts/artifact-1/content");
+    expect(artifactContentUrl(WORKSPACE_ID, "/v1/workspaces/workspace%2F1/artifacts/artifact-1/content"))
+      .toBe("/api/v1/workspaces/workspace%2F1/artifacts/artifact-1/content");
   });
 
   it("preserves absolute HTTP and custom-scheme URLs", () => {
-    expect(artifactContentUrl("https://private.example/artifact"))
+    expect(artifactContentUrl(WORKSPACE_ID, "https://private.example/artifact"))
       .toBe("https://private.example/artifact");
-    expect(artifactContentUrl("pmtiles://private.example/archive.pmtiles"))
+    expect(artifactContentUrl(WORKSPACE_ID, "pmtiles://private.example/archive.pmtiles"))
       .toBe("pmtiles://private.example/archive.pmtiles");
   });
 });

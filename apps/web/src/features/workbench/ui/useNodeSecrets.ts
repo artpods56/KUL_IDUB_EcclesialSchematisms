@@ -173,6 +173,7 @@ function mergeRefreshStatuses(
 
 /** Keeps secret values write-only: only status metadata enters React state. */
 export function useNodeSecrets(
+  workspaceId: string,
   nodes: readonly WorkflowNode[],
 ): UseNodeSecretsResult {
   const [nodeSecretStatuses, setNodeSecretStatuses] =
@@ -235,7 +236,7 @@ export function useNodeSecrets(
       ),
     );
     try {
-      const response = await getGraphNodeSecrets(graph.id, signal);
+      const response = await getGraphNodeSecrets(workspaceId, graph.id, signal);
       if (
         refreshGenerationRef.current !== refreshGeneration ||
         activeGraphRef.current?.id !== graph.id ||
@@ -288,7 +289,7 @@ export function useNodeSecrets(
       );
       return false;
     }
-  }, []);
+  }, [workspaceId]);
 
   const applyConfiguredNodeSecret = React.useCallback(async (
     nodeId: string,
@@ -334,7 +335,7 @@ export function useNodeSecrets(
       },
     }));
     try {
-      const response = await applyNodeSecret(graph.id, nodeId, name, {
+      const response = await applyNodeSecret(workspaceId, graph.id, nodeId, name, {
         value,
         expected_graph_revision: graph.revision,
       });
@@ -383,7 +384,7 @@ export function useNodeSecrets(
       }
       return false;
     }
-  }, []);
+  }, [workspaceId]);
 
   const removeConfiguredNodeSecret = React.useCallback(async (
     nodeId: string,
@@ -428,7 +429,7 @@ export function useNodeSecrets(
       },
     }));
     try {
-      await removeNodeSecret(graph.id, nodeId, name, graph.revision);
+      await removeNodeSecret(workspaceId, graph.id, nodeId, name, graph.revision);
       if (
         activeGraphRef.current?.id !== graph.id ||
         activeGraphRef.current.revision !== graph.revision ||
@@ -467,7 +468,7 @@ export function useNodeSecrets(
       }
       return false;
     }
-  }, []);
+  }, [workspaceId]);
 
   const clearGraphSecretStatuses = React.useCallback(() => {
     refreshGenerationRef.current += 1;

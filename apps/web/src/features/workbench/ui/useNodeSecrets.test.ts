@@ -126,7 +126,7 @@ describe("useNodeSecrets", () => {
       1,
     );
     const hook = await renderHook(
-      ({ nodes }: { nodes: readonly WorkflowNode[] }) => useNodeSecrets(nodes),
+      ({ nodes }: { nodes: readonly WorkflowNode[] }) => useNodeSecrets("workspace-1", nodes),
       { nodes: [node] },
     );
 
@@ -153,7 +153,7 @@ describe("useNodeSecrets", () => {
       .mockReturnValueOnce(olderResponse.promise)
       .mockReturnValueOnce(newerResponse.promise);
     const hook = await renderHook(
-      ({ nodes }: { nodes: readonly WorkflowNode[] }) => useNodeSecrets(nodes),
+      ({ nodes }: { nodes: readonly WorkflowNode[] }) => useNodeSecrets("workspace-1", nodes),
       { nodes: [node] },
     );
 
@@ -202,7 +202,7 @@ describe("useNodeSecrets", () => {
     const response = deferred<GraphNodeSecrets>();
     api.getGraphNodeSecrets.mockReturnValue(response.promise);
     const hook = await renderHook(
-      ({ nodes }: { nodes: readonly WorkflowNode[] }) => useNodeSecrets(nodes),
+      ({ nodes }: { nodes: readonly WorkflowNode[] }) => useNodeSecrets("workspace-1", nodes),
       { nodes: [node] },
     );
 
@@ -235,7 +235,7 @@ describe("useNodeSecrets", () => {
     const response = deferred<GraphNodeSecrets>();
     api.getGraphNodeSecrets.mockReturnValue(response.promise);
     const hook = await renderHook(
-      ({ nodes }: { nodes: readonly WorkflowNode[] }) => useNodeSecrets(nodes),
+      ({ nodes }: { nodes: readonly WorkflowNode[] }) => useNodeSecrets("workspace-1", nodes),
       { nodes: [node] },
     );
 
@@ -281,7 +281,7 @@ describe("useNodeSecrets", () => {
       .mockReturnValueOnce(refreshResponse.promise);
     api.applyNodeSecret.mockReturnValue(applyResponse.promise);
     const hook = await renderHook(
-      ({ nodes }: { nodes: readonly WorkflowNode[] }) => useNodeSecrets(nodes),
+      ({ nodes }: { nodes: readonly WorkflowNode[] }) => useNodeSecrets("workspace-1", nodes),
       { nodes: [firstNode, otherNode] },
     );
 
@@ -361,7 +361,7 @@ describe("useNodeSecrets", () => {
     const applyResponse = deferred<AppliedNodeSecret>();
     api.applyNodeSecret.mockReturnValue(applyResponse.promise);
     const hook = await renderHook(
-      ({ nodes }: { nodes: readonly WorkflowNode[] }) => useNodeSecrets(nodes),
+      ({ nodes }: { nodes: readonly WorkflowNode[] }) => useNodeSecrets("workspace-1", nodes),
       { nodes: [node] },
     );
     await React.act(async () => {
@@ -382,6 +382,7 @@ describe("useNodeSecrets", () => {
     });
 
     expect(api.applyNodeSecret).toHaveBeenCalledWith(
+      "workspace-1",
       activeGraph.id,
       nodeId,
       secretName,
@@ -420,7 +421,7 @@ describe("useNodeSecrets", () => {
       graphSecrets(activeGraph, true),
     );
     const hook = await renderHook(
-      ({ nodes }: { nodes: readonly WorkflowNode[] }) => useNodeSecrets(nodes),
+      ({ nodes }: { nodes: readonly WorkflowNode[] }) => useNodeSecrets("workspace-1", nodes),
       { nodes: [node] },
     );
     await React.act(async () => {

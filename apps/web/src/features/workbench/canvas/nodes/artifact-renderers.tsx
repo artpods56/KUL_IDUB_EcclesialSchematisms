@@ -28,6 +28,7 @@ import {
   type TableQueryInput,
   type TableSchema,
 } from "@/lib/api";
+import { useWorkspaceContext } from "@/features/workspaces/WorkspaceLayout";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import type {
   ArtifactViewerEffect,
@@ -714,11 +715,14 @@ const imageRenderer: ArtifactRendererSpec = {
   matches: (artifact) =>
     artifact.content_type.startsWith("image/") && Boolean(artifact.content_url),
   Component: ({ artifact, mode }) => {
+    const { workspace } = useWorkspaceContext();
     if (mode === "meta") {
       return <PrettyValue value={artifactMeta(artifact)} />;
     }
     const url =
-      artifactContentUrl(artifact.content_url) ?? artifact.content_url ?? "";
+      artifactContentUrl(workspace.id, artifact.content_url) ??
+      artifact.content_url ??
+      "";
     return (
       /* eslint-disable-next-line @next/next/no-img-element -- artifact URLs are dynamic */
       <img
@@ -1002,6 +1006,7 @@ function TableArtifactRendererState({
   availableHeight?: number;
   interaction?: ArtifactViewerInteractionContext;
 }) {
+  const { workspace } = useWorkspaceContext();
   const [offset, setOffset] = React.useState(0);
   const [pageSize, setPageSize] = React.useState(DEFAULT_TABLE_PAGE_SIZE);
   const [visibleColumnIds, setVisibleColumnIds] =
@@ -1020,8 +1025,9 @@ function TableArtifactRendererState({
     error: tableSchemaError,
     mutate: retryTableSchema,
   } = useSWR(
-    ["table-artifact-schema", artifact.artifact_id] as const,
-    ([, artifactId]) => getArtifactTableSchema(artifactId),
+    ["table-artifact-schema", workspace.id, artifact.artifact_id] as const,
+    ([, workspaceId, artifactId]) =>
+      getArtifactTableSchema(workspaceId, artifactId),
   );
   const selectedColumnIds = React.useMemo(() => {
     if (!tableSchema) return [];
@@ -1066,6 +1072,7 @@ function TableArtifactRendererState({
   });
   const pageKey = [
     interactionQuery ? "table-artifact-query" : "table-artifact-page",
+    workspace.id,
     artifact.artifact_id,
     offset,
     pageSize,
@@ -1079,10 +1086,11 @@ function TableArtifactRendererState({
     mutate: retryPage,
   } = useSWR(
     tableSchema ? pageKey : null,
-    ([, artifactId, pageOffset]) =>
+    ([, workspaceId, artifactId, pageOffset]) =>
       interactionQuery
-        ? queryArtifactTablePage(artifactId, interactionQuery)
+        ? queryArtifactTablePage(workspaceId, artifactId, interactionQuery)
         : getArtifactTablePage(
+            workspaceId,
             artifactId,
             pageOffset,
             pageSize,
@@ -1094,6 +1102,7 @@ function TableArtifactRendererState({
   const cellKey = selectedCell
     ? [
         "table-artifact-cell",
+        workspace.id,
         artifact.artifact_id,
         selectedCell.rowIndex,
         selectedCell.columnId,
@@ -1103,8 +1112,8 @@ function TableArtifactRendererState({
     data: fullCell,
     error: fullCellError,
     isLoading: fullCellLoading,
-  } = useSWR(cellKey, ([, artifactId, rowIndex, columnId]) =>
-    getArtifactTableCell(artifactId, rowIndex, columnId),
+  } = useSWR(cellKey, ([, workspaceId, artifactId, rowIndex, columnId]) =>
+    getArtifactTableCell(workspaceId, artifactId, rowIndex, columnId),
   );
 
   React.useEffect(() => {
@@ -1167,7 +1176,7 @@ function TableArtifactRendererState({
   const viewportHeight = availableHeight
     ? Math.max(120, availableHeight - 92)
     : undefined;
-  const contentUrl = artifactContentUrl(artifact.content_url);
+  const contentUrl = artifactContentUrl(workspace.id, artifact.content_url);
   const fullCellText = fullCell
     ? tableCellText(fullCell.value)
     : "";
@@ -1232,6 +1241,7 @@ function TableArtifactRendererState({
       const cells = await Promise.all(
         requestedFields.map((fieldName) =>
           getArtifactTableCell(
+            workspace.id,
             artifact.artifact_id,
             rowIndex,
             fieldName,

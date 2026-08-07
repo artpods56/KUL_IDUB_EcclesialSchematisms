@@ -242,17 +242,19 @@ export interface ListGraphExecutionsOptions {
 }
 
 export function getSavedGraph(
+  workspaceId: string,
   graphId: string,
   signal?: AbortSignal,
 ) {
   return request<SavedGraph>(
     "GET",
-    `/v1/graphs/${encodeURIComponent(graphId)}`,
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/graphs/${encodeURIComponent(graphId)}`,
     { signal },
   );
 }
 
 export function getGraphMaterializations(
+  workspaceId: string,
   graphId: string,
   graphRevision: number,
   signal?: AbortSignal,
@@ -262,12 +264,13 @@ export function getGraphMaterializations(
   });
   return request<GraphMaterializations>(
     "GET",
-    `/v1/graphs/${encodeURIComponent(graphId)}/materializations?${query}`,
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/graphs/${encodeURIComponent(graphId)}/materializations?${query}`,
     { signal },
   );
 }
 
 export function listGraphExecutions(
+  workspaceId: string,
   graphId: string,
   options: ListGraphExecutionsOptions = {},
   signal?: AbortSignal,
@@ -282,35 +285,38 @@ export function listGraphExecutions(
   if (options.nodeId) query.set("node_id", options.nodeId);
   return request<GraphExecutionList>(
     "GET",
-    `/v1/graphs/${encodeURIComponent(graphId)}/executions?${query}`,
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/graphs/${encodeURIComponent(graphId)}/executions?${query}`,
     { signal },
   );
 }
 
 export function getGraphExecution(
+  workspaceId: string,
   graphId: string,
   executionId: string,
   signal?: AbortSignal,
 ) {
   return request<GraphExecutionDetail>(
     "GET",
-    `/v1/graphs/${encodeURIComponent(graphId)}/executions/${encodeURIComponent(executionId)}`,
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/graphs/${encodeURIComponent(graphId)}/executions/${encodeURIComponent(executionId)}`,
     { signal },
   );
 }
 
 export function getGraphNodeSecrets(
+  workspaceId: string,
   graphId: string,
   signal?: AbortSignal,
 ) {
   return request<GraphNodeSecrets>(
     "GET",
-    `/v1/graphs/${encodeURIComponent(graphId)}/node-secrets`,
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/graphs/${encodeURIComponent(graphId)}/node-secrets`,
     { signal },
   );
 }
 
 export function applyNodeSecret(
+  workspaceId: string,
   graphId: string,
   nodeId: string,
   name: string,
@@ -318,12 +324,13 @@ export function applyNodeSecret(
 ) {
   return request<AppliedNodeSecret>(
     "PUT",
-    `/v1/graphs/${encodeURIComponent(graphId)}/nodes/${encodeURIComponent(nodeId)}/secrets/${encodeURIComponent(name)}`,
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/graphs/${encodeURIComponent(graphId)}/nodes/${encodeURIComponent(nodeId)}/secrets/${encodeURIComponent(name)}`,
     { body: requestBody },
   );
 }
 
 export function removeNodeSecret(
+  workspaceId: string,
   graphId: string,
   nodeId: string,
   name: string,
@@ -334,28 +341,33 @@ export function removeNodeSecret(
   });
   return request<undefined>(
     "DELETE",
-    `/v1/graphs/${encodeURIComponent(graphId)}/nodes/${encodeURIComponent(nodeId)}/secrets/${encodeURIComponent(name)}?${query}`,
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/graphs/${encodeURIComponent(graphId)}/nodes/${encodeURIComponent(nodeId)}/secrets/${encodeURIComponent(name)}?${query}`,
   );
 }
 
-export function createSavedGraph(requestBody: CreateSavedGraphRequest) {
-  return request<CreateSavedGraphResponse>("POST", "/v1/graphs", {
+export function createSavedGraph(
+  workspaceId: string,
+  requestBody: CreateSavedGraphRequest,
+) {
+  return request<CreateSavedGraphResponse>("POST", `/v1/workspaces/${encodeURIComponent(workspaceId)}/graphs`, {
     body: requestBody,
   });
 }
 
 export function updateSavedGraph(
+  workspaceId: string,
   graphId: string,
   requestBody: UpdateSavedGraphRequest,
 ) {
   return request<SavedGraph>(
     "PUT",
-    `/v1/graphs/${encodeURIComponent(graphId)}`,
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/graphs/${encodeURIComponent(graphId)}`,
     { body: requestBody },
   );
 }
 
 export function deleteSavedGraph(
+  workspaceId: string,
   graphId: string,
   expectedRevision: number,
 ) {
@@ -364,49 +376,54 @@ export function deleteSavedGraph(
   });
   return request<undefined>(
     "DELETE",
-    `/v1/graphs/${encodeURIComponent(graphId)}?${query}`,
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/graphs/${encodeURIComponent(graphId)}?${query}`,
   );
 }
 
 export async function uploadFile(
+  workspaceId: string,
   file: File,
   signal?: AbortSignal,
 ): Promise<UploadResponse> {
   const body = new FormData();
   body.append("file", file, file.name);
-  return request<UploadResponse>("POST", "/v1/uploads", {
+  return request<UploadResponse>("POST", `/v1/workspaces/${encodeURIComponent(workspaceId)}/uploads`, {
     body,
     signal,
   });
 }
 
-export function runGraph(requestBody: RunRequest) {
-  return request<RunResponse>("POST", "/v1/runs", {
+export function runGraph(workspaceId: string, requestBody: RunRequest) {
+  return request<RunResponse>("POST", `/v1/workspaces/${encodeURIComponent(workspaceId)}/runs`, {
     body: requestBody,
   });
 }
 
-export function startRunExecution(requestBody: RunRequest) {
-  return request<RunExecution>("POST", "/v1/executions", {
+export function startRunExecution(
+  workspaceId: string,
+  requestBody: RunRequest,
+) {
+  return request<RunExecution>("POST", `/v1/workspaces/${encodeURIComponent(workspaceId)}/executions`, {
     body: requestBody,
   });
 }
 
-export function getRunExecution(executionId: string) {
+export function getRunExecution(workspaceId: string, executionId: string) {
   return request<RunExecution>(
     "GET",
-    `/v1/executions/${encodeURIComponent(executionId)}`,
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/executions/${encodeURIComponent(executionId)}`,
   );
 }
 
 export function subscribeRunExecutionEvents(
+  workspaceId: string,
   executionId: string,
   handlers: RunExecutionEventHandlers,
 ): RunExecutionEventSubscription {
   let source: EventSource;
   try {
     source = new EventSource(
-      `${API_BASE}/v1/executions/${encodeURIComponent(executionId)}/events`,
+      `${API_BASE}/v1/workspaces/${encodeURIComponent(workspaceId)}/executions/${encodeURIComponent(executionId)}/events`,
     );
   } catch (error) {
     handlers.onError(
@@ -452,14 +469,15 @@ export function subscribeRunExecutionEvents(
   };
 }
 
-export function cancelRunExecution(executionId: string) {
+export function cancelRunExecution(workspaceId: string, executionId: string) {
   return request<RunExecution>(
     "DELETE",
-    `/v1/executions/${encodeURIComponent(executionId)}`,
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/executions/${encodeURIComponent(executionId)}`,
   );
 }
 
 export function artifactContentUrl(
+  workspaceId: string,
   contentUrl: string | null | undefined,
 ): string | null {
   if (!contentUrl) return null;
@@ -470,12 +488,13 @@ export function artifactContentUrl(
 
   const resolved = new URL(
     contentUrl,
-    "https://notarius.invalid/api/v1/",
+    `https://notarius.invalid/api/v1/workspaces/${encodeURIComponent(workspaceId)}/`,
   );
   return `${resolved.pathname}${resolved.search}${resolved.hash}`;
 }
 
 export function getArtifactTablePage(
+  workspaceId: string,
   artifactId: string,
   offset: number,
   limit: number,
@@ -493,58 +512,63 @@ export function getArtifactTablePage(
   }
   return request<TablePage>(
     "GET",
-    `/v1/artifacts/${encodeURIComponent(artifactId)}/table/page?${query}`,
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}/table/page?${query}`,
     { signal },
   );
 }
 
 export function getArtifactTableSchema(
+  workspaceId: string,
   artifactId: string,
   signal?: AbortSignal,
 ) {
   return request<TableSchema>(
     "GET",
-    `/v1/artifacts/${encodeURIComponent(artifactId)}/table/schema`,
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}/table/schema`,
     { signal },
   );
 }
 
 export function queryArtifactTablePage(
+  workspaceId: string,
   artifactId: string,
   query: TableQueryInput,
   signal?: AbortSignal,
 ) {
   return request<TablePage>(
     "POST",
-    `/v1/artifacts/${encodeURIComponent(artifactId)}/table/query`,
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}/table/query`,
     { body: query, signal },
   );
 }
 
 export function getArtifactGeoRender(
+  workspaceId: string,
   artifactId: string,
   signal?: AbortSignal,
 ) {
   return request<GeoRenderDescriptor>(
     "GET",
-    `/v1/artifacts/${encodeURIComponent(artifactId)}/geo/render`,
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}/geo/render`,
     { signal },
   );
 }
 
 export function queryArtifactGeoFeatures(
+  workspaceId: string,
   artifactId: string,
   query: GeoFeatureQueryInput,
   signal?: AbortSignal,
 ) {
   return request<GeoFeatureQuery>(
     "POST",
-    `/v1/artifacts/${encodeURIComponent(artifactId)}/geo/query`,
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}/geo/query`,
     { body: query, signal },
   );
 }
 
 export function getArtifactTableCell(
+  workspaceId: string,
   artifactId: string,
   rowIndex: number,
   columnId: string,
@@ -556,7 +580,7 @@ export function getArtifactTableCell(
   });
   return request<TableCell>(
     "GET",
-    `/v1/artifacts/${encodeURIComponent(artifactId)}/table/cell?${query}`,
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}/table/cell?${query}`,
     { signal },
   );
 }

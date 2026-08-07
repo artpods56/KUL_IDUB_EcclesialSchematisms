@@ -77,6 +77,7 @@ function nodeExecutionIsTerminal(status: NodeExecutionStatus): boolean {
 }
 
 interface UseRunExecutionOptions {
+  workspaceId: string;
   registryAvailable: boolean;
   nodes: readonly WorkflowNode[];
   edges: readonly WorkflowEdge[];
@@ -94,6 +95,7 @@ interface UseRunExecutionOptions {
 }
 
 export function useRunExecution({
+  workspaceId,
   registryAvailable,
   nodes,
   edges,
@@ -262,6 +264,7 @@ export function useRunExecution({
     if (scope === "selected" && activeGraph && !isDirty) {
       try {
         const materializations = await getGraphMaterializations(
+          workspaceId,
           activeGraph.id,
           activeGraph.revision,
         );
@@ -421,7 +424,7 @@ export function useRunExecution({
             secret_graph_revision: activeGraph.revision,
           }
         : {};
-      let response = await startRunExecution({
+      let response = await startRunExecution(workspaceId, {
         ...requestPlan.request,
         ...graphContext,
         ...secretGraphContext,
@@ -483,6 +486,7 @@ export function useRunExecution({
 
         if (!eventSubscription) {
           eventSubscription = subscribeRunExecutionEvents(
+            workspaceId,
             response.execution_id,
             {
               onOpen: () => {
@@ -804,7 +808,7 @@ export function useRunExecution({
             return;
           }
           try {
-            const polledResponse = await getRunExecution(response.execution_id);
+            const polledResponse = await getRunExecution(workspaceId, response.execution_id);
             if (!mountedRef.current) return;
             if (polledResponse.execution_id !== guard.executionId) {
               pollStatusError =
@@ -1126,6 +1130,7 @@ export function useRunExecution({
     running,
     setNodes,
     setRunError,
+    workspaceId,
   ]);
 
   const runWorkflow = React.useCallback(async (scope: RunScope) => {
@@ -1190,7 +1195,7 @@ export function useRunExecution({
     });
 
     try {
-      const response = await cancelRunExecution(executionId);
+      const response = await cancelRunExecution(workspaceId, executionId);
       const currentGuard = executionGuardRef.current;
       if (
         !currentGuard ||
@@ -1311,7 +1316,7 @@ export function useRunExecution({
         currentGuard.cancelInFlight = false;
       }
     }
-  }, [isGraphSnapshotCurrent, setNodes]);
+  }, [isGraphSnapshotCurrent, setNodes, workspaceId]);
 
   return {
     running,

@@ -9,6 +9,7 @@ import {
   type ArtifactTypeSpec,
   type RunPortOutput,
 } from "@/lib/api";
+import { useWorkspaceContext } from "@/features/workspaces/WorkspaceLayout";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import type { ArtifactViewerInteractionContext } from "../artifact-interactions";
 import {
@@ -426,6 +427,7 @@ export function ArtifactPortPreview({
   onModeChoiceChange?: (mode: string) => void;
   interaction?: ArtifactViewerInteractionContext;
 }) {
+  const { workspace } = useWorkspaceContext();
   const artifacts = output.artifacts;
   const sequence = output.kind === "sequence";
   const [index, setIndex] = React.useState(0);
@@ -440,7 +442,7 @@ export function ArtifactPortPreview({
 
   const focusedIndex = Math.min(index, artifacts.length - 1);
   const active = artifacts[focusedIndex];
-  const activeContentUrl = artifactContentUrl(active.content_url);
+  const activeContentUrl = artifactContentUrl(workspace.id, active.content_url);
   const tableArtifact =
     active.artifact_type === "table.data" && active.schema_version === 1;
   const geoArtifact =
@@ -509,7 +511,7 @@ export function ArtifactPortPreview({
     ? artifacts.flatMap((artifact) => {
         const url =
           artifact.content_type === "application/json"
-            ? artifactContentUrl(artifact.content_url)
+            ? artifactContentUrl(workspace.id, artifact.content_url)
             : null;
         return url
           ? [{ artifactId: artifact.artifact_id, url }]

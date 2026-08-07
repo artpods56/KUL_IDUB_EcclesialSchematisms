@@ -129,6 +129,7 @@ function lifecycleOptions(
   });
   return {
     options: {
+      workspaceId: "workspace-1",
       workspaceSlug: "local",
       initialGraphId,
       registry,
@@ -169,12 +170,13 @@ async function waitFor(assertion: () => boolean): Promise<void> {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  api.getGraphMaterializations.mockImplementation((graphId, revision) =>
-    Promise.resolve({
-      graph_id: graphId,
-      graph_revision: revision,
-      node_runs: [],
-    }),
+  api.getGraphMaterializations.mockImplementation(
+    (_workspaceId, graphId, revision) =>
+      Promise.resolve({
+        graph_id: graphId,
+        graph_revision: revision,
+        node_runs: [],
+      }),
   );
 });
 
@@ -213,9 +215,12 @@ describe("useSavedGraphLifecycle document ownership", () => {
       await hook.result.current.saveCurrentGraph();
     });
 
-    expect(api.createSavedGraph).toHaveBeenCalledWith(expect.objectContaining({
-      nodes: [expect.objectContaining({ position: finalPosition })],
-    }));
+    expect(api.createSavedGraph).toHaveBeenCalledWith(
+      "workspace-1",
+      expect.objectContaining({
+        nodes: [expect.objectContaining({ position: finalPosition })],
+      }),
+    );
 
     expect(callbacks.replaceDocument).not.toHaveBeenCalled();
   });
@@ -280,7 +285,7 @@ describe("useSavedGraphLifecycle document ownership", () => {
     const graphA = savedGraph(GRAPH_A_ID, "Graph A");
     const graphB = savedGraph(GRAPH_B_ID, "Graph B");
     const graphASecrets = deferred<boolean>();
-    api.getSavedGraph.mockImplementation((graphId) =>
+    api.getSavedGraph.mockImplementation((_workspaceId, graphId) =>
       Promise.resolve(graphId === GRAPH_A_ID ? graphA : graphB),
     );
     const refreshSecrets = vi.fn((graph: { id: string }) =>
@@ -348,7 +353,7 @@ describe("useSavedGraphLifecycle document ownership", () => {
     const graphA = savedGraph(GRAPH_A_ID, "Graph A");
     const graphB = savedGraph(GRAPH_B_ID, "Graph B");
     const deleteResponse = deferred<void>();
-    api.getSavedGraph.mockImplementation((graphId) =>
+    api.getSavedGraph.mockImplementation((_workspaceId, graphId) =>
       Promise.resolve(graphId === GRAPH_A_ID ? graphA : graphB),
     );
     api.deleteSavedGraph.mockReturnValue(deleteResponse.promise);
@@ -387,7 +392,7 @@ describe("useSavedGraphLifecycle document ownership", () => {
     const graphA = savedGraph(GRAPH_A_ID, "Graph A");
     const secretRefresh = deferred<boolean>();
     let requestSignal: AbortSignal | undefined;
-    api.getSavedGraph.mockImplementation((_graphId, signal) => {
+    api.getSavedGraph.mockImplementation((_workspaceId, _graphId, signal) => {
       requestSignal = signal;
       return Promise.resolve(graphA);
     });

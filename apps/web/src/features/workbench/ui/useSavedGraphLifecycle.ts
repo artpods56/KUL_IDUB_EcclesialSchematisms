@@ -41,6 +41,7 @@ export interface ActiveSavedGraph {
 }
 
 interface UseSavedGraphLifecycleOptions {
+  workspaceId: string;
   workspaceSlug: string;
   initialGraphId: string | null;
   registry: NodeRegistry | undefined;
@@ -102,6 +103,7 @@ export interface UseSavedGraphLifecycleResult {
 const NEW_GRAPH_NAME = "Untitled workflow";
 
 export function useSavedGraphLifecycle({
+  workspaceId,
   workspaceSlug,
   initialGraphId,
   registry,
@@ -128,7 +130,7 @@ export function useSavedGraphLifecycle({
     isLoading: savedGraphsLoading,
     isValidating: savedGraphsRefreshing,
     mutate: mutateSavedGraphs,
-  } = useSavedGraphs();
+  } = useSavedGraphs(workspaceId);
   const [activeGraph, setActiveGraph] =
     React.useState<ActiveSavedGraph | null>(null);
   const [savedFingerprint, setSavedFingerprint] =
@@ -254,11 +256,11 @@ export function useSavedGraphLifecycle({
     setPersistenceError(null);
     try {
       const savedGraph = activeGraph
-        ? await updateSavedGraph(activeGraph.id, {
+        ? await updateSavedGraph(workspaceId, activeGraph.id, {
             ...submittedDraft,
             expected_revision: activeGraph.revision,
           })
-        : await createSavedGraph(submittedDraft);
+        : await createSavedGraph(workspaceId, submittedDraft);
       if (!mountedRef.current) return;
       void mutateSavedGraphs();
       void refreshNodeRegistry();
@@ -330,6 +332,7 @@ export function useSavedGraphLifecycle({
     refreshNodeSecretStatuses,
     router,
     saving,
+    workspaceId,
     workspaceSlug,
   ]);
 
@@ -366,7 +369,7 @@ export function useSavedGraphLifecycle({
     setOpeningGraphId(graphId);
     setPersistenceError(null);
     try {
-      const savedGraph = await getSavedGraph(graphId, controller.signal);
+      const savedGraph = await getSavedGraph(workspaceId, graphId, controller.signal);
       if (
         controller.signal.aborted ||
         !mountedRef.current ||
@@ -378,6 +381,7 @@ export function useSavedGraphLifecycle({
       let materializedNodeRuns: RunNodeResult[] = [];
       try {
         const materializations = await getGraphMaterializations(
+          workspaceId,
           graphId,
           savedGraph.revision,
           controller.signal,
@@ -477,6 +481,7 @@ export function useSavedGraphLifecycle({
     replaceDocument,
     requestCanvasRefit,
     router,
+    workspaceId,
     workspaceSlug,
   ]);
 
@@ -548,7 +553,7 @@ export function useSavedGraphLifecycle({
     setDeletingGraphId(graph.id);
     setPersistenceError(null);
     try {
-      await deleteSavedGraph(graph.id, expectedRevision);
+      await deleteSavedGraph(workspaceId, graph.id, expectedRevision);
       if (!mountedRef.current) return;
       onGraphDeleted?.(graph.id);
       void mutateSavedGraphs();
@@ -610,6 +615,7 @@ export function useSavedGraphLifecycle({
     refreshNodeRegistry,
     router,
     showBlankGraph,
+    workspaceId,
     workspaceSlug,
   ]);
 

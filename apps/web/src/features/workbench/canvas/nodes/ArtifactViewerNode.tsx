@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 
 import { useNodeRegistry } from "@/hooks/use-api";
+import { useWorkspaceContext } from "@/features/workspaces/WorkspaceLayout";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import {
   ARTIFACT_VIEWER_EDGE_TYPE,
@@ -324,7 +325,8 @@ export default function ArtifactViewerNodeCard({
   const outputRevision = renderableOutput?.artifacts
     .map((artifact) => artifact.artifact_id)
     .join(":") ?? "";
-  const { data: registry } = useNodeRegistry();
+  const { workspace } = useWorkspaceContext();
+  const { data: registry } = useNodeRegistry(workspace.id);
   const interaction = React.useMemo<ArtifactViewerInteractionContext>(
     () => ({
       outgoingFields: data.outgoingFields ?? [],

@@ -27,8 +27,23 @@ vi.mock("@/hooks/use-api", () => ({
   useNodeRegistry: () => ({ data: { artifact_types: [] } }),
 }));
 
+vi.mock("@/features/workspaces/WorkspaceLayout", () => ({
+  useWorkspaceContext: () => ({
+    workspace: {
+      id: "workspace-1",
+      slug: "local",
+      name: "Local",
+      kind: "personal",
+      role: "owner",
+      capabilities: [],
+    },
+    workspaces: [],
+    refreshWorkspaces: async () => undefined,
+  }),
+}));
+
 vi.mock("@/lib/api", () => ({
-  artifactContentUrl: (value: string | null | undefined) => value ?? null,
+  artifactContentUrl: (_workspaceId: string, value: string | null | undefined) => value ?? null,
   getGraphExecution: apiMocks.getGraphExecution,
   listGraphExecutions: apiMocks.listGraphExecutions,
 }));
@@ -116,6 +131,7 @@ async function renderDrawer(
   mountedRoots.set(root, container);
   const swrConfig = { provider: () => cache, dedupingInterval: 0 };
   let currentProps: React.ComponentProps<typeof ExecutionHistoryDrawer> = {
+    workspaceId: "workspace-1",
     graphId: "graph-1",
     graphName: "Invoices",
     nodeId: null,
@@ -185,10 +201,12 @@ describe("ExecutionHistoryDrawer", () => {
       );
     });
     expect(apiMocks.listGraphExecutions).toHaveBeenCalledWith(
+      "workspace-1",
       "graph-1",
       { limit: 20, nodeId: undefined },
     );
     expect(apiMocks.getGraphExecution).toHaveBeenCalledWith(
+      "workspace-1",
       "graph-1",
       "execution-1",
     );
@@ -208,6 +226,7 @@ describe("ExecutionHistoryDrawer", () => {
       );
     });
     expect(apiMocks.listGraphExecutions).toHaveBeenCalledWith(
+      "workspace-1",
       "graph-1",
       { limit: 20, nodeId: "node-1" },
     );
@@ -233,6 +252,7 @@ describe("ExecutionHistoryDrawer", () => {
 
     await vi.waitFor(() => {
       expect(apiMocks.getGraphExecution).toHaveBeenCalledWith(
+        "workspace-1",
         "graph-1",
         "execution-requested",
       );
@@ -268,6 +288,7 @@ describe("ExecutionHistoryDrawer", () => {
     await vi.waitFor(() => expect(container.textContent).toContain("execution-2"));
     expect(apiMocks.listGraphExecutions).toHaveBeenNthCalledWith(
       3,
+      "workspace-1",
       "graph-1",
       { limit: 20, cursor: "page-2", nodeId: undefined },
     );

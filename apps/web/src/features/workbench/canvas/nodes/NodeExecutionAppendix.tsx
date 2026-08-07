@@ -244,6 +244,7 @@ type NodeHistoryKey = readonly [
   string,
   string,
   string,
+  string,
 ];
 
 export interface NodeExecutionAppendixProps {
@@ -310,16 +311,17 @@ function historyTimestamp(row: NodeHistoryRow): string {
 
 async function loadNodeHistory([
   ,
+  workspaceId,
   graphId,
   nodeId,
 ]: NodeHistoryKey): Promise<NodeHistoryResult> {
-  const executionList = await listGraphExecutions(graphId, {
+  const executionList = await listGraphExecutions(workspaceId, graphId, {
     limit: 5,
     nodeId,
   });
   const details = await Promise.all(
     executionList.items.map((item) =>
-      getGraphExecution(graphId, item.execution_id)
+      getGraphExecution(workspaceId, graphId, item.execution_id)
     ),
   );
   const rows: NodeHistoryRow[] = [];
@@ -586,6 +588,7 @@ export function NodeExecutionAppendix({
     (total, output) => total + output.artifacts.length,
     0,
   );
+  const workspaceId = historyContext?.workspaceId ?? null;
   const graphId = historyContext?.graphId ?? null;
   const isDirty = historyContext?.isDirty ?? true;
   const runArtifactRevision = JSON.stringify(
@@ -593,9 +596,10 @@ export function NodeExecutionAppendix({
       output.artifacts.map((artifact) => artifact.artifact_id)
     ),
   );
-  const historyKey: NodeHistoryKey | null = expanded && graphId
+  const historyKey: NodeHistoryKey | null = expanded && workspaceId && graphId
     ? [
         "node-execution-appendix-history",
+        workspaceId,
         graphId,
         nodeId,
         runArtifactRevision,

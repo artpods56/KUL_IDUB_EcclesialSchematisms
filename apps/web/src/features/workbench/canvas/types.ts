@@ -174,6 +174,7 @@ export interface WorkflowNodeProgress {
 }
 
 export interface WorkflowNodeHistoryContext {
+  workspaceId: string;
   graphId: string | null;
   isDirty: boolean;
 }

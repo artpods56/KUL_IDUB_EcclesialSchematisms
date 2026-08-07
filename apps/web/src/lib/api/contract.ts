@@ -115,9 +115,9 @@ export type GraphExecutionSummary =
 export type GraphExecutionNodeResult =
   Schemas["GraphExecutionNodeResultResponse"];
 export type GraphExecutionDetail =
-  paths["/v1/graphs/{graph_id}/executions/{execution_id}"]["get"]["responses"][200]["content"]["application/json"];
+  paths["/v1/workspaces/{workspace_id}/graphs/{graph_id}/executions/{execution_id}"]["get"]["responses"][200]["content"]["application/json"];
 export type GraphExecutionList =
-  paths["/v1/graphs/{graph_id}/executions"]["get"]["responses"][200]["content"]["application/json"];
+  paths["/v1/workspaces/{workspace_id}/graphs/{graph_id}/executions"]["get"]["responses"][200]["content"]["application/json"];
 export type GraphMaterializations =
   Schemas["GraphMaterializationsResponse"];
 export type SavedGraphNode = Schemas["SavedGraphNodeModel-Output"];
@@ -131,26 +131,26 @@ export type ApplyNodeSecretRequest = Schemas["ConfigureNodeSecretRequest"];
 export type AppliedNodeSecret = NodeSecretStatus;
 
 export type NodeRegistry =
-  paths["/v1/nodes"]["get"]["responses"][200]["content"]["application/json"];
+  paths["/v1/workspaces/{workspace_id}/nodes"]["get"]["responses"][200]["content"]["application/json"];
 export type UnavailableGraphModule =
   Schemas["UnavailableGraphModuleResponse"];
 export type UploadResponse =
-  paths["/v1/uploads"]["post"]["responses"][200]["content"]["application/json"];
+  paths["/v1/workspaces/{workspace_id}/uploads"]["post"]["responses"][200]["content"]["application/json"];
 export type RunScopeInput = Schemas["GraphExecutionScope"];
 export type RunRequest =
-  paths["/v1/runs"]["post"]["requestBody"]["content"]["application/json"];
+  paths["/v1/workspaces/{workspace_id}/runs"]["post"]["requestBody"]["content"]["application/json"];
 export type RunResponse =
-  paths["/v1/runs"]["post"]["responses"][200]["content"]["application/json"];
+  paths["/v1/workspaces/{workspace_id}/runs"]["post"]["responses"][200]["content"]["application/json"];
 export type SavedGraphList =
-  paths["/v1/graphs"]["get"]["responses"][200]["content"]["application/json"];
+  paths["/v1/workspaces/{workspace_id}/graphs"]["get"]["responses"][200]["content"]["application/json"];
 export type CreateSavedGraphRequest =
-  paths["/v1/graphs"]["post"]["requestBody"]["content"]["application/json"];
+  paths["/v1/workspaces/{workspace_id}/graphs"]["post"]["requestBody"]["content"]["application/json"];
 export type CreateSavedGraphResponse =
-  paths["/v1/graphs"]["post"]["responses"][201]["content"]["application/json"];
+  paths["/v1/workspaces/{workspace_id}/graphs"]["post"]["responses"][201]["content"]["application/json"];
 export type SavedGraph =
-  paths["/v1/graphs/{graph_id}"]["get"]["responses"][200]["content"]["application/json"];
+  paths["/v1/workspaces/{workspace_id}/graphs/{graph_id}"]["get"]["responses"][200]["content"]["application/json"];
 export type UpdateSavedGraphRequest =
-  paths["/v1/graphs/{graph_id}"]["put"]["requestBody"]["content"]["application/json"];
+  paths["/v1/workspaces/{workspace_id}/graphs/{graph_id}"]["put"]["requestBody"]["content"]["application/json"];
 
 export type PortDirection = Port["direction"];
 export type PortShape = Port["shape"];

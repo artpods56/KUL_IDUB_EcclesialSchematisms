@@ -198,7 +198,7 @@ export function Workbench({
     data: registry,
     error: registryError,
     mutate: refreshNodeRegistry,
-  } = useNodeRegistry();
+  } = useNodeRegistry(workspaceId);
   const { preference, cycleTheme } = useTheme();
   const [authoringState, dispatchAuthoringState] = React.useReducer(
     reduceWorkbenchAuthoringState,
@@ -321,7 +321,7 @@ export function Workbench({
     removeConfiguredNodeSecret,
     clearGraphSecretStatuses,
     forgetNodeSecretStatuses,
-  } = useNodeSecrets(nodes);
+  } = useNodeSecrets(workspaceId, nodes);
   const [flow, setFlow] = React.useState<
     ReactFlowInstance<CanvasNode, CanvasEdge>
   >();
@@ -688,7 +688,9 @@ export function Workbench({
     }));
     setRunError(null);
     try {
-      const uploads = await Promise.all(files.map((file) => uploadFile(file)));
+      const uploads = await Promise.all(
+        files.map((file) => uploadFile(workspaceId, file)),
+      );
       applyAuthoringCommands([{
         kind: "update_node_configuration",
         node_id: nodeId,
@@ -702,7 +704,7 @@ export function Workbench({
         data: { ...node.data, execution: { status: "failed", error: message } },
       } : node));
     }
-  }, [applyAuthoringCommands, edges, setNodes]);
+  }, [applyAuthoringCommands, edges, setNodes, workspaceId]);
 
   const resetNodeArtifactTypeBinding = React.useCallback(
     (nodeId: string, variable: string) => {
@@ -877,6 +879,7 @@ export function Workbench({
     removeSavedGraph,
     isGraphSnapshotCurrent,
   } = useSavedGraphLifecycle({
+    workspaceId,
     workspaceSlug,
     initialGraphId,
     registry,
@@ -904,6 +907,7 @@ export function Workbench({
     runWorkflow,
     cancelCurrentExecution,
   } = useRunExecution({
+    workspaceId,
     registryAvailable: Boolean(registry),
     nodes,
     edges,
@@ -1852,6 +1856,7 @@ export function Workbench({
           data: {
             ...attachNodeCallbacks(node.data),
             historyContext: {
+              workspaceId,
               graphId: activeGraph?.id ?? null,
               isDirty,
             },
@@ -1892,6 +1897,7 @@ export function Workbench({
       nodes,
       registry,
       removeConfiguredNodeSecret,
+      workspaceId,
     ],
   );
 
@@ -2467,6 +2473,7 @@ export function Workbench({
       {executionHistoryTarget ? (
         <ExecutionHistoryDrawer
           key={`${activeGraph?.id ?? "unsaved"}:${executionHistoryTarget.nodeId ?? "all"}:${executionHistoryTarget.executionId ?? "latest"}`}
+          workspaceId={workspaceId}
           graphId={activeGraph?.id ?? null}
           graphName={graphName}
           nodeId={executionHistoryTarget.nodeId}

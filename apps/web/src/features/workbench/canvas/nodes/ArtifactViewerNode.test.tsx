@@ -48,6 +48,21 @@ vi.mock("@/hooks/use-api", () => ({
   useNodeRegistry: () => ({ data: { artifact_types: [] } }),
 }));
 
+vi.mock("@/features/workspaces/WorkspaceLayout", () => ({
+  useWorkspaceContext: () => ({
+    workspace: {
+      id: "workspace-1",
+      slug: "local",
+      name: "Local",
+      kind: "personal",
+      role: "owner",
+      capabilities: [],
+    },
+    workspaces: [],
+    refreshWorkspaces: async () => undefined,
+  }),
+}));
+
 vi.mock("./ArtifactsAppendix", () => ({
   ArtifactPortPreview: (props: {
     output: { port: string; kind: "single" | "sequence" };
