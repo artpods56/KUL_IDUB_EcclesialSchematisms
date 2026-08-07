@@ -297,6 +297,7 @@ class EdgeValueResolver:
             source_value = await self._resolvers.resolve(
                 ref=ref,
                 target=first_conversion.source_type,
+                workspace_id=workspace_id,
             )
             converted_value: object = _validated_conversion_value(
                 source_value,

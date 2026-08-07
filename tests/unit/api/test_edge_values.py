@@ -269,7 +269,8 @@ async def test_projection_precedes_conversion_and_preserves_sequence_context(
     assert isinstance(converted, ArtifactRefSequence)
     text_resolver = TextValueResolver(uow=unit_of_work)
     assert [
-        await text_resolver.resolve(item_ref) for item_ref in converted.item_refs
+        await text_resolver.resolve(item_ref, WORKSPACE_ID)
+        for item_ref in converted.item_refs
     ] == ["7", "12"]
     assert converted.ordered is False
     assert converted.index_key == "page_number"
