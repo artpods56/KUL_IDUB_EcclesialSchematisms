@@ -19,8 +19,10 @@ from notarius_core.domain.collaboration import (
     empty_collaborative_document,
 )
 from notarius_core.domain.errors import (
+    CollaborationActiveExecutionError,
     CollaborationHeadConflictError,
     CollaborationIdempotencyMismatchError,
+    CollaborationUncheckpointedError,
     ConcurrentWriteError,
     MissingCollaborativeHeadError,
     NotFoundError,
@@ -471,6 +473,188 @@ class CollaborationService:
                     actual_revision=None,
                 ) from exc
         return head, graph.revision
+
+    async def replace_complete_document(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        graph_id: UUID,
+        name: str,
+        document: SavedGraphDocument,
+        expected_revision: int,
+    ) -> tuple[SavedGraph, CollaborativeGraphHead]:
+        async with self._unit_of_work_factory() as unit_of_work:
+            access = await self._require_capability(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+                capability=WorkspaceCapability.EDIT_GRAPH,
+            )
+            # Fixed lock order: saved-graph row, then collaborative head.
+            await unit_of_work.graphs.lock_revision(
+                workspace_id,
+                graph_id,
+                expected_revision,
+            )
+            graph = await unit_of_work.graphs.get(workspace_id, graph_id)
+            if graph is None:
+                raise NotFoundError("Saved graph", str(graph_id))
+            head = await unit_of_work.collaboration.lock_head(workspace_id, graph_id)
+            if head is None:
+                raise MissingCollaborativeHeadError(
+                    workspace_id=workspace_id,
+                    graph_id=graph_id,
+                )
+            if not head.is_fully_checkpointed:
+                raise CollaborationUncheckpointedError(
+                    workspace_id=workspace_id,
+                    graph_id=graph_id,
+                    head_sequence=head.collaboration_sequence,
+                    checkpoint_sequence=head.checkpoint_sequence,
+                )
+            if (
+                graph.revision != expected_revision
+                or head.checkpoint_revision != expected_revision
+            ):
+                raise SavedGraphRevisionConflictError(
+                    graph_id=graph_id,
+                    expected_revision=expected_revision,
+                    actual_revision=graph.revision,
+                )
+            await self._saved_graphs.apply_replacement_in_unit_of_work(
+                unit_of_work,
+                graph,
+                name=name,
+                document=document,
+                expected_revision=expected_revision,
+                physically_remove_orphaned_secrets=access.membership.grants(
+                    WorkspaceCapability.MANAGE_SECRETS
+                ),
+            )
+            room_epoch = uuid4()
+            head.room_epoch = room_epoch
+            head.collaboration_sequence = 0
+            head.checkpoint_sequence = 0
+            head.checkpoint_revision = graph.revision
+            head.name = graph.name
+            head.document = graph.document
+            head.updated_at = graph.updated_at
+            mapping = GraphCheckpointMapping(
+                workspace_id=workspace_id,
+                graph_id=graph_id,
+                room_epoch=room_epoch,
+                collaboration_sequence=0,
+                saved_revision=graph.revision,
+            )
+            await unit_of_work.collaboration.save_head(head)
+            await unit_of_work.collaboration.add_checkpoint_mapping(mapping)
+            await unit_of_work.security_audit.add(
+                SecurityAuditEvent(
+                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                    user_id=actor.user_id,
+                    credential_reference=actor.credential_reference,
+                    operation="collaboration.graph.replace",
+                    outcome=SecurityAuditOutcome.SUCCESS,
+                    workspace_id=workspace_id,
+                    resource_type="saved_graph",
+                    resource_id=str(graph_id),
+                )
+            )
+            try:
+                await unit_of_work.commit()
+            except ConcurrentWriteError as exc:
+                raise SavedGraphRevisionConflictError(
+                    graph_id=graph_id,
+                    expected_revision=expected_revision,
+                    actual_revision=None,
+                ) from exc
+        return graph, head
+
+    async def delete_graph(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        graph_id: UUID,
+        expected_revision: int,
+        expected_room_epoch: UUID | None = None,
+        expected_sequence: int | None = None,
+    ) -> None:
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_capability(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+                capability=WorkspaceCapability.DELETE_GRAPH,
+            )
+            # Fixed lock order: saved-graph row, then collaborative head.
+            await unit_of_work.graphs.lock_revision(
+                workspace_id,
+                graph_id,
+                expected_revision,
+            )
+            graph = await unit_of_work.graphs.get(workspace_id, graph_id)
+            if graph is None:
+                raise NotFoundError("Saved graph", str(graph_id))
+            graph.ensure_revision(expected_revision)
+            head = await unit_of_work.collaboration.lock_head(workspace_id, graph_id)
+            if head is None:
+                raise MissingCollaborativeHeadError(
+                    workspace_id=workspace_id,
+                    graph_id=graph_id,
+                )
+            active_slot = await unit_of_work.collaboration.get_active_execution_slot(
+                workspace_id,
+                graph_id,
+            )
+            if active_slot is not None:
+                raise CollaborationActiveExecutionError(
+                    workspace_id=workspace_id,
+                    graph_id=graph_id,
+                    execution_id=active_slot.execution_id,
+                )
+            if expected_room_epoch is not None and expected_sequence is not None:
+                if (
+                    head.room_epoch != expected_room_epoch
+                    or head.collaboration_sequence != expected_sequence
+                ):
+                    raise CollaborationHeadConflictError(
+                        workspace_id=workspace_id,
+                        graph_id=graph_id,
+                        expected_sequence=expected_sequence,
+                        actual_sequence=head.collaboration_sequence,
+                        room_epoch=head.room_epoch,
+                    )
+            elif not head.is_fully_checkpointed:
+                raise CollaborationUncheckpointedError(
+                    workspace_id=workspace_id,
+                    graph_id=graph_id,
+                    head_sequence=head.collaboration_sequence,
+                    checkpoint_sequence=head.checkpoint_sequence,
+                )
+            await unit_of_work.collaboration.remove_head(workspace_id, graph_id)
+            await unit_of_work.graphs.remove(workspace_id, graph)
+            await unit_of_work.security_audit.add(
+                SecurityAuditEvent(
+                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                    user_id=actor.user_id,
+                    credential_reference=actor.credential_reference,
+                    operation="collaboration.graph.delete",
+                    outcome=SecurityAuditOutcome.SUCCESS,
+                    workspace_id=workspace_id,
+                    resource_type="saved_graph",
+                    resource_id=str(graph_id),
+                )
+            )
+            try:
+                await unit_of_work.commit()
+            except ConcurrentWriteError as exc:
+                raise SavedGraphRevisionConflictError(
+                    graph_id=graph_id,
+                    expected_revision=expected_revision,
+                    actual_revision=None,
+                ) from exc
 
     async def _require_capability(
         self,

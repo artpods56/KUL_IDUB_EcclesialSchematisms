@@ -435,6 +435,8 @@ class SqlSavedGraphRepository(SavedGraphRepositoryPort):
     @override
     async def add(self, graph: SavedGraph) -> None:
         self._session.add(graph)
+        # Collaborative heads FK to saved_graphs; flush so later head inserts see the row.
+        await self._session.flush()
 
     @override
     async def add_revision(self, revision: SavedGraphRevision) -> None:
@@ -448,6 +450,8 @@ class SqlSavedGraphRepository(SavedGraphRepositoryPort):
                 created_at=revision.created_at,
             ),
         )
+        # Checkpoint mappings FK to revisions; flush before collaboration Core inserts.
+        await self._session.flush()
 
     @override
     async def lock_revision(
@@ -1293,6 +1297,8 @@ class SqlCollaborationRepository:
         )
 
     async def add_journal_entry(self, entry: GraphCommandJournalEntry) -> None:
+        # Core inserts must see pending ORM parents (heads) in the same unit.
+        await self._session.flush()
         await self._session.execute(
             insert(schema.graph_command_journal).values(
                 workspace_id=entry.workspace_id,
@@ -1332,6 +1338,7 @@ class SqlCollaborationRepository:
         return GraphCommandReceipt.model_validate(dict(row))
 
     async def add_receipt(self, receipt: GraphCommandReceipt) -> None:
+        await self._session.flush()
         await self._session.execute(
             insert(schema.graph_command_receipts).values(
                 workspace_id=receipt.workspace_id,
@@ -1375,6 +1382,8 @@ class SqlCollaborationRepository:
         self,
         mapping: GraphCheckpointMapping,
     ) -> None:
+        # Mapping FKs target heads and revisions that may still be pending ORM adds.
+        await self._session.flush()
         await self._session.execute(
             insert(schema.graph_checkpoint_mappings).values(
                 workspace_id=mapping.workspace_id,

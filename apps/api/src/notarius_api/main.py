@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
+from notarius_core.application.collaboration import CollaborationService
 from notarius_core.application.saved_graphs import SavedGraphService
 from notarius_core.application.identity import IdentityService
 from notarius_core.domain.errors import (
@@ -256,6 +257,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             lambda: SqlAlchemySavedGraphUnitOfWork(database.sessions),
             registry,
         )
+        collaboration = CollaborationService(
+            lambda: SqlAlchemyUnitOfWork(database.sessions),
+            registry,
+            command_hmac_key=resolved_settings.resolved_command_hmac_key(),
+            command_hmac_key_version=resolved_settings.command_hmac_key_version,
+            saved_graphs=saved_graphs,
+        )
         node_secrets = NodeSecretService(
             unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
             plugin_registry=registry,
@@ -288,6 +296,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.run_result_presenter = components.presenter
         app.state.artifacts = components.artifacts
         app.state.saved_graphs = saved_graphs
+        app.state.collaboration = collaboration
         app.state.node_secrets = node_secrets
 
         async def cleanup_expired_auth_data() -> None:
@@ -313,6 +322,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await components.execution_manager.shutdown()
             await components.artifacts.close()
             del app.state.node_secrets
+            del app.state.collaboration
             del app.state.saved_graphs
             del app.state.artifacts
             del app.state.run_result_presenter

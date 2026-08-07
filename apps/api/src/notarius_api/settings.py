@@ -69,6 +69,8 @@ class Settings(BaseSettings):
     s3_secret_access_key: SecretStr | None = None
     s3_force_path_style: bool = False
     credential_encryption_key: SecretStr | None = None
+    command_hmac_key: SecretStr | None = None
+    command_hmac_key_version: int = Field(default=1, ge=1)
 
     @field_validator("public_origin", "oidc_issuer")
     @classmethod
@@ -147,6 +149,18 @@ class Settings(BaseSettings):
     @property
     def oidc_is_configured(self) -> bool:
         return self.oidc_issuer is not None
+
+    def resolved_command_hmac_key(self) -> bytes:
+        """Return the deployment HMAC key, failing closed when unset or empty."""
+        configured = self.command_hmac_key
+        if configured is None:
+            raise ValueError(
+                "NOTARIUS_COMMAND_HMAC_KEY must be configured for collaboration"
+            )
+        value = configured.get_secret_value()
+        if value == "":
+            raise ValueError("NOTARIUS_COMMAND_HMAC_KEY must not be empty")
+        return value.encode("utf-8")
 
 
 @lru_cache

@@ -95,3 +95,28 @@ def test_credential_encryption_key_is_redacted_from_serialized_settings() -> Non
 
     assert encryption_key not in repr(settings)
     assert encryption_key not in str(settings.model_dump())
+
+
+def test_command_hmac_key_is_redacted_and_resolved() -> None:
+    hmac_key = "sensitive-command-hmac-key"
+    settings = Settings(
+        command_hmac_key=SecretStr(hmac_key),
+        command_hmac_key_version=2,
+    )
+
+    assert settings.resolved_command_hmac_key() == hmac_key.encode("utf-8")
+    assert settings.command_hmac_key_version == 2
+    assert hmac_key not in repr(settings)
+    assert hmac_key not in str(settings.model_dump())
+
+
+def test_command_hmac_key_fails_closed_when_missing() -> None:
+    settings = Settings(command_hmac_key=None)
+    with pytest.raises(ValueError, match="NOTARIUS_COMMAND_HMAC_KEY"):
+        settings.resolved_command_hmac_key()
+
+
+def test_command_hmac_key_fails_closed_when_empty() -> None:
+    settings = Settings(command_hmac_key=SecretStr(""))
+    with pytest.raises(ValueError, match="must not be empty"):
+        settings.resolved_command_hmac_key()

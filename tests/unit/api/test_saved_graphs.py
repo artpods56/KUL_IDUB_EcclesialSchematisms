@@ -1,7 +1,15 @@
+import asyncio
 from typing import cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
+import pytest
+
+from notarius_core.domain.collaboration import RenameGraphCommand
+from notarius_core.domain.errors import NotFoundError
+from notarius_core.domain.identity import ActorContext
+
+from .conftest import TEST_USER_ID, WORKSPACE_ID, workspace_api_path
 
 
 def _graph_payload(name: str = "Draft graph") -> dict[str, object]:
@@ -327,3 +335,137 @@ def test_name_length_is_checked_after_whitespace_normalization(
 
     assert response.status_code == 201
     assert response.json()["name"] == "x" * 160
+
+
+def test_http_create_bootstraps_collaborative_head(
+    builtin_client: TestClient,
+) -> None:
+    response = builtin_client.post(
+        workspace_api_path("/graphs"),
+        json=_graph_payload("Bootstrapped"),
+    )
+    assert response.status_code == 201
+    created = response.json()
+    graph_id = UUID(created["id"])
+    assert created["revision"] == 1
+
+    head = asyncio.run(
+        builtin_client.app.state.collaboration.initialize_head_for_existing_graph(
+            workspace_id=WORKSPACE_ID,
+            graph_id=graph_id,
+        )
+    )
+
+    assert head.collaboration_sequence == 1
+    assert head.checkpoint_sequence == 1
+    assert head.checkpoint_revision == 1
+    assert head.name == "Bootstrapped"
+
+
+def test_http_replace_resets_collaborative_epoch_when_checkpointed(
+    builtin_client: TestClient,
+) -> None:
+    created = builtin_client.post(
+        workspace_api_path("/graphs"),
+        json=_graph_payload("Before replace"),
+    ).json()
+    graph_id = UUID(created["id"])
+    prior_head = asyncio.run(
+        builtin_client.app.state.collaboration.initialize_head_for_existing_graph(
+            workspace_id=WORKSPACE_ID,
+            graph_id=graph_id,
+        )
+    )
+    prior_epoch = prior_head.room_epoch
+
+    payload = _graph_payload("After replace")
+    payload["expected_revision"] = created["revision"]
+    response = builtin_client.put(
+        workspace_api_path(f"/graphs/{graph_id}"),
+        json=payload,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["revision"] == 2
+    assert response.json()["name"] == "After replace"
+
+    head = asyncio.run(
+        builtin_client.app.state.collaboration.initialize_head_for_existing_graph(
+            workspace_id=WORKSPACE_ID,
+            graph_id=graph_id,
+        )
+    )
+    assert head.room_epoch != prior_epoch
+    assert head.collaboration_sequence == 0
+    assert head.checkpoint_sequence == 0
+    assert head.checkpoint_revision == 2
+    assert head.name == "After replace"
+
+
+def test_http_replace_rejects_uncheckpointed_head(
+    builtin_client: TestClient,
+) -> None:
+    created = builtin_client.post(
+        workspace_api_path("/graphs"),
+        json=_graph_payload("Live draft"),
+    ).json()
+    graph_id = UUID(created["id"])
+    collaboration = builtin_client.app.state.collaboration
+    head = asyncio.run(
+        collaboration.initialize_head_for_existing_graph(
+            workspace_id=WORKSPACE_ID,
+            graph_id=graph_id,
+        )
+    )
+    asyncio.run(
+        collaboration.accept_command(
+            actor=ActorContext(
+                user_id=TEST_USER_ID,
+                credential_reference="test-session",
+            ),
+            workspace_id=WORKSPACE_ID,
+            graph_id=graph_id,
+            command_id=uuid4(),
+            observed_sequence=head.collaboration_sequence,
+            observed_room_epoch=head.room_epoch,
+            command=RenameGraphCommand(name="Uncheckpointed"),
+        )
+    )
+
+    payload = _graph_payload("Should fail")
+    payload["expected_revision"] = created["revision"]
+    response = builtin_client.put(
+        workspace_api_path(f"/graphs/{graph_id}"),
+        json=payload,
+    )
+
+    assert response.status_code == 409
+    assert "uncheckpointed" in response.json()["detail"].lower()
+
+
+def test_http_delete_removes_collaborative_head(
+    builtin_client: TestClient,
+) -> None:
+    created = builtin_client.post(
+        workspace_api_path("/graphs"),
+        json=_graph_payload("Delete me"),
+    ).json()
+    graph_id = UUID(created["id"])
+
+    response = builtin_client.delete(
+        workspace_api_path(f"/graphs/{graph_id}"),
+        params={"expected_revision": created["revision"]},
+    )
+    assert response.status_code == 204
+    assert (
+        builtin_client.get(workspace_api_path(f"/graphs/{graph_id}")).status_code
+        == 404
+    )
+
+    with pytest.raises(NotFoundError):
+        asyncio.run(
+            builtin_client.app.state.collaboration.initialize_head_for_existing_graph(
+                workspace_id=WORKSPACE_ID,
+                graph_id=graph_id,
+            )
+        )

@@ -67,6 +67,13 @@ from notarius_storage import LocalFileObjectStore
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
 TEST_USER_ID = UUID(int=1)
+TEST_COMMAND_HMAC_KEY = "test-api-command-hmac-key"
+
+
+@pytest.fixture(autouse=True)
+def _configure_command_hmac_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOTARIUS_COMMAND_HMAC_KEY", TEST_COMMAND_HMAC_KEY)
+    monkeypatch.setenv("NOTARIUS_COMMAND_HMAC_KEY_VERSION", "1")
 
 
 def workspace_api_path(suffix: str) -> str:

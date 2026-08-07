@@ -158,3 +158,22 @@ class CollaborationUncheckpointedError(CollaborationError):
             f"commands at sequence {head_sequence} "
             f"(checkpointed through {checkpoint_sequence})"
         )
+
+
+class CollaborationActiveExecutionError(CollaborationError):
+    error_code = "active_execution"
+
+    def __init__(
+        self,
+        *,
+        workspace_id: UUID,
+        graph_id: UUID,
+        execution_id: UUID,
+    ) -> None:
+        self.workspace_id = workspace_id
+        self.graph_id = graph_id
+        self.execution_id = execution_id
+        super().__init__(
+            f"Graph {graph_id} in workspace {workspace_id} has active execution "
+            f"{execution_id}"
+        )
