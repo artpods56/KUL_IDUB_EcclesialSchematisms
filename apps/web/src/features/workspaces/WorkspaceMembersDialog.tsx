@@ -13,14 +13,15 @@ import {
 import { useWorkspaceMembers } from "@/hooks/use-api";
 import { useAuthSession } from "@/features/auth/AuthSessionBoundary";
 import { useWorkspaceContext } from "./WorkspaceLayout";
-import { executeMemberMutation } from "./workspace-member-mutation";
+import { executeMemberMutation, MemberListRefreshError } from "./workspace-member-mutation";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const roles: readonly WorkspaceRole[] = ["viewer", "editor", "owner"];
 
 function operationError(error: unknown): string {
+  if (error instanceof MemberListRefreshError) return "Change saved, but member list refresh failed.";
   if (!(error instanceof ApiError)) return "The member change could not be completed.";
-  if (error.status === 403) return "Permission changed. Refreshing workspace capabilities; the denied change was not retried.";
+  if (error.status === 403) return "Permission changed. This dialog was closed; the denied change was not retried.";
   if (error.status === 404) return "Workspace or user UUID was not found.";
   if (error.status === 409) return "The member state changed elsewhere. Refresh the list and try again.";
   return `Member change failed (${error.status}).`;
@@ -35,14 +36,22 @@ export function WorkspaceMembersDialog() {
   const [role, setRole] = React.useState<WorkspaceRole>("viewer");
   const [busyKey, setBusyKey] = React.useState<string | null>(null);
   const [message, setMessage] = React.useState<string | null>(null);
+  const [authorityUncertain, setAuthorityUncertain] = React.useState(false);
 
-  const runMutation = async (key: string, operation: () => Promise<unknown>) => {
+  const runMutation = async (key: string, operation: () => Promise<unknown>): Promise<boolean> => {
+    if (authorityUncertain) return false;
     setBusyKey(key);
     setMessage(null);
     try {
       await executeMemberMutation(operation, mutate, refreshWorkspaces);
+      return true;
     } catch (caught) {
       setMessage(operationError(caught));
+      if ((caught instanceof ApiError && caught.status === 403) || caught instanceof MemberListRefreshError) {
+        setAuthorityUncertain(true);
+        setOpen(false);
+      }
+      return false;
     } finally {
       setBusyKey(null);
     }
@@ -52,15 +61,17 @@ export function WorkspaceMembersDialog() {
     event.preventDefault();
     const normalizedUserId = userId.trim();
     if (!normalizedUserId) return;
-    await runMutation("add", () => addWorkspaceMember(workspace.id, { user_id: normalizedUserId, role }));
-    setUserId("");
+    if (await runMutation("add", () => addWorkspaceMember(workspace.id, { user_id: normalizedUserId, role }))) {
+      setUserId("");
+    }
   };
 
   return (
     <>
-      <button type="button" className="ns-workspace-button" onClick={() => setOpen(true)}>
+      <button type="button" className="ns-workspace-button" disabled={authorityUncertain} onClick={() => setOpen(true)}>
         <UserPlus size={14} /> Manage members
       </button>
+      {authorityUncertain && message ? <p className="ns-member-message" role="status">{message}</p> : null}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>

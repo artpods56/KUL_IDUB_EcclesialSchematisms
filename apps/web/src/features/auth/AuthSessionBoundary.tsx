@@ -13,6 +13,7 @@ type AuthState =
   | { kind: "authenticated"; session: Session }
   | { kind: "expired" }
   | { kind: "unavailable" }
+  | { kind: "signing-out" }
   | { kind: "logout-failed" };
 
 interface AuthSessionContextValue {
@@ -30,7 +31,7 @@ export function sessionFailureKind(error: unknown): "signed-out" | "unavailable"
     : "unavailable";
 }
 
-export function createProtectedSWRCache(): Cache<unknown> {
+function createProtectedSWRCache(): Cache<unknown> {
   return new Map<string, State<unknown>>();
 }
 
@@ -87,6 +88,14 @@ function AuthFrame({
       />
     );
   }
+  if (state.kind === "signing-out") {
+    return (
+      <AuthStatus
+        title="Signing out"
+        detail="Revoking this session…"
+      />
+    );
+  }
   if (state.kind === "logout-failed") {
     return (
       <AuthStatus
@@ -138,6 +147,8 @@ export function useAuthSession(): AuthSessionContextValue {
 export function AuthSessionBoundary({ children }: { children: React.ReactNode }) {
   const [state, setState] = React.useState<AuthState>({ kind: "loading" });
   const [cacheGeneration, setCacheGeneration] = React.useState(0);
+  const logoutAttemptRef = React.useRef(0);
+  const logoutInFlightRef = React.useRef(false);
 
   const expireSession = React.useCallback(() => {
     setState((current) => current.kind === "authenticated" ? { kind: "expired" } : current);
@@ -164,12 +175,24 @@ export function AuthSessionBoundary({ children }: { children: React.ReactNode })
   }, [loadSession]);
 
   const logout = React.useCallback(async () => {
-    setState({ kind: "logout-failed" });
+    if (logoutInFlightRef.current) return;
+    logoutInFlightRef.current = true;
+    const attempt = logoutAttemptRef.current + 1;
+    logoutAttemptRef.current = attempt;
+    setState({ kind: "signing-out" });
     try {
       await deleteSession();
+      if (attempt !== logoutAttemptRef.current) return;
       setState({ kind: "signed-out" });
-    } catch {
+    } catch (error) {
+      if (attempt !== logoutAttemptRef.current) return;
+      if (error instanceof ApiError && error.status === 401) {
+        setState({ kind: "signed-out" });
+        return;
+      }
       setState({ kind: "logout-failed" });
+    } finally {
+      if (attempt === logoutAttemptRef.current) logoutInFlightRef.current = false;
     }
   }, []);
 
