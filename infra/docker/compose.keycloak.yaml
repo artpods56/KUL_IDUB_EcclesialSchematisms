@@ -1,0 +1,38 @@
+# Local-only Keycloak for Notarius OIDC development.
+# Pattern mirrors Stacking's keycloak.localhost:8081 setup.
+#
+#   docker compose -f infra/docker/compose.keycloak.yaml up -d --wait
+#   open http://keycloak.localhost:8081  (admin / admin)
+
+name: notarius-keycloak
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.6.1
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTP_MANAGEMENT_HEALTH_ENABLED: "false"
+      KC_HOSTNAME: ${KEYCLOAK_HOSTNAME:-http://keycloak.localhost:8081}
+      KC_PROXY_HEADERS: xforwarded
+    ports:
+      - "${KEYCLOAK_HOST:-127.0.0.1}:${KEYCLOAK_PORT:-8081}:8080"
+    volumes:
+      - ../keycloak/realm-import:/opt/keycloak/data/import:ro
+      - keycloak-data:/opt/keycloak/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c \"exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  keycloak-data:

@@ -1,0 +1,74 @@
+{
+  "id": "notarius",
+  "realm": "notarius",
+  "displayName": "Notarius",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "defaultSignatureAlgorithm": "RS256",
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 28800,
+  "accessCodeLifespanLogin": 1800,
+  "users": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "username": "owner",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Notarius",
+      "lastName": "Owner",
+      "email": "owner@notarius.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "owner",
+          "temporary": false
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "notarius-web",
+      "name": "Notarius Workbench",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "fullScopeAllowed": true,
+      "redirectUris": [
+        "http://localhost:3000/api/v1/auth/oidc/callback",
+        "http://127.0.0.1:3000/api/v1/auth/oidc/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+"
+      },
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "basic",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "offline_access"
+      ]
+    }
+  ]
+}

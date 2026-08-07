@@ -1,4 +1,4 @@
-.PHONY: install install-all install-gis install-llm install-ocr install-sql api api-gis api-llm api-ocr api-sql mcp web test lint typecheck contract build check smoke db-upgrade db-downgrade db-current db-history db-revision docker-up docker-down
+.PHONY: install install-all install-gis install-llm install-ocr install-sql api api-gis api-llm api-ocr api-sql mcp web test lint typecheck contract build check smoke db-upgrade db-downgrade db-current db-history db-revision docker-up docker-down keycloak-up keycloak-down bootstrap-oidc-owner
 
 -include .env
 export
@@ -101,3 +101,14 @@ docker-up:
 
 docker-down:
 	docker compose -f infra/docker/compose.yaml down
+
+keycloak-up:
+	docker compose -f infra/docker/compose.keycloak.yaml up -d --wait
+
+keycloak-down:
+	docker compose -f infra/docker/compose.keycloak.yaml down
+
+bootstrap-oidc-owner:
+	uv run --no-dev notarius-admin bootstrap-oidc-owner \
+		--issuer $${NOTARIUS_OIDC_ISSUER:?set NOTARIUS_OIDC_ISSUER} \
+		--subject $${NOTARIUS_OIDC_BOOTSTRAP_SUBJECT:?set NOTARIUS_OIDC_BOOTSTRAP_SUBJECT}
