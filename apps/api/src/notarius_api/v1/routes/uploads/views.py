@@ -1,27 +1,34 @@
+from uuid import UUID
+
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from starlette.concurrency import run_in_threadpool
+
+from notarius_core.domain.identity import WorkspaceCapability
 
 from notarius_api.services.errors import WorkbenchOperationError
+from notarius_api.v1.routes.auth.dependencies import require_workspace_capability
 
 from .dependencies import ImageUploadDependency
 from .models import ImageUploadItemResponse, SampleRequest
 
 
-router = APIRouter(tags=["workbench"])
+router = APIRouter(prefix="/workspaces/{workspace_id}", tags=["workbench"])
 
 
 @router.post("/uploads", response_model=ImageUploadItemResponse)
 async def upload_file(
+    workspace_id: UUID,
     service: ImageUploadDependency,
+    access: require_workspace_capability(WorkspaceCapability.EDIT_GRAPH),
     file: UploadFile = File(),
 ) -> ImageUploadItemResponse:
     if not file.filename:
         raise HTTPException(status_code=422, detail="Upload filename is required")
     try:
-        item = await run_in_threadpool(
-            service.save_upload,
-            file.filename,
-            file.file,
+        item = await service.save_upload(
+            workspace_id=workspace_id,
+            created_by_user_id=access.actor.user_id,
+            filename=file.filename,
+            stream=file.file,
         )
         return ImageUploadItemResponse.from_item(item)
     except WorkbenchOperationError as exc:
@@ -30,10 +37,16 @@ async def upload_file(
 
 @router.post("/samples", response_model=list[ImageUploadItemResponse])
 async def create_samples(
+    workspace_id: UUID,
     request: SampleRequest,
     service: ImageUploadDependency,
+    access: require_workspace_capability(WorkspaceCapability.EDIT_GRAPH),
 ) -> list[ImageUploadItemResponse]:
-    items = await service.create_sample_images(request.count)
+    items = await service.create_sample_images(
+        workspace_id=workspace_id,
+        created_by_user_id=access.actor.user_id,
+        count=request.count,
+    )
     return [ImageUploadItemResponse.from_item(item) for item in items]
 
 

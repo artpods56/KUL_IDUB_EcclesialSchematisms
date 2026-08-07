@@ -4,7 +4,16 @@ from enum import StrEnum
 from inspect import Parameter, getdoc, iscoroutinefunction, signature
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Any, Final, TypeAlias, cast, get_type_hints, override
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Final,
+    Protocol,
+    TypeAlias,
+    cast,
+    get_type_hints,
+    override,
+)
 
 from notarius_core.artifacts import (
     ArtifactFieldProjection,
@@ -15,7 +24,8 @@ from notarius_core.artifacts import (
     NodeConfig,
     NodeInput,
     NodeOutput,
-    UnitOfWorkPort, Artifact,
+    UnitOfWorkPort,
+    Artifact,
 )
 from notarius_core.conversions import (
     ArtifactConversion,
@@ -34,6 +44,7 @@ from notarius_core.ports.node_secrets import (
     NodeSecretResolverPort,
     UnavailableNodeSecretResolver,
 )
+from notarius_core.ports.staged_uploads import StagedUploadRepositoryPort
 from notarius_core.ports.storage import FileStoragePort
 
 if TYPE_CHECKING:
@@ -57,12 +68,19 @@ class NodeCachePolicy(StrEnum):
     EXACT = "exact"
 
 
+class PluginUnitOfWorkPort(UnitOfWorkPort, Protocol):
+    """Workbench UoW surface available to plugin factories at runtime."""
+
+    @property
+    def staged_uploads(self) -> StagedUploadRepositoryPort: ...
+
+
 @dataclass(frozen=True, slots=True)
 class PluginRuntimeContext:
     workspace: Path
     uploads_dir: Path
     storage: FileStoragePort
-    uow: UnitOfWorkPort
+    uow: PluginUnitOfWorkPort
     bucket: str
     storage_backend: str = "local"
     node_secrets: NodeSecretResolverPort = field(

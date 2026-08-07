@@ -38,6 +38,8 @@ from notarius_core.operators.tables import (
     TableValueType,
 )
 from notarius_core.plugins import NodeCachePolicy
+from notarius_core.ports.staged_uploads import StagedUploadUnitOfWorkPort
+from notarius_core.staged_upload_paths import resolve_persisted_staged_upload_path
 
 from notarius_plugin_gis.artifacts import (
     GEO_FEATURE_COLLECTION,
@@ -426,25 +428,6 @@ GeoJsonUploadItem = GeoUploadItem
 GeoTiffUploadItem = GeoUploadItem
 
 
-def _staged_upload_path(uploads_dir: Path, upload_key: str, kind: str) -> Path:
-    relative_path = Path(upload_key)
-    if (
-        relative_path.is_absolute()
-        or relative_path.parts != (upload_key,)
-        or upload_key in {".", ".."}
-        or "\\" in upload_key
-    ):
-        raise ValueError(
-            f"{kind} upload key {upload_key!r} must be one opaque relative name"
-        )
-    path = (uploads_dir / relative_path).resolve()
-    if path.parent != uploads_dir:
-        raise ValueError(
-            f"{kind} upload key {upload_key!r} resolves outside {uploads_dir}"
-        )
-    return path
-
-
 class GeoJsonUploadConfig(NodeConfig):
     uploads: list[GeoUploadItem] = Field(
         min_length=1,
@@ -469,7 +452,10 @@ class GeoJsonUploadOutput(NodeOutput):
     operator_id="gis.geojson.upload",
     version=1,
     title="Import GeoJSON",
-    factory=lambda context: ImportGeoJsonNode(uploads_dir=context.uploads_dir),
+    factory=lambda context: ImportGeoJsonNode(
+        uploads_dir=context.uploads_dir,
+        unit_of_work=context.uow,
+    ),
 )
 @final
 class ImportGeoJsonNode(
@@ -477,21 +463,31 @@ class ImportGeoJsonNode(
 ):
     """Imports one staged WGS84 GeoJSON FeatureCollection."""
 
-    def __init__(self, uploads_dir: Path) -> None:
+    def __init__(
+        self,
+        uploads_dir: Path,
+        unit_of_work: StagedUploadUnitOfWorkPort,
+    ) -> None:
         self._uploads_dir = uploads_dir.expanduser().resolve()
+        self._unit_of_work = unit_of_work
 
     @override
     async def run(
         self,
-        _context: NodeExecutionContext,
+        context: NodeExecutionContext,
         config: GeoJsonUploadConfig,
         _inputs: GeoJsonUploadInput,
         /,
     ) -> GeoJsonUploadOutput:
         upload = config.uploads[0]
         try:
-            path = _staged_upload_path(self._uploads_dir, upload.upload_key, "GeoJSON")
-        except ValueError as exc:
+            path = await resolve_persisted_staged_upload_path(
+                self._uploads_dir,
+                self._unit_of_work,
+                workspace_id=context.workspace_id,
+                upload_key=upload.upload_key,
+            )
+        except (ValueError, FileNotFoundError) as exc:
             raise GeoJsonUploadError(str(exc)) from exc
         try:
             content = path.read_bytes()
@@ -536,19 +532,27 @@ class GeoTiffUploadOutput(NodeOutput):
     operator_id="gis.geotiff.upload",
     version=1,
     title="Import georeferenced GeoTIFF",
-    factory=lambda context: ImportGeoTiffNode(uploads_dir=context.uploads_dir),
+    factory=lambda context: ImportGeoTiffNode(
+        uploads_dir=context.uploads_dir,
+        unit_of_work=context.uow,
+    ),
 )
 @final
 class ImportGeoTiffNode(
     Node[GeoTiffUploadConfig, GeoTiffUploadInput, GeoTiffUploadOutput]
 ):
-    def __init__(self, uploads_dir: Path) -> None:
+    def __init__(
+        self,
+        uploads_dir: Path,
+        unit_of_work: StagedUploadUnitOfWorkPort,
+    ) -> None:
         self._uploads_dir = uploads_dir.expanduser().resolve()
+        self._unit_of_work = unit_of_work
 
     @override
     async def run(
         self,
-        _context: NodeExecutionContext,
+        context: NodeExecutionContext,
         config: GeoTiffUploadConfig,
         _inputs: GeoTiffUploadInput,
         /,
@@ -559,8 +563,13 @@ class ImportGeoTiffNode(
                 f"GeoTIFF upload {upload.upload_key!r} filename must end in .tif or .tiff"
             )
         try:
-            path = _staged_upload_path(self._uploads_dir, upload.upload_key, "GeoTIFF")
-        except ValueError as exc:
+            path = await resolve_persisted_staged_upload_path(
+                self._uploads_dir,
+                self._unit_of_work,
+                workspace_id=context.workspace_id,
+                upload_key=upload.upload_key,
+            )
+        except (ValueError, FileNotFoundError) as exc:
             raise GeoTiffUploadError(str(exc)) from exc
         try:
             content = path.read_bytes()

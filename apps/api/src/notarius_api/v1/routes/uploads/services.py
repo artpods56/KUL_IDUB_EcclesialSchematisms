@@ -1,12 +1,18 @@
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from typing import BinaryIO
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from PIL import Image as ImageModule
 from PIL import ImageDraw
+from starlette.concurrency import run_in_threadpool
+
+from notarius_core.domain.staged_uploads import StagedUpload
+from notarius_core.ports.staged_uploads import StagedUploadUnitOfWorkPort
+from notarius_core.staged_upload_paths import resolve_staged_upload_path
 
 from notarius_api.services.errors import WorkbenchOperationError
 
@@ -28,57 +34,126 @@ class ImageUploadItem:
 class ImageUploadService:
     """Stages opaque file uploads consumed by file-source nodes."""
 
-    def __init__(self, uploads_dir: Path) -> None:
+    def __init__(
+        self,
+        uploads_dir: Path,
+        unit_of_work_factory: Callable[[], StagedUploadUnitOfWorkPort],
+    ) -> None:
         self._uploads_dir = uploads_dir.expanduser().resolve()
         self._uploads_dir.mkdir(parents=True, exist_ok=True)
+        self._unit_of_work_factory = unit_of_work_factory
 
-    def save_upload(
+    async def save_upload(
         self,
+        *,
+        workspace_id: UUID,
+        created_by_user_id: UUID,
         filename: str,
         stream: BinaryIO,
     ) -> ImageUploadItem:
         safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", filename).strip("-") or "upload"
-        path = self._uploads_dir / f"{uuid4().hex[:8]}-{safe_name}"
+        upload_key = f"{uuid4().hex[:8]}-{safe_name}"
+        path = self._path_for(workspace_id, upload_key)
+        path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with path.open("xb") as destination:
-                while chunk := stream.read(1024 * 1024):
-                    destination.write(chunk)
+            await run_in_threadpool(self._write_stream, path, stream)
         except OSError as exc:
             path.unlink(missing_ok=True)
             raise WorkbenchOperationError(
-                f"Failed to stage upload {filename!r} in {self._uploads_dir}"
+                f"Failed to stage upload {filename!r} in {path.parent}"
             ) from exc
-        return ImageUploadItem(
-            upload_key=path.name,
+        item = ImageUploadItem(
+            upload_key=upload_key,
             filename=filename,
             byte_size=path.stat().st_size,
         )
+        try:
+            await self._persist_staged_uploads(
+                workspace_id=workspace_id,
+                created_by_user_id=created_by_user_id,
+                items=[item],
+            )
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        return item
 
     async def create_sample_images(
         self,
+        *,
+        workspace_id: UUID,
+        created_by_user_id: UUID,
         count: int,
     ) -> list[ImageUploadItem]:
         items: list[ImageUploadItem] = []
-        for index in range(count):
-            text = _SAMPLE_PAGE_TEXTS[index % len(_SAMPLE_PAGE_TEXTS)].format(
-                index=index + 1
-            )
-            image = ImageModule.new("RGB", (420, 300), color="#f5f0e6")
-            draw = ImageDraw.Draw(image)
-            draw.rectangle((12, 12, 407, 287), outline="#b9ad98")
-            draw.multiline_text((36, 48), text, fill="#463c2e", spacing=14)
-            buffer = BytesIO()
-            image.save(buffer, format="PNG")
-            path = self._uploads_dir / f"{uuid4().hex[:8]}-sample-page.png"
-            path.write_bytes(buffer.getvalue())
-            items.append(
-                ImageUploadItem(
-                    upload_key=path.name,
-                    filename=f"sample-page-{index + 1}.png",
-                    byte_size=path.stat().st_size,
+        paths: list[Path] = []
+        try:
+            for index in range(count):
+                text = _SAMPLE_PAGE_TEXTS[index % len(_SAMPLE_PAGE_TEXTS)].format(
+                    index=index + 1
                 )
+                image = ImageModule.new("RGB", (420, 300), color="#f5f0e6")
+                draw = ImageDraw.Draw(image)
+                draw.rectangle((12, 12, 407, 287), outline="#b9ad98")
+                draw.multiline_text((36, 48), text, fill="#463c2e", spacing=14)
+                buffer = BytesIO()
+                image.save(buffer, format="PNG")
+                content = buffer.getvalue()
+                upload_key = f"{uuid4().hex[:8]}-sample-page.png"
+                path = self._path_for(workspace_id, upload_key)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+                paths.append(path)
+                items.append(
+                    ImageUploadItem(
+                        upload_key=upload_key,
+                        filename=f"sample-page-{index + 1}.png",
+                        byte_size=len(content),
+                    )
+                )
+            await self._persist_staged_uploads(
+                workspace_id=workspace_id,
+                created_by_user_id=created_by_user_id,
+                items=items,
             )
+        except Exception:
+            for path in paths:
+                path.unlink(missing_ok=True)
+            raise
         return items
+
+    def _path_for(self, workspace_id: UUID, upload_key: str) -> Path:
+        return resolve_staged_upload_path(
+            self._uploads_dir,
+            workspace_id=workspace_id,
+            upload_key=upload_key,
+        )
+
+    async def _persist_staged_uploads(
+        self,
+        *,
+        workspace_id: UUID,
+        created_by_user_id: UUID,
+        items: list[ImageUploadItem],
+    ) -> None:
+        async with self._unit_of_work_factory() as unit_of_work:
+            for item in items:
+                await unit_of_work.staged_uploads.add(
+                    StagedUpload(
+                        workspace_id=workspace_id,
+                        upload_key=item.upload_key,
+                        original_filename=item.filename,
+                        byte_size=item.byte_size,
+                        created_by_user_id=created_by_user_id,
+                    )
+                )
+            await unit_of_work.commit()
+
+    @staticmethod
+    def _write_stream(path: Path, stream: BinaryIO) -> None:
+        with path.open("xb") as destination:
+            while chunk := stream.read(1024 * 1024):
+                destination.write(chunk)
 
 
 __all__ = ["ImageUploadItem", "ImageUploadService"]

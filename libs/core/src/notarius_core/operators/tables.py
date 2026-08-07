@@ -43,6 +43,7 @@ from notarius_core.artifacts import (
 from notarius_core.domain.errors import NotFoundError
 from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
 from notarius_core.plugins import NodeCachePolicy, Plugin
+from notarius_core.ports.staged_uploads import StagedUploadUnitOfWorkPort
 from notarius_core.ports.storage import FileMetadata, FileStoragePort, SaveFileCommand
 from notarius_core.runtime.persistence import ArtifactOutputWriter, ArtifactWriteContext
 from notarius_core.runtime.resolvers import (
@@ -50,6 +51,7 @@ from notarius_core.runtime.resolvers import (
     ResolutionError,
     Resolver,
 )
+from notarius_core.staged_upload_paths import resolve_persisted_staged_upload_path
 
 
 type TableValue = (
@@ -743,25 +745,6 @@ class TableFileImportOutput(NodeOutput):
     ]
 
 
-def _staged_table_path(uploads_dir: Path, upload_key: str) -> Path:
-    relative_path = Path(upload_key)
-    if (
-        relative_path.is_absolute()
-        or relative_path.parts != (upload_key,)
-        or upload_key in {".", ".."}
-        or "\\" in upload_key
-    ):
-        raise TableFileImportError(
-            f"Table upload key {upload_key!r} must be one opaque relative name"
-        )
-    path = (uploads_dir / relative_path).resolve()
-    if path.parent != uploads_dir:
-        raise TableFileImportError(
-            f"Table upload key {upload_key!r} resolves outside {uploads_dir}"
-        )
-    return path
-
-
 def _table_value(value: object) -> TableValue:
     if value is None or isinstance(value, str | bool):
         return value
@@ -914,7 +897,10 @@ def _xlsx_matrix(
     operator_id="table.file.import",
     version=1,
     title="Import table file",
-    factory=lambda context: TableFileImportNode(uploads_dir=context.uploads_dir),
+    factory=lambda context: TableFileImportNode(
+        uploads_dir=context.uploads_dir,
+        unit_of_work=context.uow,
+    ),
     cache_policy=NodeCachePolicy.NEVER,
 )
 @final
@@ -923,19 +909,33 @@ class TableFileImportNode(
 ):
     """Import a staged CSV or XLSX file as a table artifact."""
 
-    def __init__(self, *, uploads_dir: Path) -> None:
+    def __init__(
+        self,
+        *,
+        uploads_dir: Path,
+        unit_of_work: StagedUploadUnitOfWorkPort,
+    ) -> None:
         self._uploads_dir = uploads_dir.expanduser().resolve()
+        self._unit_of_work = unit_of_work
 
     @override
     async def run(
         self,
-        _context: NodeExecutionContext,
+        context: NodeExecutionContext,
         config: TableFileImportConfig,
         _inputs: TableFileImportInput,
         /,
     ) -> TableFileImportOutput:
         upload = config.uploads[0]
-        path = _staged_table_path(self._uploads_dir, upload.upload_key)
+        try:
+            path = await resolve_persisted_staged_upload_path(
+                self._uploads_dir,
+                self._unit_of_work,
+                workspace_id=context.workspace_id,
+                upload_key=upload.upload_key,
+            )
+        except (ValueError, FileNotFoundError) as exc:
+            raise TableFileImportError(str(exc)) from exc
         try:
             content = path.read_bytes()
         except OSError as exc:

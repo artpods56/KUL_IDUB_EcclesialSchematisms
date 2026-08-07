@@ -8,6 +8,7 @@ from openpyxl import Workbook
 from pydantic import ValidationError
 
 from notarius_core.artifacts import ArtifactObject, InMemoryUnitOfWork, JsonObject
+from notarius_core.domain.staged_uploads import StagedUpload
 from notarius_core.nodes import NodeExecutionContext
 from notarius_core.operators.tables import (
     FuzzyMatchTablesNode,
@@ -20,6 +21,7 @@ from notarius_core.operators.tables import (
     TableArtifactWriter,
     TableColumn,
     TableFileImportConfig,
+    TableFileImportError,
     TableFileImportInput,
     TableFileImportNode,
     TableFileUploadItem,
@@ -43,6 +45,26 @@ from notarius_storage import LocalFileObjectStore
 
 
 TEST_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
+
+
+async def seed_staged_upload(
+    unit_of_work: InMemoryUnitOfWork,
+    *,
+    workspace_id: UUID,
+    upload_key: str,
+    filename: str,
+    byte_size: int,
+) -> None:
+    async with unit_of_work as entered:
+        await entered.staged_uploads.add(
+            StagedUpload(
+                workspace_id=workspace_id,
+                upload_key=upload_key,
+                original_filename=filename,
+                byte_size=byte_size,
+            )
+        )
+        await entered.commit()
 
 
 def sample_table() -> Table:
@@ -109,13 +131,22 @@ async def test_table_file_import_reads_utf8_csv_with_stable_column_ids(
     tmp_path: Path,
 ) -> None:
     uploads_dir = tmp_path / "uploads"
-    uploads_dir.mkdir()
+    workspace_uploads = uploads_dir / str(TEST_WORKSPACE_ID)
+    workspace_uploads.mkdir(parents=True)
     content = (
         "Nr,Miejscowość,Powiat\n1,м. Бѣлыничи,mohylewski\n2,Вендорож,mohylewski\n"
     ).encode()
-    upload_path = uploads_dir / "places.csv"
+    upload_path = workspace_uploads / "places.csv"
     upload_path.write_bytes(content)
-    node = TableFileImportNode(uploads_dir=uploads_dir)
+    uow = InMemoryUnitOfWork()
+    await seed_staged_upload(
+        uow,
+        workspace_id=TEST_WORKSPACE_ID,
+        upload_key=upload_path.name,
+        filename="places.csv",
+        byte_size=len(content),
+    )
+    node = TableFileImportNode(uploads_dir=uploads_dir, unit_of_work=uow)
 
     output = await node.run(
         NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="table-file"),
@@ -160,7 +191,8 @@ async def test_table_file_import_selects_xlsx_sheet_and_preserves_scalars(
     tmp_path: Path,
 ) -> None:
     uploads_dir = tmp_path / "uploads"
-    uploads_dir.mkdir()
+    workspace_uploads = uploads_dir / str(TEST_WORKSPACE_ID)
+    workspace_uploads.mkdir(parents=True)
     workbook = Workbook()
     ignored = workbook.active
     assert ignored is not None
@@ -172,9 +204,17 @@ async def test_table_file_import_selects_xlsx_sheet_and_preserves_scalars(
     workbook.save(buffer)
     workbook.close()
     content = buffer.getvalue()
-    upload_path = uploads_dir / "places.xlsx"
+    upload_path = workspace_uploads / "places.xlsx"
     upload_path.write_bytes(content)
-    node = TableFileImportNode(uploads_dir=uploads_dir)
+    uow = InMemoryUnitOfWork()
+    await seed_staged_upload(
+        uow,
+        workspace_id=TEST_WORKSPACE_ID,
+        upload_key=upload_path.name,
+        filename="places.xlsx",
+        byte_size=len(content),
+    )
+    node = TableFileImportNode(uploads_dir=uploads_dir, unit_of_work=uow)
 
     output = await node.run(
         NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="table-file"),
@@ -199,6 +239,72 @@ async def test_table_file_import_selects_xlsx_sheet_and_preserves_scalars(
     assert output.table.rows == [
         {"column_1": "Belynichi", "column_2": 10, "column_3": True}
     ]
+
+
+@pytest.mark.asyncio
+async def test_table_file_import_fails_closed_without_db_row(tmp_path: Path) -> None:
+    uploads_dir = tmp_path / "uploads"
+    workspace_uploads = uploads_dir / str(TEST_WORKSPACE_ID)
+    workspace_uploads.mkdir(parents=True)
+    content = b"a,b\n1,2\n"
+    upload_path = workspace_uploads / "orphan.csv"
+    upload_path.write_bytes(content)
+    node = TableFileImportNode(
+        uploads_dir=uploads_dir,
+        unit_of_work=InMemoryUnitOfWork(),
+    )
+
+    with pytest.raises(TableFileImportError, match="was not found in workspace"):
+        await node.run(
+            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="table-file"),
+            TableFileImportConfig(
+                uploads=[
+                    TableFileUploadItem(
+                        upload_key=upload_path.name,
+                        filename="orphan.csv",
+                        byte_size=len(content),
+                    )
+                ]
+            ),
+            TableFileImportInput(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_table_file_import_fails_closed_for_foreign_workspace_row(
+    tmp_path: Path,
+) -> None:
+    uploads_dir = tmp_path / "uploads"
+    other_workspace = UUID("00000000-0000-0000-0000-000000000902")
+    workspace_uploads = uploads_dir / str(TEST_WORKSPACE_ID)
+    workspace_uploads.mkdir(parents=True)
+    content = b"a,b\n1,2\n"
+    upload_path = workspace_uploads / "places.csv"
+    upload_path.write_bytes(content)
+    uow = InMemoryUnitOfWork()
+    await seed_staged_upload(
+        uow,
+        workspace_id=other_workspace,
+        upload_key=upload_path.name,
+        filename="places.csv",
+        byte_size=len(content),
+    )
+    node = TableFileImportNode(uploads_dir=uploads_dir, unit_of_work=uow)
+
+    with pytest.raises(TableFileImportError, match="was not found in workspace"):
+        await node.run(
+            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="table-file"),
+            TableFileImportConfig(
+                uploads=[
+                    TableFileUploadItem(
+                        upload_key=upload_path.name,
+                        filename="places.csv",
+                        byte_size=len(content),
+                    )
+                ]
+            ),
+            TableFileImportInput(),
+        )
 
 
 @pytest.mark.asyncio

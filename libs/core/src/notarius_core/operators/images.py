@@ -19,11 +19,13 @@ from notarius_core.artifacts import (
 )
 from notarius_core.nodes import Node, NodeExecutionContext, OutPort
 from notarius_core.plugins import Plugin
+from notarius_core.ports.staged_uploads import StagedUploadUnitOfWorkPort
 from notarius_core.ports.storage import FileMetadata, FileStoragePort, SaveFileCommand
 from notarius_core.runtime.persistence import (
     ArtifactOutputWriter,
     ArtifactWriteContext,
 )
+from notarius_core.staged_upload_paths import resolve_persisted_staged_upload_path
 
 
 RasterImageContentType = Literal[
@@ -206,26 +208,42 @@ class ImageUploadOutput(NodeOutput):
     operator_id="image.upload",
     version=1,
     title="Upload images",
-    factory=lambda context: UploadImagesNode(uploads_dir=context.uploads_dir),
+    factory=lambda context: UploadImagesNode(
+        uploads_dir=context.uploads_dir,
+        unit_of_work=context.uow,
+    ),
 )
 @final
 class UploadImagesNode(Node[ImageUploadConfig, ImageUploadInput, ImageUploadOutput]):
     """Imports staged image uploads as an ordered raster image sequence."""
 
-    def __init__(self, uploads_dir: Path) -> None:
+    def __init__(
+        self,
+        uploads_dir: Path,
+        unit_of_work: StagedUploadUnitOfWorkPort,
+    ) -> None:
         self._uploads_dir = uploads_dir.expanduser().resolve()
+        self._unit_of_work = unit_of_work
 
     @override
     async def run(
         self,
-        _context: NodeExecutionContext,
+        context: NodeExecutionContext,
         config: ImageUploadConfig,
         _inputs: ImageUploadInput,
         /,
     ) -> ImageUploadOutput:
         images: list[RasterImageContent] = []
         for upload in config.uploads:
-            path = self._path_for(upload.upload_key)
+            try:
+                path = await resolve_persisted_staged_upload_path(
+                    self._uploads_dir,
+                    self._unit_of_work,
+                    workspace_id=context.workspace_id,
+                    upload_key=upload.upload_key,
+                )
+            except (ValueError, FileNotFoundError) as exc:
+                raise ImageUploadError(str(exc)) from exc
             try:
                 content = path.read_bytes()
             except OSError as exc:
@@ -247,26 +265,6 @@ class UploadImagesNode(Node[ImageUploadConfig, ImageUploadInput, ImageUploadOutp
                 )
             )
         return ImageUploadOutput(images=images)
-
-    def _path_for(self, upload_key: str) -> Path:
-        relative_path = Path(upload_key)
-        if (
-            relative_path.is_absolute()
-            or relative_path.parts != (upload_key,)
-            or upload_key in {".", ".."}
-            or "\\" in upload_key
-        ):
-            raise ImageUploadError(
-                f"Image upload key {upload_key!r} must be one opaque relative name"
-            )
-
-        path = (self._uploads_dir / relative_path).resolve()
-        if path.parent != self._uploads_dir:
-            raise ImageUploadError(
-                f"Image upload key {upload_key!r} resolves outside "
-                f"{self._uploads_dir}"
-            )
-        return path
 
     def _content_type_for(self, upload: ImageUploadItem) -> RasterImageContentType:
         content_type = guess_type(upload.filename)[0]

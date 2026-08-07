@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         GraphExecutionStatus,
     )
     from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
+    from notarius_core.domain.staged_uploads import StagedUpload
     from notarius_core.ports.invocation_cache import InvocationCacheRepositoryPort
     from notarius_core.ports.execution_history import (
         GraphExecutionHistoryRepositoryPort,
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
     from notarius_core.ports.materialized_outputs import (
         MaterializedNodeOutputsRepositoryPort,
     )
+    from notarius_core.ports.staged_uploads import StagedUploadRepositoryPort
     from notarius_core.plugins import PluginRuntimeContext
     from notarius_core.runtime.persistence import ArtifactOutputWriter
     from notarius_core.runtime.resolvers import Resolver
@@ -225,6 +227,9 @@ class InMemoryDataStore:
     invocation_cache: dict[tuple[UUID, str], "InvocationCacheEntry"] = field(
         default_factory=dict
     )
+    staged_uploads: dict[tuple[UUID, str], "StagedUpload"] = field(
+        default_factory=dict
+    )
     graph_executions: dict[
         UUID,
         "GraphExecution",
@@ -241,6 +246,7 @@ class InMemoryDataStore:
         self.artifacts = _clone(other.artifacts)
         self.materialized_outputs = _clone(other.materialized_outputs)
         self.invocation_cache = _clone(other.invocation_cache)
+        self.staged_uploads = _clone(other.staged_uploads)
         self.graph_executions = _clone(other.graph_executions)
         self.graph_execution_node_results = _clone(
             other.graph_execution_node_results
@@ -601,12 +607,49 @@ class InMemoryGraphExecutionHistoryRepository:
         return interrupted
 
 
+@final
+class InMemoryStagedUploadRepository:
+    def __init__(self, store: InMemoryDataStore) -> None:
+        self._store = store
+
+    async def add(self, upload: "StagedUpload") -> None:
+        key = (upload.workspace_id, upload.upload_key)
+        if key in self._store.staged_uploads:
+            raise ObjectAlreadyExistsError(
+                f"Staged upload already exists: {upload.workspace_id}/{upload.upload_key}"
+            )
+        self._store.staged_uploads[key] = _clone(upload)
+
+    async def get(
+        self,
+        workspace_id: UUID,
+        upload_key: str,
+    ) -> "StagedUpload | None":
+        upload = self._store.staged_uploads.get((workspace_id, upload_key))
+        if upload is None:
+            return None
+        return _clone(upload)
+
+    async def list_for_workspace(self, workspace_id: UUID) -> list["StagedUpload"]:
+        uploads = [
+            _clone(upload)
+            for (stored_workspace_id, _), upload in self._store.staged_uploads.items()
+            if stored_workspace_id == workspace_id
+        ]
+        uploads.sort(key=lambda upload: (upload.created_at, upload.upload_key))
+        return uploads
+
+    async def remove(self, workspace_id: UUID, upload_key: str) -> None:
+        self._store.staged_uploads.pop((workspace_id, upload_key), None)
+
+
 @dataclass(frozen=True, slots=True)
 class _InMemoryUnitOfWorkState:
     working_store: InMemoryDataStore
     artifacts: ArtifactRepositoryPort
     materialized_outputs: "MaterializedNodeOutputsRepositoryPort"
     invocation_cache: "InvocationCacheRepositoryPort"
+    staged_uploads: "StagedUploadRepositoryPort"
     execution_history: "GraphExecutionHistoryRepositoryPort"
 
 
@@ -635,6 +678,10 @@ class InMemoryUnitOfWork(UnitOfWorkPort):
         return self._entered_state().invocation_cache
 
     @property
+    def staged_uploads(self) -> "StagedUploadRepositoryPort":
+        return self._entered_state().staged_uploads
+
+    @property
     def execution_history(self) -> "GraphExecutionHistoryRepositoryPort":
         return self._entered_state().execution_history
 
@@ -654,6 +701,7 @@ class InMemoryUnitOfWork(UnitOfWorkPort):
                         working_store
                     ),
                     invocation_cache=InMemoryInvocationCacheRepository(working_store),
+                    staged_uploads=InMemoryStagedUploadRepository(working_store),
                     execution_history=InMemoryGraphExecutionHistoryRepository(
                         working_store
                     ),

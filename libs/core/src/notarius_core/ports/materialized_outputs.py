@@ -4,6 +4,7 @@ from uuid import UUID
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
 from notarius_core.ports.invocation_cache import InvocationCacheRepositoryPort
 from notarius_core.ports.execution_history import ExecutionHistoryUnitOfWorkPort
+from notarius_core.ports.staged_uploads import StagedUploadRepositoryPort
 
 
 class MaterializedNodeOutputsRepositoryPort(Protocol):
@@ -31,3 +32,6 @@ class WorkbenchUnitOfWorkPort(ExecutionHistoryUnitOfWorkPort, Protocol):
 
     @property
     def invocation_cache(self) -> InvocationCacheRepositoryPort: ...
+
+    @property
+    def staged_uploads(self) -> StagedUploadRepositoryPort: ...

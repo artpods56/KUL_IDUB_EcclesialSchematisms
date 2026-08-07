@@ -9,6 +9,7 @@ from notarius_core.artifacts import (
     ArtifactRefSequence,
     InMemoryUnitOfWork,
 )
+from notarius_core.domain.staged_uploads import StagedUpload
 from notarius_core.nodes import NodeExecutionContext
 from notarius_core.operators.images import (
     IMAGES,
@@ -47,16 +48,51 @@ def write_png(path: Path, size: tuple[int, int]) -> None:
     image.save(path, format="PNG")
 
 
+async def seed_staged_upload(
+    unit_of_work: InMemoryUnitOfWork,
+    *,
+    workspace_id: UUID,
+    upload_key: str,
+    filename: str,
+    byte_size: int,
+) -> None:
+    async with unit_of_work as entered:
+        await entered.staged_uploads.add(
+            StagedUpload(
+                workspace_id=workspace_id,
+                upload_key=upload_key,
+                original_filename=filename,
+                byte_size=byte_size,
+            )
+        )
+        await entered.commit()
+
+
 @pytest.mark.asyncio
 async def test_runtime_chains_image_collect_and_ocr_writers(tmp_path: Path) -> None:
     staging_root = tmp_path / "uploads"
-    staging_root.mkdir()
-    first = staging_root / "page-001.png"
-    second = staging_root / "page-002.png"
+    workspace_uploads = staging_root / str(TEST_WORKSPACE_ID)
+    workspace_uploads.mkdir(parents=True)
+    first = workspace_uploads / "page-001.png"
+    second = workspace_uploads / "page-002.png"
     write_png(first, (3, 2))
     write_png(second, (5, 4))
 
     uow = InMemoryUnitOfWork()
+    await seed_staged_upload(
+        uow,
+        workspace_id=TEST_WORKSPACE_ID,
+        upload_key=first.name,
+        filename="page-001.png",
+        byte_size=first.stat().st_size,
+    )
+    await seed_staged_upload(
+        uow,
+        workspace_id=TEST_WORKSPACE_ID,
+        upload_key=second.name,
+        filename="page-002.png",
+        byte_size=second.stat().st_size,
+    )
     storage = LocalFileObjectStore(tmp_path / "object-store")
     runtime = NodeRuntime(
         materializer=InputMaterializer(
@@ -77,7 +113,7 @@ async def test_runtime_chains_image_collect_and_ocr_writers(tmp_path: Path) -> N
     )
 
     upload_output = await runtime.bind(
-        UploadImagesNode(uploads_dir=staging_root),
+        UploadImagesNode(uploads_dir=staging_root, unit_of_work=uow),
         NodeExecutionContext(
             workspace_id=TEST_WORKSPACE_ID,
             node_id="image_upload_1",
@@ -189,7 +225,10 @@ async def test_ocr_many_input_requires_artifact_ref_sequence() -> None:
 async def test_upload_rejects_keys_outside_the_upload_root(tmp_path: Path) -> None:
     uploads_dir = tmp_path / "uploads"
     uploads_dir.mkdir()
-    node = UploadImagesNode(uploads_dir=uploads_dir)
+    node = UploadImagesNode(
+        uploads_dir=uploads_dir,
+        unit_of_work=InMemoryUnitOfWork(),
+    )
 
     with pytest.raises(ImageUploadError, match="opaque relative name"):
         await node.run(
@@ -201,6 +240,72 @@ async def test_upload_rejects_keys_outside_the_upload_root(tmp_path: Path) -> No
                             "upload_key": "../outside.png",
                             "filename": "outside.png",
                             "byte_size": 1,
+                        }
+                    ]
+                }
+            ),
+            node.input_contract.model.model_validate({}),
+        )
+
+
+@pytest.mark.asyncio
+async def test_upload_fails_closed_when_file_exists_without_db_row(
+    tmp_path: Path,
+) -> None:
+    uploads_dir = tmp_path / "uploads"
+    staged = uploads_dir / str(TEST_WORKSPACE_ID) / "page.png"
+    staged.parent.mkdir(parents=True)
+    write_png(staged, (2, 2))
+    node = UploadImagesNode(
+        uploads_dir=uploads_dir,
+        unit_of_work=InMemoryUnitOfWork(),
+    )
+
+    with pytest.raises(ImageUploadError, match="was not found in workspace"):
+        await node.run(
+            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="upload"),
+            node.config_contract.model.model_validate(
+                {
+                    "uploads": [
+                        {
+                            "upload_key": "page.png",
+                            "filename": "page.png",
+                            "byte_size": staged.stat().st_size,
+                        }
+                    ]
+                }
+            ),
+            node.input_contract.model.model_validate({}),
+        )
+
+
+@pytest.mark.asyncio
+async def test_upload_fails_closed_for_row_in_another_workspace(tmp_path: Path) -> None:
+    uploads_dir = tmp_path / "uploads"
+    other_workspace = UUID("00000000-0000-0000-0000-000000000902")
+    staged = uploads_dir / str(TEST_WORKSPACE_ID) / "page.png"
+    staged.parent.mkdir(parents=True)
+    write_png(staged, (2, 2))
+    uow = InMemoryUnitOfWork()
+    await seed_staged_upload(
+        uow,
+        workspace_id=other_workspace,
+        upload_key="page.png",
+        filename="page.png",
+        byte_size=staged.stat().st_size,
+    )
+    node = UploadImagesNode(uploads_dir=uploads_dir, unit_of_work=uow)
+
+    with pytest.raises(ImageUploadError, match="was not found in workspace"):
+        await node.run(
+            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="upload"),
+            node.config_contract.model.model_validate(
+                {
+                    "uploads": [
+                        {
+                            "upload_key": "page.png",
+                            "filename": "page.png",
+                            "byte_size": staged.stat().st_size,
                         }
                     ]
                 }
