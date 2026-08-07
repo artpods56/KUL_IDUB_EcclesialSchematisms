@@ -86,16 +86,22 @@ class CollaborationRepositoryPort(Protocol):
         graph_id: UUID,
     ) -> GraphActiveExecutionSlot | None: ...
 
-    async def upsert_active_execution_slot(
+    async def acquire_active_execution_slot(
         self,
         slot: GraphActiveExecutionSlot,
-    ) -> None: ...
+    ) -> bool:
+        """Insert the active slot. Returns False when the graph already has one."""
+        ...
 
     async def clear_active_execution_slot(
         self,
         workspace_id: UUID,
         graph_id: UUID,
+        *,
+        execution_id: UUID | None = None,
     ) -> None: ...
+
+    async def clear_all_active_execution_slots(self) -> int: ...
 
 
 class CollaborationUnitOfWorkPort(Protocol):

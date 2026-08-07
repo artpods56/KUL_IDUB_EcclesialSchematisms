@@ -159,6 +159,18 @@ async def graph_room(
         workspace_id=workspace_id,
         graph_id=graph_id,
     )
+    active_execution = await websocket.app.state.execution_manager.active_execution_summary(
+        workspace_id,
+        graph_id,
+    )
+    if active_execution is not None:
+        active_execution = active_execution.model_copy(
+            update={
+                "overlays_compatible": (
+                    head.checkpoint_revision == active_execution.graph_revision
+                )
+            }
+        )
     ready = RoomReadyMessage(
         workspace_id=workspace_id,
         graph_id=graph_id,
@@ -172,6 +184,7 @@ async def graph_room(
         ),
         head=CollaborativeHeadResponse.from_head(head),
         participants=participants,
+        active_execution=active_execution,
     )
     heartbeat_seconds = websocket.app.state.settings.graph_room_heartbeat_seconds
     try:

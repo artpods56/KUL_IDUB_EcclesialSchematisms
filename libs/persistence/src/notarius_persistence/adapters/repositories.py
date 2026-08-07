@@ -1472,10 +1472,10 @@ class SqlCollaborationRepository:
             return None
         return GraphActiveExecutionSlot.model_validate(dict(row))
 
-    async def upsert_active_execution_slot(
+    async def acquire_active_execution_slot(
         self,
         slot: GraphActiveExecutionSlot,
-    ) -> None:
+    ) -> bool:
         values = {
             "workspace_id": slot.workspace_id,
             "graph_id": slot.graph_id,
@@ -1484,39 +1484,50 @@ class SqlCollaborationRepository:
         }
         dialect = self._session.bind.dialect.name if self._session.bind is not None else ""
         if dialect == "postgresql":
-            statement = postgresql_insert(schema.graph_active_execution_slots).values(
-                **values
-            )
-            statement = statement.on_conflict_do_update(
-                index_elements=["workspace_id", "graph_id"],
-                set_={
-                    "execution_id": statement.excluded.execution_id,
-                    "updated_at": statement.excluded.updated_at,
-                },
+            statement = (
+                postgresql_insert(schema.graph_active_execution_slots)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=["workspace_id", "graph_id"])
             )
         elif dialect == "sqlite":
-            statement = sqlite_insert(schema.graph_active_execution_slots).values(
-                **values
-            )
-            statement = statement.on_conflict_do_update(
-                index_elements=["workspace_id", "graph_id"],
-                set_={
-                    "execution_id": statement.excluded.execution_id,
-                    "updated_at": statement.excluded.updated_at,
-                },
+            statement = (
+                sqlite_insert(schema.graph_active_execution_slots)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=["workspace_id", "graph_id"])
             )
         else:
+            existing = await self.get_active_execution_slot(
+                slot.workspace_id,
+                slot.graph_id,
+            )
+            if existing is not None:
+                return False
             statement = insert(schema.graph_active_execution_slots).values(**values)
-        await self._session.execute(statement)
+        result = await self._session.execute(statement)
+        return bool(result.rowcount)
 
     async def clear_active_execution_slot(
         self,
         workspace_id: UUID,
         graph_id: UUID,
+        *,
+        execution_id: UUID | None = None,
     ) -> None:
-        await self._session.execute(
-            delete(schema.graph_active_execution_slots).where(
-                schema.graph_active_execution_slots.c.workspace_id == workspace_id,
-                schema.graph_active_execution_slots.c.graph_id == graph_id,
+        clause = [
+            schema.graph_active_execution_slots.c.workspace_id == workspace_id,
+            schema.graph_active_execution_slots.c.graph_id == graph_id,
+        ]
+        if execution_id is not None:
+            clause.append(
+                schema.graph_active_execution_slots.c.execution_id == execution_id
             )
+        await self._session.execute(
+            delete(schema.graph_active_execution_slots).where(*clause)
         )
+
+    async def clear_all_active_execution_slots(self) -> int:
+        result = cast(
+            CursorResult[tuple[object, ...]],
+            await self._session.execute(delete(schema.graph_active_execution_slots)),
+        )
+        return int(result.rowcount or 0)

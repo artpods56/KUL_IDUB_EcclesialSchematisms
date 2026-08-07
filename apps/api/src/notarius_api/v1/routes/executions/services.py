@@ -7,6 +7,7 @@ from uuid import UUID
 from notarius_core.application.saved_graphs import SavedGraphService
 from notarius_core.artifacts import ArtifactRef, ArtifactRefSequence
 from notarius_core.domain.artifact_outputs import ArtifactOutputValue
+from notarius_core.domain.collaboration import GraphActiveExecutionSlot
 from notarius_core.domain.execution_history import (
     GraphExecution,
     GraphExecutionCursor,
@@ -16,10 +17,14 @@ from notarius_core.domain.execution_history import (
     GraphExecutionScope,
     GraphExecutionStatus,
 )
-from notarius_core.domain.errors import NotFoundError
+from notarius_core.domain.errors import (
+    CollaborationActiveExecutionError,
+    NotFoundError,
+)
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
 from notarius_core.domain.saved_graphs import SavedGraphRevision
 from notarius_core.operators.tables import TABLE_DATA
+from notarius_core.ports.collaboration import CollaborationRepositoryPort
 from notarius_core.ports.execution_history import ExecutionHistoryUnitOfWorkPort
 from notarius_core.ports.materialized_outputs import WorkbenchUnitOfWorkPort
 
@@ -83,7 +88,37 @@ class ExecutionHistoryService:
             requested_node_ids=requested_node_ids,
         )
         async with self._unit_of_work as unit_of_work:
+            collaboration = _collaboration_repository(unit_of_work)
+            existing = await collaboration.get_active_execution_slot(
+                workspace_id,
+                graph_id,
+            )
+            if existing is not None:
+                raise CollaborationActiveExecutionError(
+                    workspace_id=workspace_id,
+                    graph_id=graph_id,
+                    execution_id=existing.execution_id,
+                )
             await unit_of_work.execution_history.add(execution)
+            acquired = await collaboration.acquire_active_execution_slot(
+                GraphActiveExecutionSlot(
+                    workspace_id=workspace_id,
+                    graph_id=graph_id,
+                    execution_id=execution_id,
+                )
+            )
+            if not acquired:
+                existing = await collaboration.get_active_execution_slot(
+                    workspace_id,
+                    graph_id,
+                )
+                raise CollaborationActiveExecutionError(
+                    workspace_id=workspace_id,
+                    graph_id=graph_id,
+                    execution_id=(
+                        existing.execution_id if existing is not None else execution_id
+                    ),
+                )
             await unit_of_work.commit()
         return execution
 
@@ -148,6 +183,11 @@ class ExecutionHistoryService:
                             completed_at=completed_at,
                         )
                     )
+            await _collaboration_repository(unit_of_work).clear_active_execution_slot(
+                workspace_id,
+                execution.graph_id,
+                execution_id=execution.execution_id,
+            )
             await unit_of_work.commit()
 
     async def get_for_graph(
@@ -196,8 +236,22 @@ class ExecutionHistoryService:
                     "before reporting a terminal result"
                 ),
             )
+            await _collaboration_repository(
+                unit_of_work
+            ).clear_all_active_execution_slots()
             await unit_of_work.commit()
         return interrupted
+
+
+def _collaboration_repository(
+    unit_of_work: ExecutionHistoryUnitOfWorkPort,
+) -> CollaborationRepositoryPort:
+    collaboration = getattr(unit_of_work, "collaboration", None)
+    if collaboration is None:
+        raise RuntimeError(
+            "Active execution slots require a collaboration-capable unit of work"
+        )
+    return collaboration
 
 
 class MaterializationService:

@@ -7,6 +7,7 @@ from pydantic import StringConstraints
 from starlette.responses import StreamingResponse
 
 from notarius_core.domain.errors import (
+    CollaborationActiveExecutionError,
     NotFoundError,
     SavedGraphRevisionConflictError,
 )
@@ -16,6 +17,7 @@ from notarius_api.services.errors import (
     ArtifactContentUnavailableError,
     WorkbenchOperationError,
 )
+from notarius_api.v1.routes.collaboration.publish import actor_presentation_for
 from notarius_api.v1.routes.saved_graphs.dependencies import SavedGraphDependency
 
 from .dependencies import (
@@ -78,15 +80,32 @@ async def run_graph(
 )
 async def start_graph_execution(
     request: RunRequest,
+    http_request: Request,
     manager: RunExecutionManagerDependency,
     presenter: RunResultPresenterDependency,
     access: require_workspace_capability(WorkspaceCapability.EXECUTE_GRAPH),
 ) -> RunExecutionResponse:
     try:
-        execution = await manager.start(access.workspace_id, request)
+        starter = await actor_presentation_for(http_request.app, access.actor)
+        execution = await manager.start(
+            access.workspace_id,
+            request,
+            starter=starter,
+        )
         return await presenter.execution_response(execution)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except CollaborationActiveExecutionError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_code": exc.error_code,
+                "message": str(exc),
+                "execution_id": str(exc.execution_id),
+                "graph_id": str(exc.graph_id),
+                "workspace_id": str(exc.workspace_id),
+            },
+        ) from exc
     except SavedGraphRevisionConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except WorkbenchOperationError as exc:

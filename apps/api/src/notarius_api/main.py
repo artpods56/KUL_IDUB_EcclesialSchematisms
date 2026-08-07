@@ -43,6 +43,7 @@ from notarius_api.v1.routes.auth.views import router as auth_router
 from notarius_api.v1.routes.artifacts.views import router as artifacts_router
 from notarius_api.v1.routes.catalog.views import router as catalog_router
 from notarius_api.v1.routes.collaboration.hub import GraphRoomHub
+from notarius_api.v1.routes.collaboration.publish import ActiveExecutionRoomPublisher
 from notarius_api.v1.routes.collaboration.views import router as collaboration_router
 from notarius_api.v1.routes.executions.views import router as executions_router
 from notarius_api.v1.routes.node_secrets.services import NodeSecretService
@@ -290,6 +291,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await components.execution_history.interrupt_all_active()
         # Migration 0009 backfills heads; refuse to serve if any graph still lacks one.
         await collaboration.verify_every_graph_has_head()
+        components.execution_manager.bind_room_publisher(
+            ActiveExecutionRoomPublisher(app.state.graph_room_hub)
+        )
         app.state.workbench_plugin_registry = components.plugin_registry
         app.state.image_uploads = components.uploads
         app.state.graph_modules = components.modules

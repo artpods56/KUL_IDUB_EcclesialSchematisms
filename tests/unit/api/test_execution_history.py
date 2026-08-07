@@ -277,6 +277,11 @@ def test_duplicate_saved_node_ids_become_a_browsable_failed_execution(
 
 
 async def _seed_active_execution(database_url: str) -> tuple[UUID, UUID]:
+    from notarius_core.domain.collaboration import (
+        CollaborativeGraphHead,
+        GraphActiveExecutionSlot,
+    )
+
     database = create_database(database_url)
     registry = build_plugin_registry(builtin_plugins(), external_plugins=())
     saved_graphs = SavedGraphService(
@@ -318,6 +323,18 @@ async def _seed_active_execution(database_url: str) -> tuple[UUID, UUID]:
         )
         execution_id = uuid4()
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+            await unit_of_work.collaboration.add_head(
+                CollaborativeGraphHead(
+                    workspace_id=WORKSPACE_ID,
+                    graph_id=graph.id,
+                    room_epoch=uuid4(),
+                    collaboration_sequence=1,
+                    checkpoint_sequence=1,
+                    checkpoint_revision=graph.revision,
+                    name=graph.name,
+                    document=graph.document,
+                )
+            )
             await unit_of_work.execution_history.add(
                 GraphExecution(
                     workspace_id=WORKSPACE_ID,
@@ -328,6 +345,16 @@ async def _seed_active_execution(database_url: str) -> tuple[UUID, UUID]:
                     requested_node_ids=(),
                 )
             )
+            await unit_of_work.commit()
+        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+            acquired = await unit_of_work.collaboration.acquire_active_execution_slot(
+                GraphActiveExecutionSlot(
+                    workspace_id=WORKSPACE_ID,
+                    graph_id=graph.id,
+                    execution_id=execution_id,
+                )
+            )
+            assert acquired
             await unit_of_work.commit()
         return graph.id, execution_id
     finally:

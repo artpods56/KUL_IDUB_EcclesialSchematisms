@@ -767,3 +767,229 @@ def test_slow_consumer_is_disconnected_instead_of_unbounded_queue() -> None:
         await hub.shutdown()
 
     asyncio.run(_exercise())
+
+
+def _create_graph_with_revision(
+    client: TestClient,
+    name: str = "Execution room graph",
+) -> tuple[UUID, int]:
+    response = client.post(
+        workspace_api_path("/graphs"),
+        json={"name": name, "nodes": [], "edges": []},
+    )
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    return UUID(payload["id"]), int(payload["revision"])
+
+
+def _start_saved_execution(
+    client: TestClient,
+    *,
+    graph_id: UUID,
+    graph_revision: int,
+) -> dict:
+    response = client.post(
+        workspace_api_path("/executions"),
+        json={
+            "nodes": [],
+            "edges": [],
+            "graph_id": str(graph_id),
+            "graph_revision": graph_revision,
+        },
+    )
+    assert response.status_code == 202, response.text
+    return response.json()
+
+
+def test_two_sessions_see_execution_start_and_complete(
+    room_client: tuple[TestClient, ActorSwitcher],
+) -> None:
+    """Phase 5B: room advertises active execution lifecycle to every session."""
+
+    client, switcher = room_client
+    graph_id, revision = _create_graph_with_revision(client)
+
+    with _connect(client, graph_id) as owner_ws:
+        owner_ready = owner_ws.receive_json()
+        assert owner_ready["active_execution"] is None
+        switcher.as_user(EDITOR_USER_ID)
+        with _connect(client, graph_id) as editor_ws:
+            editor_ready = editor_ws.receive_json()
+            assert editor_ready["active_execution"] is None
+
+            switcher.as_user(TEST_USER_ID)
+            started = _start_saved_execution(
+                client,
+                graph_id=graph_id,
+                graph_revision=revision,
+            )
+            execution_id = started["execution_id"]
+
+            owner_active = _receive_until(owner_ws, "execution.active")
+            editor_active = _receive_until(editor_ws, "execution.active")
+            assert owner_active["execution"]["execution_id"] == execution_id
+            assert editor_active["execution"]["execution_id"] == execution_id
+            assert owner_active["execution"]["status"] in {
+                "queued",
+                "running",
+            }
+            assert owner_active["execution"]["starter"]["actor_id"] == str(
+                TEST_USER_ID
+            )
+            assert owner_active["execution"]["cancellable"] is True
+
+            owner_cleared = _receive_until(owner_ws, "execution.cleared")
+            editor_cleared = _receive_until(editor_ws, "execution.cleared")
+            assert owner_cleared["execution_id"] == execution_id
+            assert editor_cleared["execution_id"] == execution_id
+            assert owner_cleared["status"] == "succeeded"
+            assert editor_cleared["status"] == "succeeded"
+
+
+def test_viewer_discovers_active_execution_on_room_ready_and_cannot_cancel(
+    room_app_client: tuple[TestClient, ActorSwitcher, FastAPI],
+) -> None:
+    client, switcher, application = room_app_client
+    graph_id, revision = _create_graph_with_revision(client)
+
+    original_run = application.state.run_graph.run
+
+    async def blocking_run(*args, **kwargs):
+        del args, kwargs
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            raise
+
+    application.state.run_graph.run = blocking_run
+    try:
+        started = _start_saved_execution(
+            client,
+            graph_id=graph_id,
+            graph_revision=revision,
+        )
+        execution_id = started["execution_id"]
+
+        switcher.as_user(VIEWER_USER_ID)
+        with _connect(client, graph_id) as viewer_ws:
+            ready = viewer_ws.receive_json()
+            assert ready["active_execution"] is not None
+            assert ready["active_execution"]["execution_id"] == execution_id
+            assert ready["active_execution"]["status"] in {"queued", "running"}
+            assert "execute_graph" not in ready["capabilities"]["capabilities"]
+            assert "cancel_execution" not in ready["capabilities"]["capabilities"]
+
+            observed = client.get(workspace_api_path(f"/executions/{execution_id}"))
+            assert observed.status_code == 200
+
+            denied = client.delete(workspace_api_path(f"/executions/{execution_id}"))
+            assert denied.status_code == 403
+
+        switcher.as_user(EDITOR_USER_ID)
+        cancel = client.delete(workspace_api_path(f"/executions/{execution_id}"))
+        assert cancel.status_code == 200
+        assert cancel.json()["status"] in {"cancelling", "cancelled"}
+    finally:
+        application.state.run_graph.run = original_run
+
+
+def test_second_saved_execution_conflicts_while_active(
+    room_app_client: tuple[TestClient, ActorSwitcher, FastAPI],
+) -> None:
+    client, switcher, application = room_app_client
+    del switcher
+    graph_id, revision = _create_graph_with_revision(client)
+
+    original_run = application.state.run_graph.run
+
+    async def blocking_run(*args, **kwargs):
+        del args, kwargs
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            raise
+
+    application.state.run_graph.run = blocking_run
+    try:
+        first = _start_saved_execution(
+            client,
+            graph_id=graph_id,
+            graph_revision=revision,
+        )
+        conflict = client.post(
+            workspace_api_path("/executions"),
+            json={
+                "nodes": [],
+                "edges": [],
+                "graph_id": str(graph_id),
+                "graph_revision": revision,
+            },
+        )
+        assert conflict.status_code == 409, conflict.text
+        detail = conflict.json()["detail"]
+        assert detail["error_code"] == "active_execution"
+        assert detail["execution_id"] == first["execution_id"]
+
+        cancel = client.delete(
+            workspace_api_path(f"/executions/{first['execution_id']}")
+        )
+        assert cancel.status_code == 200
+    finally:
+        application.state.run_graph.run = original_run
+
+
+def test_two_sessions_see_execution_cancel(
+    room_app_client: tuple[TestClient, ActorSwitcher, FastAPI],
+) -> None:
+    client, switcher, application = room_app_client
+    graph_id, revision = _create_graph_with_revision(client)
+
+    original_run = application.state.run_graph.run
+
+    async def blocking_run(*args, **kwargs):
+        del args, kwargs
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            raise
+
+    application.state.run_graph.run = blocking_run
+    try:
+        with _connect(client, graph_id) as owner_ws:
+            owner_ws.receive_json()
+            switcher.as_user(EDITOR_USER_ID)
+            with _connect(client, graph_id) as editor_ws:
+                editor_ws.receive_json()
+
+                switcher.as_user(TEST_USER_ID)
+                started = _start_saved_execution(
+                    client,
+                    graph_id=graph_id,
+                    graph_revision=revision,
+                )
+                execution_id = started["execution_id"]
+                _receive_until(owner_ws, "execution.active")
+                _receive_until(editor_ws, "execution.active")
+
+                cancel = client.delete(
+                    workspace_api_path(f"/executions/{execution_id}")
+                )
+                assert cancel.status_code == 200
+
+                owner_cancelling = _receive_execution_active_status(
+                    owner_ws,
+                    "cancelling",
+                )
+                editor_cancelling = _receive_execution_active_status(
+                    editor_ws,
+                    "cancelling",
+                )
+                assert owner_cancelling["execution"]["cancellable"] is False
+                assert editor_cancelling["execution"]["cancellable"] is False
+
+                owner_cleared = _receive_until(owner_ws, "execution.cleared")
+                editor_cleared = _receive_until(editor_ws, "execution.cleared")
+                assert owner_cleared["status"] == "cancelled"
+                assert editor_cleared["status"] == "cancelled"
+    finally:
+        application.state.run_graph.run = original_run

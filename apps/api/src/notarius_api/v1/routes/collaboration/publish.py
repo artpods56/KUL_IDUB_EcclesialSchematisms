@@ -18,9 +18,13 @@ from notarius_api.v1.routes.collaboration.hub import (
     GraphRoomHub,
 )
 from notarius_api.v1.routes.collaboration.models import (
+    ActiveExecutionSummary,
     ActorPresentation,
+    ExecutionActiveMessage,
+    ExecutionClearedMessage,
     GraphCommandAcceptedMessage,
     RoomRehydrateMessage,
+    TerminalExecutionStatus,
     actor_display_color,
     bounded_display_name,
 )
@@ -127,3 +131,45 @@ async def close_user_rooms_for_permission_change(
         code=code,
         reason=reason,
     )
+
+
+class ActiveExecutionRoomPublisher:
+    """Post-commit fanout of active-execution discovery to graph rooms."""
+
+    def __init__(self, hub: GraphRoomHub) -> None:
+        self._hub = hub
+
+    async def publish_active(
+        self,
+        *,
+        workspace_id: UUID,
+        graph_id: UUID,
+        execution: ActiveExecutionSummary,
+    ) -> None:
+        await self._hub.publish_execution_active(
+            workspace_id=workspace_id,
+            graph_id=graph_id,
+            message=ExecutionActiveMessage(execution=execution),
+        )
+
+    async def publish_cleared(
+        self,
+        *,
+        workspace_id: UUID,
+        graph_id: UUID,
+        execution_id: UUID,
+        status: TerminalExecutionStatus,
+        graph_revision: int,
+        error: str | None,
+    ) -> None:
+        bounded_error = None if error is None else error[:2000]
+        await self._hub.publish_execution_cleared(
+            workspace_id=workspace_id,
+            graph_id=graph_id,
+            message=ExecutionClearedMessage(
+                execution_id=execution_id,
+                status=status,
+                graph_revision=graph_revision,
+                error=bounded_error,
+            ),
+        )

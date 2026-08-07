@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 from notarius_core.domain.collaboration import GraphCommand
+from notarius_core.domain.execution_history import GraphExecutionScope
 from notarius_core.domain.identity import WorkspaceCapability
 
 from notarius_api.v1.routes.saved_graphs.models import CollaborativeHeadResponse
@@ -28,6 +29,10 @@ ACTOR_DISPLAY_COLORS = (
     "orange",
 )
 
+
+
+ActiveExecutionLifecycleStatus = Literal["queued", "running", "cancelling"]
+TerminalExecutionStatus = Literal["cancelled", "succeeded", "failed"]
 
 
 class PresenceActivityKind(StrEnum):
@@ -146,6 +151,34 @@ class PresenceUpdateSubmitMessage(RoomProtocolModel):
 
 
 
+class ActiveExecutionSummary(RoomProtocolModel):
+    """Shared discovery facts for the one active graph execution."""
+
+    execution_id: UUID
+    graph_revision: int = Field(ge=1)
+    status: ActiveExecutionLifecycleStatus
+    scope: GraphExecutionScope = "all"
+    requested_node_ids: list[str] = Field(default_factory=list)
+    starter: ActorPresentation
+    active_node_id: str | None = None
+    overlays_compatible: bool = True
+    cancellable: bool = True
+
+    @field_validator("requested_node_ids")
+    @classmethod
+    def _normalize_requested_node_ids(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in value:
+            node_id = raw.strip()
+            if node_id == "" or node_id in seen:
+                continue
+            if len(node_id) > 255:
+                raise ValueError("requested node id must be at most 255 characters")
+            seen.add(node_id)
+            normalized.append(node_id)
+        return normalized
+
 class RoomReadyMessage(RoomProtocolModel):
     protocol_version: Literal[1] = PROTOCOL_VERSION
     type: Literal["room.ready"] = "room.ready"
@@ -156,10 +189,28 @@ class RoomReadyMessage(RoomProtocolModel):
     capabilities: CapabilitySnapshot
     head: CollaborativeHeadResponse
     participants: list[PresenceParticipant] = Field(default_factory=list)
-    active_execution: None = None
+    active_execution: ActiveExecutionSummary | None = None
     registry_marker: str = "builtin"
 
 
+
+class ExecutionActiveMessage(RoomProtocolModel):
+    """Room announcement when an active execution is accepted or changes lifecycle."""
+
+    protocol_version: Literal[1] = PROTOCOL_VERSION
+    type: Literal["execution.active"] = "execution.active"
+    execution: ActiveExecutionSummary
+
+
+class ExecutionClearedMessage(RoomProtocolModel):
+    """Room announcement after durable terminal state and active-slot release."""
+
+    protocol_version: Literal[1] = PROTOCOL_VERSION
+    type: Literal["execution.cleared"] = "execution.cleared"
+    execution_id: UUID
+    status: TerminalExecutionStatus
+    graph_revision: int = Field(ge=1)
+    error: str | None = Field(default=None, max_length=2000)
 
 class GraphCommandSubmitMessage(RoomProtocolModel):
     protocol_version: Literal[1] = PROTOCOL_VERSION

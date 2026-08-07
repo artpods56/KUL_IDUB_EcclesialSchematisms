@@ -1,15 +1,23 @@
 """In-process ownership and observation of asynchronous graph executions."""
 
 import asyncio
+import logging
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, Protocol
 from uuid import UUID, uuid4
 
 from notarius_core.domain.execution_history import GraphExecution
 from notarius_core.domain.errors import NotFoundError
 from notarius_core.nodes import NodeExecutionContext
+
+from notarius_api.v1.routes.collaboration.models import (
+    ActiveExecutionLifecycleStatus,
+    ActiveExecutionSummary,
+    ActorPresentation,
+    TerminalExecutionStatus,
+)
 
 from ..models import (
     ExecutionStatusEvent,
@@ -26,7 +34,31 @@ from .models import GraphExecutionResult
 from .run_graph import RunGraph
 
 
+logger = logging.getLogger(__name__)
+
 _TERMINAL_STATUSES = frozenset({"cancelled", "succeeded", "failed"})
+_ACTIVE_STATUSES = frozenset({"queued", "running", "cancelling"})
+
+
+class ActiveExecutionPublisher(Protocol):
+    async def publish_active(
+        self,
+        *,
+        workspace_id: UUID,
+        graph_id: UUID,
+        execution: ActiveExecutionSummary,
+    ) -> None: ...
+
+    async def publish_cleared(
+        self,
+        *,
+        workspace_id: UUID,
+        graph_id: UUID,
+        execution_id: UUID,
+        status: TerminalExecutionStatus,
+        graph_revision: int,
+        error: str | None,
+    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +223,8 @@ class _RunExecutionRecord:
     control: RunExecutionControl
     journal: _RunExecutionEventJournal
     history_execution: GraphExecution | None = None
+    starter: ActorPresentation | None = None
+    overlays_compatible: bool = True
     transition_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     status: RunExecutionStatus = "queued"
     task: asyncio.Task[None] | None = None
@@ -206,6 +240,32 @@ class _RunExecutionRecord:
             active_node_id=self.control.active_node_id,
             result=self.result,
             error=self.error,
+        )
+
+    def active_summary(self) -> ActiveExecutionSummary | None:
+        if (
+            self.history_execution is None
+            or self.starter is None
+            or self.status not in _ACTIVE_STATUSES
+        ):
+            return None
+        status: ActiveExecutionLifecycleStatus
+        if self.status == "queued":
+            status = "queued"
+        elif self.status == "running":
+            status = "running"
+        else:
+            status = "cancelling"
+        return ActiveExecutionSummary(
+            execution_id=self.execution_id,
+            graph_revision=self.history_execution.graph_revision,
+            status=status,
+            scope=self.history_execution.scope,
+            requested_node_ids=list(self.history_execution.requested_node_ids),
+            starter=self.starter,
+            active_node_id=self.control.active_node_id,
+            overlays_compatible=self.overlays_compatible,
+            cancellable=self.status in {"queued", "running"},
         )
 
 
@@ -232,11 +292,35 @@ class RunExecutionManager:
         self._terminal_order: deque[UUID] = deque()
         self._lock = asyncio.Lock()
         self._shutting_down = False
+        self._room_publisher: ActiveExecutionPublisher | None = None
+
+    def bind_room_publisher(self, publisher: ActiveExecutionPublisher) -> None:
+        self._room_publisher = publisher
+
+    async def active_execution_summary(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> ActiveExecutionSummary | None:
+        async with self._lock:
+            for record in self._executions.values():
+                if record.workspace_id != workspace_id:
+                    continue
+                history = record.history_execution
+                if history is None or history.graph_id != graph_id:
+                    continue
+                summary = record.active_summary()
+                if summary is not None:
+                    return summary
+            return None
 
     async def start(
         self,
         workspace_id: UUID,
         request: RunRequest,
+        *,
+        starter: ActorPresentation | None = None,
+        overlays_compatible: bool = True,
     ) -> RunExecutionSnapshot:
         async with self._lock:
             if self._shutting_down:
@@ -271,6 +355,8 @@ class RunExecutionManager:
                 control=control,
                 journal=journal,
                 history_execution=history_execution,
+                starter=starter,
+                overlays_compatible=overlays_compatible,
             )
             self._executions[execution_id] = record
             control.publish_execution_status("queued", None)
@@ -285,7 +371,9 @@ class RunExecutionManager:
                     completed,
                 )
             )
-            return record.snapshot()
+            snapshot = record.snapshot()
+            await self._publish_active(record)
+            return snapshot
 
     async def get(
         self,
@@ -362,6 +450,7 @@ class RunExecutionManager:
                 )
                 task = record.task
                 snapshot = record.snapshot()
+                await self._publish_active(record)
             if task is not None:
                 task.cancel()
             return snapshot
@@ -413,6 +502,7 @@ class RunExecutionManager:
                     "running",
                     record.control.active_node_id,
                 )
+                await self._publish_active(record)
             result = await self._run_graph.run(
                 record.workspace_id,
                 request,
@@ -534,6 +624,7 @@ class RunExecutionManager:
             else:
                 record.error = f"{error} <- caused by {history_error}"
             record.control.publish_execution_status(status, None)
+            await self._publish_cleared(record, status=status)
             if record.retained_terminal:
                 return
             record.retained_terminal = True
@@ -541,6 +632,55 @@ class RunExecutionManager:
             while len(self._terminal_order) > self._terminal_retention:
                 expired_id = self._terminal_order.popleft()
                 self._executions.pop(expired_id, None)
+
+    async def _publish_active(self, record: _RunExecutionRecord) -> None:
+        publisher = self._room_publisher
+        history = record.history_execution
+        summary = record.active_summary()
+        if publisher is None or history is None or summary is None:
+            return
+        try:
+            await publisher.publish_active(
+                workspace_id=record.workspace_id,
+                graph_id=history.graph_id,
+                execution=summary,
+            )
+        except Exception:
+            logger.exception(
+                "active_execution_publish_failed workspace_id=%s graph_id=%s "
+                "execution_id=%s",
+                record.workspace_id,
+                history.graph_id,
+                record.execution_id,
+            )
+
+    async def _publish_cleared(
+        self,
+        record: _RunExecutionRecord,
+        *,
+        status: Literal["cancelled", "succeeded", "failed"],
+    ) -> None:
+        publisher = self._room_publisher
+        history = record.history_execution
+        if publisher is None or history is None:
+            return
+        try:
+            await publisher.publish_cleared(
+                workspace_id=record.workspace_id,
+                graph_id=history.graph_id,
+                execution_id=record.execution_id,
+                status=status,
+                graph_revision=history.graph_revision,
+                error=record.error,
+            )
+        except Exception:
+            logger.exception(
+                "active_execution_clear_publish_failed workspace_id=%s graph_id=%s "
+                "execution_id=%s",
+                record.workspace_id,
+                history.graph_id,
+                record.execution_id,
+            )
 
 
 def _contains_cancellation(exception: BaseException) -> bool:

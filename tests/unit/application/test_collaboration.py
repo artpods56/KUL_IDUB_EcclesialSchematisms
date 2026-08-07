@@ -154,15 +154,32 @@ class FakeCollaborationRepository:
     ) -> GraphActiveExecutionSlot | None:
         return self.active_slots.get((workspace_id, graph_id))
 
-    async def upsert_active_execution_slot(self, slot: GraphActiveExecutionSlot) -> None:
-        self.active_slots[(slot.workspace_id, slot.graph_id)] = slot
+    async def acquire_active_execution_slot(self, slot: GraphActiveExecutionSlot) -> bool:
+        key = (slot.workspace_id, slot.graph_id)
+        if key in self.active_slots:
+            return False
+        self.active_slots[key] = slot
+        return True
 
     async def clear_active_execution_slot(
         self,
         workspace_id: UUID,
         graph_id: UUID,
+        *,
+        execution_id: UUID | None = None,
     ) -> None:
-        self.active_slots.pop((workspace_id, graph_id), None)
+        key = (workspace_id, graph_id)
+        existing = self.active_slots.get(key)
+        if existing is None:
+            return
+        if execution_id is not None and existing.execution_id != execution_id:
+            return
+        self.active_slots.pop(key, None)
+
+    async def clear_all_active_execution_slots(self) -> int:
+        count = len(self.active_slots)
+        self.active_slots.clear()
+        return count
 
 
 class FakeSavedGraphRepository:

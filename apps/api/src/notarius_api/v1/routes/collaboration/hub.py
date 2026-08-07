@@ -10,6 +10,8 @@ from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from notarius_api.v1.routes.collaboration.models import (
     ActorPresentation,
+    ExecutionActiveMessage,
+    ExecutionClearedMessage,
     GraphCommandAcceptedMessage,
     GraphCommandReceiptMessage,
     PresenceJoinMessage,
@@ -270,6 +272,27 @@ class GraphRoomHub:
         for session in await self._sessions_for(workspace_id, graph_id):
             await self._enqueue(session, message)
 
+
+
+    async def publish_execution_active(
+        self,
+        *,
+        workspace_id: UUID,
+        graph_id: UUID,
+        message: ExecutionActiveMessage,
+    ) -> None:
+        for session in await self._sessions_for(workspace_id, graph_id):
+            await self._enqueue(session, message)
+
+    async def publish_execution_cleared(
+        self,
+        *,
+        workspace_id: UUID,
+        graph_id: UUID,
+        message: ExecutionClearedMessage,
+    ) -> None:
+        for session in await self._sessions_for(workspace_id, graph_id):
+            await self._enqueue(session, message)
 
     async def close_graph(
         self,

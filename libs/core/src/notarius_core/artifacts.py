@@ -21,6 +21,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 if TYPE_CHECKING:
+    from notarius_core.domain.collaboration import GraphActiveExecutionSlot
     from notarius_core.domain.invocation_cache import InvocationCacheEntry
     from notarius_core.domain.execution_history import (
         GraphExecution,
@@ -238,6 +239,10 @@ class InMemoryDataStore:
         tuple[UUID, UUID, str],
         "GraphExecutionNodeResult",
     ] = field(default_factory=dict)
+    active_execution_slots: dict[
+        tuple[UUID, UUID],
+        "GraphActiveExecutionSlot",
+    ] = field(default_factory=dict)
 
     def clone(self) -> Self:
         return _clone(self)
@@ -251,6 +256,7 @@ class InMemoryDataStore:
         self.graph_execution_node_results = _clone(
             other.graph_execution_node_results
         )
+        self.active_execution_slots = _clone(other.active_execution_slots)
 
 
 class UnitOfWorkPort(Protocol):
@@ -608,6 +614,54 @@ class InMemoryGraphExecutionHistoryRepository:
 
 
 @final
+class InMemoryActiveExecutionSlotRepository:
+    """Minimal slot store for in-memory execution history tests."""
+
+    def __init__(self, store: InMemoryDataStore) -> None:
+        self._store = store
+
+    async def get_active_execution_slot(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> "GraphActiveExecutionSlot | None":
+        slot = self._store.active_execution_slots.get((workspace_id, graph_id))
+        if slot is None:
+            return None
+        return _clone(slot)
+
+    async def acquire_active_execution_slot(
+        self,
+        slot: "GraphActiveExecutionSlot",
+    ) -> bool:
+        key = (slot.workspace_id, slot.graph_id)
+        if key in self._store.active_execution_slots:
+            return False
+        self._store.active_execution_slots[key] = _clone(slot)
+        return True
+
+    async def clear_active_execution_slot(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+        *,
+        execution_id: UUID | None = None,
+    ) -> None:
+        key = (workspace_id, graph_id)
+        existing = self._store.active_execution_slots.get(key)
+        if existing is None:
+            return
+        if execution_id is not None and existing.execution_id != execution_id:
+            return
+        self._store.active_execution_slots.pop(key, None)
+
+    async def clear_all_active_execution_slots(self) -> int:
+        count = len(self._store.active_execution_slots)
+        self._store.active_execution_slots.clear()
+        return count
+
+
+@final
 class InMemoryStagedUploadRepository:
     def __init__(self, store: InMemoryDataStore) -> None:
         self._store = store
@@ -651,6 +705,7 @@ class _InMemoryUnitOfWorkState:
     invocation_cache: "InvocationCacheRepositoryPort"
     staged_uploads: "StagedUploadRepositoryPort"
     execution_history: "GraphExecutionHistoryRepositoryPort"
+    collaboration: InMemoryActiveExecutionSlotRepository
 
 
 class InMemoryUnitOfWork(UnitOfWorkPort):
@@ -685,6 +740,10 @@ class InMemoryUnitOfWork(UnitOfWorkPort):
     def execution_history(self) -> "GraphExecutionHistoryRepositoryPort":
         return self._entered_state().execution_history
 
+    @property
+    def collaboration(self) -> InMemoryActiveExecutionSlotRepository:
+        return self._entered_state().collaboration
+
     @override
     async def __aenter__(self) -> Self:
         if self._state.get() is not None:
@@ -705,6 +764,7 @@ class InMemoryUnitOfWork(UnitOfWorkPort):
                     execution_history=InMemoryGraphExecutionHistoryRepository(
                         working_store
                     ),
+                    collaboration=InMemoryActiveExecutionSlotRepository(working_store),
                 )
             )
         except BaseException:
