@@ -105,6 +105,15 @@ class FakeCollaborationRepository:
     async def add_journal_entry(self, entry: GraphCommandJournalEntry) -> None:
         self.journal.append(entry)
 
+    async def clear_journal(self, workspace_id: UUID, graph_id: UUID) -> None:
+        self.journal = [
+            entry
+            for entry in self.journal
+            if not (
+                entry.workspace_id == workspace_id and entry.graph_id == graph_id
+            )
+        ]
+
     async def get_receipt(
         self,
         workspace_id: UUID,
@@ -705,9 +714,23 @@ async def test_replace_complete_document_resets_epoch_when_checkpointed() -> Non
     assert new_head.collaboration_sequence == 0
     assert new_head.checkpoint_sequence == 0
     assert new_head.checkpoint_revision == 2
+    assert factory.collaboration.journal == []
     assert (WORKSPACE_ID, graph_id, new_head.room_epoch, 0) in (
         factory.collaboration.mappings
     )
+
+    after_replace, receipt = await service.accept_command(
+        actor=ActorContext(user_id=USER_ID),
+        workspace_id=WORKSPACE_ID,
+        graph_id=graph_id,
+        command_id=uuid4(),
+        observed_sequence=0,
+        observed_room_epoch=new_head.room_epoch,
+        command=RenameGraphCommand(name="After replace", expected_name="Replaced"),
+    )
+    assert receipt.outcome is CommandReceiptOutcome.ACCEPTED
+    assert after_replace.collaboration_sequence == 1
+    assert after_replace.name == "After replace"
 
 
 @pytest.mark.asyncio

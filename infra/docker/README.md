@@ -80,12 +80,18 @@ Then open `http://127.0.0.1:4200`.
 
 ## Nginx routing contract
 
-Configure Nginx so:
+Checked configuration lives at `infra/docker/gateway/nginx.conf`. Whether you
+run that file as a Compose gateway service or adapt it on the host, keep this
+same-origin contract:
 
-- `/` proxies to `http://127.0.0.1:3000`.
-- `/api/` proxies to `http://127.0.0.1:8000/`.
-- The trailing slash on `proxy_pass` strips `/api` before FastAPI receives the
-  request.
+- `/` proxies to the Next.js web process.
+- `/api/` proxies to the API process with a trailing-slash `proxy_pass` that
+  strips only `/api`, so public `/api/v1/...` becomes FastAPI `/v1/...`.
+- `/mcp` proxies to the same API process without rewriting the path, so the
+  mounted Streamable HTTP MCP application remains under one authority with
+  `/api/v1`.
+- Preserve WebSocket upgrade on graph-room paths and disable proxy buffering
+  for SSE and MCP long-lived responses.
 - Nginx must overwrite, not append to, the forwarding headers before proxying:
 
   ```nginx
@@ -99,13 +105,13 @@ Configure Nginx so:
   If the subnet overlaps another Docker network, set
   `NOTARIUS_DOCKER_SUBNET` and `NOTARIUS_DOCKER_GATEWAY` together; never use
   `*` as the trusted peer.
-- Proxy buffering is disabled for execution event streams.
 - Request body limits are high enough for the table, image, and GIS files you
   intend to upload.
 
-Notarius does not yet provide application-level user authentication. Protect
-both routes at Nginx with your existing VPN, SSO, or authentication policy.
-Do not expose ports 3000 or 8000 publicly.
+Browser traffic uses the opaque Notarius session cookie after OIDC login. MCP
+clients use a workspace-bound PAT in `Authorization: Bearer`. Terminate TLS at
+the public origin registered for OIDC. Do not expose ports 3000 or 8000 on a
+non-loopback address.
 
 ## Persistence and backups
 

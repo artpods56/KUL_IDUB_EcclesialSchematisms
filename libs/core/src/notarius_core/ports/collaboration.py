@@ -45,6 +45,17 @@ class CollaborationRepositoryPort(Protocol):
 
     async def add_journal_entry(self, entry: GraphCommandJournalEntry) -> None: ...
 
+    async def clear_journal(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> None:
+        """Drop journal rows so a room-epoch reset can reuse sequence numbers.
+
+        Receipt tombstones remain for obsolete-epoch command resolve.
+        """
+        ...
+
     async def get_receipt(
         self,
         workspace_id: UUID,

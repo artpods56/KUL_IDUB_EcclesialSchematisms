@@ -36,3 +36,30 @@ def test_compose_gateway_and_forwarded_proxy_trust_are_identical() -> None:
     )
     assert env_values["NOTARIUS_DOCKER_GATEWAY"] == "172.30.0.1"
     assert env_values["NOTARIUS_DOCKER_SUBNET"] == "172.30.0.0/24"
+
+
+def test_nginx_gateway_routes_api_and_mcp_to_same_upstream() -> None:
+    repository = Path(__file__).parents[3]
+    nginx = (repository / "infra/docker/gateway/nginx.conf").read_text()
+
+    assert "upstream notarius_api" in nginx
+    assert "server api:8000;" in nginx
+    assert "upstream notarius_web" in nginx
+    assert "server web:3000;" in nginx
+
+    api_location = re.search(
+        r"location\s+/api/\s*\{(.*?)\n\s*\}",
+        nginx,
+        re.DOTALL,
+    )
+    mcp_location = re.search(
+        r"location\s+/mcp\s*\{(.*?)\n\s*\}",
+        nginx,
+        re.DOTALL,
+    )
+    assert api_location is not None, "gateway must expose /api/ to FastAPI"
+    assert mcp_location is not None, "gateway must expose /mcp to mounted MCP"
+    assert "proxy_pass http://notarius_api/;" in api_location.group(1)
+    assert "proxy_pass http://notarius_api;" in mcp_location.group(1)
+    assert "proxy_buffering off;" in api_location.group(1)
+    assert "proxy_buffering off;" in mcp_location.group(1)

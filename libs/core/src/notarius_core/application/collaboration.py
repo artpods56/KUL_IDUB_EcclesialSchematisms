@@ -623,6 +623,10 @@ class CollaborationService:
                     WorkspaceCapability.MANAGE_SECRETS
                 ),
             )
+            # Journal sequences are unique per graph, not per room epoch. Clear
+            # prior journal rows so the reset epoch can accept sequence 1 again.
+            # Receipts remain as obsolete-epoch resolve tombstones.
+            await unit_of_work.collaboration.clear_journal(workspace_id, graph_id)
             room_epoch = uuid4()
             head.room_epoch = room_epoch
             head.collaboration_sequence = 0

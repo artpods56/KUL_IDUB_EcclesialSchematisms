@@ -1339,6 +1339,14 @@ class SqlCollaborationRepository:
             )
         )
 
+    async def clear_journal(self, workspace_id: UUID, graph_id: UUID) -> None:
+        await self._session.execute(
+            delete(schema.graph_command_journal).where(
+                schema.graph_command_journal.c.workspace_id == workspace_id,
+                schema.graph_command_journal.c.graph_id == graph_id,
+            )
+        )
+
     async def get_receipt(
         self,
         workspace_id: UUID,
