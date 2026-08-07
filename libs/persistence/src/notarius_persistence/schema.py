@@ -449,6 +449,7 @@ graph_execution_requested_nodes = Table(
     ForeignKeyConstraint(
         ("workspace_id", "execution_id"),
         ("graph_executions.workspace_id", "graph_executions.execution_id"),
+        name="fk_exec_req_nodes_workspace_execution",
         ondelete="CASCADE",
     ),
     UniqueConstraint(
@@ -485,6 +486,7 @@ graph_execution_node_results = Table(
     ForeignKeyConstraint(
         ("workspace_id", "execution_id"),
         ("graph_executions.workspace_id", "graph_executions.execution_id"),
+        name="fk_exec_result_nodes_workspace_execution",
         ondelete="CASCADE",
     ),
     UniqueConstraint(

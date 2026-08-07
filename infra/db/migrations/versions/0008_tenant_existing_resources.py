@@ -18,7 +18,6 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 LOCAL_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
-_LOCAL_ID = LOCAL_WORKSPACE_ID.hex
 
 _RESOURCE_TABLES = (
     "saved_graphs",
@@ -514,9 +513,9 @@ def _create_tenant_tables(connection: sa.Connection) -> None:
                     "_0008_graph_executions.execution_id",
                 ],
                 name=(
-                    "fk_graph_execution_requested_nodes_workspace_id_graph_executions"
+                    "fk_exec_req_nodes_workspace_execution"
                     if kind == "requested"
-                    else "fk_graph_execution_node_results_workspace_id_graph_executions"
+                    else "fk_exec_result_nodes_workspace_execution"
                 ),
                 ondelete="CASCADE",
             ),
@@ -606,6 +605,32 @@ def _create_indexes() -> None:
         "ix_staged_uploads_workspace_created_at",
         "staged_uploads",
         ["workspace_id", "created_at"],
+    )
+
+
+def _create_staged_upload_table(connection: sa.Connection) -> None:
+    op.create_table(
+        "staged_uploads",
+        sa.Column("workspace_id", sa.Uuid(), nullable=False),
+        sa.Column("upload_key", sa.String(length=1024), nullable=False),
+        sa.Column("created_by_user_id", sa.Uuid(), nullable=True),
+        sa.Column("original_filename", sa.String(length=255), nullable=False),
+        sa.Column("byte_size", sa.BigInteger(), nullable=False),
+        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["workspace_id"],
+            ["workspaces.id"],
+            name="fk_staged_uploads_workspace_id_workspaces",
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["created_by_user_id"],
+            ["users.id"],
+            name="fk_staged_uploads_created_by_user_id_users",
+            ondelete="SET NULL",
+        ),
+        sa.PrimaryKeyConstraint("workspace_id", "upload_key", name="pk_staged_uploads"),
+        *_staged_upload_constraints(connection),
     )
 
 
@@ -772,29 +797,7 @@ def _copy_and_replace_tables(connection: sa.Connection) -> None:
         ),
         "u",
     )
-    op.create_table(
-        "staged_uploads",
-        sa.Column("workspace_id", sa.Uuid(), nullable=False),
-        sa.Column("upload_key", sa.String(length=1024), nullable=False),
-        sa.Column("created_by_user_id", sa.Uuid(), nullable=True),
-        sa.Column("original_filename", sa.String(length=255), nullable=False),
-        sa.Column("byte_size", sa.BigInteger(), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["workspace_id"],
-            ["workspaces.id"],
-            name="fk_staged_uploads_workspace_id_workspaces",
-            ondelete="CASCADE",
-        ),
-        sa.ForeignKeyConstraint(
-            ["created_by_user_id"],
-            ["users.id"],
-            name="fk_staged_uploads_created_by_user_id_users",
-            ondelete="SET NULL",
-        ),
-        sa.PrimaryKeyConstraint("workspace_id", "upload_key", name="pk_staged_uploads"),
-        *_staged_upload_constraints(connection),
-    )
+    _create_staged_upload_table(connection)
     _create_indexes()
     if connection.dialect.name == "sqlite":
         connection.exec_driver_sql("PRAGMA foreign_keys=ON")
@@ -854,7 +857,8 @@ def _assert_downgrade_is_safe(connection: sa.Connection) -> None:
     collisions = connection.scalar(
         sa.text(
             "SELECT COUNT(*) FROM (SELECT key_sha256 FROM "
-            "invocation_cache_entries GROUP BY key_sha256 HAVING COUNT(*) > 1)"
+            "invocation_cache_entries GROUP BY key_sha256 HAVING COUNT(*) > 1) "
+            "AS collisions"
         )
     )
     if collisions:
@@ -949,12 +953,9 @@ def _rebuild_legacy_tables(connection: sa.Connection) -> None:
         sa.Column("outputs", sa.JSON(), nullable=False),
         sa.Column("materialized_at", sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(
-            ["graph_id", "graph_revision"],
-            [
-                "_0008d_saved_graph_revisions.graph_id",
-                "_0008d_saved_graph_revisions.revision",
-            ],
-            name="fk_materialized_node_outputs_graph_id_saved_graph_revisions",
+            ["graph_id"],
+            ["_0008d_saved_graphs.id"],
+            name="fk_materialized_node_outputs_graph_id_saved_graphs",
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint(
@@ -1056,9 +1057,9 @@ def _rebuild_legacy_tables(connection: sa.Connection) -> None:
                 ["execution_id"],
                 ["_0008d_graph_executions.execution_id"],
                 name=(
-                    "fk_graph_execution_requested_nodes_execution_id_graph_executions"
+                    "fk_exec_req_nodes_execution"
                     if kind == "requested"
-                    else "fk_graph_execution_node_results_execution_id_graph_executions"
+                    else "fk_exec_result_nodes_execution"
                 ),
                 ondelete="CASCADE",
             ),

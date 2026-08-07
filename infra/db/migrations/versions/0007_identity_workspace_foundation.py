@@ -359,16 +359,12 @@ def upgrade() -> None:
 def downgrade() -> None:
     connection = op.get_bind()
     local_workspace = connection.execute(
-        sa.text(
-            "SELECT id, slug, kind, personal_owner_user_id FROM workspaces "
-            "WHERE id = :local_id"
-        ),
-        {"local_id": LOCAL_WORKSPACE_ID.hex},
+        _local_workspace_guard_query(),
+        {"local_id": LOCAL_WORKSPACE_ID},
     ).mappings().all()
     workspace_count = connection.scalar(sa.text("SELECT COUNT(*) FROM workspaces"))
     if workspace_count != 1 or local_workspace != [
         {
-            "id": LOCAL_WORKSPACE_ID.hex,
             "slug": "local",
             "kind": "shared",
             "personal_owner_user_id": None,
@@ -451,3 +447,10 @@ def downgrade() -> None:
     op.drop_table("oidc_identities")
     op.drop_index("ix_users_active_updated_at", table_name="users")
     op.drop_table("users")
+
+
+def _local_workspace_guard_query() -> sa.TextClause:
+    return sa.text(
+        "SELECT slug, kind, personal_owner_user_id FROM workspaces "
+        "WHERE id = :local_id"
+    ).bindparams(sa.bindparam("local_id", type_=sa.Uuid()))

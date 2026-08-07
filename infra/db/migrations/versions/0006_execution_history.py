@@ -69,7 +69,7 @@ def upgrade() -> None:
             ["execution_id"],
             ["graph_executions.execution_id"],
             name=(
-                "fk_graph_execution_requested_nodes_execution_id_graph_executions"
+                "fk_exec_req_nodes_execution"
             ),
             ondelete="CASCADE",
         ),
@@ -105,7 +105,7 @@ def upgrade() -> None:
             ["execution_id"],
             ["graph_executions.execution_id"],
             name=(
-                "fk_graph_execution_node_results_execution_id_graph_executions"
+                "fk_exec_result_nodes_execution"
             ),
             ondelete="CASCADE",
         ),

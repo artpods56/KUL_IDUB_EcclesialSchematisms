@@ -6,9 +6,10 @@ from uuid import UUID
 from alembic import command
 from alembic.config import Config
 import pytest
+import sqlalchemy as sa
 from sqlalchemy import Column, Integer, MetaData, Table, create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.schema import CreateTable
+from sqlalchemy.schema import CreateIndex, CreateTable
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects import sqlite
 
@@ -46,6 +47,80 @@ def test_tenant_rebuild_uses_postgresql_temporary_constraint_names() -> None:
     )
     assert "instr(upload_key, char(92)) = 0" in sqlite_upload_ddl
     assert "position(chr(92) in upload_key) = 0" in postgres_upload_ddl
+
+
+def test_all_0008_upgrade_and_downgrade_tables_compile_for_postgresql() -> None:
+    migration = importlib.import_module(
+        "infra.db.migrations.versions.0008_tenant_existing_resources"
+    )
+    captured_tables: list[tuple[str, tuple[object, ...]]] = []
+    captured_indexes: list[tuple[str, str, tuple[str, ...]]] = []
+
+    class CaptureOperations:
+        def create_table(self, name: str, *elements: object, **kwargs: object) -> None:
+            del kwargs
+            captured_tables.append((name, elements))
+
+        def create_index(
+            self,
+            name: str,
+            table_name: str,
+            columns: list[str],
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            del args, kwargs
+            captured_indexes.append((name, table_name, tuple(columns)))
+
+    class PostgresqlConnection:
+        dialect = postgresql.dialect()
+
+        def exec_driver_sql(self, statement: str) -> None:
+            del statement
+
+    migration.op = CaptureOperations()
+    connection = PostgresqlConnection()
+    migration._create_tenant_tables(connection)
+    migration._create_staged_upload_table(connection)
+    migration._create_indexes()
+    migration._rebuild_legacy_tables(connection)
+
+    metadata = MetaData()
+    Table("workspaces", metadata, Column("id", postgresql.UUID()))
+    Table("users", metadata, Column("id", postgresql.UUID()))
+    for table_name, elements in captured_tables:
+        Table(table_name, metadata, *elements)
+
+    expected_tables = {
+        *(f"_0008_{name}" for name in migration._LEGACY_RESOURCE_TABLES),
+        "staged_uploads",
+        *(f"_0008d_{name}" for name in migration._LEGACY_RESOURCE_TABLES),
+    }
+    assert {name for name, _ in captured_tables} == expected_tables
+    for table in metadata.tables.values():
+        if not table.name.startswith(("_0008", "staged_uploads")):
+            continue
+        ddl = str(CreateTable(table).compile(dialect=postgresql.dialect()))
+        assert ddl.startswith("\nCREATE TABLE")
+        for constraint in table.constraints:
+            assert constraint.name is None or len(str(constraint.name)) <= 63
+    for name, table_name, columns in captured_indexes:
+        assert len(name) <= 63
+        table = metadata.tables.get(table_name)
+        if table is None:
+            table = metadata.tables[f"_0008_{table_name}"]
+        index = sa.Index(name, *[table.c[column] for column in columns])
+        assert str(CreateIndex(index).compile(dialect=postgresql.dialect()))
+
+
+def test_identity_downgrade_guard_uses_typed_uuid_bind_for_postgresql() -> None:
+    migration = importlib.import_module(
+        "infra.db.migrations.versions.0007_identity_workspace_foundation"
+    )
+    statement = migration._local_workspace_guard_query()
+    compiled = str(statement.compile(dialect=postgresql.dialect()))
+    assert "WHERE id = %(local_id)s" in compiled
+    assert isinstance(statement._bindparams["local_id"].type, sa.Uuid)
 
 
 def test_tenant_upgrade_preflight_leaves_no_temporary_tables_and_retries_cleanly(
@@ -536,6 +611,29 @@ def test_tenant_migration_backfills_all_0006_resources_and_checks_composite_keys
                     "created_at": timestamp,
                 },
             )
+        connection.execute(
+            text("DELETE FROM workspaces WHERE id = '00000000000000000000000000000009'")
+        )
+
+    command.downgrade(config, "0006_execution_history")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        materialized_foreign_keys = inspect(connection).get_foreign_keys(
+            "materialized_node_outputs"
+        )
+        assert materialized_foreign_keys == [
+            {
+                "name": "fk_materialized_node_outputs_graph_id_saved_graphs",
+                "constrained_columns": ["graph_id"],
+                "referred_schema": None,
+                "referred_table": "saved_graphs",
+                "referred_columns": ["id"],
+                "options": {"ondelete": "CASCADE"},
+            }
+        ]
+
+    command.downgrade(config, "0004_saved_graph_revisions")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        assert "materialized_node_outputs" in inspect(connection).get_table_names()
 
     get_settings.cache_clear()
 
