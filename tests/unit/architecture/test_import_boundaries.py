@@ -52,6 +52,7 @@ API_ROUTE_AREAS = (
     "uploads",
     "auth",
     "workspaces",
+    "collaboration",
 )
 API_SERVICE_AREAS = (
     "artifacts",
@@ -87,6 +88,14 @@ def test_api_routes_are_organized_as_capability_slices() -> None:
     }
     assert {path.name for path in (routes_root / "workspaces").glob("*.py")} == {
         "__init__.py",
+        "views.py",
+    }
+    assert {path.name for path in (routes_root / "collaboration").glob("*.py")} == {
+        "__init__.py",
+        "dependencies.py",
+        "hub.py",
+        "models.py",
+        "publish.py",
         "views.py",
     }
     for area in API_SERVICE_AREAS:

@@ -42,6 +42,8 @@ from notarius_api.v1.routes.auth.services import (
 from notarius_api.v1.routes.auth.views import router as auth_router
 from notarius_api.v1.routes.artifacts.views import router as artifacts_router
 from notarius_api.v1.routes.catalog.views import router as catalog_router
+from notarius_api.v1.routes.collaboration.hub import GraphRoomHub
+from notarius_api.v1.routes.collaboration.views import router as collaboration_router
 from notarius_api.v1.routes.executions.views import router as executions_router
 from notarius_api.v1.routes.node_secrets.services import NodeSecretService
 from notarius_api.v1.routes.node_secrets.views import router as node_secrets_router
@@ -321,6 +323,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             cleanup_task.cancel()
             await asyncio.gather(cleanup_task, return_exceptions=True)
+            await app.state.graph_room_hub.shutdown()
             await components.execution_manager.shutdown()
             await components.artifacts.close()
             del app.state.node_secrets
@@ -375,6 +378,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.identity_uow_factory = identity_uow_factory
     application.state.identity_service = identity_service
     application.state.auth_service = auth_service
+    application.state.graph_room_hub = GraphRoomHub()
     application.add_middleware(
         CORSMiddleware,
         allow_origins=list(resolved_settings.allowed_cors_origins),
@@ -412,6 +416,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(auth_router, prefix="/v1")
     application.include_router(workspaces_router, prefix="/v1")
     application.include_router(saved_graphs_router, prefix="/v1")
+    application.include_router(collaboration_router, prefix="/v1")
     application.include_router(node_secrets_router, prefix="/v1")
     application.include_router(catalog_router, prefix="/v1")
     application.include_router(uploads_router, prefix="/v1")

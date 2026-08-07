@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import Response
 
 from notarius_core.domain.collaboration import ReplaceDocumentCommand
@@ -18,6 +18,11 @@ from notarius_core.domain.errors import (
 from notarius_core.domain.identity import WorkspaceCapability
 
 from notarius_api.v1.routes.auth.dependencies import require_workspace_capability
+from notarius_api.v1.routes.collaboration.publish import (
+    close_graph_room,
+    publish_accepted_command,
+    publish_epoch_reset,
+)
 
 from .dependencies import CollaborationDependency, SavedGraphDependency
 from .models import (
@@ -143,6 +148,7 @@ async def get_collaborative_head(
 async def submit_graph_command(
     graph_id: UUID,
     request: SubmitGraphCommandRequest,
+    http_request: Request,
     collaboration: CollaborationDependency,
     access: require_workspace_capability(WorkspaceCapability.EDIT_GRAPH),
 ) -> SubmitGraphCommandResponse:
@@ -167,6 +173,14 @@ async def submit_graph_command(
         CollaborationIdempotencyMismatchError,
     ) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await publish_accepted_command(
+        http_request,
+        actor=access.actor,
+        workspace_id=access.workspace_id,
+        graph_id=graph_id,
+        command=request.command,
+        receipt=receipt,
+    )
     return SubmitGraphCommandResponse(
         head=CollaborativeHeadResponse.from_head(head),
         receipt=GraphCommandReceiptResponse.from_receipt(receipt),
@@ -210,11 +224,12 @@ async def checkpoint_graph(
 async def update_saved_graph(
     graph_id: UUID,
     request: UpdateSavedGraphRequest,
+    http_request: Request,
     collaboration: CollaborationDependency,
     access: require_workspace_capability(WorkspaceCapability.EDIT_GRAPH),
 ) -> SavedGraphResponse:
     try:
-        graph, _ = await collaboration.replace_complete_document(
+        graph, head = await collaboration.replace_complete_document(
             actor=access.actor,
             workspace_id=access.workspace_id,
             graph_id=graph_id,
@@ -232,12 +247,19 @@ async def update_saved_graph(
         CollaborationHeadConflictError,
     ) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await publish_epoch_reset(
+        http_request,
+        workspace_id=access.workspace_id,
+        graph_id=graph_id,
+        head=head,
+    )
     return SavedGraphResponse.from_graph(graph)
 
 
 @router.delete("/{graph_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_saved_graph(
     graph_id: UUID,
+    http_request: Request,
     collaboration: CollaborationDependency,
     access: require_workspace_capability(WorkspaceCapability.DELETE_GRAPH),
     expected_revision: Annotated[int, Query(ge=1)],
@@ -272,4 +294,9 @@ async def delete_saved_graph(
         CollaborationHeadConflictError,
     ) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await close_graph_room(
+        http_request,
+        workspace_id=access.workspace_id,
+        graph_id=graph_id,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

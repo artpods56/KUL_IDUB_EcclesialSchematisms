@@ -29,6 +29,9 @@ from notarius_api.v1.routes.auth.models import (
     WorkspaceResponse,
 )
 from notarius_api.v1.routes.auth.services import AuthService
+from notarius_api.v1.routes.collaboration.publish import (
+    close_user_rooms_for_permission_change,
+)
 
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
@@ -200,6 +203,12 @@ async def add_member(
         user_id=payload.user_id,
         role=payload.role,
     )
+    await close_user_rooms_for_permission_change(
+        request,
+        workspace_id=workspace_id,
+        user_id=payload.user_id,
+        access_revoked=False,
+    )
     return await _member_response(request, membership.user_id, membership)
 
 
@@ -219,6 +228,12 @@ async def change_member_role(
         user_id=user_id,
         role=payload.role,
     )
+    await close_user_rooms_for_permission_change(
+        request,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        access_revoked=False,
+    )
     return await _member_response(request, user_id, membership)
 
 
@@ -233,6 +248,12 @@ async def remove_member(
         actor=actor,
         workspace_id=workspace_id,
         user_id=user_id,
+    )
+    await close_user_rooms_for_permission_change(
+        request,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        access_revoked=True,
     )
     return Response(status_code=204)
 
