@@ -1053,37 +1053,6 @@ class SqlGraphExecutionHistoryRepository(
         return GraphExecutionPage(items=items, next_cursor=next_cursor)
 
     @override
-    async def interrupt_active(
-        self,
-        *,
-        workspace_id: UUID,
-        finished_at: datetime,
-        error: str,
-    ) -> int:
-        if finished_at.tzinfo is None:
-            raise ValueError(
-                "Graph execution interruption timestamp must be timezone-aware"
-            )
-        result = cast(
-            CursorResult[tuple[object, ...]],
-            await self._session.execute(
-                update(schema.graph_executions)
-                .where(
-                    schema.graph_executions.c.workspace_id == workspace_id,
-                    schema.graph_executions.c.status.in_(
-                        ("queued", "running", "cancelling")
-                    )
-                )
-                .values(
-                    status="failed",
-                    finished_at=finished_at,
-                    error=error,
-                )
-            ),
-        )
-        return result.rowcount
-
-    @override
     async def interrupt_all_active(
         self,
         *,

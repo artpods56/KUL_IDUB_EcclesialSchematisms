@@ -360,7 +360,7 @@ async def test_restart_recovery_fails_only_active_executions(
 
     recovered_at = created_at + timedelta(minutes=5)
     async with unit_of_work as entered:
-        interrupted = await entered.execution_history.interrupt_active(
+        interrupted = await entered.execution_history.interrupt_all_active(
             finished_at=recovered_at,
             error="API restarted before execution completed",
         )

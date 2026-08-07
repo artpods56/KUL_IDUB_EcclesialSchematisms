@@ -38,14 +38,6 @@ class GraphExecutionHistoryRepositoryPort(Protocol):
         node_id: str | None = None,
     ) -> GraphExecutionPage: ...
 
-    async def interrupt_active(
-        self,
-        *,
-        workspace_id: UUID,
-        finished_at: datetime,
-        error: str,
-    ) -> int: ...
-
     async def interrupt_all_active(
         self,
         *,

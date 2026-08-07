@@ -577,32 +577,6 @@ class InMemoryGraphExecutionHistoryRepository:
             )
         return GraphExecutionPage(items=tuple(items), next_cursor=next_cursor)
 
-    async def interrupt_active(
-        self,
-        *,
-        workspace_id: UUID,
-        finished_at: datetime,
-        error: str,
-    ) -> int:
-        if finished_at.tzinfo is None:
-            raise ValueError(
-                "Graph execution interruption timestamp must be timezone-aware"
-            )
-        interrupted = 0
-        for execution_key, execution in list(self._store.graph_executions.items()):
-            if execution.workspace_id != workspace_id:
-                continue
-            if execution.status not in {"queued", "running", "cancelling"}:
-                continue
-            self._store.graph_executions[execution_key] = replace(
-                execution,
-                status="failed",
-                finished_at=finished_at,
-                error=error,
-            )
-            interrupted += 1
-        return interrupted
-
     async def interrupt_all_active(
         self,
         *,

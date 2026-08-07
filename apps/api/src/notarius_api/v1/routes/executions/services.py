@@ -187,19 +187,6 @@ class ExecutionHistoryService:
                 node_id=node_id,
             )
 
-    async def interrupt_active(self, workspace_id: UUID) -> int:
-        async with self._unit_of_work as unit_of_work:
-            interrupted = await unit_of_work.execution_history.interrupt_active(
-                workspace_id=workspace_id,
-                finished_at=datetime.now(UTC),
-                error=(
-                    "Execution was interrupted because the API process stopped "
-                    "before reporting a terminal result"
-                ),
-            )
-            await unit_of_work.commit()
-        return interrupted
-
     async def interrupt_all_active(self) -> int:
         async with self._unit_of_work as unit_of_work:
             interrupted = await unit_of_work.execution_history.interrupt_all_active(
