@@ -6,11 +6,12 @@ import Link from "next/link";
 import { useWorkspaceContext } from "./WorkspaceLayout";
 import { WorkspaceMembersDialog } from "./WorkspaceMembersDialog";
 import { useAuthSession } from "@/features/auth/AuthSessionBoundary";
+import { workspaceCanManageMembers } from "./WorkspaceLayout";
 
 export function WorkspaceOverview() {
   const { workspace } = useWorkspaceContext();
   const { session } = useAuthSession();
-  const canManageMembers = workspace.capabilities.includes("manage_members");
+  const canManageMembers = workspaceCanManageMembers(workspace);
   const isLocal = workspace.slug === "local";
 
   return (

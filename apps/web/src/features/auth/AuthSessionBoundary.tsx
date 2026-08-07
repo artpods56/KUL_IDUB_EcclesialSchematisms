@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useSWRConfig } from "swr";
+import { SWRConfig, type Cache, type State } from "swr";
 
 import { deleteSession, getSession, oidcLoginUrl, safeReturnPath } from "@/lib/api/auth";
 import { ApiError, onUnauthorized } from "@/lib/api/client";
@@ -12,7 +12,8 @@ type AuthState =
   | { kind: "signed-out" }
   | { kind: "authenticated"; session: Session }
   | { kind: "expired" }
-  | { kind: "unavailable" };
+  | { kind: "unavailable" }
+  | { kind: "logout-failed" };
 
 interface AuthSessionContextValue {
   session: Session;
@@ -29,10 +30,8 @@ export function sessionFailureKind(error: unknown): "signed-out" | "unavailable"
     : "unavailable";
 }
 
-export async function clearProtectedSWRState(
-  cache: { keys: () => IterableIterator<string>; delete: (key: string) => void },
-): Promise<void> {
-  for (const key of cache.keys()) cache.delete(key);
+export function createProtectedSWRCache(): Cache<unknown> {
+  return new Map<string, State<unknown>>();
 }
 
 function readReturnPath(): string {
@@ -49,11 +48,13 @@ function AuthFrame({
   state,
   onLogout,
   onRetry,
+  cacheGeneration,
   children,
 }: {
   state: AuthState;
   onLogout: () => Promise<void>;
   onRetry: () => void;
+  cacheGeneration: number;
   children: React.ReactNode;
 }) {
   if (state.kind === "loading") {
@@ -86,11 +87,25 @@ function AuthFrame({
       />
     );
   }
+  if (state.kind === "logout-failed") {
+    return (
+      <AuthStatus
+        title="Sign out could not be completed"
+        detail="The server could not revoke this session. Try again before leaving Notarius."
+        action={<button type="button" onClick={onLogout}>Try sign out again</button>}
+      />
+    );
+  }
 
   return (
-    <AuthSessionContext.Provider value={{ session: state.session, logout: onLogout }}>
-      {children}
-    </AuthSessionContext.Provider>
+    <SWRConfig
+      key={`protected-cache-${cacheGeneration}-${state.session.id}-${state.session.user_id}`}
+      value={{ provider: createProtectedSWRCache }}
+    >
+      <AuthSessionContext.Provider value={{ session: state.session, logout: onLogout }}>
+        {children}
+      </AuthSessionContext.Provider>
+    </SWRConfig>
   );
 }
 
@@ -121,23 +136,21 @@ export function useAuthSession(): AuthSessionContextValue {
 }
 
 export function AuthSessionBoundary({ children }: { children: React.ReactNode }) {
-  const { cache } = useSWRConfig();
   const [state, setState] = React.useState<AuthState>({ kind: "loading" });
-
-  const clearState = React.useCallback(async () => {
-    await clearProtectedSWRState(cache);
-  }, [cache]);
+  const [cacheGeneration, setCacheGeneration] = React.useState(0);
 
   const expireSession = React.useCallback(() => {
-    void clearState();
     setState((current) => current.kind === "authenticated" ? { kind: "expired" } : current);
-  }, [clearState]);
+  }, []);
 
   React.useEffect(() => onUnauthorized(expireSession), [expireSession]);
 
   const loadSession = React.useCallback((signal: AbortSignal) => {
     void getSession(signal)
-      .then((session) => setState({ kind: "authenticated", session }))
+      .then((session) => {
+        setCacheGeneration((current) => current + 1);
+        setState({ kind: "authenticated", session });
+      })
       .catch((error: unknown) => {
         if (signal.aborted) return;
         setState({ kind: sessionFailureKind(error) });
@@ -151,18 +164,20 @@ export function AuthSessionBoundary({ children }: { children: React.ReactNode })
   }, [loadSession]);
 
   const logout = React.useCallback(async () => {
+    setState({ kind: "logout-failed" });
     try {
       await deleteSession();
-    } finally {
-      await clearState();
       setState({ kind: "signed-out" });
+    } catch {
+      setState({ kind: "logout-failed" });
     }
-  }, [clearState]);
+  }, []);
 
   return (
     <AuthFrame
       state={state}
       onLogout={logout}
+      cacheGeneration={cacheGeneration}
       onRetry={() => {
         setState({ kind: "loading" });
         loadSession(new AbortController().signal);

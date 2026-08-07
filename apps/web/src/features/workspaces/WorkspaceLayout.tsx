@@ -15,6 +15,21 @@ interface WorkspaceContextValue {
   refreshWorkspaces: () => Promise<readonly Workspace[] | undefined>;
 }
 
+export type WorkspaceRouteAccessState = "available" | "missing" | "revoked";
+
+export function workspaceCanManageMembers(workspace: Workspace): boolean {
+  return workspace.capabilities.includes("manage_members");
+}
+
+export function workspaceRouteAccessState(
+  workspaceSlug: string,
+  workspace: Workspace | undefined,
+  previouslyResolvedWorkspace: Pick<Workspace, "slug" | "id"> | undefined,
+): WorkspaceRouteAccessState {
+  if (workspace) return "available";
+  return previouslyResolvedWorkspace?.slug === workspaceSlug ? "revoked" : "missing";
+}
+
 const WorkspaceContext = React.createContext<WorkspaceContextValue | null>(null);
 
 export function useWorkspaceContext(): WorkspaceContextValue {
@@ -112,6 +127,22 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
   const { workspaceSlug } = useParams<{ workspaceSlug: string }>();
   const { session, logout } = useAuthSession();
   const { data, error, mutate } = useWorkspaces(session.user_id);
+  const [previouslyResolvedWorkspace, setPreviouslyResolvedWorkspace] =
+    React.useState<Pick<Workspace, "slug" | "id"> | undefined>(undefined);
+
+  const workspace = data?.find((candidate) => candidate.slug === workspaceSlug);
+  if (
+    workspace &&
+    (previouslyResolvedWorkspace?.slug !== workspace.slug ||
+      previouslyResolvedWorkspace.id !== workspace.id)
+  ) {
+    setPreviouslyResolvedWorkspace({ slug: workspace.slug, id: workspace.id });
+  }
+  const routeAccessState = workspaceRouteAccessState(
+    workspaceSlug,
+    workspace,
+    previouslyResolvedWorkspace,
+  );
 
   if (error) {
     return <WorkspaceRouteStatus title="Workspaces unavailable" detail="Notarius could not confirm access to this workspace." />;
@@ -120,9 +151,10 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
     return <WorkspaceRouteStatus title="Loading workspace" detail="Checking your current workspace access…" />;
   }
 
-  const workspace = data.find((candidate) => candidate.slug === workspaceSlug);
   if (!workspace) {
-    return <WorkspaceRouteStatus title="Workspace unavailable" detail="This workspace is missing or your access has been revoked." />;
+    return routeAccessState === "revoked"
+      ? <WorkspaceRouteStatus title="Workspace access revoked" detail="Your access to this workspace is no longer available." />
+      : <WorkspaceRouteStatus title="Workspace not found" detail="No workspace with this slug is available to this session." />;
   }
 
   return (

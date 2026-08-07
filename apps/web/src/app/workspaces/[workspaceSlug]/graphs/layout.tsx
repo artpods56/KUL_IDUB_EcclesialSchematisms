@@ -11,6 +11,7 @@ import {
   isSupportedWorkbenchGraphRoute,
 } from "@/features/workbench/routes";
 import { useWorkspaceContext } from "@/features/workspaces/WorkspaceLayout";
+import { useAuthSession } from "@/features/auth/AuthSessionBoundary";
 
 interface GraphsLayoutProps {
   children: ReactNode;
@@ -22,6 +23,7 @@ export default function GraphsLayout({ children }: GraphsLayoutProps) {
     graphId: string;
   }>();
   const { workspace } = useWorkspaceContext();
+  const { session } = useAuthSession();
 
   if (
     workspace.slug !== "local" ||
@@ -33,6 +35,9 @@ export default function GraphsLayout({ children }: GraphsLayoutProps) {
   return (
     <>
       <Workbench
+        key={`${session.user_id}:${workspace.id}`}
+        userId={session.user_id}
+        workspaceId={workspace.id}
         workspaceSlug={workspaceSlug}
         initialGraphId={graphId === NEW_GRAPH_ROUTE_ID ? null : graphId}
       />

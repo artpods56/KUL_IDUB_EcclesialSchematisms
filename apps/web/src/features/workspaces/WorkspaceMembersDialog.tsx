@@ -13,6 +13,7 @@ import {
 import { useWorkspaceMembers } from "@/hooks/use-api";
 import { useAuthSession } from "@/features/auth/AuthSessionBoundary";
 import { useWorkspaceContext } from "./WorkspaceLayout";
+import { executeMemberMutation } from "./workspace-member-mutation";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const roles: readonly WorkspaceRole[] = ["viewer", "editor", "owner"];
@@ -39,11 +40,9 @@ export function WorkspaceMembersDialog() {
     setBusyKey(key);
     setMessage(null);
     try {
-      await operation();
-      await mutate();
+      await executeMemberMutation(operation, mutate, refreshWorkspaces);
     } catch (caught) {
       setMessage(operationError(caught));
-      if (caught instanceof ApiError && caught.status === 403) await refreshWorkspaces();
     } finally {
       setBusyKey(null);
     }

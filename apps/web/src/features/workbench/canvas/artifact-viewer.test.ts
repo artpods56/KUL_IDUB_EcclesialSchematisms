@@ -18,14 +18,16 @@ import {
 import type { ArtifactViewerBinding } from "./artifact-interactions";
 
 describe("artifact viewer storage", () => {
-  it("scopes documents by encoded workspace slug and graph id", () => {
-    const first = artifactViewerStorageKey("team/west", "graph-1");
+  it("scopes documents by user, stable workspace UUID, and graph id", () => {
+    const first = artifactViewerStorageKey("user-1", "workspace-1", "graph-1");
 
     expect(first).toBe(
-      "ns-workbench-presentation:v1:team%2Fwest:graph-1",
+      "ns-workbench-presentation:v2:user-1:workspace-1:graph-1",
     );
-    expect(artifactViewerStorageKey("team/east", "graph-1")).not.toBe(first);
-    expect(artifactViewerStorageKey("team/west", "graph-2")).not.toBe(first);
+    expect(artifactViewerStorageKey("user-2", "workspace-1", "graph-1")).not.toBe(first);
+    expect(artifactViewerStorageKey("user-1", "workspace-2", "graph-1")).not.toBe(first);
+    expect(artifactViewerStorageKey("user-1", "workspace-1", "graph-2")).not.toBe(first);
+    expect(artifactViewerStorageKey("user-1", "workspace-1", "team/west")).not.toBe(first);
   });
 
   it("round-trips only presentation geometry and semantic source identity", () => {
