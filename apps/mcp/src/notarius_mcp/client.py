@@ -44,13 +44,27 @@ class NotariusApiError(RuntimeError):
 
 
 class NotariusApiClient:
-    def __init__(self, http_client: httpx.AsyncClient) -> None:
+    """Workspace-scoped HTTP client for the standalone stdio MCP process.
+
+    Paths target `/v1/workspaces/{workspace_id}/...`. Live calls still lack a
+    credential accepted by those routes (browser AuthSession cookie only until
+    Phase 6 mounts Streamable HTTP MCP at `/mcp` with a workspace-bound PAT).
+    """
+
+    def __init__(
+        self,
+        http_client: httpx.AsyncClient,
+        *,
+        workspace_id: UUID,
+    ) -> None:
         self._http_client = http_client
+        self._workspace_id = workspace_id
+        self._workspace_root = f"/v1/workspaces/{workspace_id}"
 
     async def get_registry(self) -> NodeRegistryResponse:
         return await self._request(
             "GET",
-            "/v1/nodes",
+            f"{self._workspace_root}/nodes",
             expected_status=200,
             response_model=NodeRegistryResponse,
         )
@@ -58,13 +72,13 @@ class NotariusApiClient:
     async def list_graphs(self) -> SavedGraphListResponse:
         return await self._request(
             "GET",
-            "/v1/graphs",
+            f"{self._workspace_root}/graphs",
             expected_status=200,
             response_model=SavedGraphListResponse,
         )
 
     async def get_graph(self, graph_id: UUID) -> SavedGraphResponse:
-        path = f"/v1/graphs/{graph_id}"
+        path = f"{self._workspace_root}/graphs/{graph_id}"
         return await self._request(
             "GET",
             path,
@@ -78,7 +92,7 @@ class NotariusApiClient:
     ) -> SavedGraphResponse:
         return await self._request(
             "POST",
-            "/v1/graphs",
+            f"{self._workspace_root}/graphs",
             expected_status=201,
             response_model=SavedGraphResponse,
             request=request,
@@ -89,7 +103,7 @@ class NotariusApiClient:
         graph_id: UUID,
         request: UpdateSavedGraphRequest,
     ) -> SavedGraphResponse:
-        path = f"/v1/graphs/{graph_id}"
+        path = f"{self._workspace_root}/graphs/{graph_id}"
         return await self._request(
             "PUT",
             path,

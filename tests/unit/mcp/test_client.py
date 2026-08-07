@@ -14,6 +14,8 @@ from notarius_mcp.models import (
 
 
 GRAPH_ID = UUID("8d570df6-188d-40f2-b62a-dedbe35637cf")
+WORKSPACE_ID = UUID("11111111-2222-3333-4444-555555555555")
+WORKSPACE_ROOT = f"/v1/workspaces/{WORKSPACE_ID}"
 UPDATED_AT = datetime(2026, 7, 23, 10, 30, tzinfo=UTC)
 
 
@@ -108,18 +110,22 @@ def _create_request(name: str = "Example graph") -> CreateSavedGraphRequest:
     )
 
 
+def _api_client(http_client: httpx.AsyncClient) -> NotariusApiClient:
+    return NotariusApiClient(http_client, workspace_id=WORKSPACE_ID)
+
+
 @pytest.mark.asyncio
 async def test_get_registry_validates_the_typed_response() -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
-        assert request.url.path == "/v1/nodes"
+        assert request.url.path == f"{WORKSPACE_ROOT}/nodes"
         return httpx.Response(200, json=_registry_response())
 
     async with httpx.AsyncClient(
         base_url="http://notarius.test",
         transport=httpx.MockTransport(respond),
     ) as http_client:
-        registry = await NotariusApiClient(http_client).get_registry()
+        registry = await _api_client(http_client).get_registry()
 
     assert registry.plugins[0].origin == "builtin"
     assert registry.nodes[0].operator_id == "core.literal"
@@ -130,7 +136,7 @@ async def test_get_registry_validates_the_typed_response() -> None:
 @pytest.mark.asyncio
 async def test_graph_crud_uses_expected_paths_and_statuses() -> None:
     def respond(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET" and request.url.path == "/v1/graphs":
+        if request.method == "GET" and request.url.path == f"{WORKSPACE_ROOT}/graphs":
             return httpx.Response(
                 200,
                 json={
@@ -147,15 +153,15 @@ async def test_graph_crud_uses_expected_paths_and_statuses() -> None:
                 },
             )
         if request.method == "GET":
-            assert request.url.path == f"/v1/graphs/{GRAPH_ID}"
+            assert request.url.path == f"{WORKSPACE_ROOT}/graphs/{GRAPH_ID}"
             return httpx.Response(200, json=_graph_response())
         if request.method == "POST":
-            assert request.url.path == "/v1/graphs"
+            assert request.url.path == f"{WORKSPACE_ROOT}/graphs"
             payload = CreateSavedGraphRequest.model_validate_json(request.content)
             assert payload.name == "Example graph"
             return httpx.Response(201, json=_graph_response())
         assert request.method == "PUT"
-        assert request.url.path == f"/v1/graphs/{GRAPH_ID}"
+        assert request.url.path == f"{WORKSPACE_ROOT}/graphs/{GRAPH_ID}"
         payload = UpdateSavedGraphRequest.model_validate_json(request.content)
         assert payload.expected_revision == 1
         return httpx.Response(
@@ -167,7 +173,7 @@ async def test_graph_crud_uses_expected_paths_and_statuses() -> None:
         base_url="http://notarius.test",
         transport=httpx.MockTransport(respond),
     ) as http_client:
-        client = NotariusApiClient(http_client)
+        client = _api_client(http_client)
         graph_list = await client.list_graphs()
         graph = await client.get_graph(GRAPH_ID)
         created = await client.create_graph(_create_request())
@@ -195,10 +201,10 @@ async def test_get_graph_preserves_404_detail() -> None:
         transport=httpx.MockTransport(respond),
     ) as http_client:
         with pytest.raises(NotariusApiError) as raised:
-            await NotariusApiClient(http_client).get_graph(GRAPH_ID)
+            await _api_client(http_client).get_graph(GRAPH_ID)
 
     assert raised.value.method == "GET"
-    assert raised.value.path == f"/v1/graphs/{GRAPH_ID}"
+    assert raised.value.path == f"{WORKSPACE_ROOT}/graphs/{GRAPH_ID}"
     assert raised.value.status_code == 404
     assert raised.value.detail == "Graph was not found"
     assert raised.value.raw_body is None
@@ -214,7 +220,7 @@ async def test_replace_graph_preserves_409_detail() -> None:
         transport=httpx.MockTransport(respond),
     ) as http_client:
         with pytest.raises(NotariusApiError) as raised:
-            await NotariusApiClient(http_client).replace_graph(
+            await _api_client(http_client).replace_graph(
                 GRAPH_ID,
                 UpdateSavedGraphRequest(
                     **_create_request().model_dump(),
@@ -244,7 +250,7 @@ async def test_create_graph_preserves_422_validation_detail() -> None:
         transport=httpx.MockTransport(respond),
     ) as http_client:
         with pytest.raises(NotariusApiError) as raised:
-            await NotariusApiClient(http_client).create_graph(_create_request())
+            await _api_client(http_client).create_graph(_create_request())
 
     assert raised.value.status_code == 422
     assert raised.value.detail == validation_detail
@@ -260,7 +266,7 @@ async def test_non_json_error_preserves_raw_body() -> None:
         transport=httpx.MockTransport(respond),
     ) as http_client:
         with pytest.raises(NotariusApiError) as raised:
-            await NotariusApiClient(http_client).list_graphs()
+            await _api_client(http_client).list_graphs()
 
     assert raised.value.status_code == 502
     assert raised.value.detail is None
@@ -277,10 +283,10 @@ async def test_transport_error_is_contextual_and_chained() -> None:
         transport=httpx.MockTransport(respond),
     ) as http_client:
         with pytest.raises(NotariusApiError) as raised:
-            await NotariusApiClient(http_client).get_registry()
+            await _api_client(http_client).get_registry()
 
     assert raised.value.method == "GET"
-    assert raised.value.path == "/v1/nodes"
+    assert raised.value.path == f"{WORKSPACE_ROOT}/nodes"
     assert raised.value.status_code is None
     assert raised.value.detail == "connection refused"
     assert isinstance(raised.value.__cause__, httpx.ConnectError)

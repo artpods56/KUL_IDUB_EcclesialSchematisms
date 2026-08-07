@@ -104,7 +104,12 @@ async def _api_lifespan(
         base_url=str(settings.api_url),
         timeout=httpx.Timeout(settings.timeout_seconds),
     ) as http_client:
-        yield {"api_client": NotariusApiClient(http_client)}
+        yield {
+            "api_client": NotariusApiClient(
+                http_client,
+                workspace_id=settings.workspace_id,
+            )
+        }
 
 
 def _api_client(context: Context) -> NotariusApiClient:

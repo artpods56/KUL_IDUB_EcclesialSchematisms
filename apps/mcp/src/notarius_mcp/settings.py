@@ -1,4 +1,5 @@
 from typing import ClassVar
+from uuid import UUID
 
 from pydantic import Field, HttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -13,6 +14,8 @@ class Settings(BaseSettings):
     )
 
     api_url: HttpUrl = HttpUrl("http://127.0.0.1:8000")
+    # Explicit process workspace until Phase 6 derives it from a workspace-bound PAT.
+    workspace_id: UUID
     timeout_seconds: float = Field(default=15.0, gt=0)
 
 

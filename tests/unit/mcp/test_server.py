@@ -17,7 +17,14 @@ from notarius_mcp.server import mcp
 
 
 _GRAPH_ID = UUID("12345678-1234-5678-1234-567812345678")
+_WORKSPACE_ID = UUID("11111111-2222-3333-4444-555555555555")
+_WORKSPACE_ROOT = f"/v1/workspaces/{_WORKSPACE_ID}"
 _NOW = datetime(2026, 7, 23, tzinfo=timezone.utc).isoformat()
+
+
+@pytest.fixture(autouse=True)
+def _configure_mcp_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOTARIUS_MCP_WORKSPACE_ID", str(_WORKSPACE_ID))
 
 
 def _catalog_node(
@@ -169,7 +176,7 @@ async def test_search_and_inspect_nodes_use_the_live_catalog(
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
-        assert request.url.path == "/v1/nodes"
+        assert request.url.path == f"{_WORKSPACE_ROOT}/nodes"
         return httpx.Response(200, json=registry)
 
     _install_transport(monkeypatch, httpx.MockTransport(handler))
@@ -237,7 +244,7 @@ async def test_graph_read_tools_return_typed_api_results(
     graph_response = _graph_response(graph_request, revision=3)
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/v1/graphs":
+        if request.url.path == f"{_WORKSPACE_ROOT}/graphs":
             return httpx.Response(
                 200,
                 json={
@@ -253,7 +260,7 @@ async def test_graph_read_tools_return_typed_api_results(
                     ]
                 },
             )
-        assert request.url.path == f"/v1/graphs/{_GRAPH_ID}"
+        assert request.url.path == f"{_WORKSPACE_ROOT}/graphs/{_GRAPH_ID}"
         return httpx.Response(200, json=graph_response)
 
     _install_transport(monkeypatch, httpx.MockTransport(handler))
