@@ -94,9 +94,11 @@ Configure Nginx so:
   proxy_set_header X-Forwarded-Proto $scheme;
   ```
 
-  The Compose network uses `172.30.0.0/24`, and the API trusts only its
-  gateway, `172.30.0.1`, by default. If the gateway address changes, set
-  `NOTARIUS_TRUSTED_PROXY_IPS` to the exact proxy IP or network; never use `*`.
+  The Compose network uses subnet `172.30.0.0/24` with gateway `172.30.0.1`,
+  and the API derives its trusted forwarded-header peer from that same gateway.
+  If the subnet overlaps another Docker network, set
+  `NOTARIUS_DOCKER_SUBNET` and `NOTARIUS_DOCKER_GATEWAY` together; never use
+  `*` as the trusted peer.
 - Proxy buffering is disabled for execution event streams.
 - Request body limits are high enough for the table, image, and GIS files you
   intend to upload.
