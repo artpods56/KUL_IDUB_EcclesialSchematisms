@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Literal
 
@@ -38,7 +39,10 @@ from notarius_api.v1.routes.auth.services import (
     OIDC_TRANSACTION_COOKIE,
     AuthService,
 )
-from notarius_api.v1.routes.auth.abuse import request_browser_key
+from notarius_api.v1.routes.auth.abuse import (
+    request_browser_key,
+    set_browser_abuse_cookie,
+)
 from notarius_api.v1.routes.auth.views import router as auth_router
 from notarius_api.v1.routes.artifacts.views import router as artifacts_router
 from notarius_api.v1.routes.catalog.views import router as catalog_router
@@ -47,7 +51,10 @@ from notarius_api.v1.routes.node_secrets.services import NodeSecretService
 from notarius_api.v1.routes.node_secrets.views import router as node_secrets_router
 from notarius_api.v1.routes.saved_graphs.views import router as saved_graphs_router
 from notarius_api.v1.routes.uploads.views import router as uploads_router
-from notarius_api.v1.routes.workspaces.views import router as workspaces_router
+from notarius_api.v1.routes.workspaces.views import (
+    router as workspaces_router,
+    workspace_failure_metadata,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -95,11 +102,11 @@ async def _request_validation_error_handler(
         auth: AuthService = request.app.state.auth_service
         browser_key = request_browser_key(request)
         allowed = await auth.allow_callback(browser_key)
-        consumed = await auth.replace_login_transaction(
+        consumed_transaction_id = await auth.replace_login_transaction(
             request.cookies.get(OIDC_TRANSACTION_COOKIE)
         )
-        if consumed:
-            await auth.release_login(browser_key)
+        if consumed_transaction_id is not None:
+            await auth.release_login(browser_key, str(consumed_transaction_id))
         error_code = "validation_failed" if allowed else "rate_limited"
         await auth.audit_request_failure(
             request,
@@ -121,12 +128,7 @@ async def _request_validation_error_handler(
         )
         auth.clear_transaction_cookie(response)
         return response
-    if request.url.path.startswith("/v1/workspaces"):
-        await request.app.state.auth_service.audit_request_failure(
-            request,
-            operation="workspace.request",
-            error_code="validation_failed",
-        )
+    await _audit_workspace_failure(request, "validation_failed")
     if request.method != "PUT" or "/secrets/" not in request.url.path:
         return await default_validation_error_handler(request, exception)
     redacted_errors = [
@@ -181,12 +183,18 @@ async def _http_error_handler(request: Request, exception: Exception) -> Respons
 
 
 async def _audit_workspace_failure(request: Request, error_code: str) -> None:
-    if request.url.path.startswith("/v1/workspaces"):
-        await request.app.state.auth_service.audit_request_failure(
-            request,
-            operation="workspace.request",
-            error_code=error_code,
-        )
+    metadata = workspace_failure_metadata(request)
+    if metadata is None:
+        return
+    operation, workspace_id, resource_type, resource_id = metadata
+    await request.app.state.auth_service.audit_request_failure(
+        request,
+        operation=operation,
+        error_code=error_code,
+        workspace_id=workspace_id,
+        resource_type=resource_type,
+        resource_id=resource_id,
+    )
 
 
 async def _audit_auth_failure(request: Request, error_code: str) -> None:
@@ -202,6 +210,9 @@ async def _audit_auth_failure(request: Request, error_code: str) -> None:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or get_settings()
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     database = create_database(resolved_settings.resolved_database_url)
 
     @asynccontextmanager
@@ -314,6 +325,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redoc_url=None,
         openapi_url=None,
     )
+
+    async def browser_abuse_cookie_boundary(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        response = await call_next(request)
+        if request.url.path.startswith("/v1/auth"):
+            browser_key = getattr(request.state, "auth_browser_key", None)
+            if isinstance(browser_key, str):
+                set_browser_abuse_cookie(
+                    response,
+                    browser_key,
+                    secure=resolved_settings.auth_cookie_secure,
+                )
+        return response
+
+    application.middleware("http")(browser_abuse_cookie_boundary)
 
     def identity_uow_factory() -> SqlAlchemyUnitOfWork:
         return SqlAlchemyUnitOfWork(database.sessions)

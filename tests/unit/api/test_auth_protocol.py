@@ -1,8 +1,9 @@
 import base64
 import hashlib
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
-from collections.abc import Callable
 from pathlib import Path
+from types import TracebackType
 from typing import cast
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
@@ -18,12 +19,18 @@ from pydantic import SecretStr
 from notarius_api.settings import Settings
 from notarius_api.v1.routes.auth.services import (
     AuthService,
+    OidcCallbackInternalError,
     OidcProtocolError,
     ProviderMetadata,
 )
 from notarius_core.application.identity import IdentityService
 from notarius_core.domain.identity import OidcLoginTransaction, User, Workspace
-from notarius_core.ports.identity import IdentityUnitOfWorkPort
+from notarius_core.domain.security_audit import SecurityAuditEvent
+from notarius_core.ports.identity import (
+    IdentityRepositoryPort,
+    IdentityUnitOfWorkPort,
+    SecurityAuditRepositoryPort,
+)
 from notarius_persistence.database import create_database
 from notarius_persistence.orm import metadata
 from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
@@ -87,6 +94,62 @@ def _claims(**overrides: object) -> dict[str, object]:
     }
     claims.update(overrides)
     return claims
+
+
+class _FailingCallbackAuditRepository(SecurityAuditRepositoryPort):
+    def __init__(self, delegate: SecurityAuditRepositoryPort) -> None:
+        self._delegate = delegate
+
+    async def add(self, event: SecurityAuditEvent) -> None:
+        if event.operation == "oidc.callback.success":
+            raise RuntimeError("callback audit sentinel")
+        await self._delegate.add(event)
+
+    async def list_for_workspace(
+        self,
+        workspace_id: UUID,
+        *,
+        limit: int,
+    ) -> Sequence[SecurityAuditEvent]:
+        return await self._delegate.list_for_workspace(workspace_id, limit=limit)
+
+    async def delete_before(self, occurred_before: datetime) -> int:
+        return await self._delegate.delete_before(occurred_before)
+
+
+class _FailingCallbackAuditUnitOfWork(IdentityUnitOfWorkPort):
+    def __init__(self, factory: Callable[[], IdentityUnitOfWorkPort]) -> None:
+        self._delegate = factory()
+        self._audit: SecurityAuditRepositoryPort | None = None
+
+    @property
+    def identity(self) -> IdentityRepositoryPort:
+        return self._delegate.identity
+
+    @property
+    def security_audit(self) -> SecurityAuditRepositoryPort:
+        if self._audit is None:
+            raise RuntimeError("Unit of work is not entered")
+        return self._audit
+
+    async def __aenter__(self) -> "_FailingCallbackAuditUnitOfWork":
+        entered = await self._delegate.__aenter__()
+        self._audit = _FailingCallbackAuditRepository(entered.security_audit)
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        await self._delegate.__aexit__(exc_type, exc, traceback)
+
+    async def commit(self) -> None:
+        await self._delegate.commit()
+
+    async def rollback(self) -> None:
+        await self._delegate.rollback()
 
 
 def test_oidc_transaction_return_path_is_sensitive_state() -> None:
@@ -454,6 +517,49 @@ async def test_protocol_issuer_successfully_provisions_identity_and_rotates_sess
             )
         ).all()
     assert operations
+    failure_url, failure_id = await auth.start_login(return_path="/after-failure")
+    failure_params = parse_qs(urlsplit(failure_url).query)
+    protocol_state["url"] = failure_url
+    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        sessions_before_failure = {
+            session.id
+            for session in await unit_of_work.identity.list_auth_sessions_for_user(
+                provisioned.user.id
+            )
+        }
+
+    real_uow_factory = cast(
+        Callable[[], IdentityUnitOfWorkPort],
+        lambda: SqlAlchemyUnitOfWork(database.sessions),
+    )
+    monkeypatch.setattr(
+        auth,
+        "_unit_of_work_factory",
+        lambda: _FailingCallbackAuditUnitOfWork(real_uow_factory),
+    )
+    with pytest.raises(OidcCallbackInternalError) as internal_failure:
+        await auth.callback(
+            transaction_id_value=str(failure_id),
+            state=failure_params["state"][0],
+            code="protocol-code",
+            error=None,
+        )
+    assert isinstance(internal_failure.value.__cause__, RuntimeError)
+    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        failed_transaction = await unit_of_work.identity.get_login_transaction(
+            failure_id
+        )
+        assert failed_transaction is not None and failed_transaction.is_consumed
+        sessions_after_failure = (
+            await unit_of_work.identity.list_auth_sessions_for_user(provisioned.user.id)
+        )
+    new_sessions = [
+        session
+        for session in sessions_after_failure
+        if session.id not in sessions_before_failure
+    ]
+    assert len(new_sessions) == 1
+    assert new_sessions[0].is_revoked
     with pytest.raises(OidcProtocolError):
         await auth.callback(
             transaction_id_value=str(transaction_id),

@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -14,8 +15,11 @@ from notarius_core.domain.errors import (
 )
 from notarius_core.domain.identity import (
     ActorContext,
+    AuthSession,
+    PersonalAccessToken,
     User,
     Workspace,
+    WorkspaceCapability,
     WorkspaceMembership,
     WorkspaceRole,
 )
@@ -281,7 +285,39 @@ async def test_personal_membership_stays_owner_and_membership_changes_are_audite
     assert "workspace.membership.remove" in operations
     assert all(event.credential_reference == "session-owner" for event in events)
 
+    now = datetime.now(UTC)
+    active_session = AuthSession(
+        user_id=member.user.id,
+        secret_digest=b"session-secret-digest",
+        csrf_digest=b"csrf-secret-digest",
+        expires_at=now + timedelta(hours=1),
+    )
+    active_token = PersonalAccessToken(
+        user_id=member.user.id,
+        workspace_id=shared.id,
+        public_prefix="nrt_disable_user_test",
+        secret_digest=b"pat-secret-digest",
+        label="disable-user-test",
+        scopes=(WorkspaceCapability.VIEW_GRAPH,),
+        expires_at=now + timedelta(hours=1),
+    )
+    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        await unit_of_work.identity.add_auth_session(active_session)
+        await unit_of_work.identity.add_personal_access_token(active_token)
+        await unit_of_work.commit()
+
     await service.disable_user(user_id=member.user.id)
+    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        stored_session = await unit_of_work.identity.get_auth_session(active_session.id)
+        stored_token = (
+            await unit_of_work.identity.get_personal_access_token_for_user_workspace(
+                token_id=active_token.id,
+                user_id=member.user.id,
+                workspace_id=shared.id,
+            )
+        )
+    assert stored_session is not None and stored_session.is_revoked
+    assert stored_token is not None and stored_token.is_revoked
     async with database.engine.connect() as connection:
         disabled_event = (
             (

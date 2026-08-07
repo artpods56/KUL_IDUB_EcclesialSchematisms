@@ -1289,6 +1289,7 @@ export interface components {
             readonly scopes: readonly components["schemas"]["WorkspaceCapability"][];
             /**
              * Token
+             * Format: password
              * @description Raw personal access token; returned once and never retrievable again.
              */
             readonly token: string;

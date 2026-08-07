@@ -58,6 +58,14 @@ class OidcProtocolError(Exception):
         super().__init__(code)
 
 
+class OidcCallbackInternalError(Exception):
+    """Safe internal callback failure with transaction lifecycle state."""
+
+    def __init__(self, *, transaction_consumed: bool) -> None:
+        self.transaction_consumed = transaction_consumed
+        super().__init__("callback_internal_error")
+
+
 @dataclass(frozen=True, slots=True)
 class IssuedSession:
     session: AuthSession
@@ -99,14 +107,19 @@ class AuthService:
         self._jwks: dict[str, object] | list[object] | None = None
         self._jwks_expires_at: datetime | None = None
 
-    async def start_login(self, *, return_path: str) -> tuple[str, UUID]:
+    async def start_login(
+        self,
+        *,
+        return_path: str,
+        transaction_id: UUID | None = None,
+    ) -> tuple[str, UUID]:
         self._require_oidc_configuration()
         safe_return_path = self._validate_return_path(return_path)
         metadata = await self._provider()
         state = token_urlsafe(32)
         nonce = token_urlsafe(32)
         verifier = token_urlsafe(32)
-        transaction_id = UUID(bytes=token_bytes(16))
+        transaction_id = transaction_id or UUID(bytes=token_bytes(16))
         now = datetime.now(UTC)
         transaction = OidcLoginTransaction(
             id=transaction_id,
@@ -176,57 +189,65 @@ class AuthService:
             transaction_id=transaction_id,
             state=state,
         )
+        issued: IssuedSession | None = None
         try:
-            claims = await self._exchange_code(
-                code=code,
-                verifier=verifier,
-                nonce_digest=transaction.nonce_digest,
-            )
-        except (httpx.HTTPError, OidcProtocolError, JoseError) as exc:
-            raise OidcProtocolError(
-                "provider_token_validation_failed",
-                transaction_consumed=True,
-            ) from exc
-        issuer = self._require_value(self._settings.oidc_issuer)
-        subject = claims.get("sub")
-        if not isinstance(subject, str) or not subject:
-            raise OidcProtocolError("missing_subject", transaction_consumed=True)
-        email = claims.get("email")
-        display_name = claims.get("name")
-        if not isinstance(email, str):
-            email = None
-        if not isinstance(display_name, str):
-            display_name = None
-        try:
-            provisioned = await self._identity_service.provision_oidc_identity(
-                issuer=issuer,
-                subject=subject,
-                email=email,
-                display_name=display_name,
-            )
-        except (BootstrapOwnerRequiredError, UserDisabledError) as exc:
-            raise OidcProtocolError(
-                "identity_not_eligible",
-                transaction_consumed=True,
-            ) from exc
-        issued = await self.issue_session(
-            provisioned.user.id,
-            replacing_cookie=current_session_cookie,
-        )
-        async with self._unit_of_work_factory() as unit_of_work:
-            await unit_of_work.security_audit.add(
-                SecurityAuditEvent(
-                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
-                    user_id=provisioned.user.id,
-                    credential_reference=f"session:{issued.session.id}",
-                    operation="oidc.callback.success",
-                    outcome=SecurityAuditOutcome.SUCCESS,
-                    resource_type="auth_session",
-                    resource_id=str(issued.session.id),
+            try:
+                claims = await self._exchange_code(
+                    code=code,
+                    verifier=verifier,
+                    nonce_digest=transaction.nonce_digest,
                 )
+            except (httpx.HTTPError, OidcProtocolError, JoseError) as exc:
+                raise OidcProtocolError(
+                    "provider_token_validation_failed",
+                    transaction_consumed=True,
+                ) from exc
+            issuer = self._require_value(self._settings.oidc_issuer)
+            subject = claims.get("sub")
+            if not isinstance(subject, str) or not subject:
+                raise OidcProtocolError("missing_subject", transaction_consumed=True)
+            email = claims.get("email")
+            display_name = claims.get("name")
+            if not isinstance(email, str):
+                email = None
+            if not isinstance(display_name, str):
+                display_name = None
+            try:
+                provisioned = await self._identity_service.provision_oidc_identity(
+                    issuer=issuer,
+                    subject=subject,
+                    email=email,
+                    display_name=display_name,
+                )
+            except (BootstrapOwnerRequiredError, UserDisabledError) as exc:
+                raise OidcProtocolError(
+                    "identity_not_eligible",
+                    transaction_consumed=True,
+                ) from exc
+            issued = await self.issue_session(
+                provisioned.user.id,
+                replacing_cookie=current_session_cookie,
             )
-            await unit_of_work.commit()
-        return provisioned, issued, return_path
+            async with self._unit_of_work_factory() as unit_of_work:
+                await unit_of_work.security_audit.add(
+                    SecurityAuditEvent(
+                        actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                        user_id=provisioned.user.id,
+                        credential_reference=f"session:{issued.session.id}",
+                        operation="oidc.callback.success",
+                        outcome=SecurityAuditOutcome.SUCCESS,
+                        resource_type="auth_session",
+                        resource_id=str(issued.session.id),
+                    )
+                )
+                await unit_of_work.commit()
+            return provisioned, issued, return_path
+        except OidcProtocolError:
+            raise
+        except Exception as exc:
+            if issued is not None:
+                await self._revoke_session_after_callback_failure(issued.session.id)
+            raise OidcCallbackInternalError(transaction_consumed=True) from exc
 
     async def issue_session(
         self,
@@ -282,6 +303,25 @@ class AuthService:
             cookie_value=f"{session.id}.{session_secret}",
             csrf_value=csrf_value,
         )
+
+    async def _revoke_session_after_callback_failure(self, session_id: UUID) -> None:
+        async with self._unit_of_work_factory() as unit_of_work:
+            session = await unit_of_work.identity.get_auth_session(session_id)
+            if session is None or session.is_revoked:
+                return
+            session.revoke()
+            await unit_of_work.security_audit.add(
+                SecurityAuditEvent(
+                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                    user_id=session.user_id,
+                    credential_reference=f"session:{session.id}",
+                    operation="credential.session.revoke",
+                    outcome=SecurityAuditOutcome.SUCCESS,
+                    resource_type="auth_session",
+                    resource_id=str(session.id),
+                )
+            )
+            await unit_of_work.commit()
 
     def issue_personal_access_token(
         self,
@@ -388,6 +428,9 @@ class AuthService:
         *,
         operation: str,
         error_code: str,
+        workspace_id: UUID | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
     ) -> None:
         async with self._unit_of_work_factory() as unit_of_work:
             await unit_of_work.security_audit.add(
@@ -395,6 +438,9 @@ class AuthService:
                     actor_kind=SecurityAuditActorKind.UNAUTHENTICATED,
                     operation=operation,
                     outcome=SecurityAuditOutcome.FAILURE,
+                    workspace_id=workspace_id,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
                     error_code=error_code,
                 )
             )
@@ -407,6 +453,9 @@ class AuthService:
         credential_reference: str,
         operation: str,
         error_code: str,
+        workspace_id: UUID | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
     ) -> None:
         async with self._unit_of_work_factory() as unit_of_work:
             await unit_of_work.security_audit.add(
@@ -416,6 +465,9 @@ class AuthService:
                     credential_reference=credential_reference,
                     operation=operation,
                     outcome=SecurityAuditOutcome.FAILURE,
+                    workspace_id=workspace_id,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
                     error_code=error_code,
                 )
             )
@@ -427,6 +479,9 @@ class AuthService:
         *,
         operation: str,
         error_code: str,
+        workspace_id: UUID | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
     ) -> None:
         user_id = getattr(request.state, "auth_session_user_id", None)
         credential_reference = getattr(
@@ -440,11 +495,17 @@ class AuthService:
                 credential_reference=credential_reference,
                 operation=operation,
                 error_code=error_code,
+                workspace_id=workspace_id,
+                resource_type=resource_type,
+                resource_id=resource_id,
             )
             return
         await self.audit_unauthenticated_failure(
             operation=operation,
             error_code=error_code,
+            workspace_id=workspace_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
         )
 
     async def list_sessions(self, *, actor: ActorContext) -> list[AuthSession]:
@@ -546,28 +607,38 @@ class AuthService:
     async def allow_pat_creation(self, user_key: str) -> bool:
         return await self._abuse_control.allow_pat_creation(user_key)
 
-    async def reserve_login(self, browser_key: str) -> bool:
-        return await self._abuse_control.reserve_login(browser_key)
+    async def reserve_login(self, browser_key: str, transaction_id: UUID) -> bool:
+        return await self._abuse_control.reserve_login(browser_key, transaction_id)
 
-    async def release_login(self, browser_key: str) -> None:
-        await self._abuse_control.release_login(browser_key)
+    async def release_login(
+        self,
+        browser_key: str,
+        transaction_id_value: str | None,
+    ) -> None:
+        if transaction_id_value is None:
+            return
+        try:
+            transaction_id = UUID(transaction_id_value)
+        except ValueError:
+            return
+        await self._abuse_control.release_login(browser_key, transaction_id)
 
-    async def replace_login_transaction(self, value: str | None) -> bool:
+    async def replace_login_transaction(self, value: str | None) -> UUID | None:
         if value is None:
-            return False
+            return None
         try:
             transaction_id = UUID(value)
         except ValueError:
-            return False
+            return None
         async with self._unit_of_work_factory() as unit_of_work:
             transaction = await unit_of_work.identity.lock_login_transaction(
                 transaction_id
             )
             if transaction is None or transaction.is_consumed:
-                return False
+                return None
             transaction.consume()
             await unit_of_work.commit()
-            return True
+            return transaction_id
 
     async def _consume_transaction(
         self,

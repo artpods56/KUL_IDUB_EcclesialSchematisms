@@ -2,14 +2,28 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import hashlib
 import time
 from asyncio import Lock
+from secrets import token_urlsafe
+from uuid import UUID
+
+from fastapi import Response
+
+
+BROWSER_ABUSE_COOKIE = "notarius_browser_abuse"
+_BROWSER_ABUSE_COOKIE_MAX_AGE = 24 * 60 * 60
 
 
 @dataclass
 class _Window:
     started_at: float
     count: int = 0
+
+
+@dataclass
+class _LoginReservation:
+    expires_at: float
 
 
 class AuthAbuseControl:
@@ -37,8 +51,8 @@ class AuthAbuseControl:
         self._outstanding_login_limit = outstanding_login_limit
         self._outstanding_login_ttl_seconds = outstanding_login_ttl_seconds
         self._clock = clock
-        self._windows: dict[tuple[str, str], _Window] = {}
-        self._outstanding_logins: dict[str, _Window] = {}
+        self._windows: dict[tuple[str, bytes], _Window] = {}
+        self._outstanding_logins: dict[bytes, dict[UUID, _LoginReservation]] = {}
         self._lock = Lock()
 
     async def allow_login_start(self, browser_key: str) -> bool:
@@ -53,40 +67,49 @@ class AuthAbuseControl:
     async def allow_pat_creation(self, user_key: str) -> bool:
         return await self._allow("pat_creation", user_key)
 
-    async def reserve_login(self, browser_key: str) -> bool:
+    async def reserve_login(self, browser_key: str, transaction_id: UUID) -> bool:
         now = self._clock()
+        browser_digest = _digest(browser_key)
         async with self._lock:
-            expired_keys = [
-                key
-                for key, window in self._outstanding_logins.items()
-                if now - window.started_at >= self._outstanding_login_ttl_seconds
-            ]
-            for expired_key in expired_keys:
-                del self._outstanding_logins[expired_key]
-            current = self._outstanding_logins.get(browser_key)
+            expired_browser_digests: list[bytes] = []
+            for digest, reservations in self._outstanding_logins.items():
+                expired_ids = [
+                    reservation_id
+                    for reservation_id, reservation in reservations.items()
+                    if reservation.expires_at <= now
+                ]
+                for reservation_id in expired_ids:
+                    del reservations[reservation_id]
+                if not reservations:
+                    expired_browser_digests.append(digest)
+            for digest in expired_browser_digests:
+                del self._outstanding_logins[digest]
+
+            current = self._outstanding_logins.get(browser_digest)
             if (
                 current is None
                 and len(self._outstanding_logins) >= self._max_tracked_keys
             ):
                 return False
-            if (
-                current is None
-                or now - current.started_at >= self._outstanding_login_ttl_seconds
-            ):
-                current = _Window(started_at=now)
-                self._outstanding_logins[browser_key] = current
-            if current.count >= self._outstanding_login_limit:
+            if current is None:
+                current = {}
+                self._outstanding_logins[browser_digest] = current
+            if len(current) >= self._outstanding_login_limit:
                 return False
-            current.count += 1
+            current[transaction_id] = _LoginReservation(
+                expires_at=now + self._outstanding_login_ttl_seconds
+            )
             return True
 
-    async def release_login(self, browser_key: str) -> None:
+    async def release_login(self, browser_key: str, transaction_id: UUID) -> None:
+        browser_digest = _digest(browser_key)
         async with self._lock:
-            current = self._outstanding_logins.get(browser_key)
-            if current is None or current.count <= 1:
-                self._outstanding_logins.pop(browser_key, None)
-            else:
-                current.count -= 1
+            current = self._outstanding_logins.get(browser_digest)
+            if current is None:
+                return
+            current.pop(transaction_id, None)
+            if not current:
+                self._outstanding_logins.pop(browser_digest, None)
 
     async def _allow(self, kind: str, key: str) -> bool:
         now = self._clock()
@@ -98,7 +121,7 @@ class AuthAbuseControl:
             ]
             for expired_key in expired_keys:
                 del self._windows[expired_key]
-            window_key = (kind, key)
+            window_key = (kind, _digest(key))
             if (
                 window_key not in self._windows
                 and len(self._windows) >= self._max_tracked_keys
@@ -119,9 +142,48 @@ class AuthAbuseControl:
 
 
 def request_browser_key(request: object) -> str:
-    client = getattr(request, "client", None)
-    host = getattr(client, "host", None)
-    return host if isinstance(host, str) and host else "unknown"
+    state = getattr(request, "state", None)
+    cached = getattr(state, "auth_browser_key", None)
+    if isinstance(cached, str):
+        return cached
+    cookies = getattr(request, "cookies", {})
+    browser_key = cookies.get(BROWSER_ABUSE_COOKIE)
+    if not isinstance(browser_key, str) or not browser_key or len(browser_key) > 128:
+        path = getattr(getattr(request, "url", None), "path", "")
+        if isinstance(path, str) and "/auth/oidc/" not in path:
+            client = getattr(request, "client", None)
+            host = getattr(client, "host", None)
+            browser_key = (
+                f"ip:{host}" if isinstance(host, str) and host else "ip:unknown"
+            )
+        else:
+            browser_key = token_urlsafe(32)
+    if state is not None:
+        state.auth_browser_key = browser_key
+    return browser_key
 
 
-__all__ = ["AuthAbuseControl", "request_browser_key"]
+def set_browser_abuse_cookie(
+    response: Response, browser_key: str, *, secure: bool
+) -> None:
+    response.set_cookie(
+        BROWSER_ABUSE_COOKIE,
+        browser_key,
+        max_age=_BROWSER_ABUSE_COOKIE_MAX_AGE,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        path="/api/v1/auth/oidc",
+    )
+
+
+def _digest(value: str) -> bytes:
+    return hashlib.sha256(value.encode("utf-8")).digest()
+
+
+__all__ = [
+    "AuthAbuseControl",
+    "BROWSER_ABUSE_COOKIE",
+    "request_browser_key",
+    "set_browser_abuse_cookie",
+]

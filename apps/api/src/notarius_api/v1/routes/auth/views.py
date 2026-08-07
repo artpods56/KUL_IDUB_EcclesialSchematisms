@@ -1,6 +1,6 @@
 import logging
 from typing import Annotated
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -13,6 +13,7 @@ from notarius_api.v1.routes.auth.services import (
     OIDC_TRANSACTION_COOKIE,
     SESSION_COOKIE,
     AuthService,
+    OidcCallbackInternalError,
     OidcProtocolError,
     bounded_oidc_failure,
 )
@@ -36,12 +37,13 @@ async def oidc_login(
             error_code="rate_limited",
         )
         raise HTTPException(status_code=429, detail="Too many login attempts")
-    replaced = await auth.replace_login_transaction(
+    replaced_transaction_id = await auth.replace_login_transaction(
         request.cookies.get(OIDC_TRANSACTION_COOKIE)
     )
-    if replaced:
-        await auth.release_login(browser_key)
-    if not await auth.reserve_login(browser_key):
+    if replaced_transaction_id is not None:
+        await auth.release_login(browser_key, str(replaced_transaction_id))
+    transaction_id = uuid4()
+    if not await auth.reserve_login(browser_key, transaction_id):
         await auth.audit_unauthenticated_failure(
             operation="oidc.login.start",
             error_code="too_many_login_transactions",
@@ -49,17 +51,18 @@ async def oidc_login(
         raise HTTPException(status_code=429, detail="Too many login attempts")
     try:
         authorization_url, transaction_id = await auth.start_login(
-            return_path=return_path
+            return_path=return_path,
+            transaction_id=transaction_id,
         )
     except OidcProtocolError as error:
-        await auth.release_login(browser_key)
+        await auth.release_login(browser_key, str(transaction_id))
         await auth.audit_unauthenticated_failure(
             operation="oidc.login.start",
             error_code=error.code,
         )
         raise bounded_oidc_failure(error) from error
     except Exception:
-        await auth.release_login(browser_key)
+        await auth.release_login(browser_key, str(transaction_id))
         raise
     response = RedirectResponse(authorization_url, status_code=307)
     auth.set_transaction_cookie(response, str(transaction_id))
@@ -75,6 +78,7 @@ async def oidc_callback(
 ) -> Response:
     auth: AuthService = request.app.state.auth_service
     browser_key = request_browser_key(request)
+    transaction_id_value = request.cookies.get(OIDC_TRANSACTION_COOKIE)
     if not await auth.allow_callback(browser_key):
         await auth.audit_unauthenticated_failure(
             operation="oidc.login.callback",
@@ -86,7 +90,7 @@ async def oidc_callback(
         )
     try:
         _, issued, return_path = await auth.callback(
-            transaction_id_value=request.cookies.get(OIDC_TRANSACTION_COOKIE),
+            transaction_id_value=transaction_id_value,
             state=state,
             code=code,
             error=error,
@@ -94,7 +98,7 @@ async def oidc_callback(
         )
     except OidcProtocolError as protocol_error:
         if protocol_error.transaction_consumed:
-            await auth.release_login(browser_key)
+            await auth.release_login(browser_key, transaction_id_value)
         await auth.audit_unauthenticated_failure(
             operation="oidc.login.callback",
             error_code=protocol_error.code,
@@ -105,6 +109,20 @@ async def oidc_callback(
             content={"detail": failure.detail},
         )
         auth.clear_transaction_cookie(response)
+        return response
+    except OidcCallbackInternalError as internal_error:
+        if internal_error.transaction_consumed:
+            await auth.release_login(browser_key, transaction_id_value)
+        await auth.audit_unauthenticated_failure(
+            operation="oidc.login.callback",
+            error_code="internal_error",
+        )
+        response = JSONResponse(
+            status_code=500,
+            content={"detail": "OIDC callback failed"},
+        )
+        if internal_error.transaction_consumed:
+            auth.clear_transaction_cookie(response)
         return response
     except Exception as exception:
         logger.warning(
@@ -120,7 +138,7 @@ async def oidc_callback(
             content={"detail": "OIDC callback failed"},
         )
         return response
-    await auth.release_login(browser_key)
+    await auth.release_login(browser_key, transaction_id_value)
     response = RedirectResponse(return_path, status_code=303)
     auth.set_session_cookies(response, issued)
     auth.clear_transaction_cookie(response)

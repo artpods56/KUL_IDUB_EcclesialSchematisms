@@ -2001,8 +2001,10 @@
           },
           "token": {
             "description": "Raw personal access token; returned once and never retrievable again.",
+            "format": "password",
             "title": "Token",
-            "type": "string"
+            "type": "string",
+            "writeOnly": true
           },
           "workspace_id": {
             "format": "uuid",
