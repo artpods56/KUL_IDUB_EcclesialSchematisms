@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Annotated
 from uuid import UUID
@@ -29,6 +30,8 @@ from notarius_api.v1.routes.collaboration.dependencies import (
     GraphRoomHubWsDependency,
 )
 from notarius_api.v1.routes.collaboration.hub import (
+    CLOSE_ACCESS_REVOKED,
+    CLOSE_PERMISSIONS_CHANGED,
     CLOSE_PROTOCOL_ERROR,
     GraphRoomHub,
     GraphRoomSession,
@@ -40,6 +43,7 @@ from notarius_api.v1.routes.collaboration.models import (
     GraphCommandReceiptMessage,
     GraphCommandRejectedMessage,
     GraphCommandSubmitMessage,
+    RoomHeartbeatMessage,
     RoomReadyMessage,
     command_receipt_outcome,
 )
@@ -162,10 +166,28 @@ async def graph_room(
         ),
         head=CollaborativeHeadResponse.from_head(head),
     )
+    heartbeat_seconds = websocket.app.state.settings.graph_room_heartbeat_seconds
     try:
         await websocket.send_json(ready.model_dump(mode="json"))
         while True:
-            raw = await websocket.receive_json()
+            if heartbeat_seconds > 0:
+                try:
+                    raw = await asyncio.wait_for(
+                        websocket.receive_json(),
+                        timeout=heartbeat_seconds,
+                    )
+                except TimeoutError:
+                    still_open = await _revalidate_and_heartbeat(
+                        websocket=websocket,
+                        session=session,
+                        actor=actor,
+                        hub=hub,
+                    )
+                    if not still_open:
+                        return
+                    continue
+            else:
+                raw = await websocket.receive_json()
             try:
                 message = CLIENT_ROOM_MESSAGE_ADAPTER.validate_python(raw)
             except ValidationError:
@@ -194,6 +216,52 @@ async def graph_room(
             session.graph_room_session_id,
         )
         await hub.leave(session)
+
+
+async def _revalidate_and_heartbeat(
+    *,
+    websocket: WebSocket,
+    session: GraphRoomSession,
+    actor: ActorContext,
+    hub: GraphRoomHub,
+) -> bool:
+    """Reauthorize membership and emit ``room.heartbeat``.
+
+    Covers lost post-commit invalidation (auth tenancy design). Role or view
+    changes close with the stable protocol reasons rather than updating
+    capabilities in place.
+    """
+
+    if session.closed:
+        return False
+    try:
+        access = await websocket.app.state.identity_service.authorize(
+            actor=actor,
+            workspace_id=session.workspace_id,
+            capability=WorkspaceCapability.JOIN_GRAPH_ROOM,
+        )
+        access.require(WorkspaceCapability.VIEW_GRAPH)
+    except (NotFoundError, CapabilityDeniedError, UserDisabledError):
+        await hub.close_session(
+            session,
+            code=CLOSE_ACCESS_REVOKED[0],
+            reason=CLOSE_ACCESS_REVOKED[1],
+        )
+        return False
+    if access.membership.authorization_version != session.authorization_version:
+        await hub.close_session(
+            session,
+            code=CLOSE_PERMISSIONS_CHANGED[0],
+            reason=CLOSE_PERMISSIONS_CHANGED[1],
+        )
+        return False
+    await hub.deliver_private(
+        session,
+        RoomHeartbeatMessage(
+            authorization_version=access.membership.authorization_version,
+        ),
+    )
+    return True
 
 
 async def _handle_command_submit(
@@ -273,14 +341,6 @@ async def _handle_command_submit(
         return
 
     deduplicated = receipt.outcome is CommandReceiptOutcome.IDEMPOTENT_REPLAY
-    accepted = GraphCommandAcceptedMessage(
-        command_id=message.command_id,
-        room_epoch=receipt.room_epoch,
-        sequence=receipt.accepted_sequence,
-        actor=session.actor_presentation,
-        graph_room_session_id=session.graph_room_session_id,
-        command=message.command,
-    )
     receipt_message = GraphCommandReceiptMessage(
         command_id=message.command_id,
         outcome=command_receipt_outcome(deduplicated=deduplicated),
@@ -290,6 +350,19 @@ async def _handle_command_submit(
         current_sequence=head.collaboration_sequence,
         deduplicated=deduplicated,
         requires_head_rehydration=receipt.room_epoch != head.room_epoch,
+    )
+    if deduplicated:
+        # Design: receipt answers an idempotent retry and is never rebroadcast.
+        await hub.deliver_private(session, receipt_message)
+        return
+
+    accepted = GraphCommandAcceptedMessage(
+        command_id=message.command_id,
+        room_epoch=receipt.room_epoch,
+        sequence=receipt.accepted_sequence,
+        actor=session.actor_presentation,
+        graph_room_session_id=session.graph_room_session_id,
+        command=message.command,
     )
     await hub.publish_accepted(
         workspace_id=session.workspace_id,

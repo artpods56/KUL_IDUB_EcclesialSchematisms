@@ -105,6 +105,14 @@ class RoomRehydrateMessage(RoomProtocolModel):
     head: CollaborativeHeadResponse
 
 
+class RoomHeartbeatMessage(RoomProtocolModel):
+    """Server-owned keepalive; also triggers membership revalidation."""
+
+    protocol_version: Literal[1] = PROTOCOL_VERSION
+    type: Literal["room.heartbeat"] = "room.heartbeat"
+    authorization_version: int = Field(ge=1)
+
+
 ClientRoomMessage = Annotated[
     GraphCommandSubmitMessage,
     Field(discriminator="type"),

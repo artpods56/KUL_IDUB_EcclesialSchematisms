@@ -93,6 +93,15 @@ class GraphRoomHub:
             ):
                 await self._enqueue(session, receipt)
 
+    async def deliver_private(
+        self,
+        session: GraphRoomSession,
+        message: BaseModel,
+    ) -> None:
+        """Deliver a private message (e.g. idempotent receipt) without fanout."""
+
+        await self._enqueue(session, message)
+
     async def publish_rehydrate(
         self,
         *,

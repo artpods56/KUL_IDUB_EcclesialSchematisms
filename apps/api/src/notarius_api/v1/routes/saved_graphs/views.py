@@ -4,7 +4,10 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import Response
 
-from notarius_core.domain.collaboration import ReplaceDocumentCommand
+from notarius_core.domain.collaboration import (
+    CommandReceiptOutcome,
+    ReplaceDocumentCommand,
+)
 from notarius_core.domain.errors import (
     CollaborationActiveExecutionError,
     CollaborationCommandRejectedError,
@@ -173,14 +176,17 @@ async def submit_graph_command(
         CollaborationIdempotencyMismatchError,
     ) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    await publish_accepted_command(
-        http_request,
-        actor=access.actor,
-        workspace_id=access.workspace_id,
-        graph_id=graph_id,
-        command=request.command,
-        receipt=receipt,
-    )
+    # Idempotent retries return the original receipt over HTTP and must not
+    # rebroadcast an accepted command that peers already applied.
+    if receipt.outcome is not CommandReceiptOutcome.IDEMPOTENT_REPLAY:
+        await publish_accepted_command(
+            http_request,
+            actor=access.actor,
+            workspace_id=access.workspace_id,
+            graph_id=graph_id,
+            command=request.command,
+            receipt=receipt,
+        )
     return SubmitGraphCommandResponse(
         head=CollaborativeHeadResponse.from_head(head),
         receipt=GraphCommandReceiptResponse.from_receipt(receipt),

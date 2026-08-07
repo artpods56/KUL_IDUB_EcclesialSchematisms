@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     credential_encryption_key: SecretStr | None = None
     command_hmac_key: SecretStr | None = None
     command_hmac_key_version: int = Field(default=1, ge=1)
+    # Application graph-room heartbeat interval. Zero disables heartbeats
+    # (useful for focused unit tests). Production default revalidates membership
+    # when post-commit room invalidation is lost.
+    graph_room_heartbeat_seconds: float = Field(default=15.0, ge=0.0, le=120.0)
 
     @field_validator("public_origin", "oidc_issuer")
     @classmethod
