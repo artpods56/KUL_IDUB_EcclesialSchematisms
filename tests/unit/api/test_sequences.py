@@ -1,4 +1,5 @@
 import asyncio
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,6 +15,9 @@ from notarius_core.operators.sequences import ItemAtConfig, SliceConfig
 
 from notarius_api.v1.routes.catalog.models import NodeRegistryResponse
 from notarius_api.v1.routes.executions.models import RunResponse
+
+
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
 
 
 async def _store_artifacts(
@@ -41,7 +45,7 @@ def _binding(artifact_type: str, schema_version: int = 1) -> list[dict[str, obje
 def test_registry_declares_sequence_node_contracts(
     builtin_client: TestClient,
 ) -> None:
-    response = builtin_client.get("/v1/nodes")
+    response = builtin_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes")
 
     assert response.status_code == 200
     registry = NodeRegistryResponse.model_validate(response.json())
@@ -88,7 +92,7 @@ def test_count_slice_and_item_at_preserve_refs_and_artifact_content(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -166,10 +170,10 @@ def test_count_slice_and_item_at_preserve_refs_and_artifact_content(
     assert picked.value == numbers.value.item_refs[2]
     assert counted.artifacts[0].text == "4"
     assert builtin_client.get(
-        f"/v1/artifacts/{counted.value.artifact_id}/content"
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{counted.value.artifact_id}/content"
     ).json() == {"value": 4}
     assert builtin_client.get(
-        f"/v1/artifacts/{picked.value.artifact_id}/content"
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{picked.value.artifact_id}/content"
     ).json() == {"value": 30}
 
 
@@ -179,6 +183,7 @@ def test_collect_flattens_image_scalar_and_sequence_in_plug_order(
     client, uow = conversion_path_client
     images = [
         ArtifactObject(
+            workspace_id=WORKSPACE_ID,
             artifact_type=RASTER_IMAGE.key.id,
             schema_version=RASTER_IMAGE.key.schema_version,
             content_type="image/png",
@@ -193,7 +198,7 @@ def test_collect_flattens_image_scalar_and_sequence_in_plug_order(
     )
 
     response = client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -272,7 +277,7 @@ def test_collect_converts_each_input_to_its_bound_text_type(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -330,7 +335,7 @@ def test_collect_converts_each_input_to_its_bound_text_type(
         run.outputs[0] for run in result.node_runs if run.node_id == "collect"
     )
     assert [
-        builtin_client.get(f"/v1/artifacts/{artifact.artifact_id}/content").json()[
+        builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content").json()[
             "value"
         ]
         for artifact in output.artifacts
@@ -374,7 +379,7 @@ def test_collect_rejects_invalid_type_bindings(
     error_fragment: str,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -397,7 +402,7 @@ def test_run_rejects_removed_local_upload_operator(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -420,7 +425,7 @@ def test_collect_rejects_removed_page_image_artifact_type(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -445,7 +450,7 @@ def test_collect_rejects_non_integer_artifact_type_schema_versions(
     schema_version: object,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -476,7 +481,7 @@ def test_collect_rejects_an_input_with_a_different_artifact_type(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {

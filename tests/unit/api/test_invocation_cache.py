@@ -29,6 +29,7 @@ from notarius_core.operators.tables import (
 from notarius_core.runtime.materialization import MaterializationProvenance
 from notarius_core.runtime.persistence import ArtifactWriteContext
 from notarius_core.ports.storage import SaveFileCommand
+from notarius_core.domain.identity import Workspace
 from notarius_persistence.database import create_database
 from notarius_persistence.orm import metadata
 from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
@@ -47,6 +48,25 @@ from notarius_api.services.composition import build_workbench_components
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
 
 
+async def _seed_workspace(database_url: str) -> None:
+    database = create_database(database_url)
+    try:
+        async with database.engine.begin() as connection:
+            await connection.run_sync(metadata.create_all)
+        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+            await unit_of_work.identity.add_workspace(
+                Workspace(
+                    id=WORKSPACE_ID,
+                    slug="cache-test",
+                    name="Cache test workspace",
+                    kind="shared",
+                )
+            )
+            await unit_of_work.commit()
+    finally:
+        await database.dispose()
+
+
 def _raise_storage_outage(bucket: str, path: str) -> bool:
     raise RuntimeError(f"Storage unavailable for {bucket}/{path}")
 
@@ -59,7 +79,7 @@ def _run_output_artifact_id(
     config: dict[str, object],
 ) -> str:
     response = client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -330,11 +350,9 @@ async def test_cache_evicts_a_json_collection_with_a_corrupt_chunk(
 
 @pytest.mark.asyncio
 async def test_sql_cache_survives_fresh_workbench_components(tmp_path: Path) -> None:
-    database = create_database(
-        f"sqlite+aiosqlite:///{tmp_path / 'persistent-cache.sqlite3'}"
-    )
-    async with database.engine.begin() as connection:
-        await connection.run_sync(metadata.create_all)
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'persistent-cache.sqlite3'}"
+    await _seed_workspace(database_url)
+    database = create_database(database_url)
     registry = build_plugin_registry(builtin_plugins(), external_plugins=())
     request = RunRequest(
         nodes=[

@@ -1,9 +1,15 @@
 from typing import Annotated
+from uuid import UUID
 
-from fastapi import HTTPException, Request, Security, status
+from fastapi import Depends, HTTPException, Request, Security, status
 from fastapi.security import APIKeyCookie
 
-from notarius_core.domain.identity import ActorContext
+from notarius_core.domain.identity import (
+    ActorContext,
+    WorkspaceAccess,
+    WorkspaceCapability,
+)
+
 from notarius_api.v1.routes.auth.services import SESSION_COOKIE
 
 
@@ -48,3 +54,18 @@ async def browser_actor(
         )
         request.state.auth_failure_audited = True
         raise
+
+
+def require_workspace_capability(capability: WorkspaceCapability):
+    async def dependency(
+        request: Request,
+        workspace_id: UUID,
+        actor: Annotated[ActorContext, Depends(browser_actor)],
+    ) -> WorkspaceAccess:
+        return await request.app.state.identity_service.authorize(
+            actor=actor,
+            workspace_id=workspace_id,
+            capability=capability,
+        )
+
+    return Annotated[WorkspaceAccess, Depends(dependency)]

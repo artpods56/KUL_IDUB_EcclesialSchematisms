@@ -10,7 +10,7 @@ def test_schema_builders_compose_nested_objects_and_sequence_items_by_plug(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -130,7 +130,7 @@ def test_schema_builders_compose_nested_objects_and_sequence_items_by_plug(
     )
     schema_ref = invoice_run.outputs[0].artifacts[0]
     stored_payload = builtin_client.get(
-        f"/v1/artifacts/{schema_ref.artifact_id}/content"
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{schema_ref.artifact_id}/content"
     ).json()
     schema = cast(dict[str, object], json.loads(stored_payload["value"]))
 
@@ -164,7 +164,7 @@ def test_schema_builder_requires_one_connection_for_each_nested_field_plug(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {

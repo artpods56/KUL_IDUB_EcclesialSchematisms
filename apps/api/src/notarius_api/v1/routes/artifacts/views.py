@@ -26,10 +26,12 @@ from .services import (
     GeoRangeNotSatisfiableError,
     IMMUTABLE_CACHE_CONTROL,
 )
-from notarius_api.v1.routes.workspace_scope import LegacyWorkspaceDependency
+from notarius_core.domain.identity import WorkspaceCapability
+
+from notarius_api.v1.routes.auth.dependencies import require_workspace_capability
 
 
-router = APIRouter(tags=["workbench"])
+router = APIRouter(prefix="/workspaces/{workspace_id}", tags=["workbench"])
 
 
 @router.get(
@@ -47,13 +49,13 @@ router = APIRouter(tags=["workbench"])
 async def get_geo_render_descriptor(
     artifact_id: UUID,
     service: ArtifactDependency,
-    workspace_id: LegacyWorkspaceDependency,
+    access: require_workspace_capability(WorkspaceCapability.VIEW_ARTIFACTS),
 ) -> GeoRenderResponse:
-    artifact = await service.get(workspace_id, artifact_id)
+    artifact = await service.get(access.workspace_id, artifact_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     try:
-        return await service.load_geo_render(artifact, workspace_id=workspace_id)
+        return await service.load_geo_render(artifact, workspace_id=access.workspace_id)
     except ArtifactContentUnavailableError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except WorkbenchOperationError as exc:
@@ -76,16 +78,16 @@ async def query_geo_features(
     artifact_id: UUID,
     query: GeoFeatureQueryRequest,
     service: ArtifactDependency,
-    workspace_id: LegacyWorkspaceDependency,
+    access: require_workspace_capability(WorkspaceCapability.VIEW_ARTIFACTS),
 ) -> GeoFeatureQueryResponse:
-    artifact = await service.get(workspace_id, artifact_id)
+    artifact = await service.get(access.workspace_id, artifact_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     try:
         return await service.query_geo_features(
             artifact,
             query.rows,
-            workspace_id=workspace_id,
+            workspace_id=access.workspace_id,
         )
     except ArtifactContentUnavailableError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -108,10 +110,10 @@ async def query_geo_features(
 async def get_geo_vector_pmtiles(
     source_id: UUID,
     service: ArtifactDependency,
-    workspace_id: LegacyWorkspaceDependency,
+    access: require_workspace_capability(WorkspaceCapability.VIEW_ARTIFACTS),
     range_header: Annotated[str | None, Header(alias="Range")] = None,
 ) -> Response:
-    artifact = await service.get(workspace_id, source_id)
+    artifact = await service.get(access.workspace_id, source_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     try:
@@ -164,10 +166,10 @@ async def get_geo_vector_pmtiles(
 async def get_geo_exact_feature(
     source_id: UUID,
     service: ArtifactDependency,
-    workspace_id: LegacyWorkspaceDependency,
+    access: require_workspace_capability(WorkspaceCapability.VIEW_ARTIFACTS),
     feature_index: Annotated[int, Path(ge=0)],
 ) -> GeoExactFeatureResponse:
-    artifact = await service.get(workspace_id, source_id)
+    artifact = await service.get(access.workspace_id, source_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     try:
@@ -196,16 +198,16 @@ async def get_geo_exact_feature(
 async def get_geo_raster_tilejson(
     source_id: UUID,
     service: ArtifactDependency,
-    workspace_id: LegacyWorkspaceDependency,
+    access: require_workspace_capability(WorkspaceCapability.VIEW_ARTIFACTS),
     request: Request,
 ) -> GeoRasterTileJsonResponse:
-    artifact = await service.get(workspace_id, source_id)
+    artifact = await service.get(access.workspace_id, source_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     try:
         tilejson = await service.load_raster_tilejson(
             artifact,
-            workspace_id=workspace_id,
+            workspace_id=access.workspace_id,
         )
         return tilejson.model_copy(
             update={
@@ -213,6 +215,7 @@ async def get_geo_raster_tilejson(
                     str(
                         request.url_for(
                             "get_geo_raster_tile",
+                            workspace_id=access.workspace_id,
                             source_id=source_id,
                             z="{z}",
                             x="{x}",
@@ -247,18 +250,18 @@ async def get_geo_raster_tilejson(
 async def get_geo_raster_tile(
     source_id: UUID,
     service: ArtifactDependency,
-    workspace_id: LegacyWorkspaceDependency,
+    access: require_workspace_capability(WorkspaceCapability.VIEW_ARTIFACTS),
     z: Annotated[int, Path(ge=0, le=24)],
     x: Annotated[int, Path(ge=0)],
     y: Annotated[int, Path(ge=0)],
 ) -> Response:
-    artifact = await service.get(workspace_id, source_id)
+    artifact = await service.get(access.workspace_id, source_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     try:
         tile = await service.load_raster_tile(
             artifact,
-            workspace_id=workspace_id,
+            workspace_id=access.workspace_id,
             z=z,
             x=x,
             y=y,
@@ -298,7 +301,7 @@ async def get_geo_raster_tile(
 async def get_table_artifact_page(
     artifact_id: UUID,
     service: ArtifactDependency,
-    workspace_id: LegacyWorkspaceDependency,
+    access: require_workspace_capability(WorkspaceCapability.VIEW_ARTIFACTS),
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     column_offset: Annotated[int, Query(ge=0)] = 0,
@@ -321,7 +324,7 @@ async def get_table_artifact_page(
                 "max_cell_characters"
             ),
         )
-    artifact = await service.get(workspace_id, artifact_id)
+    artifact = await service.get(access.workspace_id, artifact_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     try:
@@ -361,9 +364,9 @@ async def get_table_artifact_page(
 async def get_table_artifact_schema(
     artifact_id: UUID,
     service: ArtifactDependency,
-    workspace_id: LegacyWorkspaceDependency,
+    access: require_workspace_capability(WorkspaceCapability.VIEW_ARTIFACTS),
 ) -> TableSchemaResponse:
-    artifact = await service.get(workspace_id, artifact_id)
+    artifact = await service.get(access.workspace_id, artifact_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     try:
@@ -391,7 +394,7 @@ async def query_table_artifact_page(
     artifact_id: UUID,
     query: TableQueryRequest,
     service: ArtifactDependency,
-    workspace_id: LegacyWorkspaceDependency,
+    access: require_workspace_capability(WorkspaceCapability.VIEW_ARTIFACTS),
 ) -> TablePageResponse:
     requested_column_count = (
         len(query.column_ids)
@@ -407,7 +410,7 @@ async def query_table_artifact_page(
                 "max_cell_characters"
             ),
         )
-    artifact = await service.get(workspace_id, artifact_id)
+    artifact = await service.get(access.workspace_id, artifact_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     try:
@@ -451,11 +454,11 @@ async def query_table_artifact_page(
 async def get_table_artifact_cell(
     artifact_id: UUID,
     service: ArtifactDependency,
-    workspace_id: LegacyWorkspaceDependency,
+    access: require_workspace_capability(WorkspaceCapability.VIEW_ARTIFACTS),
     row_index: Annotated[int, Query(ge=0)],
     column_id: Annotated[str, Query(min_length=1)],
 ) -> TableCellResponse:
-    artifact = await service.get(workspace_id, artifact_id)
+    artifact = await service.get(access.workspace_id, artifact_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     try:
@@ -488,9 +491,9 @@ async def get_table_artifact_cell(
 async def get_artifact_content(
     artifact_id: UUID,
     service: ArtifactDependency,
-    workspace_id: LegacyWorkspaceDependency,
+    access: require_workspace_capability(WorkspaceCapability.VIEW_ARTIFACTS),
 ) -> Response:
-    artifact = await service.get(workspace_id, artifact_id)
+    artifact = await service.get(access.workspace_id, artifact_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     try:

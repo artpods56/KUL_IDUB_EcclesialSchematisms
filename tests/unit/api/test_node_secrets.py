@@ -17,7 +17,12 @@ from notarius_core.domain.saved_graphs import (
     SavedGraphDocument,
     SavedGraphNode,
 )
-from notarius_core.domain.identity import Workspace
+from notarius_core.domain.identity import (
+    User,
+    Workspace,
+    WorkspaceMembership,
+    WorkspaceRole,
+)
 from notarius_core.domain.errors import SavedGraphRevisionConflictError
 from notarius_core.nodes import Node, NodeExecutionContext
 from notarius_core.plugins import NodeSecretInput, Plugin, PluginRegistry
@@ -127,12 +132,26 @@ async def node_secret_setup(
     async with database.engine.begin() as connection:
         await connection.run_sync(metadata.create_all)
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        await unit_of_work.identity.add_user(
+            User(
+                id=UUID(int=1),
+                email="owner@example.test",
+                display_name="Owner",
+            )
+        )
         await unit_of_work.identity.add_workspace(
             Workspace(
                 id=WORKSPACE_ID,
                 slug="local",
                 name="Local workspace",
                 kind="shared",
+            )
+        )
+        await unit_of_work.identity.add_membership(
+            WorkspaceMembership(
+                workspace_id=WORKSPACE_ID,
+                user_id=UUID(int=1),
+                role=WorkspaceRole.OWNER,
             )
         )
         await unit_of_work.commit()
@@ -1010,12 +1029,26 @@ def test_node_secret_routes_never_return_secret_value(tmp_path: Path) -> None:
         async with database.engine.begin() as connection:
             await connection.run_sync(metadata.create_all)
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+            await unit_of_work.identity.add_user(
+                User(
+                    id=UUID(int=1),
+                    email="owner@example.test",
+                    display_name="Owner",
+                )
+            )
             await unit_of_work.identity.add_workspace(
                 Workspace(
                     id=WORKSPACE_ID,
                     slug="local",
                     name="Local workspace",
                     kind="shared",
+                )
+            )
+            await unit_of_work.identity.add_membership(
+                WorkspaceMembership(
+                    workspace_id=WORKSPACE_ID,
+                    user_id=UUID(int=1),
+                    role=WorkspaceRole.OWNER,
                 )
             )
             await unit_of_work.commit()
@@ -1055,7 +1088,7 @@ def test_node_secret_routes_never_return_secret_value(tmp_path: Path) -> None:
     plaintext = "route-secret-value"
     try:
         with TestClient(application) as client:
-            catalog = client.get("/v1/nodes")
+            catalog = client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes")
             assert catalog.status_code == 200
             secret_node = next(
                 node
@@ -1072,7 +1105,7 @@ def test_node_secret_routes_never_return_secret_value(tmp_path: Path) -> None:
             ]
 
             configured = client.put(
-                f"/v1/graphs/{graph_id}/nodes/llm/secrets/api_key",
+                f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}/nodes/llm/secrets/api_key",
                 json={"value": plaintext, "expected_graph_revision": 1},
             )
             assert configured.status_code == 200
@@ -1084,13 +1117,13 @@ def test_node_secret_routes_never_return_secret_value(tmp_path: Path) -> None:
             assert plaintext not in configured.text
 
             invalid = client.put(
-                f"/v1/graphs/{graph_id}/nodes/llm/secrets/api_key",
+                f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}/nodes/llm/secrets/api_key",
                 json={"value": plaintext},
             )
             assert invalid.status_code == 422
             assert plaintext not in invalid.text
 
-            status = client.get(f"/v1/graphs/{graph_id}/node-secrets")
+            status = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}/node-secrets")
             assert status.status_code == 200
             assert status.json() == {
                 "graph_id": graph_id,
@@ -1105,12 +1138,12 @@ def test_node_secret_routes_never_return_secret_value(tmp_path: Path) -> None:
             }
             assert plaintext not in status.text
 
-            saved_graph = client.get(f"/v1/graphs/{graph_id}")
+            saved_graph = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}")
             assert saved_graph.status_code == 200
             assert plaintext not in saved_graph.text
 
             deleted = client.delete(
-                f"/v1/graphs/{graph_id}/nodes/llm/secrets/api_key",
+                f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}/nodes/llm/secrets/api_key",
                 params={"expected_graph_revision": 1},
             )
             assert deleted.status_code == 204

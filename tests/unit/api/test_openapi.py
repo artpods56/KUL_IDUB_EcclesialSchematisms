@@ -19,31 +19,31 @@ def test_openapi_contains_exact_public_routes() -> None:
     schema = app.openapi()
 
     assert set(schema["paths"]) == {
-        "/v1/artifacts/{artifact_id}/content",
-        "/v1/artifacts/{artifact_id}/geo/query",
-        "/v1/artifacts/{artifact_id}/geo/render",
-        "/v1/artifacts/{artifact_id}/table/cell",
-        "/v1/artifacts/{artifact_id}/table/page",
-        "/v1/artifacts/{artifact_id}/table/query",
-        "/v1/artifacts/{artifact_id}/table/schema",
-        "/v1/artifacts/{source_id}/geo/features/{feature_index}",
-        "/v1/artifacts/{source_id}/geo/raster/tilejson.json",
-        "/v1/artifacts/{source_id}/geo/raster/{z}/{x}/{y}.png",
-        "/v1/artifacts/{source_id}/geo/vector.pmtiles",
-        "/v1/executions",
-        "/v1/executions/{execution_id}",
-        "/v1/executions/{execution_id}/events",
-        "/v1/graphs",
-        "/v1/graphs/{graph_id}",
-        "/v1/graphs/{graph_id}/executions",
-        "/v1/graphs/{graph_id}/executions/{execution_id}",
-        "/v1/graphs/{graph_id}/materializations",
-        "/v1/graphs/{graph_id}/node-secrets",
-        "/v1/graphs/{graph_id}/nodes/{node_id}/secrets/{name}",
-        "/v1/nodes",
-        "/v1/runs",
-        "/v1/samples",
-        "/v1/uploads",
+        "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/content",
+        "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/geo/query",
+        "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/geo/render",
+        "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/table/cell",
+        "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/table/page",
+        "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/table/query",
+        "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/table/schema",
+        "/v1/workspaces/{workspace_id}/artifacts/{source_id}/geo/features/{feature_index}",
+        "/v1/workspaces/{workspace_id}/artifacts/{source_id}/geo/raster/tilejson.json",
+        "/v1/workspaces/{workspace_id}/artifacts/{source_id}/geo/raster/{z}/{x}/{y}.png",
+        "/v1/workspaces/{workspace_id}/artifacts/{source_id}/geo/vector.pmtiles",
+        "/v1/workspaces/{workspace_id}/executions",
+        "/v1/workspaces/{workspace_id}/executions/{execution_id}",
+        "/v1/workspaces/{workspace_id}/executions/{execution_id}/events",
+        "/v1/workspaces/{workspace_id}/graphs",
+        "/v1/workspaces/{workspace_id}/graphs/{graph_id}",
+        "/v1/workspaces/{workspace_id}/graphs/{graph_id}/executions",
+        "/v1/workspaces/{workspace_id}/graphs/{graph_id}/executions/{execution_id}",
+        "/v1/workspaces/{workspace_id}/graphs/{graph_id}/materializations",
+        "/v1/workspaces/{workspace_id}/graphs/{graph_id}/node-secrets",
+        "/v1/workspaces/{workspace_id}/graphs/{graph_id}/nodes/{node_id}/secrets/{name}",
+        "/v1/workspaces/{workspace_id}/nodes",
+        "/v1/workspaces/{workspace_id}/runs",
+        "/v1/workspaces/{workspace_id}/samples",
+        "/v1/workspaces/{workspace_id}/uploads",
         "/v1/auth/oidc/login",
         "/v1/auth/oidc/callback",
         "/v1/auth/session",
@@ -55,8 +55,8 @@ def test_openapi_contains_exact_public_routes() -> None:
         "/v1/workspaces/{workspace_id}/personal-access-tokens",
         "/v1/workspaces/{workspace_id}/personal-access-tokens/{token_id}",
     }
-    assert set(schema["paths"]["/v1/graphs"]) == {"get", "post"}
-    assert set(schema["paths"]["/v1/executions"]) == {"post"}
+    assert set(schema["paths"]["/v1/workspaces/{workspace_id}/graphs"]) == {"get", "post"}
+    assert set(schema["paths"]["/v1/workspaces/{workspace_id}/executions"]) == {"post"}
     security_schemes = schema["components"]["securitySchemes"]
     session_scheme_name = next(
         name
@@ -127,7 +127,7 @@ def test_openapi_contains_exact_public_routes() -> None:
         "attribution",
         "scheme",
     }
-    assert set(schema["paths"]["/v1/executions/{execution_id}"]) == {
+    assert set(schema["paths"]["/v1/workspaces/{workspace_id}/executions/{execution_id}"]) == {
         "delete",
         "get",
     }
@@ -147,14 +147,14 @@ def test_openapi_contains_exact_public_routes() -> None:
         "succeeded",
         "failed",
     ]
-    assert set(schema["paths"]["/v1/graphs/{graph_id}"]) == {
+    assert set(schema["paths"]["/v1/workspaces/{workspace_id}/graphs/{graph_id}"]) == {
         "delete",
         "get",
         "put",
     }
-    assert set(schema["paths"]["/v1/graphs/{graph_id}/materializations"]) == {"get"}
-    assert set(schema["paths"]["/v1/graphs/{graph_id}/executions"]) == {"get"}
-    assert set(schema["paths"]["/v1/graphs/{graph_id}/executions/{execution_id}"]) == {
+    assert set(schema["paths"]["/v1/workspaces/{workspace_id}/graphs/{graph_id}/materializations"]) == {"get"}
+    assert set(schema["paths"]["/v1/workspaces/{workspace_id}/graphs/{graph_id}/executions"]) == {"get"}
+    assert set(schema["paths"]["/v1/workspaces/{workspace_id}/graphs/{graph_id}/executions/{execution_id}"]) == {
         "get"
     }
     history_summary = schema["components"]["schemas"]["GraphExecutionSummaryResponse"]
@@ -173,9 +173,9 @@ def test_openapi_contains_exact_public_routes() -> None:
         "workflow_run_id",
         "error",
     }
-    assert set(schema["paths"]["/v1/graphs/{graph_id}/node-secrets"]) == {"get"}
+    assert set(schema["paths"]["/v1/workspaces/{workspace_id}/graphs/{graph_id}/node-secrets"]) == {"get"}
     assert set(
-        schema["paths"]["/v1/graphs/{graph_id}/nodes/{node_id}/secrets/{name}"]
+        schema["paths"]["/v1/workspaces/{workspace_id}/graphs/{graph_id}/nodes/{node_id}/secrets/{name}"]
     ) == {"delete", "put"}
     node_schema = schema["components"]["schemas"]["NodeSpecResponse"]
     assert "config_schema" in node_schema["properties"]
@@ -286,7 +286,7 @@ def test_app_health_is_ok() -> None:
 
 def test_app_allows_local_web_origin() -> None:
     response = TestClient(app).options(
-        "/v1/nodes",
+        "/v1/workspaces/{workspace_id}/nodes",
         headers={
             "Origin": "http://localhost:3000",
             "Access-Control-Request-Method": "GET",

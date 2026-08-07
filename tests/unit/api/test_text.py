@@ -95,7 +95,7 @@ def _collect_edges(payload: dict[str, object]) -> list[dict[str, object]]:
 def test_registry_declares_text_artifact_and_operator_contracts(
     builtin_client: TestClient,
 ) -> None:
-    response = builtin_client.get("/v1/nodes")
+    response = builtin_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes")
 
     assert response.status_code == 200
     registry = NodeRegistryResponse.model_validate(response.json())
@@ -150,7 +150,7 @@ def test_as_markdown_graph_persists_exact_source(
 ) -> None:
     source = "# Café\r\n\r\n- first\n- **second**\n\n"
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -187,7 +187,7 @@ def test_as_markdown_graph_persists_exact_source(
     assert markdown_ref.artifact_type == "text.markdown"
     assert markdown_ref.text == source
     assert builtin_client.get(
-        f"/v1/artifacts/{markdown_ref.artifact_id}/content"
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{markdown_ref.artifact_id}/content"
     ).json() == {"markdown": source}
 
 
@@ -195,7 +195,7 @@ def test_text_graph_splits_maps_replacement_and_joins(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -252,20 +252,20 @@ def test_text_graph_splits_maps_replacement_and_joins(
     assert result.status == "succeeded"
     runs = {run.node_id: run for run in result.node_runs}
     assert [
-        builtin_client.get(f"/v1/artifacts/{artifact.artifact_id}/content").json()[
+        builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content").json()[
             "value"
         ]
         for artifact in runs["split"].outputs[0].artifacts
     ] == ["alpha", "beta", "", "gamma", ""]
     assert [
-        builtin_client.get(f"/v1/artifacts/{artifact.artifact_id}/content").json()[
+        builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content").json()[
             "value"
         ]
         for artifact in runs["replace"].outputs[0].artifacts
     ] == ["AlphA", "betA", "", "gAmmA", ""]
 
     joined = runs["join"].outputs[0].artifacts[0]
-    assert builtin_client.get(f"/v1/artifacts/{joined.artifact_id}/content").json() == {
+    assert builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{joined.artifact_id}/content").json() == {
         "value": "AlphA|betA||gAmmA|"
     }
 
@@ -273,7 +273,7 @@ def test_text_graph_splits_maps_replacement_and_joins(
 def test_sequence_collect_accepts_text_shapes_in_declared_plug_order(
     builtin_client: TestClient,
 ) -> None:
-    response = builtin_client.post("/v1/runs", json=_collect_run_payload())
+    response = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json=_collect_run_payload())
 
     assert response.status_code == 200
     result = RunResponse.model_validate(response.json())
@@ -282,7 +282,7 @@ def test_sequence_collect_accepts_text_shapes_in_declared_plug_order(
     output = collect_run.outputs[0]
     assert isinstance(output.value, ArtifactRefSequence)
     assert [
-        builtin_client.get(f"/v1/artifacts/{artifact.artifact_id}/content").json()[
+        builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content").json()[
             "value"
         ]
         for artifact in output.artifacts
@@ -361,7 +361,7 @@ def test_sequence_collect_rejects_invalid_executable_plug_structures(
     invalid_payloads.append((unconnected_plug, "requires exactly one incoming edge"))
 
     for payload, expected_detail in invalid_payloads:
-        response = builtin_client.post("/v1/runs", json=payload)
+        response = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json=payload)
 
         assert response.status_code == 422
         assert expected_detail in response.json()["detail"]

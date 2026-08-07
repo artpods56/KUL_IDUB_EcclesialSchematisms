@@ -1,6 +1,7 @@
 import asyncio
 import json
 from pathlib import Path
+from uuid import UUID
 
 from PIL import Image, ImageDraw
 
@@ -36,13 +37,14 @@ from notarius_storage import LocalFileObjectStore
 
 
 WORKSPACE = Path(".notarius-artifacts/workbench-smoke").resolve()
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
 UPLOADS = WORKSPACE / "uploads"
 OBJECT_STORE = WORKSPACE / "objects"
 BUCKET = "workbench-artifacts"
 
 
 async def main() -> None:
-    image_paths = create_sample_images(UPLOADS)
+    image_paths = create_sample_images(UPLOADS / str(WORKSPACE_ID))
 
     uow = InMemoryUnitOfWork()
     storage = LocalFileObjectStore(OBJECT_STORE)
@@ -74,7 +76,7 @@ async def main() -> None:
 
     upload_output = await runtime.bind(
         plugin_registry.build_node("image.upload", 1, plugin_context),
-        NodeExecutionContext(node_id="image_upload_1"),
+        NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="image_upload_1"),
     )(
         {},
         config={
@@ -92,21 +94,21 @@ async def main() -> None:
 
     collect_output = await runtime.bind(
         CollectNode(),
-        NodeExecutionContext(node_id="collect_1"),
+        NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="collect_1"),
         artifact_type_bindings={"T": RASTER_IMAGE.key},
     )({"items": [uploaded_images]})
     collected_images = output_sequence(collect_output, "items")
 
     count_output = await runtime.bind(
         CountNode(),
-        NodeExecutionContext(node_id="count_1"),
+        NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="count_1"),
         artifact_type_bindings={"T": RASTER_IMAGE.key},
     )({"items": collected_images})
     count_ref = output_ref(count_output, "count")
 
     slice_output = await runtime.bind(
         SliceNode(),
-        NodeExecutionContext(node_id="slice_1"),
+        NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="slice_1"),
         artifact_type_bindings={"T": RASTER_IMAGE.key},
     )(
         {"items": collected_images},
@@ -116,7 +118,7 @@ async def main() -> None:
 
     pick_output = await runtime.bind(
         ItemAtNode(),
-        NodeExecutionContext(node_id="pick_1"),
+        NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="pick_1"),
         artifact_type_bindings={"T": RASTER_IMAGE.key},
     )(
         {"items": collected_images},
@@ -126,18 +128,28 @@ async def main() -> None:
     first_image = await resolver_registry.resolve(
         first_image_ref,
         Image.Image,
+        WORKSPACE_ID,
     )
 
     ocr_output = await runtime.bind(
         plugin_registry.build_node("ocr.tesseract.pages", 2, plugin_context),
-        NodeExecutionContext(node_id="ocr_1"),
+        NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="ocr_1"),
     )({"pages": selected_pages})
     ocr_pages = output_sequence(ocr_output, "results")
 
     async with uow as entered:
-        image_artifacts = await entered.artifacts.list_by_type(RASTER_IMAGE.key)
-        integer_artifacts = await entered.artifacts.list_by_type(INTEGER_VALUE.key)
-        ocr_artifacts = await entered.artifacts.list_by_type(OCR_PAGE_RESULT.key)
+        image_artifacts = await entered.artifacts.list_by_type(
+            WORKSPACE_ID,
+            RASTER_IMAGE.key,
+        )
+        integer_artifacts = await entered.artifacts.list_by_type(
+            WORKSPACE_ID,
+            INTEGER_VALUE.key,
+        )
+        ocr_artifacts = await entered.artifacts.list_by_type(
+            WORKSPACE_ID,
+            OCR_PAGE_RESULT.key,
+        )
 
     if len(integer_artifacts) != 1:
         raise RuntimeError("Count did not persist exactly one integer artifact")

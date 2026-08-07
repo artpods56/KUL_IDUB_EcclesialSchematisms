@@ -7,7 +7,12 @@ from pydantic import SecretStr
 
 from notarius_core.application.saved_graphs import SavedGraphService
 from notarius_core.domain.execution_history import GraphExecution
-from notarius_core.domain.identity import Workspace
+from notarius_core.domain.identity import (
+    User,
+    Workspace,
+    WorkspaceMembership,
+    WorkspaceRole,
+)
 from notarius_core.domain.saved_graphs import SavedGraphDocument
 from notarius_persistence.database import create_database
 from notarius_persistence.orm import metadata
@@ -53,7 +58,7 @@ def _start_saved_text_execution(
     graph: SavedGraphResponse,
 ) -> RunExecutionResponse:
     response = client.post(
-        "/v1/executions",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
         json={
             "nodes": [
                 {
@@ -72,7 +77,7 @@ def _start_saved_text_execution(
     assert response.status_code == 202
     started = RunExecutionResponse.model_validate(response.json())
     for _ in range(100):
-        poll = client.get(f"/v1/executions/{started.execution_id}")
+        poll = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{started.execution_id}")
         assert poll.status_code == 200
         current = RunExecutionResponse.model_validate(poll.json())
         if current.status in {"cancelled", "succeeded", "failed"}:
@@ -84,7 +89,7 @@ def test_saved_graph_execution_history_lists_filters_and_renders_artifacts(
     builtin_client: TestClient,
 ) -> None:
     created_response = builtin_client.post(
-        "/v1/graphs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
         json=_saved_text_graph_payload("History", "remember this"),
     )
     assert created_response.status_code == 201
@@ -93,7 +98,7 @@ def test_saved_graph_execution_history_lists_filters_and_renders_artifacts(
     first = _start_saved_text_execution(builtin_client, graph)
     assert first.status == "succeeded"
 
-    listing_response = builtin_client.get(f"/v1/graphs/{graph.id}/executions")
+    listing_response = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions")
     assert listing_response.status_code == 200
     listing = GraphExecutionListResponse.model_validate(listing_response.json())
     assert len(listing.items) == 1
@@ -110,7 +115,7 @@ def test_saved_graph_execution_history_lists_filters_and_renders_artifacts(
     assert summary.workflow_run_id is not None
 
     detail_response = builtin_client.get(
-        f"/v1/graphs/{graph.id}/executions/{first.execution_id}"
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions/{first.execution_id}"
     )
     assert detail_response.status_code == 200
     detail = GraphExecutionDetailResponse.model_validate(detail_response.json())
@@ -122,34 +127,34 @@ def test_saved_graph_execution_history_lists_filters_and_renders_artifacts(
     assert output.artifacts[0].text == '"remember this"'
 
     succeeded = builtin_client.get(
-        f"/v1/graphs/{graph.id}/executions",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions",
         params={"status": "succeeded", "node_id": "text"},
     )
     assert succeeded.status_code == 200
     assert len(GraphExecutionListResponse.model_validate(succeeded.json()).items) == 1
     no_match = builtin_client.get(
-        f"/v1/graphs/{graph.id}/executions",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions",
         params={"status": "failed", "node_id": "missing"},
     )
     assert no_match.status_code == 200
     assert GraphExecutionListResponse.model_validate(no_match.json()).items == []
     assert (
         builtin_client.get(
-            f"/v1/graphs/{graph.id}/executions",
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions",
             params={"node_id": "   "},
         ).status_code
         == 422
     )
     assert (
         builtin_client.get(
-            f"/v1/graphs/{graph.id}/executions",
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions",
             params={"cursor": "not-a-cursor"},
         ).status_code
         == 422
     )
     assert (
         builtin_client.get(
-            f"/v1/graphs/{uuid4()}/executions/{first.execution_id}"
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{uuid4()}/executions/{first.execution_id}"
         ).status_code
         == 404
     )
@@ -157,7 +162,7 @@ def test_saved_graph_execution_history_lists_filters_and_renders_artifacts(
     update_payload = _saved_text_graph_payload("History r2", "remember this")
     update_payload["expected_revision"] = graph.revision
     updated_response = builtin_client.put(
-        f"/v1/graphs/{graph.id}",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}",
         json=update_payload,
     )
     assert updated_response.status_code == 200
@@ -167,7 +172,7 @@ def test_saved_graph_execution_history_lists_filters_and_renders_artifacts(
     second = _start_saved_text_execution(builtin_client, updated_graph)
     assert second.status == "succeeded"
     revision_one_response = builtin_client.get(
-        f"/v1/graphs/{graph.id}/executions",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions",
         params={"graph_revision": 1},
     )
     revision_one = GraphExecutionListResponse.model_validate(
@@ -175,14 +180,14 @@ def test_saved_graph_execution_history_lists_filters_and_renders_artifacts(
     )
     assert [item.execution_id for item in revision_one.items] == [first.execution_id]
     revision_two_response = builtin_client.get(
-        f"/v1/graphs/{graph.id}/executions",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions",
         params={"graph_revision": 2},
     )
     revision_two = GraphExecutionListResponse.model_validate(
         revision_two_response.json()
     )
     assert [item.execution_id for item in revision_two.items] == [second.execution_id]
-    all_revisions_response = builtin_client.get(f"/v1/graphs/{graph.id}/executions")
+    all_revisions_response = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions")
     assert {
         item.graph_revision
         for item in GraphExecutionListResponse.model_validate(
@@ -190,14 +195,14 @@ def test_saved_graph_execution_history_lists_filters_and_renders_artifacts(
         ).items
     } == {1, 2}
     first_page_response = builtin_client.get(
-        f"/v1/graphs/{graph.id}/executions",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions",
         params={"limit": 1},
     )
     first_page = GraphExecutionListResponse.model_validate(first_page_response.json())
     assert len(first_page.items) == 1
     assert first_page.next_cursor is not None
     second_page_response = builtin_client.get(
-        f"/v1/graphs/{graph.id}/executions",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions",
         params={"limit": 1, "cursor": first_page.next_cursor},
     )
     second_page = GraphExecutionListResponse.model_validate(second_page_response.json())
@@ -209,7 +214,7 @@ def test_saved_graph_execution_is_not_accepted_without_its_revision(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/executions",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
         json={
             "nodes": [],
             "edges": [],
@@ -226,7 +231,7 @@ def test_duplicate_saved_node_ids_become_a_browsable_failed_execution(
     builtin_client: TestClient,
 ) -> None:
     created_response = builtin_client.post(
-        "/v1/graphs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
         json=_saved_text_graph_payload("Invalid history", "duplicate"),
     )
     assert created_response.status_code == 201
@@ -239,7 +244,7 @@ def test_duplicate_saved_node_ids_become_a_browsable_failed_execution(
     }
 
     start_response = builtin_client.post(
-        "/v1/executions",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
         json={
             "nodes": [duplicate_node, duplicate_node],
             "scope": "all",
@@ -250,7 +255,7 @@ def test_duplicate_saved_node_ids_become_a_browsable_failed_execution(
     assert start_response.status_code == 202
     execution = RunExecutionResponse.model_validate(start_response.json())
     for _ in range(100):
-        poll_response = builtin_client.get(f"/v1/executions/{execution.execution_id}")
+        poll_response = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{execution.execution_id}")
         assert poll_response.status_code == 200
         execution = RunExecutionResponse.model_validate(poll_response.json())
         if execution.status == "failed":
@@ -260,7 +265,7 @@ def test_duplicate_saved_node_ids_become_a_browsable_failed_execution(
     assert "Duplicate node ids" in execution.error
 
     detail_response = builtin_client.get(
-        f"/v1/graphs/{graph.id}/executions/{execution.execution_id}"
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions/{execution.execution_id}"
     )
     assert detail_response.status_code == 200
     detail = GraphExecutionDetailResponse.model_validate(detail_response.json())
@@ -282,12 +287,26 @@ async def _seed_active_execution(database_url: str) -> tuple[UUID, UUID]:
         async with database.engine.begin() as connection:
             await connection.run_sync(metadata.create_all)
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+            await unit_of_work.identity.add_user(
+                User(
+                    id=UUID(int=1),
+                    email="owner@example.test",
+                    display_name="Owner",
+                )
+            )
             await unit_of_work.identity.add_workspace(
                 Workspace(
                     id=WORKSPACE_ID,
                     slug="local",
                     name="Local workspace",
                     kind="shared",
+                )
+            )
+            await unit_of_work.identity.add_membership(
+                WorkspaceMembership(
+                    workspace_id=WORKSPACE_ID,
+                    user_id=UUID(int=1),
+                    role=WorkspaceRole.OWNER,
                 )
             )
             await unit_of_work.commit()
@@ -330,7 +349,7 @@ def test_application_startup_marks_stale_active_execution_failed(
     install_browser_actor_override(application)
 
     with TestClient(application) as client:
-        response = client.get(f"/v1/graphs/{graph_id}/executions/{execution_id}")
+        response = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}/executions/{execution_id}")
 
     assert response.status_code == 200
     detail = GraphExecutionDetailResponse.model_validate(response.json())

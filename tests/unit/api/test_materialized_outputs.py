@@ -12,6 +12,7 @@ from pydantic import SecretStr
 from sqlalchemy import delete
 
 from notarius_core.artifacts import ArtifactObject, ArtifactRef, ArtifactRefSequence
+from notarius_core.domain.identity import Workspace, User, WorkspaceMembership, WorkspaceRole
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
 from notarius_persistence import schema
 from notarius_persistence.database import create_database
@@ -29,11 +30,38 @@ from notarius_api.v1.routes.saved_graphs.models import SavedGraphResponse
 from notarius_api.settings import Settings
 
 
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
+
+
 async def _create_schema(database_url: str) -> None:
     database = create_database(database_url)
     try:
         async with database.engine.begin() as connection:
             await connection.run_sync(metadata.create_all)
+        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+            await unit_of_work.identity.add_user(
+                User(
+                    id=UUID(int=1),
+                    email="owner@example.test",
+                    display_name="Owner",
+                )
+            )
+            await unit_of_work.identity.add_workspace(
+                Workspace(
+                    id=WORKSPACE_ID,
+                    slug="local",
+                    name="Local workspace",
+                    kind="shared",
+                )
+            )
+            await unit_of_work.identity.add_membership(
+                WorkspaceMembership(
+                    workspace_id=WORKSPACE_ID,
+                    user_id=UUID(int=1),
+                    role=WorkspaceRole.OWNER,
+                )
+            )
+            await unit_of_work.commit()
     finally:
         await database.dispose()
 
@@ -58,6 +86,7 @@ async def _persist_partially_accessible_materialization(
 ) -> None:
     database = create_database(database_url)
     accessible = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         artifact_type="scalar.integer",
         schema_version=1,
         content_type="application/json",
@@ -74,6 +103,7 @@ async def _persist_partially_accessible_materialization(
             await unit_of_work.artifacts.add(accessible)
             await unit_of_work.materialized_outputs.upsert(
                 MaterializedNodeOutputs(
+                    workspace_id=WORKSPACE_ID,
                     graph_id=graph_id,
                     graph_revision=graph_revision,
                     node_id="add",
@@ -355,7 +385,7 @@ def test_run_graph_context_requires_id_and_revision_together(
     settings, _ = durable_api
     with _client(settings) as client:
         response = client.post(
-            "/v1/runs",
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
             json={"nodes": [], "edges": [], **graph_context},
         )
 
@@ -369,7 +399,7 @@ def test_run_graph_contexts_must_identify_same_saved_revision(
     settings, _ = durable_api
     with _client(settings) as client:
         response = client.post(
-            "/v1/runs",
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
             json={
                 "nodes": [],
                 "edges": [],
@@ -391,18 +421,18 @@ def test_materialization_context_validates_graph_revision_and_fragment(
     missing_graph_id = "00000000-0000-0000-0000-000000000404"
     with _client(settings) as client:
         missing = client.get(
-            f"/v1/graphs/{missing_graph_id}/materializations",
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{missing_graph_id}/materializations",
             params={"graph_revision": 1},
         )
         graph = SavedGraphResponse.model_validate(
-            client.post("/v1/graphs", json=_graph_payload()).json()
+            client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
         )
         missing_revision = client.get(
-            f"/v1/graphs/{graph.id}/materializations",
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
             params={"graph_revision": graph.revision + 1},
         )
         rogue = client.post(
-            "/v1/runs",
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
             json={
                 "nodes": [
                     {
@@ -430,14 +460,14 @@ def test_graph_context_run_rejects_omitted_saved_incoming_edge(
     settings, _ = durable_api
     with _client(settings) as client:
         graph = SavedGraphResponse.model_validate(
-            client.post("/v1/graphs", json=_graph_payload()).json()
+            client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
         )
         payload = _full_run_payload(str(graph.id), graph.revision)
         payload["edges"] = _edges()[:1] + _edges()[2:]
 
-        response = client.post("/v1/runs", json=payload)
+        response = client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json=payload)
         materializations = client.get(
-            f"/v1/graphs/{graph.id}/materializations",
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
             params={"graph_revision": graph.revision},
         )
 
@@ -456,14 +486,14 @@ def test_graph_context_run_rejects_duplicated_saved_incoming_edge(
     settings, _ = durable_api
     with _client(settings) as client:
         graph = SavedGraphResponse.model_validate(
-            client.post("/v1/graphs", json=_graph_payload()).json()
+            client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
         )
         payload = _full_run_payload(str(graph.id), graph.revision)
         payload["edges"] = [*_edges(), _edges()[1]]
 
-        response = client.post("/v1/runs", json=payload)
+        response = client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json=payload)
         materializations = client.get(
-            f"/v1/graphs/{graph.id}/materializations",
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
             params={"graph_revision": graph.revision},
         )
 
@@ -481,12 +511,12 @@ def test_saved_collect_fragment_matches_ordered_plugs_and_edge_targets(
 ) -> None:
     settings, _ = durable_api
     with _client(settings) as client:
-        created = client.post("/v1/graphs", json=_collect_graph_payload())
+        created = client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_collect_graph_payload())
         assert created.status_code == 201
         graph = SavedGraphResponse.model_validate(created.json())
 
         matching_run = _collect_run_payload(graph)
-        matching = client.post("/v1/runs", json=matching_run)
+        matching = client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json=matching_run)
         assert matching.status_code == 200
         assert RunResponse.model_validate(matching.json()).status == "succeeded"
 
@@ -501,7 +531,7 @@ def test_saved_collect_fragment_matches_ordered_plugs_and_edge_targets(
             collect_node["input_plugs"],
         )
         input_plugs.reverse()
-        reordered = client.post("/v1/runs", json=reordered_run)
+        reordered = client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json=reordered_run)
 
         retargeted_run = deepcopy(matching_run)
         retargeted_edges = cast(
@@ -515,7 +545,7 @@ def test_saved_collect_fragment_matches_ordered_plugs_and_edge_targets(
             collect_edges[1]["to_plug"],
             collect_edges[0]["to_plug"],
         )
-        retargeted = client.post("/v1/runs", json=retargeted_run)
+        retargeted = client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json=retargeted_run)
 
     assert reordered.status_code == 422
     assert "does not match saved graph" in reordered.json()["detail"]
@@ -531,14 +561,14 @@ def test_fresh_app_runs_collect_only_from_persisted_scalar_and_sequence_pins(
     settings, _ = durable_api
     with _client(settings) as client:
         graph = SavedGraphResponse.model_validate(
-            client.post("/v1/graphs", json=_collect_graph_payload()).json()
+            client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_collect_graph_payload()).json()
         )
-        full_run = client.post("/v1/runs", json=_collect_run_payload(graph))
+        full_run = client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json=_collect_run_payload(graph))
         assert full_run.status_code == 200
 
     with _client(settings) as fresh_client:
         materializations_response = fresh_client.get(
-            f"/v1/graphs/{graph.id}/materializations",
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
             params={"graph_revision": graph.revision},
         )
         assert materializations_response.status_code == 200
@@ -572,7 +602,7 @@ def test_fresh_app_runs_collect_only_from_persisted_scalar_and_sequence_pins(
             if edge["to_node"] == "collect"
         ]
         selected_run = fresh_client.post(
-            "/v1/runs",
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
             json={
                 "nodes": [
                     {
@@ -607,7 +637,7 @@ def test_fresh_app_runs_collect_only_from_persisted_scalar_and_sequence_pins(
         collected = _output(selected_result, "collect")
         assert isinstance(collected.value, ArtifactRefSequence)
         assert [
-            fresh_client.get(f"/v1/artifacts/{artifact.artifact_id}/content").json()[
+            fresh_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content").json()[
                 "value"
             ]
             for artifact in collected.artifacts
@@ -620,19 +650,19 @@ def test_full_run_persists_outputs_and_fresh_app_reuses_them_for_downstream_run(
     settings, _ = durable_api
 
     with _client(settings) as client:
-        created = client.post("/v1/graphs", json=_graph_payload())
+        created = client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload())
         assert created.status_code == 201
         graph = SavedGraphResponse.model_validate(created.json())
 
         full_run = client.post(
-            "/v1/runs",
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
             json=_full_run_payload(str(graph.id), graph.revision),
         )
         assert full_run.status_code == 200
         assert RunResponse.model_validate(full_run.json()).status == "succeeded"
 
         materializations = client.get(
-            f"/v1/graphs/{graph.id}/materializations",
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
             params={"graph_revision": graph.revision},
         )
         assert materializations.status_code == 200
@@ -648,7 +678,7 @@ def test_full_run_persists_outputs_and_fresh_app_reuses_them_for_downstream_run(
 
     with _client(settings) as fresh_client:
         reloaded = fresh_client.get(
-            f"/v1/graphs/{graph.id}/materializations",
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
             params={"graph_revision": graph.revision},
         )
         assert reloaded.status_code == 200
@@ -662,7 +692,7 @@ def test_full_run_persists_outputs_and_fresh_app_reuses_them_for_downstream_run(
         persisted_value = add_run.outputs[0].value
 
         downstream = fresh_client.post(
-            "/v1/runs",
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
             json=_downstream_run_payload(
                 str(graph.id),
                 graph.revision,
@@ -681,11 +711,11 @@ def test_downstream_run_without_materialization_returns_dependency_guidance(
     settings, _ = durable_api
     with _client(settings) as client:
         graph = SavedGraphResponse.model_validate(
-            client.post("/v1/graphs", json=_graph_payload()).json()
+            client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
         )
         standalone = RunResponse.model_validate(
             client.post(
-                "/v1/runs",
+                "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
                 json={
                     "nodes": [
                         {
@@ -702,7 +732,7 @@ def test_downstream_run_without_materialization_returns_dependency_guidance(
         unrelated_value = _output(standalone, "standalone").value
 
         response = client.post(
-            "/v1/runs",
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
             json=_downstream_run_payload(
                 str(graph.id),
                 graph.revision,
@@ -720,11 +750,11 @@ def test_inaccessible_artifact_is_filtered_and_blocks_downstream_reuse(
     settings, database_url = durable_api
     with _client(settings) as client:
         graph = SavedGraphResponse.model_validate(
-            client.post("/v1/graphs", json=_graph_payload()).json()
+            client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
         )
         full_run = RunResponse.model_validate(
             client.post(
-                "/v1/runs",
+                "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
                 json=_full_run_payload(str(graph.id), graph.revision),
             ).json()
         )
@@ -737,7 +767,7 @@ def test_inaccessible_artifact_is_filtered_and_blocks_downstream_reuse(
 
     with _client(settings) as client:
         materializations = client.get(
-            f"/v1/graphs/{graph.id}/materializations",
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
             params={"graph_revision": graph.revision},
         )
         materialized = GraphMaterializationsResponse.model_validate(
@@ -747,7 +777,7 @@ def test_inaccessible_artifact_is_filtered_and_blocks_downstream_reuse(
         assert "add" not in visible_nodes
 
         downstream = client.post(
-            "/v1/runs",
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
             json=_downstream_run_payload(
                 str(graph.id),
                 graph.revision,
@@ -766,7 +796,7 @@ def test_materialization_response_keeps_accessible_sibling_ports(
     settings, database_url = durable_api
     with _client(settings) as client:
         graph = SavedGraphResponse.model_validate(
-            client.post("/v1/graphs", json=_graph_payload()).json()
+            client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
         )
 
     asyncio.run(
@@ -779,7 +809,7 @@ def test_materialization_response_keeps_accessible_sibling_ports(
 
     with _client(settings) as client:
         response = client.get(
-            f"/v1/graphs/{graph.id}/materializations",
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
             params={"graph_revision": graph.revision},
         )
 
@@ -797,16 +827,16 @@ def test_saved_run_rejects_pin_that_is_not_the_latest_materialization(
     settings, _ = durable_api
     with _client(settings) as client:
         graph = SavedGraphResponse.model_validate(
-            client.post("/v1/graphs", json=_graph_payload()).json()
+            client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
         )
         persisted = client.post(
-            "/v1/runs",
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
             json=_full_run_payload(str(graph.id), graph.revision),
         )
         assert persisted.status_code == 200
 
         alternate = client.post(
-            "/v1/runs",
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
             json={
                 "nodes": [
                     {
@@ -850,7 +880,7 @@ def test_saved_run_rejects_pin_that_is_not_the_latest_materialization(
         assert isinstance(pinned_value, ArtifactRef)
 
         downstream = client.post(
-            "/v1/runs",
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
             json=_downstream_run_payload(
                 str(graph.id),
                 graph.revision,

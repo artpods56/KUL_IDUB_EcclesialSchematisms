@@ -3,7 +3,7 @@ from io import BytesIO
 import json
 from pathlib import Path
 from typing import cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,7 +13,7 @@ from notarius_persistence.database import create_database
 from notarius_persistence.orm import metadata
 
 from notarius_api.main import create_app
-from tests.unit.api.conftest import install_browser_actor_override
+from tests.unit.api.conftest import WORKSPACE_ID, install_browser_actor_override
 from notarius_api.v1.routes.catalog.models import NodeRegistryResponse
 from notarius_api.v1.routes.executions.models import (
     RunExecutionResponse,
@@ -21,6 +21,7 @@ from notarius_api.v1.routes.executions.models import (
 )
 from notarius_api.v1.routes.uploads.services import ImageUploadService
 from notarius_api.settings import Settings
+from notarius_core.artifacts import InMemoryUnitOfWork
 from notarius_core.plugins import PluginOrigin
 
 
@@ -91,7 +92,7 @@ def test_application_lifespan_builds_and_releases_workbench_components(
 def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
     builtin_client: TestClient,
 ) -> None:
-    response = builtin_client.get("/v1/nodes")
+    response = builtin_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes")
 
     assert response.status_code == 200
     registry = NodeRegistryResponse.model_validate(response.json())
@@ -248,7 +249,7 @@ def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
 
 
 def test_run_accepts_empty_graph(builtin_client: TestClient) -> None:
-    response = builtin_client.post("/v1/runs", json={"nodes": [], "edges": []})
+    response = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json={"nodes": [], "edges": []})
 
     assert response.status_code == 200
     result = RunResponse.model_validate(response.json())
@@ -260,7 +261,7 @@ def test_async_execution_routes_return_pollable_typed_state(
     builtin_client: TestClient,
 ) -> None:
     start_response = builtin_client.post(
-        "/v1/executions",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
         json={"nodes": [], "edges": []},
     )
 
@@ -273,7 +274,7 @@ def test_async_execution_routes_return_pollable_typed_state(
 
     polled = started
     for _ in range(20):
-        response = builtin_client.get(f"/v1/executions/{started.execution_id}")
+        response = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{started.execution_id}")
         assert response.status_code == 200
         polled = RunExecutionResponse.model_validate(response.json())
         if polled.status == "succeeded":
@@ -282,30 +283,30 @@ def test_async_execution_routes_return_pollable_typed_state(
     assert polled.result is not None
     assert polled.result.status == "succeeded"
 
-    cancel_response = builtin_client.delete(f"/v1/executions/{started.execution_id}")
+    cancel_response = builtin_client.delete(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{started.execution_id}")
     assert cancel_response.status_code == 200
     assert RunExecutionResponse.model_validate(cancel_response.json()).status == (
         "succeeded"
     )
 
     missing_id = uuid4()
-    assert builtin_client.get(f"/v1/executions/{missing_id}").status_code == 404
-    assert builtin_client.delete(f"/v1/executions/{missing_id}").status_code == 404
+    assert builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{missing_id}").status_code == 404
+    assert builtin_client.delete(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{missing_id}").status_code == 404
 
 
 def test_execution_event_stream_replays_ids_and_closes_after_terminal(
     builtin_client: TestClient,
 ) -> None:
     started = builtin_client.post(
-        "/v1/executions",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
         json={"nodes": [], "edges": []},
     ).json()
     execution_id = started["execution_id"]
 
-    response = builtin_client.get(f"/v1/executions/{execution_id}/events")
+    response = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{execution_id}/events")
     events = _parse_sse_events(response.text)
     replay_response = builtin_client.get(
-        f"/v1/executions/{execution_id}/events",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{execution_id}/events",
         headers={"Last-Event-ID": "1"},
     )
     replayed = _parse_sse_events(replay_response.text)
@@ -328,22 +329,22 @@ def test_execution_event_stream_validates_replay_and_missing_execution_ids(
     builtin_client: TestClient,
 ) -> None:
     started = builtin_client.post(
-        "/v1/executions",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
         json={"nodes": [], "edges": []},
     ).json()
     execution_id = started["execution_id"]
     missing_id = uuid4()
 
     invalid_replay = builtin_client.get(
-        f"/v1/executions/{execution_id}/events",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{execution_id}/events",
         headers={"Last-Event-ID": "not-a-sequence"},
     )
     oversized_replay = builtin_client.get(
-        f"/v1/executions/{execution_id}/events",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{execution_id}/events",
         headers={"Last-Event-ID": "9" * 5_000},
     )
-    missing = builtin_client.get(f"/v1/executions/{missing_id}/events")
-    malformed = builtin_client.get("/v1/executions/not-a-uuid/events")
+    missing = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{missing_id}/events")
+    malformed = builtin_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/not-a-uuid/events")
 
     assert invalid_replay.status_code == 422
     assert invalid_replay.json()["detail"] == (
@@ -361,7 +362,7 @@ def test_execution_request_rejects_oversized_node_ids(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/executions",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
         json={
             "nodes": [
                 {
@@ -383,11 +384,19 @@ async def test_upload_from_relative_workspace_returns_opaque_upload_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    service = ImageUploadService(Path("relative-workbench/uploads"))
+    unit_of_work = InMemoryUnitOfWork()
+    service = ImageUploadService(
+        Path("relative-workbench/uploads"),
+        unit_of_work_factory=lambda: unit_of_work,
+    )
+    workspace_id = UUID("00000000-0000-0000-0000-000000000007")
+    user_id = UUID("00000000-0000-0000-0000-000000000001")
 
-    item = service.save_upload(
-        "page.png",
-        BytesIO(b"image-bytes"),
+    item = await service.save_upload(
+        workspace_id=workspace_id,
+        created_by_user_id=user_id,
+        filename="page.png",
+        stream=BytesIO(b"image-bytes"),
     )
 
     assert "/" not in item.upload_key
@@ -395,13 +404,24 @@ async def test_upload_from_relative_workspace_returns_opaque_upload_key(
     assert item.upload_key.endswith("-page.png")
     assert item.filename == "page.png"
     assert item.byte_size == len(b"image-bytes")
+    staged_path = (
+        Path("relative-workbench/uploads") / str(workspace_id) / item.upload_key
+    )
+    assert staged_path.is_file()
+    assert staged_path.read_bytes() == b"image-bytes"
+    async with unit_of_work as entered:
+        stored = await entered.staged_uploads.get(workspace_id, item.upload_key)
+    assert stored is not None
+    assert stored.original_filename == "page.png"
+    assert stored.created_by_user_id == user_id
 
 
 def test_upload_endpoint_streams_an_opaque_file(
     builtin_client: TestClient,
+    tmp_path: Path,
 ) -> None:
     response = builtin_client.post(
-        "/v1/uploads",
+        f"/v1/workspaces/{WORKSPACE_ID}/uploads",
         files={
             "file": (
                 "historical-map.tif",
@@ -416,17 +436,22 @@ def test_upload_endpoint_streams_an_opaque_file(
     assert payload["filename"] == "historical-map.tif"
     assert payload["byte_size"] == len(b"geotiff-bytes")
     assert payload["upload_key"].endswith("-historical-map.tif")
+    staged_path = (
+        tmp_path / "workbench" / "uploads" / str(WORKSPACE_ID) / payload["upload_key"]
+    )
+    assert staged_path.is_file()
+    assert staged_path.read_bytes() == b"geotiff-bytes"
 
 
 def test_image_upload_materializes_sample_images(
     builtin_client: TestClient,
 ) -> None:
-    sample_response = builtin_client.post("/v1/samples", json={"count": 2})
+    sample_response = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/samples", json={"count": 2})
     assert sample_response.status_code == 200
     uploads = sample_response.json()
 
     run_response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -449,7 +474,7 @@ def test_image_upload_materializes_sample_images(
     assert len(upload_run.outputs[0].artifacts) == 2
 
     content_response = builtin_client.get(
-        f"/v1/artifacts/{upload_run.outputs[0].artifacts[0].artifact_id}/content"
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{upload_run.outputs[0].artifacts[0].artifact_id}/content"
     )
     assert content_response.status_code == 200
     assert content_response.headers["content-type"] == "image/png"

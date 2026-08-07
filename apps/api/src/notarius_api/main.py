@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import (
     http_exception_handler as default_http_exception_handler,
     request_validation_exception_handler as default_validation_error_handler,
@@ -34,7 +34,6 @@ from notarius_api.builtins import builtin_plugins
 from notarius_api.plugin_discovery import build_plugin_registry
 from notarius_api.services.composition import build_workbench_components
 from notarius_api.settings import Settings, get_settings
-from notarius_api.v1.routes.auth.dependencies import browser_actor
 from notarius_api.v1.routes.auth.services import (
     OIDC_TRANSACTION_COOKIE,
     AuthService,
@@ -47,7 +46,6 @@ from notarius_api.v1.routes.node_secrets.services import NodeSecretService
 from notarius_api.v1.routes.node_secrets.views import router as node_secrets_router
 from notarius_api.v1.routes.saved_graphs.views import router as saved_graphs_router
 from notarius_api.v1.routes.uploads.views import router as uploads_router
-from notarius_api.v1.routes.workspace_scope import LEGACY_WORKSPACE_ID
 from notarius_api.v1.routes.workspaces.views import (
     router as workspaces_router,
     workspace_failure_metadata,
@@ -281,7 +279,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         await components.execution_history.interrupt_all_active()
         app.state.workbench_plugin_registry = components.plugin_registry
-        app.state.legacy_workspace_id = LEGACY_WORKSPACE_ID
         app.state.image_uploads = components.uploads
         app.state.graph_modules = components.modules
         app.state.run_graph = components.run_graph
@@ -402,38 +399,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     application.include_router(auth_router, prefix="/v1")
     application.include_router(workspaces_router, prefix="/v1")
-    # Phase 1 gates legacy global resources by browser authentication only.
-    # Phase 2 replaces these routes with workspace-qualified authorization.
-    application.include_router(
-        saved_graphs_router,
-        prefix="/v1",
-        dependencies=[Depends(browser_actor)],
-    )
-    application.include_router(
-        node_secrets_router,
-        prefix="/v1",
-        dependencies=[Depends(browser_actor)],
-    )
-    application.include_router(
-        catalog_router,
-        prefix="/v1",
-        dependencies=[Depends(browser_actor)],
-    )
-    application.include_router(
-        uploads_router,
-        prefix="/v1",
-        dependencies=[Depends(browser_actor)],
-    )
-    application.include_router(
-        executions_router,
-        prefix="/v1",
-        dependencies=[Depends(browser_actor)],
-    )
-    application.include_router(
-        artifacts_router,
-        prefix="/v1",
-        dependencies=[Depends(browser_actor)],
-    )
+    application.include_router(saved_graphs_router, prefix="/v1")
+    application.include_router(node_secrets_router, prefix="/v1")
+    application.include_router(catalog_router, prefix="/v1")
+    application.include_router(uploads_router, prefix="/v1")
+    application.include_router(executions_router, prefix="/v1")
+    application.include_router(artifacts_router, prefix="/v1")
     return application
 
 

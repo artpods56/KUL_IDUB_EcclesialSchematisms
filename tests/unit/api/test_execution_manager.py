@@ -259,6 +259,7 @@ class ControlledExecutionHistory(ExecutionHistoryService):
     async def create_queued(
         self,
         *,
+        workspace_id: UUID,
         execution_id: UUID,
         graph_id: UUID,
         graph_revision: int,
@@ -267,6 +268,7 @@ class ControlledExecutionHistory(ExecutionHistoryService):
     ) -> GraphExecution:
         self.transitions.append("queued")
         return GraphExecution(
+            workspace_id=workspace_id,
             execution_id=execution_id,
             graph_id=graph_id,
             graph_revision=graph_revision,
@@ -276,13 +278,23 @@ class ControlledExecutionHistory(ExecutionHistoryService):
         )
 
     @override
-    async def mark_running(self, execution: GraphExecution) -> None:
+    async def mark_running(
+        self,
+        workspace_id: UUID,
+        execution: GraphExecution,
+    ) -> None:
+        del workspace_id
         execution.status = "running"
         execution.started_at = datetime.now(UTC)
         self.transitions.append("running")
 
     @override
-    async def mark_cancelling(self, execution: GraphExecution) -> None:
+    async def mark_cancelling(
+        self,
+        workspace_id: UUID,
+        execution: GraphExecution,
+    ) -> None:
+        del workspace_id
         self.cancelling_entered.set()
         await self.allow_cancelling.wait()
         execution.status = "cancelling"
@@ -291,13 +303,14 @@ class ControlledExecutionHistory(ExecutionHistoryService):
     @override
     async def complete(
         self,
+        workspace_id: UUID,
         execution: GraphExecution,
         *,
         status: GraphExecutionStatus,
         result: GraphExecutionResult | None,
         error: str | None,
     ) -> None:
-        del result
+        del workspace_id, result
         self.complete_calls += 1
         self.complete_entered.set()
         await self.allow_complete.wait()

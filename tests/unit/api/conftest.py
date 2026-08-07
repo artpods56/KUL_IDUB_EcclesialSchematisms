@@ -23,7 +23,13 @@ from notarius_core.artifacts import (
     NodeOutput,
 )
 from notarius_core.application.saved_graphs import SavedGraphService
-from notarius_core.domain.identity import ActorContext, Workspace
+from notarius_core.domain.identity import (
+    ActorContext,
+    User,
+    Workspace,
+    WorkspaceMembership,
+    WorkspaceRole,
+)
 from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
 from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
 from notarius_core.operators.arithmetic import INTEGER_VALUE
@@ -59,6 +65,15 @@ from notarius_api.v1.routes.uploads.dependencies import image_upload_service
 from notarius_storage import LocalFileObjectStore
 
 
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
+TEST_USER_ID = UUID(int=1)
+
+
+def workspace_api_path(suffix: str) -> str:
+    normalized = suffix if suffix.startswith("/") else f"/{suffix}"
+    return f"/v1/workspaces/{WORKSPACE_ID}{normalized}"
+
+
 class CompoundResultPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -69,7 +84,7 @@ class CompoundResultPayload(BaseModel):
 def install_browser_actor_override(application: FastAPI) -> None:
     def test_browser_actor() -> ActorContext:
         return ActorContext(
-            user_id=UUID(int=1),
+            user_id=TEST_USER_ID,
             credential_reference="test-session",
         )
 
@@ -303,12 +318,26 @@ async def _create_schema(database_url: str) -> None:
         async with database.engine.begin() as connection:
             await connection.run_sync(metadata.create_all)
         async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
+            await unit_of_work.identity.add_user(
+                User(
+                    id=TEST_USER_ID,
+                    email="owner@example.test",
+                    display_name="Owner",
+                )
+            )
             await unit_of_work.identity.add_workspace(
                 Workspace(
-                    id=UUID("00000000-0000-0000-0000-000000000007"),
+                    id=WORKSPACE_ID,
                     slug="local",
                     name="Local workspace",
                     kind="shared",
+                )
+            )
+            await unit_of_work.identity.add_membership(
+                WorkspaceMembership(
+                    workspace_id=WORKSPACE_ID,
+                    user_id=TEST_USER_ID,
+                    role=WorkspaceRole.OWNER,
                 )
             )
             await unit_of_work.commit()

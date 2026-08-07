@@ -27,12 +27,23 @@ from notarius_persistence.orm import metadata
 from notarius_persistence.unit_of_work import SqlAlchemySavedGraphUnitOfWork
 
 
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000001")
+
+
 @pytest.fixture
 async def database(tmp_path: Path) -> AsyncIterator[Database]:
     database_path = tmp_path / "nested" / "saved-graphs.sqlite3"
     created = create_database(f"sqlite+aiosqlite:///{database_path}")
     async with created.engine.begin() as connection:
         await connection.run_sync(metadata.create_all)
+        await connection.execute(
+            text(
+                "INSERT INTO workspaces "
+                "(id, slug, name, kind, created_at, updated_at) "
+                "VALUES (:id, 'local', 'Local', 'shared', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            ),
+            {"id": WORKSPACE_ID.hex},
+        )
     try:
         yield created
     finally:
@@ -87,6 +98,7 @@ def _graph(
     updated_at: datetime,
 ) -> SavedGraph:
     return SavedGraph(
+        workspace_id=WORKSPACE_ID,
         id=graph_id,
         name=name,
         document=_document(name),
@@ -100,6 +112,7 @@ async def test_file_backed_sqlite_round_trips_saved_graph_in_a_fresh_session(
     database: Database,
 ) -> None:
     graph = SavedGraph(
+        workspace_id=WORKSPACE_ID,
         id=UUID("00000000-0000-0000-0000-000000000101"),
         name="Round trip",
         document=_document(),
@@ -112,7 +125,7 @@ async def test_file_backed_sqlite_round_trips_saved_graph_in_a_fresh_session(
         await unit_of_work.commit()
 
     async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
-        loaded = await unit_of_work.graphs.get(graph.id)
+        loaded = await unit_of_work.graphs.get(WORKSPACE_ID, graph.id)
 
     assert loaded is not None
     assert loaded is not graph
@@ -169,11 +182,12 @@ async def test_legacy_sql_json_loads_then_updates_as_v3_in_a_fresh_session(
         await connection.execute(
             text(
                 "INSERT INTO saved_graphs "
-                "(id, name, document, revision, created_at, updated_at) "
-                "VALUES (:id, :name, :document, :revision, :created_at, :updated_at)"
+                "(workspace_id, id, name, document, revision, created_at, updated_at) "
+                "VALUES (:workspace_id, :id, :name, :document, :revision, :created_at, :updated_at)"
             ),
             {
                 "id": graph_id.hex,
+                "workspace_id": WORKSPACE_ID.hex,
                 "name": "Legacy graph",
                 "document": json.dumps(legacy_document),
                 "revision": 1,
@@ -183,7 +197,7 @@ async def test_legacy_sql_json_loads_then_updates_as_v3_in_a_fresh_session(
         )
 
     async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
-        loaded = await unit_of_work.graphs.get(graph_id)
+        loaded = await unit_of_work.graphs.get(WORKSPACE_ID, graph_id)
         assert loaded is not None
         assert loaded.document.schema_version == 3
         assert loaded.document.edges[0].conversion_path == (
@@ -225,7 +239,7 @@ async def test_legacy_sql_json_loads_then_updates_as_v3_in_a_fresh_session(
     ]
 
     async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
-        reloaded = await unit_of_work.graphs.get(graph_id)
+        reloaded = await unit_of_work.graphs.get(WORKSPACE_ID, graph_id)
 
     assert reloaded is not None
     assert reloaded.name == "Migrated graph"
@@ -238,7 +252,9 @@ async def test_legacy_sql_json_loads_then_updates_as_v3_in_a_fresh_session(
 
 @pytest.mark.asyncio
 async def test_update_persists_new_document_and_revision(database: Database) -> None:
-    graph = SavedGraph(name="Original", document=SavedGraphDocument())
+    graph = SavedGraph(
+        workspace_id=WORKSPACE_ID, name="Original", document=SavedGraphDocument()
+    )
     async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
         await unit_of_work.graphs.add(graph)
         await unit_of_work.commit()
@@ -246,7 +262,7 @@ async def test_update_persists_new_document_and_revision(database: Database) -> 
     replacement = _document("replacement")
     replacement_time = datetime(2026, 7, 14, 10, 0, tzinfo=UTC)
     async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
-        loaded = await unit_of_work.graphs.get(graph.id)
+        loaded = await unit_of_work.graphs.get(WORKSPACE_ID, graph.id)
         assert loaded is not None
         loaded.replace(
             name="Replacement",
@@ -257,7 +273,7 @@ async def test_update_persists_new_document_and_revision(database: Database) -> 
         await unit_of_work.commit()
 
     async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
-        reloaded = await unit_of_work.graphs.get(graph.id)
+        reloaded = await unit_of_work.graphs.get(WORKSPACE_ID, graph.id)
 
     assert reloaded is not None
     assert reloaded.name == "Replacement"
@@ -272,6 +288,7 @@ async def test_revision_snapshots_round_trip_and_preserve_old_documents(
 ) -> None:
     original_document = _document("original")
     graph = SavedGraph(
+        workspace_id=WORKSPACE_ID,
         name="Original",
         document=original_document,
         created_at=datetime(2026, 7, 14, 8, 0, tzinfo=UTC),
@@ -285,7 +302,7 @@ async def test_revision_snapshots_round_trip_and_preserve_old_documents(
     replacement_document = _document("replacement")
     replacement_time = datetime(2026, 7, 14, 9, 0, tzinfo=UTC)
     async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
-        loaded = await unit_of_work.graphs.get(graph.id)
+        loaded = await unit_of_work.graphs.get(WORKSPACE_ID, graph.id)
         assert loaded is not None
         loaded.replace(
             name="Replacement",
@@ -297,11 +314,12 @@ async def test_revision_snapshots_round_trip_and_preserve_old_documents(
         await unit_of_work.commit()
 
     async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
-        first = await unit_of_work.graphs.get_revision(graph.id, 1)
-        second = await unit_of_work.graphs.get_revision(graph.id, 2)
-        listed = await unit_of_work.graphs.list_revisions(graph.id)
+        first = await unit_of_work.graphs.get_revision(WORKSPACE_ID, graph.id, 1)
+        second = await unit_of_work.graphs.get_revision(WORKSPACE_ID, graph.id, 2)
+        listed = await unit_of_work.graphs.list_revisions(WORKSPACE_ID, graph.id)
 
     assert first == SavedGraphRevision(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph.id,
         revision=1,
         name="Original",
@@ -309,6 +327,7 @@ async def test_revision_snapshots_round_trip_and_preserve_old_documents(
         created_at=datetime(2026, 7, 14, 8, 0, tzinfo=UTC),
     )
     assert second == SavedGraphRevision(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph.id,
         revision=2,
         name="Replacement",
@@ -320,33 +339,37 @@ async def test_revision_snapshots_round_trip_and_preserve_old_documents(
 
 @pytest.mark.asyncio
 async def test_delete_removes_saved_graph(database: Database) -> None:
-    graph = SavedGraph(name="Disposable", document=SavedGraphDocument())
+    graph = SavedGraph(
+        workspace_id=WORKSPACE_ID, name="Disposable", document=SavedGraphDocument()
+    )
     async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
         await unit_of_work.graphs.add(graph)
         await unit_of_work.graphs.add_revision(graph.snapshot())
         await unit_of_work.commit()
 
     async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
-        loaded = await unit_of_work.graphs.get(graph.id)
+        loaded = await unit_of_work.graphs.get(WORKSPACE_ID, graph.id)
         assert loaded is not None
-        await unit_of_work.graphs.remove(loaded)
+        await unit_of_work.graphs.remove(WORKSPACE_ID, loaded)
         await unit_of_work.commit()
 
     async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
-        assert await unit_of_work.graphs.get(graph.id) is None
-        assert await unit_of_work.graphs.get_revision(graph.id, 1) is None
+        assert await unit_of_work.graphs.get(WORKSPACE_ID, graph.id) is None
+        assert await unit_of_work.graphs.get_revision(WORKSPACE_ID, graph.id, 1) is None
 
 
 @pytest.mark.asyncio
 async def test_rollback_discards_pending_insert(database: Database) -> None:
-    graph = SavedGraph(name="Rolled back", document=SavedGraphDocument())
+    graph = SavedGraph(
+        workspace_id=WORKSPACE_ID, name="Rolled back", document=SavedGraphDocument()
+    )
 
     async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
         await unit_of_work.graphs.add(graph)
         await unit_of_work.rollback()
 
     async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
-        assert await unit_of_work.graphs.get(graph.id) is None
+        assert await unit_of_work.graphs.get(WORKSPACE_ID, graph.id) is None
 
 
 @pytest.mark.asyncio
@@ -378,7 +401,7 @@ async def test_list_orders_by_updated_at_descending_then_id_ascending(
         await unit_of_work.commit()
 
     async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
-        listed = await unit_of_work.graphs.list()
+        listed = await unit_of_work.graphs.list(WORKSPACE_ID)
 
     assert [graph.id for graph in listed] == [
         newest.id,
@@ -391,7 +414,9 @@ async def test_list_orders_by_updated_at_descending_then_id_ascending(
 async def test_concurrent_session_update_raises_concurrent_write_error(
     database: Database,
 ) -> None:
-    graph = SavedGraph(name="Original", document=SavedGraphDocument())
+    graph = SavedGraph(
+        workspace_id=WORKSPACE_ID, name="Original", document=SavedGraphDocument()
+    )
     async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
         await unit_of_work.graphs.add(graph)
         await unit_of_work.commit()
@@ -399,8 +424,8 @@ async def test_concurrent_session_update_raises_concurrent_write_error(
     first_uow = SqlAlchemySavedGraphUnitOfWork(database.sessions)
     second_uow = SqlAlchemySavedGraphUnitOfWork(database.sessions)
     async with first_uow as first, second_uow as second:
-        first_graph = await first.graphs.get(graph.id)
-        second_graph = await second.graphs.get(graph.id)
+        first_graph = await first.graphs.get(WORKSPACE_ID, graph.id)
+        second_graph = await second.graphs.get(WORKSPACE_ID, graph.id)
         assert first_graph is not None
         assert second_graph is not None
         first_graph.replace(

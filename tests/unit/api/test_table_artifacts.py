@@ -1,6 +1,7 @@
 import asyncio
 from hashlib import sha256
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,6 +11,9 @@ from notarius_api.v1.routes.artifacts.services import ArtifactService
 from notarius_api.v1.routes.executions.services import RunResultPresenter
 from notarius_core.artifacts import ArtifactObject, InMemoryUnitOfWork
 from notarius_core.nodes import NodeExecutionContext
+
+
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
 from notarius_core.operators.tables import (
     Table,
     TableArtifactWriter,
@@ -63,14 +67,17 @@ def test_table_page_bounds_cell_previews_and_full_download(
         writer.write(
             table,
             ArtifactWriteContext(
-                node_context=NodeExecutionContext(node_id="table"),
+                node_context=NodeExecutionContext(
+                    workspace_id=WORKSPACE_ID,
+                    node_id="table",
+                ),
                 provenance=MaterializationProvenance(refs_by_input={}),
             ),
         )
     )
 
     page_response = client.get(
-        f"/v1/artifacts/{ref.artifact_id}/table/page",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/page",
         params={"offset": 95, "limit": 10, "max_cell_characters": 32},
     )
 
@@ -93,7 +100,7 @@ def test_table_page_bounds_cell_previews_and_full_download(
     assert geometry_preview["original_length"] == len(geometry)
 
     cell_response = client.get(
-        f"/v1/artifacts/{ref.artifact_id}/table/cell",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/cell",
         params={"row_index": 95, "column_id": "geometry/wkt"},
     )
     assert cell_response.status_code == 200
@@ -105,7 +112,7 @@ def test_table_page_bounds_cell_previews_and_full_download(
     }
 
     large_integer_response = client.get(
-        f"/v1/artifacts/{ref.artifact_id}/table/cell",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/cell",
         params={"row_index": 95, "column_id": "large_id"},
     )
     assert large_integer_response.json() == {
@@ -115,7 +122,7 @@ def test_table_page_bounds_cell_previews_and_full_download(
         "encoding": "integer",
     }
     nested_response = client.get(
-        f"/v1/artifacts/{ref.artifact_id}/table/cell",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/cell",
         params={"row_index": 95, "column_id": "metadata"},
     )
     assert nested_response.json() == {
@@ -126,21 +133,21 @@ def test_table_page_bounds_cell_previews_and_full_download(
     }
     assert (
         client.get(
-            f"/v1/artifacts/{ref.artifact_id}/table/cell",
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/cell",
             params={"row_index": 999, "column_id": "id"},
         ).status_code
         == 400
     )
     assert (
         client.get(
-            f"/v1/artifacts/{ref.artifact_id}/table/cell",
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/cell",
             params={"row_index": 0, "column_id": "missing"},
         ).status_code
         == 400
     )
 
     column_page_response = client.get(
-        f"/v1/artifacts/{ref.artifact_id}/table/page",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/page",
         params={"column_offset": 2, "column_limit": 1},
     )
     assert column_page_response.status_code == 200
@@ -152,7 +159,7 @@ def test_table_page_bounds_cell_previews_and_full_download(
     assert column_page["total_columns"] == 4
 
     selected_columns_response = client.get(
-        f"/v1/artifacts/{ref.artifact_id}/table/page",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/page",
         params=[
             ("column_ids", "metadata"),
             ("column_ids", "id"),
@@ -169,14 +176,14 @@ def test_table_page_bounds_cell_previews_and_full_download(
     assert selected_columns_page["total_columns"] == 4
     assert (
         client.get(
-            f"/v1/artifacts/{ref.artifact_id}/table/page",
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/page",
             params={"column_ids": "missing"},
         ).status_code
         == 400
     )
 
     schema_response = client.get(
-        f"/v1/artifacts/{ref.artifact_id}/table/schema"
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/schema"
     )
     assert schema_response.status_code == 200
     assert schema_response.json()["total_rows"] == 120
@@ -185,10 +192,10 @@ def test_table_page_bounds_cell_previews_and_full_download(
         for column in schema_response.json()["columns"]
     ] == ["id", "geometry/wkt", "large_id", "metadata"]
 
-    summary = asyncio.run(components.presenter.artifact_summary(ref))
+    summary = asyncio.run(components.presenter.artifact_summary(WORKSPACE_ID, ref))
     assert summary.byte_size is not None
 
-    content_response = client.get(f"/v1/artifacts/{ref.artifact_id}/content")
+    content_response = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/content")
     assert content_response.status_code == 200
     assert Table.model_validate(content_response.json()) == table
     assert len(content_response.content) == summary.byte_size
@@ -209,7 +216,7 @@ def test_table_page_rejects_non_table_and_invalid_limits(
     client, _, _ = table_artifact_client
 
     run_response = client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -225,24 +232,24 @@ def test_table_page_rejects_non_table_and_invalid_limits(
     text_artifact_id = run_response.json()["node_runs"][0]["outputs"][0]["value"][
         "artifact_id"
     ]
-    assert client.get(f"/v1/artifacts/{text_artifact_id}/table/page").status_code == 400
+    assert client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{text_artifact_id}/table/page").status_code == 400
 
     assert (
         client.get(
-            "/v1/artifacts/00000000-0000-0000-0000-000000000000/table/page"
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/00000000-0000-0000-0000-000000000000/table/page"
         ).status_code
         == 404
     )
     assert (
         client.get(
-            "/v1/artifacts/00000000-0000-0000-0000-000000000000/table/page",
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/00000000-0000-0000-0000-000000000000/table/page",
             params={"limit": 0},
         ).status_code
         == 422
     )
     assert (
         client.get(
-            "/v1/artifacts/00000000-0000-0000-0000-000000000000/table/page",
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/00000000-0000-0000-0000-000000000000/table/page",
             params={"limit": 100, "column_limit": 100, "max_cell_characters": 2_000},
         ).status_code
         == 400
@@ -302,14 +309,17 @@ def test_table_query_filters_composite_keys_and_preserves_source_rows(
         writer.write(
             table,
             ArtifactWriteContext(
-                node_context=NodeExecutionContext(node_id="table-query"),
+                node_context=NodeExecutionContext(
+                    workspace_id=WORKSPACE_ID,
+                    node_id="table-query",
+                ),
                 provenance=MaterializationProvenance(refs_by_input={}),
             ),
         )
     )
 
     response = client.post(
-        f"/v1/artifacts/{ref.artifact_id}/table/query",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/query",
         json={
             "filter_groups": [
                 {
@@ -342,7 +352,7 @@ def test_table_query_filters_composite_keys_and_preserves_source_rows(
     ] == ["Belynichi", "Kniazhitsy"]
 
     missing_field = client.post(
-        f"/v1/artifacts/{ref.artifact_id}/table/query",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/query",
         json={
             "filter_groups": [
                 {"rows": [{"values": {"missing": "Belynichi"}}]}
@@ -359,6 +369,7 @@ async def test_artifact_summaries_never_embed_unbounded_or_table_json(
 ) -> None:
     unit_of_work = InMemoryUnitOfWork()
     unknown_size = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         artifact_type="sql.result",
         schema_version=1,
         content_type="application/json",
@@ -366,6 +377,7 @@ async def test_artifact_summaries_never_embed_unbounded_or_table_json(
         inline_payload={"table": "unbounded"},
     )
     large = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         artifact_type="sql.result",
         schema_version=1,
         content_type="application/json",
@@ -380,6 +392,7 @@ async def test_artifact_summaries_never_embed_unbounded_or_table_json(
         rows=[{"value": "small but paged"}],
     )
     table_artifact = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         artifact_type="table.data",
         schema_version=1,
         content_type="application/json",
@@ -388,6 +401,7 @@ async def test_artifact_summaries_never_embed_unbounded_or_table_json(
         byte_size=10,
     )
     small = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         artifact_type="scalar.text",
         schema_version=1,
         content_type="application/json",
@@ -406,7 +420,13 @@ async def test_artifact_summaries_never_embed_unbounded_or_table_json(
         )
     )
 
-    assert (await presenter.artifact_summary(unknown_size.ref())).text is None
-    assert (await presenter.artifact_summary(large.ref())).text is None
-    assert (await presenter.artifact_summary(table_artifact.ref())).text is None
-    assert (await presenter.artifact_summary(small.ref())).text == "bounded"
+    assert (
+        await presenter.artifact_summary(WORKSPACE_ID, unknown_size.ref())
+    ).text is None
+    assert (await presenter.artifact_summary(WORKSPACE_ID, large.ref())).text is None
+    assert (
+        await presenter.artifact_summary(WORKSPACE_ID, table_artifact.ref())
+    ).text is None
+    assert (
+        await presenter.artifact_summary(WORKSPACE_ID, small.ref())
+    ).text == "bounded"

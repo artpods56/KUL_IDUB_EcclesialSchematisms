@@ -7,7 +7,7 @@ from notarius_api.v1.routes.executions.models import RunResponse
 def test_registry_derives_nested_json_scalar_projections(
     structural_projection_client: TestClient,
 ) -> None:
-    response = structural_projection_client.get("/v1/nodes")
+    response = structural_projection_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes")
 
     assert response.status_code == 200
     registry = NodeRegistryResponse.model_validate(response.json())
@@ -42,7 +42,7 @@ def test_nested_json_string_projects_directly_and_integer_converts_to_text(
     structural_projection_client: TestClient,
 ) -> None:
     response = structural_projection_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -100,10 +100,10 @@ def test_nested_json_string_projects_directly_and_integer_converts_to_text(
     name = outputs_by_node["name"]
     retries = outputs_by_node["retries"]
     assert structural_projection_client.get(
-        f"/v1/artifacts/{name.artifact_id}/content"
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{name.artifact_id}/content"
     ).json() == {"value": "aBc"}
     assert structural_projection_client.get(
-        f"/v1/artifacts/{retries.artifact_id}/content"
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{retries.artifact_id}/content"
     ).json() == {"value": "four-2"}
 
 
@@ -111,7 +111,7 @@ def test_projected_values_feed_generic_collect_with_optional_conversion(
     structural_projection_client: TestClient,
 ) -> None:
     response = structural_projection_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -174,7 +174,7 @@ def test_projected_values_feed_generic_collect_with_optional_conversion(
     )
     assert [
         structural_projection_client.get(
-            f"/v1/artifacts/{artifact.artifact_id}/content"
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content"
         ).json()["value"]
         for artifact in collect_output.artifacts
     ] == ["abc", "42"]

@@ -792,7 +792,7 @@ class ArtifactService:
             max_zoom=max_zoom,
             source=GeoVectorRenderSourceResponse(
                 artifact_id=artifact.id,
-                archive_url=f"/v1/artifacts/{artifact.id}/geo/vector.pmtiles",
+                archive_url=(f"/v1/workspaces/{artifact.workspace_id}/artifacts/{artifact.id}/geo/vector.pmtiles"),
                 source_layer=projection.source_layer,
                 bounds=projection.bounds,
                 min_zoom=projection.min_zoom,
@@ -826,7 +826,7 @@ class ArtifactService:
             max_zoom=max_zoom,
             source=GeoRasterRenderSourceResponse(
                 artifact_id=artifact.id,
-                tilejson_url=(f"/v1/artifacts/{artifact.id}/geo/raster/tilejson.json"),
+                tilejson_url=(f"/v1/workspaces/{artifact.workspace_id}/artifacts/{artifact.id}/geo/raster/tilejson.json"),
                 bounds=projection.bounds,
             ),
             style=style,
@@ -901,7 +901,7 @@ class ArtifactService:
             source=GeoRasterRenderSourceResponse(
                 artifact_id=None,
                 tilejson_url=(
-                    f"/v1/artifacts/{layer_artifact.id}/geo/raster/tilejson.json"
+                    f"/v1/workspaces/{layer_artifact.workspace_id}/artifacts/{layer_artifact.id}/geo/raster/tilejson.json"
                 ),
                 bounds=layer.source.bounds,
                 attribution=layer.source.attribution,
@@ -962,7 +962,7 @@ class ArtifactService:
             )
             return GeoRasterTileJsonResponse(
                 name=self._source_name(artifact),
-                tiles=[f"/v1/artifacts/{artifact.id}/geo/raster/{{z}}/{{x}}/{{y}}.png"],
+                tiles=[f"/v1/workspaces/{artifact.workspace_id}/artifacts/{artifact.id}/geo/raster/{{z}}/{{x}}/{{y}}.png"],
                 bounds=projection.bounds,
                 minzoom=projection.min_zoom,
                 maxzoom=projection.max_zoom,
@@ -990,7 +990,7 @@ class ArtifactService:
             )
             return GeoRasterTileJsonResponse(
                 name=layer.title,
-                tiles=[f"/v1/artifacts/{artifact.id}/geo/raster/{{z}}/{{x}}/{{y}}.png"],
+                tiles=[f"/v1/workspaces/{artifact.workspace_id}/artifacts/{artifact.id}/geo/raster/{{z}}/{{x}}/{{y}}.png"],
                 bounds=projection.bounds,
                 minzoom=max(layer.min_zoom, projection.min_zoom),
                 maxzoom=min(layer.max_zoom, projection.max_zoom),
@@ -998,7 +998,7 @@ class ArtifactService:
         _validate_public_wms_url(layer.source)
         return GeoRasterTileJsonResponse(
             name=layer.title,
-            tiles=[f"/v1/artifacts/{artifact.id}/geo/raster/{{z}}/{{x}}/{{y}}.png"],
+            tiles=[f"/v1/workspaces/{artifact.workspace_id}/artifacts/{artifact.id}/geo/raster/{{z}}/{{x}}/{{y}}.png"],
             bounds=layer.source.bounds,
             minzoom=layer.min_zoom,
             maxzoom=layer.max_zoom,

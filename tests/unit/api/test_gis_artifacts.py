@@ -30,8 +30,17 @@ from notarius_core.ports.storage import (
     StoredObjectInfo,
 )
 
+from notarius_core.domain.identity import (
+    ActorContext,
+    WorkspaceAccess,
+    WorkspaceCapability,
+    WorkspaceMembership,
+    WorkspaceRole,
+)
+
 from notarius_api.v1.routes.artifacts.services import ArtifactService
 from notarius_api.v1.routes.artifacts.views import router as artifacts_router
+from notarius_api.v1.routes.auth.dependencies import browser_actor
 from notarius_storage import LocalFileObjectStore
 
 
@@ -39,6 +48,28 @@ FEATURE_KEY = ArtifactTypeKey("geo.feature_collection", 1)
 RASTER_KEY = ArtifactTypeKey("geo.raster_scan", 1)
 LAYER_KEY = ArtifactTypeKey("geo.map_layer", 1)
 DOCUMENT_KEY = ArtifactTypeKey("geo.map_document", 1)
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
+TEST_USER_ID = UUID(int=1)
+
+
+class _AllowAllIdentityService:
+    async def authorize(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        capability: WorkspaceCapability,
+    ) -> WorkspaceAccess:
+        del capability
+        return WorkspaceAccess(
+            actor=actor,
+            workspace_id=workspace_id,
+            membership=WorkspaceMembership(
+                workspace_id=workspace_id,
+                user_id=actor.user_id,
+                role=WorkspaceRole.OWNER,
+            ),
+        )
 
 
 class TrackingStorage(FileStoragePort):
@@ -91,6 +122,11 @@ def geo_artifact_client(
     application = FastAPI()
     service = ArtifactService(unit_of_work, storage)
     application.state.artifacts = service
+    application.state.identity_service = _AllowAllIdentityService()
+    application.dependency_overrides[browser_actor] = lambda: ActorContext(
+        user_id=TEST_USER_ID,
+        credential_reference="test-session",
+    )
     application.include_router(artifacts_router, prefix="/v1")
     with TestClient(application) as client:
         yield client, unit_of_work, storage
@@ -245,7 +281,7 @@ async def _feature_artifact(
             },
         ),
         node_id="features",
-        workspace_id=UUID("00000000-0000-0000-0000-000000000901"),
+        workspace_id=WORKSPACE_ID,
     )
     logical_payload = {
         "type": "FeatureCollection",
@@ -301,6 +337,7 @@ async def _feature_artifact(
     return await _add_artifact(
         unit_of_work,
         ArtifactObject(
+            workspace_id=WORKSPACE_ID,
             artifact_type=FEATURE_KEY.id,
             schema_version=1,
             content_type="application/geo+json",
@@ -342,6 +379,7 @@ async def _raster_artifact(
     return await _add_artifact(
         unit_of_work,
         ArtifactObject(
+            workspace_id=WORKSPACE_ID,
             artifact_type=RASTER_KEY.id,
             schema_version=1,
             content_type=("image/tiff; application=geotiff; profile=cloud-optimized"),
@@ -387,6 +425,7 @@ async def _inline_artifact(
     return await _add_artifact(
         unit_of_work,
         ArtifactObject(
+            workspace_id=WORKSPACE_ID,
             artifact_type=key.id,
             schema_version=key.schema_version,
             content_type="application/json",
@@ -419,7 +458,7 @@ def test_vector_render_archive_ranges_and_exact_feature_are_bounded(
         )
     )
 
-    render = client.get(f"/v1/artifacts/{artifact.id}/geo/render")
+    render = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/render")
     assert render.status_code == 200
     descriptor = render.json()
     assert descriptor["kind"] == "feature_collection"
@@ -427,7 +466,7 @@ def test_vector_render_archive_ranges_and_exact_feature_are_bounded(
     assert descriptor["layers"][0]["source"] == {
         "kind": "vector",
         "artifact_id": str(artifact.id),
-        "archive_url": f"/v1/artifacts/{artifact.id}/geo/vector.pmtiles",
+        "archive_url": f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/vector.pmtiles",
         "source_layer": "features",
         "bounds": [0.0, 0.0, 64.0, 64.0],
             "min_zoom": 0,
@@ -437,17 +476,17 @@ def test_vector_render_archive_ranges_and_exact_feature_are_bounded(
             ],
         }
 
-    full = client.get(f"/v1/artifacts/{artifact.id}/geo/vector.pmtiles")
+    full = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/vector.pmtiles")
     partial = client.get(
-        f"/v1/artifacts/{artifact.id}/geo/vector.pmtiles",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/vector.pmtiles",
         headers={"Range": "bytes=2-7"},
     )
     suffix = client.get(
-        f"/v1/artifacts/{artifact.id}/geo/vector.pmtiles",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/vector.pmtiles",
         headers={"Range": "bytes=-4"},
     )
     invalid = client.get(
-        f"/v1/artifacts/{artifact.id}/geo/vector.pmtiles",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/vector.pmtiles",
         headers={"Range": "bytes=999-1000"},
     )
     assert full.status_code == 200
@@ -470,16 +509,16 @@ def test_vector_render_archive_ranges_and_exact_feature_are_bounded(
     ]
 
     storage.loaded_paths.clear()
-    exact = client.get(f"/v1/artifacts/{artifact.id}/geo/features/55")
+    exact = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/features/55")
     assert exact.status_code == 200
     assert exact.json()["feature_index"] == 55
     assert exact.json()["feature"]["properties"]["name"] == "point-55"
     assert len(storage.loaded_paths) == 2
     assert sum("/chunks/" in path for path in storage.loaded_paths) == 1
-    assert client.get(f"/v1/artifacts/{artifact.id}/geo/features/65").status_code == 404
+    assert client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/features/65").status_code == 404
 
     query = client.post(
-        f"/v1/artifacts/{artifact.id}/geo/query",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/query",
         json={
             "rows": [
                 {"values": {"name": "point-55"}},
@@ -496,7 +535,7 @@ def test_vector_render_archive_ranges_and_exact_feature_are_bounded(
     }
 
     missing = client.post(
-        f"/v1/artifacts/{artifact.id}/geo/query",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/query",
         json={"rows": [{"values": {"name": "not-present"}}]},
     )
     assert missing.status_code == 200
@@ -519,12 +558,12 @@ def test_empty_feature_collection_has_clear_non_renderable_descriptor(
         )
     )
 
-    response = client.get(f"/v1/artifacts/{artifact.id}/geo/render")
+    response = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/render")
 
     assert response.status_code == 200
     assert response.json()["layers"] == []
     assert response.json()["initial_bounds"] is None
-    archive = client.get(f"/v1/artifacts/{artifact.id}/geo/vector.pmtiles")
+    archive = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/vector.pmtiles")
     assert archive.status_code == 400
     assert "empty" in archive.json()["detail"]
 
@@ -647,7 +686,7 @@ def test_map_document_resolves_ordered_vector_raster_and_wms_layers(
         )
     )
 
-    response = client.get(f"/v1/artifacts/{document.id}/geo/render")
+    response = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{document.id}/geo/render")
 
     assert response.status_code == 200
     descriptor = response.json()
@@ -667,12 +706,12 @@ def test_map_document_resolves_ordered_vector_raster_and_wms_layers(
     assert descriptor["layers"][3]["source"]["attribution"] == "Atlas Fontium"
 
     tilejson = client.get(
-        f"/v1/artifacts/{wms_layer.id}/geo/raster/tilejson.json",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{wms_layer.id}/geo/raster/tilejson.json",
         params={"url": "http://127.0.0.1/private"},
     )
     assert tilejson.status_code == 200
     assert tilejson.json()["tiles"] == [
-        f"http://testserver/v1/artifacts/{wms_layer.id}/geo/raster/"
+        f"http://testserver/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{wms_layer.id}/geo/raster/"
         "{z}/{x}/{y}.png"
     ]
 
@@ -685,16 +724,16 @@ def test_raster_tilejson_and_tiles_read_only_precomputed_xyz_objects(
     storage.loaded_paths.clear()
     storage.range_requests.clear()
 
-    tilejson = client.get(f"/v1/artifacts/{raster.id}/geo/raster/tilejson.json")
-    tile = client.get(f"/v1/artifacts/{raster.id}/geo/raster/2/2/1.png")
-    blank = client.get(f"/v1/artifacts/{raster.id}/geo/raster/2/1/1.png")
+    tilejson = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{raster.id}/geo/raster/tilejson.json")
+    tile = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{raster.id}/geo/raster/2/2/1.png")
+    blank = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{raster.id}/geo/raster/2/1/1.png")
 
     assert tilejson.status_code == 200
     assert tilejson.json()["minzoom"] == 2
     assert tilejson.json()["maxzoom"] == 6
     assert tilejson.json()["bounds"] == [10.0, 10.0, 20.0, 20.0]
     assert tilejson.json()["tiles"] == [
-        f"http://testserver/v1/artifacts/{raster.id}/geo/raster/{{z}}/{{x}}/{{y}}.png"
+        f"http://testserver/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{raster.id}/geo/raster/{{z}}/{{x}}/{{y}}.png"
     ]
     assert tile.status_code == 200
     assert tile.content == b"png-tile"
@@ -765,8 +804,8 @@ def test_render_rejects_stale_refs_and_private_wms_hosts(
         )
     )
 
-    stale = client.get(f"/v1/artifacts/{stale_layer.id}/geo/render")
-    private = client.get(f"/v1/artifacts/{private_wms.id}/geo/render")
+    stale = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{stale_layer.id}/geo/render")
+    private = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{private_wms.id}/geo/render")
 
     assert stale.status_code == 500
     assert "does not match" in stale.json()["detail"]
@@ -779,6 +818,6 @@ def test_geo_page_route_is_removed(
 ) -> None:
     client, _, _ = geo_artifact_client
 
-    response = client.get("/v1/artifacts/00000000-0000-0000-0000-000000000000/geo/page")
+    response = client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/00000000-0000-0000-0000-000000000000/geo/page")
 
     assert response.status_code == 404

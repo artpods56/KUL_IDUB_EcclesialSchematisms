@@ -19,7 +19,7 @@ from notarius_core.artifacts import (
     NodeOutput,
 )
 from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
-from notarius_core.domain.identity import Workspace
+from notarius_core.domain.identity import User, Workspace, WorkspaceMembership, WorkspaceRole
 from notarius_core.operators.text import TEXT_VALUE
 from notarius_core.plugins import NodeSecretInput, Plugin
 from notarius_core.ports.node_secrets import NodeSecretResolverPort
@@ -155,12 +155,26 @@ async def _create_schema(database_url: str) -> None:
         async with database.engine.begin() as connection:
             await connection.run_sync(metadata.create_all)
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+            await unit_of_work.identity.add_user(
+                User(
+                    id=UUID(int=1),
+                    email="owner@example.test",
+                    display_name="Owner",
+                )
+            )
             await unit_of_work.identity.add_workspace(
                 Workspace(
                     id=UUID("00000000-0000-0000-0000-000000000007"),
                     slug="local",
                     name="Local workspace",
                     kind="shared",
+                )
+            )
+            await unit_of_work.identity.add_membership(
+                WorkspaceMembership(
+                    workspace_id=UUID("00000000-0000-0000-0000-000000000007"),
+                    user_id=UUID(int=1),
+                    role=WorkspaceRole.OWNER,
                 )
             )
             await unit_of_work.commit()
@@ -564,10 +578,10 @@ def _module_node_run(
 def test_saved_graph_module_is_discoverable_and_executes_once(
     module_client: TestClient,
 ) -> None:
-    created = module_client.post("/v1/graphs", json=_text_module_payload()).json()
+    created = module_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_text_module_payload()).json()
     graph_id = created["id"]
 
-    registry_response = module_client.get("/v1/nodes")
+    registry_response = module_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes")
     assert registry_response.status_code == 200
     registry = registry_response.json()
     assert {
@@ -588,7 +602,7 @@ def test_saved_graph_module_is_discoverable_and_executes_once(
     )
 
     response = module_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -631,12 +645,12 @@ def test_execution_events_route_nested_nodes_to_each_module_instance(
     module_client: TestClient,
 ) -> None:
     created = module_client.post(
-        "/v1/graphs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
         json=_text_module_payload(emit_progress=True),
     ).json()
     operator_id = f"graph.module.{created['id']}"
     started = module_client.post(
-        "/v1/executions",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
         json={
             "nodes": [
                 {
@@ -675,7 +689,7 @@ def test_execution_events_route_nested_nodes_to_each_module_instance(
         },
     ).json()
 
-    response = module_client.get(f"/v1/executions/{started['execution_id']}/events")
+    response = module_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{started['execution_id']}/events")
     events = [
         json.loads(line.removeprefix("data: "))
         for line in response.text.splitlines()
@@ -709,12 +723,12 @@ def test_mapped_module_events_keep_the_outer_invocation_identity(
     module_client: TestClient,
 ) -> None:
     created = module_client.post(
-        "/v1/graphs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
         json=_text_module_payload(emit_progress=True),
     ).json()
     operator_id = f"graph.module.{created['id']}"
     started = module_client.post(
-        "/v1/executions",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
         json={
             "nodes": [
                 {
@@ -754,7 +768,7 @@ def test_mapped_module_events_keep_the_outer_invocation_identity(
         },
     ).json()
 
-    response = module_client.get(f"/v1/executions/{started['execution_id']}/events")
+    response = module_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{started['execution_id']}/events")
     progress_events = [
         json.loads(line.removeprefix("data: "))
         for line in response.text.splitlines()
@@ -780,11 +794,11 @@ def test_nested_map_events_append_each_local_invocation_index(
     module_client: TestClient,
 ) -> None:
     created = module_client.post(
-        "/v1/graphs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
         json=_nested_map_progress_module_payload(),
     ).json()
     started = module_client.post(
-        "/v1/executions",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
         json={
             "nodes": [
                 {
@@ -824,7 +838,7 @@ def test_nested_map_events_append_each_local_invocation_index(
         },
     ).json()
 
-    response = module_client.get(f"/v1/executions/{started['execution_id']}/events")
+    response = module_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{started['execution_id']}/events")
     progress_events = [
         json.loads(line.removeprefix("data: "))
         for line in response.text.splitlines()
@@ -850,12 +864,12 @@ def test_nested_map_events_append_each_local_invocation_index(
 def test_module_uses_existing_map_semantics_and_keeps_revision_pinned(
     module_client: TestClient,
 ) -> None:
-    created = module_client.post("/v1/graphs", json=_text_module_payload()).json()
+    created = module_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_text_module_payload()).json()
     graph_id = created["id"]
     operator_id = f"graph.module.{graph_id}"
 
     mapped_response = module_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -910,13 +924,13 @@ def test_module_uses_existing_map_semantics_and_keeps_revision_pinned(
     update_payload = _text_module_payload(replacement="X")
     update_payload["expected_revision"] = 1
     updated_response = module_client.put(
-        f"/v1/graphs/{graph_id}",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}",
         json=update_payload,
     )
     assert updated_response.status_code == 200
     assert updated_response.json()["revision"] == 2
 
-    registry = module_client.get("/v1/nodes").json()
+    registry = module_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes").json()
     module_specs = [
         node for node in registry["nodes"] if node["module_graph_id"] == graph_id
     ]
@@ -926,7 +940,7 @@ def test_module_uses_existing_map_semantics_and_keeps_revision_pinned(
     ] == [(2, True), (1, False)]
 
     pinned_response = module_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -964,11 +978,11 @@ def test_nested_module_omits_absent_optional_input_and_disabled_edges(
     module_client: TestClient,
 ) -> None:
     created = module_client.post(
-        "/v1/graphs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
         json=_optional_input_module_payload(),
     ).json()
     graph_id = created["id"]
-    registry = module_client.get("/v1/nodes").json()
+    registry = module_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes").json()
     module_spec = next(
         node for node in registry["nodes"] if node["module_graph_id"] == graph_id
     )
@@ -978,7 +992,7 @@ def test_nested_module_omits_absent_optional_input_and_disabled_edges(
     ]
 
     response = module_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -1013,7 +1027,7 @@ def test_nested_module_omits_absent_optional_input_and_disabled_edges(
     assert artifacts[0]["text"] == '"hello"'
 
     supplied_response = module_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -1067,7 +1081,7 @@ def test_module_catalog_rejects_optional_input_targeting_required_input(
     module_client: TestClient,
 ) -> None:
     created = module_client.post(
-        "/v1/graphs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
         json=_text_module_payload(
             name="Invalid optional input",
             input_required=False,
@@ -1080,7 +1094,7 @@ def test_module_catalog_rejects_optional_input_targeting_required_input(
         "(text.replace@1)"
     )
 
-    registry = module_client.get("/v1/nodes").json()
+    registry = module_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes").json()
     assert all(
         node["module_graph_id"] != graph_id
         for node in registry["nodes"]
@@ -1096,7 +1110,7 @@ def test_module_catalog_rejects_optional_input_targeting_required_input(
     ]
 
     response = module_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -1119,7 +1133,7 @@ def test_module_catalog_reports_invalid_boundary_wiring(
     module_client: TestClient,
 ) -> None:
     created = module_client.post(
-        "/v1/graphs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
         json={
             "name": "Input without output",
             "nodes": [
@@ -1137,7 +1151,7 @@ def test_module_catalog_reports_invalid_boundary_wiring(
     ).json()
     graph_id = created["id"]
 
-    registry = module_client.get("/v1/nodes").json()
+    registry = module_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes").json()
     unavailable = [
         module
         for module in registry["unavailable_modules"]
@@ -1161,7 +1175,7 @@ def test_module_catalog_ignores_graphs_without_module_boundaries(
     module_client: TestClient,
 ) -> None:
     created = module_client.post(
-        "/v1/graphs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
         json={
             "name": "Ordinary workflow",
             "nodes": [
@@ -1178,7 +1192,7 @@ def test_module_catalog_ignores_graphs_without_module_boundaries(
     ).json()
     graph_id = created["id"]
 
-    registry = module_client.get("/v1/nodes").json()
+    registry = module_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes").json()
     assert all(
         node["module_graph_id"] != graph_id
         for node in registry["nodes"]
@@ -1193,12 +1207,12 @@ def test_graph_module_required_input_is_rejected_by_compiler(
     module_client: TestClient,
 ) -> None:
     created = module_client.post(
-        "/v1/graphs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
         json=_optional_input_module_payload(),
     ).json()
 
     response = module_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -1222,12 +1236,12 @@ def test_nested_module_resolves_secret_from_its_own_pinned_graph(
     module_client: TestClient,
 ) -> None:
     created = module_client.post(
-        "/v1/graphs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
         json=_secret_module_payload(),
     ).json()
     graph_id = created["id"]
     configured = module_client.put(
-        f"/v1/graphs/{graph_id}/nodes/secret-gate/secrets/api_key",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}/nodes/secret-gate/secrets/api_key",
         json={"value": "module-only-key", "expected_graph_revision": 1},
     )
     assert configured.status_code == 200
@@ -1242,14 +1256,14 @@ def test_nested_module_resolves_secret_from_its_own_pinned_graph(
     update_payload["expected_revision"] = 1
     assert (
         module_client.put(
-            f"/v1/graphs/{graph_id}",
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}",
             json=update_payload,
         ).status_code
         == 200
     )
 
     response = module_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -1292,11 +1306,11 @@ def test_exact_module_revision_cycle_reports_the_nested_path(
     module_client: TestClient,
 ) -> None:
     first = module_client.post(
-        "/v1/graphs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
         json=_text_module_payload(name="First"),
     ).json()
     second = module_client.post(
-        "/v1/graphs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
         json=_text_module_payload(name="Second"),
     ).json()
 
@@ -1308,7 +1322,7 @@ def test_exact_module_revision_cycle_reports_the_nested_path(
     first_update["expected_revision"] = 1
     assert (
         module_client.put(
-            f"/v1/graphs/{first['id']}",
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{first['id']}",
             json=first_update,
         ).status_code
         == 200
@@ -1322,14 +1336,14 @@ def test_exact_module_revision_cycle_reports_the_nested_path(
     second_update["expected_revision"] = 1
     assert (
         module_client.put(
-            f"/v1/graphs/{second['id']}",
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{second['id']}",
             json=second_update,
         ).status_code
         == 200
     )
 
     response = module_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {

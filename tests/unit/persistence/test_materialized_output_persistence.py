@@ -15,11 +15,19 @@ from notarius_core.artifacts import (
     InMemoryUnitOfWork,
 )
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
-from notarius_core.domain.saved_graphs import SavedGraph, SavedGraphDocument
+from notarius_core.domain.saved_graphs import (
+    SavedGraph,
+    SavedGraphDocument,
+    SavedGraphRevision,
+)
 
 from notarius_persistence.database import Database, create_database
 from notarius_persistence.orm import metadata
 from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
+from notarius_persistence import schema
+
+
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
 @pytest.fixture
@@ -28,6 +36,17 @@ async def database(tmp_path: Path) -> AsyncIterator[Database]:
     created = create_database(f"sqlite+aiosqlite:///{database_path}")
     async with created.engine.begin() as connection:
         await connection.run_sync(metadata.create_all)
+        await connection.execute(
+            schema.workspaces.insert(),
+            {
+                "id": WORKSPACE_ID,
+                "slug": "local",
+                "name": "Local",
+                "kind": "shared",
+                "created_at": datetime(2026, 7, 1, tzinfo=UTC),
+                "updated_at": datetime(2026, 7, 1, tzinfo=UTC),
+            },
+        )
     try:
         yield created
     finally:
@@ -41,9 +60,30 @@ async def _persist_graph(
     async with unit_of_work as entered:
         await entered.graphs.add(
             SavedGraph(
+                workspace_id=WORKSPACE_ID,
                 id=graph_id,
                 name="Materialized graph",
                 document=SavedGraphDocument(),
+            )
+        )
+        await entered.graphs.add_revision(
+            SavedGraphRevision(
+                workspace_id=WORKSPACE_ID,
+                graph_id=graph_id,
+                revision=1,
+                name="Materialized graph",
+                document=SavedGraphDocument(),
+                created_at=datetime(2026, 7, 1, tzinfo=UTC),
+            )
+        )
+        await entered.graphs.add_revision(
+            SavedGraphRevision(
+                workspace_id=WORKSPACE_ID,
+                graph_id=graph_id,
+                revision=2,
+                name="Materialized graph",
+                document=SavedGraphDocument(),
+                created_at=datetime(2026, 7, 1, tzinfo=UTC),
             )
         )
         await entered.commit()
@@ -55,6 +95,7 @@ async def test_in_memory_materializations_follow_unit_of_work_commit_boundaries(
     unit_of_work = InMemoryUnitOfWork(store)
     graph_id = UUID("00000000-0000-0000-0000-000000000001")
     artifact = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         artifact_type="scalar.integer",
         schema_version=1,
         content_type="application/json",
@@ -62,6 +103,7 @@ async def test_in_memory_materializations_follow_unit_of_work_commit_boundaries(
         inline_payload={"value": 1},
     )
     committed = MaterializedNodeOutputs(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph_id,
         graph_revision=1,
         node_id="committed",
@@ -69,6 +111,7 @@ async def test_in_memory_materializations_follow_unit_of_work_commit_boundaries(
         outputs={"value": artifact.ref()},
     )
     discarded = MaterializedNodeOutputs(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph_id,
         graph_revision=1,
         node_id="discarded",
@@ -82,7 +125,9 @@ async def test_in_memory_materializations_follow_unit_of_work_commit_boundaries(
     async with unit_of_work as entered:
         await entered.materialized_outputs.upsert(discarded)
     async with unit_of_work as entered:
-        listed = await entered.materialized_outputs.list_for_graph(graph_id, 1)
+        listed = await entered.materialized_outputs.list_for_graph(
+            WORKSPACE_ID, graph_id, 1
+        )
 
     assert [value.node_id for value in listed] == ["committed"]
 
@@ -93,6 +138,7 @@ async def test_artifact_metadata_round_trips_in_a_fresh_session(
 ) -> None:
     unit_of_work = SqlAlchemyUnitOfWork(database.sessions)
     inline = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         id=UUID("00000000-0000-0000-0000-000000000101"),
         artifact_type="scalar.integer",
         schema_version=1,
@@ -104,6 +150,7 @@ async def test_artifact_metadata_round_trips_in_a_fresh_session(
         metadata={"producer_node_id": "addition"},
     )
     stored = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         id=UUID("00000000-0000-0000-0000-000000000102"),
         artifact_type="image.raster",
         schema_version=1,
@@ -122,9 +169,10 @@ async def test_artifact_metadata_round_trips_in_a_fresh_session(
         await entered.commit()
 
     async with unit_of_work as entered:
-        loaded_inline = await entered.artifacts.get(inline.id)
-        loaded_stored = await entered.artifacts.get(stored.id)
+        loaded_inline = await entered.artifacts.get(WORKSPACE_ID, inline.id)
+        loaded_stored = await entered.artifacts.get(WORKSPACE_ID, stored.id)
         integer_artifacts = await entered.artifacts.list_by_type(
+            WORKSPACE_ID,
             ArtifactTypeKey("scalar.integer", 1)
         )
 
@@ -147,6 +195,7 @@ async def test_latest_node_outputs_preserve_exact_single_and_sequence_envelopes(
     graph_id = UUID("00000000-0000-0000-0000-000000000201")
     await _persist_graph(unit_of_work, graph_id)
     first = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         id=UUID("00000000-0000-0000-0000-000000000211"),
         artifact_type="scalar.integer",
         schema_version=1,
@@ -156,6 +205,7 @@ async def test_latest_node_outputs_preserve_exact_single_and_sequence_envelopes(
         sha256="3" * 64,
     )
     second = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         id=UUID("00000000-0000-0000-0000-000000000212"),
         artifact_type="scalar.integer",
         schema_version=1,
@@ -175,6 +225,7 @@ async def test_latest_node_outputs_preserve_exact_single_and_sequence_envelopes(
     )
     materialized_at = datetime(2026, 7, 15, 8, 30, tzinfo=UTC)
     materialization = MaterializedNodeOutputs(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph_id,
         graph_revision=1,
         node_id="source",
@@ -186,12 +237,18 @@ async def test_latest_node_outputs_preserve_exact_single_and_sequence_envelopes(
     async with unit_of_work as entered:
         await entered.artifacts.add(first)
         await entered.artifacts.add(second)
+        await entered.commit()
+    async with unit_of_work as entered:
         await entered.materialized_outputs.upsert(materialization)
         await entered.commit()
 
     async with unit_of_work as entered:
-        loaded = await entered.materialized_outputs.get(graph_id, 1, "source")
-        listed = await entered.materialized_outputs.list_for_graph(graph_id, 1)
+        loaded = await entered.materialized_outputs.get(
+            WORKSPACE_ID, graph_id, 1, "source"
+        )
+        listed = await entered.materialized_outputs.list_for_graph(
+            WORKSPACE_ID, graph_id, 1
+        )
 
     assert loaded is not None
     assert loaded is not materialization
@@ -215,6 +272,7 @@ async def test_upsert_replaces_only_the_same_graph_revision_and_node(
     graph_id = UUID("00000000-0000-0000-0000-000000000301")
     await _persist_graph(unit_of_work, graph_id)
     artifact = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         artifact_type="scalar.integer",
         schema_version=1,
         content_type="application/json",
@@ -222,6 +280,7 @@ async def test_upsert_replaces_only_the_same_graph_revision_and_node(
         inline_payload={"value": 9},
     )
     first = MaterializedNodeOutputs(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph_id,
         graph_revision=1,
         node_id="number",
@@ -230,6 +289,7 @@ async def test_upsert_replaces_only_the_same_graph_revision_and_node(
         materialized_at=datetime(2026, 7, 15, 9, 0, tzinfo=UTC),
     )
     replacement = MaterializedNodeOutputs(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph_id,
         graph_revision=1,
         node_id="number",
@@ -238,6 +298,7 @@ async def test_upsert_replaces_only_the_same_graph_revision_and_node(
         materialized_at=datetime(2026, 7, 15, 9, 5, tzinfo=UTC),
     )
     next_revision = MaterializedNodeOutputs(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph_id,
         graph_revision=2,
         node_id="number",
@@ -248,6 +309,8 @@ async def test_upsert_replaces_only_the_same_graph_revision_and_node(
 
     async with unit_of_work as entered:
         await entered.artifacts.add(artifact)
+        await entered.commit()
+    async with unit_of_work as entered:
         await entered.materialized_outputs.upsert(first)
         await entered.commit()
     async with unit_of_work as entered:
@@ -256,8 +319,12 @@ async def test_upsert_replaces_only_the_same_graph_revision_and_node(
         await entered.commit()
 
     async with unit_of_work as entered:
-        revision_one = await entered.materialized_outputs.get(graph_id, 1, "number")
-        revision_two = await entered.materialized_outputs.get(graph_id, 2, "number")
+        revision_one = await entered.materialized_outputs.get(
+            WORKSPACE_ID, graph_id, 1, "number"
+        )
+        revision_two = await entered.materialized_outputs.get(
+            WORKSPACE_ID, graph_id, 2, "number"
+        )
 
     assert revision_one is not None
     assert revision_one.workflow_run_id == replacement.workflow_run_id
@@ -274,6 +341,7 @@ async def test_concurrent_first_upserts_share_one_valid_materialization(
     graph_id = UUID("00000000-0000-0000-0000-000000000321")
     await _persist_graph(unit_of_work, graph_id)
     artifact = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         id=UUID("00000000-0000-0000-0000-000000000324"),
         artifact_type="scalar.integer",
         schema_version=1,
@@ -282,6 +350,7 @@ async def test_concurrent_first_upserts_share_one_valid_materialization(
         inline_payload={"value": 9},
     )
     first = MaterializedNodeOutputs(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph_id,
         graph_revision=1,
         node_id="number",
@@ -290,6 +359,7 @@ async def test_concurrent_first_upserts_share_one_valid_materialization(
         materialized_at=datetime(2026, 7, 15, 9, 20, tzinfo=UTC),
     )
     second = MaterializedNodeOutputs(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph_id,
         graph_revision=1,
         node_id="number",
@@ -297,6 +367,9 @@ async def test_concurrent_first_upserts_share_one_valid_materialization(
         outputs={"second": artifact.ref()},
         materialized_at=datetime(2026, 7, 15, 9, 21, tzinfo=UTC),
     )
+    async with unit_of_work as entered:
+        await entered.artifacts.add(artifact)
+        await entered.commit()
     first_statement_finished = asyncio.Event()
     second_statement_started = asyncio.Event()
     release_first_commit = asyncio.Event()
@@ -350,8 +423,12 @@ async def test_concurrent_first_upserts_share_one_valid_materialization(
         )
 
     async with unit_of_work as entered:
-        loaded = await entered.materialized_outputs.get(graph_id, 1, "number")
-        listed = await entered.materialized_outputs.list_for_graph(graph_id, 1)
+        loaded = await entered.materialized_outputs.get(
+            WORKSPACE_ID, graph_id, 1, "number"
+        )
+        listed = await entered.materialized_outputs.list_for_graph(
+            WORKSPACE_ID, graph_id, 1
+        )
 
     assert insert_count == 2
     assert loaded is not None
@@ -369,6 +446,7 @@ async def test_deleting_graph_cascades_materializations_but_keeps_artifacts(
     graph_id = UUID("00000000-0000-0000-0000-000000000401")
     await _persist_graph(unit_of_work, graph_id)
     artifact = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
         artifact_type="scalar.integer",
         schema_version=1,
         content_type="application/json",
@@ -376,6 +454,7 @@ async def test_deleting_graph_cascades_materializations_but_keeps_artifacts(
         inline_payload={"value": 4},
     )
     materialization = MaterializedNodeOutputs(
+        workspace_id=WORKSPACE_ID,
         graph_id=graph_id,
         graph_revision=1,
         node_id="number",
@@ -384,17 +463,22 @@ async def test_deleting_graph_cascades_materializations_but_keeps_artifacts(
     )
     async with unit_of_work as entered:
         await entered.artifacts.add(artifact)
+        await entered.commit()
+    async with unit_of_work as entered:
         await entered.materialized_outputs.upsert(materialization)
         await entered.commit()
     async with unit_of_work as entered:
-        graph = await entered.graphs.get(graph_id)
+        graph = await entered.graphs.get(WORKSPACE_ID, graph_id)
         assert graph is not None
-        await entered.graphs.remove(graph)
+        await entered.graphs.remove(WORKSPACE_ID, graph)
         await entered.commit()
 
     async with unit_of_work as entered:
-        assert await entered.materialized_outputs.list_for_graph(graph_id, 1) == []
-        assert await entered.artifacts.get(artifact.id) is not None
+        assert (
+            await entered.materialized_outputs.list_for_graph(WORKSPACE_ID, graph_id, 1)
+            == []
+        )
+        assert await entered.artifacts.get(WORKSPACE_ID, artifact.id) is not None
 
 
 @pytest.mark.asyncio
@@ -414,6 +498,7 @@ async def test_reusable_unit_of_work_is_isolated_per_async_task(
             await asyncio.wait_for(both_entered.wait(), timeout=1)
             return len(
                 await entered.artifacts.list_by_type(
+                    WORKSPACE_ID,
                     ArtifactTypeKey("scalar.integer", 1)
                 )
             )

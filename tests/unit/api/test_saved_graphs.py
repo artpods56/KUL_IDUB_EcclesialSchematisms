@@ -61,7 +61,7 @@ def _graph_payload(name: str = "Draft graph") -> dict[str, object]:
 
 def test_saved_graph_crud_round_trip(builtin_client: TestClient) -> None:
     create_response = builtin_client.post(
-        "/v1/graphs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
         json=_graph_payload("  Parish index draft  "),
     )
 
@@ -106,11 +106,11 @@ def test_saved_graph_crud_round_trip(builtin_client: TestClient) -> None:
     ]
     assert "conversion" not in created["edges"][0]
 
-    get_response = builtin_client.get(f"/v1/graphs/{graph_id}")
+    get_response = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}")
     assert get_response.status_code == 200
     assert get_response.json() == created
 
-    list_response = builtin_client.get("/v1/graphs")
+    list_response = builtin_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs")
     assert list_response.status_code == 200
     assert list_response.json() == {
         "graphs": [
@@ -128,7 +128,7 @@ def test_saved_graph_crud_round_trip(builtin_client: TestClient) -> None:
     update_payload = _graph_payload("Updated draft")
     update_payload["expected_revision"] = 1
     update_response = builtin_client.put(
-        f"/v1/graphs/{graph_id}",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}",
         json=update_payload,
     )
     assert update_response.status_code == 200
@@ -139,12 +139,12 @@ def test_saved_graph_crud_round_trip(builtin_client: TestClient) -> None:
     assert updated["created_at"] == created["created_at"]
 
     delete_response = builtin_client.delete(
-        f"/v1/graphs/{graph_id}",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}",
         params={"expected_revision": updated["revision"]},
     )
     assert delete_response.status_code == 204
     assert delete_response.content == b""
-    assert builtin_client.get(f"/v1/graphs/{graph_id}").status_code == 404
+    assert builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}").status_code == 404
 
 
 def test_create_rejects_structurally_invalid_graph(builtin_client: TestClient) -> None:
@@ -159,11 +159,11 @@ def test_create_rejects_structurally_invalid_graph(builtin_client: TestClient) -
         }
     ]
 
-    response = builtin_client.post("/v1/graphs", json=payload)
+    response = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=payload)
 
     assert response.status_code == 422
     assert "missing target node missing" in str(response.json())
-    assert builtin_client.get("/v1/graphs").json() == {"graphs": []}
+    assert builtin_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs").json() == {"graphs": []}
 
 
 def test_create_rejects_ambiguous_conversion_fields(
@@ -173,7 +173,7 @@ def test_create_rejects_ambiguous_conversion_fields(
     edge = cast(list[dict[str, object]], payload["edges"])[0]
     edge["conversion_path"] = [edge["conversion"]]
 
-    response = builtin_client.post("/v1/graphs", json=payload)
+    response = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=payload)
 
     assert response.status_code == 422
     assert "both conversion and conversion_path" in str(response.json())
@@ -196,7 +196,7 @@ def test_create_rejects_duplicate_artifact_type_binding_variables(
         }
     )
 
-    response = builtin_client.post("/v1/graphs", json=payload)
+    response = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=payload)
 
     assert response.status_code == 422
     assert "binding variables must be unique" in str(response.json())
@@ -213,12 +213,12 @@ def test_saved_graph_preserves_conversion_path_order(
         {"id": "example.text.finalize", "version": 7},
     ]
 
-    create_response = builtin_client.post("/v1/graphs", json=payload)
+    create_response = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=payload)
 
     assert create_response.status_code == 201
     created = create_response.json()
     assert created["edges"][0]["conversion_path"] == edge["conversion_path"]
-    loaded = builtin_client.get(f"/v1/graphs/{created['id']}")
+    loaded = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{created['id']}")
     assert loaded.status_code == 200
     assert loaded.json()["edges"][0]["conversion_path"] == edge["conversion_path"]
 
@@ -228,23 +228,23 @@ def test_saved_graph_preserves_disabled_edges(builtin_client: TestClient) -> Non
     edge = cast(list[dict[str, object]], payload["edges"])[0]
     edge["enabled"] = False
 
-    create_response = builtin_client.post("/v1/graphs", json=payload)
+    create_response = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=payload)
 
     assert create_response.status_code == 201
     created = create_response.json()
     assert created["edges"][0]["enabled"] is False
-    loaded = builtin_client.get(f"/v1/graphs/{created['id']}")
+    loaded = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{created['id']}")
     assert loaded.status_code == 200
     assert loaded.json()["edges"][0]["enabled"] is False
 
 
 def test_update_requires_positive_expected_revision(builtin_client: TestClient) -> None:
-    created = builtin_client.post("/v1/graphs", json=_graph_payload()).json()
+    created = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
     payload = _graph_payload("Invalid revision")
     payload["expected_revision"] = 0
 
     response = builtin_client.put(
-        f"/v1/graphs/{created['id']}",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{created['id']}",
         json=payload,
     )
 
@@ -258,13 +258,13 @@ def test_missing_saved_graph_returns_not_found_for_crud_operations(
     update_payload = _graph_payload()
     update_payload["expected_revision"] = 1
 
-    get_response = builtin_client.get(f"/v1/graphs/{graph_id}")
+    get_response = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}")
     update_response = builtin_client.put(
-        f"/v1/graphs/{graph_id}",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}",
         json=update_payload,
     )
     delete_response = builtin_client.delete(
-        f"/v1/graphs/{graph_id}",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}",
         params={"expected_revision": 1},
     )
 
@@ -275,7 +275,7 @@ def test_missing_saved_graph_returns_not_found_for_crud_operations(
 
 
 def test_stale_update_returns_revision_conflict(builtin_client: TestClient) -> None:
-    created = builtin_client.post("/v1/graphs", json=_graph_payload()).json()
+    created = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
     graph_id = created["id"]
     first_update = _graph_payload("First update")
     first_update["expected_revision"] = 1
@@ -283,11 +283,11 @@ def test_stale_update_returns_revision_conflict(builtin_client: TestClient) -> N
     stale_update["expected_revision"] = 1
 
     assert (
-        builtin_client.put(f"/v1/graphs/{graph_id}", json=first_update).status_code
+        builtin_client.put(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}", json=first_update).status_code
         == 200
     )
     conflict_response = builtin_client.put(
-        f"/v1/graphs/{graph_id}",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}",
         json=stale_update,
     )
 
@@ -299,29 +299,29 @@ def test_stale_update_returns_revision_conflict(builtin_client: TestClient) -> N
 def test_stale_delete_returns_revision_conflict_and_preserves_graph(
     builtin_client: TestClient,
 ) -> None:
-    created = builtin_client.post("/v1/graphs", json=_graph_payload()).json()
+    created = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
     update_payload = _graph_payload("Newer graph")
     update_payload["expected_revision"] = created["revision"]
     updated = builtin_client.put(
-        f"/v1/graphs/{created['id']}",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{created['id']}",
         json=update_payload,
     ).json()
 
     response = builtin_client.delete(
-        f"/v1/graphs/{created['id']}",
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{created['id']}",
         params={"expected_revision": created["revision"]},
     )
 
     assert response.status_code == 409
     assert "current revision is 2" in response.json()["detail"]
-    assert builtin_client.get(f"/v1/graphs/{created['id']}").json() == updated
+    assert builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{created['id']}").json() == updated
 
 
 def test_name_length_is_checked_after_whitespace_normalization(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/graphs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
         json=_graph_payload("x" * 160 + " "),
     )
 

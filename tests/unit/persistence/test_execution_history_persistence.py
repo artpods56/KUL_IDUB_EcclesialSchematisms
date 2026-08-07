@@ -25,6 +25,10 @@ from notarius_persistence.orm import metadata
 from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 
+WORKSPACE_ONE = UUID("00000000-0000-0000-0000-000000000001")
+WORKSPACE_TWO = UUID("00000000-0000-0000-0000-000000000002")
+
+
 @pytest.fixture
 async def database(tmp_path: Path) -> AsyncIterator[Database]:
     created = create_database(
@@ -32,6 +36,27 @@ async def database(tmp_path: Path) -> AsyncIterator[Database]:
     )
     async with created.engine.begin() as connection:
         await connection.run_sync(metadata.create_all)
+        await connection.execute(
+            schema.workspaces.insert(),
+            [
+                {
+                    "id": WORKSPACE_ONE,
+                    "slug": "one",
+                    "name": "One",
+                    "kind": "shared",
+                    "created_at": datetime(2026, 7, 1, tzinfo=UTC),
+                    "updated_at": datetime(2026, 7, 1, tzinfo=UTC),
+                },
+                {
+                    "id": WORKSPACE_TWO,
+                    "slug": "two",
+                    "name": "Two",
+                    "kind": "shared",
+                    "created_at": datetime(2026, 7, 1, tzinfo=UTC),
+                    "updated_at": datetime(2026, 7, 1, tzinfo=UTC),
+                },
+            ],
+        )
     try:
         yield created
     finally:
@@ -41,12 +66,14 @@ async def database(tmp_path: Path) -> AsyncIterator[Database]:
 async def _persist_graph_revisions(
     unit_of_work: SqlAlchemyUnitOfWork,
     graph_id: UUID,
+    workspace_id: UUID,
 ) -> None:
     document = SavedGraphDocument()
     created_at = datetime(2026, 7, 18, 7, 0, tzinfo=UTC)
     async with unit_of_work as entered:
         await entered.graphs.add(
             SavedGraph(
+                workspace_id=workspace_id,
                 id=graph_id,
                 name="Execution history graph",
                 document=document,
@@ -60,6 +87,7 @@ async def _persist_graph_revisions(
         for revision in (1, 2):
             await entered.graphs.add_revision(
                 SavedGraphRevision(
+                    workspace_id=workspace_id,
                     graph_id=graph_id,
                     revision=revision,
                     name="Execution history graph",
@@ -77,11 +105,12 @@ async def test_execution_lifecycle_and_node_outputs_round_trip_without_replacing
     unit_of_work = SqlAlchemyUnitOfWork(database.sessions)
     graph_id = UUID("00000000-0000-0000-0000-000000000101")
     execution_id = UUID("00000000-0000-0000-0000-000000000102")
-    await _persist_graph_revisions(unit_of_work, graph_id)
+    await _persist_graph_revisions(unit_of_work, graph_id, WORKSPACE_ONE)
     created_at = datetime(2026, 7, 18, 8, 0, tzinfo=UTC)
     started_at = created_at + timedelta(seconds=1)
     finished_at = started_at + timedelta(seconds=2)
     execution = GraphExecution(
+        workspace_id=WORKSPACE_ONE,
         execution_id=execution_id,
         graph_id=graph_id,
         graph_revision=2,
@@ -91,6 +120,7 @@ async def test_execution_lifecycle_and_node_outputs_round_trip_without_replacing
         created_at=created_at,
     )
     image = ArtifactObject(
+        workspace_id=WORKSPACE_ONE,
         id=UUID("00000000-0000-0000-0000-000000000103"),
         artifact_type="image.raster",
         schema_version=1,
@@ -99,6 +129,7 @@ async def test_execution_lifecycle_and_node_outputs_round_trip_without_replacing
         object_key="images/page.png",
     )
     second_image = ArtifactObject(
+        workspace_id=WORKSPACE_ONE,
         id=UUID("00000000-0000-0000-0000-000000000104"),
         artifact_type="image.raster",
         schema_version=1,
@@ -131,6 +162,7 @@ async def test_execution_lifecycle_and_node_outputs_round_trip_without_replacing
         await entered.artifacts.add(second_image)
         await entered.execution_history.add_node_result(
             GraphExecutionNodeResult(
+                workspace_id=WORKSPACE_ONE,
                 execution_id=execution_id,
                 node_id="upload",
                 position=0,
@@ -141,6 +173,7 @@ async def test_execution_lifecycle_and_node_outputs_round_trip_without_replacing
         )
         await entered.execution_history.add_node_result(
             GraphExecutionNodeResult(
+                workspace_id=WORKSPACE_ONE,
                 execution_id=execution_id,
                 node_id="extract",
                 position=1,
@@ -154,9 +187,13 @@ async def test_execution_lifecycle_and_node_outputs_round_trip_without_replacing
         await entered.commit()
 
     async with unit_of_work as entered:
-        detail = await entered.execution_history.get(execution_id)
-        page = await entered.execution_history.list_for_graph(graph_id, limit=20)
-        materialized = await entered.materialized_outputs.list_for_graph(graph_id, 2)
+        detail = await entered.execution_history.get(WORKSPACE_ONE, execution_id)
+        page = await entered.execution_history.list_for_graph(
+            WORKSPACE_ONE, graph_id, limit=20
+        )
+        materialized = await entered.materialized_outputs.list_for_graph(
+            WORKSPACE_ONE, graph_id, 2
+        )
 
     assert detail is not None
     assert detail.execution == succeeded
@@ -175,7 +212,7 @@ async def test_cursor_paging_is_stable_when_execution_timestamps_tie(
 ) -> None:
     unit_of_work = SqlAlchemyUnitOfWork(database.sessions)
     graph_id = UUID("00000000-0000-0000-0000-000000000201")
-    await _persist_graph_revisions(unit_of_work, graph_id)
+    await _persist_graph_revisions(unit_of_work, graph_id, WORKSPACE_ONE)
     created_at = datetime(2026, 7, 18, 9, 0, tzinfo=UTC)
     execution_ids = [
         UUID("00000000-0000-0000-0000-000000000201"),
@@ -186,6 +223,7 @@ async def test_cursor_paging_is_stable_when_execution_timestamps_tie(
         for execution_id in execution_ids:
             await entered.execution_history.add(
                 GraphExecution(
+                    workspace_id=WORKSPACE_ONE,
                     execution_id=execution_id,
                     graph_id=graph_id,
                     graph_revision=1,
@@ -197,9 +235,12 @@ async def test_cursor_paging_is_stable_when_execution_timestamps_tie(
         await entered.commit()
 
     async with unit_of_work as entered:
-        first = await entered.execution_history.list_for_graph(graph_id, limit=2)
+        first = await entered.execution_history.list_for_graph(
+            WORKSPACE_ONE, graph_id, limit=2
+        )
         assert first.next_cursor is not None
         second = await entered.execution_history.list_for_graph(
+            WORKSPACE_ONE,
             graph_id,
             limit=2,
             cursor=first.next_cursor,
@@ -221,13 +262,14 @@ async def test_filters_select_executions_without_filtering_detail_node_rows(
 ) -> None:
     unit_of_work = SqlAlchemyUnitOfWork(database.sessions)
     graph_id = UUID("00000000-0000-0000-0000-000000000301")
-    await _persist_graph_revisions(unit_of_work, graph_id)
+    await _persist_graph_revisions(unit_of_work, graph_id, WORKSPACE_ONE)
     base_time = datetime(2026, 7, 18, 10, 0, tzinfo=UTC)
     completed_id = UUID("00000000-0000-0000-0000-000000000302")
     queued_id = UUID("00000000-0000-0000-0000-000000000303")
     unrelated_id = UUID("00000000-0000-0000-0000-000000000304")
     cancelled_id = UUID("00000000-0000-0000-0000-000000000305")
     completed = GraphExecution(
+        workspace_id=WORKSPACE_ONE,
         execution_id=completed_id,
         graph_id=graph_id,
         graph_revision=1,
@@ -239,6 +281,7 @@ async def test_filters_select_executions_without_filtering_detail_node_rows(
         finished_at=base_time + timedelta(seconds=1),
     )
     queued = GraphExecution(
+        workspace_id=WORKSPACE_ONE,
         execution_id=queued_id,
         graph_id=graph_id,
         graph_revision=2,
@@ -248,6 +291,7 @@ async def test_filters_select_executions_without_filtering_detail_node_rows(
         created_at=base_time + timedelta(minutes=1),
     )
     unrelated = GraphExecution(
+        workspace_id=WORKSPACE_ONE,
         execution_id=unrelated_id,
         graph_id=graph_id,
         graph_revision=1,
@@ -257,6 +301,7 @@ async def test_filters_select_executions_without_filtering_detail_node_rows(
         created_at=base_time + timedelta(minutes=2),
     )
     cancelled = GraphExecution(
+        workspace_id=WORKSPACE_ONE,
         execution_id=cancelled_id,
         graph_id=graph_id,
         graph_revision=1,
@@ -272,6 +317,7 @@ async def test_filters_select_executions_without_filtering_detail_node_rows(
         with pytest.raises(ValueError, match="did not request node 'unexpected'"):
             await entered.execution_history.add_node_result(
                 GraphExecutionNodeResult(
+                    workspace_id=WORKSPACE_ONE,
                     execution_id=completed_id,
                     node_id="unexpected",
                     position=2,
@@ -283,6 +329,7 @@ async def test_filters_select_executions_without_filtering_detail_node_rows(
         for position, node_id in enumerate(("target", "other")):
             await entered.execution_history.add_node_result(
                 GraphExecutionNodeResult(
+                    workspace_id=WORKSPACE_ONE,
                     execution_id=completed_id,
                     node_id=node_id,
                     position=position,
@@ -295,21 +342,24 @@ async def test_filters_select_executions_without_filtering_detail_node_rows(
 
     async with unit_of_work as entered:
         target_page = await entered.execution_history.list_for_graph(
+            WORKSPACE_ONE,
             graph_id,
             limit=10,
             node_id="target",
         )
         revision_page = await entered.execution_history.list_for_graph(
+            WORKSPACE_ONE,
             graph_id,
             limit=10,
             graph_revision=2,
         )
         succeeded_page = await entered.execution_history.list_for_graph(
+            WORKSPACE_ONE,
             graph_id,
             limit=10,
             status="succeeded",
         )
-        detail = await entered.execution_history.get(completed_id)
+        detail = await entered.execution_history.get(WORKSPACE_ONE, completed_id)
 
     assert [item.execution.execution_id for item in target_page.items] == [
         cancelled_id,
@@ -329,8 +379,10 @@ async def test_restart_recovery_fails_only_active_executions(
     database: Database,
 ) -> None:
     unit_of_work = SqlAlchemyUnitOfWork(database.sessions)
-    graph_id = UUID("00000000-0000-0000-0000-000000000401")
-    await _persist_graph_revisions(unit_of_work, graph_id)
+    graph_one_id = UUID("00000000-0000-0000-0000-000000000401")
+    graph_two_id = UUID("00000000-0000-0000-0000-000000000402")
+    await _persist_graph_revisions(unit_of_work, graph_one_id, WORKSPACE_ONE)
+    await _persist_graph_revisions(unit_of_work, graph_two_id, WORKSPACE_TWO)
     created_at = datetime(2026, 7, 18, 11, 0, tzinfo=UTC)
     statuses: tuple[GraphExecutionStatus, ...] = (
         "queued",
@@ -342,13 +394,34 @@ async def test_restart_recovery_fails_only_active_executions(
         UUID(f"00000000-0000-0000-0000-{index:012d}")
         for index in range(410, 414)
     ]
+    second_workspace_execution_ids = [
+        UUID(f"00000000-0000-0000-0000-{index:012d}")
+        for index in range(420, 424)
+    ]
     async with unit_of_work as entered:
         for execution_id, status in zip(execution_ids, statuses, strict=True):
             terminal = status == "succeeded"
             await entered.execution_history.add(
                 GraphExecution(
+                    workspace_id=WORKSPACE_ONE,
                     execution_id=execution_id,
-                    graph_id=graph_id,
+                    graph_id=graph_one_id,
+                    graph_revision=1,
+                    status=status,
+                    created_at=created_at,
+                    started_at=(created_at if status != "queued" else None),
+                    finished_at=(created_at if terminal else None),
+                )
+            )
+        for execution_id, status in zip(
+            second_workspace_execution_ids, statuses, strict=True
+        ):
+            terminal = status == "succeeded"
+            await entered.execution_history.add(
+                GraphExecution(
+                    workspace_id=WORKSPACE_TWO,
+                    execution_id=execution_id,
+                    graph_id=graph_two_id,
                     graph_revision=1,
                     status=status,
                     created_at=created_at,
@@ -368,11 +441,15 @@ async def test_restart_recovery_fails_only_active_executions(
 
     async with unit_of_work as entered:
         details = [
-            await entered.execution_history.get(execution_id)
+            await entered.execution_history.get(WORKSPACE_ONE, execution_id)
             for execution_id in execution_ids
         ]
+        second_workspace_details = [
+            await entered.execution_history.get(WORKSPACE_TWO, execution_id)
+            for execution_id in second_workspace_execution_ids
+        ]
 
-    assert interrupted == 3
+    assert interrupted == 6
     assert all(detail is not None for detail in details)
     assert [detail.execution.status for detail in details if detail is not None] == [
         "failed",
@@ -383,6 +460,11 @@ async def test_restart_recovery_fails_only_active_executions(
     assert details[0] is not None
     assert details[0].execution.finished_at == recovered_at
     assert details[0].execution.error == "API restarted before execution completed"
+    assert [
+        detail.execution.status
+        for detail in second_workspace_details
+        if detail is not None
+    ] == ["failed", "failed", "failed", "succeeded"]
 
 
 @pytest.mark.asyncio
@@ -393,6 +475,7 @@ async def test_deleting_graph_cascades_history_and_preserves_artifacts(
     graph_id = UUID("00000000-0000-0000-0000-000000000501")
     execution_id = UUID("00000000-0000-0000-0000-000000000502")
     artifact = ArtifactObject(
+        workspace_id=WORKSPACE_ONE,
         id=UUID("00000000-0000-0000-0000-000000000503"),
         artifact_type="scalar.integer",
         schema_version=1,
@@ -400,11 +483,12 @@ async def test_deleting_graph_cascades_history_and_preserves_artifacts(
         storage_backend="inline",
         inline_payload={"value": 5},
     )
-    await _persist_graph_revisions(unit_of_work, graph_id)
+    await _persist_graph_revisions(unit_of_work, graph_id, WORKSPACE_ONE)
     async with unit_of_work as entered:
         await entered.artifacts.add(artifact)
         await entered.execution_history.add(
             GraphExecution(
+                workspace_id=WORKSPACE_ONE,
                 execution_id=execution_id,
                 graph_id=graph_id,
                 graph_revision=1,
@@ -413,14 +497,14 @@ async def test_deleting_graph_cascades_history_and_preserves_artifacts(
         )
         await entered.commit()
     async with unit_of_work as entered:
-        graph = await entered.graphs.get(graph_id)
+        graph = await entered.graphs.get(WORKSPACE_ONE, graph_id)
         assert graph is not None
-        await entered.graphs.remove(graph)
+        await entered.graphs.remove(WORKSPACE_ONE, graph)
         await entered.commit()
 
     async with unit_of_work as entered:
-        assert await entered.execution_history.get(execution_id) is None
-        assert await entered.artifacts.get(artifact.id) is not None
+        assert await entered.execution_history.get(WORKSPACE_ONE, execution_id) is None
+        assert await entered.artifacts.get(WORKSPACE_ONE, artifact.id) is not None
     async with database.sessions() as session:
         assert (
             await session.scalar(

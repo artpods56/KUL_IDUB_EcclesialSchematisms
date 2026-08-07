@@ -104,6 +104,17 @@ def test_all_0008_upgrade_and_downgrade_tables_compile_for_postgresql() -> None:
         assert ddl.startswith("\nCREATE TABLE")
         for constraint in table.constraints:
             assert constraint.name is None or len(str(constraint.name)) <= 63
+    node_secret_table = next(
+        table
+        for table in metadata.tables.values()
+        if table.name == "_0008_node_secrets"
+    )
+    node_secret_ddl = str(
+        CreateTable(node_secret_table).compile(dialect=postgresql.dialect())
+    )
+    assert "CONSTRAINT ck_node_secrets_aad_version CHECK (aad_version IN (1, 2))" in (
+        node_secret_ddl
+    )
     for name, table_name, columns in captured_indexes:
         assert len(name) <= 63
         table = metadata.tables.get(table_name)

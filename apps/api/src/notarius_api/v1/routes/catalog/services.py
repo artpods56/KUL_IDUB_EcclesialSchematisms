@@ -125,9 +125,9 @@ class GraphModuleCatalog:
                 workspace_id=workspace_id,
             )
         except NotFoundError as exc:
-            raise GraphModuleCatalogError(
-                f"Saved graph {reference.graph_id} revision {reference.revision} "
-                "was not found in the requested workspace"
+            raise NotFoundError(
+                "Saved graph module",
+                f"{reference.graph_id}@{reference.revision}",
             ) from exc
         except GraphModuleDefinitionError as exc:
             raise GraphModuleCatalogError(

@@ -36,7 +36,7 @@ from notarius_core.operators.arithmetic import (
 from notarius_core.operators.text import TEXT_VALUE
 
 
-WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
 TEST_COMPOUND_RESULT_KEY = ArtifactTypeKey("test.compound_result", 1)
 
 
@@ -180,7 +180,7 @@ def test_registry_declares_scalar_arithmetic_nodes_and_test_compound_projections
     conversion_path_client: tuple[TestClient, InMemoryUnitOfWork],
 ) -> None:
     client, _uow = conversion_path_client
-    response = client.get("/v1/nodes")
+    response = client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes")
 
     assert response.status_code == 200
     registry = NodeRegistryResponse.model_validate(response.json())
@@ -233,7 +233,7 @@ def test_integer_output_converts_to_text_before_text_node_execution(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -270,7 +270,7 @@ def test_integer_output_converts_to_text_before_text_node_execution(
     assert replaced.kind == "single"
     assert replaced.artifacts[0].artifact_type == "scalar.text"
     replaced_content = builtin_client.get(
-        f"/v1/artifacts/{replaced.artifacts[0].artifact_id}/content"
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{replaced.artifacts[0].artifact_id}/content"
     )
     assert replaced_content.status_code == 200
     assert replaced_content.json() == {"value": "nine"}
@@ -285,7 +285,7 @@ def test_integer_output_converts_to_text_before_text_node_execution(
     converted_ref = converted_refs[0]
     assert isinstance(converted_ref, dict)
     converted_content = builtin_client.get(
-        f"/v1/artifacts/{converted_ref['artifact_id']}/content"
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{converted_ref['artifact_id']}/content"
     )
     assert converted_content.status_code == 200
     assert converted_content.json() == {"value": "9"}
@@ -296,7 +296,7 @@ def test_projection_runs_before_declared_integer_to_text_conversion(
 ) -> None:
     client, _uow = conversion_path_client
     response = client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -356,7 +356,7 @@ def test_projection_runs_before_declared_integer_to_text_conversion(
     result = RunResponse.model_validate(response.json())
     replaced = _run_output(result, "replace", "text")
     replaced_content = client.get(
-        f"/v1/artifacts/{replaced.artifacts[0].artifact_id}/content"
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{replaced.artifacts[0].artifact_id}/content"
     )
     assert replaced_content.status_code == 200
     assert replaced_content.json() == {"value": "thirteen"}
@@ -366,7 +366,7 @@ def test_integer_sequence_conversion_preserves_order_through_mapped_text_node(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -417,13 +417,13 @@ def test_integer_sequence_conversion_preserves_order_through_mapped_text_node(
     assert replaced.value.ordered is True
     assert replaced.value.index_key == "order_index"
     assert [
-        builtin_client.get(f"/v1/artifacts/{artifact.artifact_id}/content").json()[
+        builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content").json()[
             "value"
         ]
         for artifact in replaced.artifacts
     ] == ["1", "two", "3"]
     joined = _run_output(result, "join", "text").artifacts[0]
-    joined_content = builtin_client.get(f"/v1/artifacts/{joined.artifact_id}/content")
+    joined_content = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{joined.artifact_id}/content")
     assert joined_content.status_code == 200
     assert joined_content.json() == {"value": "1,two,3"}
 
@@ -433,7 +433,7 @@ def test_transitive_conversion_path_composes_in_memory_and_writes_final_only(
 ) -> None:
     client, uow = conversion_path_client
     response = client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -489,7 +489,7 @@ def test_projection_runs_before_every_step_in_a_transitive_conversion_path(
 ) -> None:
     client, uow = conversion_path_client
     response = client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -571,7 +571,7 @@ def test_sequence_items_each_traverse_the_full_conversion_path_before_mapping(
 ) -> None:
     client, uow = conversion_path_client
     response = client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -656,7 +656,7 @@ def test_invalid_conversion_paths_are_rejected_before_node_execution(
 ) -> None:
     client, _uow = conversion_path_client
     response = client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -701,7 +701,7 @@ def test_conversion_path_errors_identify_the_exact_failing_step(
 ) -> None:
     client, uow = conversion_path_client
     response = client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -842,7 +842,7 @@ def test_invalid_conversion_is_422_before_node_execution(
     error_fragment: str,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={"nodes": nodes, "edges": [edge]},
     )
 
@@ -854,7 +854,7 @@ def test_add_and_subtract_nodes_feed_scalar_results_into_multiply(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -941,7 +941,7 @@ def test_test_compound_graph_projects_both_result_fields_into_multiply(
 ) -> None:
     client, _uow = conversion_path_client
     response = client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json=_compound_run_request(
             left_projection={"path": ["addition"]},
             right_projection={"path": ["subtraction"]},
@@ -962,14 +962,14 @@ def test_test_compound_graph_projects_both_result_fields_into_multiply(
         "addition": 13,
         "subtraction": 5,
     }
-    compound_content = client.get(f"/v1/artifacts/{compound.artifact_id}/content")
+    compound_content = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{compound.artifact_id}/content")
     assert compound_content.status_code == 200
     assert compound_content.json() == {"addition": 13, "subtraction": 5}
 
     product = runs["multiply"].outputs[0].artifacts[0]
     assert product.artifact_type == "scalar.integer"
     assert product.text == "65"
-    product_content = client.get(f"/v1/artifacts/{product.artifact_id}/content")
+    product_content = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{product.artifact_id}/content")
     assert product_content.status_code == 200
     assert product_content.json() == {"value": 65}
 
@@ -979,7 +979,7 @@ def test_selected_target_projects_two_edges_from_one_pinned_compound_output(
 ) -> None:
     client, _uow = conversion_path_client
     upstream_response = client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json=_compound_run_request(
             left_projection={"path": ["addition"]},
             right_projection={"path": ["subtraction"]},
@@ -993,7 +993,7 @@ def test_selected_target_projects_two_edges_from_one_pinned_compound_output(
     assert compound_output.value.content_hash == compound_output.artifacts[0].sha256
 
     selected_response = client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -1044,7 +1044,7 @@ def test_integer_sequence_maps_multiply_and_sums_once(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json=_mapped_sum_run_request(collection_mode="map"),
     )
 
@@ -1071,7 +1071,7 @@ def test_selected_mapped_run_uses_exact_pinned_sequence_envelope_in_order(
     builtin_client: TestClient,
 ) -> None:
     upstream_response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -1101,7 +1101,7 @@ def test_selected_mapped_run_uses_exact_pinned_sequence_envelope_in_order(
     ]
 
     selected_response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -1163,7 +1163,7 @@ def test_selected_run_uses_submitted_older_or_newer_pin_without_latest_lookup(
     pinned_values: list[ArtifactRef] = []
     for value in (3, 7):
         response = builtin_client.post(
-            "/v1/runs",
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
             json={
                 "nodes": [
                     {
@@ -1186,7 +1186,7 @@ def test_selected_run_uses_submitted_older_or_newer_pin_without_latest_lookup(
     products: list[str | None] = []
     for pinned_value in pinned_values:
         response = builtin_client.post(
-            "/v1/runs",
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
             json={
                 "nodes": [
                     {
@@ -1247,7 +1247,7 @@ def test_invalid_selected_run_pins_are_rejected_before_target_execution(
 ) -> None:
     client, _uow = conversion_path_client
     upstream_response = client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json=_compound_run_request(
             left_projection={"path": ["addition"]},
             right_projection={"path": ["subtraction"]},
@@ -1327,7 +1327,7 @@ def test_invalid_selected_run_pins_are_rejected_before_target_execution(
         ]
 
     response = client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -1350,7 +1350,7 @@ def test_pin_for_executing_source_is_rejected_before_source_config_runs(
     builtin_client: TestClient,
 ) -> None:
     upstream_response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -1369,7 +1369,7 @@ def test_pin_for_executing_source_is_rejected_before_source_config_runs(
     assert isinstance(pinned_value, ArtifactRef)
 
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -1420,7 +1420,7 @@ def test_crossing_edge_to_unknown_target_is_rejected(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [],
             "edges": [
@@ -1445,7 +1445,7 @@ def test_many_output_cannot_feed_once_item_input(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json=_mapped_sum_run_request(collection_mode="direct"),
     )
 
@@ -1458,7 +1458,7 @@ def test_invalid_map_edge_target_is_rejected_before_execution(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -1495,7 +1495,7 @@ def test_node_rejects_more_than_one_map_edge(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -1545,7 +1545,7 @@ def test_unknown_operator_version_is_rejected_before_execution(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -1579,7 +1579,7 @@ def test_invalid_test_compound_projection_is_422_before_node_execution(
 ) -> None:
     client, _uow = conversion_path_client
     response = client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json=_compound_run_request(
             left_projection=projection,
             right_projection={"path": ["subtraction"]},
@@ -1595,7 +1595,7 @@ def test_missing_required_arithmetic_input_is_422_before_node_execution(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {
@@ -1634,7 +1634,7 @@ def test_number_node_config_does_not_coerce_non_integer_values(
     value: object,
 ) -> None:
     response = builtin_client.post(
-        "/v1/runs",
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={
             "nodes": [
                 {

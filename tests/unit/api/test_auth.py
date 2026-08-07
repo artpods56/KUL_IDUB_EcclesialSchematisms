@@ -119,7 +119,7 @@ def test_v1_routes_fail_closed_but_health_is_public(tmp_path: Path) -> None:
     _seed_sync(database_url)
     with TestClient(create_app(_settings(database_url))) as client:
         assert client.get("/health").status_code == 200
-        assert client.get("/v1/nodes").status_code == 401
+        assert client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes").status_code == 401
         assert client.get("/v1/workspaces").status_code == 401
         assert client.get("/v1/auth/session").status_code == 401
 

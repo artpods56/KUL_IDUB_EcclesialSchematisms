@@ -100,8 +100,11 @@ def build_workbench_components(
         .resolve()
     )
     uploads_dir = resolved_workspace / "uploads"
-    uploads = ImageUploadService(uploads_dir)
     resolved_unit_of_work = unit_of_work or InMemoryUnitOfWork()
+    uploads = ImageUploadService(
+        uploads_dir,
+        unit_of_work_factory=lambda: resolved_unit_of_work,
+    )
     resolved_storage = storage or LocalFileObjectStore(resolved_workspace / "objects")
     resolved_node_secrets = node_secrets or UnavailableNodeSecretResolver()
     plugin_context = PluginRuntimeContext(
