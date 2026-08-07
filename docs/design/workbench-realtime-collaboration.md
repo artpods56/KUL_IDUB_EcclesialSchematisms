@@ -1,6 +1,6 @@
 # Realtime Workbench collaboration rework
 
-- **Status:** Accepted
+- **Status:** Accepted; Phase 0–6 implemented; Phase 7 operator release gate open
 - **Date:** 2026-08-05
 - **Audience:** Engineers changing the Workbench, saved-graph persistence, or graph execution
 - **Document type:** Technical design explanation

@@ -206,6 +206,11 @@ browser/REST path.
 
 ## Phase 7 release checklist (operator)
 
+Automatable pieces already covered in CI/unit tests: one-owner fence, Compose
+gateway/proxy contract, and two-session API/WS collaboration acceptance
+(`tests/unit/api/test_collaboration_acceptance.py`). The items below still need
+a human on a real host/IdP/data copy.
+
 - [ ] Exact `NOTARIUS_PUBLIC_ORIGIN` and OIDC callback registered
 - [ ] Secrets generated and backed up outside the data volume
 - [ ] `bootstrap-oidc-owner` mapping written for the intended first subject
@@ -213,6 +218,7 @@ browser/REST path.
 - [ ] One API replica / one worker; second owner fails startup
 - [ ] Backup + integrity check rehearsed on a copy of realistic data
 - [ ] Authenticated browser smoke and PAT MCP smoke through the gateway
+- [ ] Live two-browser collaboration smoke (converge, presence, shared run, revoke)
 - [ ] Collaboration drain before upgrade; restore rehearsed
 
 ## Stop or upgrade

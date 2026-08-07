@@ -9,6 +9,30 @@ outside its scope.
 
 ## Domain vocabulary
 
+### Accepted identity vocabulary
+
+These terms are product vocabulary for authentication and tenancy. They are
+distinct from the filesystem/workbench data root (`Settings.workspace` /
+Compose volume): that path stores runtime files; it is not a collaboration
+boundary.
+
+| Term | Meaning |
+| --- | --- |
+| `User` | Internal account provisioned only after a valid OIDC callback. Profile email/display name are not authorization keys. |
+| `OidcIdentity` | Exact `(issuer, subject)` link from the configured OpenID Connect provider to one `User`. |
+| `Workspace` | Sole collaboration and tenancy boundary. `personal` has one owner and no other members; `shared` holds `viewer` / `editor` / `owner` memberships. |
+| `WorkspaceMembership` | Active or revoked role of one user in one workspace, with a monotonic authorization version. |
+| `OidcLoginTransaction` | Short-lived, single-use Authorization Code + PKCE handshake state. |
+| `AuthSession` | Opaque, revocable browser session (raw secret never persisted). |
+| `PersonalAccessToken` (`PAT`) | Workspace-bound bearer credential for Streamable HTTP MCP; effective permission is token scope ∩ current membership. |
+| `SecurityAuditEvent` | Metadata-only security audit row; never stores credentials, provider payloads, or command/config bodies. |
+| `GraphRoomSession` | Ephemeral WebSocket participant identity inside one `(workspace_id, graph_id)` collaboration room. |
+| Capability | Fine-grained permission derived from role (and intersected with PAT scopes), such as `edit_graph`, `execute_graph`, or `join_graph_room`. |
+
+“Team” and “organization” in conversation both mean a shared workspace. There is
+no second grouping aggregate, per-graph ACL, or public-link grant in the first
+delivery.
+
 ### Artifact
 
 A typed, versioned value produced or consumed by a node. Its payload may be

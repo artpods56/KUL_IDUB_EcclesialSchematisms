@@ -1,9 +1,11 @@
 # Authentication, workspace, and collaboration implementation plan
 
-- **Status:** Accepted; Phase 0–6 exit met; Phase 7 deployment gate started
-  (one-owner fence, same-origin Compose gateway, automatable deploy checks).
-  Remaining Phase 7: live SSH/OIDC rehearsal, two-browser acceptance, full
-  backup/restore drill. `executions:run` MCP tools deferred.
+- **Status:** Accepted; Phase 0–6 exit met; Phase 7 in progress.
+  Automatable gate landed: one-owner fence, same-origin Compose gateway `:8080`,
+  deploy DoD unit tests, and two-session API/WS acceptance
+  (`tests/unit/api/test_collaboration_acceptance.py`). Remaining operator-only
+  gates: live SSH/OIDC rehearsal and full backup/restore on realistic data.
+  `executions:run` MCP tools deferred.
 - **Date:** 2026-08-06
 - **Audience:** Experienced contributors changing identity, persistence, API,
   Workbench, MCP, collaboration, execution, or deployment
@@ -771,7 +773,9 @@ operations, and final acceptance.
 - Rehearse backup, migration, OIDC bootstrap mapping and first login,
   authenticated browser/MCP smoke, collaboration drain, and restore on a copy
   of realistic data.
-- Run the complete verification and two-browser acceptance suites.
+- Run the complete verification suite and the two-session API/WS acceptance
+  journey (`tests/unit/api/test_collaboration_acceptance.py`). Live two-browser
+  smoke through the SSH-forwarded gateway remains an operator rehearsal.
 
 Multiple API owners remain blocked on a separate accepted design for owner
 leases/fencing, shared room publication, shared execution replay, cancellation
@@ -1055,8 +1059,8 @@ Do not repeat every command permutation in every layer.
 | Shared execution | Execution API/persistence tests | Role checks, durable active slot, actor attribution, cross-workspace invisibility, late SSE recovery, cancellation and startup recovery. |
 | MCP SDK and tools | `tests/unit/mcp/` plus FastAPI mount integration | Pinned SDK ASGI/lifespan compatibility, stateless per-request actor injection, read/write scope, post-revocation fail-closed requests, safe errors, no persistence dependency. |
 | Generated contract | `tests/unit/api/test_openapi.py`, web contract check | Exact target routes and generated JSON/TS are current; the browser adapter agrees with FastAPI; mounted MCP tool schemas and injected-operation fixtures are current. |
-| Browser journey | Two independent browser contexts | Owner adds editor/viewer; editor and owner converge and share a run; viewer observes but cannot mutate; removal closes room; personal graph remains invisible. |
-| Deployment | Container smoke/release check | Same-origin cookie/CSRF, WebSocket and SSE through gateway/SSH, one API owner, second-owner rejection, backup/restore rehearsal. |
+| Browser journey | `tests/unit/api/test_collaboration_acceptance.py` (API/WS stand-in); live two-browser contexts remain an operator rehearsal | Owner adds editor/viewer; editor and owner converge and share a run; viewer observes but cannot mutate; removal closes room; personal graph remains invisible. |
+| Deployment | Container smoke/release check plus operator rehearsal | Same-origin cookie/CSRF, WebSocket and SSE through gateway/SSH, one API owner, second-owner rejection, backup/restore rehearsal. |
 
 Add real in-memory adapters only for repository ports already required by
 production workflows. Do not add factory layers or widen types to `Any` merely

@@ -1,6 +1,6 @@
 # Authentication and workspace tenancy
 
-- **Status:** Accepted
+- **Status:** Accepted; Phase 0–6 implemented; Phase 7 operator release gate open
 - **Date:** 2026-08-06
 - **Audience:** Engineers changing identity, persistence, API, Workbench,
   collaboration, execution, MCP, or deployment
@@ -14,8 +14,9 @@
 ## Summary
 
 This design adds application identity, workspace tenancy, and continuing
-authorization to Notarius. It is an accepted design for the refactor; parts of
-the live codebase may still be mid-migration toward this contract.
+authorization to Notarius. The implementation through Phase 6 matches this
+contract; Phase 7 still needs live SSH/OIDC and backup/restore operator
+rehearsal before calling the refactor release-ready.
 
 The design makes these decisions:
 

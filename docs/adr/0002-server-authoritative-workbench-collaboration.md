@@ -1,6 +1,6 @@
 # ADR 0002: Use server-authoritative graph sessions for Workbench collaboration
 
-- **Status:** Accepted
+- **Status:** Accepted; Phase 0–6 implemented; Phase 7 operator release gate open
 - **Date:** 2026-08-05
 - **Scope:** Workbench graph authoring, persistence, presence, and execution observation
 - **Design:** [Realtime Workbench collaboration rework](../design/workbench-realtime-collaboration.md)
