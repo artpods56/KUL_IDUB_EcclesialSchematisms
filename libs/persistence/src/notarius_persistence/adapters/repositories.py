@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import cast, override
 from uuid import UUID
 
-from sqlalchemy import delete, func, insert, or_, select, text, update
+from sqlalchemy import and_, delete, func, insert, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import CursorResult
@@ -799,14 +799,13 @@ class SqlGraphExecutionHistoryRepository(
 
     @override
     async def update(self, execution: GraphExecution) -> None:
-        current_record = await self._session.get(
-            GraphExecutionRecord,
-            execution.execution_id,
+        current_record = await self._session.scalar(
+            select(GraphExecutionRecord).where(
+                schema.graph_executions.c.workspace_id == execution.workspace_id,
+                schema.graph_executions.c.execution_id == execution.execution_id,
+            )
         )
-        if (
-            current_record is None
-            or current_record.workspace_id != execution.workspace_id
-        ):
+        if current_record is None:
             raise NotFoundError("Graph execution", str(execution.execution_id))
         requested_node_ids = await self._requested_node_ids(
             execution.workspace_id,
@@ -892,8 +891,13 @@ class SqlGraphExecutionHistoryRepository(
         workspace_id: UUID,
         execution_id: UUID,
     ) -> GraphExecutionDetail | None:
-        record = await self._session.get(GraphExecutionRecord, execution_id)
-        if record is None or record.workspace_id != workspace_id:
+        record = await self._session.scalar(
+            select(GraphExecutionRecord).where(
+                schema.graph_executions.c.workspace_id == workspace_id,
+                schema.graph_executions.c.execution_id == execution_id,
+            )
+        )
+        if record is None:
             return None
         execution = record.to_domain(
             await self._requested_node_ids(workspace_id, execution_id)
@@ -939,13 +943,17 @@ class SqlGraphExecutionHistoryRepository(
         node_results = schema.graph_execution_node_results
         counts = (
             select(
+                node_results.c.workspace_id,
                 node_results.c.execution_id,
                 func.count(node_results.c.node_id).label("node_count"),
                 func.coalesce(func.sum(node_results.c.artifact_count), 0).label(
                     "artifact_count"
                 ),
             )
-            .group_by(node_results.c.execution_id)
+            .group_by(
+                node_results.c.workspace_id,
+                node_results.c.execution_id,
+            )
             .subquery()
         )
         statement = (
@@ -956,7 +964,10 @@ class SqlGraphExecutionHistoryRepository(
             )
             .outerjoin(
                 counts,
-                counts.c.execution_id == executions.c.execution_id,
+                and_(
+                    counts.c.workspace_id == executions.c.workspace_id,
+                    counts.c.execution_id == executions.c.execution_id,
+                ),
             )
             .where(
                 executions.c.workspace_id == workspace_id,

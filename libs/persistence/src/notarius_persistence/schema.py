@@ -427,7 +427,7 @@ graph_executions = Table(
         "created_at",
         "execution_id",
     ),
-    Index("ix_graph_executions_status", "status"),
+    Index("ix_graph_executions_workspace_status", "workspace_id", "status"),
 )
 
 
@@ -558,6 +558,30 @@ staged_uploads = Table(
         "length(original_filename) BETWEEN 1 AND 255",
         name="ck_staged_uploads_original_filename_bounded",
     ),
+    CheckConstraint(
+        "length(upload_key) BETWEEN 1 AND 1024",
+        name="ck_staged_uploads_upload_key_bounded",
+    ),
+    CheckConstraint(
+        "upload_key NOT IN ('.', '..')",
+        name="ck_staged_uploads_upload_key_not_dot_path",
+    ),
+    CheckConstraint(
+        "upload_key NOT LIKE '%/%'",
+        name="ck_staged_uploads_upload_key_no_slash",
+    ),
+    CheckConstraint(
+        "instr(upload_key, char(92)) = 0",
+        name="ck_staged_uploads_upload_key_no_backslash",
+    ).ddl_if(dialect="sqlite"),
+    CheckConstraint(
+        "position(chr(92) in upload_key) = 0",
+        name="ck_staged_uploads_upload_key_no_backslash",
+    ).ddl_if(dialect="postgresql"),
+    CheckConstraint(
+        "instr(upload_key, char(0)) = 0",
+        name="ck_staged_uploads_upload_key_no_nul",
+    ).ddl_if(dialect="sqlite"),
     Index("ix_staged_uploads_workspace_created_at", "workspace_id", "created_at"),
 )
 

@@ -1,12 +1,15 @@
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from pathlib import Path
 from uuid import UUID
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from notarius_core.artifacts import ArtifactObject
 from notarius_core.domain.execution_history import GraphExecution
+from notarius_core.domain.errors import NotFoundError
 from notarius_core.domain.invocation_cache import InvocationCacheEntry
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
 from notarius_core.domain.node_secrets import EncryptedNodeSecret
@@ -55,15 +58,27 @@ async def test_sql_repositories_require_workspace_for_artifact_cache_and_upload(
         inline_payload={"value": 1},
         metadata={},
     )
+    artifact_two = ArtifactObject(
+        workspace_id=WORKSPACE_TWO,
+        id=UUID("00000000-0000-0000-0000-000000000207"),
+        artifact_type="test.value",
+        schema_version=1,
+        content_type="application/json",
+        storage_backend="inline",
+        inline_payload={"value": 2},
+        metadata={},
+    )
     cache_one = InvocationCacheEntry(
         workspace_id=WORKSPACE_ONE,
         key_sha256="c" * 64,
-        outputs={},
+        generation=UUID("00000000-0000-0000-0000-000000000208"),
+        outputs={"value": artifact.ref()},
     )
     cache_two = InvocationCacheEntry(
         workspace_id=WORKSPACE_TWO,
         key_sha256=cache_one.key_sha256,
-        outputs={},
+        generation=UUID("00000000-0000-0000-0000-000000000209"),
+        outputs={"value": artifact_two.ref()},
     )
     upload = StagedUpload(
         workspace_id=WORKSPACE_ONE,
@@ -113,6 +128,7 @@ async def test_sql_repositories_require_workspace_for_artifact_cache_and_upload(
         await unit_of_work.graphs.add(graph)
         await unit_of_work.graphs.add_revision(revision)
         await unit_of_work.artifacts.add(artifact)
+        await unit_of_work.artifacts.add(artifact_two)
         assert await unit_of_work.invocation_cache.put_if_absent(cache_one)
         assert await unit_of_work.invocation_cache.put_if_absent(cache_two)
         await unit_of_work.staged_uploads.add(upload)
@@ -159,11 +175,31 @@ async def test_sql_repositories_require_workspace_for_artifact_cache_and_upload(
             is None
         )
         assert (
-            await unit_of_work.invocation_cache.get(WORKSPACE_ONE, cache_one.key_sha256)
-        ) is not None
-        assert (
-            await unit_of_work.invocation_cache.get(WORKSPACE_TWO, cache_two.key_sha256)
-        ) is not None
+            await unit_of_work.execution_history.list_for_graph(
+                WORKSPACE_TWO,
+                graph.id,
+                limit=10,
+            )
+        ).items == ()
+        with pytest.raises(NotFoundError):
+            await unit_of_work.execution_history.update(
+                replace(execution, workspace_id=WORKSPACE_TWO)
+            )
+        stored_cache_one = await unit_of_work.invocation_cache.get(
+            WORKSPACE_ONE,
+            cache_one.key_sha256,
+        )
+        stored_cache_two = await unit_of_work.invocation_cache.get(
+            WORKSPACE_TWO,
+            cache_two.key_sha256,
+        )
+        assert stored_cache_one is not None
+        assert stored_cache_two is not None
+        assert stored_cache_one.generation == cache_one.generation
+        assert stored_cache_one.outputs == cache_one.outputs
+        assert stored_cache_two.generation == cache_two.generation
+        assert stored_cache_two.outputs == cache_two.outputs
+        assert stored_cache_one != stored_cache_two
         assert (
             await unit_of_work.staged_uploads.get(
                 WORKSPACE_TWO,
@@ -171,3 +207,27 @@ async def test_sql_repositories_require_workspace_for_artifact_cache_and_upload(
             )
             is None
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid_key",
+    ["", ".", "..", "../escape", r"..\escape", "\x00key", "x" * 1025],
+)
+async def test_sql_staged_upload_key_constraints_reject_path_like_keys(
+    database: Database,
+    invalid_key: str,
+) -> None:
+    with pytest.raises(IntegrityError):
+        async with database.engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO staged_uploads "
+                    "(workspace_id, upload_key, original_filename, byte_size, created_at) "
+                    "VALUES (:workspace_id, :upload_key, 'input.csv', 0, CURRENT_TIMESTAMP)"
+                ),
+                {
+                    "workspace_id": WORKSPACE_ONE.hex,
+                    "upload_key": invalid_key,
+                },
+            )

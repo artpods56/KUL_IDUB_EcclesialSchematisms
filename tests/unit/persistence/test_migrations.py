@@ -1,17 +1,115 @@
 import json
+import importlib
 from pathlib import Path
 from uuid import UUID
 
 from alembic import command
 from alembic.config import Config
 import pytest
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import Column, Integer, MetaData, Table, create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.schema import CreateTable
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects import sqlite
 
 from notarius_api.settings import get_settings
+from notarius_persistence.schema import staged_uploads
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_tenant_rebuild_uses_postgresql_temporary_constraint_names() -> None:
+    migration = importlib.import_module(
+        "infra.db.migrations.versions.0008_tenant_existing_resources"
+    )
+    mock_postgresql = type("Dialect", (), {"name": "postgresql"})()
+    temporary_name = migration._rebuild_constraint_name(
+        type("Connection", (), {"dialect": mock_postgresql})(),
+        "pk_saved_graphs",
+        "u",
+    )
+    assert temporary_name == "tmp_0008u_pk_saved_graphs"
+    table = Table(
+        "_0008_saved_graphs",
+        MetaData(),
+        Column("id", Integer, primary_key=True),
+    )
+    table.primary_key.name = temporary_name
+    ddl = str(CreateTable(table).compile(dialect=postgresql.dialect()))
+    assert "CONSTRAINT tmp_0008u_pk_saved_graphs PRIMARY KEY" in ddl
+    sqlite_upload_ddl = str(
+        CreateTable(staged_uploads).compile(dialect=sqlite.dialect())
+    )
+    postgres_upload_ddl = str(
+        CreateTable(staged_uploads).compile(dialect=postgresql.dialect())
+    )
+    assert "instr(upload_key, char(92)) = 0" in sqlite_upload_ddl
+    assert "position(chr(92) in upload_key) = 0" in postgres_upload_ddl
+
+
+def test_tenant_upgrade_preflight_leaves_no_temporary_tables_and_retries_cleanly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "preflight" / "migrated.sqlite3"
+    monkeypatch.setenv(
+        "NOTARIUS_DATABASE_URL",
+        f"sqlite+aiosqlite:///{database_path}",
+    )
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0007_identity_workspace_foundation")
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(
+            text("UPDATE workspaces SET slug = 'temporarily-invalid' WHERE id = :id"),
+            {"id": "00000000000000000000000000000007"},
+        )
+
+    with pytest.raises(RuntimeError, match="deterministic local workspace"):
+        command.upgrade(config, "head")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        assert not any(
+            table_name.startswith("_0008")
+            for table_name in inspect(connection).get_table_names()
+        )
+        connection.commit()
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(
+            text("UPDATE workspaces SET slug = 'local' WHERE id = :id"),
+            {"id": "00000000000000000000000000000007"},
+        )
+    command.upgrade(config, "head")
+    get_settings.cache_clear()
+
+
+def test_tenant_downgrade_preflight_rejects_leftovers_before_rebuild(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "downgrade-preflight" / "migrated.sqlite3"
+    monkeypatch.setenv(
+        "NOTARIUS_DATABASE_URL",
+        f"sqlite+aiosqlite:///{database_path}",
+    )
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "head")
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(text("CREATE TABLE _0008d_saved_graphs (id INTEGER)"))
+
+    with pytest.raises(RuntimeError, match="temporary table"):
+        command.downgrade(config, "0007_identity_workspace_foundation")
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        assert "_0008d_saved_graphs" in inspect(connection).get_table_names()
+        connection.execute(text("DROP TABLE _0008d_saved_graphs"))
+    command.downgrade(config, "0007_identity_workspace_foundation")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        assert not any(
+            table_name.startswith("_0008d_")
+            for table_name in inspect(connection).get_table_names()
+        )
+    get_settings.cache_clear()
 
 
 def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(

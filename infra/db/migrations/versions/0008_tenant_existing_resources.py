@@ -32,10 +32,183 @@ _RESOURCE_TABLES = (
     "graph_execution_node_results",
     "staged_uploads",
 )
+_LEGACY_RESOURCE_TABLES = tuple(
+    table_name for table_name in _RESOURCE_TABLES if table_name != "staged_uploads"
+)
+_UPGRADE_TEMP_TABLES = {f"_0008_{table_name}" for table_name in _LEGACY_RESOURCE_TABLES}
+_DOWNGRADE_TEMP_TABLES = {
+    f"_0008d_{table_name}" for table_name in _LEGACY_RESOURCE_TABLES
+}
 
 
 def _table_exists(connection: sa.Connection, table_name: str) -> bool:
     return table_name in sa.inspect(connection).get_table_names()
+
+
+def _bind_local_id(statement: sa.TextClause) -> sa.TextClause:
+    return statement.bindparams(sa.bindparam("local_id", type_=sa.Uuid()))
+
+
+def _rebuild_constraint_name(
+    connection: sa.Connection,
+    name: str,
+    direction: str,
+) -> str:
+    if connection.dialect.name != "postgresql":
+        return name
+    return f"tmp_0008{direction}_{name}"
+
+
+def _rename_rebuild_constraints(
+    connection: sa.Connection,
+    table_constraints: tuple[tuple[str, tuple[str, ...]], ...],
+    direction: str,
+) -> None:
+    if connection.dialect.name != "postgresql":
+        return
+    for _, constraint_names in table_constraints:
+        for constraint_name in constraint_names:
+            temporary_name = _rebuild_constraint_name(
+                connection,
+                constraint_name,
+                direction,
+            )
+            connection.exec_driver_sql(
+                f'ALTER INDEX "{temporary_name}" '
+                f'RENAME TO "{constraint_name}"'
+            )
+
+
+def _preflight_upgrade(connection: sa.Connection) -> None:
+    tables = set(sa.inspect(connection).get_table_names())
+    missing = set(_LEGACY_RESOURCE_TABLES) - tables
+    if missing:
+        raise RuntimeError(
+            "Cannot tenant migration: expected legacy table(s) are missing: "
+            + ", ".join(sorted(missing))
+        )
+    leftovers = tables & (_UPGRADE_TEMP_TABLES | _DOWNGRADE_TEMP_TABLES)
+    if leftovers:
+        raise RuntimeError(
+            "Cannot tenant migration: temporary table(s) require manual cleanup: "
+            + ", ".join(sorted(leftovers))
+        )
+    if "staged_uploads" in tables:
+        raise RuntimeError(
+            "Cannot tenant migration: staged_uploads already exists; 0008 is not a retry"
+        )
+    saved_graph_columns = {
+        column["name"] for column in sa.inspect(connection).get_columns("saved_graphs")
+    }
+    if "workspace_id" in saved_graph_columns:
+        raise RuntimeError(
+            "Cannot tenant migration: legacy resource tables are already tenant-scoped"
+        )
+    local_workspace = connection.execute(
+        _bind_local_id(
+            sa.text(
+                "SELECT slug, kind FROM workspaces WHERE id = :local_id"
+            )
+        ),
+        {"local_id": LOCAL_WORKSPACE_ID},
+    ).one_or_none()
+    if local_workspace != ("local", "shared"):
+        raise RuntimeError(
+            "Cannot tenant migration: deterministic local workspace bootstrap is missing"
+        )
+
+
+def _preflight_downgrade(connection: sa.Connection) -> None:
+    tables = set(sa.inspect(connection).get_table_names())
+    missing = set(_RESOURCE_TABLES) - tables
+    if missing:
+        raise RuntimeError(
+            "Cannot downgrade tenant migration: expected tenant table(s) are missing: "
+            + ", ".join(sorted(missing))
+        )
+    leftovers = tables & (_UPGRADE_TEMP_TABLES | _DOWNGRADE_TEMP_TABLES)
+    if leftovers:
+        raise RuntimeError(
+            "Cannot downgrade tenant migration: temporary table(s) require manual cleanup: "
+            + ", ".join(sorted(leftovers))
+        )
+    saved_graph_columns = {
+        column["name"] for column in sa.inspect(connection).get_columns("saved_graphs")
+    }
+    if "workspace_id" not in saved_graph_columns:
+        raise RuntimeError(
+            "Cannot downgrade tenant migration: resources are not tenant-scoped"
+        )
+
+
+def _staged_upload_constraints(connection: sa.Connection) -> tuple[sa.CheckConstraint, ...]:
+    constraints = [
+        sa.CheckConstraint(
+            "upload_key NOT IN ('.', '..')",
+            name="ck_staged_uploads_upload_key_not_dot_path",
+        ),
+        sa.CheckConstraint(
+            "length(upload_key) BETWEEN 1 AND 1024",
+            name="ck_staged_uploads_upload_key_bounded",
+        ),
+        sa.CheckConstraint(
+            "upload_key NOT LIKE '%/%'",
+            name="ck_staged_uploads_upload_key_no_slash",
+        ),
+        sa.CheckConstraint(
+            (
+                "instr(upload_key, char(92)) = 0"
+                if connection.dialect.name == "sqlite"
+                else "position(chr(92) in upload_key) = 0"
+            ),
+            name="ck_staged_uploads_upload_key_no_backslash",
+        ),
+        sa.CheckConstraint(
+            "byte_size >= 0",
+            name="ck_staged_uploads_byte_size_nonnegative",
+        ),
+        sa.CheckConstraint(
+            "length(original_filename) BETWEEN 1 AND 255",
+            name="ck_staged_uploads_original_filename_bounded",
+        ),
+    ]
+    if connection.dialect.name == "sqlite":
+        constraints.append(
+            sa.CheckConstraint(
+                "instr(upload_key, char(0)) = 0",
+                name="ck_staged_uploads_upload_key_no_nul",
+            )
+        )
+    return tuple(constraints)
+
+
+def _verify_foreign_keys(connection: sa.Connection) -> None:
+    if connection.dialect.name == "sqlite":
+        foreign_key_errors = connection.exec_driver_sql(
+            "PRAGMA foreign_key_check"
+        ).fetchall()
+        if foreign_key_errors:
+            raise RuntimeError(
+                "Tenant migration produced foreign-key errors: "
+                f"{foreign_key_errors}"
+            )
+        return
+    if connection.dialect.name == "postgresql":
+        inspector = sa.inspect(connection)
+        for table_name in _RESOURCE_TABLES:
+            for foreign_key in inspector.get_foreign_keys(table_name):
+                constraint_name = foreign_key["name"]
+                if constraint_name is None:
+                    continue
+                connection.exec_driver_sql(
+                    f'ALTER TABLE "{table_name}" '
+                    f'VALIDATE CONSTRAINT "{constraint_name}"'
+                )
+        return
+    raise RuntimeError(
+        "Cannot verify tenant migration foreign keys for unsupported dialect "
+        f"{connection.dialect.name!r}"
+    )
 
 
 def _assert_no_orphans(connection: sa.Connection) -> None:
@@ -86,7 +259,7 @@ def _assert_no_orphans(connection: sa.Connection) -> None:
             )
 
 
-def _create_tenant_tables() -> None:
+def _create_tenant_tables(connection: sa.Connection) -> None:
     op.create_table(
         "_0008_saved_graphs",
         sa.Column("id", sa.Uuid(), nullable=False),
@@ -98,16 +271,29 @@ def _create_tenant_tables() -> None:
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(
-            ["workspace_id"], ["workspaces.id"], ondelete="RESTRICT"
+            ["workspace_id"],
+            ["workspaces.id"],
+            name="fk_saved_graphs_workspace_id_workspaces",
+            ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
-            ["created_by_user_id"], ["users.id"], ondelete="SET NULL"
+            ["created_by_user_id"],
+            ["users.id"],
+            name="fk_saved_graphs_created_by_user_id_users",
+            ondelete="SET NULL",
         ),
-        sa.PrimaryKeyConstraint("id", name="pk_saved_graphs"),
+        sa.PrimaryKeyConstraint(
+            "id",
+            name=_rebuild_constraint_name(connection, "pk_saved_graphs", "u"),
+        ),
         sa.UniqueConstraint(
             "workspace_id",
             "id",
-            name="uq_saved_graphs_workspace_id_id",
+            name=_rebuild_constraint_name(
+                connection,
+                "uq_saved_graphs_workspace_id_id",
+                "u",
+            ),
         ),
     )
     op.create_table(
@@ -121,13 +307,18 @@ def _create_tenant_tables() -> None:
         sa.ForeignKeyConstraint(
             ["workspace_id", "graph_id"],
             ["_0008_saved_graphs.workspace_id", "_0008_saved_graphs.id"],
+            name="fk_saved_graph_revisions_workspace_id_saved_graphs",
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint(
             "workspace_id",
             "graph_id",
             "revision",
-            name="pk_saved_graph_revisions",
+            name=_rebuild_constraint_name(
+                connection,
+                "pk_saved_graph_revisions",
+                "u",
+            ),
         ),
     )
     op.create_table(
@@ -145,13 +336,23 @@ def _create_tenant_tables() -> None:
         sa.Column("sha256", sa.String(length=64), nullable=True),
         sa.Column("metadata", sa.JSON(), nullable=False),
         sa.ForeignKeyConstraint(
-            ["workspace_id"], ["workspaces.id"], ondelete="RESTRICT"
+            ["workspace_id"],
+            ["workspaces.id"],
+            name="fk_artifact_objects_workspace_id_workspaces",
+            ondelete="RESTRICT",
         ),
-        sa.PrimaryKeyConstraint("id", name="pk_artifact_objects"),
+        sa.PrimaryKeyConstraint(
+            "id",
+            name=_rebuild_constraint_name(connection, "pk_artifact_objects", "u"),
+        ),
         sa.UniqueConstraint(
             "workspace_id",
             "id",
-            name="uq_artifact_objects_workspace_id_id",
+            name=_rebuild_constraint_name(
+                connection,
+                "uq_artifact_objects_workspace_id_id",
+                "u",
+            ),
         ),
     )
     op.create_table(
@@ -170,7 +371,11 @@ def _create_tenant_tables() -> None:
         sa.PrimaryKeyConstraint(
             "workspace_id",
             "key_sha256",
-            name="pk_invocation_cache_entries",
+            name=_rebuild_constraint_name(
+                connection,
+                "pk_invocation_cache_entries",
+                "u",
+            ),
         ),
     )
     op.create_table(
@@ -189,6 +394,7 @@ def _create_tenant_tables() -> None:
                 "_0008_saved_graph_revisions.graph_id",
                 "_0008_saved_graph_revisions.revision",
             ],
+            name="fk_materialized_node_outputs_workspace_id_saved_graph_revisions",
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint(
@@ -196,7 +402,11 @@ def _create_tenant_tables() -> None:
             "graph_id",
             "graph_revision",
             "node_id",
-            name="pk_materialized_node_outputs",
+            name=_rebuild_constraint_name(
+                connection,
+                "pk_materialized_node_outputs",
+                "u",
+            ),
         ),
     )
     op.create_table(
@@ -216,6 +426,7 @@ def _create_tenant_tables() -> None:
         sa.ForeignKeyConstraint(
             ["workspace_id", "graph_id"],
             ["_0008_saved_graphs.workspace_id", "_0008_saved_graphs.id"],
+            name="fk_node_secrets_workspace_id_saved_graphs",
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint(
@@ -223,7 +434,7 @@ def _create_tenant_tables() -> None:
             "graph_id",
             "node_id",
             "name",
-            name="pk_node_secrets",
+            name=_rebuild_constraint_name(connection, "pk_node_secrets", "u"),
         ),
     )
     op.create_table(
@@ -246,13 +457,21 @@ def _create_tenant_tables() -> None:
                 "_0008_saved_graph_revisions.graph_id",
                 "_0008_saved_graph_revisions.revision",
             ],
+            name="fk_graph_executions_workspace_id_saved_graph_revisions",
             ondelete="CASCADE",
         ),
-        sa.PrimaryKeyConstraint("execution_id", name="pk_graph_executions"),
+        sa.PrimaryKeyConstraint(
+            "execution_id",
+            name=_rebuild_constraint_name(connection, "pk_graph_executions", "u"),
+        ),
         sa.UniqueConstraint(
             "workspace_id",
             "execution_id",
-            name="uq_graph_executions_workspace_id_execution_id",
+            name=_rebuild_constraint_name(
+                connection,
+                "uq_graph_executions_workspace_id_execution_id",
+                "u",
+            ),
         ),
     )
     for table_name, kind in (
@@ -294,19 +513,24 @@ def _create_tenant_tables() -> None:
                     "_0008_graph_executions.workspace_id",
                     "_0008_graph_executions.execution_id",
                 ],
+                name=(
+                    "fk_graph_execution_requested_nodes_workspace_id_graph_executions"
+                    if kind == "requested"
+                    else "fk_graph_execution_node_results_workspace_id_graph_executions"
+                ),
                 ondelete="CASCADE",
             ),
             sa.PrimaryKeyConstraint(
                 "workspace_id",
                 "execution_id",
                 "node_id",
-                name=primary_key_name,
+                name=_rebuild_constraint_name(connection, primary_key_name, "u"),
             ),
             sa.UniqueConstraint(
                 "workspace_id",
                 "execution_id",
                 "position",
-                name=constraint_name,
+                name=_rebuild_constraint_name(connection, constraint_name, "u"),
             ),
         )
 
@@ -358,7 +582,11 @@ def _create_indexes() -> None:
             "execution_id",
         ],
     )
-    op.create_index("ix_graph_executions_status", "graph_executions", ["status"])
+    op.create_index(
+        "ix_graph_executions_workspace_status",
+        "graph_executions",
+        ["workspace_id", "status"],
+    )
     op.create_index(
         "ix_graph_execution_requested_nodes_node_execution",
         "graph_execution_requested_nodes",
@@ -389,7 +617,7 @@ def _copy_and_replace_tables(connection: sa.Connection) -> None:
         for table_name in _RESOURCE_TABLES
         if table_name != "staged_uploads"
     }
-    _create_tenant_tables()
+    _create_tenant_tables(connection)
     copy_statements = (
         (
             "_0008_saved_graphs",
@@ -481,9 +709,13 @@ def _copy_and_replace_tables(connection: sa.Connection) -> None:
         ),
     )
     for temporary_table, statement in copy_statements:
-        connection.execute(sa.text(statement), {"local_id": _LOCAL_ID})
+        connection.execute(
+            _bind_local_id(sa.text(statement)),
+            {"local_id": LOCAL_WORKSPACE_ID},
+        )
 
-    connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+    if connection.dialect.name == "sqlite":
+        connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
     for table_name in (
         "graph_execution_node_results",
         "graph_execution_requested_nodes",
@@ -510,6 +742,36 @@ def _copy_and_replace_tables(connection: sa.Connection) -> None:
         connection.exec_driver_sql(
             f"ALTER TABLE _0008_{table_name} RENAME TO {table_name}"
         )
+    _rename_rebuild_constraints(
+        connection,
+        (
+            ("saved_graphs", ("pk_saved_graphs", "uq_saved_graphs_workspace_id_id")),
+            ("saved_graph_revisions", ("pk_saved_graph_revisions",)),
+            ("artifact_objects", ("pk_artifact_objects", "uq_artifact_objects_workspace_id_id")),
+            ("invocation_cache_entries", ("pk_invocation_cache_entries",)),
+            ("materialized_node_outputs", ("pk_materialized_node_outputs",)),
+            ("node_secrets", ("pk_node_secrets",)),
+            (
+                "graph_executions",
+                ("pk_graph_executions", "uq_graph_executions_workspace_id_execution_id"),
+            ),
+            (
+                "graph_execution_requested_nodes",
+                (
+                    "pk_graph_execution_requested_nodes",
+                    "uq_graph_execution_requested_nodes_execution_position",
+                ),
+            ),
+            (
+                "graph_execution_node_results",
+                (
+                    "pk_graph_execution_node_results",
+                    "uq_graph_execution_node_results_execution_position",
+                ),
+            ),
+        ),
+        "u",
+    )
     op.create_table(
         "staged_uploads",
         sa.Column("workspace_id", sa.Uuid(), nullable=False),
@@ -518,20 +780,25 @@ def _copy_and_replace_tables(connection: sa.Connection) -> None:
         sa.Column("original_filename", sa.String(length=255), nullable=False),
         sa.Column("byte_size", sa.BigInteger(), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(["workspace_id"], ["workspaces.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["created_by_user_id"], ["users.id"], ondelete="SET NULL"),
-        sa.PrimaryKeyConstraint("workspace_id", "upload_key", name="pk_staged_uploads"),
-        sa.CheckConstraint("byte_size >= 0", name="ck_staged_uploads_byte_size_nonnegative"),
-        sa.CheckConstraint(
-            "length(original_filename) BETWEEN 1 AND 255",
-            name="ck_staged_uploads_original_filename_bounded",
+        sa.ForeignKeyConstraint(
+            ["workspace_id"],
+            ["workspaces.id"],
+            name="fk_staged_uploads_workspace_id_workspaces",
+            ondelete="CASCADE",
         ),
+        sa.ForeignKeyConstraint(
+            ["created_by_user_id"],
+            ["users.id"],
+            name="fk_staged_uploads_created_by_user_id_users",
+            ondelete="SET NULL",
+        ),
+        sa.PrimaryKeyConstraint("workspace_id", "upload_key", name="pk_staged_uploads"),
+        *_staged_upload_constraints(connection),
     )
     _create_indexes()
-    connection.exec_driver_sql("PRAGMA foreign_keys=ON")
-    foreign_key_errors = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
-    if foreign_key_errors:
-        raise RuntimeError(f"Tenant migration produced foreign-key errors: {foreign_key_errors}")
+    if connection.dialect.name == "sqlite":
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+    _verify_foreign_keys(connection)
     for table_name, expected_count in counts.items():
         actual_count = int(connection.scalar(sa.text(f"SELECT COUNT(*) FROM {table_name}")) or 0)
         if actual_count != expected_count:
@@ -543,8 +810,7 @@ def _copy_and_replace_tables(connection: sa.Connection) -> None:
 
 def upgrade() -> None:
     connection = op.get_bind()
-    if connection.dialect.name != "sqlite":
-        raise NotImplementedError("Tenant resource migration currently requires SQLite")
+    _preflight_upgrade(connection)
     _assert_no_orphans(connection)
     _copy_and_replace_tables(connection)
 
@@ -554,8 +820,13 @@ def _assert_downgrade_is_safe(connection: sa.Connection) -> None:
         if not _table_exists(connection, table_name) or table_name == "staged_uploads":
             continue
         outside_local = connection.scalar(
-            sa.text(f"SELECT COUNT(*) FROM {table_name} WHERE workspace_id != :local_id"),
-            {"local_id": _LOCAL_ID},
+            _bind_local_id(
+                sa.text(
+                    f"SELECT COUNT(*) FROM {table_name} "
+                    "WHERE workspace_id != :local_id"
+                )
+            ),
+            {"local_id": LOCAL_WORKSPACE_ID},
         )
         if outside_local:
             raise RuntimeError(
@@ -608,7 +879,10 @@ def _rebuild_legacy_tables(connection: sa.Connection) -> None:
         sa.Column("revision", sa.Integer(), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
-        sa.PrimaryKeyConstraint("id", name="pk_saved_graphs"),
+        sa.PrimaryKeyConstraint(
+            "id",
+            name=_rebuild_constraint_name(connection, "pk_saved_graphs", "d"),
+        ),
     )
     op.create_table(
         "_0008d_saved_graph_revisions",
@@ -618,9 +892,20 @@ def _rebuild_legacy_tables(connection: sa.Connection) -> None:
         sa.Column("document", sa.JSON(), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(
-            ["graph_id"], ["_0008d_saved_graphs.id"], ondelete="CASCADE"
+            ["graph_id"],
+            ["_0008d_saved_graphs.id"],
+            name="fk_saved_graph_revisions_graph_id_saved_graphs",
+            ondelete="CASCADE",
         ),
-        sa.PrimaryKeyConstraint("graph_id", "revision", name="pk_saved_graph_revisions"),
+        sa.PrimaryKeyConstraint(
+            "graph_id",
+            "revision",
+            name=_rebuild_constraint_name(
+                connection,
+                "pk_saved_graph_revisions",
+                "d",
+            ),
+        ),
     )
     op.create_table(
         "_0008d_artifact_objects",
@@ -635,7 +920,10 @@ def _rebuild_legacy_tables(connection: sa.Connection) -> None:
         sa.Column("byte_size", sa.BigInteger(), nullable=True),
         sa.Column("sha256", sa.String(length=64), nullable=True),
         sa.Column("metadata", sa.JSON(), nullable=False),
-        sa.PrimaryKeyConstraint("id", name="pk_artifact_objects"),
+        sa.PrimaryKeyConstraint(
+            "id",
+            name=_rebuild_constraint_name(connection, "pk_artifact_objects", "d"),
+        ),
     )
     op.create_table(
         "_0008d_invocation_cache_entries",
@@ -643,7 +931,14 @@ def _rebuild_legacy_tables(connection: sa.Connection) -> None:
         sa.Column("generation", sa.Uuid(), nullable=False),
         sa.Column("outputs", sa.JSON(), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
-        sa.PrimaryKeyConstraint("key_sha256", name="pk_invocation_cache_entries"),
+        sa.PrimaryKeyConstraint(
+            "key_sha256",
+            name=_rebuild_constraint_name(
+                connection,
+                "pk_invocation_cache_entries",
+                "d",
+            ),
+        ),
     )
     op.create_table(
         "_0008d_materialized_node_outputs",
@@ -659,13 +954,18 @@ def _rebuild_legacy_tables(connection: sa.Connection) -> None:
                 "_0008d_saved_graph_revisions.graph_id",
                 "_0008d_saved_graph_revisions.revision",
             ],
+            name="fk_materialized_node_outputs_graph_id_saved_graph_revisions",
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint(
             "graph_id",
             "graph_revision",
             "node_id",
-            name="pk_materialized_node_outputs",
+            name=_rebuild_constraint_name(
+                connection,
+                "pk_materialized_node_outputs",
+                "d",
+            ),
         ),
     )
     op.create_table(
@@ -682,9 +982,17 @@ def _rebuild_legacy_tables(connection: sa.Connection) -> None:
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(
-            ["graph_id"], ["_0008d_saved_graphs.id"], ondelete="CASCADE"
+            ["graph_id"],
+            ["_0008d_saved_graphs.id"],
+            name="fk_node_secrets_graph_id_saved_graphs",
+            ondelete="CASCADE",
         ),
-        sa.PrimaryKeyConstraint("graph_id", "node_id", "name", name="pk_node_secrets"),
+        sa.PrimaryKeyConstraint(
+            "graph_id",
+            "node_id",
+            "name",
+            name=_rebuild_constraint_name(connection, "pk_node_secrets", "d"),
+        ),
     )
     op.create_table(
         "_0008d_graph_executions",
@@ -704,9 +1012,13 @@ def _rebuild_legacy_tables(connection: sa.Connection) -> None:
                 "_0008d_saved_graph_revisions.graph_id",
                 "_0008d_saved_graph_revisions.revision",
             ],
+            name="fk_graph_executions_graph_id_saved_graph_revisions",
             ondelete="CASCADE",
         ),
-        sa.PrimaryKeyConstraint("execution_id", name="pk_graph_executions"),
+        sa.PrimaryKeyConstraint(
+            "execution_id",
+            name=_rebuild_constraint_name(connection, "pk_graph_executions", "d"),
+        ),
     )
     for table_name, kind in (
         ("_0008d_graph_execution_requested_nodes", "requested"),
@@ -743,21 +1055,27 @@ def _rebuild_legacy_tables(connection: sa.Connection) -> None:
             sa.ForeignKeyConstraint(
                 ["execution_id"],
                 ["_0008d_graph_executions.execution_id"],
+                name=(
+                    "fk_graph_execution_requested_nodes_execution_id_graph_executions"
+                    if kind == "requested"
+                    else "fk_graph_execution_node_results_execution_id_graph_executions"
+                ),
                 ondelete="CASCADE",
             ),
             sa.PrimaryKeyConstraint(
                 "execution_id",
                 "node_id",
-                name=primary_key_name,
+                name=_rebuild_constraint_name(connection, primary_key_name, "d"),
             ),
             sa.UniqueConstraint(
                 "execution_id",
                 "position",
-                name=constraint_name,
+                name=_rebuild_constraint_name(connection, constraint_name, "d"),
             ),
         )
 
-    connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+    if connection.dialect.name == "sqlite":
+        connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
     copy_statements = (
         (
             "_0008d_saved_graphs",
@@ -846,6 +1164,33 @@ def _rebuild_legacy_tables(connection: sa.Connection) -> None:
         connection.exec_driver_sql(
             f"ALTER TABLE _0008d_{table_name} RENAME TO {table_name}"
         )
+    _rename_rebuild_constraints(
+        connection,
+        (
+            ("saved_graphs", ("pk_saved_graphs",)),
+            ("saved_graph_revisions", ("pk_saved_graph_revisions",)),
+            ("artifact_objects", ("pk_artifact_objects",)),
+            ("invocation_cache_entries", ("pk_invocation_cache_entries",)),
+            ("materialized_node_outputs", ("pk_materialized_node_outputs",)),
+            ("node_secrets", ("pk_node_secrets",)),
+            ("graph_executions", ("pk_graph_executions",)),
+            (
+                "graph_execution_requested_nodes",
+                (
+                    "pk_graph_execution_requested_nodes",
+                    "uq_graph_execution_requested_nodes_execution_position",
+                ),
+            ),
+            (
+                "graph_execution_node_results",
+                (
+                    "pk_graph_execution_node_results",
+                    "uq_graph_execution_node_results_execution_position",
+                ),
+            ),
+        ),
+        "d",
+    )
     op.create_index(
         "ix_saved_graphs_updated_at", "saved_graphs", ["updated_at"]
     )
@@ -882,12 +1227,12 @@ def _rebuild_legacy_tables(connection: sa.Connection) -> None:
         ["node_id", "execution_id"],
     )
     op.create_index("ix_node_secrets_graph_id", "node_secrets", ["graph_id"])
-    connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+    if connection.dialect.name == "sqlite":
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
 
 
 def downgrade() -> None:
     connection = op.get_bind()
-    if connection.dialect.name != "sqlite":
-        raise NotImplementedError("Tenant resource migration currently requires SQLite")
+    _preflight_downgrade(connection)
     _assert_downgrade_is_safe(connection)
     _rebuild_legacy_tables(connection)
