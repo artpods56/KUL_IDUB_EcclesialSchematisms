@@ -68,6 +68,29 @@ async def _request_validation_error_handler(
     if not isinstance(exception, RequestValidationError):
         raise exception
     is_oidc_callback = request.url.path.endswith("/auth/oidc/callback")
+    is_oidc_login = request.url.path.endswith("/auth/oidc/login")
+    if is_oidc_login:
+        login_auth: AuthService = request.app.state.auth_service
+        browser_key = request_browser_key(request)
+        allowed = await login_auth.allow_login_start(browser_key)
+        await login_auth.audit_request_failure(
+            request,
+            operation="oidc.login.start",
+            error_code="validation_failed" if allowed else "rate_limited",
+        )
+        return JSONResponse(
+            status_code=422 if allowed else 429,
+            content=(
+                {
+                    "detail": [
+                        {"loc": error.get("loc"), "type": error.get("type")}
+                        for error in exception.errors()
+                    ]
+                }
+                if allowed
+                else {"detail": "Too many login attempts"}
+            ),
+        )
     if is_oidc_callback:
         auth: AuthService = request.app.state.auth_service
         browser_key = request_browser_key(request)
@@ -151,6 +174,7 @@ async def _identity_invariant_error_handler(
 async def _http_error_handler(request: Request, exception: Exception) -> Response:
     if isinstance(exception, HTTPException):
         await _audit_workspace_failure(request, "http_error")
+        await _audit_auth_failure(request, "http_error")
         return await default_http_exception_handler(request, exception)
     raise exception
 

@@ -39,3 +39,25 @@ async def test_abuse_windows_and_outstanding_logins_are_deterministic() -> None:
     assert await abuse.reserve_login("browser")
     assert await abuse.allow_session_failure("browser")
     assert not await abuse.allow_session_failure("browser")
+
+
+@pytest.mark.asyncio
+async def test_outstanding_login_capacity_preserves_existing_browser_count() -> None:
+    abuse = AuthAbuseControl(outstanding_login_limit=2)
+
+    assert await abuse.reserve_login("existing")
+    for index in range(abuse._max_tracked_keys - 1):
+        assert await abuse.reserve_login(f"browser-{index}")
+
+    assert await abuse.reserve_login("existing")
+    assert not await abuse.reserve_login("existing")
+
+
+@pytest.mark.asyncio
+async def test_outstanding_login_capacity_rejects_new_browser_key() -> None:
+    abuse = AuthAbuseControl(outstanding_login_limit=2)
+
+    for index in range(abuse._max_tracked_keys):
+        assert await abuse.reserve_login(f"browser-{index}")
+
+    assert not await abuse.reserve_login("new-browser")

@@ -63,13 +63,12 @@ class AuthAbuseControl:
             ]
             for expired_key in expired_keys:
                 del self._outstanding_logins[expired_key]
-            if len(self._outstanding_logins) >= self._max_tracked_keys:
-                oldest_key = min(
-                    self._outstanding_logins,
-                    key=lambda key: self._outstanding_logins[key].started_at,
-                )
-                del self._outstanding_logins[oldest_key]
             current = self._outstanding_logins.get(browser_key)
+            if (
+                current is None
+                and len(self._outstanding_logins) >= self._max_tracked_keys
+            ):
+                return False
             if (
                 current is None
                 or now - current.started_at >= self._outstanding_login_ttl_seconds

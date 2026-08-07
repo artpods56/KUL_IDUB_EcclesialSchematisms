@@ -324,6 +324,77 @@ def test_callback_validation_is_bounded_and_consumes_transaction(
     assert asyncio.run(auth.reserve_login("testclient"))
 
 
+def test_login_validation_is_bounded_and_audited(tmp_path: Path) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'login-validation.sqlite3'}"
+    _seed_sync(database_url)
+    settings = _settings(database_url).model_copy(
+        update={"auth_login_start_rate_limit": 1}
+    )
+    sentinel = "R" * 2049
+    with TestClient(create_app(settings)) as client:
+        first = client.get("/v1/auth/oidc/login", params={"return_path": sentinel})
+        second = client.get("/v1/auth/oidc/login", params={"return_path": sentinel})
+
+    assert first.status_code == 422
+    assert second.status_code == 429
+    assert sentinel not in first.text
+    assert sentinel not in second.text
+
+    async def read_audits() -> list[str]:
+        database = create_database(database_url)
+        async with database.engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    text(
+                        "SELECT error_code FROM security_audit_events "
+                        "WHERE operation = 'oidc.login.start'"
+                    )
+                )
+            ).all()
+        await database.dispose()
+        return [row[0] for row in rows]
+
+    assert set(asyncio.run(read_audits())) == {
+        "validation_failed",
+        "rate_limited",
+    }
+
+
+def test_auth_http_exception_is_audited_as_authenticated_failure(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'auth-http-error.sqlite3'}"
+    _, _, issued = _seed_sync(database_url)
+    with TestClient(create_app(_settings(database_url))) as client:
+        client.cookies.set("notarius_session", issued.cookie_value)
+        client.cookies.set("notarius_csrf", issued.csrf_value)
+        response = client.delete(
+            "/v1/auth/sessions/not-a-uuid",
+            headers={
+                "Origin": "http://testserver",
+                "X-CSRF-Token": issued.csrf_value,
+            },
+        )
+
+    assert response.status_code == 404
+
+    async def read_audits() -> list[tuple[str, str]]:
+        database = create_database(database_url)
+        async with database.engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    text(
+                        "SELECT actor_kind, error_code FROM security_audit_events "
+                        "WHERE operation = 'auth.session.request'"
+                    )
+                )
+            ).all()
+        await database.dispose()
+        return [(row[0], row[1]) for row in rows]
+
+    assert ("authenticated", "http_error") in asyncio.run(read_audits())
+
+
 def test_workspace_and_pat_request_validation_is_bounded(tmp_path: Path) -> None:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'dto-validation.sqlite3'}"
     _, workspace, issued = _seed_sync(database_url)
@@ -337,6 +408,19 @@ def test_workspace_and_pat_request_validation_is_bounded(tmp_path: Path) -> None
             json={"slug": "   ", "name": "Team"},
         )
         assert whitespace.status_code == 422
+        invalid_slug = client.post(
+            "/v1/workspaces",
+            headers=headers,
+            json={"slug": "bad slug!", "name": "Team"},
+        )
+        assert invalid_slug.status_code == 422
+        normalized = client.post(
+            "/v1/workspaces",
+            headers=headers,
+            json={"slug": "  Team-Name  ", "name": "Team"},
+        )
+        assert normalized.status_code == 201
+        assert normalized.json()["slug"] == "team-name"
         duplicate_scopes = client.post(
             f"/v1/workspaces/{workspace.id}/personal-access-tokens",
             headers=headers,
@@ -347,3 +431,13 @@ def test_workspace_and_pat_request_validation_is_bounded(tmp_path: Path) -> None
             },
         )
         assert duplicate_scopes.status_code == 422
+        blank_label = client.post(
+            f"/v1/workspaces/{workspace.id}/personal-access-tokens",
+            headers=headers,
+            json={
+                "label": "   ",
+                "scopes": ["view_graph"],
+                "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+            },
+        )
+        assert blank_label.status_code == 422

@@ -301,7 +301,7 @@ class OidcLoginTransaction:
     nonce_digest: bytes = field(repr=False)
     encrypted_pkce_verifier: bytes = field(repr=False)
     pkce_key_version: int
-    return_path: str
+    return_path: str = field(repr=False)
     expires_at: datetime
     id: UUID = field(default_factory=uuid4)
     created_at: datetime = field(default_factory=_utc_now)

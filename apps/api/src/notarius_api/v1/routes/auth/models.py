@@ -9,6 +9,7 @@ from notarius_core.domain.identity import (
     WorkspaceCapability,
     WorkspaceKind,
     WorkspaceRole,
+    normalize_workspace_slug,
 )
 
 
@@ -51,11 +52,16 @@ class WorkspaceCreateRequest(BaseModel):
     slug: str = Field(min_length=1, max_length=80)
     name: str = Field(min_length=1, max_length=160)
 
-    @field_validator("slug", "name")
+    @field_validator("slug")
     @classmethod
-    def reject_whitespace_only(cls, value: str) -> str:
+    def normalize_slug(cls, value: str) -> str:
+        return normalize_workspace_slug(value)
+
+    @field_validator("name")
+    @classmethod
+    def reject_whitespace_only_name(cls, value: str) -> str:
         if not value.strip():
-            raise ValueError("value must contain a non-whitespace character")
+            raise ValueError("name must contain a non-whitespace character")
         return value
 
 
@@ -78,6 +84,13 @@ class PersonalAccessTokenCreateRequest(BaseModel):
     label: str = Field(min_length=1, max_length=160)
     scopes: tuple[WorkspaceCapability, ...] = Field(min_length=1, max_length=8)
     expires_at: datetime
+
+    @field_validator("label")
+    @classmethod
+    def reject_whitespace_only_label(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("label must contain a non-whitespace character")
+        return value
 
     @field_validator("scopes")
     @classmethod

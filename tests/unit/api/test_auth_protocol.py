@@ -22,7 +22,7 @@ from notarius_api.v1.routes.auth.services import (
     ProviderMetadata,
 )
 from notarius_core.application.identity import IdentityService
-from notarius_core.domain.identity import User, Workspace
+from notarius_core.domain.identity import OidcLoginTransaction, User, Workspace
 from notarius_core.ports.identity import IdentityUnitOfWorkPort
 from notarius_persistence.database import create_database
 from notarius_persistence.orm import metadata
@@ -87,6 +87,20 @@ def _claims(**overrides: object) -> dict[str, object]:
     }
     claims.update(overrides)
     return claims
+
+
+def test_oidc_transaction_return_path_is_sensitive_state() -> None:
+    sentinel = "/after-login?one-time=return-path-sentinel"
+    transaction = OidcLoginTransaction(
+        state_digest=b"state-digest",
+        nonce_digest=b"nonce-digest",
+        encrypted_pkce_verifier=b"encrypted-verifier",
+        pkce_key_version=1,
+        return_path=sentinel,
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
+    )
+
+    assert sentinel not in repr(transaction)
 
 
 @pytest.mark.asyncio
