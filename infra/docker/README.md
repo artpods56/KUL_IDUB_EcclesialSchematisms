@@ -86,6 +86,17 @@ Configure Nginx so:
 - `/api/` proxies to `http://127.0.0.1:8000/`.
 - The trailing slash on `proxy_pass` strips `/api` before FastAPI receives the
   request.
+- Nginx must overwrite, not append to, the forwarding headers before proxying:
+
+  ```nginx
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-For $remote_addr;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  ```
+
+  The Compose network uses `172.30.0.0/24`, and the API trusts only its
+  gateway, `172.30.0.1`, by default. If the gateway address changes, set
+  `NOTARIUS_TRUSTED_PROXY_IPS` to the exact proxy IP or network; never use `*`.
 - Proxy buffering is disabled for execution event streams.
 - Request body limits are high enough for the table, image, and GIS files you
   intend to upload.

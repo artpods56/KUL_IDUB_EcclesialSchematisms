@@ -21,6 +21,7 @@ x-api-environment: &api-environment
   NOTARIUS_MCP_API_URL: http://127.0.0.1:8000
   NOTARIUS_STORAGE_BACKEND: ${NOTARIUS_STORAGE_BACKEND:-local}
   NOTARIUS_STORAGE_BUCKET: ${NOTARIUS_STORAGE_BUCKET:-workbench-artifacts}
+  FORWARDED_ALLOW_IPS: ${NOTARIUS_TRUSTED_PROXY_IPS:-172.30.0.1}
   NOTARIUS_S3_ENDPOINT_URL: ${NOTARIUS_S3_ENDPOINT_URL:-}
   NOTARIUS_S3_REGION: ${NOTARIUS_S3_REGION:-us-east-1}
   NOTARIUS_S3_ACCESS_KEY_ID: ${NOTARIUS_S3_ACCESS_KEY_ID:-}
@@ -136,3 +137,10 @@ services:
 volumes:
   notarius-data:
   prefect-data:
+
+networks:
+  default:
+    name: ${NOTARIUS_DOCKER_NETWORK:-notarius-internal}
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

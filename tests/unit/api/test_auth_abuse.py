@@ -1,6 +1,16 @@
+import httpx
 from types import SimpleNamespace
-import pytest
+from typing import cast
 from uuid import UUID
+
+import pytest
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
+from starlette.types import ASGIApp
+from uvicorn._types import ASGI3Application
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from notarius_api.v1.routes.auth.abuse import (
     AuthAbuseControl,
@@ -138,3 +148,52 @@ def test_forged_browser_cookie_is_rejected_without_using_the_submitted_handle() 
     keys = request_browser_keys(request, secret=secret)
     assert keys.browser_key != "stable-browser"
     assert keys.network_key == "ip:127.0.0.1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("peer_host", "forwarded_for", "expected"),
+    (
+        ("198.51.100.8", "198.51.100.7", "198.51.100.8|ip:198.51.100.8"),
+        (
+            "172.30.0.1",
+            "198.51.100.7, 172.30.0.1",
+            "198.51.100.7|ip:198.51.100.7",
+        ),
+    ),
+)
+async def test_proxy_headers_bound_network_limiter_identity(
+    peer_host: str,
+    forwarded_for: str,
+    expected: str,
+) -> None:
+    async def capture_identity(request: Request) -> PlainTextResponse:
+        client = request.client
+        assert client is not None
+        keys = request_browser_keys(request, secret=b"test-secret")
+        return PlainTextResponse(f"{client.host}|{keys.network_key}")
+
+    application = cast(
+        ASGIApp,
+        ProxyHeadersMiddleware(
+            cast(
+                ASGI3Application,
+                Starlette(routes=[Route("/v1/auth/oidc/login", capture_identity)]),
+            ),
+            trusted_hosts="172.30.0.1",
+        ),
+    )
+    transport = httpx.ASGITransport(
+        app=application,
+        client=(peer_host, 40000),
+    )
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+    ) as client:
+        response = await client.get(
+            "/v1/auth/oidc/login",
+            headers={"X-Forwarded-For": forwarded_for},
+        )
+
+    assert response.text == expected
