@@ -1,18 +1,168 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  checkpointGraph,
+  copyExactHead,
+  deleteSavedGraph,
   getArtifactGeoRender,
   getArtifactTableCell,
   getArtifactTablePage,
+  getCollaborativeHead,
   getGraphExecution,
   listGraphExecutions,
   artifactContentUrl,
+  submitGraphCommand,
   uploadFile,
 } from "./workbench";
 
 afterEach(() => vi.unstubAllGlobals());
 
 const WORKSPACE_ID = "workspace/1";
+
+describe("collaboration HTTP API", () => {
+  it("reads the live head and submits semantic commands", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            graph_id: "graph/1",
+            room_epoch: "epoch-1",
+            collaboration_sequence: 2,
+            checkpoint_sequence: 1,
+            checkpoint_revision: 1,
+            name: "Draft",
+            updated_at: "2026-08-07T00:00:00Z",
+            nodes: [],
+            edges: [],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            head: {
+              graph_id: "graph/1",
+              room_epoch: "epoch-1",
+              collaboration_sequence: 3,
+              checkpoint_sequence: 1,
+              checkpoint_revision: 1,
+              name: "Renamed",
+              updated_at: "2026-08-07T00:00:01Z",
+              nodes: [],
+              edges: [],
+            },
+            receipt: {
+              command_id: "command-1",
+              outcome: "accepted",
+              accepted_sequence: 3,
+              room_epoch: "epoch-1",
+              deduplicated: false,
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getCollaborativeHead(WORKSPACE_ID, "graph/1");
+    await submitGraphCommand(WORKSPACE_ID, "graph/1", {
+      command_id: "command-1",
+      room_epoch: "epoch-1",
+      observed_sequence: 2,
+      command: {
+        kind: "rename_graph",
+        name: "Renamed",
+        expected_name: "Draft",
+      },
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/v1/workspaces/workspace%2F1/graphs/graph%2F1/head",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/workspaces/workspace%2F1/graphs/graph%2F1/commands",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("checkpoints, copies, and deletes with exact-head confirmation", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            head: {
+              graph_id: "graph/1",
+              room_epoch: "epoch-1",
+              collaboration_sequence: 3,
+              checkpoint_sequence: 3,
+              checkpoint_revision: 2,
+              name: "Renamed",
+              updated_at: "2026-08-07T00:00:02Z",
+              nodes: [],
+              edges: [],
+            },
+            saved_revision: 2,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: "graph/2",
+            name: "Copied",
+            revision: 1,
+            created_at: "2026-08-07T00:00:03Z",
+            updated_at: "2026-08-07T00:00:03Z",
+            nodes: [],
+            edges: [],
+          }),
+          { status: 201, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await checkpointGraph(WORKSPACE_ID, "graph/1", {
+      expected_room_epoch: "epoch-1",
+      expected_sequence: 3,
+    });
+    await copyExactHead("workspace/2", {
+      source_workspace_id: WORKSPACE_ID,
+      source_graph_id: "graph/1",
+      expected_room_epoch: "epoch-1",
+      expected_sequence: 3,
+      command_id: "copy-1",
+      name: "Copied",
+    });
+    await deleteSavedGraph(WORKSPACE_ID, "graph/1", 2, {
+      expectedRoomEpoch: "epoch-1",
+      expectedSequence: 3,
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/v1/workspaces/workspace%2F1/graphs/graph%2F1/checkpoint",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/workspaces/workspace%2F2/graphs/copies",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/v1/workspaces/workspace%2F1/graphs/graph%2F1?expected_revision=2&expected_room_epoch=epoch-1&expected_sequence=3",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+});
 
 describe("execution history API", () => {
   it("serializes list filters and opaque cursors", async () => {

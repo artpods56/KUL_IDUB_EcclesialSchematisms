@@ -13,6 +13,12 @@ from pydantic import (
 )
 
 from notarius_core.conversions import MAX_ARTIFACT_CONVERSION_HOPS
+from notarius_core.domain.collaboration import (
+    CollaborativeGraphHead,
+    CommandReceiptOutcome,
+    GraphCommand,
+    GraphCommandReceipt,
+)
 from notarius_core.domain.saved_graphs import (
     GraphPoint,
     SavedGraph,
@@ -361,3 +367,99 @@ class SavedGraphListResponse(SavedGraphApiModel):
         return cls(
             graphs=[SavedGraphSummaryResponse.from_graph(graph) for graph in graphs]
         )
+
+
+class CollaborativeHeadResponse(SavedGraphApiModel):
+    graph_id: UUID
+    room_epoch: UUID
+    collaboration_sequence: int
+    checkpoint_sequence: int
+    checkpoint_revision: int
+    name: str
+    updated_at: datetime
+    nodes: list[SavedGraphNodeModel]
+    edges: list[SavedGraphEdgeModel]
+
+    @classmethod
+    def from_head(cls, head: CollaborativeGraphHead) -> "CollaborativeHeadResponse":
+        mapped = SavedGraphResponse.from_graph(
+            SavedGraph(
+                workspace_id=head.workspace_id,
+                id=head.graph_id,
+                name=head.name,
+                document=head.document,
+                revision=max(head.checkpoint_revision, 1),
+                created_at=head.updated_at,
+                updated_at=head.updated_at,
+            )
+        )
+        return cls(
+            graph_id=head.graph_id,
+            room_epoch=head.room_epoch,
+            collaboration_sequence=head.collaboration_sequence,
+            checkpoint_sequence=head.checkpoint_sequence,
+            checkpoint_revision=head.checkpoint_revision,
+            name=head.name,
+            updated_at=head.updated_at,
+            nodes=mapped.nodes,
+            edges=mapped.edges,
+        )
+
+
+class SubmitGraphCommandRequest(SavedGraphApiModel):
+    command_id: UUID
+    room_epoch: UUID
+    observed_sequence: int = Field(ge=0)
+    command: GraphCommand
+
+
+class GraphCommandReceiptResponse(SavedGraphApiModel):
+    command_id: UUID
+    outcome: CommandReceiptOutcome
+    accepted_sequence: int
+    room_epoch: UUID
+    deduplicated: bool
+
+    @classmethod
+    def from_receipt(
+        cls,
+        receipt: GraphCommandReceipt,
+    ) -> "GraphCommandReceiptResponse":
+        return cls(
+            command_id=receipt.command_id,
+            outcome=receipt.outcome,
+            accepted_sequence=receipt.accepted_sequence,
+            room_epoch=receipt.room_epoch,
+            deduplicated=receipt.outcome is CommandReceiptOutcome.IDEMPOTENT_REPLAY,
+        )
+
+
+class SubmitGraphCommandResponse(SavedGraphApiModel):
+    head: CollaborativeHeadResponse
+    receipt: GraphCommandReceiptResponse
+
+
+class CheckpointGraphRequest(SavedGraphApiModel):
+    expected_room_epoch: UUID
+    expected_sequence: int = Field(ge=0)
+
+
+class CheckpointGraphResponse(SavedGraphApiModel):
+    head: CollaborativeHeadResponse
+    saved_revision: int
+
+
+class CopyExactHeadRequest(SavedGraphApiModel):
+    source_workspace_id: UUID
+    source_graph_id: UUID
+    expected_room_epoch: UUID
+    expected_sequence: int = Field(ge=0)
+    command_id: UUID
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value

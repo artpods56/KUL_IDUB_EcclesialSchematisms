@@ -1,6 +1,44 @@
 {
   "components": {
     "schemas": {
+      "AddEdgeCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "edge": {
+            "$ref": "#/components/schemas/SavedGraphEdge"
+          },
+          "kind": {
+            "const": "add_edge",
+            "default": "add_edge",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "edge"
+        ],
+        "title": "AddEdgeCommand",
+        "type": "object"
+      },
+      "AddNodeCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "add_node",
+            "default": "add_node",
+            "title": "Kind",
+            "type": "string"
+          },
+          "node": {
+            "$ref": "#/components/schemas/SavedGraphNode"
+          }
+        },
+        "required": [
+          "node"
+        ],
+        "title": "AddNodeCommand",
+        "type": "object"
+      },
       "ArtifactConversionKeyResponse": {
         "properties": {
           "id": {
@@ -281,6 +319,24 @@
         "title": "ArtifactTypeBindingModel",
         "type": "object"
       },
+      "ArtifactTypeKey": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schema_version"
+        ],
+        "title": "ArtifactTypeKey",
+        "type": "object"
+      },
       "ArtifactTypeKeyResponse": {
         "properties": {
           "id": {
@@ -345,6 +401,145 @@
         "title": "Body_upload_file_v1_workspaces__workspace_id__uploads_post",
         "type": "object"
       },
+      "CheckpointGraphRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_room_epoch": {
+            "format": "uuid",
+            "title": "Expected Room Epoch",
+            "type": "string"
+          },
+          "expected_sequence": {
+            "minimum": 0.0,
+            "title": "Expected Sequence",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_room_epoch",
+          "expected_sequence"
+        ],
+        "title": "CheckpointGraphRequest",
+        "type": "object"
+      },
+      "CheckpointGraphResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "head": {
+            "$ref": "#/components/schemas/CollaborativeHeadResponse"
+          },
+          "saved_revision": {
+            "title": "Saved Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "head",
+          "saved_revision"
+        ],
+        "title": "CheckpointGraphResponse",
+        "type": "object"
+      },
+      "ClearNodeArtifactTypeBindingCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_binding": {
+            "$ref": "#/components/schemas/SavedGraphArtifactTypeBinding"
+          },
+          "kind": {
+            "const": "clear_node_artifact_type_binding",
+            "default": "clear_node_artifact_type_binding",
+            "title": "Kind",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "variable": {
+            "title": "Variable",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "variable",
+          "expected_binding"
+        ],
+        "title": "ClearNodeArtifactTypeBindingCommand",
+        "type": "object"
+      },
+      "CollaborativeHeadResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "checkpoint_revision": {
+            "title": "Checkpoint Revision",
+            "type": "integer"
+          },
+          "checkpoint_sequence": {
+            "title": "Checkpoint Sequence",
+            "type": "integer"
+          },
+          "collaboration_sequence": {
+            "title": "Collaboration Sequence",
+            "type": "integer"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/SavedGraphEdgeModel"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "graph_id": {
+            "format": "uuid",
+            "title": "Graph Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/SavedGraphNodeModel-Output"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "room_epoch": {
+            "format": "uuid",
+            "title": "Room Epoch",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "graph_id",
+          "room_epoch",
+          "collaboration_sequence",
+          "checkpoint_sequence",
+          "checkpoint_revision",
+          "name",
+          "updated_at",
+          "nodes",
+          "edges"
+        ],
+        "title": "CollaborativeHeadResponse",
+        "type": "object"
+      },
+      "CommandReceiptOutcome": {
+        "enum": [
+          "accepted",
+          "idempotent_replay"
+        ],
+        "title": "CommandReceiptOutcome",
+        "type": "string"
+      },
       "ConfigureNodeSecretRequest": {
         "additionalProperties": false,
         "properties": {
@@ -365,6 +560,58 @@
           "expected_graph_revision"
         ],
         "title": "ConfigureNodeSecretRequest",
+        "type": "object"
+      },
+      "CopyExactHeadRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "format": "uuid",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "expected_room_epoch": {
+            "format": "uuid",
+            "title": "Expected Room Epoch",
+            "type": "string"
+          },
+          "expected_sequence": {
+            "minimum": 0.0,
+            "title": "Expected Sequence",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "source_graph_id": {
+            "format": "uuid",
+            "title": "Source Graph Id",
+            "type": "string"
+          },
+          "source_workspace_id": {
+            "format": "uuid",
+            "title": "Source Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_workspace_id",
+          "source_graph_id",
+          "expected_room_epoch",
+          "expected_sequence",
+          "command_id"
+        ],
+        "title": "CopyExactHeadRequest",
         "type": "object"
       },
       "CreateSavedGraphRequest": {
@@ -395,6 +642,30 @@
           "name"
         ],
         "title": "CreateSavedGraphRequest",
+        "type": "object"
+      },
+      "DuplicateNodeCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "duplicate_node",
+            "default": "duplicate_node",
+            "title": "Kind",
+            "type": "string"
+          },
+          "node": {
+            "$ref": "#/components/schemas/SavedGraphNode"
+          },
+          "source_node_id": {
+            "title": "Source Node Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_node_id",
+          "node"
+        ],
+        "title": "DuplicateNodeCommand",
         "type": "object"
       },
       "FieldProjectionRequest": {
@@ -1263,6 +1534,41 @@
         "title": "GeoVectorStyle",
         "type": "object"
       },
+      "GraphCommandReceiptResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted_sequence": {
+            "title": "Accepted Sequence",
+            "type": "integer"
+          },
+          "command_id": {
+            "format": "uuid",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "deduplicated": {
+            "title": "Deduplicated",
+            "type": "boolean"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/CommandReceiptOutcome"
+          },
+          "room_epoch": {
+            "format": "uuid",
+            "title": "Room Epoch",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "outcome",
+          "accepted_sequence",
+          "room_epoch",
+          "deduplicated"
+        ],
+        "title": "GraphCommandReceiptResponse",
+        "type": "object"
+      },
       "GraphExecutionDetailResponse": {
         "properties": {
           "artifact_count": {
@@ -1645,6 +1951,25 @@
         "title": "GraphNodeSecretsResponse",
         "type": "object"
       },
+      "GraphPoint": {
+        "additionalProperties": false,
+        "properties": {
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "title": "GraphPoint",
+        "type": "object"
+      },
       "GraphPointModel": {
         "additionalProperties": false,
         "properties": {
@@ -1698,6 +2023,54 @@
           "byte_size"
         ],
         "title": "ImageUploadItemResponse",
+        "type": "object"
+      },
+      "MoveNodePosition": {
+        "additionalProperties": false,
+        "properties": {
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "node_id",
+          "x",
+          "y"
+        ],
+        "title": "MoveNodePosition",
+        "type": "object"
+      },
+      "MoveNodesCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "move_nodes",
+            "default": "move_nodes",
+            "title": "Kind",
+            "type": "string"
+          },
+          "positions": {
+            "items": {
+              "$ref": "#/components/schemas/MoveNodePosition"
+            },
+            "minItems": 1,
+            "title": "Positions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "positions"
+        ],
+        "title": "MoveNodesCommand",
         "type": "object"
       },
       "NodeRegistryResponse": {
@@ -2282,6 +2655,103 @@
         "title": "PortShape",
         "type": "string"
       },
+      "RemoveEdgesCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "edge_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Edge Ids",
+            "type": "array"
+          },
+          "kind": {
+            "const": "remove_edges",
+            "default": "remove_edges",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "edge_ids"
+        ],
+        "title": "RemoveEdgesCommand",
+        "type": "object"
+      },
+      "RemoveNodesCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "remove_nodes",
+            "default": "remove_nodes",
+            "title": "Kind",
+            "type": "string"
+          },
+          "node_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Node Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "node_ids"
+        ],
+        "title": "RemoveNodesCommand",
+        "type": "object"
+      },
+      "RenameGraphCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_name": {
+            "title": "Expected Name",
+            "type": "string"
+          },
+          "kind": {
+            "const": "rename_graph",
+            "default": "rename_graph",
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "expected_name"
+        ],
+        "title": "RenameGraphCommand",
+        "type": "object"
+      },
+      "ReplaceDocumentCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/SavedGraphDocument"
+          },
+          "kind": {
+            "const": "replace_document",
+            "default": "replace_document",
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "document"
+        ],
+        "title": "ReplaceDocumentCommand",
+        "type": "object"
+      },
       "RunEdgeRequest": {
         "properties": {
           "collection_mode": {
@@ -2683,6 +3153,48 @@
         "title": "SampleRequest",
         "type": "object"
       },
+      "SavedGraphArtifactTypeBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_type": {
+            "$ref": "#/components/schemas/ArtifactTypeKey"
+          },
+          "variable": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Variable",
+            "type": "string"
+          }
+        },
+        "required": [
+          "variable",
+          "artifact_type"
+        ],
+        "title": "SavedGraphArtifactTypeBinding",
+        "type": "object"
+      },
+      "SavedGraphConversion": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "version"
+        ],
+        "title": "SavedGraphConversion",
+        "type": "object"
+      },
       "SavedGraphConversionModel": {
         "additionalProperties": false,
         "properties": {
@@ -2703,6 +3215,135 @@
           "version"
         ],
         "title": "SavedGraphConversionModel",
+        "type": "object"
+      },
+      "SavedGraphDocument": {
+        "additionalProperties": false,
+        "properties": {
+          "edges": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SavedGraphEdge"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "nodes": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SavedGraphNode"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "schema_version": {
+            "const": 3,
+            "default": 3,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "title": "SavedGraphDocument",
+        "type": "object"
+      },
+      "SavedGraphEdge": {
+        "additionalProperties": false,
+        "properties": {
+          "collection_mode": {
+            "default": "direct",
+            "enum": [
+              "direct",
+              "map"
+            ],
+            "title": "Collection Mode",
+            "type": "string"
+          },
+          "conversion_path": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SavedGraphConversion"
+            },
+            "maxItems": 8,
+            "title": "Conversion Path",
+            "type": "array"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "from_node": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "From Node",
+            "type": "string"
+          },
+          "from_port": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "From Port",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "projection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SavedGraphProjection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "route_offset": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GraphPoint"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "to_node": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "To Node",
+            "type": "string"
+          },
+          "to_plug": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Plug"
+          },
+          "to_port": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "To Port",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "from_node",
+          "from_port",
+          "to_node",
+          "to_port"
+        ],
+        "title": "SavedGraphEdge",
         "type": "object"
       },
       "SavedGraphEdgeModel": {
@@ -2804,6 +3445,29 @@
         "title": "SavedGraphEdgeModel",
         "type": "object"
       },
+      "SavedGraphInputPlug": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "port": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Port",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "port"
+        ],
+        "title": "SavedGraphInputPlug",
+        "type": "object"
+      },
       "SavedGraphInputPlugModel": {
         "additionalProperties": false,
         "properties": {
@@ -2842,6 +3506,117 @@
           "graphs"
         ],
         "title": "SavedGraphListResponse",
+        "type": "object"
+      },
+      "SavedGraphNode": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_type_bindings": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SavedGraphArtifactTypeBinding"
+            },
+            "title": "Artifact Type Bindings",
+            "type": "array"
+          },
+          "config": {
+            "additionalProperties": true,
+            "title": "Config",
+            "type": "object"
+          },
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "input_plugs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SavedGraphInputPlug"
+            },
+            "title": "Input Plugs",
+            "type": "array"
+          },
+          "layout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SavedGraphNodeLayout"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "operator_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Operator Id",
+            "type": "string"
+          },
+          "operator_version": {
+            "minimum": 1.0,
+            "title": "Operator Version",
+            "type": "integer"
+          },
+          "position": {
+            "$ref": "#/components/schemas/GraphPoint"
+          }
+        },
+        "required": [
+          "id",
+          "operator_id",
+          "operator_version",
+          "position"
+        ],
+        "title": "SavedGraphNode",
+        "type": "object"
+      },
+      "SavedGraphNodeLayout": {
+        "additionalProperties": false,
+        "description": "Canvas chrome sizes for a node shell and its artifact appendix.",
+        "properties": {
+          "appendix_height": {
+            "anyOf": [
+              {
+                "maximum": 16384.0,
+                "minimum": 120.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Appendix Height"
+          },
+          "body_height": {
+            "anyOf": [
+              {
+                "maximum": 16384.0,
+                "minimum": 96.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body Height"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "maximum": 16384.0,
+                "minimum": 260.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
+          }
+        },
+        "title": "SavedGraphNodeLayout",
         "type": "object"
       },
       "SavedGraphNodeLayoutModel": {
@@ -3012,6 +3787,26 @@
           "position"
         ],
         "title": "SavedGraphNodeModel",
+        "type": "object"
+      },
+      "SavedGraphProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "items": {
+              "maxLength": 255,
+              "minLength": 1,
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Path",
+            "type": "array"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "SavedGraphProjection",
         "type": "object"
       },
       "SavedGraphProjectionModel": {
@@ -3189,6 +3984,187 @@
           "current"
         ],
         "title": "SessionResponse",
+        "type": "object"
+      },
+      "SetNodeArtifactTypeBindingCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/components/schemas/SavedGraphArtifactTypeBinding"
+          },
+          "expected_binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SavedGraphArtifactTypeBinding"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "const": "set_node_artifact_type_binding",
+            "default": "set_node_artifact_type_binding",
+            "title": "Kind",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "binding"
+        ],
+        "title": "SetNodeArtifactTypeBindingCommand",
+        "type": "object"
+      },
+      "SetNodeInputPlugsCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_plug_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Expected Plug Ids",
+            "type": "array"
+          },
+          "input_plugs": {
+            "items": {
+              "$ref": "#/components/schemas/SavedGraphInputPlug"
+            },
+            "title": "Input Plugs",
+            "type": "array"
+          },
+          "kind": {
+            "const": "set_node_input_plugs",
+            "default": "set_node_input_plugs",
+            "title": "Kind",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "input_plugs",
+          "expected_plug_ids"
+        ],
+        "title": "SetNodeInputPlugsCommand",
+        "type": "object"
+      },
+      "SubmitGraphCommandRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "discriminator": {
+              "mapping": {
+                "add_edge": "#/components/schemas/AddEdgeCommand",
+                "add_node": "#/components/schemas/AddNodeCommand",
+                "clear_node_artifact_type_binding": "#/components/schemas/ClearNodeArtifactTypeBindingCommand",
+                "duplicate_node": "#/components/schemas/DuplicateNodeCommand",
+                "move_nodes": "#/components/schemas/MoveNodesCommand",
+                "remove_edges": "#/components/schemas/RemoveEdgesCommand",
+                "remove_nodes": "#/components/schemas/RemoveNodesCommand",
+                "rename_graph": "#/components/schemas/RenameGraphCommand",
+                "replace_document": "#/components/schemas/ReplaceDocumentCommand",
+                "set_node_artifact_type_binding": "#/components/schemas/SetNodeArtifactTypeBindingCommand",
+                "set_node_input_plugs": "#/components/schemas/SetNodeInputPlugsCommand",
+                "update_edge": "#/components/schemas/UpdateEdgeCommand",
+                "update_node_configuration": "#/components/schemas/UpdateNodeConfigurationCommand",
+                "update_node_layout": "#/components/schemas/UpdateNodeLayoutCommand"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RenameGraphCommand"
+              },
+              {
+                "$ref": "#/components/schemas/AddNodeCommand"
+              },
+              {
+                "$ref": "#/components/schemas/DuplicateNodeCommand"
+              },
+              {
+                "$ref": "#/components/schemas/RemoveNodesCommand"
+              },
+              {
+                "$ref": "#/components/schemas/MoveNodesCommand"
+              },
+              {
+                "$ref": "#/components/schemas/UpdateNodeConfigurationCommand"
+              },
+              {
+                "$ref": "#/components/schemas/UpdateNodeLayoutCommand"
+              },
+              {
+                "$ref": "#/components/schemas/SetNodeInputPlugsCommand"
+              },
+              {
+                "$ref": "#/components/schemas/SetNodeArtifactTypeBindingCommand"
+              },
+              {
+                "$ref": "#/components/schemas/ClearNodeArtifactTypeBindingCommand"
+              },
+              {
+                "$ref": "#/components/schemas/AddEdgeCommand"
+              },
+              {
+                "$ref": "#/components/schemas/UpdateEdgeCommand"
+              },
+              {
+                "$ref": "#/components/schemas/RemoveEdgesCommand"
+              },
+              {
+                "$ref": "#/components/schemas/ReplaceDocumentCommand"
+              }
+            ],
+            "title": "Command"
+          },
+          "command_id": {
+            "format": "uuid",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "observed_sequence": {
+            "minimum": 0.0,
+            "title": "Observed Sequence",
+            "type": "integer"
+          },
+          "room_epoch": {
+            "format": "uuid",
+            "title": "Room Epoch",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "room_epoch",
+          "observed_sequence",
+          "command"
+        ],
+        "title": "SubmitGraphCommandRequest",
+        "type": "object"
+      },
+      "SubmitGraphCommandResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "head": {
+            "$ref": "#/components/schemas/CollaborativeHeadResponse"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/GraphCommandReceiptResponse"
+          }
+        },
+        "required": [
+          "head",
+          "receipt"
+        ],
+        "title": "SubmitGraphCommandResponse",
         "type": "object"
       },
       "TableCellPreviewResponse": {
@@ -3540,6 +4516,108 @@
           "reason"
         ],
         "title": "UnavailableGraphModuleResponse",
+        "type": "object"
+      },
+      "UpdateEdgeCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "edge": {
+            "$ref": "#/components/schemas/SavedGraphEdge"
+          },
+          "expected_edge": {
+            "$ref": "#/components/schemas/SavedGraphEdge"
+          },
+          "kind": {
+            "const": "update_edge",
+            "default": "update_edge",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "edge",
+          "expected_edge"
+        ],
+        "title": "UpdateEdgeCommand",
+        "type": "object"
+      },
+      "UpdateNodeConfigurationCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_value": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Value"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "kind": {
+            "const": "update_node_configuration",
+            "default": "update_node_configuration",
+            "title": "Kind",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value"
+          }
+        },
+        "required": [
+          "node_id",
+          "field",
+          "value"
+        ],
+        "title": "UpdateNodeConfigurationCommand",
+        "type": "object"
+      },
+      "UpdateNodeLayoutCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_layout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SavedGraphNodeLayout"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "const": "update_node_layout",
+            "default": "update_node_layout",
+            "title": "Kind",
+            "type": "string"
+          },
+          "layout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SavedGraphNodeLayout"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "layout"
+        ],
+        "title": "UpdateNodeLayoutCommand",
         "type": "object"
       },
       "UpdateSavedGraphRequest": {
@@ -5650,6 +6728,64 @@
         ]
       }
     },
+    "/v1/workspaces/{workspace_id}/graphs/copies": {
+      "post": {
+        "operationId": "copy_exact_head_v1_workspaces__workspace_id__graphs_copies_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CopyExactHeadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedGraphResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Copy Exact Head",
+        "tags": [
+          "saved graphs"
+        ]
+      }
+    },
     "/v1/workspaces/{workspace_id}/graphs/{graph_id}": {
       "delete": {
         "operationId": "delete_saved_graph_v1_workspaces__workspace_id__graphs__graph_id__delete",
@@ -5682,6 +6818,40 @@
               "minimum": 1,
               "title": "Expected Revision",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_room_epoch",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expected Room Epoch"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_sequence",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expected Sequence"
             }
           }
         ],
@@ -5828,6 +6998,142 @@
           }
         ],
         "summary": "Update Saved Graph",
+        "tags": [
+          "saved graphs"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/graphs/{graph_id}/checkpoint": {
+      "post": {
+        "operationId": "checkpoint_graph_v1_workspaces__workspace_id__graphs__graph_id__checkpoint_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "graph_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Graph Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckpointGraphRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckpointGraphResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Checkpoint Graph",
+        "tags": [
+          "saved graphs"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/graphs/{graph_id}/commands": {
+      "post": {
+        "operationId": "submit_graph_command_v1_workspaces__workspace_id__graphs__graph_id__commands_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "graph_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Graph Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitGraphCommandRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitGraphCommandResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Submit Graph Command",
         "tags": [
           "saved graphs"
         ]
@@ -6035,6 +7341,64 @@
         "summary": "Get Graph Execution History",
         "tags": [
           "executions"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/graphs/{graph_id}/head": {
+      "get": {
+        "operationId": "get_collaborative_head_v1_workspaces__workspace_id__graphs__graph_id__head_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "graph_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Graph Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollaborativeHeadResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Collaborative Head",
+        "tags": [
+          "saved graphs"
         ]
       }
     },

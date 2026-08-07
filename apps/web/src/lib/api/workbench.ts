@@ -2,6 +2,11 @@ import { API_BASE, request } from "./client";
 import type {
   AppliedNodeSecret,
   ApplyNodeSecretRequest,
+  CheckpointGraphRequest,
+  CheckpointGraphResponse,
+  CollaborativeHead,
+  CopyExactHeadRequest,
+  CopyExactHeadResponse,
   CreateSavedGraphRequest,
   CreateSavedGraphResponse,
   GraphNodeSecrets,
@@ -16,6 +21,8 @@ import type {
   RunRequest,
   RunResponse,
   SavedGraph,
+  SubmitGraphCommandRequest,
+  SubmitGraphCommandResponse,
   TableCell,
   TablePage,
   TableSchema,
@@ -366,14 +373,67 @@ export function updateSavedGraph(
   );
 }
 
+export function getCollaborativeHead(workspaceId: string, graphId: string) {
+  return request<CollaborativeHead>(
+    "GET",
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/graphs/${encodeURIComponent(graphId)}/head`,
+  );
+}
+
+export function submitGraphCommand(
+  workspaceId: string,
+  graphId: string,
+  requestBody: SubmitGraphCommandRequest,
+) {
+  return request<SubmitGraphCommandResponse>(
+    "POST",
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/graphs/${encodeURIComponent(graphId)}/commands`,
+    { body: requestBody },
+  );
+}
+
+export function checkpointGraph(
+  workspaceId: string,
+  graphId: string,
+  requestBody: CheckpointGraphRequest,
+) {
+  return request<CheckpointGraphResponse>(
+    "POST",
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/graphs/${encodeURIComponent(graphId)}/checkpoint`,
+    { body: requestBody },
+  );
+}
+
+export function copyExactHead(
+  targetWorkspaceId: string,
+  requestBody: CopyExactHeadRequest,
+) {
+  return request<CopyExactHeadResponse>(
+    "POST",
+    `/v1/workspaces/${encodeURIComponent(targetWorkspaceId)}/graphs/copies`,
+    { body: requestBody },
+  );
+}
+
 export function deleteSavedGraph(
   workspaceId: string,
   graphId: string,
   expectedRevision: number,
+  options?: {
+    expectedRoomEpoch?: string;
+    expectedSequence?: number;
+  },
 ) {
   const query = new URLSearchParams({
     expected_revision: String(expectedRevision),
   });
+  if (
+    options?.expectedRoomEpoch !== undefined &&
+    options.expectedSequence !== undefined
+  ) {
+    query.set("expected_room_epoch", options.expectedRoomEpoch);
+    query.set("expected_sequence", String(options.expectedSequence));
+  }
   return request<undefined>(
     "DELETE",
     `/v1/workspaces/${encodeURIComponent(workspaceId)}/graphs/${encodeURIComponent(graphId)}?${query}`,

@@ -14,12 +14,16 @@ from notarius_core.domain.collaboration import (
     GraphCommandJournalEntry,
     GraphCommandKind,
     GraphCommandReceipt,
+    ReplaceDocumentCommand,
     apply_graph_command,
     command_hmac_digest,
+    command_requires_exact_sequence,
     empty_collaborative_document,
+    sanitize_document_for_cross_workspace_copy,
 )
 from notarius_core.domain.errors import (
     CollaborationActiveExecutionError,
+    CollaborationCommandRejectedError,
     CollaborationHeadConflictError,
     CollaborationIdempotencyMismatchError,
     CollaborationUncheckpointedError,
@@ -243,6 +247,28 @@ class CollaborationService:
             await unit_of_work.commit()
         return graph, head, receipt
 
+    async def get_head(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> CollaborativeGraphHead:
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_capability(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+                capability=WorkspaceCapability.VIEW_GRAPH,
+            )
+            head = await unit_of_work.collaboration.get_head(workspace_id, graph_id)
+            if head is None:
+                raise MissingCollaborativeHeadError(
+                    workspace_id=workspace_id,
+                    graph_id=graph_id,
+                )
+            return head
+
     async def accept_command(
         self,
         *,
@@ -304,9 +330,24 @@ class CollaborationService:
                     workspace_id=workspace_id,
                     graph_id=graph_id,
                 )
-            if (
-                head.room_epoch != observed_room_epoch
-                or head.collaboration_sequence != observed_sequence
+            if head.room_epoch != observed_room_epoch:
+                raise CollaborationHeadConflictError(
+                    workspace_id=workspace_id,
+                    graph_id=graph_id,
+                    expected_sequence=observed_sequence,
+                    actual_sequence=head.collaboration_sequence,
+                    room_epoch=head.room_epoch,
+                )
+            if head.collaboration_sequence < observed_sequence:
+                raise CollaborationHeadConflictError(
+                    workspace_id=workspace_id,
+                    graph_id=graph_id,
+                    expected_sequence=observed_sequence,
+                    actual_sequence=head.collaboration_sequence,
+                    room_epoch=head.room_epoch,
+                )
+            if head.collaboration_sequence > observed_sequence and (
+                command_requires_exact_sequence(command)
             ):
                 raise CollaborationHeadConflictError(
                     workspace_id=workspace_id,
@@ -570,6 +611,180 @@ class CollaborationService:
                     actual_revision=None,
                 ) from exc
         return graph, head
+
+    async def copy_exact_head(
+        self,
+        *,
+        actor: ActorContext,
+        source_workspace_id: UUID,
+        source_graph_id: UUID,
+        target_workspace_id: UUID,
+        expected_room_epoch: UUID,
+        expected_sequence: int,
+        command_id: UUID,
+        name: str | None = None,
+        target_graph_id: UUID | None = None,
+    ) -> tuple[SavedGraph, CollaborativeGraphHead, GraphCommandReceipt]:
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_capability(
+                unit_of_work,
+                actor=actor,
+                workspace_id=source_workspace_id,
+                capability=WorkspaceCapability.VIEW_GRAPH,
+            )
+            access = await self._require_capability(
+                unit_of_work,
+                actor=actor,
+                workspace_id=target_workspace_id,
+                capability=WorkspaceCapability.CREATE_GRAPH,
+            )
+            access.require(WorkspaceCapability.EDIT_GRAPH)
+            access.require(WorkspaceCapability.CHECKPOINT_GRAPH)
+
+            source_head = await unit_of_work.collaboration.lock_head(
+                source_workspace_id,
+                source_graph_id,
+            )
+            if source_head is None:
+                raise MissingCollaborativeHeadError(
+                    workspace_id=source_workspace_id,
+                    graph_id=source_graph_id,
+                )
+            if (
+                source_head.room_epoch != expected_room_epoch
+                or source_head.collaboration_sequence != expected_sequence
+            ):
+                raise CollaborationHeadConflictError(
+                    workspace_id=source_workspace_id,
+                    graph_id=source_graph_id,
+                    expected_sequence=expected_sequence,
+                    actual_sequence=source_head.collaboration_sequence,
+                    room_epoch=source_head.room_epoch,
+                )
+            try:
+                copied_document = sanitize_document_for_cross_workspace_copy(
+                    source_head.document
+                )
+            except CollaborationCommandRejectedError:
+                raise
+            copied_name = source_head.name if name is None else name.strip()
+            if copied_name == "":
+                raise CollaborationCommandRejectedError(
+                    code="invalid_name",
+                    message="Copied graph name must not be blank",
+                )
+            command = ReplaceDocumentCommand(name=copied_name, document=copied_document)
+            resolved_graph_id = uuid4() if target_graph_id is None else target_graph_id
+            room_epoch = uuid4()
+            digest = command_hmac_digest(
+                self._command_hmac_key,
+                key_version=self._command_hmac_key_version,
+                workspace_id=target_workspace_id,
+                graph_id=resolved_graph_id,
+                actor_user_id=actor.user_id,
+                room_epoch=room_epoch,
+                observed_sequence=0,
+                command=command,
+            )
+            existing_receipt = await unit_of_work.collaboration.get_receipt(
+                target_workspace_id,
+                resolved_graph_id,
+                command_id,
+            )
+            if existing_receipt is not None:
+                if not hmac.compare_digest(existing_receipt.command_hmac, digest):
+                    raise CollaborationIdempotencyMismatchError(
+                        workspace_id=target_workspace_id,
+                        graph_id=resolved_graph_id,
+                        command_id=command_id,
+                    )
+                graph = await unit_of_work.graphs.get(
+                    target_workspace_id,
+                    resolved_graph_id,
+                )
+                head = await unit_of_work.collaboration.get_head(
+                    target_workspace_id,
+                    resolved_graph_id,
+                )
+                if graph is None or head is None:
+                    raise MissingCollaborativeHeadError(
+                        workspace_id=target_workspace_id,
+                        graph_id=resolved_graph_id,
+                    )
+                return graph, head, existing_receipt
+
+            graph = SavedGraph(
+                workspace_id=target_workspace_id,
+                created_by_user_id=actor.user_id,
+                id=resolved_graph_id,
+                name=copied_name,
+                document=copied_document,
+                revision=1,
+            )
+            head = CollaborativeGraphHead(
+                workspace_id=target_workspace_id,
+                graph_id=resolved_graph_id,
+                room_epoch=room_epoch,
+                collaboration_sequence=1,
+                checkpoint_sequence=1,
+                checkpoint_revision=1,
+                name=copied_name,
+                document=copied_document,
+            )
+            receipt = GraphCommandReceipt(
+                workspace_id=target_workspace_id,
+                graph_id=resolved_graph_id,
+                command_id=command_id,
+                command_hmac=digest,
+                hmac_key_version=self._command_hmac_key_version,
+                actor_kind=CollaborationActorKind.USER,
+                actor_user_id=actor.user_id,
+                room_epoch=room_epoch,
+                accepted_sequence=1,
+                outcome=CommandReceiptOutcome.ACCEPTED,
+            )
+            journal_entry = GraphCommandJournalEntry(
+                workspace_id=target_workspace_id,
+                graph_id=resolved_graph_id,
+                room_epoch=room_epoch,
+                command_id=command_id,
+                command_hmac=digest,
+                hmac_key_version=self._command_hmac_key_version,
+                accepted_sequence=1,
+                actor_kind=CollaborationActorKind.USER,
+                actor_user_id=actor.user_id,
+                graph_room_session_id=None,
+                authorization_version=access.membership.authorization_version,
+                command_kind=GraphCommandKind.REPLACE_DOCUMENT,
+                command_payload=command.model_dump(mode="json"),
+            )
+            mapping = GraphCheckpointMapping(
+                workspace_id=target_workspace_id,
+                graph_id=resolved_graph_id,
+                room_epoch=room_epoch,
+                collaboration_sequence=1,
+                saved_revision=1,
+            )
+            await unit_of_work.graphs.add(graph)
+            await unit_of_work.graphs.add_revision(graph.snapshot())
+            await unit_of_work.collaboration.add_head(head)
+            await unit_of_work.collaboration.add_checkpoint_mapping(mapping)
+            await unit_of_work.collaboration.add_journal_entry(journal_entry)
+            await unit_of_work.collaboration.add_receipt(receipt)
+            await unit_of_work.security_audit.add(
+                SecurityAuditEvent(
+                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                    user_id=actor.user_id,
+                    credential_reference=actor.credential_reference,
+                    operation="collaboration.graph.copy",
+                    outcome=SecurityAuditOutcome.SUCCESS,
+                    workspace_id=target_workspace_id,
+                    resource_type="saved_graph",
+                    resource_id=str(resolved_graph_id),
+                )
+            )
+            await unit_of_work.commit()
+        return graph, head, receipt
 
     async def delete_graph(
         self,

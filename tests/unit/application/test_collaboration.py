@@ -12,11 +12,15 @@ from notarius_core.domain.collaboration import (
     GraphCheckpointMapping,
     GraphCommandJournalEntry,
     GraphCommandReceipt,
+    MoveNodePosition,
+    MoveNodesCommand,
     RenameGraphCommand,
     ReplaceDocumentCommand,
 )
 from notarius_core.domain.errors import (
     CollaborationActiveExecutionError,
+    CollaborationCommandRejectedError,
+    CollaborationHeadConflictError,
     CollaborationIdempotencyMismatchError,
     CollaborationUncheckpointedError,
     MissingCollaborativeHeadError,
@@ -199,9 +203,16 @@ class FakeNodeSecretRepository:
 
 
 class FakeIdentityRepository:
-    def __init__(self, user: User, membership: WorkspaceMembership) -> None:
+    def __init__(
+        self,
+        user: User,
+        memberships: list[WorkspaceMembership],
+    ) -> None:
         self.user = user
-        self.membership = membership
+        self.memberships = {
+            (membership.workspace_id, membership.user_id): membership
+            for membership in memberships
+        }
 
     async def get_user(self, user_id: UUID) -> User | None:
         if user_id != self.user.id:
@@ -209,12 +220,7 @@ class FakeIdentityRepository:
         return self.user
 
     async def get_membership(self, *, workspace_id: UUID, user_id: UUID):
-        if (
-            workspace_id != self.membership.workspace_id
-            or user_id != self.membership.user_id
-        ):
-            return None
-        return self.membership
+        return self.memberships.get((workspace_id, user_id))
 
 
 class FakeSecurityAuditRepository:
@@ -259,6 +265,9 @@ class FakeCollaborationUnitOfWork:
         return None
 
 
+TARGET_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000301")
+
+
 class FakeFactory:
     def __init__(self, role: WorkspaceRole = WorkspaceRole.OWNER) -> None:
         self.user = User(id=USER_ID, email="editor@example.com", display_name="Editor")
@@ -269,10 +278,18 @@ class FakeFactory:
             user_id=USER_ID,
             role=role,
         )
+        self.target_membership = WorkspaceMembership(
+            workspace_id=TARGET_WORKSPACE_ID,
+            user_id=USER_ID,
+            role=role,
+        )
         self.collaboration = FakeCollaborationRepository()
         self.graphs = FakeSavedGraphRepository()
         self.security_audit = FakeSecurityAuditRepository()
-        self.identity = FakeIdentityRepository(self.user, self.membership)
+        self.identity = FakeIdentityRepository(
+            self.user,
+            [self.membership, self.target_membership],
+        )
         self.created: list[FakeCollaborationUnitOfWork] = []
 
     def __call__(self) -> FakeCollaborationUnitOfWork:
@@ -383,7 +400,7 @@ async def test_accept_command_advances_sequence_without_checkpoint() -> None:
         command_id=uuid4(),
         observed_sequence=head.collaboration_sequence,
         observed_room_epoch=head.room_epoch,
-        command=RenameGraphCommand(name="Renamed"),
+        command=RenameGraphCommand(name="Renamed", expected_name="Draft"),
     )
 
     assert updated_head.collaboration_sequence == 2
@@ -406,7 +423,7 @@ async def test_accept_command_idempotent_replay_and_mismatch() -> None:
         command=ReplaceDocumentCommand(name="Draft", document=SavedGraphDocument()),
         graph_id=graph_id,
     )
-    command = RenameGraphCommand(name="Once")
+    command = RenameGraphCommand(name="Once", expected_name="Draft")
     observed_sequence = head.collaboration_sequence
     observed_room_epoch = head.room_epoch
     first_head, first_receipt = await service.accept_command(
@@ -440,7 +457,7 @@ async def test_accept_command_idempotent_replay_and_mismatch() -> None:
             command_id=command_id,
             observed_sequence=observed_sequence,
             observed_room_epoch=observed_room_epoch,
-            command=RenameGraphCommand(name="Different"),
+            command=RenameGraphCommand(name="Different", expected_name="Draft"),
         )
 
 
@@ -463,7 +480,7 @@ async def test_checkpoint_advances_saved_revision_and_preserves_secrets() -> Non
         command_id=uuid4(),
         observed_sequence=head.collaboration_sequence,
         observed_room_epoch=head.room_epoch,
-        command=RenameGraphCommand(name="Checkpoint me"),
+        command=RenameGraphCommand(name="Checkpoint me", expected_name="Draft"),
     )
 
     checkpointed_head, revision = await service.checkpoint(
@@ -493,7 +510,7 @@ async def test_accept_command_requires_existing_head() -> None:
             command_id=uuid4(),
             observed_sequence=0,
             observed_room_epoch=uuid4(),
-            command=RenameGraphCommand(name="Nope"),
+            command=RenameGraphCommand(name="Nope", expected_name="Nope"),
         )
 
 
@@ -559,7 +576,7 @@ async def test_replace_complete_document_rejects_uncheckpointed_head() -> None:
         command_id=uuid4(),
         observed_sequence=head.collaboration_sequence,
         observed_room_epoch=head.room_epoch,
-        command=RenameGraphCommand(name="Uncheckpointed"),
+        command=RenameGraphCommand(name="Uncheckpointed", expected_name="Draft"),
     )
 
     with pytest.raises(CollaborationUncheckpointedError):
@@ -616,7 +633,7 @@ async def test_delete_graph_rejects_uncheckpointed_legacy_delete() -> None:
         command_id=uuid4(),
         observed_sequence=head.collaboration_sequence,
         observed_room_epoch=head.room_epoch,
-        command=RenameGraphCommand(name="Pending"),
+        command=RenameGraphCommand(name="Pending", expected_name="Draft"),
     )
 
     with pytest.raises(CollaborationUncheckpointedError):
@@ -659,6 +676,209 @@ async def test_delete_graph_rejects_active_execution() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_head_returns_live_document() -> None:
+    factory = FakeFactory()
+    service = _service(factory)
+    graph_id = uuid4()
+    _, head, _ = await service.bootstrap_graph(
+        actor=ActorContext(user_id=USER_ID),
+        workspace_id=WORKSPACE_ID,
+        command_id=uuid4(),
+        command=ReplaceDocumentCommand(name="Live", document=SavedGraphDocument()),
+        graph_id=graph_id,
+    )
+
+    loaded = await service.get_head(
+        actor=ActorContext(user_id=USER_ID),
+        workspace_id=WORKSPACE_ID,
+        graph_id=graph_id,
+    )
+
+    assert loaded.room_epoch == head.room_epoch
+    assert loaded.collaboration_sequence == 1
+    assert loaded.name == "Live"
+
+
+@pytest.mark.asyncio
+async def test_accept_command_rebases_move_against_newer_head() -> None:
+    factory = FakeFactory()
+    service = _service(factory)
+    graph_id = uuid4()
+    node = SavedGraphNode(
+        id="n1",
+        operator_id="example.operator",
+        operator_version=1,
+        position=GraphPoint(x=0, y=0),
+    )
+    _, head, _ = await service.bootstrap_graph(
+        actor=ActorContext(user_id=USER_ID),
+        workspace_id=WORKSPACE_ID,
+        command_id=uuid4(),
+        command=ReplaceDocumentCommand(
+            name="Draft",
+            document=SavedGraphDocument(nodes=(node,)),
+        ),
+        graph_id=graph_id,
+    )
+    observed_sequence = head.collaboration_sequence
+    observed_epoch = head.room_epoch
+    await service.accept_command(
+        actor=ActorContext(user_id=USER_ID),
+        workspace_id=WORKSPACE_ID,
+        graph_id=graph_id,
+        command_id=uuid4(),
+        observed_sequence=observed_sequence,
+        observed_room_epoch=observed_epoch,
+        command=RenameGraphCommand(name="Moved ahead", expected_name="Draft"),
+    )
+
+    updated, receipt = await service.accept_command(
+        actor=ActorContext(user_id=USER_ID),
+        workspace_id=WORKSPACE_ID,
+        graph_id=graph_id,
+        command_id=uuid4(),
+        observed_sequence=observed_sequence,
+        observed_room_epoch=observed_epoch,
+        command=MoveNodesCommand(
+            positions=(MoveNodePosition(node_id="n1", x=9, y=8),)
+        ),
+    )
+
+    assert updated.collaboration_sequence == 3
+    assert updated.document.nodes[0].position == GraphPoint(x=9, y=8)
+    assert receipt.accepted_sequence == 3
+
+
+@pytest.mark.asyncio
+async def test_accept_command_rejects_stale_rename_with_field_conflict() -> None:
+    factory = FakeFactory()
+    service = _service(factory)
+    graph_id = uuid4()
+    _, head, _ = await service.bootstrap_graph(
+        actor=ActorContext(user_id=USER_ID),
+        workspace_id=WORKSPACE_ID,
+        command_id=uuid4(),
+        command=ReplaceDocumentCommand(name="Draft", document=SavedGraphDocument()),
+        graph_id=graph_id,
+    )
+    observed_sequence = head.collaboration_sequence
+    observed_epoch = head.room_epoch
+    await service.accept_command(
+        actor=ActorContext(user_id=USER_ID),
+        workspace_id=WORKSPACE_ID,
+        graph_id=graph_id,
+        command_id=uuid4(),
+        observed_sequence=observed_sequence,
+        observed_room_epoch=observed_epoch,
+        command=RenameGraphCommand(name="Other", expected_name="Draft"),
+    )
+
+    with pytest.raises(CollaborationCommandRejectedError) as exc:
+        await service.accept_command(
+            actor=ActorContext(user_id=USER_ID),
+            workspace_id=WORKSPACE_ID,
+            graph_id=graph_id,
+            command_id=uuid4(),
+            observed_sequence=observed_sequence,
+            observed_room_epoch=observed_epoch,
+            command=RenameGraphCommand(name="Mine", expected_name="Draft"),
+        )
+    assert exc.value.error_code == "field_conflict"
+
+
+@pytest.mark.asyncio
+async def test_copy_exact_head_bootstraps_target_without_source_secrets() -> None:
+    factory = FakeFactory()
+    service = _service(factory)
+    source_graph_id = uuid4()
+    _, source_head, _ = await service.bootstrap_graph(
+        actor=ActorContext(user_id=USER_ID),
+        workspace_id=WORKSPACE_ID,
+        command_id=uuid4(),
+        command=ReplaceDocumentCommand(
+            name="Source",
+            document=SavedGraphDocument(
+                nodes=(
+                    SavedGraphNode(
+                        id="n1",
+                        operator_id="example.operator",
+                        operator_version=1,
+                        position=GraphPoint(x=1, y=2),
+                        config={
+                            "uploads": [
+                                {
+                                    "upload_key": "x.png",
+                                    "filename": "x.png",
+                                    "byte_size": 1,
+                                }
+                            ],
+                            "label": "keep",
+                        },
+                    ),
+                )
+            ),
+        ),
+        graph_id=source_graph_id,
+    )
+
+    graph, head, receipt = await service.copy_exact_head(
+        actor=ActorContext(user_id=USER_ID),
+        source_workspace_id=WORKSPACE_ID,
+        source_graph_id=source_graph_id,
+        target_workspace_id=TARGET_WORKSPACE_ID,
+        expected_room_epoch=source_head.room_epoch,
+        expected_sequence=source_head.collaboration_sequence,
+        command_id=uuid4(),
+    )
+
+    assert graph.workspace_id == TARGET_WORKSPACE_ID
+    assert graph.revision == 1
+    assert head.collaboration_sequence == 1
+    assert head.checkpoint_sequence == 1
+    assert head.checkpoint_revision == 1
+    assert receipt.accepted_sequence == 1
+    assert graph.document.nodes[0].config_dict() == {"label": "keep"}
+    assert source_graph_id in factory.graphs.graphs
+    assert factory.graphs.graphs[source_graph_id].workspace_id == WORKSPACE_ID
+
+
+@pytest.mark.asyncio
+async def test_copy_exact_head_rejects_moved_source() -> None:
+    factory = FakeFactory()
+    service = _service(factory)
+    source_graph_id = uuid4()
+    _, source_head, _ = await service.bootstrap_graph(
+        actor=ActorContext(user_id=USER_ID),
+        workspace_id=WORKSPACE_ID,
+        command_id=uuid4(),
+        command=ReplaceDocumentCommand(name="Source", document=SavedGraphDocument()),
+        graph_id=source_graph_id,
+    )
+    expected_room_epoch = source_head.room_epoch
+    expected_sequence = source_head.collaboration_sequence
+    await service.accept_command(
+        actor=ActorContext(user_id=USER_ID),
+        workspace_id=WORKSPACE_ID,
+        graph_id=source_graph_id,
+        command_id=uuid4(),
+        observed_sequence=expected_sequence,
+        observed_room_epoch=expected_room_epoch,
+        command=RenameGraphCommand(name="Moved", expected_name="Source"),
+    )
+
+    with pytest.raises(CollaborationHeadConflictError):
+        await service.copy_exact_head(
+            actor=ActorContext(user_id=USER_ID),
+            source_workspace_id=WORKSPACE_ID,
+            source_graph_id=source_graph_id,
+            target_workspace_id=TARGET_WORKSPACE_ID,
+            expected_room_epoch=expected_room_epoch,
+            expected_sequence=expected_sequence,
+            command_id=uuid4(),
+        )
+
+
+@pytest.mark.asyncio
 async def test_delete_graph_collaboration_aware_discards_uncheckpointed() -> None:
     factory = FakeFactory()
     service = _service(factory)
@@ -677,7 +897,7 @@ async def test_delete_graph_collaboration_aware_discards_uncheckpointed() -> Non
         command_id=uuid4(),
         observed_sequence=head.collaboration_sequence,
         observed_room_epoch=head.room_epoch,
-        command=RenameGraphCommand(name="Discard"),
+        command=RenameGraphCommand(name="Discard", expected_name="Draft"),
     )
 
     await service.delete_graph(

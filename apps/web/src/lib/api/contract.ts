@@ -151,6 +151,20 @@ export type SavedGraph =
   paths["/v1/workspaces/{workspace_id}/graphs/{graph_id}"]["get"]["responses"][200]["content"]["application/json"];
 export type UpdateSavedGraphRequest =
   paths["/v1/workspaces/{workspace_id}/graphs/{graph_id}"]["put"]["requestBody"]["content"]["application/json"];
+export type CollaborativeHead =
+  paths["/v1/workspaces/{workspace_id}/graphs/{graph_id}/head"]["get"]["responses"][200]["content"]["application/json"];
+export type SubmitGraphCommandRequest =
+  paths["/v1/workspaces/{workspace_id}/graphs/{graph_id}/commands"]["post"]["requestBody"]["content"]["application/json"];
+export type SubmitGraphCommandResponse =
+  paths["/v1/workspaces/{workspace_id}/graphs/{graph_id}/commands"]["post"]["responses"][200]["content"]["application/json"];
+export type CheckpointGraphRequest =
+  paths["/v1/workspaces/{workspace_id}/graphs/{graph_id}/checkpoint"]["post"]["requestBody"]["content"]["application/json"];
+export type CheckpointGraphResponse =
+  paths["/v1/workspaces/{workspace_id}/graphs/{graph_id}/checkpoint"]["post"]["responses"][200]["content"]["application/json"];
+export type CopyExactHeadRequest =
+  paths["/v1/workspaces/{workspace_id}/graphs/copies"]["post"]["requestBody"]["content"]["application/json"];
+export type CopyExactHeadResponse =
+  paths["/v1/workspaces/{workspace_id}/graphs/copies"]["post"]["responses"][201]["content"]["application/json"];
 
 export type PortDirection = Port["direction"];
 export type PortShape = Port["shape"];

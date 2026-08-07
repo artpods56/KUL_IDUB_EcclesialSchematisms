@@ -428,7 +428,7 @@ def test_http_replace_rejects_uncheckpointed_head(
             command_id=uuid4(),
             observed_sequence=head.collaboration_sequence,
             observed_room_epoch=head.room_epoch,
-            command=RenameGraphCommand(name="Uncheckpointed"),
+            command=RenameGraphCommand(name="Uncheckpointed", expected_name="Live draft"),
         )
     )
 
@@ -469,3 +469,117 @@ def test_http_delete_removes_collaborative_head(
                 graph_id=graph_id,
             )
         )
+
+
+def test_http_live_head_command_checkpoint_and_aware_delete(
+    builtin_client: TestClient,
+) -> None:
+    created = builtin_client.post(
+        workspace_api_path("/graphs"),
+        json=_graph_payload("Command graph"),
+    ).json()
+    graph_id = created["id"]
+
+    head_response = builtin_client.get(workspace_api_path(f"/graphs/{graph_id}/head"))
+    assert head_response.status_code == 200
+    head = head_response.json()
+    assert head["name"] == "Command graph"
+    assert head["collaboration_sequence"] == 1
+    assert head["checkpoint_sequence"] == 1
+
+    command_response = builtin_client.post(
+        workspace_api_path(f"/graphs/{graph_id}/commands"),
+        json={
+            "command_id": str(uuid4()),
+            "room_epoch": head["room_epoch"],
+            "observed_sequence": head["collaboration_sequence"],
+            "command": {
+                "kind": "rename_graph",
+                "name": "Renamed live",
+                "expected_name": "Command graph",
+            },
+        },
+    )
+    assert command_response.status_code == 200
+    command_payload = command_response.json()
+    assert command_payload["head"]["name"] == "Renamed live"
+    assert command_payload["head"]["collaboration_sequence"] == 2
+    assert command_payload["receipt"]["outcome"] == "accepted"
+    assert command_payload["receipt"]["deduplicated"] is False
+
+    checkpoint_response = builtin_client.post(
+        workspace_api_path(f"/graphs/{graph_id}/checkpoint"),
+        json={
+            "expected_room_epoch": command_payload["head"]["room_epoch"],
+            "expected_sequence": command_payload["head"]["collaboration_sequence"],
+        },
+    )
+    assert checkpoint_response.status_code == 200
+    assert checkpoint_response.json()["saved_revision"] == 2
+    assert checkpoint_response.json()["head"]["checkpoint_sequence"] == 2
+
+    saved = builtin_client.get(workspace_api_path(f"/graphs/{graph_id}")).json()
+    assert saved["name"] == "Renamed live"
+    assert saved["revision"] == 2
+
+    # Leave an uncheckpointed command, then discard with exact-head delete.
+    pending = builtin_client.post(
+        workspace_api_path(f"/graphs/{graph_id}/commands"),
+        json={
+            "command_id": str(uuid4()),
+            "room_epoch": checkpoint_response.json()["head"]["room_epoch"],
+            "observed_sequence": checkpoint_response.json()["head"][
+                "collaboration_sequence"
+            ],
+            "command": {
+                "kind": "rename_graph",
+                "name": "Discard me",
+                "expected_name": "Renamed live",
+            },
+        },
+    ).json()
+    delete_response = builtin_client.delete(
+        workspace_api_path(f"/graphs/{graph_id}"),
+        params={
+            "expected_revision": saved["revision"],
+            "expected_room_epoch": pending["head"]["room_epoch"],
+            "expected_sequence": pending["head"]["collaboration_sequence"],
+        },
+    )
+    assert delete_response.status_code == 204
+
+
+def test_http_copy_exact_head_into_same_workspace(
+    builtin_client: TestClient,
+) -> None:
+    created = builtin_client.post(
+        workspace_api_path("/graphs"),
+        json=_graph_payload("Copy source"),
+    ).json()
+    head = builtin_client.get(
+        workspace_api_path(f"/graphs/{created['id']}/head")
+    ).json()
+
+    copy_response = builtin_client.post(
+        workspace_api_path("/graphs/copies"),
+        json={
+            "source_workspace_id": str(WORKSPACE_ID),
+            "source_graph_id": created["id"],
+            "expected_room_epoch": head["room_epoch"],
+            "expected_sequence": head["collaboration_sequence"],
+            "command_id": str(uuid4()),
+            "name": "Copied graph",
+        },
+    )
+    assert copy_response.status_code == 201
+    copied = copy_response.json()
+    assert copied["id"] != created["id"]
+    assert copied["name"] == "Copied graph"
+    assert copied["revision"] == 1
+
+    copied_head = builtin_client.get(
+        workspace_api_path(f"/graphs/{copied['id']}/head")
+    ).json()
+    assert copied_head["collaboration_sequence"] == 1
+    assert copied_head["checkpoint_sequence"] == 1
+    assert copied_head["checkpoint_revision"] == 1

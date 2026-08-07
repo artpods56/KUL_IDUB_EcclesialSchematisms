@@ -384,6 +384,40 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/workspaces/{workspace_id}/graphs/{graph_id}/checkpoint": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Checkpoint Graph */
+        readonly post: operations["checkpoint_graph_v1_workspaces__workspace_id__graphs__graph_id__checkpoint_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/graphs/{graph_id}/commands": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Submit Graph Command */
+        readonly post: operations["submit_graph_command_v1_workspaces__workspace_id__graphs__graph_id__commands_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/workspaces/{workspace_id}/graphs/{graph_id}/executions": {
         readonly parameters: {
             readonly query?: never;
@@ -410,6 +444,23 @@ export interface paths {
         };
         /** Get Graph Execution History */
         readonly get: operations["get_graph_execution_history_v1_workspaces__workspace_id__graphs__graph_id__executions__execution_id__get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/graphs/{graph_id}/head": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Collaborative Head */
+        readonly get: operations["get_collaborative_head_v1_workspaces__workspace_id__graphs__graph_id__head_get"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -465,6 +516,23 @@ export interface paths {
         readonly post?: never;
         /** Delete Node Secret */
         readonly delete: operations["delete_node_secret_v1_workspaces__workspace_id__graphs__graph_id__nodes__node_id__secrets__name__delete"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/graphs/copies": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Copy Exact Head */
+        readonly post: operations["copy_exact_head_v1_workspaces__workspace_id__graphs_copies_post"];
+        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -613,6 +681,24 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AddEdgeCommand */
+        readonly AddEdgeCommand: {
+            readonly edge: components["schemas"]["SavedGraphEdge"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "add_edge";
+        };
+        /** AddNodeCommand */
+        readonly AddNodeCommand: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "add_node";
+            readonly node: components["schemas"]["SavedGraphNode"];
+        };
         /** ArtifactConversionKeyResponse */
         readonly ArtifactConversionKeyResponse: {
             /** Id */
@@ -717,6 +803,13 @@ export interface components {
             /** Variable */
             readonly variable: string;
         };
+        /** ArtifactTypeKey */
+        readonly ArtifactTypeKey: {
+            /** Id */
+            readonly id: string;
+            /** Schema Version */
+            readonly schema_version: number;
+        };
         /** ArtifactTypeKeyResponse */
         readonly ArtifactTypeKeyResponse: {
             /** Id */
@@ -741,6 +834,70 @@ export interface components {
             /** File */
             readonly file: string;
         };
+        /** CheckpointGraphRequest */
+        readonly CheckpointGraphRequest: {
+            /**
+             * Expected Room Epoch
+             * Format: uuid
+             */
+            readonly expected_room_epoch: string;
+            /** Expected Sequence */
+            readonly expected_sequence: number;
+        };
+        /** CheckpointGraphResponse */
+        readonly CheckpointGraphResponse: {
+            readonly head: components["schemas"]["CollaborativeHeadResponse"];
+            /** Saved Revision */
+            readonly saved_revision: number;
+        };
+        /** ClearNodeArtifactTypeBindingCommand */
+        readonly ClearNodeArtifactTypeBindingCommand: {
+            readonly expected_binding: components["schemas"]["SavedGraphArtifactTypeBinding"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "clear_node_artifact_type_binding";
+            /** Node Id */
+            readonly node_id: string;
+            /** Variable */
+            readonly variable: string;
+        };
+        /** CollaborativeHeadResponse */
+        readonly CollaborativeHeadResponse: {
+            /** Checkpoint Revision */
+            readonly checkpoint_revision: number;
+            /** Checkpoint Sequence */
+            readonly checkpoint_sequence: number;
+            /** Collaboration Sequence */
+            readonly collaboration_sequence: number;
+            /** Edges */
+            readonly edges: readonly components["schemas"]["SavedGraphEdgeModel"][];
+            /**
+             * Graph Id
+             * Format: uuid
+             */
+            readonly graph_id: string;
+            /** Name */
+            readonly name: string;
+            /** Nodes */
+            readonly nodes: readonly components["schemas"]["SavedGraphNodeModel-Output"][];
+            /**
+             * Room Epoch
+             * Format: uuid
+             */
+            readonly room_epoch: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
+        /**
+         * CommandReceiptOutcome
+         * @enum {string}
+         */
+        readonly CommandReceiptOutcome: "accepted" | "idempotent_replay";
         /** ConfigureNodeSecretRequest */
         readonly ConfigureNodeSecretRequest: {
             /** Expected Graph Revision */
@@ -751,6 +908,33 @@ export interface components {
              */
             readonly value: string;
         };
+        /** CopyExactHeadRequest */
+        readonly CopyExactHeadRequest: {
+            /**
+             * Command Id
+             * Format: uuid
+             */
+            readonly command_id: string;
+            /**
+             * Expected Room Epoch
+             * Format: uuid
+             */
+            readonly expected_room_epoch: string;
+            /** Expected Sequence */
+            readonly expected_sequence: number;
+            /** Name */
+            readonly name?: string | null;
+            /**
+             * Source Graph Id
+             * Format: uuid
+             */
+            readonly source_graph_id: string;
+            /**
+             * Source Workspace Id
+             * Format: uuid
+             */
+            readonly source_workspace_id: string;
+        };
         /** CreateSavedGraphRequest */
         readonly CreateSavedGraphRequest: {
             /** Edges */
@@ -759,6 +943,17 @@ export interface components {
             readonly name: string;
             /** Nodes */
             readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel-Input"][];
+        };
+        /** DuplicateNodeCommand */
+        readonly DuplicateNodeCommand: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "duplicate_node";
+            readonly node: components["schemas"]["SavedGraphNode"];
+            /** Source Node Id */
+            readonly source_node_id: string;
         };
         /** FieldProjectionRequest */
         readonly FieldProjectionRequest: {
@@ -1038,6 +1233,24 @@ export interface components {
             readonly outline: components["schemas"]["GeoLineStyle"];
             readonly point: components["schemas"]["GeoPointStyle"];
         };
+        /** GraphCommandReceiptResponse */
+        readonly GraphCommandReceiptResponse: {
+            /** Accepted Sequence */
+            readonly accepted_sequence: number;
+            /**
+             * Command Id
+             * Format: uuid
+             */
+            readonly command_id: string;
+            /** Deduplicated */
+            readonly deduplicated: boolean;
+            readonly outcome: components["schemas"]["CommandReceiptOutcome"];
+            /**
+             * Room Epoch
+             * Format: uuid
+             */
+            readonly room_epoch: string;
+        };
         /** GraphExecutionDetailResponse */
         readonly GraphExecutionDetailResponse: {
             /** Artifact Count */
@@ -1166,6 +1379,13 @@ export interface components {
             /** Secrets */
             readonly secrets: readonly components["schemas"]["NodeSecretStatusResponse"][];
         };
+        /** GraphPoint */
+        readonly GraphPoint: {
+            /** X */
+            readonly x: number;
+            /** Y */
+            readonly y: number;
+        };
         /** GraphPointModel */
         readonly GraphPointModel: {
             /** X */
@@ -1186,6 +1406,25 @@ export interface components {
             readonly filename: string;
             /** Upload Key */
             readonly upload_key: string;
+        };
+        /** MoveNodePosition */
+        readonly MoveNodePosition: {
+            /** Node Id */
+            readonly node_id: string;
+            /** X */
+            readonly x: number;
+            /** Y */
+            readonly y: number;
+        };
+        /** MoveNodesCommand */
+        readonly MoveNodesCommand: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "move_nodes";
+            /** Positions */
+            readonly positions: readonly components["schemas"]["MoveNodePosition"][];
         };
         /** NodeRegistryResponse */
         readonly NodeRegistryResponse: {
@@ -1411,6 +1650,49 @@ export interface components {
          * @enum {string}
          */
         readonly PortShape: "one" | "many";
+        /** RemoveEdgesCommand */
+        readonly RemoveEdgesCommand: {
+            /** Edge Ids */
+            readonly edge_ids: readonly string[];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "remove_edges";
+        };
+        /** RemoveNodesCommand */
+        readonly RemoveNodesCommand: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "remove_nodes";
+            /** Node Ids */
+            readonly node_ids: readonly string[];
+        };
+        /** RenameGraphCommand */
+        readonly RenameGraphCommand: {
+            /** Expected Name */
+            readonly expected_name: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "rename_graph";
+            /** Name */
+            readonly name: string;
+        };
+        /** ReplaceDocumentCommand */
+        readonly ReplaceDocumentCommand: {
+            readonly document: components["schemas"]["SavedGraphDocument"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "replace_document";
+            /** Name */
+            readonly name: string;
+        };
         /** RunEdgeRequest */
         readonly RunEdgeRequest: {
             /**
@@ -1540,12 +1822,77 @@ export interface components {
              */
             readonly count: number;
         };
+        /** SavedGraphArtifactTypeBinding */
+        readonly SavedGraphArtifactTypeBinding: {
+            readonly artifact_type: components["schemas"]["ArtifactTypeKey"];
+            /** Variable */
+            readonly variable: string;
+        };
+        /** SavedGraphConversion */
+        readonly SavedGraphConversion: {
+            /** Id */
+            readonly id: string;
+            /** Version */
+            readonly version: number;
+        };
         /** SavedGraphConversionModel */
         readonly SavedGraphConversionModel: {
             /** Id */
             readonly id: string;
             /** Version */
             readonly version: number;
+        };
+        /** SavedGraphDocument */
+        readonly SavedGraphDocument: {
+            /**
+             * Edges
+             * @default []
+             */
+            readonly edges: readonly components["schemas"]["SavedGraphEdge"][];
+            /**
+             * Nodes
+             * @default []
+             */
+            readonly nodes: readonly components["schemas"]["SavedGraphNode"][];
+            /**
+             * Schema Version
+             * @default 3
+             * @constant
+             */
+            readonly schema_version: 3;
+        };
+        /** SavedGraphEdge */
+        readonly SavedGraphEdge: {
+            /**
+             * Collection Mode
+             * @default direct
+             * @enum {string}
+             */
+            readonly collection_mode: "direct" | "map";
+            /**
+             * Conversion Path
+             * @default []
+             */
+            readonly conversion_path: readonly components["schemas"]["SavedGraphConversion"][];
+            /**
+             * Enabled
+             * @default true
+             */
+            readonly enabled: boolean;
+            /** From Node */
+            readonly from_node: string;
+            /** From Port */
+            readonly from_port: string;
+            /** Id */
+            readonly id: string;
+            readonly projection?: components["schemas"]["SavedGraphProjection"] | null;
+            readonly route_offset?: components["schemas"]["GraphPoint"] | null;
+            /** To Node */
+            readonly to_node: string;
+            /** To Plug */
+            readonly to_plug?: string | null;
+            /** To Port */
+            readonly to_port: string;
         };
         /** SavedGraphEdgeModel */
         readonly SavedGraphEdgeModel: {
@@ -1577,6 +1924,13 @@ export interface components {
             /** To Port */
             readonly to_port: string;
         };
+        /** SavedGraphInputPlug */
+        readonly SavedGraphInputPlug: {
+            /** Id */
+            readonly id: string;
+            /** Port */
+            readonly port: string;
+        };
         /** SavedGraphInputPlugModel */
         readonly SavedGraphInputPlugModel: {
             /** Id */
@@ -1588,6 +1942,43 @@ export interface components {
         readonly SavedGraphListResponse: {
             /** Graphs */
             readonly graphs: readonly components["schemas"]["SavedGraphSummaryResponse"][];
+        };
+        /** SavedGraphNode */
+        readonly SavedGraphNode: {
+            /**
+             * Artifact Type Bindings
+             * @default []
+             */
+            readonly artifact_type_bindings: readonly components["schemas"]["SavedGraphArtifactTypeBinding"][];
+            /** Config */
+            readonly config?: {
+                readonly [key: string]: unknown;
+            };
+            /** Id */
+            readonly id: string;
+            /**
+             * Input Plugs
+             * @default []
+             */
+            readonly input_plugs: readonly components["schemas"]["SavedGraphInputPlug"][];
+            readonly layout?: components["schemas"]["SavedGraphNodeLayout"] | null;
+            /** Operator Id */
+            readonly operator_id: string;
+            /** Operator Version */
+            readonly operator_version: number;
+            readonly position: components["schemas"]["GraphPoint"];
+        };
+        /**
+         * SavedGraphNodeLayout
+         * @description Canvas chrome sizes for a node shell and its artifact appendix.
+         */
+        readonly SavedGraphNodeLayout: {
+            /** Appendix Height */
+            readonly appendix_height?: number | null;
+            /** Body Height */
+            readonly body_height?: number | null;
+            /** Width */
+            readonly width?: number | null;
         };
         /** SavedGraphNodeLayoutModel */
         readonly SavedGraphNodeLayoutModel: {
@@ -1635,6 +2026,11 @@ export interface components {
             /** Operator Version */
             readonly operator_version: number;
             readonly position: components["schemas"]["GraphPointModel"];
+        };
+        /** SavedGraphProjection */
+        readonly SavedGraphProjection: {
+            /** Path */
+            readonly path: readonly string[];
         };
         /** SavedGraphProjectionModel */
         readonly SavedGraphProjectionModel: {
@@ -1716,6 +2112,54 @@ export interface components {
              * Format: uuid
              */
             readonly user_id: string;
+        };
+        /** SetNodeArtifactTypeBindingCommand */
+        readonly SetNodeArtifactTypeBindingCommand: {
+            readonly binding: components["schemas"]["SavedGraphArtifactTypeBinding"];
+            readonly expected_binding?: components["schemas"]["SavedGraphArtifactTypeBinding"] | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "set_node_artifact_type_binding";
+            /** Node Id */
+            readonly node_id: string;
+        };
+        /** SetNodeInputPlugsCommand */
+        readonly SetNodeInputPlugsCommand: {
+            /** Expected Plug Ids */
+            readonly expected_plug_ids: readonly string[];
+            /** Input Plugs */
+            readonly input_plugs: readonly components["schemas"]["SavedGraphInputPlug"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "set_node_input_plugs";
+            /** Node Id */
+            readonly node_id: string;
+        };
+        /** SubmitGraphCommandRequest */
+        readonly SubmitGraphCommandRequest: {
+            /** Command */
+            readonly command: components["schemas"]["RenameGraphCommand"] | components["schemas"]["AddNodeCommand"] | components["schemas"]["DuplicateNodeCommand"] | components["schemas"]["RemoveNodesCommand"] | components["schemas"]["MoveNodesCommand"] | components["schemas"]["UpdateNodeConfigurationCommand"] | components["schemas"]["UpdateNodeLayoutCommand"] | components["schemas"]["SetNodeInputPlugsCommand"] | components["schemas"]["SetNodeArtifactTypeBindingCommand"] | components["schemas"]["ClearNodeArtifactTypeBindingCommand"] | components["schemas"]["AddEdgeCommand"] | components["schemas"]["UpdateEdgeCommand"] | components["schemas"]["RemoveEdgesCommand"] | components["schemas"]["ReplaceDocumentCommand"];
+            /**
+             * Command Id
+             * Format: uuid
+             */
+            readonly command_id: string;
+            /** Observed Sequence */
+            readonly observed_sequence: number;
+            /**
+             * Room Epoch
+             * Format: uuid
+             */
+            readonly room_epoch: string;
+        };
+        /** SubmitGraphCommandResponse */
+        readonly SubmitGraphCommandResponse: {
+            readonly head: components["schemas"]["CollaborativeHeadResponse"];
+            readonly receipt: components["schemas"]["GraphCommandReceiptResponse"];
         };
         /** TableCellPreviewResponse */
         readonly TableCellPreviewResponse: {
@@ -1838,6 +2282,44 @@ export interface components {
             readonly reason: string;
             /** Revision */
             readonly revision: number;
+        };
+        /** UpdateEdgeCommand */
+        readonly UpdateEdgeCommand: {
+            readonly edge: components["schemas"]["SavedGraphEdge"];
+            readonly expected_edge: components["schemas"]["SavedGraphEdge"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "update_edge";
+        };
+        /** UpdateNodeConfigurationCommand */
+        readonly UpdateNodeConfigurationCommand: {
+            /** Expected Value */
+            readonly expected_value?: unknown | null;
+            /** Field */
+            readonly field: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "update_node_configuration";
+            /** Node Id */
+            readonly node_id: string;
+            /** Value */
+            readonly value: unknown;
+        };
+        /** UpdateNodeLayoutCommand */
+        readonly UpdateNodeLayoutCommand: {
+            readonly expected_layout?: components["schemas"]["SavedGraphNodeLayout"] | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "update_node_layout";
+            readonly layout: components["schemas"]["SavedGraphNodeLayout"] | null;
+            /** Node Id */
+            readonly node_id: string;
         };
         /** UpdateSavedGraphRequest */
         readonly UpdateSavedGraphRequest: {
@@ -3097,6 +3579,8 @@ export interface operations {
         readonly parameters: {
             readonly query: {
                 readonly expected_revision: number;
+                readonly expected_room_epoch?: string | null;
+                readonly expected_sequence?: number | null;
             };
             readonly header?: never;
             readonly path: {
@@ -3113,6 +3597,78 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly checkpoint_graph_v1_workspaces__workspace_id__graphs__graph_id__checkpoint_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly graph_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CheckpointGraphRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CheckpointGraphResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly submit_graph_command_v1_workspaces__workspace_id__graphs__graph_id__commands_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly graph_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SubmitGraphCommandRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SubmitGraphCommandResponse"];
+                };
             };
             /** @description Validation Error */
             readonly 422: {
@@ -3183,6 +3739,38 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["GraphExecutionDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly get_collaborative_head_v1_workspaces__workspace_id__graphs__graph_id__head_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly graph_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CollaborativeHeadResponse"];
                 };
             };
             /** @description Validation Error */
@@ -3322,6 +3910,41 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly copy_exact_head_v1_workspaces__workspace_id__graphs_copies_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CopyExactHeadRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SavedGraphResponse"];
+                };
             };
             /** @description Validation Error */
             readonly 422: {

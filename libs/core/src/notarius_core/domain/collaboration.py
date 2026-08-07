@@ -18,10 +18,13 @@ from pydantic import (
 )
 
 from notarius_core.domain.errors import CollaborationCommandRejectedError
+from notarius_core.domain.modules import GRAPH_MODULE_OPERATOR_PREFIX
 from notarius_core.domain.saved_graphs import (
     GraphPoint,
+    SavedGraphArtifactTypeBinding,
     SavedGraphDocument,
     SavedGraphEdge,
+    SavedGraphInputPlug,
     SavedGraphNode,
     SavedGraphNodeLayout,
 )
@@ -44,11 +47,16 @@ class CommandReceiptOutcome(StrEnum):
 class GraphCommandKind(StrEnum):
     RENAME_GRAPH = "rename_graph"
     ADD_NODE = "add_node"
+    DUPLICATE_NODE = "duplicate_node"
     REMOVE_NODES = "remove_nodes"
     MOVE_NODES = "move_nodes"
     UPDATE_NODE_CONFIGURATION = "update_node_configuration"
     UPDATE_NODE_LAYOUT = "update_node_layout"
+    SET_NODE_INPUT_PLUGS = "set_node_input_plugs"
+    SET_NODE_ARTIFACT_TYPE_BINDING = "set_node_artifact_type_binding"
+    CLEAR_NODE_ARTIFACT_TYPE_BINDING = "clear_node_artifact_type_binding"
     ADD_EDGE = "add_edge"
+    UPDATE_EDGE = "update_edge"
     REMOVE_EDGES = "remove_edges"
     REPLACE_DOCUMENT = "replace_document"
 
@@ -61,23 +69,34 @@ class CollaborationValue(BaseModel):
     )
 
 
+def _validated_graph_name(value: str) -> str:
+    name = value.strip()
+    if name == "":
+        raise ValueError("Graph name must not be blank")
+    if len(name) > 160:
+        raise ValueError("Graph name must be at most 160 characters")
+    return name
+
+
 class RenameGraphCommand(CollaborationValue):
     kind: Literal[GraphCommandKind.RENAME_GRAPH] = GraphCommandKind.RENAME_GRAPH
     name: str
+    expected_name: str
 
-    @field_validator("name")
+    @field_validator("name", "expected_name")
     @classmethod
     def validate_name(cls, value: str) -> str:
-        name = value.strip()
-        if name == "":
-            raise ValueError("Graph name must not be blank")
-        if len(name) > 160:
-            raise ValueError("Graph name must be at most 160 characters")
-        return name
+        return _validated_graph_name(value)
 
 
 class AddNodeCommand(CollaborationValue):
     kind: Literal[GraphCommandKind.ADD_NODE] = GraphCommandKind.ADD_NODE
+    node: SavedGraphNode
+
+
+class DuplicateNodeCommand(CollaborationValue):
+    kind: Literal[GraphCommandKind.DUPLICATE_NODE] = GraphCommandKind.DUPLICATE_NODE
+    source_node_id: str
     node: SavedGraphNode
 
 
@@ -104,6 +123,7 @@ class UpdateNodeConfigurationCommand(CollaborationValue):
     node_id: str
     field: str
     value: object
+    expected_value: object | None = None
 
 
 class UpdateNodeLayoutCommand(CollaborationValue):
@@ -112,11 +132,45 @@ class UpdateNodeLayoutCommand(CollaborationValue):
     )
     node_id: str
     layout: SavedGraphNodeLayout | None
+    expected_layout: SavedGraphNodeLayout | None = None
+
+
+class SetNodeInputPlugsCommand(CollaborationValue):
+    kind: Literal[GraphCommandKind.SET_NODE_INPUT_PLUGS] = (
+        GraphCommandKind.SET_NODE_INPUT_PLUGS
+    )
+    node_id: str
+    input_plugs: tuple[SavedGraphInputPlug, ...]
+    expected_plug_ids: tuple[str, ...]
+
+
+class SetNodeArtifactTypeBindingCommand(CollaborationValue):
+    kind: Literal[GraphCommandKind.SET_NODE_ARTIFACT_TYPE_BINDING] = (
+        GraphCommandKind.SET_NODE_ARTIFACT_TYPE_BINDING
+    )
+    node_id: str
+    binding: SavedGraphArtifactTypeBinding
+    expected_binding: SavedGraphArtifactTypeBinding | None = None
+
+
+class ClearNodeArtifactTypeBindingCommand(CollaborationValue):
+    kind: Literal[GraphCommandKind.CLEAR_NODE_ARTIFACT_TYPE_BINDING] = (
+        GraphCommandKind.CLEAR_NODE_ARTIFACT_TYPE_BINDING
+    )
+    node_id: str
+    variable: str
+    expected_binding: SavedGraphArtifactTypeBinding
 
 
 class AddEdgeCommand(CollaborationValue):
     kind: Literal[GraphCommandKind.ADD_EDGE] = GraphCommandKind.ADD_EDGE
     edge: SavedGraphEdge
+
+
+class UpdateEdgeCommand(CollaborationValue):
+    kind: Literal[GraphCommandKind.UPDATE_EDGE] = GraphCommandKind.UPDATE_EDGE
+    edge: SavedGraphEdge
+    expected_edge: SavedGraphEdge
 
 
 class RemoveEdgesCommand(CollaborationValue):
@@ -132,22 +186,22 @@ class ReplaceDocumentCommand(CollaborationValue):
     @field_validator("name")
     @classmethod
     def validate_name(cls, value: str) -> str:
-        name = value.strip()
-        if name == "":
-            raise ValueError("Graph name must not be blank")
-        if len(name) > 160:
-            raise ValueError("Graph name must be at most 160 characters")
-        return name
+        return _validated_graph_name(value)
 
 
 GraphCommand = Annotated[
     RenameGraphCommand
     | AddNodeCommand
+    | DuplicateNodeCommand
     | RemoveNodesCommand
     | MoveNodesCommand
     | UpdateNodeConfigurationCommand
     | UpdateNodeLayoutCommand
+    | SetNodeInputPlugsCommand
+    | SetNodeArtifactTypeBindingCommand
+    | ClearNodeArtifactTypeBindingCommand
     | AddEdgeCommand
+    | UpdateEdgeCommand
     | RemoveEdgesCommand
     | ReplaceDocumentCommand,
     Field(discriminator="kind"),
@@ -191,6 +245,28 @@ def command_hmac_digest(
     return hmac.new(key, payload, sha256).digest()
 
 
+def command_requires_exact_sequence(command: GraphCommand) -> bool:
+    return isinstance(command, ReplaceDocumentCommand)
+
+
+def _json_equal(left: object, right: object) -> bool:
+    return json.dumps(left, sort_keys=True, separators=(",", ":")) == json.dumps(
+        right,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _model_json(value: BaseModel | None) -> object:
+    if value is None:
+        return None
+    return value.model_dump(mode="json")
+
+
+def _field_conflict(message: str) -> CollaborationCommandRejectedError:
+    return CollaborationCommandRejectedError(code="field_conflict", message=message)
+
+
 def _node_or_raise(document: SavedGraphDocument, node_id: str) -> SavedGraphNode:
     for node in document.nodes:
         if node.id == node_id:
@@ -201,6 +277,62 @@ def _node_or_raise(document: SavedGraphDocument, node_id: str) -> SavedGraphNode
     )
 
 
+def _edge_or_raise(document: SavedGraphDocument, edge_id: str) -> SavedGraphEdge:
+    for edge in document.edges:
+        if edge.id == edge_id:
+            return edge
+    raise CollaborationCommandRejectedError(
+        code="missing_edge",
+        message=f"Graph command targets missing edge {edge_id}",
+    )
+
+
+def _binding_for_variable(
+    node: SavedGraphNode,
+    variable: str,
+) -> SavedGraphArtifactTypeBinding | None:
+    for binding in node.artifact_type_bindings:
+        if binding.variable == variable:
+            return binding
+    return None
+
+
+def _sanitize_config_value(value: object) -> object:
+    if isinstance(value, dict):
+        sanitized: dict[str, object] = {}
+        for key, item in value.items():
+            if key in {"upload_key", "artifact_id"}:
+                continue
+            if key == "uploads" and isinstance(item, list):
+                continue
+            sanitized[key] = _sanitize_config_value(item)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_config_value(item) for item in value]
+    return value
+
+
+def sanitize_document_for_cross_workspace_copy(
+    document: SavedGraphDocument,
+) -> SavedGraphDocument:
+    for node in document.nodes:
+        if node.operator_id.startswith(GRAPH_MODULE_OPERATOR_PREFIX):
+            raise CollaborationCommandRejectedError(
+                code="foreign_module_reference",
+                message=(
+                    f"Cross-workspace copy cannot include module operator "
+                    f"{node.operator_id}"
+                ),
+            )
+    sanitized_nodes = tuple(
+        node.model_copy(
+            update={"config": _sanitize_config_value(node.config_dict())}
+        )
+        for node in document.nodes
+    )
+    return SavedGraphDocument(nodes=sanitized_nodes, edges=document.edges)
+
+
 def apply_graph_command(
     *,
     name: str,
@@ -208,9 +340,26 @@ def apply_graph_command(
     command: GraphCommand,
 ) -> tuple[str, SavedGraphDocument]:
     if isinstance(command, RenameGraphCommand):
+        if name != command.expected_name:
+            raise _field_conflict(
+                f"Graph name conflict: expected {command.expected_name!r}, "
+                f"actual {name!r}"
+            )
         return command.name, document
 
     if isinstance(command, AddNodeCommand):
+        if any(node.id == command.node.id for node in document.nodes):
+            raise CollaborationCommandRejectedError(
+                code="duplicate_node",
+                message=f"Graph command adds duplicate node {command.node.id}",
+            )
+        return name, SavedGraphDocument(
+            nodes=(*document.nodes, command.node),
+            edges=document.edges,
+        )
+
+    if isinstance(command, DuplicateNodeCommand):
+        _node_or_raise(document, command.source_node_id)
         if any(node.id == command.node.id for node in document.nodes):
             raise CollaborationCommandRejectedError(
                 code="duplicate_node",
@@ -250,25 +399,106 @@ def apply_graph_command(
         )
 
     if isinstance(command, UpdateNodeConfigurationCommand):
-        _node_or_raise(document, command.node_id)
+        node = _node_or_raise(document, command.node_id)
+        current_value = node.config_dict().get(command.field)
+        if not _json_equal(current_value, command.expected_value):
+            raise _field_conflict(
+                f"Configuration field {command.field!r} on node "
+                f"{command.node_id} changed"
+            )
         updated_nodes: list[SavedGraphNode] = []
-        for node in document.nodes:
-            if node.id != command.node_id:
-                updated_nodes.append(node)
+        for candidate in document.nodes:
+            if candidate.id != command.node_id:
+                updated_nodes.append(candidate)
                 continue
-            config = dict(node.config_dict())
+            config = dict(candidate.config_dict())
             config[command.field] = command.value
-            updated_nodes.append(node.model_copy(update={"config": config}))
+            updated_nodes.append(candidate.model_copy(update={"config": config}))
         return name, SavedGraphDocument(nodes=tuple(updated_nodes), edges=document.edges)
 
     if isinstance(command, UpdateNodeLayoutCommand):
-        _node_or_raise(document, command.node_id)
+        node = _node_or_raise(document, command.node_id)
+        if not _json_equal(
+            _model_json(node.layout),
+            _model_json(command.expected_layout),
+        ):
+            raise _field_conflict(f"Layout on node {command.node_id} changed")
         return name, SavedGraphDocument(
             nodes=tuple(
                 node.model_copy(update={"layout": command.layout})
                 if node.id == command.node_id
                 else node
                 for node in document.nodes
+            ),
+            edges=document.edges,
+        )
+
+    if isinstance(command, SetNodeInputPlugsCommand):
+        node = _node_or_raise(document, command.node_id)
+        current_ids = tuple(plug.id for plug in node.input_plugs)
+        if current_ids != command.expected_plug_ids:
+            raise _field_conflict(
+                f"Input plugs on node {command.node_id} changed"
+            )
+        return name, SavedGraphDocument(
+            nodes=tuple(
+                candidate.model_copy(update={"input_plugs": command.input_plugs})
+                if candidate.id == command.node_id
+                else candidate
+                for candidate in document.nodes
+            ),
+            edges=document.edges,
+        )
+
+    if isinstance(command, SetNodeArtifactTypeBindingCommand):
+        node = _node_or_raise(document, command.node_id)
+        current = _binding_for_variable(node, command.binding.variable)
+        if not _json_equal(_model_json(current), _model_json(command.expected_binding)):
+            raise _field_conflict(
+                f"Artifact type binding {command.binding.variable!r} on node "
+                f"{command.node_id} changed"
+            )
+        remaining = tuple(
+            binding
+            for binding in node.artifact_type_bindings
+            if binding.variable != command.binding.variable
+        )
+        return name, SavedGraphDocument(
+            nodes=tuple(
+                candidate.model_copy(
+                    update={
+                        "artifact_type_bindings": (*remaining, command.binding),
+                    }
+                )
+                if candidate.id == command.node_id
+                else candidate
+                for candidate in document.nodes
+            ),
+            edges=document.edges,
+        )
+
+    if isinstance(command, ClearNodeArtifactTypeBindingCommand):
+        node = _node_or_raise(document, command.node_id)
+        current = _binding_for_variable(node, command.variable)
+        if not _json_equal(_model_json(current), _model_json(command.expected_binding)):
+            raise _field_conflict(
+                f"Artifact type binding {command.variable!r} on node "
+                f"{command.node_id} changed"
+            )
+        return name, SavedGraphDocument(
+            nodes=tuple(
+                candidate.model_copy(
+                    update={
+                        "artifact_type_bindings": tuple(
+                            binding
+                            for binding in candidate.artifact_type_bindings
+                            if binding.variable != command.variable
+                        )
+                    }
+                )
+                if candidate.id == command.node_id
+                else candidate
+                for candidate in document.nodes
             ),
             edges=document.edges,
         )
@@ -282,6 +512,26 @@ def apply_graph_command(
         return name, SavedGraphDocument(
             nodes=document.nodes,
             edges=(*document.edges, command.edge),
+        )
+
+    if isinstance(command, UpdateEdgeCommand):
+        current = _edge_or_raise(document, command.edge.id)
+        if not _json_equal(
+            _model_json(current),
+            _model_json(command.expected_edge),
+        ):
+            raise _field_conflict(f"Edge {command.edge.id} changed")
+        if command.edge.id != command.expected_edge.id:
+            raise CollaborationCommandRejectedError(
+                code="invalid_edge_update",
+                message="Update edge command cannot change edge id",
+            )
+        return name, SavedGraphDocument(
+            nodes=document.nodes,
+            edges=tuple(
+                command.edge if edge.id == command.edge.id else edge
+                for edge in document.edges
+            ),
         )
 
     if isinstance(command, RemoveEdgesCommand):
@@ -494,9 +744,11 @@ class GraphActiveExecutionSlot(BaseModel):
 __all__ = [
     "AddEdgeCommand",
     "AddNodeCommand",
+    "ClearNodeArtifactTypeBindingCommand",
     "CollaborationActorKind",
     "CollaborativeGraphHead",
     "CommandReceiptOutcome",
+    "DuplicateNodeCommand",
     "GRAPH_COMMAND_ADAPTER",
     "GraphActiveExecutionSlot",
     "GraphCheckpointMapping",
@@ -511,10 +763,15 @@ __all__ = [
     "RemoveNodesCommand",
     "RenameGraphCommand",
     "ReplaceDocumentCommand",
+    "SetNodeArtifactTypeBindingCommand",
+    "SetNodeInputPlugsCommand",
+    "UpdateEdgeCommand",
     "UpdateNodeConfigurationCommand",
     "UpdateNodeLayoutCommand",
     "apply_graph_command",
     "canonical_command_payload",
     "command_hmac_digest",
+    "command_requires_exact_sequence",
     "empty_collaborative_document",
+    "sanitize_document_for_cross_workspace_copy",
 ]
