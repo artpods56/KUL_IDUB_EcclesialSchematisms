@@ -24,6 +24,7 @@ def _utc_now() -> datetime:
 
 @dataclass
 class MaterializedNodeOutputs:
+    workspace_id: UUID
     graph_id: UUID
     graph_revision: int
     node_id: str

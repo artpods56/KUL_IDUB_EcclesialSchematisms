@@ -170,6 +170,7 @@ class ArtifactRefSequence(BaseModel):
 
 @dataclass
 class ArtifactObject:
+    workspace_id: UUID
     artifact_type: str
     schema_version: int
     content_type: str
@@ -193,29 +194,43 @@ class ArtifactObject:
 class ArtifactRepositoryPort(Protocol):
     async def add(self, artifact: ArtifactObject) -> None: ...
 
-    async def get(self, artifact_id: UUID) -> ArtifactObject | None: ...
+    async def get(
+        self,
+        workspace_id: UUID,
+        artifact_id: UUID,
+    ) -> ArtifactObject | None: ...
 
     async def get_many(
         self,
+        workspace_id: UUID,
         artifact_ids: Collection[UUID],
     ) -> dict[UUID, ArtifactObject]: ...
 
-    async def remove(self, artifact: ArtifactObject) -> None: ...
+    async def remove(self, workspace_id: UUID, artifact: ArtifactObject) -> None: ...
 
-    async def list_by_type(self, key: ArtifactTypeKey) -> list[ArtifactObject]: ...
+    async def list_by_type(
+        self,
+        workspace_id: UUID,
+        key: ArtifactTypeKey,
+    ) -> list[ArtifactObject]: ...
 
 
 @dataclass(slots=True)
 class InMemoryDataStore:
-    artifacts: dict[UUID, ArtifactObject] = field(default_factory=dict)
+    artifacts: dict[tuple[UUID, UUID], ArtifactObject] = field(default_factory=dict)
     materialized_outputs: dict[
-        tuple[UUID, int, str],
+        tuple[UUID, UUID, int, str],
         "MaterializedNodeOutputs",
     ] = field(default_factory=dict)
-    invocation_cache: dict[str, "InvocationCacheEntry"] = field(default_factory=dict)
-    graph_executions: dict[UUID, "GraphExecution"] = field(default_factory=dict)
+    invocation_cache: dict[tuple[UUID, str], "InvocationCacheEntry"] = field(
+        default_factory=dict
+    )
+    graph_executions: dict[
+        tuple[UUID, UUID],
+        "GraphExecution",
+    ] = field(default_factory=dict)
     graph_execution_node_results: dict[
-        tuple[UUID, str],
+        tuple[UUID, UUID, str],
         "GraphExecutionNodeResult",
     ] = field(default_factory=dict)
 
@@ -257,33 +272,45 @@ class InMemoryArtifactRepository(ArtifactRepositoryPort):
 
     @override
     async def add(self, artifact: ArtifactObject) -> None:
-        self._store.artifacts[artifact.id] = artifact
+        self._store.artifacts[(artifact.workspace_id, artifact.id)] = artifact
 
     @override
-    async def get(self, artifact_id: UUID) -> ArtifactObject | None:
-        return self._store.artifacts.get(artifact_id)
+    async def get(
+        self,
+        workspace_id: UUID,
+        artifact_id: UUID,
+    ) -> ArtifactObject | None:
+        return self._store.artifacts.get((workspace_id, artifact_id))
 
     @override
     async def get_many(
         self,
+        workspace_id: UUID,
         artifact_ids: Collection[UUID],
     ) -> dict[UUID, ArtifactObject]:
         return {
             artifact_id: artifact
             for artifact_id in artifact_ids
-            if (artifact := self._store.artifacts.get(artifact_id)) is not None
+            if (
+                artifact := self._store.artifacts.get((workspace_id, artifact_id))
+            ) is not None
         }
 
     @override
-    async def remove(self, artifact: ArtifactObject) -> None:
-        self._store.artifacts.pop(artifact.id, None)
+    async def remove(self, workspace_id: UUID, artifact: ArtifactObject) -> None:
+        self._store.artifacts.pop((workspace_id, artifact.id), None)
 
     @override
-    async def list_by_type(self, key: ArtifactTypeKey) -> list[ArtifactObject]:
+    async def list_by_type(
+        self,
+        workspace_id: UUID,
+        key: ArtifactTypeKey,
+    ) -> list[ArtifactObject]:
         return [
             artifact
             for artifact in self._store.artifacts.values()
-            if artifact.artifact_type == key.id
+            if artifact.workspace_id == workspace_id
+            and artifact.artifact_type == key.id
             and artifact.schema_version == key.schema_version
         ]
 
@@ -294,31 +321,42 @@ class InMemoryMaterializedNodeOutputsRepository:
         self._store = store
 
     async def upsert(self, value: "MaterializedNodeOutputs") -> None:
-        key = (value.graph_id, value.graph_revision, value.node_id)
+        key = (
+            value.workspace_id,
+            value.graph_id,
+            value.graph_revision,
+            value.node_id,
+        )
         self._store.materialized_outputs[key] = _clone(value)
 
     async def get(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         graph_revision: int,
         node_id: str,
     ) -> "MaterializedNodeOutputs | None":
         value = self._store.materialized_outputs.get(
-            (graph_id, graph_revision, node_id)
+            (workspace_id, graph_id, graph_revision, node_id)
         )
         return _clone(value) if value is not None else None
 
     async def list_for_graph(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         graph_revision: int,
     ) -> list["MaterializedNodeOutputs"]:
         values = [
             value
-            for (saved_graph_id, saved_revision, _), value in (
+            for (saved_workspace_id, saved_graph_id, saved_revision, _), value in (
                 self._store.materialized_outputs.items()
             )
-            if saved_graph_id == graph_id and saved_revision == graph_revision
+            if (
+                saved_workspace_id == workspace_id
+                and saved_graph_id == graph_id
+                and saved_revision == graph_revision
+            )
         ]
         return _clone(sorted(values, key=lambda value: value.node_id))
 
@@ -328,25 +366,31 @@ class InMemoryInvocationCacheRepository:
     def __init__(self, store: InMemoryDataStore) -> None:
         self._store = store
 
-    async def get(self, key_sha256: str) -> "InvocationCacheEntry | None":
-        entry = self._store.invocation_cache.get(key_sha256)
+    async def get(
+        self,
+        workspace_id: UUID,
+        key_sha256: str,
+    ) -> "InvocationCacheEntry | None":
+        entry = self._store.invocation_cache.get((workspace_id, key_sha256))
         return _clone(entry) if entry is not None else None
 
     async def put_if_absent(self, entry: "InvocationCacheEntry") -> bool:
-        if entry.key_sha256 in self._store.invocation_cache:
+        key = (entry.workspace_id, entry.key_sha256)
+        if key in self._store.invocation_cache:
             return False
-        self._store.invocation_cache[entry.key_sha256] = _clone(entry)
+        self._store.invocation_cache[key] = _clone(entry)
         return True
 
     async def remove_if_current(
         self,
+        workspace_id: UUID,
         key_sha256: str,
         generation: UUID,
     ) -> bool:
-        entry = self._store.invocation_cache.get(key_sha256)
+        entry = self._store.invocation_cache.get((workspace_id, key_sha256))
         if entry is None or entry.generation != generation:
             return False
-        del self._store.invocation_cache[key_sha256]
+        del self._store.invocation_cache[(workspace_id, key_sha256)]
         return True
 
 
@@ -358,16 +402,19 @@ class InMemoryGraphExecutionHistoryRepository:
     async def add(self, execution: "GraphExecution") -> None:
         from notarius_core.domain.errors import ObjectAlreadyExistsError
 
-        if execution.execution_id in self._store.graph_executions:
+        execution_key = (execution.workspace_id, execution.execution_id)
+        if execution_key in self._store.graph_executions:
             raise ObjectAlreadyExistsError(
                 f"Graph execution already exists: {execution.execution_id}"
             )
-        self._store.graph_executions[execution.execution_id] = _clone(execution)
+        self._store.graph_executions[execution_key] = _clone(execution)
 
     async def update(self, execution: "GraphExecution") -> None:
         from notarius_core.domain.errors import NotFoundError
 
-        current = self._store.graph_executions.get(execution.execution_id)
+        current = self._store.graph_executions.get(
+            (execution.workspace_id, execution.execution_id)
+        )
         if current is None:
             raise NotFoundError("Graph execution", str(execution.execution_id))
         if (
@@ -381,12 +428,16 @@ class InMemoryGraphExecutionHistoryRepository:
                 f"Graph execution {execution.execution_id} identity and request "
                 "fields are immutable"
             )
-        self._store.graph_executions[execution.execution_id] = _clone(execution)
+        self._store.graph_executions[
+            (execution.workspace_id, execution.execution_id)
+        ] = _clone(execution)
 
     async def add_node_result(self, result: "GraphExecutionNodeResult") -> None:
         from notarius_core.domain.errors import NotFoundError, ObjectAlreadyExistsError
 
-        execution = self._store.graph_executions.get(result.execution_id)
+        execution = self._store.graph_executions.get(
+            (result.workspace_id, result.execution_id)
+        )
         if execution is None:
             raise NotFoundError("Graph execution", str(result.execution_id))
         if result.node_id not in execution.requested_node_ids:
@@ -394,14 +445,15 @@ class InMemoryGraphExecutionHistoryRepository:
                 f"Graph execution {result.execution_id} did not request node "
                 f"{result.node_id!r}"
             )
-        key = (result.execution_id, result.node_id)
+        key = (result.workspace_id, result.execution_id, result.node_id)
         if key in self._store.graph_execution_node_results:
             raise ObjectAlreadyExistsError(
                 "Graph execution node result already exists: "
                 f"{result.execution_id}/{result.node_id}"
             )
         if any(
-            stored.execution_id == result.execution_id
+            stored.workspace_id == result.workspace_id
+            and stored.execution_id == result.execution_id
             and stored.position == result.position
             for stored in self._store.graph_execution_node_results.values()
         ):
@@ -411,17 +463,24 @@ class InMemoryGraphExecutionHistoryRepository:
             )
         self._store.graph_execution_node_results[key] = _clone(result)
 
-    async def get(self, execution_id: UUID) -> "GraphExecutionDetail | None":
+    async def get(
+        self,
+        workspace_id: UUID,
+        execution_id: UUID,
+    ) -> "GraphExecutionDetail | None":
         from notarius_core.domain.execution_history import GraphExecutionDetail
 
-        execution = self._store.graph_executions.get(execution_id)
+        execution = self._store.graph_executions.get((workspace_id, execution_id))
         if execution is None:
             return None
         node_results = sorted(
             (
                 result
                 for result in self._store.graph_execution_node_results.values()
-                if result.execution_id == execution_id
+                if (
+                    result.workspace_id == workspace_id
+                    and result.execution_id == execution_id
+                )
             ),
             key=lambda result: (result.position, result.node_id),
         )
@@ -432,6 +491,7 @@ class InMemoryGraphExecutionHistoryRepository:
 
     async def list_for_graph(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         *,
         limit: int,
@@ -459,7 +519,8 @@ class InMemoryGraphExecutionHistoryRepository:
         values = [
             execution
             for execution in self._store.graph_executions.values()
-            if execution.graph_id == graph_id
+            if execution.workspace_id == workspace_id
+            and execution.graph_id == graph_id
             and (
                 graph_revision is None
                 or execution.graph_revision == graph_revision
@@ -491,7 +552,10 @@ class InMemoryGraphExecutionHistoryRepository:
             results = [
                 result
                 for result in self._store.graph_execution_node_results.values()
-                if result.execution_id == execution.execution_id
+                if (
+                    result.workspace_id == workspace_id
+                    and result.execution_id == execution.execution_id
+                )
             ]
             items.append(
                 GraphExecutionListItem(
@@ -512,6 +576,7 @@ class InMemoryGraphExecutionHistoryRepository:
     async def interrupt_active(
         self,
         *,
+        workspace_id: UUID,
         finished_at: datetime,
         error: str,
     ) -> int:
@@ -520,10 +585,12 @@ class InMemoryGraphExecutionHistoryRepository:
                 "Graph execution interruption timestamp must be timezone-aware"
             )
         interrupted = 0
-        for execution_id, execution in list(self._store.graph_executions.items()):
+        for execution_key, execution in list(self._store.graph_executions.items()):
+            if execution.workspace_id != workspace_id:
+                continue
             if execution.status not in {"queued", "running", "cancelling"}:
                 continue
-            self._store.graph_executions[execution_id] = replace(
+            self._store.graph_executions[execution_key] = replace(
                 execution,
                 status="failed",
                 finished_at=finished_at,

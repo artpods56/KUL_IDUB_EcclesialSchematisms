@@ -20,10 +20,15 @@ class GraphExecutionHistoryRepositoryPort(Protocol):
 
     async def add_node_result(self, result: GraphExecutionNodeResult) -> None: ...
 
-    async def get(self, execution_id: UUID) -> GraphExecutionDetail | None: ...
+    async def get(
+        self,
+        workspace_id: UUID,
+        execution_id: UUID,
+    ) -> GraphExecutionDetail | None: ...
 
     async def list_for_graph(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         *,
         limit: int,
@@ -36,6 +41,7 @@ class GraphExecutionHistoryRepositoryPort(Protocol):
     async def interrupt_active(
         self,
         *,
+        workspace_id: UUID,
         finished_at: datetime,
         error: str,
     ) -> int: ...

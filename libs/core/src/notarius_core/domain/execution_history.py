@@ -46,6 +46,7 @@ def _require_aware_timestamp(value: datetime | None, label: str) -> None:
 
 @dataclass
 class GraphExecution:
+    workspace_id: UUID
     execution_id: UUID
     graph_id: UUID
     graph_revision: int
@@ -109,6 +110,7 @@ class GraphExecution:
 
 @dataclass
 class GraphExecutionNodeResult:
+    workspace_id: UUID
     execution_id: UUID
     node_id: str
     position: int

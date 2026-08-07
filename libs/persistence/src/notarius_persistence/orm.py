@@ -26,6 +26,7 @@ from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
 from notarius_core.domain.node_secrets import EncryptedNodeSecret
 from notarius_core.domain.saved_graphs import SavedGraph, SavedGraphDocument
 from notarius_core.domain.security_audit import SecurityAuditEvent
+from notarius_core.domain.staged_uploads import StagedUpload
 
 from notarius_persistence import schema
 
@@ -36,6 +37,7 @@ metadata = schema.metadata
 
 @dataclass
 class SavedGraphRevisionRecord:
+    workspace_id: UUID
     graph_id: UUID
     revision: int
     name: str
@@ -45,6 +47,7 @@ class SavedGraphRevisionRecord:
 
 @dataclass
 class GraphExecutionRecord:
+    workspace_id: UUID
     execution_id: UUID
     graph_id: UUID
     graph_revision: int
@@ -58,6 +61,7 @@ class GraphExecutionRecord:
 
     def to_domain(self, requested_node_ids: tuple[str, ...]) -> GraphExecution:
         return GraphExecution(
+            workspace_id=self.workspace_id,
             execution_id=self.execution_id,
             graph_id=self.graph_id,
             graph_revision=self.graph_revision,
@@ -134,3 +138,4 @@ def start_mappers() -> None:
         SecurityAuditEvent,
         schema.security_audit_events,
     )
+    mapper_registry.map_imperatively(StagedUpload, schema.staged_uploads)

@@ -250,12 +250,26 @@ saved_graphs = Table(
     "saved_graphs",
     metadata,
     Column("id", SaUuid(as_uuid=True), primary_key=True),
+    Column(
+        "workspace_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    Column(
+        "created_by_user_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    ),
     Column("name", String(160), nullable=False),
     Column("document", SavedGraphDocumentType(), nullable=False),
     Column("revision", Integer, nullable=False, default=1),
     Column("created_at", UTCDateTime(), nullable=False),
     Column("updated_at", UTCDateTime(), nullable=False),
-    Index("ix_saved_graphs_updated_at", "updated_at"),
+    UniqueConstraint("workspace_id", "id", name="uq_saved_graphs_workspace_id_id"),
+    Index("ix_saved_graphs_workspace_updated_at", "workspace_id", "updated_at"),
+    Index("ix_saved_graphs_workspace_id", "workspace_id", "id"),
 )
 
 
@@ -263,15 +277,30 @@ saved_graph_revisions = Table(
     "saved_graph_revisions",
     metadata,
     Column(
+        "workspace_id",
+        SaUuid(as_uuid=True),
+        primary_key=True,
+    ),
+    Column(
         "graph_id",
         SaUuid(as_uuid=True),
-        ForeignKey("saved_graphs.id", ondelete="CASCADE"),
         primary_key=True,
     ),
     Column("revision", Integer, primary_key=True),
     Column("name", String(160), nullable=False),
     Column("document", SavedGraphDocumentType(), nullable=False),
     Column("created_at", UTCDateTime(), nullable=False),
+    ForeignKeyConstraint(
+        ("workspace_id", "graph_id"),
+        ("saved_graphs.workspace_id", "saved_graphs.id"),
+        ondelete="CASCADE",
+    ),
+    Index(
+        "ix_saved_graph_revisions_workspace_graph_revision",
+        "workspace_id",
+        "graph_id",
+        "revision",
+    ),
 )
 
 
@@ -279,6 +308,12 @@ artifact_objects = Table(
     "artifact_objects",
     metadata,
     Column("id", SaUuid(as_uuid=True), primary_key=True),
+    Column(
+        "workspace_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
     Column("artifact_type", String(255), nullable=False),
     Column("schema_version", Integer, nullable=False),
     Column("content_type", String(255), nullable=False),
@@ -289,14 +324,26 @@ artifact_objects = Table(
     Column("byte_size", BigInteger, nullable=True),
     Column("sha256", String(64), nullable=True),
     Column("metadata", JSON, nullable=False),
-    Index("ix_artifact_objects_type", "artifact_type", "schema_version"),
-    Index("ix_artifact_objects_sha256", "sha256"),
+    UniqueConstraint("workspace_id", "id", name="uq_artifact_objects_workspace_id_id"),
+    Index(
+        "ix_artifact_objects_workspace_type",
+        "workspace_id",
+        "artifact_type",
+        "schema_version",
+    ),
+    Index("ix_artifact_objects_workspace_sha256", "workspace_id", "sha256"),
 )
 
 
 invocation_cache_entries = Table(
     "invocation_cache_entries",
     metadata,
+    Column(
+        "workspace_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
     Column("key_sha256", String(64), primary_key=True),
     Column("generation", SaUuid(as_uuid=True), nullable=False),
     Column("outputs", ArtifactOutputsType(), nullable=False),
@@ -307,10 +354,10 @@ invocation_cache_entries = Table(
 materialized_node_outputs = Table(
     "materialized_node_outputs",
     metadata,
+    Column("workspace_id", SaUuid(as_uuid=True), primary_key=True),
     Column(
         "graph_id",
         SaUuid(as_uuid=True),
-        ForeignKey("saved_graphs.id", ondelete="CASCADE"),
         primary_key=True,
     ),
     Column("graph_revision", Integer, primary_key=True),
@@ -318,8 +365,18 @@ materialized_node_outputs = Table(
     Column("workflow_run_id", SaUuid(as_uuid=True), nullable=False),
     Column("outputs", ArtifactOutputsType(), nullable=False),
     Column("materialized_at", UTCDateTime(), nullable=False),
+    ForeignKeyConstraint(
+        ("workspace_id", "graph_id", "graph_revision"),
+        (
+            "saved_graph_revisions.workspace_id",
+            "saved_graph_revisions.graph_id",
+            "saved_graph_revisions.revision",
+        ),
+        ondelete="CASCADE",
+    ),
     Index(
         "ix_materialized_node_outputs_graph_revision",
+        "workspace_id",
         "graph_id",
         "graph_revision",
         "materialized_at",
@@ -330,6 +387,7 @@ materialized_node_outputs = Table(
 graph_executions = Table(
     "graph_executions",
     metadata,
+    Column("workspace_id", SaUuid(as_uuid=True), nullable=False),
     Column("execution_id", SaUuid(as_uuid=True), primary_key=True),
     Column("graph_id", SaUuid(as_uuid=True), nullable=False),
     Column("graph_revision", Integer, nullable=False),
@@ -341,18 +399,29 @@ graph_executions = Table(
     Column("started_at", UTCDateTime(), nullable=True),
     Column("finished_at", UTCDateTime(), nullable=True),
     ForeignKeyConstraint(
-        ("graph_id", "graph_revision"),
-        ("saved_graph_revisions.graph_id", "saved_graph_revisions.revision"),
+        ("workspace_id", "graph_id", "graph_revision"),
+        (
+            "saved_graph_revisions.workspace_id",
+            "saved_graph_revisions.graph_id",
+            "saved_graph_revisions.revision",
+        ),
         ondelete="CASCADE",
+    ),
+    UniqueConstraint(
+        "workspace_id",
+        "execution_id",
+        name="uq_graph_executions_workspace_id_execution_id",
     ),
     Index(
         "ix_graph_executions_graph_created",
+        "workspace_id",
         "graph_id",
         "created_at",
         "execution_id",
     ),
     Index(
         "ix_graph_executions_graph_revision_created",
+        "workspace_id",
         "graph_id",
         "graph_revision",
         "created_at",
@@ -366,20 +435,31 @@ graph_execution_requested_nodes = Table(
     "graph_execution_requested_nodes",
     metadata,
     Column(
+        "workspace_id",
+        SaUuid(as_uuid=True),
+        primary_key=True,
+    ),
+    Column(
         "execution_id",
         SaUuid(as_uuid=True),
-        ForeignKey("graph_executions.execution_id", ondelete="CASCADE"),
         primary_key=True,
     ),
     Column("node_id", String(255), primary_key=True),
     Column("position", Integer, nullable=False),
+    ForeignKeyConstraint(
+        ("workspace_id", "execution_id"),
+        ("graph_executions.workspace_id", "graph_executions.execution_id"),
+        ondelete="CASCADE",
+    ),
     UniqueConstraint(
+        "workspace_id",
         "execution_id",
         "position",
         name="uq_graph_execution_requested_nodes_execution_position",
     ),
     Index(
         "ix_graph_execution_requested_nodes_node_execution",
+        "workspace_id",
         "node_id",
         "execution_id",
     ),
@@ -389,10 +469,10 @@ graph_execution_requested_nodes = Table(
 graph_execution_node_results = Table(
     "graph_execution_node_results",
     metadata,
+    Column("workspace_id", SaUuid(as_uuid=True), primary_key=True),
     Column(
         "execution_id",
         SaUuid(as_uuid=True),
-        ForeignKey("graph_executions.execution_id", ondelete="CASCADE"),
         primary_key=True,
     ),
     Column("node_id", String(255), primary_key=True),
@@ -402,13 +482,20 @@ graph_execution_node_results = Table(
     Column("artifact_count", Integer, nullable=False),
     Column("error", Text, nullable=True),
     Column("completed_at", UTCDateTime(), nullable=False),
+    ForeignKeyConstraint(
+        ("workspace_id", "execution_id"),
+        ("graph_executions.workspace_id", "graph_executions.execution_id"),
+        ondelete="CASCADE",
+    ),
     UniqueConstraint(
+        "workspace_id",
         "execution_id",
         "position",
         name="uq_graph_execution_node_results_execution_position",
     ),
     Index(
         "ix_graph_execution_node_results_node_execution",
+        "workspace_id",
         "node_id",
         "execution_id",
     ),
@@ -418,10 +505,10 @@ graph_execution_node_results = Table(
 node_secrets = Table(
     "node_secrets",
     metadata,
+    Column("workspace_id", SaUuid(as_uuid=True), primary_key=True),
     Column(
         "graph_id",
         SaUuid(as_uuid=True),
-        ForeignKey("saved_graphs.id", ondelete="CASCADE"),
         primary_key=True,
     ),
     Column("node_id", String(255), primary_key=True),
@@ -434,7 +521,44 @@ node_secrets = Table(
     Column("ciphertext", LargeBinary(), nullable=False),
     Column("created_at", UTCDateTime(), nullable=False),
     Column("updated_at", UTCDateTime(), nullable=False),
-    Index("ix_node_secrets_graph_id", "graph_id"),
+    ForeignKeyConstraint(
+        ("workspace_id", "graph_id"),
+        ("saved_graphs.workspace_id", "saved_graphs.id"),
+        ondelete="CASCADE",
+    ),
+    Index("ix_node_secrets_workspace_graph", "workspace_id", "graph_id"),
+)
+
+
+staged_uploads = Table(
+    "staged_uploads",
+    metadata,
+    Column("workspace_id", SaUuid(as_uuid=True), primary_key=True),
+    Column("upload_key", String(1024), primary_key=True),
+    Column(
+        "created_by_user_id",
+        SaUuid(as_uuid=True),
+        nullable=True,
+    ),
+    Column("original_filename", String(255), nullable=False),
+    Column("byte_size", BigInteger, nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    ForeignKeyConstraint(
+        ("workspace_id",),
+        ("workspaces.id",),
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ("created_by_user_id",),
+        ("users.id",),
+        ondelete="SET NULL",
+    ),
+    CheckConstraint("byte_size >= 0", name="ck_staged_uploads_byte_size_nonnegative"),
+    CheckConstraint(
+        "length(original_filename) BETWEEN 1 AND 255",
+        name="ck_staged_uploads_original_filename_bounded",
+    ),
+    Index("ix_staged_uploads_workspace_created_at", "workspace_id", "created_at"),
 )
 
 

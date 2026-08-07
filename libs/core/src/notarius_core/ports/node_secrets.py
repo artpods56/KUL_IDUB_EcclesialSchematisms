@@ -71,14 +71,25 @@ class NodeSecretRepositoryPort(Protocol):
 
     async def get(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         node_id: str,
         name: str,
     ) -> EncryptedNodeSecret | None: ...
 
-    async def list_for_graph(self, graph_id: UUID) -> list[EncryptedNodeSecret]: ...
+    async def list_for_graph(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> list[EncryptedNodeSecret]: ...
 
-    async def remove(self, graph_id: UUID, node_id: str, name: str) -> None: ...
+    async def remove(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+        node_id: str,
+        name: str,
+    ) -> None: ...
 
 
 class NodeSecretUnitOfWorkPort(Protocol):

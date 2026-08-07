@@ -31,6 +31,10 @@ from notarius_core.ports.identity import (
     IdentityUnitOfWorkPort,
     SecurityAuditRepositoryPort,
 )
+from notarius_core.ports.staged_uploads import (
+    StagedUploadRepositoryPort,
+    StagedUploadUnitOfWorkPort,
+)
 
 __all__ = [
     "FileMetadata",
@@ -54,4 +58,6 @@ __all__ = [
     "StoredFile",
     "StoredObjectInfo",
     "UnavailableNodeSecretResolver",
+    "StagedUploadRepositoryPort",
+    "StagedUploadUnitOfWorkPort",
 ]

@@ -24,6 +24,56 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
         f"sqlite+aiosqlite:///{database_path}",
     )
     get_settings.cache_clear()
+
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0003_node_secrets")
+
+    graph_id = UUID("00000000-0000-0000-0000-000000000401")
+    document: dict[str, object] = {
+        "schema_version": 3,
+        "nodes": [],
+        "edges": [],
+    }
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO saved_graphs "
+                "(id, name, document, revision, created_at, updated_at) "
+                "VALUES (:id, :name, :document, :revision, :created_at, :updated_at)"
+            ),
+            {
+                "id": graph_id.hex,
+                "name": "Existing graph",
+                "document": json.dumps(document),
+                "revision": 7,
+                "created_at": "2026-07-14 08:00:00",
+                "updated_at": "2026-07-16 09:30:00",
+            },
+        )
+
+    command.upgrade(config, "head")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        row = (
+            connection.execute(
+                text(
+                    "SELECT graph_id, revision, name, document, created_at "
+                    "FROM saved_graph_revisions"
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert row["graph_id"] == graph_id.hex
+        assert row["revision"] == 7
+        assert row["name"] == "Existing graph"
+        assert json.loads(row["document"]) == document
+        assert str(row["created_at"]) == "2026-07-16 09:30:00"
+
+    command.downgrade(config, "0003_node_secrets")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        assert "saved_graph_revisions" not in inspect(connection).get_table_names()
+
+    get_settings.cache_clear()
     config = Config(REPOSITORY_ROOT / "alembic.ini")
 
     command.upgrade(config, "head")
@@ -49,6 +99,7 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "security_audit_events",
             "saved_graphs",
             "saved_graph_revisions",
+            "staged_uploads",
         }
     command.check(config)
 
@@ -58,6 +109,7 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
 
     command.upgrade(config, "head")
     with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
         assert set(inspect(connection).get_table_names()) == {
             "alembic_version",
             "artifact_objects",
@@ -78,6 +130,7 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "security_audit_events",
             "saved_graphs",
             "saved_graph_revisions",
+            "staged_uploads",
         }
 
     get_settings.cache_clear()
@@ -97,20 +150,22 @@ def test_identity_migration_creates_sealed_local_workspace_and_audit_indexes(
 
     command.upgrade(config, "0007_identity_workspace_foundation")
     with create_engine(f"sqlite:///{database_path}").connect() as connection:
-        local = connection.execute(
-            text(
-                "SELECT slug, kind, personal_owner_user_id "
-                "FROM workspaces WHERE slug = 'local'"
+        local = (
+            connection.execute(
+                text(
+                    "SELECT slug, kind, personal_owner_user_id "
+                    "FROM workspaces WHERE slug = 'local'"
+                )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
         assert local == {
             "slug": "local",
             "kind": "shared",
             "personal_owner_user_id": None,
         }
-        assert connection.execute(
-            text("SELECT COUNT(*) FROM users")
-        ).scalar_one() == 0
+        assert connection.execute(text("SELECT COUNT(*) FROM users")).scalar_one() == 0
         workspaces_ddl = connection.execute(
             text(
                 "SELECT sql FROM sqlite_master "
@@ -162,6 +217,7 @@ def test_saved_graph_revision_migration_backfills_the_current_head(
         f"sqlite+aiosqlite:///{database_path}",
     )
     get_settings.cache_clear()
+
     config = Config(REPOSITORY_ROOT / "alembic.ini")
     command.upgrade(config, "0003_node_secrets")
 
@@ -210,4 +266,213 @@ def test_saved_graph_revision_migration_backfills_the_current_head(
     with create_engine(f"sqlite:///{database_path}").connect() as connection:
         assert "saved_graph_revisions" not in inspect(connection).get_table_names()
 
+    get_settings.cache_clear()
+
+
+def test_tenant_migration_backfills_all_0006_resources_and_checks_composite_keys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "tenant-backfill" / "migrated.sqlite3"
+    monkeypatch.setenv(
+        "NOTARIUS_DATABASE_URL",
+        f"sqlite+aiosqlite:///{database_path}",
+    )
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0006_execution_history")
+
+    graph_id = UUID("00000000-0000-0000-0000-000000000801")
+    execution_id = UUID("00000000-0000-0000-0000-000000000802")
+    artifact_id = UUID("00000000-0000-0000-0000-000000000803")
+    generation_id = UUID("00000000-0000-0000-0000-000000000804")
+    workflow_run_id = UUID("00000000-0000-0000-0000-000000000805")
+    timestamp = "2026-08-07 08:00:00"
+    document = json.dumps({"schema_version": 3, "nodes": [], "edges": []})
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO saved_graphs "
+                "(id, name, document, revision, created_at, updated_at) "
+                "VALUES (:id, 'Migrated graph', :document, 1, :created_at, :updated_at)"
+            ),
+            {
+                "id": graph_id.hex,
+                "document": document,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO saved_graph_revisions "
+                "(graph_id, revision, name, document, created_at) "
+                "VALUES (:graph_id, 1, 'Migrated graph', :document, :created_at)"
+            ),
+            {"graph_id": graph_id.hex, "document": document, "created_at": timestamp},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO artifact_objects "
+                "(id, artifact_type, schema_version, content_type, storage_backend, "
+                "metadata) VALUES (:id, 'test.artifact', 1, 'application/json', "
+                "'inline', '{}')"
+            ),
+            {"id": artifact_id.hex},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO invocation_cache_entries "
+                "(key_sha256, generation, outputs, created_at) "
+                "VALUES (:key, :generation, '[]', :created_at)"
+            ),
+            {
+                "key": "a" * 64,
+                "generation": generation_id.hex,
+                "created_at": timestamp,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO materialized_node_outputs "
+                "(graph_id, graph_revision, node_id, workflow_run_id, outputs, "
+                "materialized_at) VALUES (:graph_id, 1, 'node', :workflow_run_id, "
+                "'[]', :created_at)"
+            ),
+            {
+                "graph_id": graph_id.hex,
+                "workflow_run_id": workflow_run_id.hex,
+                "created_at": timestamp,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO node_secrets "
+                "(graph_id, node_id, name, operator_id, operator_version, key_id, "
+                "dependency_sha256, nonce, ciphertext, created_at, updated_at) "
+                "VALUES (:graph_id, 'node', 'secret', 'test.operator', 1, 'key', "
+                ":dependency, :nonce, :ciphertext, :created_at, :updated_at)"
+            ),
+            {
+                "graph_id": graph_id.hex,
+                "dependency": "b" * 64,
+                "nonce": b"0" * 12,
+                "ciphertext": b"ciphertext",
+                "created_at": timestamp,
+                "updated_at": timestamp,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO graph_executions "
+                "(execution_id, graph_id, graph_revision, status, scope, created_at) "
+                "VALUES (:execution_id, :graph_id, 1, 'succeeded', 'all', :created_at)"
+            ),
+            {
+                "execution_id": execution_id.hex,
+                "graph_id": graph_id.hex,
+                "created_at": timestamp,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO graph_execution_requested_nodes "
+                "(execution_id, node_id, position) VALUES (:execution_id, 'node', 0)"
+            ),
+            {"execution_id": execution_id.hex},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO graph_execution_node_results "
+                "(execution_id, node_id, position, status, outputs, artifact_count, "
+                "completed_at) VALUES (:execution_id, 'node', 0, 'succeeded', '[]', "
+                "0, :completed_at)"
+            ),
+            {"execution_id": execution_id.hex, "completed_at": timestamp},
+        )
+
+    command.upgrade(config, "head")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+        for table_name in (
+            "saved_graphs",
+            "saved_graph_revisions",
+            "artifact_objects",
+            "invocation_cache_entries",
+            "materialized_node_outputs",
+            "node_secrets",
+            "graph_executions",
+            "graph_execution_requested_nodes",
+            "graph_execution_node_results",
+        ):
+            assert (
+                connection.execute(
+                    text(
+                        f"SELECT COUNT(*) FROM {table_name} "
+                        "WHERE workspace_id = '00000000000000000000000000000007'"
+                    )
+                ).scalar_one()
+                == 1
+            )
+        assert connection.execute(text("PRAGMA foreign_key_check")).all() == []
+        connection.execute(
+            text(
+                "INSERT INTO workspaces "
+                "(id, slug, name, kind, created_at, updated_at) VALUES "
+                "(:id, 'other', 'Other', 'shared', :created_at, :created_at)"
+            ),
+            {"id": "00000000000000000000000000000009", "created_at": timestamp},
+        )
+        with pytest.raises(IntegrityError):
+            connection.execute(
+                text(
+                    "INSERT INTO saved_graph_revisions "
+                    "(workspace_id, graph_id, revision, name, document, created_at) "
+                    "VALUES (:workspace_id, :graph_id, 2, 'Foreign', :document, "
+                    ":created_at)"
+                ),
+                {
+                    "workspace_id": "00000000000000000000000000000009",
+                    "graph_id": graph_id.hex,
+                    "document": document,
+                    "created_at": timestamp,
+                },
+            )
+
+    get_settings.cache_clear()
+
+
+def test_direct_0007_downgrade_refuses_identity_data_but_allows_empty_bootstrap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "identity-guard" / "migrated.sqlite3"
+    monkeypatch.setenv(
+        "NOTARIUS_DATABASE_URL",
+        f"sqlite+aiosqlite:///{database_path}",
+    )
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0007_identity_workspace_foundation")
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO users "
+                "(id, active, created_at, updated_at) VALUES "
+                "('00000000000000000000000000000008', 1, :created_at, :created_at)"
+            ),
+            {"created_at": "2026-08-07 08:00:00"},
+        )
+    with pytest.raises(RuntimeError, match="identity/security data"):
+        command.downgrade(config, "0006_execution_history")
+
+    empty_database_path = tmp_path / "identity-empty" / "migrated.sqlite3"
+    monkeypatch.setenv(
+        "NOTARIUS_DATABASE_URL",
+        f"sqlite+aiosqlite:///{empty_database_path}",
+    )
+    get_settings.cache_clear()
+    empty_config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(empty_config, "0007_identity_workspace_foundation")
+    command.downgrade(empty_config, "0006_execution_history")
     get_settings.cache_clear()

@@ -41,6 +41,7 @@ def node_secret_dependency_sha256(
 
 @dataclass(repr=False)
 class EncryptedNodeSecret:
+    workspace_id: UUID
     graph_id: UUID
     node_id: str
     name: str
@@ -76,7 +77,8 @@ class EncryptedNodeSecret:
     def __repr__(self) -> str:
         return (
             "EncryptedNodeSecret("
-            f"graph_id={self.graph_id!r}, node_id={self.node_id!r}, "
+            f"workspace_id={self.workspace_id!r}, graph_id={self.graph_id!r}, "
+            f"node_id={self.node_id!r}, "
             f"name={self.name!r}, operator_id={self.operator_id!r}, "
             f"operator_version={self.operator_version!r}, key_id={self.key_id!r}, "
             "nonce=<redacted>, ciphertext=<redacted>)"

@@ -14,6 +14,7 @@ def _utc_now() -> datetime:
 
 @dataclass
 class InvocationCacheEntry:
+    workspace_id: UUID
     key_sha256: str
     outputs: dict[str, ArtifactOutputValue]
     generation: UUID = field(default_factory=uuid4)

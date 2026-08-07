@@ -340,8 +340,10 @@ def _validated_graph_name(value: str) -> str:
 
 @dataclass
 class SavedGraph:
+    workspace_id: UUID
     name: str
     document: SavedGraphDocument
+    created_by_user_id: UUID | None = None
     id: UUID = field(default_factory=uuid4)
     revision: int = 1
     created_at: datetime = field(default_factory=_utc_now)
@@ -375,6 +377,7 @@ class SavedGraph:
 
     def snapshot(self) -> "SavedGraphRevision":
         return SavedGraphRevision(
+            workspace_id=self.workspace_id,
             graph_id=self.id,
             revision=self.revision,
             name=self.name,
@@ -393,6 +396,7 @@ class SavedGraph:
 
 @dataclass(frozen=True, slots=True)
 class SavedGraphRevision:
+    workspace_id: UUID
     graph_id: UUID
     revision: int
     name: str

@@ -30,6 +30,10 @@ from notarius_core.ports.saved_graphs import (
     SavedGraphRepositoryPort,
     SavedGraphUnitOfWorkPort,
 )
+from notarius_core.ports.staged_uploads import (
+    StagedUploadRepositoryPort,
+    StagedUploadUnitOfWorkPort,
+)
 
 from notarius_persistence.adapters.repositories import (
     SqlArtifactRepository,
@@ -40,6 +44,7 @@ from notarius_persistence.adapters.repositories import (
     SqlNodeSecretRepository,
     SqlSavedGraphRepository,
     SqlSecurityAuditRepository,
+    SqlStagedUploadRepository,
 )
 
 
@@ -54,6 +59,7 @@ class _SqlAlchemyUnitOfWorkState:
     execution_history: GraphExecutionHistoryRepositoryPort
     identity: IdentityRepositoryPort
     security_audit: SecurityAuditRepositoryPort
+    staged_uploads: StagedUploadRepositoryPort
 
 
 class SqlAlchemyUnitOfWork(
@@ -62,6 +68,7 @@ class SqlAlchemyUnitOfWork(
     NodeSecretUnitOfWorkPort,
     ExecutionHistoryUnitOfWorkPort,
     IdentityUnitOfWorkPort,
+    StagedUploadUnitOfWorkPort,
 ):
     """Reusable task-local SQLAlchemy transaction boundary.
 
@@ -120,6 +127,11 @@ class SqlAlchemyUnitOfWork(
     def security_audit(self) -> SecurityAuditRepositoryPort:
         return self._entered_state().security_audit
 
+    @property
+    @override
+    def staged_uploads(self) -> StagedUploadRepositoryPort:
+        return self._entered_state().staged_uploads
+
     @override
     async def __aenter__(self) -> "SqlAlchemyUnitOfWork":
         if self._state.get() is not None:
@@ -136,6 +148,7 @@ class SqlAlchemyUnitOfWork(
                 execution_history=SqlGraphExecutionHistoryRepository(session),
                 identity=SqlIdentityRepository(session),
                 security_audit=SqlSecurityAuditRepository(session),
+                staged_uploads=SqlStagedUploadRepository(session),
             )
         )
         return self

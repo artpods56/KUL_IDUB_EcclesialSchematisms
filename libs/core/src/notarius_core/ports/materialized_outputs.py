@@ -11,6 +11,7 @@ class MaterializedNodeOutputsRepositoryPort(Protocol):
 
     async def get(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         graph_revision: int,
         node_id: str,
@@ -18,6 +19,7 @@ class MaterializedNodeOutputsRepositoryPort(Protocol):
 
     async def list_for_graph(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         graph_revision: int,
     ) -> list[MaterializedNodeOutputs]: ...

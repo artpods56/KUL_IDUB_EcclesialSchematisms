@@ -41,6 +41,7 @@ from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
 from notarius_core.domain.node_secrets import EncryptedNodeSecret
 from notarius_core.domain.saved_graphs import SavedGraph, SavedGraphRevision
 from notarius_core.domain.security_audit import SecurityAuditEvent
+from notarius_core.domain.staged_uploads import StagedUpload
 from notarius_core.ports.identity import (
     IdentityRepositoryPort,
     SecurityAuditRepositoryPort,
@@ -54,6 +55,7 @@ from notarius_core.ports.materialized_outputs import (
 )
 from notarius_core.ports.node_secrets import NodeSecretRepositoryPort
 from notarius_core.ports.saved_graphs import SavedGraphRepositoryPort
+from notarius_core.ports.staged_uploads import StagedUploadRepositoryPort
 
 from notarius_persistence import schema
 from notarius_persistence.orm import GraphExecutionRecord, SavedGraphRevisionRecord
@@ -430,6 +432,7 @@ class SqlSavedGraphRepository(SavedGraphRepositoryPort):
     async def add_revision(self, revision: SavedGraphRevision) -> None:
         self._session.add(
             SavedGraphRevisionRecord(
+                workspace_id=revision.workspace_id,
                 graph_id=revision.graph_id,
                 revision=revision.revision,
                 name=revision.name,
@@ -439,35 +442,48 @@ class SqlSavedGraphRepository(SavedGraphRepositoryPort):
         )
 
     @override
-    async def lock_revision(self, graph_id: UUID, expected_revision: int) -> None:
+    async def lock_revision(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+        expected_revision: int,
+    ) -> None:
         table = schema.saved_graphs
         await self._session.execute(
             update(table)
             .where(
                 table.c.id == graph_id,
+                table.c.workspace_id == workspace_id,
                 table.c.revision == expected_revision,
             )
             .values(revision=table.c.revision)
         )
 
     @override
-    async def get(self, graph_id: UUID) -> SavedGraph | None:
-        return await self._session.get(SavedGraph, graph_id)
+    async def get(self, workspace_id: UUID, graph_id: UUID) -> SavedGraph | None:
+        return await self._session.scalar(
+            select(SavedGraph).where(
+                schema.saved_graphs.c.workspace_id == workspace_id,
+                schema.saved_graphs.c.id == graph_id,
+            )
+        )
 
     @override
     async def get_revision(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         revision: int,
     ) -> SavedGraphRevision | None:
         record = await self._session.get(
             SavedGraphRevisionRecord,
-            (graph_id, revision),
+            (workspace_id, graph_id, revision),
         )
         if record is None:
             return None
         return SavedGraphRevision(
             graph_id=record.graph_id,
+            workspace_id=record.workspace_id,
             revision=record.revision,
             name=record.name,
             document=record.document,
@@ -475,15 +491,21 @@ class SqlSavedGraphRepository(SavedGraphRepositoryPort):
         )
 
     @override
-    async def list_revisions(self, graph_id: UUID) -> list[SavedGraphRevision]:
+    async def list_revisions(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> list[SavedGraphRevision]:
         result = await self._session.scalars(
             select(SavedGraphRevisionRecord)
             .where(schema.saved_graph_revisions.c.graph_id == graph_id)
+            .where(schema.saved_graph_revisions.c.workspace_id == workspace_id)
             .order_by(schema.saved_graph_revisions.c.revision.desc())
         )
         return [
             SavedGraphRevision(
                 graph_id=record.graph_id,
+                workspace_id=record.workspace_id,
                 revision=record.revision,
                 name=record.name,
                 document=record.document,
@@ -493,18 +515,24 @@ class SqlSavedGraphRepository(SavedGraphRepositoryPort):
         ]
 
     @override
-    async def list(self) -> list[SavedGraph]:
+    async def list(self, workspace_id: UUID) -> list[SavedGraph]:
         result = await self._session.scalars(
             select(SavedGraph).order_by(
                 schema.saved_graphs.c.updated_at.desc(),
                 schema.saved_graphs.c.id.asc(),
             )
+            .where(schema.saved_graphs.c.workspace_id == workspace_id)
         )
         return list(result)
 
     @override
-    async def remove(self, graph: SavedGraph) -> None:
-        await self._session.delete(graph)
+    async def remove(self, workspace_id: UUID, graph: SavedGraph) -> None:
+        await self._session.execute(
+            delete(schema.saved_graphs).where(
+                schema.saved_graphs.c.workspace_id == workspace_id,
+                schema.saved_graphs.c.id == graph.id,
+            )
+        )
 
 
 class SqlArtifactRepository(ArtifactRepositoryPort):
@@ -516,34 +544,55 @@ class SqlArtifactRepository(ArtifactRepositoryPort):
         self._session.add(artifact)
 
     @override
-    async def get(self, artifact_id: UUID) -> ArtifactObject | None:
-        return await self._session.get(ArtifactObject, artifact_id)
+    async def get(
+        self,
+        workspace_id: UUID,
+        artifact_id: UUID,
+    ) -> ArtifactObject | None:
+        return await self._session.scalar(
+            select(ArtifactObject).where(
+                schema.artifact_objects.c.workspace_id == workspace_id,
+                schema.artifact_objects.c.id == artifact_id,
+            )
+        )
 
     @override
     async def get_many(
         self,
+        workspace_id: UUID,
         artifact_ids: Collection[UUID],
     ) -> dict[UUID, ArtifactObject]:
         if not artifact_ids:
             return {}
         result = await self._session.scalars(
             select(ArtifactObject).where(
-                schema.artifact_objects.c.id.in_(set(artifact_ids))
+                schema.artifact_objects.c.id.in_(set(artifact_ids)),
+                schema.artifact_objects.c.workspace_id == workspace_id,
             )
         )
         return {artifact.id: artifact for artifact in result}
 
     @override
-    async def remove(self, artifact: ArtifactObject) -> None:
-        await self._session.delete(artifact)
+    async def remove(self, workspace_id: UUID, artifact: ArtifactObject) -> None:
+        await self._session.execute(
+            delete(schema.artifact_objects).where(
+                schema.artifact_objects.c.workspace_id == workspace_id,
+                schema.artifact_objects.c.id == artifact.id,
+            )
+        )
 
     @override
-    async def list_by_type(self, key: ArtifactTypeKey) -> list[ArtifactObject]:
+    async def list_by_type(
+        self,
+        workspace_id: UUID,
+        key: ArtifactTypeKey,
+    ) -> list[ArtifactObject]:
         result = await self._session.scalars(
             select(ArtifactObject)
             .where(
                 schema.artifact_objects.c.artifact_type == key.id,
                 schema.artifact_objects.c.schema_version == key.schema_version,
+                schema.artifact_objects.c.workspace_id == workspace_id,
             )
             .order_by(schema.artifact_objects.c.id.asc())
         )
@@ -555,8 +604,15 @@ class SqlInvocationCacheRepository(InvocationCacheRepositoryPort):
         self._session = session
 
     @override
-    async def get(self, key_sha256: str) -> InvocationCacheEntry | None:
-        return await self._session.get(InvocationCacheEntry, key_sha256)
+    async def get(
+        self,
+        workspace_id: UUID,
+        key_sha256: str,
+    ) -> InvocationCacheEntry | None:
+        return await self._session.get(
+            InvocationCacheEntry,
+            (workspace_id, key_sha256),
+        )
 
     @override
     async def put_if_absent(self, entry: InvocationCacheEntry) -> bool:
@@ -577,11 +633,12 @@ class SqlInvocationCacheRepository(InvocationCacheRepositoryPort):
             await self._session.execute(
                 insert_statement.values(
                     key_sha256=entry.key_sha256,
+                    workspace_id=entry.workspace_id,
                     generation=entry.generation,
                     outputs=entry.outputs,
                     created_at=entry.created_at,
                 ).on_conflict_do_nothing(
-                    index_elements=(table.c.key_sha256,),
+                    index_elements=(table.c.workspace_id, table.c.key_sha256),
                 )
             ),
         )
@@ -590,6 +647,7 @@ class SqlInvocationCacheRepository(InvocationCacheRepositoryPort):
     @override
     async def remove_if_current(
         self,
+        workspace_id: UUID,
         key_sha256: str,
         generation: UUID,
     ) -> bool:
@@ -598,6 +656,7 @@ class SqlInvocationCacheRepository(InvocationCacheRepositoryPort):
             CursorResult[tuple[object, ...]],
             await self._session.execute(
                 delete(table).where(
+                    table.c.workspace_id == workspace_id,
                     table.c.key_sha256 == key_sha256,
                     table.c.generation == generation,
                 )
@@ -627,6 +686,7 @@ class SqlMaterializedNodeOutputsRepository(
             )
 
         insert_statement = insert_statement.values(
+            workspace_id=value.workspace_id,
             graph_id=value.graph_id,
             graph_revision=value.graph_revision,
             node_id=value.node_id,
@@ -637,6 +697,7 @@ class SqlMaterializedNodeOutputsRepository(
         await self._session.execute(
             insert_statement.on_conflict_do_update(
                 index_elements=(
+                    table.c.workspace_id,
                     table.c.graph_id,
                     table.c.graph_revision,
                     table.c.node_id,
@@ -652,18 +713,20 @@ class SqlMaterializedNodeOutputsRepository(
     @override
     async def get(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         graph_revision: int,
         node_id: str,
     ) -> MaterializedNodeOutputs | None:
         return await self._session.get(
             MaterializedNodeOutputs,
-            (graph_id, graph_revision, node_id),
+            (workspace_id, graph_id, graph_revision, node_id),
         )
 
     @override
     async def list_for_graph(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         graph_revision: int,
     ) -> list[MaterializedNodeOutputs]:
@@ -672,6 +735,7 @@ class SqlMaterializedNodeOutputsRepository(
             .where(
                 schema.materialized_node_outputs.c.graph_id == graph_id,
                 schema.materialized_node_outputs.c.graph_revision == graph_revision,
+                schema.materialized_node_outputs.c.workspace_id == workspace_id,
             )
             .order_by(schema.materialized_node_outputs.c.node_id.asc())
         )
@@ -689,6 +753,7 @@ class SqlGraphExecutionHistoryRepository(
         table = schema.graph_executions
         revision_exists = await self._session.scalar(
             select(schema.saved_graph_revisions.c.graph_id).where(
+                schema.saved_graph_revisions.c.workspace_id == execution.workspace_id,
                 schema.saved_graph_revisions.c.graph_id == execution.graph_id,
                 schema.saved_graph_revisions.c.revision == execution.graph_revision,
             )
@@ -702,6 +767,7 @@ class SqlGraphExecutionHistoryRepository(
             await self._session.execute(
                 insert(table).values(
                     execution_id=execution.execution_id,
+                    workspace_id=execution.workspace_id,
                     graph_id=execution.graph_id,
                     graph_revision=execution.graph_revision,
                     status=execution.status,
@@ -722,6 +788,7 @@ class SqlGraphExecutionHistoryRepository(
                 insert(schema.graph_execution_requested_nodes),
                 [
                     {
+                        "workspace_id": execution.workspace_id,
                         "execution_id": execution.execution_id,
                         "node_id": node_id,
                         "position": position,
@@ -736,9 +803,15 @@ class SqlGraphExecutionHistoryRepository(
             GraphExecutionRecord,
             execution.execution_id,
         )
-        if current_record is None:
+        if (
+            current_record is None
+            or current_record.workspace_id != execution.workspace_id
+        ):
             raise NotFoundError("Graph execution", str(execution.execution_id))
-        requested_node_ids = await self._requested_node_ids(execution.execution_id)
+        requested_node_ids = await self._requested_node_ids(
+            execution.workspace_id,
+            execution.execution_id,
+        )
         current = current_record.to_domain(requested_node_ids)
         if (
             current.graph_id != execution.graph_id
@@ -754,7 +827,10 @@ class SqlGraphExecutionHistoryRepository(
 
         await self._session.execute(
             update(schema.graph_executions)
-            .where(schema.graph_executions.c.execution_id == execution.execution_id)
+            .where(
+                schema.graph_executions.c.workspace_id == execution.workspace_id,
+                schema.graph_executions.c.execution_id == execution.execution_id,
+            )
             .values(
                 status=execution.status,
                 workflow_run_id=execution.workflow_run_id,
@@ -768,6 +844,7 @@ class SqlGraphExecutionHistoryRepository(
     async def add_node_result(self, result: GraphExecutionNodeResult) -> None:
         execution_exists = await self._session.scalar(
             select(schema.graph_executions.c.execution_id).where(
+                schema.graph_executions.c.workspace_id == result.workspace_id,
                 schema.graph_executions.c.execution_id == result.execution_id
             )
         )
@@ -775,6 +852,8 @@ class SqlGraphExecutionHistoryRepository(
             raise NotFoundError("Graph execution", str(result.execution_id))
         requested_node_exists = await self._session.scalar(
             select(schema.graph_execution_requested_nodes.c.execution_id).where(
+                schema.graph_execution_requested_nodes.c.workspace_id
+                == result.workspace_id,
                 schema.graph_execution_requested_nodes.c.execution_id
                 == result.execution_id,
                 schema.graph_execution_requested_nodes.c.node_id == result.node_id,
@@ -790,6 +869,7 @@ class SqlGraphExecutionHistoryRepository(
         try:
             await self._session.execute(
                 insert(table).values(
+                    workspace_id=result.workspace_id,
                     execution_id=result.execution_id,
                     node_id=result.node_id,
                     position=result.position,
@@ -807,14 +887,21 @@ class SqlGraphExecutionHistoryRepository(
             ) from exc
 
     @override
-    async def get(self, execution_id: UUID) -> GraphExecutionDetail | None:
+    async def get(
+        self,
+        workspace_id: UUID,
+        execution_id: UUID,
+    ) -> GraphExecutionDetail | None:
         record = await self._session.get(GraphExecutionRecord, execution_id)
-        if record is None:
+        if record is None or record.workspace_id != workspace_id:
             return None
-        execution = record.to_domain(await self._requested_node_ids(execution_id))
+        execution = record.to_domain(
+            await self._requested_node_ids(workspace_id, execution_id)
+        )
         results = await self._session.scalars(
             select(GraphExecutionNodeResult)
             .where(schema.graph_execution_node_results.c.execution_id == execution_id)
+            .where(schema.graph_execution_node_results.c.workspace_id == workspace_id)
             .order_by(
                 schema.graph_execution_node_results.c.position.asc(),
                 schema.graph_execution_node_results.c.node_id.asc(),
@@ -828,6 +915,7 @@ class SqlGraphExecutionHistoryRepository(
     @override
     async def list_for_graph(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         *,
         limit: int,
@@ -870,7 +958,10 @@ class SqlGraphExecutionHistoryRepository(
                 counts,
                 counts.c.execution_id == executions.c.execution_id,
             )
-            .where(executions.c.graph_id == graph_id)
+            .where(
+                executions.c.workspace_id == workspace_id,
+                executions.c.graph_id == graph_id,
+            )
         )
         if graph_revision is not None:
             statement = statement.where(executions.c.graph_revision == graph_revision)
@@ -881,6 +972,7 @@ class SqlGraphExecutionHistoryRepository(
                 select(1)
                 .where(
                     requested_nodes.c.execution_id == executions.c.execution_id,
+                    requested_nodes.c.workspace_id == workspace_id,
                     requested_nodes.c.node_id == normalized_node_id,
                 )
                 .exists()
@@ -913,6 +1005,7 @@ class SqlGraphExecutionHistoryRepository(
                         requested_nodes.c.node_id,
                     )
                     .where(requested_nodes.c.execution_id.in_(execution_ids))
+                    .where(requested_nodes.c.workspace_id == workspace_id)
                     .order_by(
                         requested_nodes.c.execution_id.asc(),
                         requested_nodes.c.position.asc(),
@@ -952,6 +1045,7 @@ class SqlGraphExecutionHistoryRepository(
     async def interrupt_active(
         self,
         *,
+        workspace_id: UUID,
         finished_at: datetime,
         error: str,
     ) -> int:
@@ -964,6 +1058,7 @@ class SqlGraphExecutionHistoryRepository(
             await self._session.execute(
                 update(schema.graph_executions)
                 .where(
+                    schema.graph_executions.c.workspace_id == workspace_id,
                     schema.graph_executions.c.status.in_(
                         ("queued", "running", "cancelling")
                     )
@@ -977,11 +1072,18 @@ class SqlGraphExecutionHistoryRepository(
         )
         return result.rowcount
 
-    async def _requested_node_ids(self, execution_id: UUID) -> tuple[str, ...]:
+    async def _requested_node_ids(
+        self,
+        workspace_id: UUID,
+        execution_id: UUID,
+    ) -> tuple[str, ...]:
         requested_nodes = schema.graph_execution_requested_nodes
         result = await self._session.scalars(
             select(requested_nodes.c.node_id)
-            .where(requested_nodes.c.execution_id == execution_id)
+            .where(
+                requested_nodes.c.workspace_id == workspace_id,
+                requested_nodes.c.execution_id == execution_id,
+            )
             .order_by(requested_nodes.c.position.asc())
         )
         return tuple(result)
@@ -1006,6 +1108,7 @@ class SqlNodeSecretRepository(NodeSecretRepositoryPort):
                 f"received dialect {dialect_name!r}"
             )
         insert_statement = insert_statement.values(
+            workspace_id=secret.workspace_id,
             graph_id=secret.graph_id,
             node_id=secret.node_id,
             name=secret.name,
@@ -1020,7 +1123,12 @@ class SqlNodeSecretRepository(NodeSecretRepositoryPort):
         )
         await self._session.execute(
             insert_statement.on_conflict_do_update(
-                index_elements=(table.c.graph_id, table.c.node_id, table.c.name),
+                index_elements=(
+                    table.c.workspace_id,
+                    table.c.graph_id,
+                    table.c.node_id,
+                    table.c.name,
+                ),
                 set_={
                     "operator_id": insert_statement.excluded.operator_id,
                     "operator_version": insert_statement.excluded.operator_version,
@@ -1036,20 +1144,26 @@ class SqlNodeSecretRepository(NodeSecretRepositoryPort):
     @override
     async def get(
         self,
+        workspace_id: UUID,
         graph_id: UUID,
         node_id: str,
         name: str,
     ) -> EncryptedNodeSecret | None:
         return await self._session.get(
             EncryptedNodeSecret,
-            (graph_id, node_id, name),
+            (workspace_id, graph_id, node_id, name),
         )
 
     @override
-    async def list_for_graph(self, graph_id: UUID) -> list[EncryptedNodeSecret]:
+    async def list_for_graph(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> list[EncryptedNodeSecret]:
         result = await self._session.scalars(
             select(EncryptedNodeSecret)
             .where(schema.node_secrets.c.graph_id == graph_id)
+            .where(schema.node_secrets.c.workspace_id == workspace_id)
             .order_by(
                 schema.node_secrets.c.node_id.asc(),
                 schema.node_secrets.c.name.asc(),
@@ -1058,11 +1172,56 @@ class SqlNodeSecretRepository(NodeSecretRepositoryPort):
         return list(result)
 
     @override
-    async def remove(self, graph_id: UUID, node_id: str, name: str) -> None:
+    async def remove(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+        node_id: str,
+        name: str,
+    ) -> None:
         await self._session.execute(
             delete(schema.node_secrets).where(
+                schema.node_secrets.c.workspace_id == workspace_id,
                 schema.node_secrets.c.graph_id == graph_id,
                 schema.node_secrets.c.node_id == node_id,
                 schema.node_secrets.c.name == name,
+            )
+        )
+
+
+class SqlStagedUploadRepository(StagedUploadRepositoryPort):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    @override
+    async def add(self, upload: StagedUpload) -> None:
+        self._session.add(upload)
+
+    @override
+    async def get(
+        self,
+        workspace_id: UUID,
+        upload_key: str,
+    ) -> StagedUpload | None:
+        return await self._session.get(StagedUpload, (workspace_id, upload_key))
+
+    @override
+    async def list_for_workspace(self, workspace_id: UUID) -> list[StagedUpload]:
+        result = await self._session.scalars(
+            select(StagedUpload)
+            .where(schema.staged_uploads.c.workspace_id == workspace_id)
+            .order_by(
+                schema.staged_uploads.c.created_at.asc(),
+                schema.staged_uploads.c.upload_key.asc(),
+            )
+        )
+        return list(result)
+
+    @override
+    async def remove(self, workspace_id: UUID, upload_key: str) -> None:
+        await self._session.execute(
+            delete(schema.staged_uploads).where(
+                schema.staged_uploads.c.workspace_id == workspace_id,
+                schema.staged_uploads.c.upload_key == upload_key,
             )
         )

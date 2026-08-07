@@ -357,6 +357,49 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    connection = op.get_bind()
+    local_workspace = connection.execute(
+        sa.text(
+            "SELECT id, slug, kind, personal_owner_user_id FROM workspaces "
+            "WHERE id = :local_id"
+        ),
+        {"local_id": LOCAL_WORKSPACE_ID.hex},
+    ).mappings().all()
+    workspace_count = connection.scalar(sa.text("SELECT COUNT(*) FROM workspaces"))
+    if workspace_count != 1 or local_workspace != [
+        {
+            "id": LOCAL_WORKSPACE_ID.hex,
+            "slug": "local",
+            "kind": "shared",
+            "personal_owner_user_id": None,
+        }
+    ]:
+        raise RuntimeError(
+            "Cannot downgrade identity foundation: users or workspaces would "
+            "be discarded or merged"
+        )
+    identity_tables = (
+        "users",
+        "oidc_identities",
+        "oidc_login_transactions",
+        "oidc_bootstrap_owner_mappings",
+        "workspace_memberships",
+        "auth_sessions",
+        "personal_access_tokens",
+        "security_audit_events",
+    )
+    populated = {
+        table_name: int(
+            connection.scalar(sa.text(f"SELECT COUNT(*) FROM {table_name}")) or 0
+        )
+        for table_name in identity_tables
+    }
+    populated = {table_name: count for table_name, count in populated.items() if count}
+    if populated:
+        raise RuntimeError(
+            "Cannot downgrade identity foundation: identity/security data would "
+            f"be discarded ({populated})"
+        )
     op.drop_index("ix_security_audit_events_retention", table_name="security_audit_events")
     op.drop_index(
         "ix_security_audit_events_operation_occurred_at",
