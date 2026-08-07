@@ -212,6 +212,15 @@ async def test_personal_membership_stays_owner_and_membership_changes_are_audite
         slug="team",
         name="Team",
     )
+    with pytest.raises(IdentityInvariantError):
+        await service.create_shared_workspace(
+            actor=ActorContext(
+                user_id=owner.user.id,
+                credential_reference="session-owner",
+            ),
+            slug=" team ",
+            name="Duplicate team",
+        )
 
     with pytest.raises(LastWorkspaceOwnerError):
         await service.add_or_reactivate_member(

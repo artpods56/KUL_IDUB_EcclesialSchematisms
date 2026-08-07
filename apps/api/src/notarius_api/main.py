@@ -173,8 +173,9 @@ async def _identity_invariant_error_handler(
 
 async def _http_error_handler(request: Request, exception: Exception) -> Response:
     if isinstance(exception, HTTPException):
-        await _audit_workspace_failure(request, "http_error")
-        await _audit_auth_failure(request, "http_error")
+        error_code = "not_found" if exception.status_code == 404 else "http_error"
+        await _audit_workspace_failure(request, error_code)
+        await _audit_auth_failure(request, error_code)
         return await default_http_exception_handler(request, exception)
     raise exception
 

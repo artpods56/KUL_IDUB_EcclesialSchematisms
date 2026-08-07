@@ -24,6 +24,7 @@ from notarius_core.domain.identity import (
     WorkspaceMembership,
     WorkspaceRole,
     ensure_last_owner_can_change,
+    normalize_workspace_slug,
     validate_bootstrap_match,
 )
 from notarius_core.domain.security_audit import (
@@ -376,9 +377,15 @@ class IdentityService:
         slug: str,
         name: str,
     ) -> Workspace:
+        normalized_slug = normalize_workspace_slug(slug)
         async with self._unit_of_work_factory() as unit_of_work:
+            existing = await unit_of_work.identity.lock_workspace_by_slug_for_membership_mutation(
+                normalized_slug
+            )
+            if existing is not None:
+                raise IdentityInvariantError("Workspace slug is already in use")
             await self._require_active_user(unit_of_work, actor.user_id)
-            workspace = Workspace.shared(slug=slug, name=name)
+            workspace = Workspace.shared(slug=normalized_slug, name=name)
             await unit_of_work.identity.add_workspace(workspace)
             await unit_of_work.identity.add_membership(
                 WorkspaceMembership(

@@ -1308,7 +1308,7 @@ export interface components {
             /** Label */
             readonly label: string;
             /** Scopes */
-            readonly scopes: readonly components["schemas"]["WorkspaceCapability"][];
+            readonly scopes: readonly components["schemas"]["PersonalAccessTokenScope"][];
         };
         /** PersonalAccessTokenResponse */
         readonly PersonalAccessTokenResponse: {
@@ -1343,6 +1343,11 @@ export interface components {
              */
             readonly workspace_id: string;
         };
+        /**
+         * PersonalAccessTokenScope
+         * @enum {string}
+         */
+        readonly PersonalAccessTokenScope: "view_graph" | "view_artifacts" | "view_materializations" | "view_history" | "view_execution" | "create_graph" | "edit_graph" | "checkpoint_graph" | "execute_graph" | "cancel_execution";
         /** PinnedOutputRequest */
         readonly PinnedOutputRequest: {
             /** From Node */

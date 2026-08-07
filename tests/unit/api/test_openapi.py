@@ -79,6 +79,28 @@ def test_openapi_contains_exact_public_routes() -> None:
     ]
     pat_schema = schema["components"]["schemas"]["PersonalAccessTokenCreatedResponse"]
     assert "returned once" in pat_schema["properties"]["token"]["description"]
+    pat_request_schema = schema["components"]["schemas"][
+        "PersonalAccessTokenCreateRequest"
+    ]
+    pat_scope_schema = schema["components"]["schemas"]["PersonalAccessTokenScope"]
+    assert set(pat_scope_schema["enum"]) == {
+        "view_graph",
+        "view_artifacts",
+        "view_materializations",
+        "view_history",
+        "view_execution",
+        "create_graph",
+        "edit_graph",
+        "checkpoint_graph",
+        "execute_graph",
+        "cancel_execution",
+    }
+    assert pat_request_schema["properties"]["scopes"]["items"] == {
+        "$ref": "#/components/schemas/PersonalAccessTokenScope"
+    }
+    assert "manage_members" not in pat_scope_schema["enum"]
+    assert "manage_secrets" not in pat_scope_schema["enum"]
+    assert "rename_workspace" not in pat_scope_schema["enum"]
 
     assert "GeoPageResponse" not in schema["components"]["schemas"]
     geo_render_schema = schema["components"]["schemas"]["GeoRenderResponse"]

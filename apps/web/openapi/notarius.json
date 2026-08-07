@@ -1927,7 +1927,7 @@
           },
           "scopes": {
             "items": {
-              "$ref": "#/components/schemas/WorkspaceCapability"
+              "$ref": "#/components/schemas/PersonalAccessTokenScope"
             },
             "maxItems": 8,
             "minItems": 1,
@@ -2100,6 +2100,22 @@
         ],
         "title": "PersonalAccessTokenResponse",
         "type": "object"
+      },
+      "PersonalAccessTokenScope": {
+        "enum": [
+          "view_graph",
+          "view_artifacts",
+          "view_materializations",
+          "view_history",
+          "view_execution",
+          "create_graph",
+          "edit_graph",
+          "checkpoint_graph",
+          "execute_graph",
+          "cancel_execution"
+        ],
+        "title": "PersonalAccessTokenScope",
+        "type": "string"
       },
       "PinnedOutputRequest": {
         "properties": {

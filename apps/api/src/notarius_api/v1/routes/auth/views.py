@@ -186,11 +186,6 @@ async def revoke_session(
     try:
         parsed_session_id = UUID(session_id)
     except ValueError as exc:
-        await request.app.state.auth_service.audit_request_failure(
-            request,
-            operation="auth.session.request",
-            error_code="not_found",
-        )
         raise HTTPException(status_code=404, detail="Session not found") from exc
     session = await request.app.state.auth_service.revoke_session(
         actor=actor,

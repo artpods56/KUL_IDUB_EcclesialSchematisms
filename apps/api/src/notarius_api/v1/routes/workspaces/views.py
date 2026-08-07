@@ -187,7 +187,8 @@ async def create_personal_access_token(
         raise HTTPException(
             status_code=422, detail="PAT expiry exceeds configured lifetime"
         )
-    if not set(payload.scopes).issubset(PAT_ALLOWED_CAPABILITIES):
+    scopes = tuple(WorkspaceCapability(scope.value) for scope in payload.scopes)
+    if not set(scopes).issubset(PAT_ALLOWED_CAPABILITIES):
         raise HTTPException(
             status_code=422,
             detail="Personal access token scope is not available",
@@ -199,7 +200,7 @@ async def create_personal_access_token(
         user_id=actor.user_id,
         workspace_id=workspace_id,
         label=payload.label,
-        scopes=payload.scopes,
+        scopes=scopes,
         expires_at=payload.expires_at,
     )
     created = await request.app.state.identity_service.create_personal_access_token(

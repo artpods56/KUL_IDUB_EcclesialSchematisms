@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import StrEnum
 from typing import cast
 from uuid import UUID
 
@@ -78,11 +79,24 @@ class WorkspaceMemberRoleRequest(BaseModel):
     role: WorkspaceRole
 
 
+class PersonalAccessTokenScope(StrEnum):
+    VIEW_GRAPH = "view_graph"
+    VIEW_ARTIFACTS = "view_artifacts"
+    VIEW_MATERIALIZATIONS = "view_materializations"
+    VIEW_HISTORY = "view_history"
+    VIEW_EXECUTION = "view_execution"
+    CREATE_GRAPH = "create_graph"
+    EDIT_GRAPH = "edit_graph"
+    CHECKPOINT_GRAPH = "checkpoint_graph"
+    EXECUTE_GRAPH = "execute_graph"
+    CANCEL_EXECUTION = "cancel_execution"
+
+
 class PersonalAccessTokenCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     label: str = Field(min_length=1, max_length=160)
-    scopes: tuple[WorkspaceCapability, ...] = Field(min_length=1, max_length=8)
+    scopes: tuple[PersonalAccessTokenScope, ...] = Field(min_length=1, max_length=8)
     expires_at: datetime
 
     @field_validator("label")
@@ -96,8 +110,8 @@ class PersonalAccessTokenCreateRequest(BaseModel):
     @classmethod
     def reject_duplicate_scopes(
         cls,
-        value: tuple[WorkspaceCapability, ...],
-    ) -> tuple[WorkspaceCapability, ...]:
+        value: tuple[PersonalAccessTokenScope, ...],
+    ) -> tuple[PersonalAccessTokenScope, ...]:
         if len(value) != len(set(value)):
             raise ValueError("PAT scopes must be unique")
         return value

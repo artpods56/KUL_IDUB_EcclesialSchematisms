@@ -378,21 +378,24 @@ def test_auth_http_exception_is_audited_as_authenticated_failure(
 
     assert response.status_code == 404
 
-    async def read_audits() -> list[tuple[str, str]]:
+    async def read_audits() -> list[tuple[str, str, str]]:
         database = create_database(database_url)
         async with database.engine.connect() as connection:
             rows = (
                 await connection.execute(
                     text(
-                        "SELECT actor_kind, error_code FROM security_audit_events "
+                        "SELECT actor_kind, operation, error_code "
+                        "FROM security_audit_events "
                         "WHERE operation = 'auth.session.request'"
                     )
                 )
             ).all()
         await database.dispose()
-        return [(row[0], row[1]) for row in rows]
+        return [(row[0], row[1], row[2]) for row in rows]
 
-    assert ("authenticated", "http_error") in asyncio.run(read_audits())
+    assert asyncio.run(read_audits()) == [
+        ("authenticated", "auth.session.request", "not_found")
+    ]
 
 
 def test_workspace_and_pat_request_validation_is_bounded(tmp_path: Path) -> None:
@@ -421,6 +424,12 @@ def test_workspace_and_pat_request_validation_is_bounded(tmp_path: Path) -> None
         )
         assert normalized.status_code == 201
         assert normalized.json()["slug"] == "team-name"
+        duplicate_normalized = client.post(
+            "/v1/workspaces",
+            headers=headers,
+            json={"slug": " team-name ", "name": "Duplicate team"},
+        )
+        assert duplicate_normalized.status_code == 409
         duplicate_scopes = client.post(
             f"/v1/workspaces/{workspace.id}/personal-access-tokens",
             headers=headers,
