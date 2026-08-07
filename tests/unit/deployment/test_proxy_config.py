@@ -1,30 +1,38 @@
-import json
 from pathlib import Path
-import subprocess
+import re
 
 
 def test_compose_gateway_and_forwarded_proxy_trust_are_identical() -> None:
     repository = Path(__file__).parents[3]
-    result = subprocess.run(
-        [
-            "docker",
-            "compose",
-            "-f",
-            "infra/docker/compose.yaml",
-            "--env-file",
-            "infra/docker/.env.production.example",
-            "config",
-            "--format",
-            "json",
-        ],
-        cwd=repository,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    resolved = json.loads(result.stdout)
-    gateway = resolved["networks"]["default"]["ipam"]["config"][0]["gateway"]
-    api_environment = resolved["services"]["api"]["environment"]
+    compose = (repository / "infra/docker/compose.yaml").read_text()
+    env_example = (repository / "infra/docker/.env.production.example").read_text()
 
-    assert gateway == "172.30.0.1"
-    assert api_environment["FORWARDED_ALLOW_IPS"] == gateway
+    forwarded_allow_ips = re.search(
+        r"^\s*FORWARDED_ALLOW_IPS:\s*(\$\{[^}]+\})\s*$",
+        compose,
+        re.MULTILINE,
+    )
+    gateway = re.search(
+        r"^\s*gateway:\s*(\$\{[^}]+\})\s*$",
+        compose,
+        re.MULTILINE,
+    )
+    subnet = re.search(
+        r"^\s*-\s+subnet:\s*(\$\{[^}]+\})\s*$",
+        compose,
+        re.MULTILINE,
+    )
+    assert forwarded_allow_ips is not None
+    assert gateway is not None
+    assert subnet is not None
+    assert forwarded_allow_ips.group(1) == gateway.group(1)
+    assert gateway.group(1) == "${NOTARIUS_DOCKER_GATEWAY:-172.30.0.1}"
+    assert subnet.group(1) == "${NOTARIUS_DOCKER_SUBNET:-172.30.0.0/24}"
+
+    env_values = dict(
+        line.split("=", maxsplit=1)
+        for line in env_example.splitlines()
+        if line and not line.startswith("#") and "=" in line
+    )
+    assert env_values["NOTARIUS_DOCKER_GATEWAY"] == "172.30.0.1"
+    assert env_values["NOTARIUS_DOCKER_SUBNET"] == "172.30.0.0/24"
