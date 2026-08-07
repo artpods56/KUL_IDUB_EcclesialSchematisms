@@ -378,7 +378,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.identity_uow_factory = identity_uow_factory
     application.state.identity_service = identity_service
     application.state.auth_service = auth_service
-    application.state.graph_room_hub = GraphRoomHub()
+    application.state.graph_room_hub = GraphRoomHub(
+        presence_ttl_seconds=resolved_settings.graph_room_presence_ttl_seconds,
+        presence_max_updates_per_second=(
+            resolved_settings.graph_room_presence_max_updates_per_second
+        ),
+    )
     application.add_middleware(
         CORSMiddleware,
         allow_origins=list(resolved_settings.allowed_cors_origins),

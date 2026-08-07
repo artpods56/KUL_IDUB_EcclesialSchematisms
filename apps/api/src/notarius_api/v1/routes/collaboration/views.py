@@ -43,6 +43,7 @@ from notarius_api.v1.routes.collaboration.models import (
     GraphCommandReceiptMessage,
     GraphCommandRejectedMessage,
     GraphCommandSubmitMessage,
+    PresenceUpdateSubmitMessage,
     RoomHeartbeatMessage,
     RoomReadyMessage,
     command_receipt_outcome,
@@ -153,6 +154,11 @@ async def graph_room(
         websocket=websocket,
     )
     await hub.join(session)
+    await hub.register_presence(session)
+    participants = await hub.participants_for(
+        workspace_id=workspace_id,
+        graph_id=graph_id,
+    )
     ready = RoomReadyMessage(
         workspace_id=workspace_id,
         graph_id=graph_id,
@@ -165,6 +171,7 @@ async def graph_room(
             authorization_version=access.membership.authorization_version,
         ),
         head=CollaborativeHeadResponse.from_head(head),
+        participants=participants,
     )
     heartbeat_seconds = websocket.app.state.settings.graph_room_heartbeat_seconds
     try:
@@ -202,6 +209,13 @@ async def graph_room(
                     session=session,
                     actor=actor,
                     collaboration=collaboration,
+                    hub=hub,
+                    message=message,
+                )
+            elif isinstance(message, PresenceUpdateSubmitMessage):
+                await _handle_presence_update(
+                    session=session,
+                    actor=actor,
                     hub=hub,
                     message=message,
                 )
@@ -262,6 +276,33 @@ async def _revalidate_and_heartbeat(
         ),
     )
     return True
+
+
+async def _handle_presence_update(
+    *,
+    session: GraphRoomSession,
+    actor: ActorContext,
+    hub: GraphRoomHub,
+    message: PresenceUpdateSubmitMessage,
+) -> None:
+    try:
+        access = await session.websocket.app.state.identity_service.authorize(
+            actor=actor,
+            workspace_id=session.workspace_id,
+            capability=WorkspaceCapability.PUBLISH_PRESENCE,
+        )
+        access.require(WorkspaceCapability.PUBLISH_PRESENCE)
+    except CapabilityDeniedError:
+        # Best-effort channel: lack of publish_presence drops the update only.
+        return
+    except (NotFoundError, UserDisabledError):
+        await hub.close_session(
+            session,
+            code=CLOSE_ACCESS_REVOKED[0],
+            reason=CLOSE_ACCESS_REVOKED[1],
+        )
+        return
+    await hub.apply_presence_update(session, message)
 
 
 async def _handle_command_submit(

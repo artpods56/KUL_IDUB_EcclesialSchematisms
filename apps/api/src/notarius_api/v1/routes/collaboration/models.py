@@ -1,7 +1,8 @@
+from enum import StrEnum
 from typing import Annotated, ClassVar, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 from notarius_core.domain.collaboration import GraphCommand
 from notarius_core.domain.identity import WorkspaceCapability
@@ -10,6 +11,11 @@ from notarius_api.v1.routes.saved_graphs.models import CollaborativeHeadResponse
 
 
 PROTOCOL_VERSION = 1
+
+PRESENCE_MAX_SELECTED_IDS = 64
+PRESENCE_MAX_ACTIVITY_TARGET_IDS = 64
+PRESENCE_MAX_TRANSIENT_POSITIONS = 64
+PRESENCE_ID_MAX_LENGTH = 255
 
 ACTOR_DISPLAY_COLORS = (
     "indigo",
@@ -21,6 +27,13 @@ ACTOR_DISPLAY_COLORS = (
     "teal",
     "orange",
 )
+
+
+
+class PresenceActivityKind(StrEnum):
+    MOVING_NODES = "moving_nodes"
+    EDITING_NODE = "editing_node"
+    CONNECTING = "connecting"
 
 
 class RoomProtocolModel(BaseModel):
@@ -41,6 +54,98 @@ class CapabilitySnapshot(RoomProtocolModel):
     authorization_version: int = Field(ge=1)
 
 
+class PresencePoint(RoomProtocolModel):
+    x: float
+    y: float
+
+
+class TransientNodePosition(RoomProtocolModel):
+    node_id: str = Field(min_length=1, max_length=PRESENCE_ID_MAX_LENGTH)
+    x: float
+    y: float
+
+
+def _normalize_presence_ids(value: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in value:
+        item_id = raw.strip()
+        if item_id == "" or item_id in seen:
+            continue
+        if len(item_id) > PRESENCE_ID_MAX_LENGTH:
+            raise ValueError(
+                f"presence id must be at most {PRESENCE_ID_MAX_LENGTH} characters"
+            )
+        seen.add(item_id)
+        normalized.append(item_id)
+    return tuple(normalized)
+
+
+class PresenceParticipant(RoomProtocolModel):
+    """Ephemeral collaborator state keyed by graph-room session id."""
+
+    graph_room_session_id: UUID
+    actor: ActorPresentation
+    presence_sequence: int = Field(ge=0)
+    cursor: PresencePoint | None = None
+    selected_node_ids: tuple[str, ...] = ()
+    selected_edge_ids: tuple[str, ...] = ()
+    activity: PresenceActivityKind | None = None
+    activity_target_ids: tuple[str, ...] = ()
+    transient_node_positions: tuple[TransientNodePosition, ...] = ()
+
+    @field_validator("selected_node_ids", "selected_edge_ids", "activity_target_ids")
+    @classmethod
+    def _normalize_id_lists(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _normalize_presence_ids(value)
+
+
+class PresenceJoinMessage(RoomProtocolModel):
+    protocol_version: Literal[1] = PROTOCOL_VERSION
+    type: Literal["presence.join"] = "presence.join"
+    participant: PresenceParticipant
+
+
+class PresenceLeaveMessage(RoomProtocolModel):
+    protocol_version: Literal[1] = PROTOCOL_VERSION
+    type: Literal["presence.leave"] = "presence.leave"
+    graph_room_session_id: UUID
+
+
+class PresenceUpdateMessage(RoomProtocolModel):
+    """Server fanout of accepted presence state."""
+
+    protocol_version: Literal[1] = PROTOCOL_VERSION
+    type: Literal["presence.update"] = "presence.update"
+    participant: PresenceParticipant
+
+
+class PresenceUpdateSubmitMessage(RoomProtocolModel):
+    """Client-authored presence update; identity comes from the room session."""
+
+    protocol_version: Literal[1] = PROTOCOL_VERSION
+    type: Literal["presence.update"] = "presence.update"
+    presence_sequence: int = Field(ge=1)
+    cursor: PresencePoint | None = None
+    selected_node_ids: tuple[str, ...] = Field(default=(), max_length=PRESENCE_MAX_SELECTED_IDS)
+    selected_edge_ids: tuple[str, ...] = Field(default=(), max_length=PRESENCE_MAX_SELECTED_IDS)
+    activity: PresenceActivityKind | None = None
+    activity_target_ids: tuple[str, ...] = Field(
+        default=(),
+        max_length=PRESENCE_MAX_ACTIVITY_TARGET_IDS,
+    )
+    transient_node_positions: tuple[TransientNodePosition, ...] = Field(
+        default=(),
+        max_length=PRESENCE_MAX_TRANSIENT_POSITIONS,
+    )
+
+    @field_validator("selected_node_ids", "selected_edge_ids", "activity_target_ids")
+    @classmethod
+    def _normalize_id_lists(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _normalize_presence_ids(value)
+
+
+
 class RoomReadyMessage(RoomProtocolModel):
     protocol_version: Literal[1] = PROTOCOL_VERSION
     type: Literal["room.ready"] = "room.ready"
@@ -50,9 +155,10 @@ class RoomReadyMessage(RoomProtocolModel):
     actor: ActorPresentation
     capabilities: CapabilitySnapshot
     head: CollaborativeHeadResponse
-    participants: list[ActorPresentation] = Field(default_factory=list)
+    participants: list[PresenceParticipant] = Field(default_factory=list)
     active_execution: None = None
     registry_marker: str = "builtin"
+
 
 
 class GraphCommandSubmitMessage(RoomProtocolModel):
@@ -114,13 +220,13 @@ class RoomHeartbeatMessage(RoomProtocolModel):
 
 
 ClientRoomMessage = Annotated[
-    GraphCommandSubmitMessage,
+    GraphCommandSubmitMessage | PresenceUpdateSubmitMessage,
     Field(discriminator="type"),
 ]
 
-CLIENT_ROOM_MESSAGE_ADAPTER: TypeAdapter[GraphCommandSubmitMessage] = TypeAdapter(
-    ClientRoomMessage
-)
+CLIENT_ROOM_MESSAGE_ADAPTER: TypeAdapter[
+    GraphCommandSubmitMessage | PresenceUpdateSubmitMessage
+] = TypeAdapter(ClientRoomMessage)
 
 
 def actor_display_color(user_id: UUID) -> str:

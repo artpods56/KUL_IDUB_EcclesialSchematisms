@@ -41,7 +41,23 @@
     "nodes": [],
     "edges": []
   },
-  "participants": [],
+  "participants": [
+    {
+      "graph_room_session_id": "22222222-2222-2222-2222-222222222222",
+      "actor": {
+        "actor_id": "00000000-0000-0000-0000-000000000001",
+        "display_name": "Owner",
+        "color": "emerald"
+      },
+      "presence_sequence": 0,
+      "cursor": null,
+      "selected_node_ids": [],
+      "selected_edge_ids": [],
+      "activity": null,
+      "activity_target_ids": [],
+      "transient_node_positions": []
+    }
+  ],
   "active_execution": null,
   "registry_marker": "builtin"
 }

@@ -142,6 +142,15 @@ def room_client(tmp_path: Path) -> Iterator[tuple[TestClient, ActorSwitcher]]:
 
 
 @pytest.fixture
+def room_app_client(
+    tmp_path: Path,
+) -> Iterator[tuple[TestClient, ActorSwitcher, FastAPI]]:
+    client, switcher, application = _build_room_client(tmp_path)
+    with client:
+        yield client, switcher, application
+
+
+@pytest.fixture
 def heartbeat_room_client(
     tmp_path: Path,
 ) -> Iterator[tuple[TestClient, ActorSwitcher]]:
@@ -173,6 +182,32 @@ def _connect(client: TestClient, graph_id: UUID):
     )
 
 
+def _receive_until(websocket, message_type: str, *, limit: int = 20) -> dict:
+    for _ in range(limit):
+        message = websocket.receive_json()
+        if message["type"] == message_type:
+            return message
+    raise AssertionError(f"did not receive {message_type!r} within {limit} messages")
+
+
+def _receive_execution_active_status(
+    websocket,
+    status: str,
+    *,
+    limit: int = 20,
+) -> dict:
+    for _ in range(limit):
+        message = websocket.receive_json()
+        if (
+            message.get("type") == "execution.active"
+            and message.get("execution", {}).get("status") == status
+        ):
+            return message
+    raise AssertionError(
+        f"did not receive execution.active status={status!r} within {limit} messages"
+    )
+
+
 def test_room_ready_fixture_matches_protocol_model() -> None:
     payload = json.loads((FIXTURES / "graph_room_ready.v1.json").read_text())
     ready = RoomReadyMessage.model_validate(payload)
@@ -201,7 +236,11 @@ def test_room_ready_admits_authenticated_member(
     assert ready["head"]["graph_id"] == str(graph_id)
     assert ready["head"]["collaboration_sequence"] == 1
     assert ready["graph_room_session_id"]
-    assert ready["participants"] == []
+    assert len(ready["participants"]) == 1
+    assert ready["participants"][0]["graph_room_session_id"] == (
+        ready["graph_room_session_id"]
+    )
+    assert ready["participants"][0]["actor"]["actor_id"] == str(TEST_USER_ID)
     assert ready["active_execution"] is None
 
 
@@ -271,28 +310,14 @@ def test_two_sessions_converge_on_accepted_sequence_and_head(
                 }
             )
 
-            editor_messages = [
-                editor_ws.receive_json(),
-                editor_ws.receive_json(),
-            ]
-            editor_by_type = {message["type"]: message for message in editor_messages}
-            assert set(editor_by_type) == {
-                "graph.command.accepted",
-                "graph.command.receipt",
-            }
-            assert editor_by_type["graph.command.accepted"]["sequence"] == (
-                expected_sequence
-            )
-            assert editor_by_type["graph.command.receipt"]["accepted_sequence"] == (
-                expected_sequence
-            )
-            assert editor_by_type["graph.command.receipt"]["current_sequence"] == (
-                expected_sequence
-            )
-            assert editor_by_type["graph.command.receipt"]["deduplicated"] is False
+            editor_accepted = _receive_until(editor_ws, "graph.command.accepted")
+            editor_receipt = _receive_until(editor_ws, "graph.command.receipt")
+            assert editor_accepted["sequence"] == expected_sequence
+            assert editor_receipt["accepted_sequence"] == expected_sequence
+            assert editor_receipt["current_sequence"] == expected_sequence
+            assert editor_receipt["deduplicated"] is False
 
-            owner_accepted = owner_ws.receive_json()
-            assert owner_accepted["type"] == "graph.command.accepted"
+            owner_accepted = _receive_until(owner_ws, "graph.command.accepted")
             assert owner_accepted["command_id"] == command_id
             assert owner_accepted["sequence"] == expected_sequence
             assert owner_accepted["command"]["name"] == "Renamed live"
@@ -328,10 +353,10 @@ def test_reconnect_idempotent_retry_does_not_double_apply(
             },
         }
         first_ws.send_json(submit)
-        first_messages = [first_ws.receive_json(), first_ws.receive_json()]
-        first_by_type = {message["type"]: message for message in first_messages}
-        assert first_by_type["graph.command.receipt"]["outcome"] == "accepted"
-        accepted_sequence = first_by_type["graph.command.accepted"]["sequence"]
+        first_accepted = _receive_until(first_ws, "graph.command.accepted")
+        first_receipt = _receive_until(first_ws, "graph.command.receipt")
+        assert first_receipt["outcome"] == "accepted"
+        accepted_sequence = first_accepted["sequence"]
 
     switcher.as_user(EDITOR_USER_ID)
     with _connect(client, graph_id) as peer_ws:
@@ -344,8 +369,7 @@ def test_reconnect_idempotent_retry_does_not_double_apply(
             retry_ready = retry_ws.receive_json()
             assert retry_ready["head"]["collaboration_sequence"] == accepted_sequence
             retry_ws.send_json(submit)
-            receipt = retry_ws.receive_json()
-            assert receipt["type"] == "graph.command.receipt"
+            receipt = _receive_until(retry_ws, "graph.command.receipt")
             assert receipt["outcome"] == "idempotent_replay"
             assert receipt["deduplicated"] is True
             assert receipt["accepted_sequence"] == accepted_sequence
@@ -366,19 +390,11 @@ def test_reconnect_idempotent_retry_does_not_double_apply(
                     },
                 }
             )
-            peer_messages = [peer_ws.receive_json(), peer_ws.receive_json()]
-            peer_types = {message["type"] for message in peer_messages}
-            assert peer_types == {
-                "graph.command.accepted",
-                "graph.command.receipt",
-            }
-            accepted = next(
-                message
-                for message in peer_messages
-                if message["type"] == "graph.command.accepted"
-            )
+            accepted = _receive_until(peer_ws, "graph.command.accepted")
+            receipt = _receive_until(peer_ws, "graph.command.receipt")
             assert accepted["command"]["name"] == "Peer marker"
             assert accepted["sequence"] == accepted_sequence + 1
+            assert receipt["accepted_sequence"] == accepted_sequence + 1
 
     head = client.get(workspace_api_path(f"/graphs/{graph_id}/head"))
     assert head.status_code == 200, head.text
@@ -412,8 +428,7 @@ def test_viewer_command_is_rejected_without_fanout(
                     },
                 }
             )
-            rejected = viewer_ws.receive_json()
-            assert rejected["type"] == "graph.command.rejected"
+            rejected = _receive_until(viewer_ws, "graph.command.rejected")
             assert rejected["error_code"] == "forbidden"
 
 
@@ -468,8 +483,7 @@ def test_http_epoch_reset_rehydrates_connected_sessions(
             },
         )
         assert replace.status_code == 200, replace.text
-        rehydrate = websocket.receive_json()
-        assert rehydrate["type"] == "room.rehydrate"
+        rehydrate = _receive_until(websocket, "room.rehydrate")
         assert rehydrate["reason"] == "epoch_reset"
         assert rehydrate["head"]["name"] == "Replaced document"
         assert rehydrate["head"]["collaboration_sequence"] == 0
@@ -499,8 +513,7 @@ def test_http_command_publishes_to_room(
             },
         )
         assert response.status_code == 200, response.text
-        accepted = websocket.receive_json()
-        assert accepted["type"] == "graph.command.accepted"
+        accepted = _receive_until(websocket, "graph.command.accepted")
         assert accepted["command_id"] == command_id
         assert accepted["command"]["name"] == "HTTP rename"
 
@@ -558,6 +571,164 @@ def test_heartbeat_revalidation_closes_on_lost_role_invalidation(
                 assert message["type"] == "room.heartbeat"
         assert closed.value.code == 4003
         assert closed.value.reason == "permissions_changed"
+
+
+def test_presence_join_leave_fanout_and_room_ready_participants(
+    room_client: tuple[TestClient, ActorSwitcher],
+) -> None:
+    client, switcher = room_client
+    graph_id = _create_graph(client)
+
+    with _connect(client, graph_id) as owner_ws:
+        owner_ready = owner_ws.receive_json()
+        assert len(owner_ready["participants"]) == 1
+        assert owner_ready["participants"][0]["graph_room_session_id"] == (
+            owner_ready["graph_room_session_id"]
+        )
+
+        switcher.as_user(EDITOR_USER_ID)
+        with _connect(client, graph_id) as editor_ws:
+            editor_ready = editor_ws.receive_json()
+            participant_ids = {
+                item["graph_room_session_id"] for item in editor_ready["participants"]
+            }
+            assert participant_ids == {
+                owner_ready["graph_room_session_id"],
+                editor_ready["graph_room_session_id"],
+            }
+
+            join = _receive_until(owner_ws, "presence.join")
+            assert join["participant"]["graph_room_session_id"] == (
+                editor_ready["graph_room_session_id"]
+            )
+            assert join["participant"]["actor"]["actor_id"] == str(EDITOR_USER_ID)
+
+            editor_ws.send_json(
+                {
+                    "protocol_version": 1,
+                    "type": "presence.update",
+                    "presence_sequence": 1,
+                    "cursor": {"x": 12.5, "y": -4.0},
+                    "selected_node_ids": ["node-a"],
+                    "selected_edge_ids": [],
+                    "activity": "editing_node",
+                    "activity_target_ids": ["node-a"],
+                    "transient_node_positions": [],
+                }
+            )
+            update = _receive_until(owner_ws, "presence.update")
+            assert update["participant"]["presence_sequence"] == 1
+            assert update["participant"]["cursor"] == {"x": 12.5, "y": -4.0}
+            assert update["participant"]["selected_node_ids"] == ["node-a"]
+            assert update["participant"]["activity"] == "editing_node"
+
+        leave = _receive_until(owner_ws, "presence.leave")
+        assert leave["graph_room_session_id"] == editor_ready["graph_room_session_id"]
+
+
+def test_presence_cleared_on_access_revoked(
+    room_client: tuple[TestClient, ActorSwitcher],
+) -> None:
+    client, switcher = room_client
+    graph_id = _create_graph(client)
+
+    with _connect(client, graph_id) as owner_ws:
+        owner_ws.receive_json()
+        switcher.as_user(EDITOR_USER_ID)
+        with _connect(client, graph_id) as editor_ws:
+            editor_ready = editor_ws.receive_json()
+            _receive_until(owner_ws, "presence.join")
+
+            switcher.as_user(TEST_USER_ID)
+            response = client.delete(workspace_api_path(f"/members/{EDITOR_USER_ID}"))
+            assert response.status_code == 204, response.text
+
+            with pytest.raises(WebSocketDisconnect) as closed:
+                while True:
+                    message = editor_ws.receive_json()
+                    assert message["type"] in {"presence.update", "room.heartbeat"}
+            assert closed.value.code == 4004
+            assert closed.value.reason == "access_revoked"
+
+            leave = _receive_until(owner_ws, "presence.leave")
+            assert leave["graph_room_session_id"] == editor_ready["graph_room_session_id"]
+
+
+def test_presence_rate_limit_and_stale_sequence_drop() -> None:
+    async def _exercise() -> None:
+        hub = GraphRoomHub(presence_max_updates_per_second=20.0)
+        graph_id = uuid4()
+        websocket = AsyncMock()
+        websocket.application_state = WebSocketState.CONNECTED
+        peer_ws = AsyncMock()
+        peer_ws.application_state = WebSocketState.CONNECTED
+        session = GraphRoomSession(
+            workspace_id=WORKSPACE_ID,
+            graph_id=graph_id,
+            graph_room_session_id=uuid4(),
+            actor_user_id=TEST_USER_ID,
+            credential_reference="test-session",
+            authorization_version=1,
+            actor_presentation=ActorPresentation(
+                actor_id=TEST_USER_ID,
+                display_name="Owner",
+                color="indigo",
+            ),
+            websocket=websocket,
+        )
+        peer = GraphRoomSession(
+            workspace_id=WORKSPACE_ID,
+            graph_id=graph_id,
+            graph_room_session_id=uuid4(),
+            actor_user_id=EDITOR_USER_ID,
+            credential_reference="test-session",
+            authorization_version=1,
+            actor_presentation=ActorPresentation(
+                actor_id=EDITOR_USER_ID,
+                display_name="Editor",
+                color="emerald",
+            ),
+            websocket=peer_ws,
+        )
+        await hub.join(session)
+        await hub.join(peer)
+        await hub.register_presence(session)
+        await hub.register_presence(peer)
+        # Drain join messages.
+        while not peer.outbound.empty():
+            peer.outbound.get_nowait()
+
+        from notarius_api.v1.routes.collaboration.models import (
+            PresenceUpdateSubmitMessage,
+        )
+
+        first = await hub.apply_presence_update(
+            session,
+            PresenceUpdateSubmitMessage(
+                presence_sequence=1,
+                cursor={"x": 1.0, "y": 2.0},
+            ),
+        )
+        assert first is not None
+        stale = await hub.apply_presence_update(
+            session,
+            PresenceUpdateSubmitMessage(
+                presence_sequence=1,
+                cursor={"x": 9.0, "y": 9.0},
+            ),
+        )
+        assert stale is None
+        burst = await hub.apply_presence_update(
+            session,
+            PresenceUpdateSubmitMessage(
+                presence_sequence=2,
+                cursor={"x": 3.0, "y": 4.0},
+            ),
+        )
+        assert burst is None
+        await hub.shutdown()
+
+    asyncio.run(_exercise())
 
 
 def test_slow_consumer_is_disconnected_instead_of_unbounded_queue() -> None:
