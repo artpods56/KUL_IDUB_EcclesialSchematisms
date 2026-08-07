@@ -48,6 +48,7 @@ class EncryptedNodeSecret:
     operator_id: str
     operator_version: int
     key_id: str
+    aad_version: int
     dependency_sha256: str
     nonce: bytes
     ciphertext: bytes
@@ -71,6 +72,8 @@ class EncryptedNodeSecret:
             raise ValueError("Node secret ciphertext must not be empty")
         if self.operator_version < 1:
             raise ValueError("Node secret operator version must be positive")
+        if self.aad_version not in (1, 2):
+            raise ValueError("Node secret AAD version must be 1 or 2")
         if self.created_at.tzinfo is None or self.updated_at.tzinfo is None:
             raise ValueError("Node secret timestamps must be timezone-aware")
 
@@ -81,6 +84,7 @@ class EncryptedNodeSecret:
             f"node_id={self.node_id!r}, "
             f"name={self.name!r}, operator_id={self.operator_id!r}, "
             f"operator_version={self.operator_version!r}, key_id={self.key_id!r}, "
+            f"aad_version={self.aad_version!r}, "
             "nonce=<redacted>, ciphertext=<redacted>)"
         )
 
@@ -88,7 +92,7 @@ class EncryptedNodeSecret:
         """Return an opaque revision that changes whenever the secret is replaced."""
 
         digest = sha256()
-        digest.update(b"notarius-node-secret-cache-revision-v1\0")
+        digest.update(b"notarius-node-secret-cache-revision-v2\0")
         for value in (
             str(self.graph_id),
             self.node_id,
@@ -96,6 +100,7 @@ class EncryptedNodeSecret:
             self.operator_id,
             str(self.operator_version),
             self.key_id,
+            str(self.aad_version),
             self.dependency_sha256,
         ):
             digest.update(value.encode("utf-8"))

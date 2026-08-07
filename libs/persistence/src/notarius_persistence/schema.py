@@ -518,6 +518,7 @@ node_secrets = Table(
     Column("operator_id", String(255), nullable=False),
     Column("operator_version", Integer, nullable=False),
     Column("key_id", String(64), nullable=False),
+    Column("aad_version", Integer, nullable=False),
     Column("dependency_sha256", String(64), nullable=False),
     Column("nonce", LargeBinary(12), nullable=False),
     Column("ciphertext", LargeBinary(), nullable=False),
@@ -528,6 +529,7 @@ node_secrets = Table(
         ("saved_graphs.workspace_id", "saved_graphs.id"),
         ondelete="CASCADE",
     ),
+    CheckConstraint("aad_version IN (1, 2)", name="ck_node_secrets_aad_version"),
     Index("ix_node_secrets_workspace_graph", "workspace_id", "graph_id"),
 )
 

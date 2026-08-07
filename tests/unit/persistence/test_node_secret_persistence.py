@@ -7,10 +7,14 @@ import pytest
 
 from notarius_core.domain.node_secrets import EncryptedNodeSecret
 from notarius_core.domain.saved_graphs import SavedGraph, SavedGraphDocument
+from notarius_core.domain.identity import Workspace
 
 from notarius_persistence.database import Database, create_database
 from notarius_persistence.orm import metadata
 from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
+
+
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
 
 
 @pytest.fixture
@@ -19,6 +23,16 @@ async def database(tmp_path: Path) -> AsyncIterator[Database]:
     created = create_database(f"sqlite+aiosqlite:///{database_path}")
     async with created.engine.begin() as connection:
         await connection.run_sync(metadata.create_all)
+    async with SqlAlchemyUnitOfWork(created.sessions) as unit_of_work:
+        await unit_of_work.identity.add_workspace(
+            Workspace(
+                id=WORKSPACE_ID,
+                slug="local",
+                name="Local workspace",
+                kind="shared",
+            )
+        )
+        await unit_of_work.commit()
     try:
         yield created
     finally:
@@ -28,17 +42,20 @@ async def database(tmp_path: Path) -> AsyncIterator[Database]:
 def _encrypted_secret(
     graph_id: UUID,
     *,
+    workspace_id: UUID,
     ciphertext: bytes = b"ciphertext-with-authentication-tag",
     at: datetime | None = None,
 ) -> EncryptedNodeSecret:
     timestamp = at or datetime(2026, 7, 16, 8, 0, tzinfo=UTC)
     return EncryptedNodeSecret(
+        workspace_id=workspace_id,
         graph_id=graph_id,
         node_id="llm-node",
         name="api_key",
         operator_id="llm.openai.chat-completion",
         operator_version=1,
         key_id="0123456789abcdef",
+        aad_version=2,
         dependency_sha256="a" * 64,
         nonce=b"0123456789ab",
         ciphertext=ciphertext,
@@ -51,8 +68,12 @@ def _encrypted_secret(
 async def test_node_secret_round_trips_and_upserts_without_replacing_created_at(
     database: Database,
 ) -> None:
-    graph = SavedGraph(name="Encrypted graph", document=SavedGraphDocument())
-    original = _encrypted_secret(graph.id)
+    graph = SavedGraph(
+        workspace_id=WORKSPACE_ID,
+        name="Encrypted graph",
+        document=SavedGraphDocument(),
+    )
+    original = _encrypted_secret(graph.id, workspace_id=graph.workspace_id)
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
         await unit_of_work.graphs.add(graph)
         await unit_of_work.node_secrets.upsert(original)
@@ -61,6 +82,7 @@ async def test_node_secret_round_trips_and_upserts_without_replacing_created_at(
     replacement_time = original.updated_at + timedelta(hours=1)
     replacement = _encrypted_secret(
         graph.id,
+        workspace_id=graph.workspace_id,
         ciphertext=b"replacement-ciphertext-with-tag",
         at=replacement_time,
     )
@@ -70,11 +92,14 @@ async def test_node_secret_round_trips_and_upserts_without_replacing_created_at(
 
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
         loaded = await unit_of_work.node_secrets.get(
+            graph.workspace_id,
             graph.id,
             "llm-node",
             "api_key",
         )
-        listed = await unit_of_work.node_secrets.list_for_graph(graph.id)
+        listed = await unit_of_work.node_secrets.list_for_graph(
+            graph.workspace_id, graph.id
+        )
 
     assert loaded is not None
     assert loaded.ciphertext == replacement.ciphertext
@@ -87,21 +112,30 @@ async def test_node_secret_round_trips_and_upserts_without_replacing_created_at(
 async def test_deleting_saved_graph_cascades_to_node_secrets(
     database: Database,
 ) -> None:
-    graph = SavedGraph(name="Disposable secret", document=SavedGraphDocument())
+    graph = SavedGraph(
+        workspace_id=WORKSPACE_ID,
+        name="Disposable secret",
+        document=SavedGraphDocument(),
+    )
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
         await unit_of_work.graphs.add(graph)
-        await unit_of_work.node_secrets.upsert(_encrypted_secret(graph.id))
+        await unit_of_work.node_secrets.upsert(
+            _encrypted_secret(graph.id, workspace_id=graph.workspace_id)
+        )
         await unit_of_work.commit()
 
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-        loaded_graph = await unit_of_work.graphs.get(graph.id)
+        loaded_graph = await unit_of_work.graphs.get(graph.workspace_id, graph.id)
         assert loaded_graph is not None
-        await unit_of_work.graphs.remove(loaded_graph)
+        await unit_of_work.graphs.remove(graph.workspace_id, loaded_graph)
         await unit_of_work.commit()
 
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
         assert (
-            await unit_of_work.node_secrets.get(graph.id, "llm-node", "api_key") is None
+            await unit_of_work.node_secrets.get(
+                graph.workspace_id, graph.id, "llm-node", "api_key"
+            )
+            is None
         )
 
 
@@ -109,32 +143,51 @@ async def test_deleting_saved_graph_cascades_to_node_secrets(
 async def test_node_secret_can_be_removed_without_reading_ciphertext(
     database: Database,
 ) -> None:
-    graph = SavedGraph(name="Clear secret", document=SavedGraphDocument())
+    graph = SavedGraph(
+        workspace_id=WORKSPACE_ID,
+        name="Clear secret",
+        document=SavedGraphDocument(),
+    )
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
         await unit_of_work.graphs.add(graph)
-        await unit_of_work.node_secrets.upsert(_encrypted_secret(graph.id))
+        await unit_of_work.node_secrets.upsert(
+            _encrypted_secret(graph.id, workspace_id=graph.workspace_id)
+        )
         await unit_of_work.commit()
 
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-        await unit_of_work.node_secrets.remove(graph.id, "llm-node", "api_key")
+        await unit_of_work.node_secrets.remove(
+            graph.workspace_id, graph.id, "llm-node", "api_key"
+        )
         await unit_of_work.commit()
 
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-        assert await unit_of_work.node_secrets.list_for_graph(graph.id) == []
+        assert (
+            await unit_of_work.node_secrets.list_for_graph(
+                graph.workspace_id, graph.id
+            )
+            == []
+        )
 
 
 @pytest.mark.asyncio
 async def test_saved_graph_revision_lock_is_a_no_op_for_the_graph_row(
     database: Database,
 ) -> None:
-    graph = SavedGraph(name="Lock target", document=SavedGraphDocument())
+    graph = SavedGraph(
+        workspace_id=WORKSPACE_ID,
+        name="Lock target",
+        document=SavedGraphDocument(),
+    )
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
         await unit_of_work.graphs.add(graph)
         await unit_of_work.commit()
 
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-        await unit_of_work.graphs.lock_revision(graph.id, graph.revision)
-        locked = await unit_of_work.graphs.get(graph.id)
+        await unit_of_work.graphs.lock_revision(
+            graph.workspace_id, graph.id, graph.revision
+        )
+        locked = await unit_of_work.graphs.get(graph.workspace_id, graph.id)
         await unit_of_work.commit()
 
     assert locked is not None

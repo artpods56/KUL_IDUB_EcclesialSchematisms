@@ -417,6 +417,7 @@ def _create_tenant_tables(connection: sa.Connection) -> None:
         sa.Column("operator_id", sa.String(length=255), nullable=False),
         sa.Column("operator_version", sa.Integer(), nullable=False),
         sa.Column("key_id", sa.String(length=64), nullable=False),
+        sa.Column("aad_version", sa.Integer(), nullable=False),
         sa.Column("dependency_sha256", sa.String(length=64), nullable=False),
         sa.Column("nonce", sa.LargeBinary(length=12), nullable=False),
         sa.Column("ciphertext", sa.LargeBinary(), nullable=False),
@@ -427,6 +428,10 @@ def _create_tenant_tables(connection: sa.Connection) -> None:
             ["_0008_saved_graphs.workspace_id", "_0008_saved_graphs.id"],
             name="fk_node_secrets_workspace_id_saved_graphs",
             ondelete="CASCADE",
+        ),
+        sa.CheckConstraint(
+            "aad_version IN (1, 2)",
+            name="ck_node_secrets_aad_version",
         ),
         sa.PrimaryKeyConstraint(
             "workspace_id",
@@ -693,10 +698,11 @@ def _copy_and_replace_tables(connection: sa.Connection) -> None:
             "_0008_node_secrets",
             "INSERT INTO _0008_node_secrets "
             "(workspace_id, graph_id, node_id, name, operator_id, operator_version, "
-            "key_id, dependency_sha256, nonce, ciphertext, created_at, updated_at) "
+            "key_id, aad_version, dependency_sha256, nonce, ciphertext, created_at, "
+            "updated_at) "
             "SELECT :local_id, secrets.graph_id, secrets.node_id, secrets.name, "
             "secrets.operator_id, secrets.operator_version, secrets.key_id, "
-            "secrets.dependency_sha256, secrets.nonce, secrets.ciphertext, "
+            "1, secrets.dependency_sha256, secrets.nonce, secrets.ciphertext, "
             "secrets.created_at, secrets.updated_at FROM node_secrets AS secrets "
             "JOIN saved_graphs AS graphs ON graphs.id = secrets.graph_id",
         ),
@@ -854,6 +860,13 @@ def _assert_downgrade_is_safe(connection: sa.Connection) -> None:
                 f"Cannot downgrade tenant migration: {table_name} contains "
                 f"{attributed} creator-attributed row(s)"
             )
+    aad_versions = connection.scalar(
+        sa.text("SELECT COUNT(*) FROM node_secrets WHERE aad_version != 1")
+    )
+    if aad_versions:
+        raise RuntimeError(
+            "Cannot downgrade tenant migration: node secrets use AAD version 2"
+        )
     collisions = connection.scalar(
         sa.text(
             "SELECT COUNT(*) FROM (SELECT key_sha256 FROM "

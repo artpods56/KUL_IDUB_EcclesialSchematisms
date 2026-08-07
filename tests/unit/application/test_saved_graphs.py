@@ -222,6 +222,7 @@ def _encrypted_secret(graph_id: UUID) -> EncryptedNodeSecret:
         operator_id="example.operator",
         operator_version=1,
         key_id="test-key",
+        aad_version=2,
         dependency_sha256="0" * 64,
         nonce=b"n" * 12,
         ciphertext=b"encrypted",

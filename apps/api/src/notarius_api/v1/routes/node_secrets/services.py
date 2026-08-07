@@ -163,7 +163,8 @@ class NodeSecretService(NodeSecretResolverPort):
                 )
             key, key_id = self._resolved_encryption_key()
             nonce = os.urandom(12)
-            aad = self._additional_authenticated_data(binding)
+            aad_version = 2
+            aad = self._additional_authenticated_data(binding, aad_version)
             ciphertext = AESGCM(key).encrypt(nonce, plaintext_bytes, aad)
             now = datetime.now(UTC)
             encrypted = EncryptedNodeSecret(
@@ -174,6 +175,7 @@ class NodeSecretService(NodeSecretResolverPort):
                 operator_id=binding.operator_id,
                 operator_version=binding.operator_version,
                 key_id=key_id,
+                aad_version=aad_version,
                 dependency_sha256=node_secret_dependency_sha256(binding.dependencies),
                 nonce=nonce,
                 ciphertext=ciphertext,
@@ -237,12 +239,13 @@ class NodeSecretService(NodeSecretResolverPort):
                 "Configured node secret cannot be decrypted by this server"
             )
         try:
+            aad = self._additional_authenticated_data(binding, encrypted.aad_version)
             plaintext = AESGCM(key).decrypt(
                 encrypted.nonce,
                 encrypted.ciphertext,
-                self._additional_authenticated_data(binding),
+                aad,
             )
-        except InvalidTag as exc:
+        except (InvalidTag, ValueError) as exc:
             raise NodeSecretUnavailableError(
                 "Configured node secret cannot be decrypted by this server"
             ) from exc
@@ -415,10 +418,13 @@ class NodeSecretService(NodeSecretResolverPort):
         }
 
     @classmethod
-    def _additional_authenticated_data(cls, binding: _NodeSecretBinding) -> bytes:
+    def _additional_authenticated_data(
+        cls,
+        binding: _NodeSecretBinding,
+        aad_version: int,
+    ) -> bytes:
         identity = {
-            "version": 1,
-            "workspace_id": str(binding.workspace_id),
+            "version": aad_version,
             "graph_id": str(binding.graph_id),
             "node_id": binding.node_id,
             "operator_id": binding.operator_id,
@@ -426,6 +432,10 @@ class NodeSecretService(NodeSecretResolverPort):
             "name": binding.declaration.name,
             "dependencies": binding.dependencies,
         }
+        if aad_version == 2:
+            identity["workspace_id"] = str(binding.workspace_id)
+        elif aad_version != 1:
+            raise ValueError("Unsupported node secret AAD version")
         return json.dumps(
             identity,
             ensure_ascii=False,

@@ -101,6 +101,7 @@ async def test_sql_repositories_require_workspace_for_artifact_cache_and_upload(
         operator_id="test.operator",
         operator_version=1,
         key_id="key",
+        aad_version=2,
         dependency_sha256="d" * 64,
         nonce=b"0" * 12,
         ciphertext=b"ciphertext",

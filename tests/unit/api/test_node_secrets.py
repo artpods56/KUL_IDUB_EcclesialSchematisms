@@ -238,7 +238,7 @@ async def test_configured_secret_is_encrypted_and_resolves_only_for_binding(
     async with database.engine.connect() as connection:
         raw = await connection.execute(
             text(
-                "SELECT ciphertext, nonce, dependency_sha256 "
+                "SELECT ciphertext, nonce, dependency_sha256, aad_version "
                 "FROM node_secrets WHERE graph_id = :graph_id"
             ),
             {"graph_id": graph.id.hex},
@@ -247,6 +247,7 @@ async def test_configured_secret_is_encrypted_and_resolves_only_for_binding(
     assert plaintext.encode("utf-8") not in bytes(row.ciphertext)
     assert len(bytes(row.nonce)) == 12
     assert len(str(row.dependency_sha256)) == 64
+    assert row.aad_version == 2
 
     with pytest.raises(NodeSecretUnavailableError, match="does not match"):
         await service.resolve_secret(
