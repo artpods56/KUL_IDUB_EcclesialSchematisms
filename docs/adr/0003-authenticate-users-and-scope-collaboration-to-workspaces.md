@@ -1,6 +1,6 @@
 # ADR 0003: Authenticate users and scope collaboration to workspaces
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-06
 - **Scope:** Identity, workspace tenancy, browser sessions, collaboration authorization, and MCP access
 - **Designs:** [Authentication and workspace tenancy design](../design/authentication-and-workspace-tenancy.md), [realtime Workbench collaboration rework](../design/workbench-realtime-collaboration.md)
@@ -189,9 +189,12 @@ publish only bounded configured or unconfigured metadata after commit.
 
 The FastMCP Streamable HTTP application is mounted at `/mcp` under the same
 FastAPI deployment and public authority as the REST, SSE, and WebSocket
-surfaces. It is not published on a separate unauthenticated port and does not
-use an ambient service credential that bypasses user authorization. Notarius
-does not retain a stdio MCP server or entry point; HTTP is the MCP transport.
+surfaces. First delivery uses **stateless** Streamable HTTP: every request is
+authenticated and authorized independently, and no process-global or
+transport-session caller token is retained. It is not published on a separate
+unauthenticated port and does not use an ambient service credential that
+bypasses user authorization. Notarius does not retain a stdio MCP server or
+entry point; HTTP is the MCP transport.
 
 An MCP user creates a random opaque access token scoped to one workspace and a
 bounded set of capabilities. The database stores only its hash, public lookup
@@ -200,9 +203,12 @@ revocation state. The client presents it only as an `Authorization: Bearer`
 header. Bearer-authenticated calls do not use browser cookies or CSRF tokens.
 
 Every MCP request resolves the token, active user, current workspace membership,
-and required capability. Token revocation, membership removal, role change, or
-scope loss prevents any no-longer-authorized request and closes retained MCP
-transport state owned by the affected credential.
+and required capability. Membership removal and role loss that leave a token's
+scopes outside the member's remaining capabilities revoke the affected
+workspace-bound PATs in the same transaction as the membership mutation; user
+deactivation revokes all of that user's PATs in the same transaction. Because
+MCP authorization is re-resolved per request, the next request fails closed
+when the credential or capability is no longer effective.
 MCP graph reads and writes use workspace-scoped live-head and collaboration
 application contracts, so an MCP mutation cannot bypass an uncheckpointed
 collaborative head or silently replace connected browser state. A committed MCP
@@ -211,10 +217,14 @@ mutation is published to the graph room like any other external mutation.
 ### Make revocation application-owned and fail closed
 
 Logout, session or access-token revocation, user deactivation, membership
-removal, and role changes take effect in the application database. Ordinary
-requests reload the affected state. Long-lived WebSocket, SSE, and MCP sessions
-are actively closed by the single-process connection owners and periodically
-revalidated as a fallback.
+removal, and role changes take effect in the application database. Membership
+removal, role loss affecting PAT scopes, and user deactivation revoke the
+affected workspace-bound PATs in the same unit of work as the membership or
+user mutation. Ordinary requests reload the affected state. Long-lived
+WebSocket and SSE connections are actively closed by the single-process
+connection owners and periodically revalidated as a fallback. Stateless MCP
+relies on per-request credential resolution plus those transactional PAT
+revocations rather than a retained MCP authorization session.
 
 OIDC-provider logout does not by itself prove immediate local revocation unless
 the provider supplies a verified back-channel logout event. Local sessions
@@ -298,23 +308,22 @@ authentication, revocation, audit, and collaboration coordination consistent.
 
 ## Follow-up
 
-If this ADR is accepted:
+This ADR is Accepted. Remaining follow-up:
 
 1. Add user, workspace, membership, browser session, MCP token, and authenticated
-   actor vocabulary to `CONTEXT.md`.
-2. Reconcile ADR 0002 and the realtime collaboration design so authenticated
-   workspaces are an implementation prerequisite rather than a later non-local
-   release gate.
-3. Implement and verify the migration phases in the linked authentication and
-   workspace plan, including an idempotent legacy `local` workspace backfill.
-4. Register and test the exact HTTPS OIDC callback for the SSH-tunnel deployment
-   before enabling browser login.
-5. Update deployment documentation for the shared HTTPS authority, `/mcp`,
+   actor vocabulary to `CONTEXT.md` when the accepted vocabulary pass is
+   scheduled.
+2. Continue implementing and verifying the migration phases in the linked
+   authentication and workspace plan, including finishing Phase 2 route cutover
+   and the later collaboration/MCP phases.
+3. Register and test the exact HTTPS OIDC callback for the SSH-tunnel deployment
+   before enabling browser login in a shared environment.
+4. Update deployment documentation for the shared HTTPS authority, `/mcp`,
    WebSocket upgrade forwarding, cookie settings, revocation behavior, backups,
    and the existing single-API-owner constraint.
-6. Add cross-workspace isolation, role matrix, CSRF, OIDC replay, session/token
-   revocation, WebSocket/SSE/MCP closure, copy sanitization, and sentinel-secret
-   acceptance tests.
-7. Record a separate ADR before adding public links, guests, nested teams,
+5. Add cross-workspace isolation, role matrix, CSRF, OIDC replay, session/token
+   revocation, WebSocket/SSE revocation, MCP per-request fail-closed coverage,
+   copy sanitization, and sentinel-secret acceptance tests.
+6. Record a separate ADR before adding public links, guests, nested teams,
    identity-provider group synchronization, linked cross-workspace graphs, or
    multiple API owners.

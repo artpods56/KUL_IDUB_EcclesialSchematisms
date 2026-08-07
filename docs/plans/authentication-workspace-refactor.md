@@ -1,6 +1,6 @@
 # Authentication, workspace, and collaboration implementation plan
 
-- **Status:** Proposed; implementation pending
+- **Status:** Accepted; Phase 0–1 complete; Phase 2 in progress
 - **Date:** 2026-08-06
 - **Audience:** Experienced contributors changing identity, persistence, API,
   Workbench, MCP, collaboration, execution, or deployment
@@ -8,8 +8,8 @@
   personal access tokens, personal and shared workspaces, graph sharing, and the
   dependency order for realtime collaboration
 - **Related:** [Workbench feature architecture](../adr/0001-workbench-feature-architecture.md),
-  [proposed server-authoritative collaboration ADR](../adr/0002-server-authoritative-workbench-collaboration.md),
-  [proposed identity and workspace ADR](../adr/0003-authenticate-users-and-scope-collaboration-to-workspaces.md),
+  [server-authoritative collaboration ADR](../adr/0002-server-authoritative-workbench-collaboration.md),
+  [identity and workspace ADR](../adr/0003-authenticate-users-and-scope-collaboration-to-workspaces.md),
   [authentication and workspace tenancy design](../design/authentication-and-workspace-tenancy.md),
   [realtime collaboration design](../design/workbench-realtime-collaboration.md),
   [Workbench interaction plan](../workbench-interaction-plan.md), and
@@ -102,7 +102,7 @@ Use UUID identities and UTC timestamps throughout.
 | `WorkspaceMembership` | workspace id, user id, role, authorization version, revoked timestamp, created/updated timestamps | A personal workspace has only its owner membership. A normal shared workspace retains at least one active owner; the migrated `local` workspace is sealed until its bootstrap mapping is consumed. Removal revokes rather than deletes the row, and the version advances monotonically on role or membership-state change. |
 | `OidcLoginTransaction` | public id, state digest, nonce digest, encrypted PKCE verifier and key version, return path, expiry, consumed timestamp | Single use and short lived. Callback replay, state mismatch, nonce mismatch, or expiry fails closed. Plain state, nonce, and verifier values are not persisted. |
 | `AuthSession` | public id, user id, secret digest, CSRF digest, expiry, last-used and revoked timestamps | Raw session and CSRF secrets are never persisted. Expired, revoked, or disabled-user sessions fail closed. |
-| `PersonalAccessToken` | public id/prefix, user id, workspace id, secret digest, label, scopes, expiry, last-used and revoked timestamps | The raw token is shown once. Effective permission is token scope intersected with current membership permission. |
+| `PersonalAccessToken` | public id/prefix, user id, workspace id, secret digest, label, scopes, expiry, last-used and revoked timestamps | The raw token is shown once. Effective permission is token scope intersected with current membership permission. Membership removal, role loss that leaves a token's scopes outside the member's remaining capabilities, and user disablement revoke the affected workspace-bound PATs in the same transaction as the membership or user mutation. |
 | `SecurityAuditEvent` | timestamp, actor kind, optional user and non-secret credential reference, workspace/resource ids when applicable, operation, outcome, safe error code | Metadata only. Pre-authentication and system events use explicit actor kinds without copying submitted identity. It never contains credentials, provider payloads, command/configuration values, artifacts, secrets, or one-time URLs. |
 
 Use dedicated identity domain types in
@@ -178,14 +178,20 @@ may create a workspace-bound PAT only for a workspace they currently belong to;
 the selected PAT scopes must be a subset of capabilities their role grants.
 Membership and role changes take effect on the next HTTP request and trigger
 post-commit invalidation for long-lived transports. Affected WebSocket and SSE
-connections and retained MCP transport sessions close and must establish a
-fresh authorization snapshot; handling-time authorization still resolves any
-race with an in-flight operation.
+connections close and must establish a fresh authorization snapshot; handling-
+time authorization still resolves any race with an in-flight operation. First-
+delivery MCP uses stateless Streamable HTTP, so each request re-resolves the
+PAT; there is no process-global or transport-session caller token to retain.
 
 Removing a shared-workspace member sets `revoked_at` and increments
-`authorization_version` rather than deleting attribution history. Re-adding the
-same user reactivates that row and increments the version again. Ordinary
-authorization considers only an active membership.
+`authorization_version` rather than deleting attribution history. The same
+membership transaction also revokes that user's workspace-bound PATs for the
+affected workspace. A role change that leaves an existing PAT's scopes outside
+the member's remaining capabilities likewise revokes those PATs before commit.
+User disablement revokes all of that user's sessions and PATs in one
+transaction. Re-adding a removed member reactivates the membership row and
+increments the version again; it does not revive previously revoked PATs.
+Ordinary authorization considers only an active membership.
 
 Use these boundary outcomes consistently:
 
@@ -249,9 +255,12 @@ every WebSocket handshake. CORS configuration does not replace either check.
 Workspace-bound PATs use `Authorization: Bearer <token>` for `/mcp` and do not
 use CSRF. Give them bounded scopes such as `graphs:read`, `graphs:write`, and
 `executions:run`; do not grant membership, secret-management, user-management,
-or workspace-deletion scopes in the first delivery. Resolve the bearer on each
-MCP request and intersect its scopes with current user and membership state. Do
-not store a process-global token or accept a token in an MCP tool argument.
+or workspace-deletion scopes in the first delivery. First-delivery MCP is
+**stateless Streamable HTTP** mounted at `/mcp` under the same FastAPI
+authority: resolve and authorize the bearer on every request, intersect scopes
+with current user and membership state, and inject only a request-scoped actor.
+Do not store a process-global or lifespan caller token, and do not accept a
+token in an MCP tool argument.
 
 Local development and browser acceptance tests use a configured OIDC provider
 or protocol-level test issuer with the same discovery, JWK, state, nonce, PKCE,
@@ -430,7 +439,7 @@ Before implementation:
    callback registration, idle/absolute session lifetimes, PAT maximum lifetime,
    login/session/PAT cleanup schedules, and security-audit retention.
 7. Choose bounded participant, graph, room-message, presence-rate, queue, and
-   retained-transport limits before fixing the first protocol version.
+   MCP request/concurrency limits before fixing the first protocol version.
 
 Exit when no identity or sharing decision needed by a migration is still open.
 
@@ -685,21 +694,24 @@ client or ambient service credential.
    `apps/mcp/pyproject.toml` and `uv.lock`—currently FastMCP 3.4.0 and MCP
    1.28.1. A focused integration test must prove
    that FastMCP's Streamable HTTP ASGI application can be mounted at `/mcp`
-   under FastAPI; compose lifespans once; receive the request Authorization
-   header; isolate actor context across concurrent requests; close retained MCP
-   sessions; and work behind the gateway prefix. If the pinned SDK cannot meet
-   this contract, stop the phase and make one reviewed SDK/lockfile upgrade.
-   Do not hide an incompatible SDK behind a process-global shim.
+   under FastAPI in stateless mode; compose lifespans once; receive the request
+   Authorization header; isolate actor context across concurrent requests
+   without a process-global caller token; and work behind the gateway prefix.
+   If the pinned SDK cannot meet this contract, stop the phase and make one
+   reviewed SDK/lockfile upgrade. Do not hide an incompatible SDK behind a
+   process-global shim.
 2. Refactor `apps/mcp/src/notarius_mcp/server.py` to expose a mountable
    Streamable HTTP application. Remove the separately published MCP server from
    production topology and remove the stdio transport and entry point. Delete
    the standalone `NotariusApiClient` and process-level MCP API URL settings
    when no remaining caller owns them rather than leaving a second dormant
    authority path. [R17: Delete Dead Abstractions]
-3. Mount that application at `/mcp` from `notarius_api.main`. The FastAPI
-   composition root resolves the bearer PAT on every MCP request and injects a
-   request-scoped actor plus concrete operations backed by the existing identity,
-   graph, collaboration, catalog, and execution application services.
+3. Mount that application at `/mcp` from `notarius_api.main` in **stateless**
+   Streamable HTTP mode for the first delivery. The FastAPI composition root
+   resolves the bearer PAT on every MCP request and injects a request-scoped
+   actor plus concrete operations backed by the existing identity, graph,
+   collaboration, catalog, and execution application services. Do not enable a
+   stateful MCP transport session that carries caller identity across requests.
 4. Keep token parsing in the API authority and persistence in the persistence
    adapter. The MCP transport may own a narrow operations contract required by
    its real delivery boundary, but it must not import SQLAlchemy repositories,
@@ -708,7 +720,8 @@ client or ambient service credential.
 5. Derive workspace id and capability scopes only from the resolved PAT. Keep
    workspace and token out of MCP tool arguments so a model cannot switch
    authority or reveal the credential. Never retain Authorization in a global
-   `httpx.AsyncClient`, lifespan dictionary, log, or MCP session payload.
+   `httpx.AsyncClient`, lifespan dictionary, log, or MCP transport-session
+   payload.
 6. Expose workspace-scoped MCP tools for an explicit live-head read and semantic
    command submission. The read returns room epoch, head sequence, checkpoint
    sequence/revision, and the complete authorized head; the command carries the
@@ -720,16 +733,20 @@ client or ambient service credential.
 8. Scope graph-module node search and every returned resource to the token's
    workspace. Map `401`, `403`, `404`, `409`, and `422` to bounded tool errors
    without credentials, response headers, or unsafe server bodies.
-9. On PAT revocation, user disable, membership removal, role change, or scope
-   loss, reject any no-longer-authorized request and actively close retained
-   Streamable HTTP sessions owned by the affected credential.
+9. On PAT revocation, user disable, membership removal, role loss, or scope
+   loss, the membership or user mutation transactionally revokes affected
+   workspace-bound PATs where applicable, and the next MCP request fails closed
+   from current credential state. Because first delivery is stateless, there is
+   no retained MCP authorization session to close; reject any later request that
+   presents a revoked or no-longer-authorized token.
 
 Phase exit criteria:
 
 - a read PAT can search/list/get but cannot create, replace, run, or mutate;
 - a write PAT can author only within its bound workspace and current user role;
-- PAT revocation, expiry, user disable, membership removal, or role change takes
-  effect on the next request and closes retained transport state;
+- PAT revocation, expiry, user disable, membership removal, or role loss takes
+  effect on the next request because authorization is re-resolved per request
+  and affected PATs are revoked in the membership/user transaction;
 - MCP live-head reads, semantic commands, create/replace, and browser commands
   use one collaborative head and checkpoint history rather than parallel
   mutation paths;
@@ -970,7 +987,7 @@ network. Route `/` and static assets to Next.js; route public `/api/v1/...` to
 FastAPI `/v1/...` by stripping only `/api`; and route `/mcp` to the Streamable
 HTTP MCP application mounted by FastAPI. Preserve WebSocket upgrade on graph-
 room paths and disable proxy buffering for SSE. Keep read/idle timeouts longer
-than room, SSE, and retained MCP heartbeat windows.
+than room, SSE, and MCP request/idle windows.
 
 Build the web app with `/api` as its relative API base. Derive WebSocket
 `ws:`/`wss:` from `window.location` and the `/api` route, not a separately
@@ -1022,7 +1039,7 @@ Do not repeat every command permutation in every layer.
 | --- | --- | --- |
 | Identity invariants | `tests/unit/core/test_identity.py`, `tests/unit/application/test_identity.py` | Exact issuer/subject identity, slug normalization, personal workspace, last shared owner, role-to-capability map, exact-head graph-copy policy. |
 | OIDC and sessions | `tests/unit/api/test_auth.py` | Discovery/JWK failure, issuer/audience/signature/algorithm/time validation, PKCE/state/nonce, callback replay, transaction/rate bounds, first-login provisioning/bootstrap consumption, session rotation/expiry/logout, CSRF and Origin rejection. |
-| PAT and MCP authentication | Auth and mounted MCP integration tests | Workspace/scope intersection, expiry/revocation, disabled user, concurrent request actor isolation, retained MCP-session closure, no process-global credential. |
+| PAT and MCP authentication | Auth and mounted MCP integration tests | Workspace/scope intersection, expiry/revocation, disabled user, concurrent request actor isolation, transactional PAT revoke on membership removal/role loss/user disable, stateless per-request actor injection, no process-global credential. |
 | Sensitive-state sentinel | Auth, collaboration, execution integration tests | Sentinel OIDC code/verifier/provider token, PAT/session/CSRF secret, and node secret appear in no generic dump, repr, unrelated response, command, presence, error, audit log, or captured log. The only raw-secret delivery is session/CSRF `Set-Cookie` at issuance and the PAT creation response once. |
 | Identity persistence | New persistence tests | Unique normalized identities, token digest lookup, revocation, monotonic membership authorization version, membership transactions, composite workspace constraints, and indexed audit retention. |
 | Security audit | Identity/collaboration persistence tests | Authenticated, unauthenticated, and system actor kinds; safe attribution and outcomes; accepted-mutation atomicity; retention cleanup; no submitted identity, credential, provider, command, configuration, artifact, secret, or one-time URL values. |
@@ -1033,7 +1050,7 @@ Do not repeat every command permutation in every layer.
 | WebSocket protocol | New API protocol tests | Cookie and Origin admission, room isolation, viewer read-only behavior, mid-session revocation, reconnect/epoch recovery, bounded queues. |
 | Presence | Protocol/model tests | Rate/size bounds, TTL expiry, graph coordinates, independent selection, one durable command per drag, no sensitive payload. |
 | Shared execution | Execution API/persistence tests | Role checks, durable active slot, actor attribution, cross-workspace invisibility, late SSE recovery, cancellation and startup recovery. |
-| MCP SDK and tools | `tests/unit/mcp/` plus FastAPI mount integration | Pinned SDK ASGI/lifespan compatibility, per-request actor injection, read/write scope, revocation/session closure, safe errors, no persistence dependency. |
+| MCP SDK and tools | `tests/unit/mcp/` plus FastAPI mount integration | Pinned SDK ASGI/lifespan compatibility, stateless per-request actor injection, read/write scope, post-revocation fail-closed requests, safe errors, no persistence dependency. |
 | Generated contract | `tests/unit/api/test_openapi.py`, web contract check | Exact target routes and generated JSON/TS are current; the browser adapter agrees with FastAPI; mounted MCP tool schemas and injected-operation fixtures are current. |
 | Browser journey | Two independent browser contexts | Owner adds editor/viewer; editor and owner converge and share a run; viewer observes but cannot mutate; removal closes room; personal graph remains invisible. |
 | Deployment | Container smoke/release check | Same-origin cookie/CSRF, WebSocket and SSE through gateway/SSH, one API owner, second-owner rejection, backup/restore rehearsal. |
@@ -1093,8 +1110,8 @@ The refactor is complete only when all of the following are true:
 - OpenAPI JSON, generated TypeScript, MCP models, and WebSocket fixtures are
   current and checked in CI.
 - The pinned FastMCP/MCP SDK compatibility gate proves mounted-ASGI lifespan,
-  request-scoped actor isolation, reverse-proxy path behavior, and
-  revocation-driven session closure.
+  stateless request-scoped actor isolation, reverse-proxy path behavior, and
+  immediate fail-closed behavior after PAT revocation.
 - The same-origin HTTPS gateway carries `/`, `/api/v1`, `/mcp`, SSE, and WebSocket
   traffic over the exact registered OIDC origin; the tested SSH-forwarded
   deployment publishes only loopback port 8080.

@@ -1,9 +1,9 @@
 # ADR 0002: Use server-authoritative graph sessions for Workbench collaboration
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-05
 - **Scope:** Workbench graph authoring, persistence, presence, and execution observation
-- **Design:** [Proposed realtime Workbench collaboration rework](../design/workbench-realtime-collaboration.md)
+- **Design:** [Realtime Workbench collaboration rework](../design/workbench-realtime-collaboration.md)
 - **Related:** [Authenticated workspace ADR](0003-authenticate-users-and-scope-collaboration-to-workspaces.md)
   and [authentication and workspace tenancy design](../design/authentication-and-workspace-tenancy.md)
 
@@ -107,12 +107,13 @@ Collaboration sequence and saved graph revision remain separate.
   epoch and forces connected clients to rehydrate.
 - Create, safe replacement, and delete all coordinate the collaborative head;
   deletion of an uncheckpointed head requires explicit exact-head confirmation.
-- MCP is HTTP-only: its Streamable HTTP application is mounted at `/mcp` under
-  the FastAPI authority, validates a workspace-bound PAT on every request, and
-  has no stdio or anonymous fallback. MCP authoring calls the same workspace-
-  bound collaboration application as the WebSocket and HTTP graph routes. It
-  applies commands to, or safely replaces, the live collaborative head and
-  cannot mutate an unrelated checkpoint document directly.
+- MCP is HTTP-only: first delivery mounts **stateless** Streamable HTTP at
+  `/mcp` under the FastAPI authority, validates a workspace-bound PAT on every
+  request with no process-global caller token, and has no stdio or anonymous
+  fallback. MCP authoring calls the same workspace-bound collaboration
+  application as the WebSocket and HTTP graph routes. It applies commands to,
+  or safely replaces, the live collaborative head and cannot mutate an
+  unrelated checkpoint document directly.
 
 ### Keep presence ephemeral
 
@@ -204,13 +205,17 @@ are checked before idempotency results or resource state are disclosed.
 
 Workspace-membership removal or role change advances the membership's
 authorization version and deterministically closes affected room and SSE
-connections plus retained MCP transport state. AuthSession revocation
-separately closes room and SSE connections bound to that browser credential
-without changing membership state; PAT revocation closes retained MCP transport
-state for that token. A still-authorized client must reconnect and receive newly
-derived capabilities before it can resume; a client that lost visibility is
-rejected before the room snapshot. Operation-time authorization remains
-authoritative if the close notification races an in-flight message.
+connections. The same membership transaction revokes that user's affected
+workspace-bound PATs: all of them on removal, and any whose scopes exceed the
+member's remaining capabilities on role loss. AuthSession revocation separately
+closes room and SSE connections bound to that browser credential without
+changing membership state. Because first-delivery MCP is stateless, PAT
+revocation takes effect on the next independently authenticated MCP request
+rather than by closing a retained MCP authorization session. A still-authorized
+browser client must reconnect and receive newly derived capabilities before it
+can resume; a client that lost visibility is rejected before the room snapshot.
+Operation-time authorization remains authoritative if the close notification
+races an in-flight message.
 
 Node-secret rows and bindings are workspace-owned and loaded through the exact
 workspace and graph. Only an Owner may configure or physically remove them; an
@@ -303,11 +308,11 @@ make the deployment safe.
 
 ## Follow-up
 
-If this ADR is accepted:
+This ADR is Accepted. Remaining follow-up:
 
-1. Add the proposal vocabulary to `CONTEXT.md`.
-2. Implement ADR 0003 and the authentication/workspace tenancy design, including
-   workspace-bound graph routes, before enabling the production room protocol.
+1. Add the accepted vocabulary to `CONTEXT.md` when that pass is scheduled.
+2. Finish ADR 0003 workspace-bound graph route cutover before enabling the
+   production room protocol.
 3. Implement the collaboration migration phases in the linked technical design.
 4. Update deployment documentation to state the WebSocket proxy requirements
    and single-API-owner constraint.

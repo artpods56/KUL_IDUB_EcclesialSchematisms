@@ -1,24 +1,24 @@
-# Proposed realtime Workbench collaboration rework
+# Realtime Workbench collaboration rework
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-05
 - **Audience:** Engineers changing the Workbench, saved-graph persistence, or graph execution
 - **Document type:** Technical design explanation
 - **Related:** [Workbench feature architecture](../adr/0001-workbench-feature-architecture.md),
-  [proposed collaboration ADR](../adr/0002-server-authoritative-workbench-collaboration.md),
-  [proposed authentication and workspace ADR](../adr/0003-authenticate-users-and-scope-collaboration-to-workspaces.md),
+  [collaboration ADR](../adr/0002-server-authoritative-workbench-collaboration.md),
+  [authentication and workspace ADR](../adr/0003-authenticate-users-and-scope-collaboration-to-workspaces.md),
   [authentication and workspace tenancy design](authentication-and-workspace-tenancy.md),
   [product vocabulary](../../CONTEXT.md)
 
 ## Summary
 
-This document proposes realtime collaboration for one saved graph across
+This document defines realtime collaboration for one saved graph across
 multiple browser sessions. Collaborators should see each other's cursors,
 selections, editing activity, and live node movement. Durable graph changes
 should converge without whole-document save conflicts. A graph execution and
 its activity bar should be visible to every session viewing that graph.
 
-The proposed design makes these decisions:
+The design makes these decisions:
 
 1. A saved graph has one server-authoritative collaboration room keyed by
    stable workspace id and graph id.
@@ -42,7 +42,8 @@ The proposed design makes these decisions:
    API ownership remains out of scope until execution leases, shared replay,
    cancellation routing, and shared room publication exist.
 
-This is a proposed design, not a description of current behavior.
+This is an accepted design for the collaboration rework; parts of the live
+codebase may still be mid-migration toward this contract.
 
 ## Motivation
 
@@ -118,8 +119,8 @@ commands rather than remove revision safety.
 
 ## Vocabulary
 
-These proposal-specific terms should be added to `CONTEXT.md` if this design is
-accepted.
+These design-specific terms should be added to `CONTEXT.md` when the accepted
+vocabulary pass is scheduled.
 
 ### Graph room
 
@@ -162,8 +163,8 @@ The revocable server-side browser session established after OIDC login. Its
 opaque cookie can outlive several graph-room connections, but its cookie and
 server-side identifiers never enter graph documents, commands, presence, or
 browser-persisted Workbench state. MCP uses a workspace-bound personal access
-token instead; an MCP transport session is neither an `AuthSession` nor an
-identity.
+token over first-delivery **stateless** Streamable HTTP instead; that per-
+request MCP credential resolution is neither an `AuthSession` nor an identity.
 
 ### Graph room session
 
@@ -444,10 +445,11 @@ returns the stable `idempotency_mismatch` error.
 The existing saved-graph read and revision-history endpoints continue to return
 checkpoint documents. They must never pair an uncheckpointed collaborative-head
 document with the latest checkpoint revision. The browser obtains the live head
-from `room.ready`. Authenticated MCP Streamable HTTP and other non-WebSocket
-automation are real live-head consumers, so expose a distinct workspace-scoped
-HTTP head-snapshot read that returns the room epoch, head sequence, checkpoint
-sequence/revision, and complete head without implying that it joined presence.
+from `room.ready`. Authenticated MCP over stateless Streamable HTTP and other
+non-WebSocket automation are real live-head consumers, so expose a distinct
+workspace-scoped HTTP head-snapshot read that returns the room epoch, head
+sequence, checkpoint sequence/revision, and complete head without implying that
+it joined presence.
 
 Graph-list navigation may expose head name, head sequence, and checkpoint
 sequence as explicitly named draft metadata so a durable rename is discoverable
@@ -457,10 +459,11 @@ before checkpointing. It must not overload the checkpoint document's `name` and
 ### Mutations outside the room
 
 Graph create, complete-document replace, and delete routes cannot bypass
-collaboration coordination. The authenticated MCP deployment uses Streamable
-HTTP as defined by the authentication and workspace design. Its delegated actor
-and workspace context are authorized on every tool call; an MCP transport
-session is not a graph-room session and does not publish presence.
+collaboration coordination. The authenticated MCP deployment uses stateless
+Streamable HTTP as defined by the authentication and workspace design. Its
+delegated actor and workspace context are authorized on every tool call; MCP
+request authentication is not a graph-room session and does not publish
+presence.
 
 MCP and other automation read the explicit live-head HTTP representation before
 authoring and submit semantic commands through the workspace-scoped HTTP
@@ -1417,9 +1420,10 @@ document replacement with the same module.
 
 The linked implementation plan transitions MCP after these application
 contracts exist. That transition begins with a pinned FastMCP/MCP SDK
-compatibility gate for mounted Streamable HTTP, lifespan composition, request-
-header access, concurrent actor isolation, proxy behavior, and retained-session
-closure; it does not add a stdio fallback.
+compatibility gate for mounted **stateless** Streamable HTTP, lifespan
+composition, request-header access, concurrent per-request actor isolation
+without a process-global caller token, and proxy behavior; it does not add a
+stdio fallback.
 
 Exit criteria:
 
@@ -1502,11 +1506,13 @@ Exit criteria:
 
 ### Phase 7: Production deployment and scaling gate
 
-Production identity and workspace authorization already exist from Phase 2.
-Before enabling collaboration, verify that graph rooms, HTTP/SSE execution, and
-MCP Streamable HTTP all enforce that shared contract and the full authenticated
-acceptance suite passes. Do not add another API owner until a separate
-execution/room ownership design is implemented and verified.
+This final collaboration phase is only the deployment and scaling gate; identity
+and workspace authorization already exist from Phase 2 and are not reopened
+here. Before enabling collaboration, verify that graph rooms, HTTP/SSE
+execution, and stateless MCP Streamable HTTP all enforce that shared contract
+and the full authenticated acceptance suite passes. Do not add another API
+owner until a separate execution/room ownership design is implemented and
+verified.
 
 Feature enablement also asserts exactly one FastAPI application process: one
 replica and one Uvicorn or Gunicorn worker. A second process must fail startup or
@@ -1574,9 +1580,9 @@ Tests should cross the same interfaces used by production callers.
 - Active execution GET returns a sequence-consistent per-node observation
   snapshot, and SSE reports a cursor older than its replay window explicitly.
 - Command and execution audit metadata exclude sensitive values.
-- Authenticated MCP Streamable HTTP reads explicit live-head metadata and uses
-  the same workspace-scoped command/replace coordination; its transport session
-  never appears in presence.
+- Authenticated MCP over stateless Streamable HTTP reads explicit live-head
+  metadata and uses the same workspace-scoped command/replace coordination; MCP
+  request authentication never appears in presence.
 
 ### Protocol tests
 
@@ -1815,14 +1821,14 @@ production rollout:
 
 ## Acceptance of this proposal
 
-If this design is accepted:
+This design and ADR 0002 are Accepted. Remaining follow-up:
 
-1. Change this document and the associated ADR from Proposed to Accepted.
-2. Add Actor, AuthSession, GraphRoomSession, capability snapshot, graph room,
+1. Add Actor, AuthSession, GraphRoomSession, capability snapshot, graph room,
    graph command, presence, and active graph execution to `CONTEXT.md` using the
-   definitions above and the related authentication/workspace vocabulary.
-3. Update ADR 0001 only if implementation discovers a real dependency conflict;
+   definitions above and the related authentication/workspace vocabulary when
+   the accepted vocabulary pass is scheduled.
+2. Update ADR 0001 only if implementation discovers a real dependency conflict;
    the design would complete its recorded framework-independent graph
    follow-up rather than contradicting it.
-4. Implement the phases in order and keep the compatibility path passing until
+3. Implement the phases in order and keep the compatibility path passing until
    the collaborative path has equivalent behavioral coverage.

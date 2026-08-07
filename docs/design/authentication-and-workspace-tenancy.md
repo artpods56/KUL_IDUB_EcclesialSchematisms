@@ -1,6 +1,6 @@
 # Authentication and workspace tenancy
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-06
 - **Audience:** Engineers changing identity, persistence, API, Workbench,
   collaboration, execution, MCP, or deployment
@@ -14,8 +14,8 @@
 ## Summary
 
 This design adds application identity, workspace tenancy, and continuing
-authorization to Notarius. It is a proposed design, not a description of the
-current unauthenticated application.
+authorization to Notarius. It is an accepted design for the refactor; parts of
+the live codebase may still be mid-migration toward this contract.
 
 The design makes these decisions:
 
@@ -29,9 +29,10 @@ The design makes these decisions:
    workspace scope from persistence through runtime execution.
 4. Workspace roles provide default capabilities, but the server authorizes the
    specific operation using current membership when it is handled.
-5. Browser HTTP, WebSocket, and SSE use the same-origin session. Streamable HTTP
-   MCP at `/mcp` uses a workspace-bound personal access token and the same
-   application workflows.
+5. Browser HTTP, WebSocket, and SSE use the same-origin session. First-delivery
+   MCP uses **stateless Streamable HTTP** at `/mcp` with a workspace-bound
+   personal access token and the same application workflows; every request is
+   authenticated independently and no process-global caller token is retained.
 6. Authentication or room admission is not continuing authority. Revocation
    and role changes affect ordinary requests immediately and terminate
    long-lived transports.
@@ -165,9 +166,11 @@ AuthSession nor an identity or authorization grant.
 
 ### MCP transport session
 
-Protocol state retained by Streamable HTTP when the selected MCP SDK requires
-it. It is never an identity. Every MCP request remains bound to the current PAT,
-User, WorkspaceMembership, and scopes.
+First delivery uses **stateless** Streamable HTTP, so there is no server-side
+MCP transport session that carries caller identity or authorization across
+requests. Any SDK-local protocol bookkeeping is never an identity. Every MCP
+request independently resolves the current PAT, User, WorkspaceMembership, and
+scopes.
 
 ## Workspace ownership invariants
 
@@ -301,6 +304,12 @@ For every request, the server verifies:
 Bearer requests do not use cookies or CSRF. A request presenting both browser
 cookie and bearer authentication is rejected rather than silently selecting an
 identity.
+
+Membership removal revokes that user's PATs for the affected workspace in the
+same transaction. A role change that leaves an existing PAT's scopes outside the
+member's remaining capabilities likewise revokes those PATs before commit. User
+disablement revokes all of that user's sessions and PATs in one transaction.
+Revoked PATs are not revived when membership is later restored.
 
 The first delivery accepts PAT authentication only at `/mcp`. Browser `/v1`
 resource routes use the AuthSession cookie; broad REST API-token access requires
@@ -520,16 +529,17 @@ not a substitute for the workspace-visible graph history.
 
 ## Streamable HTTP MCP
 
-Production MCP is HTTP, not stdio. FastMCP's Streamable HTTP ASGI application is
-mounted at `/mcp` under the same FastAPI authority and single API owner. It is
-not published on a separate unauthenticated port and does not call the API with
-an ambient process credential.
+Production MCP is HTTP, not stdio. First delivery mounts FastMCP's **stateless**
+Streamable HTTP ASGI application at `/mcp` under the same FastAPI authority and
+single API owner. It is not published on a separate unauthenticated port and
+does not call the API with an ambient process credential or a process-global
+caller token.
 
 Before implementation, an integration gate verifies the pinned FastMCP 3.4.0
-and MCP 1.28.1 versions can provide the required mount, lifespan, request-header access,
-concurrent actor isolation, gateway prefix behavior, and retained-session
-closure. An incompatible pin is upgraded explicitly; it is not hidden behind a
-global shim.
+and MCP 1.28.1 versions can provide the required mount, lifespan, request-header
+access, concurrent per-request actor isolation without retained caller identity,
+and gateway prefix behavior. An incompatible pin is upgraded explicitly; it is
+not hidden behind a global shim.
 
 For each request, the API authority:
 
@@ -543,10 +553,9 @@ The token and Workspace are not tool arguments. Authorization is never retained
 in a process-global HTTP client, lifespan dictionary, MCP session id, log, or
 tool error. MCP uses no cookie and no CSRF.
 
-PAT revocation, user disablement, membership removal, role change, or scope loss
-closes retained MCP transport state for the affected credential. The next
-request rebuilds authorization from current state and fails closed when the
-required capability is no longer effective.
+PAT revocation, user disablement, membership removal, role loss, or scope loss
+fails closed on the next request because authorization is re-resolved per
+request and affected PATs are revoked in the membership or user transaction.
 
 MCP is a real non-WebSocket live-head consumer. Its read contract returns room
 epoch, head sequence, checkpoint sequence and revision, and the complete
@@ -700,9 +709,9 @@ text.
 | OIDC state, nonce, issuer, audience, signature, PKCE, time, or replay failure | Deny login, consume or invalidate unsafe transaction state, and return a bounded error without provider payload |
 | Provider metadata/JWK temporarily unavailable | Use only an unexpired validated cache; otherwise fail closed |
 | Session expired or revoked | Return `401`; stop protected retries and require a new login |
-| User disabled | Revoke sessions and PATs, close long-lived transports, deny future requests |
-| Role changed | Close room, SSE, and retained MCP transport state as applicable and require fresh authorization/capabilities |
-| Workspace membership removed | Conceal resources, close transports, remove presence, and purge client caches |
+| User disabled | Revoke sessions and PATs in one transaction, close long-lived browser transports, deny future requests including MCP |
+| Role changed | Close room and SSE as applicable; revoke workspace PATs whose scopes exceed the member's remaining capabilities in the same membership transaction; require a fresh browser authorization snapshot |
+| Workspace membership removed | Revoke that user's workspace-bound PATs in the same transaction, conceal resources, close browser transports, remove presence, and purge client caches |
 | Foreign resource UUID or command id | Behave as not found without revealing existence or idempotency outcome |
 | Command races revocation | Whichever transaction commits first determines whether the command is accepted or rejected |
 | PAT revoked | Reject the next MCP request and close retained transport state for that credential |
@@ -741,10 +750,10 @@ acceptance includes:
   retention.
 - Whether owner-added users must have completed first login or whether a later
   invitation workflow may reserve an identity safely.
-- Initial participant, graph-size, WebSocket-message, presence-rate, and
-  retained-session limits.
-- Exact dependency version needed for mounted Streamable HTTP MCP after the SDK
-  compatibility gate.
+- Initial participant, graph-size, WebSocket-message, presence-rate, and MCP
+  request/concurrency limits under the first-delivery stateless transport.
+- Exact dependency version needed for mounted stateless Streamable HTTP MCP
+  after the SDK compatibility gate.
 
 These choices may tune limits and operations. They do not change the central
 User, Workspace, membership, OIDC session, workspace-scoped resource, or HTTP
