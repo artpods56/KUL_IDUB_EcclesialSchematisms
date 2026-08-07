@@ -1,6 +1,7 @@
 export {
   GraphRoomCommandError,
   GraphRoomSession,
+  PRESENCE_CLIENT_MIN_INTERVAL_MS,
   ROOM_COMMAND_QUEUE_CAP,
   graphRoomWebSocketUrl,
   type GraphRoomCommandResult,
@@ -8,8 +9,15 @@ export {
   type GraphRoomSessionOptions,
   type GraphRoomStatus,
   type GraphRoomTerminalReason,
+  type PresenceParticipant,
+  type PresenceUpdateSubmit,
   type RoomGraphCommand,
 } from "./graph-room-session";
+export {
+  PresenceOverlay,
+  remoteSelectedNodeIds,
+  remoteSelectionColor,
+} from "./PresenceOverlay";
 export {
   useGraphRoomSession,
   type UseGraphRoomSessionResult,
@@ -18,6 +26,8 @@ export type {
   GraphCommandAcceptedMessage,
   GraphCommandReceiptMessage,
   GraphCommandRejectedMessage,
+  PresenceActivityKind,
+  PresencePoint,
   RoomReadyMessage,
   RoomRehydrateMessage,
 } from "./protocol";

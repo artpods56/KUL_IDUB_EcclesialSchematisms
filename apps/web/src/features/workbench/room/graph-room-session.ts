@@ -7,18 +7,22 @@ import {
   parseServerRoomMessage,
   terminalReasonFromClose,
   type ActorPresentation,
-  type CapabilitySnapshot,
   type GraphCommandAcceptedMessage,
   type GraphCommandReceiptMessage,
   type GraphCommandRejectedMessage,
   type GraphRoomStatus,
   type GraphRoomTerminalReason,
+  type PresenceParticipant,
+  type PresenceUpdateSubmit,
   type RoomGraphCommand,
   type RoomReadyMessage,
 } from "./protocol";
 
 export type { GraphRoomStatus, GraphRoomTerminalReason, RoomGraphCommand };
+export type { PresenceParticipant, PresenceUpdateSubmit };
 export { ROOM_COMMAND_QUEUE_CAP, graphRoomWebSocketUrl };
+
+export const PRESENCE_CLIENT_MIN_INTERVAL_MS = 50;
 
 export class GraphRoomCommandError extends Error {
   readonly errorCode: string;
@@ -43,6 +47,7 @@ export interface GraphRoomSessionListeners {
   onRehydrate?: (head: CollaborativeHead) => void;
   onCommandAccepted?: (message: GraphCommandAcceptedMessage) => void;
   onCommandRejected?: (message: GraphCommandRejectedMessage) => void;
+  onPresenceChange?: (participants: readonly PresenceParticipant[]) => void;
   onTerminalClose?: (reason: GraphRoomTerminalReason) => void;
 }
 
@@ -83,6 +88,9 @@ export class GraphRoomSession {
   private head: CollaborativeHead | null = null;
   private capabilities: readonly WorkspaceCapability[] = [];
   private authorizationVersion: number | null = null;
+  private participants = new Map<string, PresenceParticipant>();
+  private presenceSequence = 0;
+  private lastPresenceSentAt = 0;
 
   private readonly queue: QueuedCommand[] = [];
   private inFlight: QueuedCommand | null = null;
@@ -100,6 +108,7 @@ export class GraphRoomSession {
       onRehydrate: options.onRehydrate,
       onCommandAccepted: options.onCommandAccepted,
       onCommandRejected: options.onCommandRejected,
+      onPresenceChange: options.onPresenceChange,
       onTerminalClose: options.onTerminalClose,
     };
   }
@@ -130,6 +139,57 @@ export class GraphRoomSession {
 
   getGraphRoomSessionId(): string | null {
     return this.ready?.graph_room_session_id ?? null;
+  }
+
+  getParticipants(): readonly PresenceParticipant[] {
+    return [...this.participants.values()];
+  }
+
+  getRemoteParticipants(): readonly PresenceParticipant[] {
+    const localId = this.getGraphRoomSessionId();
+    return this.getParticipants().filter(
+      (participant) => participant.graph_room_session_id !== localId,
+    );
+  }
+
+  canPublishPresence(): boolean {
+    return (
+      this.status === "ready" &&
+      this.capabilities.includes("publish_presence") &&
+      this.terminalReason === null
+    );
+  }
+
+  publishPresence(update: Omit<PresenceUpdateSubmit, "presence_sequence">): boolean {
+    if (!this.canPublishPresence()) return false;
+    const now = Date.now();
+    if (
+      this.lastPresenceSentAt > 0 &&
+      now - this.lastPresenceSentAt < PRESENCE_CLIENT_MIN_INTERVAL_MS
+    ) {
+      return false;
+    }
+    const socket = this.socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    this.presenceSequence += 1;
+    const payload = {
+      protocol_version: ROOM_PROTOCOL_VERSION,
+      type: "presence.update" as const,
+      presence_sequence: this.presenceSequence,
+      cursor: update.cursor ?? null,
+      selected_node_ids: update.selected_node_ids ?? [],
+      selected_edge_ids: update.selected_edge_ids ?? [],
+      activity: update.activity ?? null,
+      activity_target_ids: update.activity_target_ids ?? [],
+      transient_node_positions: update.transient_node_positions ?? [],
+    };
+    try {
+      socket.send(JSON.stringify(payload));
+      this.lastPresenceSentAt = now;
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   canSubmitCommands(): boolean {
@@ -164,6 +224,7 @@ export class GraphRoomSession {
     ));
     this.setStatus("idle");
     this.ready = null;
+    this.clearPresence();
   }
 
   submitCommand(command: RoomGraphCommand): Promise<GraphRoomCommandResult> {
@@ -251,6 +312,14 @@ export class GraphRoomSession {
         return;
       }
     }
+    if (
+      typeof raw === "object" &&
+      raw !== null &&
+      "type" in raw &&
+      (raw as { type?: unknown }).type === "room.heartbeat"
+    ) {
+      return;
+    }
     const message = parseServerRoomMessage(raw);
     if (message === null) {
       this.stopTraffic("protocol_error");
@@ -264,6 +333,14 @@ export class GraphRoomSession {
     if (message.type === "room.rehydrate") {
       this.head = message.head;
       this.listeners.onRehydrate?.(message.head);
+      return;
+    }
+    if (message.type === "presence.join" || message.type === "presence.update") {
+      this.upsertParticipant(message.participant);
+      return;
+    }
+    if (message.type === "presence.leave") {
+      this.removeParticipant(message.graph_room_session_id);
       return;
     }
     if (message.type === "graph.command.accepted") {
@@ -291,9 +368,38 @@ export class GraphRoomSession {
     this.head = message.head;
     this.capabilities = message.capabilities.capabilities;
     this.authorizationVersion = message.capabilities.authorization_version;
+    this.participants = new Map(
+      message.participants.map((participant) => [
+        participant.graph_room_session_id,
+        participant,
+      ]),
+    );
+    this.presenceSequence = 0;
+    this.lastPresenceSentAt = 0;
     this.setStatus("ready");
     this.listeners.onReady?.(message);
+    this.emitPresenceChange();
     this.drainQueue();
+  }
+
+  private upsertParticipant(participant: PresenceParticipant): void {
+    this.participants.set(participant.graph_room_session_id, participant);
+    this.emitPresenceChange();
+  }
+
+  private removeParticipant(sessionId: string): void {
+    if (!this.participants.delete(sessionId)) return;
+    this.emitPresenceChange();
+  }
+
+  private clearPresence(): void {
+    if (this.participants.size === 0) return;
+    this.participants.clear();
+    this.emitPresenceChange();
+  }
+
+  private emitPresenceChange(): void {
+    this.listeners.onPresenceChange?.(this.getParticipants());
   }
 
   private applyAccepted(message: GraphCommandAcceptedMessage): void {
@@ -404,6 +510,7 @@ export class GraphRoomSession {
       return;
     }
     this.ready = null;
+    this.clearPresence();
     this.rejectInFlight(
       new GraphRoomCommandError(
         this.inFlight?.commandId ?? "",
@@ -426,6 +533,7 @@ export class GraphRoomSession {
     this.ready = null;
     this.capabilities = [];
     this.authorizationVersion = null;
+    this.clearPresence();
     this.generation += 1;
     const socket = this.socket;
     this.socket = null;

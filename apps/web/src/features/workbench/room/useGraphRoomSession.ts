@@ -8,6 +8,8 @@ import {
   GraphRoomSession,
   type GraphRoomStatus,
   type GraphRoomTerminalReason,
+  type PresenceParticipant,
+  type PresenceUpdateSubmit,
   type RoomGraphCommand,
 } from "./graph-room-session";
 import type { RoomReadyMessage } from "./protocol";
@@ -29,9 +31,15 @@ export interface UseGraphRoomSessionResult {
   readonly capabilities: readonly string[];
   readonly authorizationVersion: number | null;
   readonly canSubmitCommands: boolean;
+  readonly canPublishPresence: boolean;
+  readonly localSessionId: string | null;
+  readonly participants: readonly PresenceParticipant[];
   readonly submitCommand: (
     command: RoomGraphCommand,
   ) => Promise<GraphRoomSubmitResult>;
+  readonly publishPresence: (
+    update: Omit<PresenceUpdateSubmit, "presence_sequence">,
+  ) => boolean;
 }
 
 interface UseGraphRoomSessionOptions {
@@ -57,6 +65,12 @@ export function useGraphRoomSession({
   const [authorizationVersion, setAuthorizationVersion] = React.useState<
     number | null
   >(null);
+  const [participants, setParticipants] = React.useState<
+    readonly PresenceParticipant[]
+  >([]);
+  const [localSessionId, setLocalSessionId] = React.useState<string | null>(
+    null,
+  );
   const sessionRef = React.useRef<GraphRoomSession | null>(null);
 
   const onReadyRef = React.useRef(onReady);
@@ -75,6 +89,8 @@ export function useGraphRoomSession({
       setHead(null);
       setCapabilities([]);
       setAuthorizationVersion(null);
+      setParticipants([]);
+      setLocalSessionId(null);
       return;
     }
 
@@ -87,16 +103,21 @@ export function useGraphRoomSession({
         setCapabilities(ready.capabilities.capabilities);
         setAuthorizationVersion(ready.capabilities.authorization_version);
         setTerminalReason(null);
+        setLocalSessionId(ready.graph_room_session_id);
+        setParticipants(ready.participants);
         onReadyRef.current?.(ready);
       },
       onRehydrate: (nextHead) => {
         setHead(nextHead);
         onRehydrateRef.current?.(nextHead);
       },
+      onPresenceChange: setParticipants,
       onTerminalClose: (reason) => {
         setTerminalReason(reason);
         setCapabilities([]);
         setAuthorizationVersion(null);
+        setParticipants([]);
+        setLocalSessionId(null);
         onTerminalCloseRef.current?.(reason);
       },
     });
@@ -128,6 +149,13 @@ export function useGraphRoomSession({
     [],
   );
 
+  const publishPresence = React.useCallback(
+    (update: Omit<PresenceUpdateSubmit, "presence_sequence">): boolean => {
+      return sessionRef.current?.publishPresence(update) ?? false;
+    },
+    [],
+  );
+
   return {
     status,
     terminalReason,
@@ -139,6 +167,13 @@ export function useGraphRoomSession({
       head !== null &&
       capabilities.includes("edit_graph") &&
       terminalReason === null,
+    canPublishPresence:
+      status === "ready" &&
+      capabilities.includes("publish_presence") &&
+      terminalReason === null,
+    localSessionId,
+    participants,
     submitCommand,
+    publishPresence,
   };
 }

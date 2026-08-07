@@ -52,6 +52,8 @@ import {
 } from "./useSavedGraphLifecycle";
 import { useRunExecution } from "./useRunExecution";
 import {
+  PresenceOverlay,
+  remoteSelectionColor,
   useGraphRoomSession,
   type RoomGraphCommand,
 } from "../room";
@@ -1167,6 +1169,21 @@ export function Workbench({
     () => nodes.flatMap((node) => (node.selected ? [node.id] : [])),
     [nodes],
   );
+  const presenceSelectionKey = selectedNodeIds.join("\0");
+  React.useEffect(() => {
+    if (!graphRoom.canPublishPresence) return;
+    graphRoom.publishPresence({
+      selected_node_ids: selectedNodeIds,
+      activity: null,
+      activity_target_ids: [],
+      transient_node_positions: [],
+    });
+  }, [
+    graphRoom.canPublishPresence,
+    graphRoom.publishPresence,
+    presenceSelectionKey,
+    selectedNodeIds,
+  ]);
   const selectedNodeCount = selectedNodeIds.length;
   const selectedNodesAreRunnable = nodes.every(
     (node) => !node.selected || workflowNodeIsSupported(node.data),
@@ -2206,10 +2223,32 @@ export function Workbench({
       ],
     );
 
-  const allCanvasNodes = React.useMemo<CanvasNode[]>(
-    () => [...canvasNodes, ...artifactViewerCanvasNodes],
-    [artifactViewerCanvasNodes, canvasNodes],
-  );
+  const allCanvasNodes = React.useMemo<CanvasNode[]>(() => {
+    const combined = [...canvasNodes, ...artifactViewerCanvasNodes];
+    return combined.map((node) => {
+      const remoteColor = remoteSelectionColor(
+        graphRoom.participants,
+        graphRoom.localSessionId,
+        node.id,
+      );
+      if (!remoteColor) return node;
+      return {
+        ...node,
+        className: [node.className, "ns-remote-selected"]
+          .filter(Boolean)
+          .join(" "),
+        style: {
+          ...node.style,
+          boxShadow: `0 0 0 2px ${remoteColor}`,
+        },
+      };
+    });
+  }, [
+    artifactViewerCanvasNodes,
+    canvasNodes,
+    graphRoom.localSessionId,
+    graphRoom.participants,
+  ]);
   const allCanvasEdges = React.useMemo<CanvasEdge[]>(
     () => [
       ...canvasEdges,
@@ -2349,7 +2388,28 @@ export function Workbench({
       >
         {executionAnnouncement}
       </span>
-      <section {...stylex.props(s.canvas)} aria-label="Workflow canvas">
+      <section
+        {...stylex.props(s.canvas)}
+        aria-label="Workflow canvas"
+        onPointerMove={(event) => {
+          if (!graphRoom.canPublishPresence || !flow) return;
+          const position = flow.screenToFlowPosition({
+            x: event.clientX,
+            y: event.clientY,
+          });
+          graphRoom.publishPresence({
+            cursor: position,
+            selected_node_ids: selectedNodeIds,
+          });
+        }}
+        onPointerLeave={() => {
+          if (!graphRoom.canPublishPresence) return;
+          graphRoom.publishPresence({
+            cursor: null,
+            selected_node_ids: selectedNodeIds,
+          });
+        }}
+      >
         <WorkflowCanvas
           fitViewOptions={WORKBENCH_FIT_VIEW_OPTIONS}
           nodes={allCanvasNodes}
@@ -2365,6 +2425,10 @@ export function Workbench({
           }}
           animateEdges={running}
         >
+          <PresenceOverlay
+            participants={graphRoom.participants}
+            localSessionId={graphRoom.localSessionId}
+          />
           {selectedNodeIds.length ? (
             <NodeToolbar
               nodeId={selectedNodeIds}

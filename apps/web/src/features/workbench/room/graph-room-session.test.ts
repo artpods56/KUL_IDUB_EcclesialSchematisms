@@ -86,7 +86,12 @@ function roomReady(overrides: Record<string, unknown> = {}) {
       color: "emerald",
     },
     capabilities: {
-      capabilities: ["view_graph", "edit_graph", "join_graph_room"],
+      capabilities: [
+        "view_graph",
+        "edit_graph",
+        "join_graph_room",
+        "publish_presence",
+      ],
       authorization_version: 2,
     },
     head: {
@@ -100,7 +105,23 @@ function roomReady(overrides: Record<string, unknown> = {}) {
       nodes: [],
       edges: [],
     },
-    participants: [],
+    participants: [
+      {
+        graph_room_session_id: SESSION_ID,
+        actor: {
+          actor_id: ACTOR_ID,
+          display_name: "Owner",
+          color: "emerald",
+        },
+        presence_sequence: 0,
+        cursor: null,
+        selected_node_ids: [],
+        selected_edge_ids: [],
+        activity: null,
+        activity_target_ids: [],
+        transient_node_positions: [],
+      },
+    ],
     active_execution: null,
     registry_marker: "builtin",
     ...overrides,
@@ -165,6 +186,7 @@ describe("GraphRoomSession", () => {
       "view_graph",
       "edit_graph",
       "join_graph_room",
+      "publish_presence",
     ]);
     expect(session.getHead()?.collaboration_sequence).toBe(4);
     expect(session.canSubmitCommands()).toBe(true);
@@ -394,5 +416,98 @@ describe("GraphRoomSession", () => {
       item.catch(() => undefined);
     }
     session.disconnect();
+  });
+
+  it("tracks remote presence join/update/leave and publishes throttled updates", () => {
+    const onPresenceChange = vi.fn();
+    const { session, socket } = connectReadySession({
+      workspaceId: WORKSPACE_ID,
+      graphId: GRAPH_ID,
+      onPresenceChange,
+    });
+
+    expect(session.getParticipants()).toHaveLength(1);
+    expect(session.canPublishPresence()).toBe(true);
+    expect(session.getRemoteParticipants()).toHaveLength(0);
+
+    const remoteId = "99999999-9999-4999-8999-999999999999";
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "presence.join",
+      participant: {
+        graph_room_session_id: remoteId,
+        actor: {
+          actor_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          display_name: "Editor",
+          color: "indigo",
+        },
+        presence_sequence: 0,
+        cursor: null,
+        selected_node_ids: [],
+        selected_edge_ids: [],
+        activity: null,
+        activity_target_ids: [],
+        transient_node_positions: [],
+      },
+    });
+    expect(session.getRemoteParticipants()).toHaveLength(1);
+
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "presence.update",
+      participant: {
+        graph_room_session_id: remoteId,
+        actor: {
+          actor_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          display_name: "Editor",
+          color: "indigo",
+        },
+        presence_sequence: 3,
+        cursor: { x: 10, y: 20 },
+        selected_node_ids: ["n1"],
+        selected_edge_ids: [],
+        activity: "editing_node",
+        activity_target_ids: ["n1"],
+        transient_node_positions: [],
+      },
+    });
+    expect(session.getRemoteParticipants()[0]?.cursor).toEqual({ x: 10, y: 20 });
+    expect(session.getRemoteParticipants()[0]?.selected_node_ids).toEqual(["n1"]);
+
+    expect(session.publishPresence({ cursor: { x: 1, y: 2 } })).toBe(true);
+    expect(JSON.parse(socket.sent.at(-1)!)).toMatchObject({
+      type: "presence.update",
+      presence_sequence: 1,
+      cursor: { x: 1, y: 2 },
+    });
+    expect(session.publishPresence({ cursor: { x: 3, y: 4 } })).toBe(false);
+
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "presence.leave",
+      graph_room_session_id: remoteId,
+    });
+    expect(session.getRemoteParticipants()).toHaveLength(0);
+    expect(onPresenceChange).toHaveBeenCalled();
+  });
+
+  it("clears presence on terminal close and ignores heartbeats", () => {
+    const onPresenceChange = vi.fn();
+    const { session, socket } = connectReadySession({
+      workspaceId: WORKSPACE_ID,
+      graphId: GRAPH_ID,
+      onPresenceChange,
+    });
+    expect(session.getParticipants()).toHaveLength(1);
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "room.heartbeat",
+      authorization_version: 2,
+    });
+    expect(session.getStatus()).toBe("ready");
+    socket.emitClose(CLOSE_ACCESS_REVOKED, "access_revoked");
+    expect(session.getStatus()).toBe("stopped");
+    expect(session.getParticipants()).toHaveLength(0);
+    expect(onPresenceChange).toHaveBeenCalled();
   });
 });
