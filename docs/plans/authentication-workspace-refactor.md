@@ -1,6 +1,6 @@
 # Authentication, workspace, and collaboration implementation plan
 
-- **Status:** Accepted; Phase 0–1 complete; Phase 2 in progress
+- **Status:** Accepted; Phase 0–2 complete; Phase 3 in progress
 - **Date:** 2026-08-06
 - **Audience:** Experienced contributors changing identity, persistence, API,
   Workbench, MCP, collaboration, execution, or deployment

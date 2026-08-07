@@ -108,83 +108,14 @@ class SavedGraphService:
             graph = await unit_of_work.graphs.get(workspace_id, graph_id)
             if graph is None:
                 raise NotFoundError("Saved graph", str(graph_id))
-            graph.ensure_revision(expected_revision)
-
-            registrations = {
-                registration.key: registration
-                for registration in self._plugin_registry.nodes
-            }
-            valid_secret_bindings: set[tuple[str, str, str, int, str]] = set()
-            dormant_secret_nodes: set[tuple[str, str, int]] = set()
-            for node in document.nodes:
-                registration = registrations.get(
-                    (node.operator_id, node.operator_version)
-                )
-                if registration is None:
-                    dormant_secret_nodes.add(
-                        (node.id, node.operator_id, node.operator_version)
-                    )
-                    continue
-                try:
-                    config = (
-                        registration.node_class.config_contract.model.model_validate(
-                            node.config_dict()
-                        ).model_dump(mode="json")
-                    )
-                except ValidationError:
-                    continue
-                for declaration in registration.secret_inputs:
-                    try:
-                        dependencies = {
-                            dependency: cast(JsonValue, config[dependency])
-                            for dependency in declaration.config_dependencies
-                        }
-                        dependency_sha256 = node_secret_dependency_sha256(dependencies)
-                    except (KeyError, InvalidNodeSecretDependenciesError):
-                        continue
-                    valid_secret_bindings.add(
-                        (
-                            node.id,
-                            declaration.name,
-                            node.operator_id,
-                            node.operator_version,
-                            dependency_sha256,
-                        )
-                    )
-
-            stored_secrets = await unit_of_work.node_secrets.list_for_graph(
-                workspace_id,
-                graph_id,
-            )
-            for secret in stored_secrets:
-                binding = (
-                    secret.node_id,
-                    secret.name,
-                    secret.operator_id,
-                    secret.operator_version,
-                    secret.dependency_sha256,
-                )
-                if binding in valid_secret_bindings:
-                    continue
-                dormant_node = (
-                    secret.node_id,
-                    secret.operator_id,
-                    secret.operator_version,
-                )
-                if dormant_node in dormant_secret_nodes:
-                    continue
-                await unit_of_work.node_secrets.remove(
-                    workspace_id,
-                    graph_id,
-                    secret.node_id,
-                    secret.name,
-                )
-            graph.replace(
+            await self.apply_replacement_in_unit_of_work(
+                unit_of_work,
+                graph,
                 name=name,
                 document=document,
                 expected_revision=expected_revision,
+                physically_remove_orphaned_secrets=True,
             )
-            await unit_of_work.graphs.add_revision(graph.snapshot())
             try:
                 await unit_of_work.commit()
             except ConcurrentWriteError as exc:
@@ -194,6 +125,117 @@ class SavedGraphService:
                     actual_revision=None,
                 ) from exc
         return graph
+
+    async def apply_replacement_in_unit_of_work(
+        self,
+        unit_of_work: SavedGraphUnitOfWorkPort,
+        graph: SavedGraph,
+        *,
+        name: str,
+        document: SavedGraphDocument,
+        expected_revision: int,
+        physically_remove_orphaned_secrets: bool,
+    ) -> SavedGraph:
+        """Apply replace + secret reconciliation without committing.
+
+        Checkpoint coordination owns the surrounding unit of work. Editors must
+        not physically delete owner-managed secret rows through checkpointing,
+        so callers set ``physically_remove_orphaned_secrets=False`` there.
+        """
+        graph.ensure_revision(expected_revision)
+        await self._reconcile_node_secrets(
+            unit_of_work,
+            workspace_id=graph.workspace_id,
+            graph_id=graph.id,
+            document=document,
+            physically_remove_orphaned_secrets=physically_remove_orphaned_secrets,
+        )
+        graph.replace(
+            name=name,
+            document=document,
+            expected_revision=expected_revision,
+        )
+        await unit_of_work.graphs.add_revision(graph.snapshot())
+        return graph
+
+    async def _reconcile_node_secrets(
+        self,
+        unit_of_work: SavedGraphUnitOfWorkPort,
+        *,
+        workspace_id: UUID,
+        graph_id: UUID,
+        document: SavedGraphDocument,
+        physically_remove_orphaned_secrets: bool,
+    ) -> None:
+        if not physically_remove_orphaned_secrets:
+            return
+        registrations = {
+            registration.key: registration
+            for registration in self._plugin_registry.nodes
+        }
+        valid_secret_bindings: set[tuple[str, str, str, int, str]] = set()
+        dormant_secret_nodes: set[tuple[str, str, int]] = set()
+        for node in document.nodes:
+            registration = registrations.get((node.operator_id, node.operator_version))
+            if registration is None:
+                dormant_secret_nodes.add(
+                    (node.id, node.operator_id, node.operator_version)
+                )
+                continue
+            try:
+                config = (
+                    registration.node_class.config_contract.model.model_validate(
+                        node.config_dict()
+                    ).model_dump(mode="json")
+                )
+            except ValidationError:
+                continue
+            for declaration in registration.secret_inputs:
+                try:
+                    dependencies = {
+                        dependency: cast(JsonValue, config[dependency])
+                        for dependency in declaration.config_dependencies
+                    }
+                    dependency_sha256 = node_secret_dependency_sha256(dependencies)
+                except (KeyError, InvalidNodeSecretDependenciesError):
+                    continue
+                valid_secret_bindings.add(
+                    (
+                        node.id,
+                        declaration.name,
+                        node.operator_id,
+                        node.operator_version,
+                        dependency_sha256,
+                    )
+                )
+
+        stored_secrets = await unit_of_work.node_secrets.list_for_graph(
+            workspace_id,
+            graph_id,
+        )
+        for secret in stored_secrets:
+            binding = (
+                secret.node_id,
+                secret.name,
+                secret.operator_id,
+                secret.operator_version,
+                secret.dependency_sha256,
+            )
+            if binding in valid_secret_bindings:
+                continue
+            dormant_node = (
+                secret.node_id,
+                secret.operator_id,
+                secret.operator_version,
+            )
+            if dormant_node in dormant_secret_nodes:
+                continue
+            await unit_of_work.node_secrets.remove(
+                workspace_id,
+                graph_id,
+                secret.node_id,
+                secret.name,
+            )
 
     async def delete(
         self,

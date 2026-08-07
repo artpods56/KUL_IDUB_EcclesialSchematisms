@@ -74,3 +74,87 @@ class SavedGraphRevisionConflictError(NotariusCoreError):
             f"Saved graph {graph_id} revision conflict: expected "
             f"{expected_revision}, but {detail}"
         )
+
+
+class CollaborationError(NotariusCoreError):
+    """Base error for collaborative head and command workflows."""
+
+    error_code: str = "collaboration_error"
+
+
+class MissingCollaborativeHeadError(CollaborationError):
+    error_code = "missing_collaborative_head"
+
+    def __init__(self, *, workspace_id: UUID, graph_id: UUID) -> None:
+        self.workspace_id = workspace_id
+        self.graph_id = graph_id
+        super().__init__(
+            f"Collaborative head missing for graph {graph_id} in workspace "
+            f"{workspace_id}"
+        )
+
+
+class CollaborationHeadConflictError(CollaborationError):
+    error_code = "head_moved"
+
+    def __init__(
+        self,
+        *,
+        workspace_id: UUID,
+        graph_id: UUID,
+        expected_sequence: int,
+        actual_sequence: int,
+        room_epoch: UUID,
+    ) -> None:
+        self.workspace_id = workspace_id
+        self.graph_id = graph_id
+        self.expected_sequence = expected_sequence
+        self.actual_sequence = actual_sequence
+        self.room_epoch = room_epoch
+        super().__init__(
+            f"Collaborative head for graph {graph_id} moved: expected sequence "
+            f"{expected_sequence}, actual {actual_sequence}"
+        )
+
+
+class CollaborationIdempotencyMismatchError(CollaborationError):
+    error_code = "idempotency_mismatch"
+
+    def __init__(self, *, workspace_id: UUID, graph_id: UUID, command_id: UUID) -> None:
+        self.workspace_id = workspace_id
+        self.graph_id = graph_id
+        self.command_id = command_id
+        super().__init__(
+            f"Command id {command_id} was reused with a different payload for "
+            f"graph {graph_id} in workspace {workspace_id}"
+        )
+
+
+class CollaborationCommandRejectedError(CollaborationError):
+    error_code = "command_rejected"
+
+    def __init__(self, *, code: str, message: str) -> None:
+        self.error_code = code
+        super().__init__(message)
+
+
+class CollaborationUncheckpointedError(CollaborationError):
+    error_code = "uncheckpointed_head"
+
+    def __init__(
+        self,
+        *,
+        workspace_id: UUID,
+        graph_id: UUID,
+        head_sequence: int,
+        checkpoint_sequence: int,
+    ) -> None:
+        self.workspace_id = workspace_id
+        self.graph_id = graph_id
+        self.head_sequence = head_sequence
+        self.checkpoint_sequence = checkpoint_sequence
+        super().__init__(
+            f"Collaborative head for graph {graph_id} has uncheckpointed "
+            f"commands at sequence {head_sequence} "
+            f"(checkpointed through {checkpoint_sequence})"
+        )

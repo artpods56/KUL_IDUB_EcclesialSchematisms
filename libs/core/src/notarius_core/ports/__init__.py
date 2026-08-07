@@ -31,12 +31,18 @@ from notarius_core.ports.identity import (
     IdentityUnitOfWorkPort,
     SecurityAuditRepositoryPort,
 )
+from notarius_core.ports.collaboration import (
+    CollaborationRepositoryPort,
+    CollaborationUnitOfWorkPort,
+)
 from notarius_core.ports.staged_uploads import (
     StagedUploadRepositoryPort,
     StagedUploadUnitOfWorkPort,
 )
 
 __all__ = [
+    "CollaborationRepositoryPort",
+    "CollaborationUnitOfWorkPort",
     "FileMetadata",
     "FileStoragePort",
     "FileStreamProtocol",

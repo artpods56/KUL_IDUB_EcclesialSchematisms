@@ -24,6 +24,7 @@ from notarius_core.domain.execution_history import (
 )
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
 from notarius_core.domain.node_secrets import EncryptedNodeSecret
+from notarius_core.domain.collaboration import CollaborativeGraphHead
 from notarius_core.domain.saved_graphs import SavedGraph, SavedGraphDocument
 from notarius_core.domain.security_audit import SecurityAuditEvent
 from notarius_core.domain.staged_uploads import StagedUpload
@@ -139,3 +140,7 @@ def start_mappers() -> None:
         schema.security_audit_events,
     )
     mapper_registry.map_imperatively(StagedUpload, schema.staged_uploads)
+    mapper_registry.map_imperatively(
+        CollaborativeGraphHead,
+        schema.collaborative_graph_heads,
+    )

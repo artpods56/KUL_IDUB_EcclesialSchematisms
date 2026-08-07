@@ -39,6 +39,14 @@ from notarius_core.domain.execution_history import (
 )
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
 from notarius_core.domain.node_secrets import EncryptedNodeSecret
+from notarius_core.domain.collaboration import (
+    CollaborativeGraphHead,
+    GraphActiveExecutionSlot,
+    GraphCheckpointMapping,
+    GraphCommandJournalEntry,
+    GraphCommandReceipt,
+    GraphExecutionIdempotencyRecord,
+)
 from notarius_core.domain.saved_graphs import SavedGraph, SavedGraphRevision
 from notarius_core.domain.security_audit import SecurityAuditEvent
 from notarius_core.domain.staged_uploads import StagedUpload
@@ -1234,5 +1242,251 @@ class SqlStagedUploadRepository(StagedUploadRepositoryPort):
             delete(schema.staged_uploads).where(
                 schema.staged_uploads.c.workspace_id == workspace_id,
                 schema.staged_uploads.c.upload_key == upload_key,
+            )
+        )
+
+
+class SqlCollaborationRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add_head(self, head: CollaborativeGraphHead) -> None:
+        self._session.add(head)
+
+    async def get_head(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> CollaborativeGraphHead | None:
+        return await self._session.scalar(
+            select(CollaborativeGraphHead).where(
+                schema.collaborative_graph_heads.c.workspace_id == workspace_id,
+                schema.collaborative_graph_heads.c.graph_id == graph_id,
+            )
+        )
+
+    async def lock_head(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> CollaborativeGraphHead | None:
+        table = schema.collaborative_graph_heads
+        await self._session.execute(
+            update(table)
+            .where(
+                table.c.workspace_id == workspace_id,
+                table.c.graph_id == graph_id,
+            )
+            .values(updated_at=table.c.updated_at)
+        )
+        return await self.get_head(workspace_id, graph_id)
+
+    async def save_head(self, head: CollaborativeGraphHead) -> None:
+        self._session.add(head)
+
+    async def remove_head(self, workspace_id: UUID, graph_id: UUID) -> None:
+        await self._session.execute(
+            delete(schema.collaborative_graph_heads).where(
+                schema.collaborative_graph_heads.c.workspace_id == workspace_id,
+                schema.collaborative_graph_heads.c.graph_id == graph_id,
+            )
+        )
+
+    async def add_journal_entry(self, entry: GraphCommandJournalEntry) -> None:
+        await self._session.execute(
+            insert(schema.graph_command_journal).values(
+                workspace_id=entry.workspace_id,
+                graph_id=entry.graph_id,
+                accepted_sequence=entry.accepted_sequence,
+                room_epoch=entry.room_epoch,
+                command_id=entry.command_id,
+                command_hmac=entry.command_hmac,
+                hmac_key_version=entry.hmac_key_version,
+                actor_kind=entry.actor_kind.value,
+                actor_user_id=entry.actor_user_id,
+                graph_room_session_id=entry.graph_room_session_id,
+                authorization_version=entry.authorization_version,
+                command_kind=entry.command_kind.value,
+                command_payload=entry.command_payload,
+                accepted_at=entry.accepted_at,
+            )
+        )
+
+    async def get_receipt(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+        command_id: UUID,
+    ) -> GraphCommandReceipt | None:
+        row = (
+            await self._session.execute(
+                select(schema.graph_command_receipts).where(
+                    schema.graph_command_receipts.c.workspace_id == workspace_id,
+                    schema.graph_command_receipts.c.graph_id == graph_id,
+                    schema.graph_command_receipts.c.command_id == command_id,
+                )
+            )
+        ).mappings().one_or_none()
+        if row is None:
+            return None
+        return GraphCommandReceipt.model_validate(dict(row))
+
+    async def add_receipt(self, receipt: GraphCommandReceipt) -> None:
+        await self._session.execute(
+            insert(schema.graph_command_receipts).values(
+                workspace_id=receipt.workspace_id,
+                graph_id=receipt.graph_id,
+                command_id=receipt.command_id,
+                command_hmac=receipt.command_hmac,
+                hmac_key_version=receipt.hmac_key_version,
+                actor_kind=receipt.actor_kind.value,
+                actor_user_id=receipt.actor_user_id,
+                room_epoch=receipt.room_epoch,
+                accepted_sequence=receipt.accepted_sequence,
+                outcome=receipt.outcome.value,
+                created_at=receipt.created_at,
+            )
+        )
+
+    async def get_checkpoint_mapping(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+        *,
+        room_epoch: UUID,
+        collaboration_sequence: int,
+    ) -> GraphCheckpointMapping | None:
+        row = (
+            await self._session.execute(
+                select(schema.graph_checkpoint_mappings).where(
+                    schema.graph_checkpoint_mappings.c.workspace_id == workspace_id,
+                    schema.graph_checkpoint_mappings.c.graph_id == graph_id,
+                    schema.graph_checkpoint_mappings.c.room_epoch == room_epoch,
+                    schema.graph_checkpoint_mappings.c.collaboration_sequence
+                    == collaboration_sequence,
+                )
+            )
+        ).mappings().one_or_none()
+        if row is None:
+            return None
+        return GraphCheckpointMapping.model_validate(dict(row))
+
+    async def add_checkpoint_mapping(
+        self,
+        mapping: GraphCheckpointMapping,
+    ) -> None:
+        await self._session.execute(
+            insert(schema.graph_checkpoint_mappings).values(
+                workspace_id=mapping.workspace_id,
+                graph_id=mapping.graph_id,
+                room_epoch=mapping.room_epoch,
+                collaboration_sequence=mapping.collaboration_sequence,
+                saved_revision=mapping.saved_revision,
+                created_at=mapping.created_at,
+            )
+        )
+
+    async def get_execution_idempotency(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+        client_request_id: UUID,
+    ) -> GraphExecutionIdempotencyRecord | None:
+        row = (
+            await self._session.execute(
+                select(schema.graph_execution_idempotency).where(
+                    schema.graph_execution_idempotency.c.workspace_id == workspace_id,
+                    schema.graph_execution_idempotency.c.graph_id == graph_id,
+                    schema.graph_execution_idempotency.c.client_request_id
+                    == client_request_id,
+                )
+            )
+        ).mappings().one_or_none()
+        if row is None:
+            return None
+        return GraphExecutionIdempotencyRecord.model_validate(dict(row))
+
+    async def add_execution_idempotency(
+        self,
+        record: GraphExecutionIdempotencyRecord,
+    ) -> None:
+        await self._session.execute(
+            insert(schema.graph_execution_idempotency).values(
+                workspace_id=record.workspace_id,
+                graph_id=record.graph_id,
+                client_request_id=record.client_request_id,
+                request_hmac=record.request_hmac,
+                hmac_key_version=record.hmac_key_version,
+                actor_user_id=record.actor_user_id,
+                room_epoch=record.room_epoch,
+                head_sequence=record.head_sequence,
+                execution_id=record.execution_id,
+                created_at=record.created_at,
+            )
+        )
+
+    async def get_active_execution_slot(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> GraphActiveExecutionSlot | None:
+        row = (
+            await self._session.execute(
+                select(schema.graph_active_execution_slots).where(
+                    schema.graph_active_execution_slots.c.workspace_id == workspace_id,
+                    schema.graph_active_execution_slots.c.graph_id == graph_id,
+                )
+            )
+        ).mappings().one_or_none()
+        if row is None:
+            return None
+        return GraphActiveExecutionSlot.model_validate(dict(row))
+
+    async def upsert_active_execution_slot(
+        self,
+        slot: GraphActiveExecutionSlot,
+    ) -> None:
+        values = {
+            "workspace_id": slot.workspace_id,
+            "graph_id": slot.graph_id,
+            "execution_id": slot.execution_id,
+            "updated_at": slot.updated_at,
+        }
+        dialect = self._session.bind.dialect.name if self._session.bind is not None else ""
+        if dialect == "postgresql":
+            statement = postgresql_insert(schema.graph_active_execution_slots).values(
+                **values
+            )
+            statement = statement.on_conflict_do_update(
+                index_elements=["workspace_id", "graph_id"],
+                set_={
+                    "execution_id": statement.excluded.execution_id,
+                    "updated_at": statement.excluded.updated_at,
+                },
+            )
+        elif dialect == "sqlite":
+            statement = sqlite_insert(schema.graph_active_execution_slots).values(
+                **values
+            )
+            statement = statement.on_conflict_do_update(
+                index_elements=["workspace_id", "graph_id"],
+                set_={
+                    "execution_id": statement.excluded.execution_id,
+                    "updated_at": statement.excluded.updated_at,
+                },
+            )
+        else:
+            statement = insert(schema.graph_active_execution_slots).values(**values)
+        await self._session.execute(statement)
+
+    async def clear_active_execution_slot(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> None:
+        await self._session.execute(
+            delete(schema.graph_active_execution_slots).where(
+                schema.graph_active_execution_slots.c.workspace_id == workspace_id,
+                schema.graph_active_execution_slots.c.graph_id == graph_id,
             )
         )

@@ -854,3 +854,174 @@ security_audit_events = Table(
     ),
     Index("ix_security_audit_events_retention", "occurred_at"),
 )
+
+
+collaborative_graph_heads = Table(
+    "collaborative_graph_heads",
+    metadata,
+    Column("workspace_id", SaUuid(as_uuid=True), primary_key=True),
+    Column("graph_id", SaUuid(as_uuid=True), primary_key=True),
+    Column("room_epoch", SaUuid(as_uuid=True), nullable=False),
+    Column("collaboration_sequence", Integer, nullable=False),
+    Column("checkpoint_sequence", Integer, nullable=False),
+    Column("checkpoint_revision", Integer, nullable=False),
+    Column("name", String(160), nullable=False),
+    Column("document", SavedGraphDocumentType(), nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
+    CheckConstraint(
+        "collaboration_sequence >= 0",
+        name="ck_collaborative_graph_heads_collaboration_sequence_nonneg",
+    ),
+    CheckConstraint(
+        "checkpoint_sequence >= 0",
+        name="ck_collaborative_graph_heads_checkpoint_sequence_nonneg",
+    ),
+    CheckConstraint(
+        "checkpoint_sequence <= collaboration_sequence",
+        name="ck_collaborative_graph_heads_checkpoint_lte_head",
+    ),
+    CheckConstraint(
+        "checkpoint_revision >= 1",
+        name="ck_collaborative_graph_heads_checkpoint_revision_positive",
+    ),
+    ForeignKeyConstraint(
+        ("workspace_id", "graph_id"),
+        ("saved_graphs.workspace_id", "saved_graphs.id"),
+        ondelete="CASCADE",
+    ),
+    Index(
+        "ix_collaborative_graph_heads_workspace_updated_at",
+        "workspace_id",
+        "updated_at",
+    ),
+)
+
+
+graph_command_journal = Table(
+    "graph_command_journal",
+    metadata,
+    Column("workspace_id", SaUuid(as_uuid=True), primary_key=True),
+    Column("graph_id", SaUuid(as_uuid=True), primary_key=True),
+    Column("accepted_sequence", Integer, primary_key=True),
+    Column("room_epoch", SaUuid(as_uuid=True), nullable=False),
+    Column("command_id", SaUuid(as_uuid=True), nullable=False),
+    Column("command_hmac", LargeBinary(64), nullable=False),
+    Column("hmac_key_version", Integer, nullable=False),
+    Column("actor_kind", String(32), nullable=False),
+    Column("actor_user_id", SaUuid(as_uuid=True), nullable=True),
+    Column("graph_room_session_id", SaUuid(as_uuid=True), nullable=True),
+    Column("authorization_version", Integer, nullable=True),
+    Column("command_kind", String(80), nullable=False),
+    Column("command_payload", JSON, nullable=False),
+    Column("accepted_at", UTCDateTime(), nullable=False),
+    ForeignKeyConstraint(
+        ("workspace_id", "graph_id"),
+        (
+            "collaborative_graph_heads.workspace_id",
+            "collaborative_graph_heads.graph_id",
+        ),
+        ondelete="CASCADE",
+    ),
+    UniqueConstraint(
+        "workspace_id",
+        "graph_id",
+        "command_id",
+        name="uq_graph_command_journal_command_id",
+    ),
+)
+
+
+graph_command_receipts = Table(
+    "graph_command_receipts",
+    metadata,
+    Column("workspace_id", SaUuid(as_uuid=True), primary_key=True),
+    Column("graph_id", SaUuid(as_uuid=True), primary_key=True),
+    Column("command_id", SaUuid(as_uuid=True), primary_key=True),
+    Column("command_hmac", LargeBinary(64), nullable=False),
+    Column("hmac_key_version", Integer, nullable=False),
+    Column("actor_kind", String(32), nullable=False),
+    Column("actor_user_id", SaUuid(as_uuid=True), nullable=True),
+    Column("room_epoch", SaUuid(as_uuid=True), nullable=False),
+    Column("accepted_sequence", Integer, nullable=False),
+    Column("outcome", String(40), nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    ForeignKeyConstraint(
+        ("workspace_id", "graph_id"),
+        (
+            "collaborative_graph_heads.workspace_id",
+            "collaborative_graph_heads.graph_id",
+        ),
+        ondelete="CASCADE",
+    ),
+)
+
+
+graph_checkpoint_mappings = Table(
+    "graph_checkpoint_mappings",
+    metadata,
+    Column("workspace_id", SaUuid(as_uuid=True), primary_key=True),
+    Column("graph_id", SaUuid(as_uuid=True), primary_key=True),
+    Column("room_epoch", SaUuid(as_uuid=True), primary_key=True),
+    Column("collaboration_sequence", Integer, primary_key=True),
+    Column("saved_revision", Integer, nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    ForeignKeyConstraint(
+        ("workspace_id", "graph_id"),
+        (
+            "collaborative_graph_heads.workspace_id",
+            "collaborative_graph_heads.graph_id",
+        ),
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ("workspace_id", "graph_id", "saved_revision"),
+        (
+            "saved_graph_revisions.workspace_id",
+            "saved_graph_revisions.graph_id",
+            "saved_graph_revisions.revision",
+        ),
+        ondelete="RESTRICT",
+    ),
+)
+
+
+graph_execution_idempotency = Table(
+    "graph_execution_idempotency",
+    metadata,
+    Column("workspace_id", SaUuid(as_uuid=True), primary_key=True),
+    Column("graph_id", SaUuid(as_uuid=True), primary_key=True),
+    Column("client_request_id", SaUuid(as_uuid=True), primary_key=True),
+    Column("request_hmac", LargeBinary(64), nullable=False),
+    Column("hmac_key_version", Integer, nullable=False),
+    Column("actor_user_id", SaUuid(as_uuid=True), nullable=False),
+    Column("room_epoch", SaUuid(as_uuid=True), nullable=False),
+    Column("head_sequence", Integer, nullable=False),
+    Column("execution_id", SaUuid(as_uuid=True), nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    ForeignKeyConstraint(
+        ("workspace_id", "graph_id"),
+        (
+            "collaborative_graph_heads.workspace_id",
+            "collaborative_graph_heads.graph_id",
+        ),
+        ondelete="CASCADE",
+    ),
+)
+
+
+graph_active_execution_slots = Table(
+    "graph_active_execution_slots",
+    metadata,
+    Column("workspace_id", SaUuid(as_uuid=True), primary_key=True),
+    Column("graph_id", SaUuid(as_uuid=True), primary_key=True),
+    Column("execution_id", SaUuid(as_uuid=True), nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
+    ForeignKeyConstraint(
+        ("workspace_id", "graph_id"),
+        (
+            "collaborative_graph_heads.workspace_id",
+            "collaborative_graph_heads.graph_id",
+        ),
+        ondelete="CASCADE",
+    ),
+)

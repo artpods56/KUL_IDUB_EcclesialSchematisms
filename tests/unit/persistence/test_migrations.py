@@ -266,6 +266,12 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
         assert set(inspect(connection).get_table_names()) == {
             "alembic_version",
             "artifact_objects",
+            "collaborative_graph_heads",
+            "graph_active_execution_slots",
+            "graph_checkpoint_mappings",
+            "graph_command_journal",
+            "graph_command_receipts",
+            "graph_execution_idempotency",
             "graph_execution_node_results",
             "graph_execution_requested_nodes",
             "graph_executions",
@@ -297,6 +303,12 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
         assert set(inspect(connection).get_table_names()) == {
             "alembic_version",
             "artifact_objects",
+            "collaborative_graph_heads",
+            "graph_active_execution_slots",
+            "graph_checkpoint_mappings",
+            "graph_command_journal",
+            "graph_command_receipts",
+            "graph_execution_idempotency",
             "graph_execution_node_results",
             "graph_execution_requested_nodes",
             "graph_executions",
@@ -445,6 +457,22 @@ def test_saved_graph_revision_migration_backfills_the_current_head(
         assert row["name"] == "Existing graph"
         assert json.loads(row["document"]) == document
         assert str(row["created_at"]) == "2026-07-16 09:30:00"
+        head = (
+            connection.execute(
+                text(
+                    "SELECT graph_id, collaboration_sequence, checkpoint_sequence, "
+                    "checkpoint_revision, name "
+                    "FROM collaborative_graph_heads"
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert head["graph_id"] == graph_id.hex
+        assert head["collaboration_sequence"] == 0
+        assert head["checkpoint_sequence"] == 0
+        assert head["checkpoint_revision"] == 7
+        assert head["name"] == "Existing graph"
 
     command.downgrade(config, "0003_node_secrets")
     with create_engine(f"sqlite:///{database_path}").connect() as connection:
