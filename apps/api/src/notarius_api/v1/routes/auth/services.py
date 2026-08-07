@@ -41,7 +41,12 @@ from notarius_core.domain.security_audit import (
 from notarius_core.ports.identity import IdentityUnitOfWorkPort
 
 from notarius_api.settings import Settings
-from notarius_api.v1.routes.auth.abuse import AuthAbuseControl, request_browser_key
+from notarius_api.v1.routes.auth.abuse import (
+    AuthAbuseControl,
+    BrowserAbuseKeys,
+    request_browser_keys,
+    set_browser_abuse_cookie as _set_browser_abuse_cookie,
+)
 
 
 SESSION_COOKIE = "notarius_session"
@@ -93,6 +98,12 @@ class AuthService:
         self._settings = settings
         self._unit_of_work_factory = unit_of_work_factory
         self._identity_service = identity_service
+        configured_browser_cookie_secret = settings.oidc_auth_wrapping_key
+        self._browser_cookie_secret = (
+            configured_browser_cookie_secret.get_secret_value().encode("utf-8")
+            if configured_browser_cookie_secret is not None
+            else token_bytes(32)
+        )
         self._abuse_control = abuse_control or AuthAbuseControl(
             window_seconds=settings.auth_rate_window_seconds,
             login_start_limit=settings.auth_login_start_rate_limit,
@@ -100,6 +111,9 @@ class AuthService:
             session_failure_limit=settings.auth_session_failure_rate_limit,
             pat_creation_limit=settings.auth_pat_creation_rate_limit,
             outstanding_login_limit=settings.auth_outstanding_login_limit,
+            network_outstanding_login_limit=(
+                settings.auth_outstanding_login_network_limit
+            ),
             outstanding_login_ttl_seconds=settings.oidc_login_transaction_ttl_seconds,
         )
         self._provider_metadata: ProviderMetadata | None = None
@@ -224,11 +238,12 @@ class AuthService:
                     "identity_not_eligible",
                     transaction_consumed=True,
                 ) from exc
-            issued = await self.issue_session(
-                provisioned.user.id,
-                replacing_cookie=current_session_cookie,
-            )
             async with self._unit_of_work_factory() as unit_of_work:
+                issued = await self._issue_session_in_unit_of_work(
+                    unit_of_work,
+                    provisioned.user.id,
+                    replacing_cookie=current_session_cookie,
+                )
                 await unit_of_work.security_audit.add(
                     SecurityAuditEvent(
                         actor_kind=SecurityAuditActorKind.AUTHENTICATED,
@@ -245,8 +260,6 @@ class AuthService:
         except OidcProtocolError:
             raise
         except Exception as exc:
-            if issued is not None:
-                await self._revoke_session_after_callback_failure(issued.session.id)
             raise OidcCallbackInternalError(transaction_consumed=True) from exc
 
     async def issue_session(
@@ -254,6 +267,22 @@ class AuthService:
         user_id: UUID,
         *,
         replacing_cookie: str | None = None,
+    ) -> IssuedSession:
+        async with self._unit_of_work_factory() as unit_of_work:
+            issued = await self._issue_session_in_unit_of_work(
+                unit_of_work,
+                user_id,
+                replacing_cookie=replacing_cookie,
+            )
+            await unit_of_work.commit()
+        return issued
+
+    async def _issue_session_in_unit_of_work(
+        self,
+        unit_of_work: IdentityUnitOfWorkPort,
+        user_id: UUID,
+        *,
+        replacing_cookie: str | None,
     ) -> IssuedSession:
         session_secret = token_urlsafe(32)
         csrf_value = token_urlsafe(32)
@@ -264,64 +293,56 @@ class AuthService:
             expires_at=datetime.now(UTC)
             + timedelta(seconds=self._settings.auth_session_absolute_seconds),
         )
-        async with self._unit_of_work_factory() as unit_of_work:
-            replacing_session_id = self._session_id_from_cookie(replacing_cookie)
-            replaced = None
-            if replacing_session_id is not None:
-                replaced = self._valid_session_from_cookie(
-                    await unit_of_work.identity.get_auth_session(replacing_session_id),
-                    replacing_cookie,
-                )
-            if replaced is not None:
-                replaced.revoke()
-                await unit_of_work.security_audit.add(
-                    SecurityAuditEvent(
-                        actor_kind=SecurityAuditActorKind.AUTHENTICATED,
-                        user_id=replaced.user_id,
-                        credential_reference=f"session:{replaced.id}",
-                        operation="credential.session.revoke",
-                        outcome=SecurityAuditOutcome.SUCCESS,
-                        resource_type="auth_session",
-                        resource_id=str(replaced.id),
-                    )
-                )
-            await unit_of_work.identity.add_auth_session(session)
-            await unit_of_work.security_audit.add(
-                SecurityAuditEvent(
-                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
-                    user_id=user_id,
-                    credential_reference=f"session:{session.id}",
-                    operation="credential.session.create",
-                    outcome=SecurityAuditOutcome.SUCCESS,
-                    resource_type="auth_session",
-                    resource_id=str(session.id),
-                )
-            )
-            await unit_of_work.commit()
+        await self._persist_session_in_unit_of_work(
+            unit_of_work,
+            session,
+            replacing_cookie=replacing_cookie,
+        )
         return IssuedSession(
             session=session,
             cookie_value=f"{session.id}.{session_secret}",
             csrf_value=csrf_value,
         )
 
-    async def _revoke_session_after_callback_failure(self, session_id: UUID) -> None:
-        async with self._unit_of_work_factory() as unit_of_work:
-            session = await unit_of_work.identity.get_auth_session(session_id)
-            if session is None or session.is_revoked:
-                return
-            session.revoke()
+    async def _persist_session_in_unit_of_work(
+        self,
+        unit_of_work: IdentityUnitOfWorkPort,
+        session: AuthSession,
+        *,
+        replacing_cookie: str | None,
+    ) -> None:
+        replacing_session_id = self._session_id_from_cookie(replacing_cookie)
+        replaced = None
+        if replacing_session_id is not None:
+            replaced = self._valid_session_from_cookie(
+                await unit_of_work.identity.get_auth_session(replacing_session_id),
+                replacing_cookie,
+            )
+        if replaced is not None:
+            replaced.revoke()
             await unit_of_work.security_audit.add(
                 SecurityAuditEvent(
                     actor_kind=SecurityAuditActorKind.AUTHENTICATED,
-                    user_id=session.user_id,
-                    credential_reference=f"session:{session.id}",
+                    user_id=replaced.user_id,
+                    credential_reference=f"session:{replaced.id}",
                     operation="credential.session.revoke",
                     outcome=SecurityAuditOutcome.SUCCESS,
                     resource_type="auth_session",
-                    resource_id=str(session.id),
+                    resource_id=str(replaced.id),
                 )
             )
-            await unit_of_work.commit()
+        await unit_of_work.identity.add_auth_session(session)
+        await unit_of_work.security_audit.add(
+            SecurityAuditEvent(
+                actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                user_id=session.user_id,
+                credential_reference=f"session:{session.id}",
+                operation="credential.session.create",
+                outcome=SecurityAuditOutcome.SUCCESS,
+                resource_type="auth_session",
+                resource_id=str(session.id),
+            )
+        )
 
     def issue_personal_access_token(
         self,
@@ -355,7 +376,7 @@ class AuthService:
             session_id, secret = self._parse_session_cookie(cookie_value)
         except HTTPException as exc:
             if not await self._abuse_control.allow_session_failure(
-                request_browser_key(request)
+                self.browser_abuse_keys(request).browser_key
             ):
                 raise HTTPException(
                     status_code=429, detail="Too many authentication attempts"
@@ -598,21 +619,52 @@ class AuthService:
             await unit_of_work.commit()
         return transactions, sessions, tokens
 
-    async def allow_login_start(self, browser_key: str) -> bool:
-        return await self._abuse_control.allow_login_start(browser_key)
+    def browser_abuse_keys(self, request: Request) -> BrowserAbuseKeys:
+        return request_browser_keys(request, secret=self._browser_cookie_secret)
 
-    async def allow_callback(self, browser_key: str) -> bool:
-        return await self._abuse_control.allow_callback(browser_key)
+    def set_browser_abuse_cookie(
+        self,
+        response: Response,
+        browser_key: str,
+    ) -> None:
+        _set_browser_abuse_cookie(
+            response,
+            browser_key,
+            secret=self._browser_cookie_secret,
+            secure=self._settings.auth_cookie_secure,
+        )
+
+    async def allow_login_start(
+        self,
+        browser_key: str,
+        network_key: str | None = None,
+    ) -> bool:
+        return await self._abuse_control.allow_login_start(browser_key, network_key)
+
+    async def allow_callback(
+        self,
+        browser_key: str,
+        network_key: str | None = None,
+    ) -> bool:
+        return await self._abuse_control.allow_callback(browser_key, network_key)
 
     async def allow_pat_creation(self, user_key: str) -> bool:
         return await self._abuse_control.allow_pat_creation(user_key)
 
-    async def reserve_login(self, browser_key: str, transaction_id: UUID) -> bool:
-        return await self._abuse_control.reserve_login(browser_key, transaction_id)
+    async def reserve_login(
+        self,
+        browser_key: str,
+        transaction_id: UUID,
+        network_key: str | None = None,
+    ) -> bool:
+        return await self._abuse_control.reserve_login(
+            browser_key,
+            transaction_id,
+            network_key,
+        )
 
     async def release_login(
         self,
-        browser_key: str,
         transaction_id_value: str | None,
     ) -> None:
         if transaction_id_value is None:
@@ -621,7 +673,7 @@ class AuthService:
             transaction_id = UUID(transaction_id_value)
         except ValueError:
             return
-        await self._abuse_control.release_login(browser_key, transaction_id)
+        await self._abuse_control.release_login(transaction_id)
 
     async def replace_login_transaction(self, value: str | None) -> UUID | None:
         if value is None:
@@ -999,7 +1051,7 @@ class AuthService:
 
     async def _raise_authentication_required(self, request: Request) -> NoReturn:
         if not await self._abuse_control.allow_session_failure(
-            request_browser_key(request)
+            self.browser_abuse_keys(request).browser_key
         ):
             raise HTTPException(
                 status_code=429, detail="Too many authentication attempts"

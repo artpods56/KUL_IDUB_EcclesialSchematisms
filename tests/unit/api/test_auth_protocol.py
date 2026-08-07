@@ -521,12 +521,9 @@ async def test_protocol_issuer_successfully_provisions_identity_and_rotates_sess
     failure_params = parse_qs(urlsplit(failure_url).query)
     protocol_state["url"] = failure_url
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-        sessions_before_failure = {
-            session.id
-            for session in await unit_of_work.identity.list_auth_sessions_for_user(
-                provisioned.user.id
-            )
-        }
+        sessions_before_failure = (
+            await unit_of_work.identity.list_auth_sessions_for_user(provisioned.user.id)
+        )
 
     real_uow_factory = cast(
         Callable[[], IdentityUnitOfWorkPort],
@@ -553,13 +550,10 @@ async def test_protocol_issuer_successfully_provisions_identity_and_rotates_sess
         sessions_after_failure = (
             await unit_of_work.identity.list_auth_sessions_for_user(provisioned.user.id)
         )
-    new_sessions = [
-        session
-        for session in sessions_after_failure
-        if session.id not in sessions_before_failure
+    assert [session.id for session in sessions_after_failure] == [
+        session.id for session in sessions_before_failure
     ]
-    assert len(new_sessions) == 1
-    assert new_sessions[0].is_revoked
+    assert all(not session.is_revoked for session in sessions_after_failure)
     with pytest.raises(OidcProtocolError):
         await auth.callback(
             transaction_id_value=str(transaction_id),

@@ -17,8 +17,6 @@ from notarius_api.v1.routes.auth.services import (
     OidcProtocolError,
     bounded_oidc_failure,
 )
-from notarius_api.v1.routes.auth.abuse import request_browser_key
-
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
@@ -30,8 +28,11 @@ async def oidc_login(
     return_path: Annotated[str, Query(max_length=2048)] = "/",
 ) -> Response:
     auth: AuthService = request.app.state.auth_service
-    browser_key = request_browser_key(request)
-    if not await auth.allow_login_start(browser_key):
+    abuse_keys = auth.browser_abuse_keys(request)
+    if not await auth.allow_login_start(
+        abuse_keys.browser_key,
+        abuse_keys.network_key,
+    ):
         await auth.audit_unauthenticated_failure(
             operation="oidc.login.start",
             error_code="rate_limited",
@@ -41,9 +42,13 @@ async def oidc_login(
         request.cookies.get(OIDC_TRANSACTION_COOKIE)
     )
     if replaced_transaction_id is not None:
-        await auth.release_login(browser_key, str(replaced_transaction_id))
+        await auth.release_login(str(replaced_transaction_id))
     transaction_id = uuid4()
-    if not await auth.reserve_login(browser_key, transaction_id):
+    if not await auth.reserve_login(
+        abuse_keys.browser_key,
+        transaction_id,
+        abuse_keys.network_key,
+    ):
         await auth.audit_unauthenticated_failure(
             operation="oidc.login.start",
             error_code="too_many_login_transactions",
@@ -55,14 +60,14 @@ async def oidc_login(
             transaction_id=transaction_id,
         )
     except OidcProtocolError as error:
-        await auth.release_login(browser_key, str(transaction_id))
+        await auth.release_login(str(transaction_id))
         await auth.audit_unauthenticated_failure(
             operation="oidc.login.start",
             error_code=error.code,
         )
         raise bounded_oidc_failure(error) from error
     except Exception:
-        await auth.release_login(browser_key, str(transaction_id))
+        await auth.release_login(str(transaction_id))
         raise
     response = RedirectResponse(authorization_url, status_code=307)
     auth.set_transaction_cookie(response, str(transaction_id))
@@ -77,9 +82,12 @@ async def oidc_callback(
     error: Annotated[str | None, Query(max_length=256)] = None,
 ) -> Response:
     auth: AuthService = request.app.state.auth_service
-    browser_key = request_browser_key(request)
+    abuse_keys = auth.browser_abuse_keys(request)
     transaction_id_value = request.cookies.get(OIDC_TRANSACTION_COOKIE)
-    if not await auth.allow_callback(browser_key):
+    if not await auth.allow_callback(
+        abuse_keys.browser_key,
+        abuse_keys.network_key,
+    ):
         await auth.audit_unauthenticated_failure(
             operation="oidc.login.callback",
             error_code="rate_limited",
@@ -98,7 +106,7 @@ async def oidc_callback(
         )
     except OidcProtocolError as protocol_error:
         if protocol_error.transaction_consumed:
-            await auth.release_login(browser_key, transaction_id_value)
+            await auth.release_login(transaction_id_value)
         await auth.audit_unauthenticated_failure(
             operation="oidc.login.callback",
             error_code=protocol_error.code,
@@ -112,7 +120,7 @@ async def oidc_callback(
         return response
     except OidcCallbackInternalError as internal_error:
         if internal_error.transaction_consumed:
-            await auth.release_login(browser_key, transaction_id_value)
+            await auth.release_login(transaction_id_value)
         await auth.audit_unauthenticated_failure(
             operation="oidc.login.callback",
             error_code="internal_error",
@@ -138,7 +146,7 @@ async def oidc_callback(
             content={"detail": "OIDC callback failed"},
         )
         return response
-    await auth.release_login(browser_key, transaction_id_value)
+    await auth.release_login(transaction_id_value)
     response = RedirectResponse(return_path, status_code=303)
     auth.set_session_cookies(response, issued)
     auth.clear_transaction_cookie(response)

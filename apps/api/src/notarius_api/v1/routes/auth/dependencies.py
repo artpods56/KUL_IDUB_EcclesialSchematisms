@@ -28,6 +28,7 @@ async def browser_actor(
             operation="auth.session.verify",
             error_code="authorization_header_rejected",
         )
+        request.state.auth_failure_audited = True
         raise error
     try:
         return await auth.require_browser_actor(request)
@@ -45,4 +46,5 @@ async def browser_actor(
             operation="auth.session.verify",
             error_code=error_code,
         )
+        request.state.auth_failure_audited = True
         raise

@@ -12,7 +12,10 @@ from sqlalchemy import text
 from notarius_api.main import create_app
 from notarius_api.settings import Settings
 from notarius_api.v1.routes.auth.models import PersonalAccessTokenCreatedResponse
-from notarius_api.v1.routes.auth.abuse import BROWSER_ABUSE_COOKIE
+from notarius_api.v1.routes.auth.abuse import (
+    BROWSER_ABUSE_COOKIE,
+    make_browser_abuse_cookie,
+)
 from notarius_api.v1.routes.auth.services import AuthService, IssuedSession
 from notarius_core.application.identity import IdentityService
 from notarius_core.domain.identity import (
@@ -121,6 +124,32 @@ def test_v1_routes_fail_closed_but_health_is_public(tmp_path: Path) -> None:
         assert client.get("/v1/auth/session").status_code == 401
 
 
+def test_unauthenticated_workspace_failure_is_audited_once(tmp_path: Path) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'workspace-auth-failure.sqlite3'}"
+    _seed_sync(database_url)
+    with TestClient(create_app(_settings(database_url))) as client:
+        assert client.get("/v1/workspaces").status_code == 401
+
+    async def read_workspace_auth_failures() -> list[tuple[str, str, str]]:
+        database = create_database(database_url)
+        async with database.engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    text(
+                        "SELECT operation, error_code, actor_kind "
+                        "FROM security_audit_events "
+                        "WHERE operation IN ('auth.session.verify', 'workspace.list')"
+                    )
+                )
+            ).all()
+        await database.dispose()
+        return [(row[0], row[1], row[2]) for row in rows]
+
+    assert asyncio.run(read_workspace_auth_failures()) == [
+        ("auth.session.verify", "authentication_required", "unauthenticated")
+    ]
+
+
 def test_session_verification_failures_are_rate_limited(tmp_path: Path) -> None:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'auth-rate.sqlite3'}"
     _seed_sync(database_url)
@@ -174,6 +203,44 @@ def test_cookie_requests_require_exact_origin_and_csrf(tmp_path: Path) -> None:
     assert events
     assert all(event[0] == "authenticated" for event in events)
     assert {event[2] for event in events} == {"origin_rejected"}
+
+
+def test_authenticated_csrf_failure_is_audited_once_at_auth_boundary(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'csrf-single-audit.sqlite3'}"
+    _, _, issued = _seed_sync(database_url)
+    with TestClient(create_app(_settings(database_url))) as client:
+        client.cookies.set("notarius_session", issued.cookie_value)
+        client.cookies.set("notarius_csrf", issued.csrf_value)
+        response = client.post(
+            "/v1/workspaces",
+            json={"slug": "team", "name": "Team"},
+            headers={
+                "Origin": "http://testserver",
+                "X-CSRF-Token": "wrong-csrf-token",
+            },
+        )
+        assert response.status_code == 403
+
+    async def read_failure_events() -> list[tuple[str, str]]:
+        database = create_database(database_url)
+        async with database.engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    text(
+                        "SELECT operation, error_code "
+                        "FROM security_audit_events "
+                        "WHERE operation IN ('auth.session.verify', 'workspace.create')"
+                    )
+                )
+            ).all()
+        await database.dispose()
+        return [(row[0], row[1]) for row in rows]
+
+    assert asyncio.run(read_failure_events()) == [
+        ("auth.session.verify", "csrf_rejected")
+    ]
 
 
 def test_session_idle_expiry_is_enforced_at_boundary(tmp_path: Path) -> None:
@@ -266,7 +333,15 @@ def test_expired_callback_consumes_transaction_and_releases_reservation(
     )
     asyncio.run(auth.reserve_login("expired-browser", transaction_id))
     with TestClient(application) as client:
-        client.cookies.set(BROWSER_ABUSE_COOKIE, "expired-browser")
+        client.cookies.set(
+            BROWSER_ABUSE_COOKIE,
+            make_browser_abuse_cookie(
+                "expired-browser",
+                secret=settings.oidc_auth_wrapping_key.get_secret_value().encode(
+                    "utf-8"
+                ),
+            ),
+        )
         client.cookies.set("notarius_oidc_transaction", str(transaction_id))
         response = client.get(
             "/v1/auth/oidc/callback",
@@ -323,7 +398,15 @@ def test_callback_failure_before_consumption_preserves_transaction_and_slot(
 
     monkeypatch.setattr(auth, "_consume_transaction", fail_before_consumption)
     with TestClient(application, raise_server_exceptions=False) as client:
-        client.cookies.set(BROWSER_ABUSE_COOKIE, "before-browser")
+        client.cookies.set(
+            BROWSER_ABUSE_COOKIE,
+            make_browser_abuse_cookie(
+                "before-browser",
+                secret=settings.oidc_auth_wrapping_key.get_secret_value().encode(
+                    "utf-8"
+                ),
+            ),
+        )
         client.cookies.set("notarius_oidc_transaction", str(transaction_id))
         response = client.get(
             "/v1/auth/oidc/callback",
@@ -381,7 +464,15 @@ def test_callback_failure_after_consumption_clears_transaction_and_releases_slot
 
     monkeypatch.setattr(auth, "_exchange_code", fail_after_consumption)
     with TestClient(application, raise_server_exceptions=False) as client:
-        client.cookies.set(BROWSER_ABUSE_COOKIE, "after-browser")
+        client.cookies.set(
+            BROWSER_ABUSE_COOKIE,
+            make_browser_abuse_cookie(
+                "after-browser",
+                secret=settings.oidc_auth_wrapping_key.get_secret_value().encode(
+                    "utf-8"
+                ),
+            ),
+        )
         client.cookies.set("notarius_oidc_transaction", str(transaction_id))
         response = client.get(
             "/v1/auth/oidc/callback",
@@ -516,7 +607,15 @@ def test_callback_validation_is_bounded_and_consumes_transaction(
     asyncio.run(auth.reserve_login("testclient", transaction_id))
     state_sentinel = "S" * 513
     with TestClient(application) as client:
-        client.cookies.set(BROWSER_ABUSE_COOKIE, "testclient")
+        client.cookies.set(
+            BROWSER_ABUSE_COOKIE,
+            make_browser_abuse_cookie(
+                "testclient",
+                secret=settings.oidc_auth_wrapping_key.get_secret_value().encode(
+                    "utf-8"
+                ),
+            ),
+        )
         client.cookies.set("notarius_oidc_transaction", str(transaction_id))
         first = client.get(
             "/v1/auth/oidc/callback",
@@ -565,10 +664,11 @@ def test_login_validation_is_bounded_and_audited(tmp_path: Path) -> None:
     settings = _settings(database_url).model_copy(
         update={"auth_login_start_rate_limit": 1}
     )
+    application = create_app(settings)
     sentinel = "R" * 2049
-    with TestClient(create_app(settings)) as client:
-        client.cookies.set(BROWSER_ABUSE_COOKIE, "login-handle")
+    with TestClient(application) as client:
         first = client.get("/v1/auth/oidc/login", params={"return_path": sentinel})
+        client.cookies.clear()
         second = client.get("/v1/auth/oidc/login", params={"return_path": sentinel})
 
     assert first.status_code == 422

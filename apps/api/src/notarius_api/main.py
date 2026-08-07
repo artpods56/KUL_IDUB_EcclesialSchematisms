@@ -39,10 +39,6 @@ from notarius_api.v1.routes.auth.services import (
     OIDC_TRANSACTION_COOKIE,
     AuthService,
 )
-from notarius_api.v1.routes.auth.abuse import (
-    request_browser_key,
-    set_browser_abuse_cookie,
-)
 from notarius_api.v1.routes.auth.views import router as auth_router
 from notarius_api.v1.routes.artifacts.views import router as artifacts_router
 from notarius_api.v1.routes.catalog.views import router as catalog_router
@@ -78,8 +74,11 @@ async def _request_validation_error_handler(
     is_oidc_login = request.url.path.endswith("/auth/oidc/login")
     if is_oidc_login:
         login_auth: AuthService = request.app.state.auth_service
-        browser_key = request_browser_key(request)
-        allowed = await login_auth.allow_login_start(browser_key)
+        abuse_keys = login_auth.browser_abuse_keys(request)
+        allowed = await login_auth.allow_login_start(
+            abuse_keys.browser_key,
+            abuse_keys.network_key,
+        )
         await login_auth.audit_request_failure(
             request,
             operation="oidc.login.start",
@@ -100,13 +99,16 @@ async def _request_validation_error_handler(
         )
     if is_oidc_callback:
         auth: AuthService = request.app.state.auth_service
-        browser_key = request_browser_key(request)
-        allowed = await auth.allow_callback(browser_key)
+        abuse_keys = auth.browser_abuse_keys(request)
+        allowed = await auth.allow_callback(
+            abuse_keys.browser_key,
+            abuse_keys.network_key,
+        )
         consumed_transaction_id = await auth.replace_login_transaction(
             request.cookies.get(OIDC_TRANSACTION_COOKIE)
         )
         if consumed_transaction_id is not None:
-            await auth.release_login(browser_key, str(consumed_transaction_id))
+            await auth.release_login(str(consumed_transaction_id))
         error_code = "validation_failed" if allowed else "rate_limited"
         await auth.audit_request_failure(
             request,
@@ -182,7 +184,12 @@ async def _http_error_handler(request: Request, exception: Exception) -> Respons
     raise exception
 
 
-async def _audit_workspace_failure(request: Request, error_code: str) -> None:
+async def _audit_workspace_failure(
+    request: Request,
+    error_code: str,
+) -> None:
+    if getattr(request.state, "auth_failure_audited", False):
+        return
     metadata = workspace_failure_metadata(request)
     if metadata is None:
         return
@@ -198,6 +205,8 @@ async def _audit_workspace_failure(request: Request, error_code: str) -> None:
 
 
 async def _audit_auth_failure(request: Request, error_code: str) -> None:
+    if getattr(request.state, "auth_failure_audited", False):
+        return
     if request.url.path.startswith("/v1/auth/") and not request.url.path.endswith(
         ("/oidc/login", "/oidc/callback")
     ):
@@ -331,13 +340,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
         response = await call_next(request)
-        if request.url.path.startswith("/v1/auth"):
+        if "/auth/oidc/" in request.url.path:
             browser_key = getattr(request.state, "auth_browser_key", None)
             if isinstance(browser_key, str):
-                set_browser_abuse_cookie(
+                request.app.state.auth_service.set_browser_abuse_cookie(
                     response,
                     browser_key,
-                    secure=resolved_settings.auth_cookie_secure,
                 )
         return response
 

@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     auth_session_failure_rate_limit: int = Field(default=30, ge=1)
     auth_pat_creation_rate_limit: int = Field(default=10, ge=1)
     auth_outstanding_login_limit: int = Field(default=2, ge=1, le=10)
+    auth_outstanding_login_network_limit: int = Field(default=8, ge=1, le=40)
     auth_cleanup_interval_seconds: int = Field(default=60, ge=1, le=3600)
     database_url: SecretStr | None = None
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
@@ -78,7 +79,9 @@ class Settings(BaseSettings):
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("OIDC origin and issuer must be absolute HTTP URLs")
         if parsed.query or parsed.fragment:
-            raise ValueError("OIDC origin and issuer must not contain query or fragment")
+            raise ValueError(
+                "OIDC origin and issuer must not contain query or fragment"
+            )
         return value.rstrip("/")
 
     @field_validator("oidc_callback_path")
@@ -119,7 +122,9 @@ class Settings(BaseSettings):
         ):
             raise ValueError("OIDC signing algorithm is not allowed")
         if self.auth_session_idle_seconds >= self.auth_session_absolute_seconds:
-            raise ValueError("Auth session idle lifetime must be below absolute lifetime")
+            raise ValueError(
+                "Auth session idle lifetime must be below absolute lifetime"
+            )
         return self
 
     @property
@@ -132,9 +137,7 @@ class Settings(BaseSettings):
     @property
     def allowed_cors_origins(self) -> tuple[str, ...]:
         return tuple(
-            origin.strip()
-            for origin in self.cors_origins.split(",")
-            if origin.strip()
+            origin.strip() for origin in self.cors_origins.split(",") if origin.strip()
         )
 
     @property
