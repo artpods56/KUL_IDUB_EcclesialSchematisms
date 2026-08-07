@@ -3,6 +3,7 @@ from collections.abc import Callable
 from enum import StrEnum
 from hashlib import sha256
 from typing import Annotated, Self, cast, final, override
+from uuid import UUID
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
@@ -370,6 +371,7 @@ class JsonSchemaOutputWriter(ArtifactOutputWriter):
             metadata["provenance"] = provenance
         metadata.update(context.metadata)
         artifact = ArtifactObject(
+            workspace_id=context.node_context.workspace_id,
             artifact_type=self.artifact_type.id,
             schema_version=self.artifact_type.schema_version,
             content_type="application/json",
@@ -402,7 +404,7 @@ class JsonSchemaResolver(Resolver[str]):
         self._uow = uow
 
     @override
-    async def resolve(self, ref: ArtifactRef) -> str:
+    async def resolve(self, ref: ArtifactRef, workspace_id: UUID) -> str:
         if ref.key() != self.source:
             message = (
                 f"JSON Schema resolver expected {self.source.id}@"
@@ -412,7 +414,7 @@ class JsonSchemaResolver(Resolver[str]):
             raise ArtifactContractError(message)
 
         async with self._uow as uow:
-            artifact = await uow.artifacts.get(ref.artifact_id)
+            artifact = await uow.artifacts.get(workspace_id, ref.artifact_id)
         if artifact is None:
             raise NotFoundError("Artifact", str(ref.artifact_id))
         if artifact.ref() != ref:

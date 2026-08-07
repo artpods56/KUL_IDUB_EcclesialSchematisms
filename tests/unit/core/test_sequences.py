@@ -1,4 +1,4 @@
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -38,6 +38,9 @@ from notarius_core.runtime.persistence import (
     PersistedNodeOutput,
 )
 from notarius_core.runtime.resolvers import ResolverRegistry
+
+
+TEST_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
 
 
 VALUE_TYPE = ArtifactTypeKey("example.value", 1)
@@ -135,7 +138,7 @@ async def test_collect_flattens_one_level_in_plug_order_and_preserves_refs() -> 
 
     result = await _runtime().run_node(
         CollectNode(),
-        NodeExecutionContext(node_id="collect"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="collect"),
         {"items": [first_ref, sequence, empty_sequence]},
         artifact_type_bindings={"T": VALUE_TYPE},
     )
@@ -175,6 +178,7 @@ async def test_collect_flattens_one_level_in_plug_order_and_preserves_refs() -> 
 async def test_collect_derives_type_from_empty_sequence_container() -> None:
     result = await _runtime().bind(
         CollectNode(),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="collect"),
         artifact_type_bindings={"T": VALUE_TYPE},
     )(
         {
@@ -214,7 +218,7 @@ async def test_collect_requires_binding_and_validates_input_against_it() -> None
     ):
         await runtime.run_node(
             CollectNode(),
-            NodeExecutionContext(node_id="collect"),
+            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="collect"),
             {"items": [ref]},
         )
 
@@ -224,7 +228,7 @@ async def test_collect_requires_binding_and_validates_input_against_it() -> None
     ):
         await runtime.run_node(
             CollectNode(),
-            NodeExecutionContext(node_id="collect"),
+            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="collect"),
             {"items": [ref]},
             artifact_type_bindings={"T": OTHER_TYPE},
         )
@@ -251,7 +255,7 @@ async def test_count_supports_empty_and_unordered_sequences(
     )
 
     output = await CountNode().run(
-        NodeExecutionContext(node_id="count"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="count"),
         NoConfig(),
         CountInput(items=sequence),
     )
@@ -279,7 +283,7 @@ async def test_slice_selects_refs_and_builds_truthful_sequence_metadata() -> Non
 
     result = await _runtime().run_node(
         SliceNode(),
-        NodeExecutionContext(node_id="slice"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="slice"),
         {"items": source},
         {"start": 1, "count": 2},
         artifact_type_bindings={"T": VALUE_TYPE},
@@ -321,7 +325,7 @@ async def test_slice_handles_open_ended_empty_and_beyond_end_ranges(
 
     result = await _runtime().run_node(
         SliceNode(),
-        NodeExecutionContext(node_id="slice"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="slice"),
         {"items": source},
         config,
         artifact_type_bindings={"T": VALUE_TYPE},
@@ -346,7 +350,7 @@ async def test_slice_rejects_unordered_sequence_with_its_id() -> None:
     with pytest.raises(ValueError, match=str(source.sequence_id)):
         await _runtime().run_node(
             SliceNode(),
-            NodeExecutionContext(node_id="slice"),
+            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="slice"),
             {"items": source},
             artifact_type_bindings={"T": VALUE_TYPE},
         )
@@ -362,7 +366,7 @@ async def test_item_at_returns_the_existing_ref() -> None:
 
     result = await _runtime().run_node(
         ItemAtNode(),
-        NodeExecutionContext(node_id="pick"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="pick"),
         {"items": source},
         {"index": 1},
         artifact_type_bindings={"T": VALUE_TYPE},
@@ -384,7 +388,7 @@ async def test_item_at_rejects_unordered_sequence_with_its_id() -> None:
     with pytest.raises(ValueError, match=str(source.sequence_id)):
         await _runtime().run_node(
             ItemAtNode(),
-            NodeExecutionContext(node_id="pick"),
+            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="pick"),
             {"items": source},
             artifact_type_bindings={"T": VALUE_TYPE},
         )
@@ -398,7 +402,7 @@ async def test_item_at_out_of_range_error_has_sequence_context() -> None:
     with pytest.raises(ValueError) as error:
         await _runtime().run_node(
             ItemAtNode(),
-            NodeExecutionContext(node_id="pick"),
+            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="pick"),
             {"items": source},
             {"index": 3},
             artifact_type_bindings={"T": VALUE_TYPE},

@@ -44,6 +44,7 @@ class OcrPageResultOutputWriter(ArtifactOutputWriter):
             separators=(",", ":"),
         ).encode("utf-8")
         artifact = ArtifactObject(
+            workspace_id=context.node_context.workspace_id,
             artifact_type=self.artifact_type.id,
             schema_version=self.artifact_type.schema_version,
             content_type="application/json",

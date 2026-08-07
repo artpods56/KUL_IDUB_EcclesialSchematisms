@@ -69,6 +69,9 @@ OTHER_VALUE = ArtifactTypeSpec(
 )
 
 
+TEST_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
+
+
 class IntResolver:
     source = INPUT_VALUE.key
     target = int
@@ -76,7 +79,7 @@ class IntResolver:
     def __init__(self, values: dict[UUID, int]) -> None:
         self._values = values
 
-    async def resolve(self, ref: ArtifactRef) -> int:
+    async def resolve(self, ref: ArtifactRef, workspace_id: UUID) -> int:
         return self._values[ref.artifact_id]
 
 
@@ -302,7 +305,7 @@ async def test_once_invokes_collection_node_once_with_the_whole_sequence() -> No
 
     result = await runtime.run_node(
         node,
-        NodeExecutionContext(node_id="collection"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="collection"),
         {
             "items": ArtifactRefSequence.from_key(
                 key=INPUT_VALUE.key,
@@ -370,6 +373,7 @@ async def test_materializer_rejects_wrong_key_empty_sequence() -> None:
                     item_refs=[],
                 )
             },
+            TEST_WORKSPACE_ID,
         )
 
 
@@ -387,6 +391,7 @@ async def test_materializer_preserves_mixed_plugs_and_flattens_provenance() -> N
     inputs, provenance = await InputMaterializer(ResolverRegistry()).materialize(
         derive_input_contract(MixedInstancePlugInput),
         {"items": raw_items},
+        TEST_WORKSPACE_ID,
     )
 
     assert inputs.items == raw_items
@@ -413,6 +418,7 @@ async def test_materializer_rejects_wrong_instance_plug_keys(
         await InputMaterializer(ResolverRegistry()).materialize(
             derive_input_contract(MixedInstancePlugInput),
             {"items": value},
+            TEST_WORKSPACE_ID,
         )
 
 
@@ -425,6 +431,7 @@ async def test_materializer_rejects_empty_required_instance_plugs() -> None:
         await InputMaterializer(ResolverRegistry()).materialize(
             derive_input_contract(MixedInstancePlugInput),
             {"items": []},
+            TEST_WORKSPACE_ID,
         )
 
 
@@ -444,7 +451,10 @@ def test_registries_reject_duplicate_contracts() -> None:
 async def test_output_persister_rejects_passthrough_key_and_shape_mismatches() -> None:
     persister = OutputPersister(ArtifactWriterRegistry())
     contract = derive_output_contract(PassthroughOutput)
-    context = NodeExecutionContext(node_id="passthrough")
+    context = NodeExecutionContext(
+        workspace_id=TEST_WORKSPACE_ID,
+        node_id="passthrough",
+    )
     provenance = MaterializationProvenance(refs_by_input={})
     wrong_key_ref = ArtifactRef.from_key(
         artifact_id=uuid4(),
@@ -495,6 +505,7 @@ def test_invocation_cache_key_is_canonical_and_scoped_to_stable_context() -> Non
     )
     node = ScalarNode()
     first_context = NodeExecutionContext(
+        workspace_id=TEST_WORKSPACE_ID,
         workflow_run_id=uuid4(),
         node_run_id=uuid4(),
         graph_id=uuid4(),
@@ -503,6 +514,7 @@ def test_invocation_cache_key_is_canonical_and_scoped_to_stable_context() -> Non
         module_path=("graph.module.example@3",),
     )
     second_context = NodeExecutionContext(
+        workspace_id=TEST_WORKSPACE_ID,
         workflow_run_id=uuid4(),
         node_run_id=uuid4(),
         graph_id=uuid4(),
@@ -538,6 +550,7 @@ def test_invocation_cache_key_is_canonical_and_scoped_to_stable_context() -> Non
     assert first != invocation_cache_key(
         node=node,
         context=NodeExecutionContext(
+            workspace_id=TEST_WORKSPACE_ID,
             node_id="other-node",
             module_path=("graph.module.example@3",),
         ),
@@ -557,6 +570,7 @@ def test_invocation_cache_key_is_canonical_and_scoped_to_stable_context() -> Non
     assert first != invocation_cache_key(
         node=node,
         context=NodeExecutionContext(
+            workspace_id=TEST_WORKSPACE_ID,
             node_id="stable-node",
             invocation_index=0,
             module_path=("graph.module.example@3",),
@@ -577,7 +591,10 @@ def test_invocation_cache_key_requires_input_content_hashes() -> None:
     assert (
         invocation_cache_key(
             node=ScalarNode(),
-            context=NodeExecutionContext(node_id="scalar"),
+                context=NodeExecutionContext(
+                    workspace_id=TEST_WORKSPACE_ID,
+                    node_id="scalar",
+                ),
             inputs={"item": input_ref},
             config=NoConfig(),
             artifact_type_bindings={},
@@ -612,6 +629,7 @@ async def test_exact_once_cache_hit_skips_node_and_writer() -> None:
     first = await runtime.run_node(
         node,
         NodeExecutionContext(
+            workspace_id=TEST_WORKSPACE_ID,
             workflow_run_id=uuid4(),
             node_run_id=uuid4(),
             graph_revision=1,
@@ -623,6 +641,7 @@ async def test_exact_once_cache_hit_skips_node_and_writer() -> None:
     second = await runtime.run_node(
         node,
         NodeExecutionContext(
+            workspace_id=TEST_WORKSPACE_ID,
             workflow_run_id=uuid4(),
             node_run_id=uuid4(),
             graph_revision=2,
@@ -663,7 +682,7 @@ async def test_exact_cache_bypasses_inputs_without_content_hashes() -> None:
     results = [
         await runtime.run_node(
             node,
-            NodeExecutionContext(node_id="collection"),
+            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="collection"),
             {"items": source},
             cache_policy=NodeCachePolicy.EXACT,
         )

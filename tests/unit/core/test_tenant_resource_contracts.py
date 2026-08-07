@@ -3,10 +3,12 @@ from uuid import UUID
 import pytest
 
 from notarius_core.artifacts import (
+    ArtifactObject,
     ArtifactRef,
     ArtifactTypeKey,
     InMemoryDataStore,
     InMemoryInvocationCacheRepository,
+    InMemoryUnitOfWork,
 )
 from notarius_core.domain.invocation_cache import InvocationCacheEntry
 from notarius_core.domain.staged_uploads import StagedUpload
@@ -46,6 +48,52 @@ async def test_in_memory_cache_partitions_same_key_by_workspace() -> None:
     assert await repository.put_if_absent(second)
     assert await repository.get(WORKSPACE_ONE, first.key_sha256) == first
     assert await repository.get(WORKSPACE_TWO, second.key_sha256) == second
+    first_result = await repository.get(WORKSPACE_ONE, first.key_sha256)
+    second_result = await repository.get(WORKSPACE_TWO, second.key_sha256)
+    assert first_result is not None
+    assert second_result is not None
+    assert first_result.generation == first.generation
+    assert second_result.outputs == second.outputs
+
+
+@pytest.mark.asyncio
+async def test_in_memory_artifacts_require_matching_workspace_identity() -> None:
+    repository = InMemoryDataStore()
+    unit_of_work = InMemoryUnitOfWork(repository)
+    artifact_id = UUID("00000000-0000-0000-0000-000000000115")
+    first = ArtifactObject(
+        workspace_id=WORKSPACE_ONE,
+        id=artifact_id,
+        artifact_type="test.value",
+        schema_version=1,
+        content_type="application/json",
+        storage_backend="inline",
+        inline_payload={"workspace": "one"},
+    )
+    second = ArtifactObject(
+        workspace_id=WORKSPACE_TWO,
+        id=artifact_id,
+        artifact_type="test.value",
+        schema_version=1,
+        content_type="application/json",
+        storage_backend="inline",
+        inline_payload={"workspace": "two"},
+    )
+
+    async with unit_of_work as entered:
+        await entered.artifacts.add(first)
+        await entered.artifacts.add(second)
+        await entered.commit()
+
+    async with unit_of_work as entered:
+        assert await entered.artifacts.get(WORKSPACE_ONE, artifact_id) == first
+        assert await entered.artifacts.get(WORKSPACE_TWO, artifact_id) == second
+        await entered.artifacts.remove(WORKSPACE_ONE, second)
+        await entered.commit()
+
+    async with unit_of_work as entered:
+        assert await entered.artifacts.get(WORKSPACE_ONE, artifact_id) == first
+        assert await entered.artifacts.get(WORKSPACE_TWO, artifact_id) == second
 
 
 def test_staged_upload_rejects_unbounded_or_negative_metadata() -> None:

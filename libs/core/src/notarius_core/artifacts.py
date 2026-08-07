@@ -298,6 +298,8 @@ class InMemoryArtifactRepository(ArtifactRepositoryPort):
 
     @override
     async def remove(self, workspace_id: UUID, artifact: ArtifactObject) -> None:
+        if artifact.workspace_id != workspace_id:
+            return
         self._store.artifacts.pop((workspace_id, artifact.id), None)
 
     @override

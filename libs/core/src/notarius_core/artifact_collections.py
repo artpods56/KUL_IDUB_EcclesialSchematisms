@@ -183,6 +183,7 @@ async def save_json_collections(
     collections: list[JsonCollection],
     metadata: JsonObject,
     node_id: str | None,
+    path_prefix: str = "",
 ) -> StoredJsonCollections:
     collection_ids = [collection.id for collection in collections]
     if len(collection_ids) != len(set(collection_ids)):
@@ -218,7 +219,7 @@ async def save_json_collections(
             content = chunk.model_dump_json().encode("utf-8")
             content_hash = sha256(content).hexdigest()
             storage_path = (
-                f"{artifact_type.id}/v{artifact_type.schema_version}/chunks/"
+                f"{path_prefix}{artifact_type.id}/v{artifact_type.schema_version}/chunks/"
                 f"{content_hash}.json"
             )
             file_metadata: FileMetadata = {
@@ -273,7 +274,7 @@ async def save_json_collections(
     manifest_content = manifest.model_dump_json().encode("utf-8")
     manifest_hash = sha256(manifest_content).hexdigest()
     manifest_path = (
-        f"{artifact_type.id}/v{artifact_type.schema_version}/manifests/"
+        f"{path_prefix}{artifact_type.id}/v{artifact_type.schema_version}/manifests/"
         f"{manifest_hash}.json"
     )
     try:

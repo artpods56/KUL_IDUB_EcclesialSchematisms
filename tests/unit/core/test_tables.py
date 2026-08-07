@@ -1,6 +1,7 @@
 from io import BytesIO
 from pathlib import Path
 from typing import cast
+from uuid import UUID
 
 import pytest
 from openpyxl import Workbook
@@ -39,6 +40,9 @@ from notarius_core.runtime.materialization import MaterializationProvenance
 from notarius_core.runtime.persistence import ArtifactWriteContext
 from notarius_core.runtime.resolvers import ResolutionError
 from notarius_storage import LocalFileObjectStore
+
+
+TEST_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
 
 
 def sample_table() -> Table:
@@ -114,7 +118,7 @@ async def test_table_file_import_reads_utf8_csv_with_stable_column_ids(
     node = TableFileImportNode(uploads_dir=uploads_dir)
 
     output = await node.run(
-        NodeExecutionContext(node_id="table-file"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="table-file"),
         TableFileImportConfig(
             uploads=[
                 TableFileUploadItem(
@@ -173,7 +177,7 @@ async def test_table_file_import_selects_xlsx_sheet_and_preserves_scalars(
     node = TableFileImportNode(uploads_dir=uploads_dir)
 
     output = await node.run(
-        NodeExecutionContext(node_id="table-file"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="table-file"),
         TableFileImportConfig(
             uploads=[
                 TableFileUploadItem(
@@ -207,7 +211,7 @@ async def test_text_normalization_adds_transliteration_without_replacing_source(
     )
 
     output = await NormalizeTableTextNode().run(
-        NodeExecutionContext(node_id="normalize"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="normalize"),
         TableTextNormalizeConfig(source_column="Name"),
         TableTextNormalizeInput(table=source),
     )
@@ -278,7 +282,7 @@ async def test_fuzzy_match_returns_ranked_candidates_and_unmatched_sources() -> 
     )
 
     output = await FuzzyMatchTablesNode().run(
-        NodeExecutionContext(node_id="fuzzy-match"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="fuzzy-match"),
         TableFuzzyMatchConfig(
             left_text_column="name",
             right_text_column="name",
@@ -336,7 +340,10 @@ async def test_fuzzy_match_uses_alias_columns_and_reports_the_best_pair() -> Non
     )
 
     output = await FuzzyMatchTablesNode().run(
-        NodeExecutionContext(node_id="fuzzy-match-aliases"),
+        NodeExecutionContext(
+            workspace_id=TEST_WORKSPACE_ID,
+            node_id="fuzzy-match-aliases",
+        ),
         TableFuzzyMatchConfig(
             left_text_column="name",
             right_text_column="historical_name",
@@ -405,12 +412,21 @@ async def test_chunked_table_round_trip_and_cross_chunk_page(tmp_path: Path) -> 
     ref = await writer.write(
         table,
         ArtifactWriteContext(
-            node_context=NodeExecutionContext(node_id="table"),
+            node_context=NodeExecutionContext(
+                workspace_id=TEST_WORKSPACE_ID,
+                node_id="table",
+            ),
             provenance=MaterializationProvenance(refs_by_input={}),
         ),
     )
     async with unit_of_work as uow:
-        artifact = await uow.artifacts.get(ref.artifact_id)
+            artifact = await uow.artifacts.get(TEST_WORKSPACE_ID, ref.artifact_id)
+            assert artifact is not None
+            assert artifact.workspace_id == TEST_WORKSPACE_ID
+            assert artifact.object_key is not None
+            assert artifact.object_key.startswith(
+                f"workspaces/{TEST_WORKSPACE_ID}/table.data/v1/manifests/"
+            )
     assert artifact is not None
     assert artifact.inline_payload is None
     assert artifact.metadata["row_count"] == 205
@@ -426,7 +442,7 @@ async def test_chunked_table_round_trip_and_cross_chunk_page(tmp_path: Path) -> 
     past_end = await load_table_page(artifact, storage, offset=999, limit=10)
     assert past_end.offset == 205
     assert past_end.rows == []
-    assert await resolver.resolve(ref) == table
+    assert await resolver.resolve(ref, TEST_WORKSPACE_ID) == table
 
 
 @pytest.mark.asyncio
@@ -448,12 +464,16 @@ async def test_empty_and_legacy_inline_tables_remain_resolvable(tmp_path: Path) 
     empty_ref = await writer.write(
         empty,
         ArtifactWriteContext(
-            node_context=NodeExecutionContext(node_id="empty-table"),
+            node_context=NodeExecutionContext(
+                workspace_id=TEST_WORKSPACE_ID,
+                node_id="empty-table",
+            ),
             provenance=MaterializationProvenance(refs_by_input={}),
         ),
     )
     legacy = sample_table()
     legacy_artifact = ArtifactObject(
+        workspace_id=TEST_WORKSPACE_ID,
         artifact_type=TABLE_DATA.key.id,
         schema_version=TABLE_DATA.key.schema_version,
         content_type="application/json",
@@ -472,8 +492,8 @@ async def test_empty_and_legacy_inline_tables_remain_resolvable(tmp_path: Path) 
         limit=10,
     )
 
-    assert await resolver.resolve(empty_ref) == empty
-    assert await resolver.resolve(legacy_artifact.ref()) == legacy
+    assert await resolver.resolve(empty_ref, TEST_WORKSPACE_ID) == empty
+    assert await resolver.resolve(legacy_artifact.ref(), TEST_WORKSPACE_ID) == legacy
     assert legacy_page.total_rows == 2
     assert legacy_page.rows == legacy.rows[1:]
 
@@ -491,12 +511,15 @@ async def test_corrupt_table_chunk_reports_artifact_and_offset(tmp_path: Path) -
     ref = await writer.write(
         sample_table(),
         ArtifactWriteContext(
-            node_context=NodeExecutionContext(node_id="table"),
+            node_context=NodeExecutionContext(
+                workspace_id=TEST_WORKSPACE_ID,
+                node_id="table",
+            ),
             provenance=MaterializationProvenance(refs_by_input={}),
         ),
     )
     async with unit_of_work as uow:
-        artifact = await uow.artifacts.get(ref.artifact_id)
+            artifact = await uow.artifacts.get(TEST_WORKSPACE_ID, ref.artifact_id)
     assert artifact is not None
     assert artifact.bucket is not None
     manifest = await load_table_manifest(artifact, storage)
@@ -536,12 +559,15 @@ async def test_table_accessibility_requires_every_chunk(tmp_path: Path) -> None:
     ref = await writer.write(
         table,
         ArtifactWriteContext(
-            node_context=NodeExecutionContext(node_id="table"),
+            node_context=NodeExecutionContext(
+                workspace_id=TEST_WORKSPACE_ID,
+                node_id="table",
+            ),
             provenance=MaterializationProvenance(refs_by_input={}),
         ),
     )
     async with unit_of_work as uow:
-        artifact = await uow.artifacts.get(ref.artifact_id)
+            artifact = await uow.artifacts.get(TEST_WORKSPACE_ID, ref.artifact_id)
     assert artifact is not None
     assert artifact.bucket is not None
     manifest = await load_table_manifest(artifact, storage)
@@ -574,12 +600,15 @@ async def test_large_rows_are_split_by_chunk_byte_budget(tmp_path: Path) -> None
     ref = await writer.write(
         table,
         ArtifactWriteContext(
-            node_context=NodeExecutionContext(node_id="large-table"),
+            node_context=NodeExecutionContext(
+                workspace_id=TEST_WORKSPACE_ID,
+                node_id="large-table",
+            ),
             provenance=MaterializationProvenance(refs_by_input={}),
         ),
     )
     async with unit_of_work as uow:
-        artifact = await uow.artifacts.get(ref.artifact_id)
+            artifact = await uow.artifacts.get(TEST_WORKSPACE_ID, ref.artifact_id)
     assert artifact is not None
     manifest = await load_table_manifest(artifact, storage)
     page = await load_table_page(artifact, storage, offset=1, limit=2)
@@ -603,12 +632,15 @@ async def test_table_manifest_and_logical_content_are_authenticated(
     ref = await writer.write(
         sample_table(),
         ArtifactWriteContext(
-            node_context=NodeExecutionContext(node_id="table"),
+            node_context=NodeExecutionContext(
+                workspace_id=TEST_WORKSPACE_ID,
+                node_id="table",
+            ),
             provenance=MaterializationProvenance(refs_by_input={}),
         ),
     )
     async with unit_of_work as uow:
-        artifact = await uow.artifacts.get(ref.artifact_id)
+            artifact = await uow.artifacts.get(TEST_WORKSPACE_ID, ref.artifact_id)
     assert artifact is not None
     assert artifact.bucket is not None
     assert artifact.object_key is not None

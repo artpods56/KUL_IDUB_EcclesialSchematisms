@@ -5,7 +5,7 @@ import subprocess
 from hashlib import sha256
 from pathlib import Path
 from typing import cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -90,6 +90,9 @@ from notarius_plugin_gis.persistence import (
 from notarius_plugin_gis.wfs import WfsClient, WfsImportError
 
 
+TEST_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
+
+
 def feature_collection(*coordinates: tuple[float, float]) -> bytes:
     return json.dumps(
         {
@@ -121,7 +124,7 @@ async def import_geojson(
     upload_key = f"staged-{filename}"
     (uploads_dir / upload_key).write_bytes(content)
     result = await ImportGeoJsonNode(uploads_dir).run(
-        NodeExecutionContext(node_id="import"),
+            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="import"),
         GeoJsonUploadConfig(
             uploads=[
                 GeoJsonUploadItem(
@@ -663,7 +666,7 @@ async def test_wfs_import_fetches_bounded_epsg4326_pages(
 
     node = ImportWfsNode(WfsClient(transport=httpx.MockTransport(respond)))
     result = await node.run(
-        NodeExecutionContext(node_id="wfs"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="wfs"),
         WfsImportConfig.model_validate(
             {
                 "service_url": "https://example.com/geoserver/ows",
@@ -744,7 +747,7 @@ async def test_wfs_import_fetches_all_pages_when_max_features_is_none(
 
     node = ImportWfsNode(WfsClient(transport=httpx.MockTransport(respond)))
     result = await node.run(
-        NodeExecutionContext(node_id="wfs"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="wfs"),
         WfsImportConfig.model_validate(
             {
                 "service_url": "https://example.com/geoserver/ows",
@@ -852,7 +855,7 @@ async def test_wfs_import_rejects_oversized_page_with_context(
         match=r"example.com.*geonode:large.*1024-byte page limit",
     ):
         await node.run(
-            NodeExecutionContext(node_id="wfs"),
+                NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="wfs"),
             WfsImportConfig.model_validate(
                 {
                     "service_url": "https://example.com/geoserver/ows",
@@ -877,7 +880,7 @@ async def test_geotiff_upload_and_raster_persistence_produce_cog_and_xyz_tiles(
     staged_path = uploads / "staged-raster"
     staged_path.write_bytes(source_content)
     upload = await ImportGeoTiffNode(uploads).run(
-        NodeExecutionContext(node_id="upload"),
+            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="upload"),
         GeoTiffUploadConfig(
             uploads=[
                 GeoTiffUploadItem(
@@ -903,18 +906,25 @@ async def test_geotiff_upload_and_raster_persistence_produce_cog_and_xyz_tiles(
     ref = await writer.write(
         upload.raster,
         ArtifactWriteContext(
-            node_context=NodeExecutionContext(node_id="raster"),
+                node_context=NodeExecutionContext(
+                    workspace_id=TEST_WORKSPACE_ID,
+                    node_id="raster",
+                ),
             provenance=MaterializationProvenance(refs_by_input={}),
         ),
     )
     async with unit_of_work as uow:
-        artifact = await uow.artifacts.get(ref.artifact_id)
+        artifact = await uow.artifacts.get(TEST_WORKSPACE_ID, ref.artifact_id)
     assert artifact is not None
     assert artifact.content_type == (
         "image/tiff; application=geotiff; profile=cloud-optimized"
     )
     assert artifact.bucket == "test"
     assert artifact.object_key is not None
+    assert artifact.workspace_id == TEST_WORKSPACE_ID
+    assert artifact.object_key.startswith(
+        f"workspaces/{TEST_WORKSPACE_ID}/geo.raster_scan/v1/"
+    )
     projection = RasterProjectionMetadata.model_validate(
         artifact.metadata["raster_projection"]
     )
@@ -935,7 +945,7 @@ async def test_geotiff_upload_and_raster_persistence_produce_cog_and_xyz_tiles(
     resolved = await RasterScanResolver(
         uow=unit_of_work,
         storage=storage,
-    ).resolve(ref)
+    ).resolve(ref, TEST_WORKSPACE_ID)
     assert resolved.filename == "historical-map.tif"
     assert sha256(resolved.content).hexdigest() == artifact.sha256
 
@@ -959,7 +969,10 @@ async def test_feature_collection_storage_keeps_exact_source_and_pmtiles_sidecar
     ref = await writer.write(
         collection,
         ArtifactWriteContext(
-            node_context=NodeExecutionContext(node_id="import"),
+                node_context=NodeExecutionContext(
+                    workspace_id=TEST_WORKSPACE_ID,
+                    node_id="import",
+                ),
             provenance=MaterializationProvenance(refs_by_input={}),
         ),
     )
@@ -968,12 +981,17 @@ async def test_feature_collection_storage_keeps_exact_source_and_pmtiles_sidecar
         storage=storage,
     )
 
-    assert await resolver.resolve(ref) == collection
+    assert await resolver.resolve(ref, TEST_WORKSPACE_ID) == collection
     async with unit_of_work as uow:
-        artifact = await uow.artifacts.get(ref.artifact_id)
+        artifact = await uow.artifacts.get(TEST_WORKSPACE_ID, ref.artifact_id)
     assert artifact is not None
     assert artifact.inline_payload is None
     assert artifact.content_type == "application/geo+json"
+    assert artifact.workspace_id == TEST_WORKSPACE_ID
+    assert artifact.object_key is not None
+    assert artifact.object_key.startswith(
+        f"workspaces/{TEST_WORKSPACE_ID}/geo.feature_collection/v1/"
+    )
     assert artifact.metadata["property_fields"] == [
         {"id": "name", "title": "name", "value_type": "text"}
     ]
@@ -1011,13 +1029,16 @@ async def test_empty_feature_source_is_exact_without_invalid_pmtiles(
     ).write(
         collection,
         ArtifactWriteContext(
-            node_context=NodeExecutionContext(node_id="empty"),
+                node_context=NodeExecutionContext(
+                    workspace_id=TEST_WORKSPACE_ID,
+                    node_id="empty",
+                ),
             provenance=MaterializationProvenance(refs_by_input={}),
         ),
     )
 
     async with unit_of_work as uow:
-        artifact = await uow.artifacts.get(ref.artifact_id)
+        artifact = await uow.artifacts.get(TEST_WORKSPACE_ID, ref.artifact_id)
     assert artifact is not None
     assert artifact.metadata["feature_count"] == 0
     assert "vector_projection" not in artifact.metadata
@@ -1046,7 +1067,10 @@ async def test_missing_gdal_driver_error_preserves_source_and_node_context(
         await writer.write(
             collection,
             ArtifactWriteContext(
-                node_context=NodeExecutionContext(node_id="feature-node"),
+                node_context=NodeExecutionContext(
+                    workspace_id=TEST_WORKSPACE_ID,
+                    node_id="feature-node",
+                ),
                 provenance=MaterializationProvenance(refs_by_input={}),
             ),
         )

@@ -10,6 +10,7 @@ from hashlib import sha256
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Annotated, Literal, Self, cast, final, override
+from uuid import UUID
 
 from openpyxl import load_workbook
 from pydantic import (
@@ -502,6 +503,7 @@ class TableArtifactWriter(ArtifactOutputWriter):
             content = chunk.model_dump_json().encode("utf-8")
             content_hash = sha256(content).hexdigest()
             storage_path = (
+                f"workspaces/{context.node_context.workspace_id}/"
                 f"{TABLE_DATA.key.id}/v{TABLE_DATA.key.schema_version}/chunks/"
                 f"{content_hash}.json"
             )
@@ -549,6 +551,7 @@ class TableArtifactWriter(ArtifactOutputWriter):
         manifest_content = manifest.model_dump_json().encode("utf-8")
         manifest_hash = sha256(manifest_content).hexdigest()
         manifest_path = (
+            f"workspaces/{context.node_context.workspace_id}/"
             f"{TABLE_DATA.key.id}/v{TABLE_DATA.key.schema_version}/manifests/"
             f"{manifest_hash}.json"
         )
@@ -601,6 +604,7 @@ class TableArtifactWriter(ArtifactOutputWriter):
         if provenance:
             artifact_metadata["provenance"] = provenance
         artifact = ArtifactObject(
+            workspace_id=context.node_context.workspace_id,
             artifact_type=TABLE_DATA.key.id,
             schema_version=TABLE_DATA.key.schema_version,
             content_type="application/json",
@@ -631,7 +635,7 @@ class TableArtifactResolver(Resolver[Table]):
         self._storage = storage
 
     @override
-    async def resolve(self, ref: ArtifactRef) -> Table:
+    async def resolve(self, ref: ArtifactRef, workspace_id: UUID) -> Table:
         if ref.key() != self.source:
             raise ArtifactContractError(
                 f"Table resolver expected {self.source.id}@"
@@ -639,7 +643,7 @@ class TableArtifactResolver(Resolver[Table]):
                 f"{ref.schema_version} for {ref.artifact_id}"
             )
         async with self._uow as uow:
-            artifact = await uow.artifacts.get(ref.artifact_id)
+            artifact = await uow.artifacts.get(workspace_id, ref.artifact_id)
         if artifact is None:
             raise NotFoundError("Artifact", str(ref.artifact_id))
         if artifact.ref() != ref:

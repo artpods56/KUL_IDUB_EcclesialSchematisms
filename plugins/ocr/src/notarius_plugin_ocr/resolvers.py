@@ -1,5 +1,6 @@
 from io import BytesIO
 from typing import final, override
+from uuid import UUID
 
 from PIL import Image as ImageModule
 from PIL.Image import Image
@@ -27,7 +28,11 @@ class EncodedPageImageResolver(Resolver[EncodedPageImage]):
         self._storage = storage
 
     @override
-    async def resolve(self, ref: ArtifactRef) -> EncodedPageImage:
+    async def resolve(
+        self,
+        ref: ArtifactRef,
+        workspace_id: UUID,
+    ) -> EncodedPageImage:
         if ref.key() != self.source:
             message = (
                 f"Encoded page resolver expected {self.source.id}@"
@@ -37,7 +42,7 @@ class EncodedPageImageResolver(Resolver[EncodedPageImage]):
             raise ArtifactContractError(message)
 
         async with self._uow as uow:
-            artifact = await uow.artifacts.get(ref.artifact_id)
+            artifact = await uow.artifacts.get(workspace_id, ref.artifact_id)
         if artifact is None:
             raise NotFoundError("Artifact", str(ref.artifact_id))
         if artifact.ref() != ref:
@@ -93,6 +98,7 @@ class PilImageResolver(Resolver[Image]):
     async def resolve(
         self,
         ref: ArtifactRef,
+        workspace_id: UUID,
     ) -> Image:
         if ref.key() != self.source:
             message = (
@@ -103,7 +109,7 @@ class PilImageResolver(Resolver[Image]):
             raise ArtifactContractError(message)
 
         async with self._uow as uow:
-            artifact = await uow.artifacts.get(ref.artifact_id)
+            artifact = await uow.artifacts.get(workspace_id, ref.artifact_id)
 
         if artifact is None:
             raise NotFoundError("Artifact", str(ref.artifact_id))

@@ -1,5 +1,5 @@
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from PIL import Image
@@ -39,6 +39,9 @@ from notarius_plugin_ocr.tesseract import FakeOcrEngine, TesseractOcrNode
 from notarius_storage import LocalFileObjectStore
 
 
+TEST_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
+
+
 def write_png(path: Path, size: tuple[int, int]) -> None:
     image = Image.new("RGB", size, color="white")
     image.save(path, format="PNG")
@@ -75,7 +78,10 @@ async def test_runtime_chains_image_collect_and_ocr_writers(tmp_path: Path) -> N
 
     upload_output = await runtime.bind(
         UploadImagesNode(uploads_dir=staging_root),
-        NodeExecutionContext(node_id="image_upload_1"),
+        NodeExecutionContext(
+            workspace_id=TEST_WORKSPACE_ID,
+            node_id="image_upload_1",
+        ),
     )(
         {},
         config={
@@ -102,7 +108,7 @@ async def test_runtime_chains_image_collect_and_ocr_writers(tmp_path: Path) -> N
 
     collect_output = await runtime.bind(
         CollectNode(),
-        NodeExecutionContext(node_id="collect_1"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="collect_1"),
         artifact_type_bindings={"T": RASTER_IMAGE.key},
     )({"items": [uploaded_images]})
     assert isinstance(collect_output, PersistedNodeOutput)
@@ -121,7 +127,7 @@ async def test_runtime_chains_image_collect_and_ocr_writers(tmp_path: Path) -> N
 
     ocr_output = await runtime.bind(
         TesseractOcrNode(FakeOcrEngine()),
-        NodeExecutionContext(node_id="ocr_1"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="ocr_1"),
     )({"pages": collected_images})
     assert isinstance(ocr_output, PersistedNodeOutput)
     ocr_results = ocr_output["results"]
@@ -131,8 +137,14 @@ async def test_runtime_chains_image_collect_and_ocr_writers(tmp_path: Path) -> N
     assert len(ocr_results.item_refs) == 2
 
     async with uow as entered:
-        image_artifacts = await entered.artifacts.list_by_type(RASTER_IMAGE.key)
-        ocr_artifacts = await entered.artifacts.list_by_type(OCR_PAGE_RESULT.key)
+        image_artifacts = await entered.artifacts.list_by_type(
+            TEST_WORKSPACE_ID,
+            RASTER_IMAGE.key,
+        )
+        ocr_artifacts = await entered.artifacts.list_by_type(
+            TEST_WORKSPACE_ID,
+            OCR_PAGE_RESULT.key,
+        )
 
     assert [artifact.metadata["original_filename"] for artifact in image_artifacts] == [
         "page-002.png",
@@ -140,6 +152,14 @@ async def test_runtime_chains_image_collect_and_ocr_writers(tmp_path: Path) -> N
     ]
     assert all(artifact.bucket == "artifacts" for artifact in image_artifacts)
     assert all(artifact.object_key is not None for artifact in image_artifacts)
+    assert all(
+        artifact.object_key is not None
+        and artifact.object_key.startswith(
+            f"workspaces/{TEST_WORKSPACE_ID}/image.raster/v1/"
+        )
+        for artifact in image_artifacts
+    )
+    assert all(artifact.workspace_id == TEST_WORKSPACE_ID for artifact in image_artifacts)
     assert all("upload_key" not in artifact.metadata for artifact in image_artifacts)
     texts: list[object] = []
     for artifact in ocr_artifacts:
@@ -161,6 +181,7 @@ async def test_ocr_many_input_requires_artifact_ref_sequence() -> None:
         await materializer.materialize(
             TesseractOcrNode.input_contract,
             {"pages": [page_ref]},
+            TEST_WORKSPACE_ID,
         )
 
 
@@ -172,7 +193,7 @@ async def test_upload_rejects_keys_outside_the_upload_root(tmp_path: Path) -> No
 
     with pytest.raises(ImageUploadError, match="opaque relative name"):
         await node.run(
-            NodeExecutionContext(node_id="upload"),
+            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="upload"),
             node.config_contract.model.model_validate(
                 {
                     "uploads": [
@@ -208,19 +229,24 @@ async def test_raster_writer_persists_content_without_upload_metadata(
             content_type="image/png",
         ),
         ArtifactWriteContext(
-            node_context=NodeExecutionContext(node_id="generated_image"),
+            node_context=NodeExecutionContext(
+                workspace_id=TEST_WORKSPACE_ID,
+                node_id="generated_image",
+            ),
             provenance=MaterializationProvenance(refs_by_input={}),
         ),
     )
 
     assert ref.key() == RASTER_IMAGE.key
     async with uow as entered:
-        artifact = await entered.artifacts.get(ref.artifact_id)
+        artifact = await entered.artifacts.get(TEST_WORKSPACE_ID, ref.artifact_id)
     assert artifact is not None
     assert artifact.metadata["producer_node_id"] == "generated_image"
     assert artifact.metadata["original_filename"] is None
     assert artifact.object_key is not None
-    assert artifact.object_key.startswith("image.raster/v1/")
+    assert artifact.object_key.startswith(
+        f"workspaces/{TEST_WORKSPACE_ID}/image.raster/v1/"
+    )
 
 
 def test_image_plugin_owns_the_raster_type_and_writer(tmp_path: Path) -> None:

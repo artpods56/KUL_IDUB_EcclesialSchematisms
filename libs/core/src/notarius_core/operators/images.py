@@ -82,6 +82,7 @@ class RasterImageOutputWriter(ArtifactOutputWriter):
         image = RasterImageContent.model_validate(value)
         content_hash = sha256(image.content).hexdigest()
         storage_path = (
+            f"workspaces/{context.node_context.workspace_id}/"
             f"{self.artifact_type.id}/v{self.artifact_type.schema_version}/"
             f"{content_hash}{self._suffix_for(image.content_type)}"
         )
@@ -133,6 +134,7 @@ class RasterImageOutputWriter(ArtifactOutputWriter):
             metadata["provenance"] = provenance
         metadata.update(context.metadata)
         artifact = ArtifactObject(
+            workspace_id=context.node_context.workspace_id,
             artifact_type=self.artifact_type.id,
             schema_version=self.artifact_type.schema_version,
             content_type=image.content_type,

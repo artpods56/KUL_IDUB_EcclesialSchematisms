@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
@@ -25,6 +26,9 @@ from notarius_core.runtime.materialization import (
 from notarius_core.runtime.persistence import ArtifactWriteContext
 from notarius_core.runtime.resolvers import ResolverRegistry
 from notarius_storage import LocalFileObjectStore
+
+
+TEST_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
 
 
 def test_schema_plugin_declares_nominal_string_artifact_and_builder_contract() -> None:
@@ -126,7 +130,7 @@ def test_schema_builder_config_validates_ordered_field_identity_and_item_kinds()
 @pytest.mark.asyncio
 async def test_schema_builder_compiles_inline_fields_to_canonical_object_schema() -> None:
     output = await JsonSchemaBuilderNode().run(
-        NodeExecutionContext(node_id="invoice-schema"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="invoice-schema"),
         JsonSchemaBuilderConfig.model_validate(
             {
                 "title": "Invoice",
@@ -235,7 +239,7 @@ async def test_schema_builder_inserts_connected_object_and_sequence_item_schemas
     )
 
     output = await JsonSchemaBuilderNode().run(
-        NodeExecutionContext(node_id="invoice-schema"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="invoice-schema"),
         config,
         JsonSchemaBuilderInput(schemas=[customer_schema, line_schema]),
     )
@@ -271,7 +275,7 @@ async def test_schema_builder_reports_missing_connected_schema_field_ids() -> No
 
     with pytest.raises(ValueError) as exc_info:
         await JsonSchemaBuilderNode().run(
-            NodeExecutionContext(node_id="schema"),
+            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="schema"),
             config,
             JsonSchemaBuilderInput(
                 schemas=['{"type":"object","properties":{}}']
@@ -336,7 +340,10 @@ async def test_schema_artifact_factories_and_typed_instance_plugs_round_trip(
     writer = registry.build_writers(context)[0]
     resolver = registry.build_resolvers(context)[0]
     write_context = ArtifactWriteContext(
-        node_context=NodeExecutionContext(node_id="child-schema"),
+        node_context=NodeExecutionContext(
+            workspace_id=TEST_WORKSPACE_ID,
+            node_id="child-schema",
+        ),
         provenance=MaterializationProvenance(refs_by_input={}),
     )
     child_schema = '{ "properties": {}, "type": "object" }'
@@ -348,12 +355,13 @@ async def test_schema_artifact_factories_and_typed_instance_plugs_round_trip(
     ).materialize(
         JsonSchemaBuilderNode.input_contract,
         {"schemas": [child_ref]},
+        TEST_WORKSPACE_ID,
     )
 
     assert inputs.schemas == [canonical_child_schema]
     assert provenance.refs_for("schemas") == (child_ref,)
     output = await JsonSchemaBuilderNode().run(
-        NodeExecutionContext(node_id="parent-schema"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="parent-schema"),
         JsonSchemaBuilderConfig.model_validate(
             {
                 "fields": [
@@ -366,14 +374,17 @@ async def test_schema_artifact_factories_and_typed_instance_plugs_round_trip(
     parent_ref = await writer.write(
         output.json_schema,
         ArtifactWriteContext(
-            node_context=NodeExecutionContext(node_id="parent-schema"),
+        node_context=NodeExecutionContext(
+            workspace_id=TEST_WORKSPACE_ID,
+            node_id="parent-schema",
+        ),
             provenance=provenance,
         ),
     )
 
-    assert await resolver.resolve(parent_ref) == output.json_schema
+    assert await resolver.resolve(parent_ref, TEST_WORKSPACE_ID) == output.json_schema
     async with uow as entered:
-        artifact = await entered.artifacts.get(parent_ref.artifact_id)
+        artifact = await entered.artifacts.get(TEST_WORKSPACE_ID, parent_ref.artifact_id)
     assert artifact is not None
     assert artifact.inline_payload == {"value": output.json_schema}
     assert artifact.metadata["provenance"] == {

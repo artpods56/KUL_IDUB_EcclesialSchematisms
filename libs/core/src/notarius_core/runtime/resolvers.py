@@ -1,4 +1,5 @@
 from typing import Protocol, cast, final, override
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -29,6 +30,7 @@ class Resolver[T](Protocol):
     async def resolve(
         self,
         ref: ArtifactRef,
+        workspace_id: UUID,
     ) -> T: ...
 
 
@@ -52,6 +54,7 @@ class ResolverRegistry:
         self,
         ref: ArtifactRef,
         target: type[T],
+        workspace_id: UUID,
     ) -> T:
         resolver = self._resolvers.get((ref.key(), target))
         if resolver is None:
@@ -60,7 +63,7 @@ class ResolverRegistry:
                 f"{ref.schema_version} as {target}"
             )
             raise UnknownResolverError(message)
-        return cast(T, await resolver.resolve(ref))
+        return cast(T, await resolver.resolve(ref, workspace_id))
 
 
 @final
@@ -80,7 +83,7 @@ class InlineModelResolver[T: BaseModel](Resolver[T]):
         self._uow = uow
 
     @override
-    async def resolve(self, ref: ArtifactRef) -> T:
+    async def resolve(self, ref: ArtifactRef, workspace_id: UUID) -> T:
         if ref.key() != self.source:
             message = (
                 f"Inline model resolver expected {self.source.id}@"
@@ -90,7 +93,7 @@ class InlineModelResolver[T: BaseModel](Resolver[T]):
             raise ArtifactContractError(message)
 
         async with self._uow as uow:
-            artifact = await uow.artifacts.get(ref.artifact_id)
+            artifact = await uow.artifacts.get(workspace_id, ref.artifact_id)
         if artifact is None:
             raise NotFoundError("Artifact", str(ref.artifact_id))
         if artifact.ref() != ref:

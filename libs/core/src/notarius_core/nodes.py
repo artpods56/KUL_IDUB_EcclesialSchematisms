@@ -148,6 +148,7 @@ class NodeProgressReporter(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class NodeExecutionContext:
+    workspace_id: UUID
     workflow_run_id: UUID | None = None
     node_run_id: UUID | None = None
     graph_id: UUID | None = None

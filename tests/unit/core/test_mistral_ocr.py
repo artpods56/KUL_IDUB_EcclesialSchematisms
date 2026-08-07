@@ -1,4 +1,4 @@
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -11,6 +11,9 @@ from notarius_plugin_ocr.mistral import (
     MistralOcrNode,
     MistralOcrProviderResponse,
 )
+
+
+TEST_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
 
 
 class FakeMistralProvider:
@@ -64,7 +67,7 @@ async def test_mistral_node_preserves_full_response_and_source_identity() -> Non
     node = MistralOcrNode(FakeMistralProvider())
 
     output = await node.run(
-        NodeExecutionContext(node_id="mistral"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="mistral"),
         MistralOcrConfig(),
         MistralOcrInput(
             pages=[
@@ -102,7 +105,7 @@ async def test_mistral_node_error_names_source_and_model() -> None:
         match="page-01.jpg.*mistral-ocr-latest",
     ):
         await node.run(
-            NodeExecutionContext(node_id="mistral"),
+            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="mistral"),
             MistralOcrConfig(),
             MistralOcrInput(
                 pages=[

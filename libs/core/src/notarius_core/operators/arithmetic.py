@@ -1,6 +1,7 @@
 import json
 from hashlib import sha256
 from typing import Annotated, cast, final, override
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
@@ -264,6 +265,7 @@ class IntegerValueOutputWriter(ArtifactOutputWriter):
             metadata["provenance"] = provenance
         metadata.update(context.metadata)
         artifact = ArtifactObject(
+            workspace_id=context.node_context.workspace_id,
             artifact_type=self.artifact_type.id,
             schema_version=self.artifact_type.schema_version,
             content_type="application/json",
@@ -296,7 +298,7 @@ class IntegerValueResolver(Resolver[int]):
         self._uow = uow
 
     @override
-    async def resolve(self, ref: ArtifactRef) -> int:
+    async def resolve(self, ref: ArtifactRef, workspace_id: UUID) -> int:
         if ref.key() != self.source:
             message = (
                 f"Integer resolver expected {self.source.id}@"
@@ -306,7 +308,7 @@ class IntegerValueResolver(Resolver[int]):
             raise ArtifactContractError(message)
 
         async with self._uow as uow:
-            artifact = await uow.artifacts.get(ref.artifact_id)
+            artifact = await uow.artifacts.get(workspace_id, ref.artifact_id)
         if artifact is None:
             raise NotFoundError("Artifact", str(ref.artifact_id))
         if artifact.ref() != ref:

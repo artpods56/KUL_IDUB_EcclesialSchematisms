@@ -55,7 +55,7 @@ class NodeRuntime:
     ](
         self,
         node: Node[ConfigT, InputT, OutputT],
-        context: NodeExecutionContext | None = None,
+        context: NodeExecutionContext,
         *,
         artifact_type_bindings: Mapping[str, ArtifactTypeKey] | None = None,
         cache_policy: NodeCachePolicy = NodeCachePolicy.NEVER,
@@ -64,7 +64,7 @@ class NodeRuntime:
         return BoundNode(
             runtime=self,
             node=node,
-            context=context or NodeExecutionContext(node_id=node.operator_id),
+            context=context,
             artifact_type_bindings=artifact_type_bindings,
             cache_policy=cache_policy,
             opaque_secret_revisions=opaque_secret_revisions,
@@ -148,6 +148,7 @@ class NodeRuntime:
         if cache_key is not None and cache_outputs is not None:
             await self._invocation_cache.put_if_absent(
                 InvocationCacheEntry(
+                    workspace_id=context.workspace_id,
                     key_sha256=cache_key,
                     outputs=cache_outputs,
                 )
@@ -170,6 +171,7 @@ class NodeRuntime:
         materialized_inputs, provenance = await self._materializer.materialize(
             contract=input_contract,
             inputs=inputs,
+            workspace_id=context.workspace_id,
         )
         run_output = await node.run(
             context,

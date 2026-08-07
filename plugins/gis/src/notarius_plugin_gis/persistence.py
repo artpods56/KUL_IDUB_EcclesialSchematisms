@@ -5,6 +5,7 @@ from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Literal, cast, final, override
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 
@@ -192,6 +193,7 @@ class FeatureCollectionOutputWriter(ArtifactOutputWriter):
             collections=[JsonCollection(id="features", items=payload.features)],
             metadata=_json_metadata(manifest_metadata),
             node_id=context.node_context.node_id,
+            path_prefix=f"workspaces/{context.node_context.workspace_id}/",
         )
 
         vector_projection: VectorProjectionMetadata | None = None
@@ -229,6 +231,7 @@ class FeatureCollectionOutputWriter(ArtifactOutputWriter):
                 projection_content = projection_path.read_bytes()
                 projection_hash = sha256(projection_content).hexdigest()
                 projection_key = (
+                    f"workspaces/{context.node_context.workspace_id}/"
                     f"{self.artifact_type.id}/v{self.artifact_type.schema_version}/"
                     f"projections/pmtiles/{projection_hash}.pmtiles"
                 )
@@ -290,6 +293,7 @@ class FeatureCollectionOutputWriter(ArtifactOutputWriter):
         if provenance:
             artifact_metadata["provenance"] = provenance
         artifact = ArtifactObject(
+            workspace_id=context.node_context.workspace_id,
             artifact_type=self.artifact_type.id,
             schema_version=self.artifact_type.schema_version,
             content_type="application/geo+json",
@@ -321,7 +325,11 @@ class FeatureCollectionResolver(Resolver[GeoFeatureCollection]):
         self._storage = storage
 
     @override
-    async def resolve(self, ref: ArtifactRef) -> GeoFeatureCollection:
+    async def resolve(
+        self,
+        ref: ArtifactRef,
+        workspace_id: UUID,
+    ) -> GeoFeatureCollection:
         if ref.key() != self.source:
             raise ArtifactContractError(
                 f"Feature collection resolver expected {self.source.id}@"
@@ -329,7 +337,7 @@ class FeatureCollectionResolver(Resolver[GeoFeatureCollection]):
                 f"{ref.schema_version} for {ref.artifact_id}"
             )
         async with self._uow as uow:
-            artifact = await uow.artifacts.get(ref.artifact_id)
+            artifact = await uow.artifacts.get(workspace_id, ref.artifact_id)
         if artifact is None:
             raise NotFoundError("Artifact", str(ref.artifact_id))
         if artifact.ref() != ref:
@@ -478,6 +486,7 @@ class RasterScanOutputWriter(ArtifactOutputWriter):
                 )
 
             cog_key = (
+                f"workspaces/{context.node_context.workspace_id}/"
                 f"{self.artifact_type.id}/v{self.artifact_type.schema_version}/"
                 f"{cog_hash}.tif"
             )
@@ -506,6 +515,7 @@ class RasterScanOutputWriter(ArtifactOutputWriter):
                 ) from exc
 
             tile_prefix = (
+                f"workspaces/{context.node_context.workspace_id}/"
                 f"{self.artifact_type.id}/v{self.artifact_type.schema_version}/"
                 f"projections/{cog_hash}/xyz"
             )
@@ -563,6 +573,7 @@ class RasterScanOutputWriter(ArtifactOutputWriter):
         if provenance:
             artifact_metadata["provenance"] = provenance
         artifact = ArtifactObject(
+            workspace_id=context.node_context.workspace_id,
             artifact_type=self.artifact_type.id,
             schema_version=self.artifact_type.schema_version,
             content_type=("image/tiff; application=geotiff; profile=cloud-optimized"),
@@ -594,7 +605,11 @@ class RasterScanResolver(Resolver[GeoRasterScan]):
         self._storage = storage
 
     @override
-    async def resolve(self, ref: ArtifactRef) -> GeoRasterScan:
+    async def resolve(
+        self,
+        ref: ArtifactRef,
+        workspace_id: UUID,
+    ) -> GeoRasterScan:
         if ref.key() != self.source:
             raise ArtifactContractError(
                 f"Raster scan resolver expected {self.source.id}@"
@@ -602,7 +617,7 @@ class RasterScanResolver(Resolver[GeoRasterScan]):
                 f"{ref.schema_version} for {ref.artifact_id}"
             )
         async with self._uow as uow:
-            artifact = await uow.artifacts.get(ref.artifact_id)
+            artifact = await uow.artifacts.get(workspace_id, ref.artifact_id)
         if artifact is None:
             raise NotFoundError("Artifact", str(ref.artifact_id))
         if artifact.ref() != ref:

@@ -1,6 +1,7 @@
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, cast
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -45,6 +46,7 @@ class InputMaterializer:
         self,
         contract: InputContract[T],
         inputs: Mapping[str, object],
+        workspace_id: UUID,
     ) -> tuple[T, MaterializationProvenance]:
         values: dict[str, object] = {}
         refs_by_input: dict[str, tuple[ArtifactRef, ...]] = {}
@@ -169,7 +171,11 @@ class InputMaterializer:
                 )
             resolved = [
                 [
-                    await self._resolver_registry.resolve(ref=ref, target=target)
+                    await self._resolver_registry.resolve(
+                        ref=ref,
+                        target=target,
+                        workspace_id=workspace_id,
+                    )
                     for ref in edge
                 ]
                 for edge in edges
