@@ -55,6 +55,11 @@ def test_prefect_task_retry_settings_must_not_be_negative() -> None:
         Settings(prefect_task_retry_delay_seconds=-0.1)
 
 
+def test_oidc_signing_algorithms_are_strictly_allowlisted() -> None:
+    with pytest.raises(ValidationError):
+        Settings(oidc_allowed_signing_algorithms=("none",))
+
+
 def test_database_url_is_redacted_from_serialized_settings() -> None:
     database_url = "sqlite+aiosqlite:///sensitive-database-name.sqlite3"
     settings = Settings(database_url=SecretStr(database_url))

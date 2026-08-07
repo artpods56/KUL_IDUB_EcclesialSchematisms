@@ -141,6 +141,34 @@ class SqlIdentityRepository(IdentityRepositoryPort):
         )
 
     @override
+    async def list_workspaces_for_user(self, user_id: UUID) -> list[Workspace]:
+        result = await self._session.scalars(
+            select(Workspace)
+            .join(
+                schema.workspace_memberships,
+                schema.workspace_memberships.c.workspace_id == schema.workspaces.c.id,
+            )
+            .where(
+                schema.workspace_memberships.c.user_id == user_id,
+                schema.workspace_memberships.c.revoked_at.is_(None),
+            )
+            .order_by(schema.workspaces.c.slug.asc())
+        )
+        return list(result)
+
+    @override
+    async def list_memberships_for_user(
+        self,
+        user_id: UUID,
+    ) -> list[WorkspaceMembership]:
+        result = await self._session.scalars(
+            select(WorkspaceMembership)
+            .where(schema.workspace_memberships.c.user_id == user_id)
+            .order_by(schema.workspace_memberships.c.workspace_id.asc())
+        )
+        return list(result)
+
+    @override
     async def add_membership(self, membership: WorkspaceMembership) -> None:
         await self._session.flush()
         self._session.add(membership)
@@ -207,6 +235,20 @@ class SqlIdentityRepository(IdentityRepositoryPort):
         return await self._session.get(OidcLoginTransaction, transaction_id)
 
     @override
+    async def lock_login_transaction(
+        self,
+        transaction_id: UUID,
+    ) -> OidcLoginTransaction | None:
+        statement = select(OidcLoginTransaction).where(
+            schema.oidc_login_transactions.c.id == transaction_id,
+        )
+        if self._session.get_bind().dialect.name == "sqlite":
+            await self._session.execute(text("BEGIN IMMEDIATE"))
+        else:
+            statement = statement.with_for_update()
+        return await self._session.scalar(statement)
+
+    @override
     async def add_auth_session(self, session: AuthSession) -> None:
         self._session.add(session)
 
@@ -227,6 +269,39 @@ class SqlIdentityRepository(IdentityRepositoryPort):
             select(AuthSession).where(schema.auth_sessions.c.user_id == user_id)
         )
         return list(result)
+
+    @override
+    async def get_auth_session_for_user(
+        self,
+        *,
+        session_id: UUID,
+        user_id: UUID,
+    ) -> AuthSession | None:
+        return await self._session.scalar(
+            select(AuthSession).where(
+                schema.auth_sessions.c.id == session_id,
+                schema.auth_sessions.c.user_id == user_id,
+            )
+        )
+
+    @override
+    async def delete_expired_login_transactions(self, expired_before: datetime) -> int:
+        result = cast(
+            CursorResult[tuple[object, ...]],
+            await self._session.execute(
+                delete(schema.oidc_login_transactions).where(
+                    or_(
+                        schema.oidc_login_transactions.c.expires_at < expired_before,
+                        schema.oidc_login_transactions.c.consumed_at.is_not(None),
+                    )
+                )
+            ),
+        )
+        return result.rowcount
+
+    @override
+    async def get_auth_session(self, session_id: UUID) -> AuthSession | None:
+        return await self._session.get(AuthSession, session_id)
 
     @override
     async def add_personal_access_token(self, token: PersonalAccessToken) -> None:
@@ -254,6 +329,66 @@ class SqlIdentityRepository(IdentityRepositoryPort):
             )
         )
         return list(result)
+
+    @override
+    async def list_personal_access_tokens_for_user_workspace(
+        self,
+        *,
+        user_id: UUID,
+        workspace_id: UUID,
+    ) -> list[PersonalAccessToken]:
+        result = await self._session.scalars(
+            select(PersonalAccessToken)
+            .where(
+                schema.personal_access_tokens.c.user_id == user_id,
+                schema.personal_access_tokens.c.workspace_id == workspace_id,
+            )
+            .order_by(schema.personal_access_tokens.c.created_at.desc())
+        )
+        return list(result)
+
+    @override
+    async def get_personal_access_token_for_user_workspace(
+        self,
+        *,
+        token_id: UUID,
+        user_id: UUID,
+        workspace_id: UUID,
+    ) -> PersonalAccessToken | None:
+        return await self._session.scalar(
+            select(PersonalAccessToken).where(
+                schema.personal_access_tokens.c.id == token_id,
+                schema.personal_access_tokens.c.user_id == user_id,
+                schema.personal_access_tokens.c.workspace_id == workspace_id,
+            )
+        )
+
+    @override
+    async def delete_expired_sessions(self, expired_before: datetime) -> int:
+        result = cast(
+            CursorResult[tuple[object, ...]],
+            await self._session.execute(
+                delete(schema.auth_sessions).where(
+                    schema.auth_sessions.c.expires_at < expired_before
+                )
+            ),
+        )
+        return result.rowcount
+
+    @override
+    async def delete_expired_personal_access_tokens(
+        self,
+        expired_before: datetime,
+    ) -> int:
+        result = cast(
+            CursorResult[tuple[object, ...]],
+            await self._session.execute(
+                delete(schema.personal_access_tokens).where(
+                    schema.personal_access_tokens.c.expires_at < expired_before
+                )
+            ),
+        )
+        return result.rowcount
 
 
 class SqlSecurityAuditRepository(SecurityAuditRepositoryPort):

@@ -180,3 +180,35 @@ async def test_identity_records_round_trip_without_plain_credential_material(
         assert stored["state_digest"] == transaction.state_digest
         assert stored["nonce_digest"] == transaction.nonce_digest
         assert stored["encrypted_pkce_verifier"] == transaction.encrypted_pkce_verifier
+
+    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        stored_transaction = await unit_of_work.identity.get_login_transaction(
+            transaction.id
+        )
+        stored_session = await unit_of_work.identity.get_auth_session(session.id)
+        stored_token = await unit_of_work.identity.get_personal_access_token_by_digest(
+            token.secret_digest
+        )
+        assert stored_transaction is not None
+        assert stored_session is not None
+        assert stored_token is not None
+        stored_transaction.consume(consumed_at=now)
+        stored_session.expires_at = now - timedelta(seconds=1)
+        stored_token.expires_at = now - timedelta(seconds=1)
+        await unit_of_work.commit()
+
+    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        assert await unit_of_work.identity.delete_expired_login_transactions(now) == 1
+        assert await unit_of_work.identity.delete_expired_sessions(now) == 1
+        assert await unit_of_work.identity.delete_expired_personal_access_tokens(now) == 1
+        await unit_of_work.commit()
+
+    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        assert await unit_of_work.identity.get_login_transaction(transaction.id) is None
+        assert await unit_of_work.identity.get_auth_session(session.id) is None
+        assert (
+            await unit_of_work.identity.get_personal_access_token_by_digest(
+                token.secret_digest
+            )
+            is None
+        )

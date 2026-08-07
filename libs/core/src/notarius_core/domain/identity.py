@@ -77,6 +77,20 @@ _ROLE_CAPABILITIES: dict[WorkspaceRole, frozenset[WorkspaceCapability]] = {
     ),
     WorkspaceRole.OWNER: frozenset(WorkspaceCapability),
 }
+PAT_ALLOWED_CAPABILITIES = frozenset(
+    {
+        WorkspaceCapability.VIEW_GRAPH,
+        WorkspaceCapability.VIEW_ARTIFACTS,
+        WorkspaceCapability.VIEW_MATERIALIZATIONS,
+        WorkspaceCapability.VIEW_HISTORY,
+        WorkspaceCapability.VIEW_EXECUTION,
+        WorkspaceCapability.CREATE_GRAPH,
+        WorkspaceCapability.EDIT_GRAPH,
+        WorkspaceCapability.CHECKPOINT_GRAPH,
+        WorkspaceCapability.EXECUTE_GRAPH,
+        WorkspaceCapability.CANCEL_EXECUTION,
+    }
+)
 
 
 def _utc_now() -> datetime:
@@ -391,6 +405,8 @@ class PersonalAccessToken:
         if len(self.secret_digest) == 0:
             raise ValueError("Personal access token digest must not be empty")
         _require_nonempty(self.label.strip(), "Personal access token label", 160)
+        if not set(self.scopes).issubset(PAT_ALLOWED_CAPABILITIES):
+            raise ValueError("Personal access token scope is not available")
         if len(set(self.scopes)) != len(self.scopes):
             raise ValueError("Personal access token scopes must be unique")
         for scope in self.scopes:
@@ -495,6 +511,7 @@ __all__ = [
     "OidcBootstrapOwnerMapping",
     "OidcIdentity",
     "OidcLoginTransaction",
+    "PAT_ALLOWED_CAPABILITIES",
     "PersonalAccessToken",
     "User",
     "Workspace",

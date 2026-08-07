@@ -44,6 +44,16 @@ def test_openapi_contains_exact_public_routes() -> None:
         "/v1/runs",
         "/v1/samples",
         "/v1/uploads",
+        "/v1/auth/oidc/login",
+        "/v1/auth/oidc/callback",
+        "/v1/auth/session",
+        "/v1/auth/sessions",
+        "/v1/auth/sessions/{session_id}",
+        "/v1/workspaces",
+        "/v1/workspaces/{workspace_id}/members",
+        "/v1/workspaces/{workspace_id}/members/{user_id}",
+        "/v1/workspaces/{workspace_id}/personal-access-tokens",
+        "/v1/workspaces/{workspace_id}/personal-access-tokens/{token_id}",
     }
     assert set(schema["paths"]["/v1/graphs"]) == {"get", "post"}
     assert set(schema["paths"]["/v1/executions"]) == {"post"}

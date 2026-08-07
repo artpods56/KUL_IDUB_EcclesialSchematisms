@@ -14,6 +14,8 @@ from notarius_core.domain.identity import (
     IdentityProvisioningResult,
     OidcBootstrapOwnerMapping,
     OidcIdentity,
+    PAT_ALLOWED_CAPABILITIES,
+    PersonalAccessToken,
     User,
     Workspace,
     WorkspaceAccess,
@@ -44,6 +46,149 @@ class IdentityService:
         unit_of_work_factory: Callable[[], IdentityUnitOfWorkPort],
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
+
+    async def list_workspaces(self, *, actor: ActorContext) -> list[tuple[Workspace, WorkspaceMembership]]:
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_active_user(unit_of_work, actor.user_id)
+            memberships = await unit_of_work.identity.list_memberships_for_user(actor.user_id)
+            workspaces: list[tuple[Workspace, WorkspaceMembership]] = []
+            for membership in memberships:
+                if not membership.is_active:
+                    continue
+                workspace = await unit_of_work.identity.get_workspace(membership.workspace_id)
+                if workspace is not None and not (
+                    workspace.is_sealed_bootstrap_workspace
+                    and membership.role is not WorkspaceRole.OWNER
+                ):
+                    workspaces.append((workspace, membership))
+            return workspaces
+
+    async def list_members(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+    ) -> list[tuple[User, WorkspaceMembership]]:
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_workspace_owner(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+            )
+            members: list[tuple[User, WorkspaceMembership]] = []
+            for membership in await unit_of_work.identity.list_memberships(workspace_id):
+                user = await unit_of_work.identity.get_user(membership.user_id)
+                if user is not None:
+                    members.append((user, membership))
+            return members
+
+    async def create_personal_access_token(
+        self,
+        *,
+        actor: ActorContext,
+        token: PersonalAccessToken,
+    ) -> PersonalAccessToken:
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_active_user(unit_of_work, actor.user_id)
+            if token.user_id != actor.user_id:
+                raise IdentityInvariantError("PAT owner must match the authenticated user")
+            if not set(token.scopes).issubset(PAT_ALLOWED_CAPABILITIES):
+                raise IdentityInvariantError(
+                    "Personal access token scope is not available"
+                )
+            membership = await self._require_membership(
+                unit_of_work,
+                workspace_id=token.workspace_id,
+                user_id=actor.user_id,
+            )
+            if not set(token.scopes).issubset(membership.capabilities):
+                raise CapabilityDeniedError(
+                    capability="personal_access_token_scope",
+                    workspace_id=token.workspace_id,
+                    user_id=actor.user_id,
+                )
+            await unit_of_work.identity.add_personal_access_token(token)
+            await unit_of_work.security_audit.add(
+                SecurityAuditEvent(
+                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                    user_id=actor.user_id,
+                    credential_reference=actor.credential_reference,
+                    operation="credential.pat.create",
+                    outcome=SecurityAuditOutcome.SUCCESS,
+                    workspace_id=token.workspace_id,
+                    resource_type="personal_access_token",
+                    resource_id=str(token.id),
+                )
+            )
+            await unit_of_work.commit()
+            return token
+
+    async def list_personal_access_tokens(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+    ) -> list[PersonalAccessToken]:
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_active_user(unit_of_work, actor.user_id)
+            membership = await self._require_membership(
+                unit_of_work,
+                workspace_id=workspace_id,
+                user_id=actor.user_id,
+            )
+            if not membership.grants(WorkspaceCapability.VIEW_GRAPH):
+                raise CapabilityDeniedError(
+                    capability=WorkspaceCapability.VIEW_GRAPH.value,
+                    workspace_id=workspace_id,
+                    user_id=actor.user_id,
+                )
+            return await unit_of_work.identity.list_personal_access_tokens_for_user_workspace(
+                user_id=actor.user_id,
+                workspace_id=workspace_id,
+            )
+
+    async def revoke_personal_access_token(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        token_id: UUID,
+    ) -> PersonalAccessToken:
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_active_user(unit_of_work, actor.user_id)
+            membership = await self._require_membership(
+                unit_of_work,
+                workspace_id=workspace_id,
+                user_id=actor.user_id,
+            )
+            if not membership.grants(WorkspaceCapability.VIEW_GRAPH):
+                raise CapabilityDeniedError(
+                    capability=WorkspaceCapability.VIEW_GRAPH.value,
+                    workspace_id=workspace_id,
+                    user_id=actor.user_id,
+                )
+            token = await unit_of_work.identity.get_personal_access_token_for_user_workspace(
+                token_id=token_id,
+                user_id=actor.user_id,
+                workspace_id=workspace_id,
+            )
+            if token is None:
+                raise NotFoundError("Personal access token", str(token_id))
+            token.revoke()
+            await unit_of_work.security_audit.add(
+                SecurityAuditEvent(
+                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                    user_id=actor.user_id,
+                    credential_reference=actor.credential_reference,
+                    workspace_id=workspace_id,
+                    resource_type="personal_access_token",
+                    resource_id=str(token.id),
+                    operation="credential.pat.revoke",
+                    outcome=SecurityAuditOutcome.SUCCESS,
+                )
+            )
+            await unit_of_work.commit()
+            return token
 
     async def bootstrap_oidc_owner(
         self,
@@ -442,10 +587,29 @@ class IdentityService:
             user.updated_at = _utc_now()
             for session in await unit_of_work.identity.list_auth_sessions_for_user(user_id):
                 session.revoke()
+                await unit_of_work.security_audit.add(
+                    SecurityAuditEvent(
+                        actor_kind=SecurityAuditActorKind.SYSTEM,
+                        operation="credential.session.revoke",
+                        outcome=SecurityAuditOutcome.SUCCESS,
+                        resource_type="auth_session",
+                        resource_id=str(session.id),
+                    )
+                )
             for token in await unit_of_work.identity.list_personal_access_tokens_for_user(
                 user_id
             ):
                 token.revoke()
+                await unit_of_work.security_audit.add(
+                    SecurityAuditEvent(
+                        actor_kind=SecurityAuditActorKind.SYSTEM,
+                        operation="credential.pat.revoke",
+                        outcome=SecurityAuditOutcome.SUCCESS,
+                        workspace_id=token.workspace_id,
+                        resource_type="personal_access_token",
+                        resource_id=str(token.id),
+                    )
+                )
             await unit_of_work.security_audit.add(
                 SecurityAuditEvent(
                     actor_kind=SecurityAuditActorKind.SYSTEM,

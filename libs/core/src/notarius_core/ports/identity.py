@@ -49,6 +49,10 @@ class IdentityRepositoryPort(Protocol):
 
     async def get_personal_workspace(self, user_id: UUID) -> Workspace | None: ...
 
+    async def list_workspaces_for_user(self, user_id: UUID) -> list[Workspace]: ...
+
+    async def list_memberships_for_user(self, user_id: UUID) -> list[WorkspaceMembership]: ...
+
     async def add_membership(self, membership: WorkspaceMembership) -> None: ...
 
     async def get_membership(
@@ -79,11 +83,27 @@ class IdentityRepositoryPort(Protocol):
         transaction_id: UUID,
     ) -> OidcLoginTransaction | None: ...
 
+    async def lock_login_transaction(
+        self,
+        transaction_id: UUID,
+    ) -> OidcLoginTransaction | None: ...
+
     async def add_auth_session(self, session: AuthSession) -> None: ...
 
     async def get_auth_session_by_digest(self, secret_digest: bytes) -> AuthSession | None: ...
 
     async def list_auth_sessions_for_user(self, user_id: UUID) -> list[AuthSession]: ...
+
+    async def get_auth_session_for_user(
+        self,
+        *,
+        session_id: UUID,
+        user_id: UUID,
+    ) -> AuthSession | None: ...
+
+    async def delete_expired_login_transactions(self, expired_before: datetime) -> int: ...
+
+    async def get_auth_session(self, session_id: UUID) -> AuthSession | None: ...
 
     async def add_personal_access_token(self, token: PersonalAccessToken) -> None: ...
 
@@ -96,6 +116,28 @@ class IdentityRepositoryPort(Protocol):
         self,
         user_id: UUID,
     ) -> list[PersonalAccessToken]: ...
+
+    async def list_personal_access_tokens_for_user_workspace(
+        self,
+        *,
+        user_id: UUID,
+        workspace_id: UUID,
+    ) -> list[PersonalAccessToken]: ...
+
+    async def get_personal_access_token_for_user_workspace(
+        self,
+        *,
+        token_id: UUID,
+        user_id: UUID,
+        workspace_id: UUID,
+    ) -> PersonalAccessToken | None: ...
+
+    async def delete_expired_sessions(self, expired_before: datetime) -> int: ...
+
+    async def delete_expired_personal_access_tokens(
+        self,
+        expired_before: datetime,
+    ) -> int: ...
 
 
 class SecurityAuditRepositoryPort(Protocol):

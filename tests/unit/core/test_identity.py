@@ -12,6 +12,7 @@ from notarius_core.domain.identity import (
     ActorContext,
     AuthSession,
     OidcLoginTransaction,
+    PAT_ALLOWED_CAPABILITIES,
     PersonalAccessToken,
     Workspace,
     WorkspaceAccess,
@@ -164,4 +165,19 @@ def test_security_audit_requires_explicit_safe_attribution() -> None:
             operation="oidc.callback.failure",
             outcome=SecurityAuditOutcome.FAILURE,
             error_code="invalid_callback",
+        )
+
+
+def test_personal_access_tokens_exclude_administration_capabilities() -> None:
+    assert WorkspaceCapability.MANAGE_MEMBERS not in PAT_ALLOWED_CAPABILITIES
+    assert WorkspaceCapability.MANAGE_SECRETS not in PAT_ALLOWED_CAPABILITIES
+    with pytest.raises(ValueError, match="scope is not available"):
+        PersonalAccessToken(
+            user_id=UUID(int=1),
+            workspace_id=UUID(int=2),
+            public_prefix="nrt_admin",
+            secret_digest=b"pat-secret-digest",
+            label="admin",
+            scopes=(WorkspaceCapability.MANAGE_MEMBERS,),
+            expires_at=datetime(2026, 8, 8, tzinfo=UTC),
         )

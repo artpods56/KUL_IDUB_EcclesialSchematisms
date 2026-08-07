@@ -1198,6 +1198,7 @@ name = "notarius-api"
 version = "0.1.0"
 source = { editable = "apps/api" }
 dependencies = [
+    { name = "authlib" },
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -1216,6 +1217,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "authlib", specifier = ">=1.7.2" },
     { name = "cryptography", specifier = ">=45.0.0" },
     { name = "fastapi", specifier = ">=0.123.0" },
     { name = "httpx", specifier = ">=0.28.0" },

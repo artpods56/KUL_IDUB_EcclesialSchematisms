@@ -1,7 +1,8 @@
+import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Literal
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exception_handlers import (
     request_validation_exception_handler as default_validation_error_handler,
 )
@@ -11,6 +12,13 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from notarius_core.application.saved_graphs import SavedGraphService
+from notarius_core.application.identity import IdentityService
+from notarius_core.domain.errors import (
+    CapabilityDeniedError,
+    IdentityInvariantError,
+    NotFoundError,
+    UserDisabledError,
+)
 
 from notarius_persistence.database import create_database
 from notarius_persistence.unit_of_work import (
@@ -23,6 +31,9 @@ from notarius_api.builtins import builtin_plugins
 from notarius_api.plugin_discovery import build_plugin_registry
 from notarius_api.services.composition import build_workbench_components
 from notarius_api.settings import Settings, get_settings
+from notarius_api.v1.routes.auth.dependencies import browser_actor
+from notarius_api.v1.routes.auth.services import AuthService
+from notarius_api.v1.routes.auth.views import router as auth_router
 from notarius_api.v1.routes.artifacts.views import router as artifacts_router
 from notarius_api.v1.routes.catalog.views import router as catalog_router
 from notarius_api.v1.routes.executions.views import router as executions_router
@@ -30,6 +41,7 @@ from notarius_api.v1.routes.node_secrets.services import NodeSecretService
 from notarius_api.v1.routes.node_secrets.views import router as node_secrets_router
 from notarius_api.v1.routes.saved_graphs.views import router as saved_graphs_router
 from notarius_api.v1.routes.uploads.views import router as uploads_router
+from notarius_api.v1.routes.workspaces.views import router as workspaces_router
 
 
 class HealthResponse(BaseModel):
@@ -53,6 +65,34 @@ async def _request_validation_error_handler(
         for error in exception.errors()
     ]
     return JSONResponse(status_code=422, content={"detail": redacted_errors})
+
+
+async def _not_found_error_handler(
+    _request: Request,
+    _exception: Exception,
+) -> JSONResponse:
+    return JSONResponse(status_code=404, content={"detail": "Not found"})
+
+
+async def _capability_denied_error_handler(
+    _request: Request,
+    _exception: Exception,
+) -> JSONResponse:
+    return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+
+
+async def _disabled_user_error_handler(
+    _request: Request,
+    _exception: Exception,
+) -> JSONResponse:
+    return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+
+
+async def _identity_invariant_error_handler(
+    _request: Request,
+    _exception: Exception,
+) -> JSONResponse:
+    return JSONResponse(status_code=409, content={"detail": "Identity operation failed"})
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -125,9 +165,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.artifacts = components.artifacts
         app.state.saved_graphs = saved_graphs
         app.state.node_secrets = node_secrets
+        async def cleanup_expired_auth_data() -> None:
+            while True:
+                await asyncio.sleep(resolved_settings.auth_cleanup_interval_seconds)
+                try:
+                    await auth_service.cleanup_expired()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    continue
+
+        cleanup_task = asyncio.create_task(cleanup_expired_auth_data())
         try:
             yield
         finally:
+            cleanup_task.cancel()
+            await asyncio.gather(cleanup_task, return_exceptions=True)
             await components.execution_manager.shutdown()
             await components.artifacts.close()
             del app.state.node_secrets
@@ -148,6 +201,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    def identity_uow_factory() -> SqlAlchemyUnitOfWork:
+        return SqlAlchemyUnitOfWork(database.sessions)
+    identity_service = IdentityService(identity_uow_factory)
+    auth_service = AuthService(
+        settings=resolved_settings,
+        unit_of_work_factory=identity_uow_factory,
+        identity_service=identity_service,
+    )
+    application.state.settings = resolved_settings
+    application.state.identity_uow_factory = identity_uow_factory
+    application.state.identity_service = identity_service
+    application.state.auth_service = auth_service
     application.add_middleware(
         CORSMiddleware,
         allow_origins=list(resolved_settings.allowed_cors_origins),
@@ -166,6 +231,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         RequestValidationError,
         _request_validation_error_handler,
     )
+    application.add_exception_handler(NotFoundError, _not_found_error_handler)
+    application.add_exception_handler(CapabilityDeniedError, _capability_denied_error_handler)
+    application.add_exception_handler(UserDisabledError, _disabled_user_error_handler)
+    application.add_exception_handler(IdentityInvariantError, _identity_invariant_error_handler)
     application.add_api_route(
         "/health",
         health,
@@ -173,12 +242,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response_model=HealthResponse,
         include_in_schema=False,
     )
-    application.include_router(saved_graphs_router, prefix="/v1")
-    application.include_router(node_secrets_router, prefix="/v1")
-    application.include_router(catalog_router, prefix="/v1")
-    application.include_router(uploads_router, prefix="/v1")
-    application.include_router(executions_router, prefix="/v1")
-    application.include_router(artifacts_router, prefix="/v1")
+    application.include_router(auth_router, prefix="/v1")
+    application.include_router(workspaces_router, prefix="/v1")
+    # Phase 1 gates legacy global resources by browser authentication only.
+    # Phase 2 replaces these routes with workspace-qualified authorization.
+    application.include_router(
+        saved_graphs_router,
+        prefix="/v1",
+        dependencies=[Depends(browser_actor)],
+    )
+    application.include_router(
+        node_secrets_router,
+        prefix="/v1",
+        dependencies=[Depends(browser_actor)],
+    )
+    application.include_router(
+        catalog_router,
+        prefix="/v1",
+        dependencies=[Depends(browser_actor)],
+    )
+    application.include_router(
+        uploads_router,
+        prefix="/v1",
+        dependencies=[Depends(browser_actor)],
+    )
+    application.include_router(
+        executions_router,
+        prefix="/v1",
+        dependencies=[Depends(browser_actor)],
+    )
+    application.include_router(
+        artifacts_router,
+        prefix="/v1",
+        dependencies=[Depends(browser_actor)],
+    )
     return application
 
 
