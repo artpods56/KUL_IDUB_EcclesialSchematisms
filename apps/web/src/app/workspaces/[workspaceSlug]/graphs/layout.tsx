@@ -33,7 +33,6 @@ export default function GraphsLayout({ children }: GraphsLayoutProps) {
     <>
       <Workbench
         key={`${session.user_id}:${workspace.id}`}
-        userId={session.user_id}
         workspaceId={workspace.id}
         workspaceSlug={workspaceSlug}
         initialGraphId={graphId === NEW_GRAPH_ROUTE_ID ? null : graphId}

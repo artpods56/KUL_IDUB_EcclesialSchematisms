@@ -17,14 +17,18 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import {
+  Circle,
   Copy,
   Eye,
+  Grid3x3,
   History,
   LoaderCircle,
   Maximize2,
   Play,
   Plus,
+  Square,
   Trash2,
+  Type,
   Workflow,
 } from "lucide-react";
 
@@ -41,10 +45,22 @@ import {
   ConnectionRouteDialog,
   type PendingConnectionRoute,
 } from "./ConnectionRouteDialog";
+import { CanvasGridSettingsPanel } from "./CanvasGridSettingsPanel";
 import { workbenchStyles as s } from "./Workbench.styles";
 import { WorkbenchHeader } from "./WorkbenchHeader";
 import { NodeSelector } from "./NodeSelector";
 import { SavedGraphBrowser } from "./SavedGraphBrowser";
+import { CanvasGridSettingsProvider, useCanvasGridSettings } from "../canvas/canvas-grid-settings";
+import {
+  layoutSnapAxes,
+  shouldSnapPosition,
+  snapNodeLayout,
+  snapPosition,
+} from "../canvas/grid-layout";
+import {
+  DEFAULT_APPENDIX_HEIGHT,
+  DEFAULT_NODE_WIDTH,
+} from "../canvas/node-layout";
 import { useNodeSecrets } from "./useNodeSecrets";
 import {
   useSavedGraphLifecycle,
@@ -52,11 +68,22 @@ import {
 } from "./useSavedGraphLifecycle";
 import { useRunExecution } from "./useRunExecution";
 import {
+  GraphRoomCommandError,
   PresenceOverlay,
   remoteSelectionColor,
+  shouldReplaceCollaborativeHead,
+  toLocalGraphCommand,
+  toRoomGraphCommand,
   useGraphRoomSession,
+  useRemoteDragPreviews,
   type RoomGraphCommand,
+  type TransientNodePosition,
 } from "../room";
+import {
+  checkpointGraph,
+  getCollaborativeHead,
+  type CollaborativeHead,
+} from "@/lib/api";
 import {
   WorkflowCanvas,
   applyEdgeChanges,
@@ -70,21 +97,32 @@ import {
   reduceWorkbenchAuthoringState,
 } from "../canvas/graph-document-adapter";
 import {
+  ANNOTATION_NODE_TYPE,
+  ANNOTATION_Z_INDEX,
+  createAnnotationNode,
+  type AnnotationColor,
+  type AnnotationKind,
+  type AnnotationLayout,
+  type AnnotationNode,
+} from "../canvas/annotations";
+import {
   ARTIFACT_VIEWER_EDGE_TYPE,
   ARTIFACT_VIEWER_INPUT_HANDLE,
   ARTIFACT_VIEWER_INTERACTION_EDGE_TYPE,
   ARTIFACT_VIEWER_INTERACTION_INPUT_HANDLE,
   ARTIFACT_VIEWER_INTERACTION_OUTPUT_HANDLE,
   ARTIFACT_VIEWER_NODE_TYPE,
-  artifactViewerStorageKey,
-  hydrateArtifactViewerDocument,
-  serializeArtifactViewerDocument,
+  artifactViewersFromPresentation,
+  emptyGraphPresentation,
+  presentationFromArtifactViewers,
   type ArtifactViewerCanvasState,
   type ArtifactViewerEdge,
+  type ArtifactViewerEdgeUpdate,
   type ArtifactViewerInteractionEdge,
   type ArtifactViewerNode,
   type CanvasEdge,
   type CanvasNode,
+  type GraphPresentation,
 } from "../canvas/artifact-viewer";
 import {
   hydrateAuthoredGraphDocument,
@@ -98,6 +136,7 @@ import {
   type ArtifactViewerBinding,
 } from "../canvas/artifact-interactions";
 import {
+  canonicalHandleId,
   connectionRouteForSelection,
   connectionRouteMatchesSelection,
   connectionRouteSelection,
@@ -133,6 +172,7 @@ import {
   resolvedPortArtifactType,
   type WorkflowEdge,
   type WorkflowEdgeRouteOffset,
+  type WorkflowEdgeRouteOption,
   type WorkflowEdgeUpdate,
   type WorkflowArtifactTypeBindings,
   type WorkflowNodeData,
@@ -140,6 +180,11 @@ import {
   portMetaForPort,
   workflowNodeIsSupported,
 } from "../canvas/types";
+import {
+  orderFeedRoutes,
+  preferredWholeFeedRoute,
+  routesForHandleFeed,
+} from "../model/connection-feeds";
 import {
   collectionModeForConnection,
   inputPlugBindingsForNode,
@@ -168,7 +213,6 @@ import {
 import { tokens } from "@/lib/stylex/tokens.stylex";
 
 interface WorkbenchProps {
-  userId: string;
   workspaceId: string;
   workspaceSlug: string;
   initialGraphId: string | null;
@@ -196,8 +240,15 @@ interface ActiveArtifactViewerActivity {
   revision: number;
 }
 
-export function Workbench({
-  userId,
+export function Workbench(props: WorkbenchProps) {
+  return (
+    <CanvasGridSettingsProvider>
+      <WorkbenchBody {...props} />
+    </CanvasGridSettingsProvider>
+  );
+}
+
+function WorkbenchBody({
   workspaceId,
   workspaceSlug,
   initialGraphId,
@@ -208,6 +259,16 @@ export function Workbench({
     mutate: refreshNodeRegistry,
   } = useNodeRegistry(workspaceId);
   const { preference, cycleTheme } = useTheme();
+  const {
+    settings: canvasGridSettings,
+    bypassSnap,
+    panelOpen: gridPanelOpen,
+    setPanelOpen: setGridPanelOpen,
+  } = useCanvasGridSettings();
+  const canvasGridSettingsRef = React.useRef(canvasGridSettings);
+  canvasGridSettingsRef.current = canvasGridSettings;
+  const bypassSnapRef = React.useRef(bypassSnap);
+  bypassSnapRef.current = bypassSnap;
   const [authoringState, dispatchAuthoringState] = React.useReducer(
     reduceWorkbenchAuthoringState,
     {
@@ -223,12 +284,21 @@ export function Workbench({
   const authoredDocument = authoringState.document;
   const nodeOverlays = authoringState.nodeOverlays;
   const authoredDocumentRef = React.useRef(authoredDocument);
+  const nodeOverlaysRef = React.useRef(nodeOverlays);
+  nodeOverlaysRef.current = nodeOverlays;
   const [selectedNodeIdSet, setSelectedNodeIdSet] =
     React.useState<ReadonlySet<string>>(new Set());
   const [selectedEdgeIdSet, setSelectedEdgeIdSet] =
     React.useState<ReadonlySet<string>>(new Set());
   const [positionOverrides, setPositionOverrides] =
     React.useState<Record<string, { x: number; y: number }>>({});
+  // React Flow keeps nodes at visibility:hidden until measured width/height are
+  // present on the controlled node objects. Authored-document hydration never
+  // carries those fields, so dimension changes must be stored separately and
+  // merged back in — otherwise nodes stay invisible after the first remount.
+  const [nodeMeasurements, setNodeMeasurements] = React.useState<
+    Readonly<Record<string, { width: number; height: number }>>
+  >({});
   const hydratedDocument = React.useMemo(
     () => registry
       ? hydrateAuthoredGraphDocument(authoredDocument, registry)
@@ -238,17 +308,22 @@ export function Workbench({
   const nodesRef = React.useRef<WorkflowNode[]>([]);
   const edgesRef = React.useRef<WorkflowEdge[]>([]);
   const nodes = React.useMemo<WorkflowNode[]>(
-    () => hydratedDocument.nodes.map((node) => ({
-      ...node,
-      position: positionOverrides[node.id] ?? node.position,
-      selected: selectedNodeIdSet.has(node.id),
-      data: {
-        ...node.data,
-        ...(nodeOverlays[node.id] ?? {}),
-      },
-    })),
+    () => hydratedDocument.nodes.map((node) => {
+      const measured = nodeMeasurements[node.id];
+      return {
+        ...node,
+        ...(measured ? { measured, width: measured.width, height: measured.height } : {}),
+        position: positionOverrides[node.id] ?? node.position,
+        selected: selectedNodeIdSet.has(node.id),
+        data: {
+          ...node.data,
+          ...(nodeOverlays[node.id] ?? {}),
+        },
+      };
+    }),
     [
       hydratedDocument.nodes,
+      nodeMeasurements,
       nodeOverlays,
       positionOverrides,
       selectedNodeIdSet,
@@ -311,7 +386,9 @@ export function Workbench({
       nodes: [],
       edges: [],
       bindings: [],
+      annotations: [],
     });
+  const [shapesMenuOpen, setShapesMenuOpen] = React.useState(false);
   const [artifactViewerSelections, setArtifactViewerSelections] =
     React.useState<Record<string, ArtifactKeySelection>>({});
   const [artifactViewerFields, setArtifactViewerFields] =
@@ -320,8 +397,7 @@ export function Workbench({
     React.useState<Record<string, ActiveArtifactViewerActivity>>({});
   const artifactViewerActivityRevisionRef = React.useRef(0);
   const artifactViewersInitializedRef = React.useRef(initialGraphId === null);
-  const [artifactViewerPersistenceError, setArtifactViewerPersistenceError] =
-    React.useState<string | null>(null);
+  const artifactViewerGraphIdRef = React.useRef<string | null>(initialGraphId);
   const {
     nodeSecretStatuses,
     refreshNodeSecretStatuses,
@@ -360,9 +436,20 @@ export function Workbench({
   );
   const pendingBoundEdgesRef = React.useRef<PendingBoundEdge[]>([]);
 
+  const roomCommandSyncRef = React.useRef<{
+    submitLocal: (
+      commands: readonly GraphCommand[],
+      before: AuthoredGraphDocument,
+    ) => void;
+  }>({ submitLocal: () => undefined });
+
   const applyAuthoringCommands = React.useCallback(
-    (commands: readonly GraphCommand[]) => {
+    (
+      commands: readonly GraphCommand[],
+      options?: { syncRoom?: boolean },
+    ) => {
       if (!commands.length) return;
+      const before = authoredDocumentRef.current;
       dispatchAuthoringState({ kind: "apply_commands", commands });
       setPositionOverrides({});
       setSelectedNodeIdSet((current) => new Set(
@@ -377,6 +464,9 @@ export function Workbench({
       ));
       setPendingConnectionRoute(null);
       setRunError(null);
+      if (options?.syncRoom !== false) {
+        roomCommandSyncRef.current.submitLocal(commands, before);
+      }
     },
     [authoredDocument.edges, authoredDocument.nodes, dispatchAuthoringState],
   );
@@ -441,11 +531,40 @@ export function Workbench({
     [applyAuthoringCommands],
   );
 
+  const presentationRoomSyncRef = React.useRef<{
+    submitReplace: (state: ArtifactViewerCanvasState) => void;
+    submitMove: (
+      positions: readonly { viewer_id: string; x: number; y: number }[],
+    ) => void;
+    submitMoveAnnotations: (
+      positions: readonly { annotation_id: string; x: number; y: number }[],
+    ) => void;
+  }>({
+    submitReplace: () => undefined,
+    submitMove: () => undefined,
+    submitMoveAnnotations: () => undefined,
+  });
+
+  const commitArtifactViewers = React.useCallback((
+    updater: (current: ArtifactViewerCanvasState) => ArtifactViewerCanvasState,
+  ) => {
+    setArtifactViewers((current) => {
+      const next = {
+        ...updater(current),
+        graphId: artifactViewerGraphIdRef.current,
+      };
+      queueMicrotask(() => {
+        presentationRoomSyncRef.current.submitReplace(next);
+      });
+      return next;
+    });
+  }, []);
+
   const updateArtifactViewerLayout = React.useCallback((
     nodeId: string,
     layout: ArtifactViewerNode["data"]["layout"],
   ) => {
-    setArtifactViewers((current) => ({
+    commitArtifactViewers((current) => ({
       ...current,
       nodes: current.nodes.map((node) =>
         node.id === nodeId
@@ -453,13 +572,57 @@ export function Workbench({
           : node,
       ),
     }));
-  }, []);
+  }, [commitArtifactViewers]);
+
+  const updateArtifactViewerEdge = React.useCallback((
+    edgeId: string,
+    update: ArtifactViewerEdgeUpdate,
+  ) => {
+    commitArtifactViewers((current) => ({
+      ...current,
+      edges: current.edges.map((edge) => {
+        if (edge.id !== edgeId) return edge;
+        const nextProjection = update.projection === undefined
+          ? edge.data?.projection
+          : update.projection ?? undefined;
+        return {
+          ...edge,
+          data: {
+            ...edge.data,
+            sourcePortName: edge.data?.sourcePortName ?? "",
+            projection: nextProjection,
+          },
+        };
+      }),
+    }));
+  }, [commitArtifactViewers]);
+
+  const updateArtifactViewerEdgeRoute = React.useCallback((
+    edgeId: string,
+    routeOffset: WorkflowEdgeRouteOffset,
+  ) => {
+    commitArtifactViewers((current) => ({
+      ...current,
+      edges: current.edges.map((edge) =>
+        edge.id === edgeId
+          ? {
+              ...edge,
+              data: {
+                ...edge.data,
+                sourcePortName: edge.data?.sourcePortName ?? "",
+                routeOffset,
+              },
+            }
+          : edge,
+      ),
+    }));
+  }, [commitArtifactViewers]);
 
   const updateArtifactViewerMode = React.useCallback((
     nodeId: string,
     mode: string,
   ) => {
-    setArtifactViewers((current) => ({
+    commitArtifactViewers((current) => ({
       ...current,
       nodes: current.nodes.map((node) =>
         node.id === nodeId
@@ -467,7 +630,7 @@ export function Workbench({
           : node,
       ),
     }));
-  }, []);
+  }, [commitArtifactViewers]);
 
   const updateArtifactViewerSelection = React.useCallback((
     nodeId: string,
@@ -521,16 +684,16 @@ export function Workbench({
     bindingId: string,
     binding: ArtifactViewerBinding,
   ) => {
-    setArtifactViewers((current) => ({
+    commitArtifactViewers((current) => ({
       ...current,
       bindings: current.bindings.map((candidate) =>
         candidate.id === bindingId ? binding : candidate
       ),
     }));
-  }, []);
+  }, [commitArtifactViewers]);
 
   const removeArtifactViewer = React.useCallback((nodeId: string) => {
-    setArtifactViewers((current) => ({
+    commitArtifactViewers((current) => ({
       ...current,
       nodes: current.nodes.filter((node) => node.id !== nodeId),
       edges: current.edges.filter(
@@ -558,18 +721,67 @@ export function Workbench({
       delete next[nodeId];
       return next;
     });
-  }, []);
+  }, [commitArtifactViewers]);
+
+  const updateAnnotationLayout = React.useCallback((
+    nodeId: string,
+    layout: AnnotationLayout,
+  ) => {
+    commitArtifactViewers((current) => ({
+      ...current,
+      annotations: current.annotations.map((node) =>
+        node.id === nodeId
+          ? { ...node, data: { ...node.data, layout } }
+          : node,
+      ),
+    }));
+  }, [commitArtifactViewers]);
+
+  const updateAnnotationText = React.useCallback((
+    nodeId: string,
+    text: string,
+  ) => {
+    commitArtifactViewers((current) => ({
+      ...current,
+      annotations: current.annotations.map((node) =>
+        node.id === nodeId
+          ? { ...node, data: { ...node.data, text } }
+          : node,
+      ),
+    }));
+  }, [commitArtifactViewers]);
+
+  const updateAnnotationColor = React.useCallback((
+    nodeId: string,
+    color: AnnotationColor,
+  ) => {
+    commitArtifactViewers((current) => ({
+      ...current,
+      annotations: current.annotations.map((node) =>
+        node.id === nodeId
+          ? { ...node, data: { ...node.data, color } }
+          : node,
+      ),
+    }));
+  }, [commitArtifactViewers]);
+
+  const removeAnnotation = React.useCallback((nodeId: string) => {
+    commitArtifactViewers((current) => ({
+      ...current,
+      annotations: current.annotations.filter((node) => node.id !== nodeId),
+    }));
+  }, [commitArtifactViewers]);
 
   const removeNode = React.useCallback((nodeId: string) => {
     applyAuthoringCommands([{ kind: "remove_nodes", node_ids: [nodeId] }]);
-    setArtifactViewers((current) => ({
+    commitArtifactViewers((current) => ({
       ...current,
       edges: current.edges.filter((edge) => edge.source !== nodeId),
     }));
     forgetNodeSecretStatuses(nodeId);
     setPendingConnectionRoute(null);
     setRunError(null);
-  }, [applyAuthoringCommands, forgetNodeSecretStatuses]);
+  }, [applyAuthoringCommands, commitArtifactViewers, forgetNodeSecretStatuses]);
 
   const handleRemoveImageUpload = React.useCallback(
     (nodeId: string, index: number) => {
@@ -815,21 +1027,46 @@ export function Workbench({
 
   const replaceDocument = React.useCallback((
     nextDocument: AuthoredGraphDocument,
-    overlayNodes: readonly WorkflowNode[] = [],
+    overlayNodes?: readonly WorkflowNode[],
   ) => {
     pendingBoundEdgesRef.current = [];
     authoredDocumentRef.current = nextDocument;
-    nodesRef.current = [...overlayNodes];
+    const nextNodeIds = new Set(nextDocument.nodes.map((node) => node.id));
+    const nextOverlays = overlayNodes === undefined
+      ? Object.fromEntries(
+          Object.entries(nodeOverlaysRef.current).filter(([nodeId]) =>
+            nextNodeIds.has(nodeId)
+          ),
+        )
+      : nodeOverlaysFromNodes(overlayNodes);
+    // Keep nodesRef aligned for callers that read overlays immediately after replace.
+    nodesRef.current = overlayNodes === undefined
+      ? nodesRef.current.filter((node) => nextNodeIds.has(node.id))
+      : [...overlayNodes];
     edgesRef.current = [];
     dispatchAuthoringState({
       kind: "replace_document",
       document: nextDocument,
-      nodeOverlays: nodeOverlaysFromNodes(overlayNodes),
+      nodeOverlays: nextOverlays,
     });
     setSelectedNodeIdSet(new Set());
     setSelectedEdgeIdSet(new Set());
     setPositionOverrides({});
+    setNodeMeasurements({});
   }, [dispatchAuthoringState]);
+  const replacePresentation = React.useCallback((
+    graphId: string,
+    presentation: GraphPresentation,
+  ) => {
+    artifactViewersInitializedRef.current = true;
+    setArtifactViewers(
+      artifactViewersFromPresentation(graphId, presentation),
+    );
+  }, []);
+  const sharedPresentation = React.useMemo(
+    () => presentationFromArtifactViewers(artifactViewers),
+    [artifactViewers],
+  );
   const updateDocumentName = React.useCallback((name: string) => {
     applyAuthoringCommands([{ kind: "rename_graph", name }]);
   }, [applyAuthoringCommands]);
@@ -845,18 +1082,6 @@ export function Workbench({
   const requestNodeRegistryRefresh = React.useCallback(() => {
     void refreshNodeRegistry();
   }, [refreshNodeRegistry]);
-  const removeArtifactViewerDocument = React.useCallback((graphId: string) => {
-    try {
-      window.localStorage.removeItem(
-        artifactViewerStorageKey(userId, workspaceId, graphId),
-      );
-      setArtifactViewerPersistenceError(null);
-    } catch {
-      setArtifactViewerPersistenceError(
-        "Artifact Viewer layout could not be removed from browser storage.",
-      );
-    }
-  }, [userId, workspaceId]);
   const uploading = nodes.some(
     (node) => node.data.execution.status === "uploading",
   );
@@ -879,6 +1104,7 @@ export function Workbench({
     setGraphName,
     currentFingerprint,
     isDirty,
+    canMaterializeSavedGraph,
     saving,
     openingGraphId,
     deletingGraphId,
@@ -907,10 +1133,12 @@ export function Workbench({
     initialGraphId,
     registry,
     document: authoredDocument,
+    presentation: sharedPresentation,
     nodes,
     isExecutionRunning,
     uploading,
     replaceDocument,
+    replacePresentation,
     updateDocumentName,
     attachNodeCallbacks,
     refreshNodeSecretStatuses,
@@ -920,7 +1148,6 @@ export function Workbench({
     closeNodeLibrary,
     requestCanvasRefit,
     refreshNodeRegistry: requestNodeRegistryRefresh,
-    onGraphDeleted: removeArtifactViewerDocument,
     roomPersistence,
   });
   const router = useRouter();
@@ -932,24 +1159,155 @@ export function Workbench({
   React.useEffect(() => {
     activeGraphIdRef.current = activeGraph?.id ?? null;
   }, [activeGraph?.id]);
+  const syncFromCollaborativeHeadRef = React.useRef(syncFromCollaborativeHead);
+  syncFromCollaborativeHeadRef.current = syncFromCollaborativeHead;
+  const applyAuthoringCommandsRef = React.useRef(applyAuthoringCommands);
+  applyAuthoringCommandsRef.current = applyAuthoringCommands;
+  const replaceHeadRef = React.useRef<(head: CollaborativeHead) => void>(
+    () => undefined,
+  );
+  const graphRoomHeadRef = React.useRef<CollaborativeHead | null>(null);
+  const refreshCollaborativeHeadRef = React.useRef<
+    (options?: { errorMessage?: string | null }) => void
+  >(() => undefined);
+  refreshCollaborativeHeadRef.current = (options) => {
+    const graphId = activeGraphIdRef.current;
+    if (!graphId) return;
+    void getCollaborativeHead(workspaceId, graphId)
+      .then((head) => {
+        const current = graphRoomHeadRef.current;
+        if (!shouldReplaceCollaborativeHead(current, head)) {
+          // Late HTTP snapshot lost the race to a newer WebSocket head.
+          // Clear the rehydration pause without wiping presentation/UI.
+          if (current) replaceHeadRef.current(current);
+          return;
+        }
+        replaceHeadRef.current(head);
+        syncFromCollaborativeHeadRef.current(head);
+      })
+      .catch((error: unknown) => {
+        if (options?.errorMessage === null) return;
+        setRunError(
+          options?.errorMessage ??
+            (error instanceof Error
+              ? error.message
+              : "Collaborative head could not be refreshed."),
+        );
+      });
+  };
+
   const graphRoom = useGraphRoomSession({
     workspaceId,
     graphId: activeGraph?.id ?? null,
     onReady: (ready) => {
       // Avoid clobbering in-progress local edits before the first room save.
       if (!isDirtyRef.current) {
-        syncFromCollaborativeHead(ready.head);
+        syncFromCollaborativeHeadRef.current(ready.head);
       }
     },
     onRehydrate: (head) => {
-      syncFromCollaborativeHead(head);
+      syncFromCollaborativeHeadRef.current(head);
+    },
+    onHeadRefreshRequired: () => {
+      refreshCollaborativeHeadRef.current({ errorMessage: null });
+    },
+    onCommandAccepted: (message, meta) => {
+      if (meta.local) {
+        // Local presentation commands already updated artifactViewers optimistically.
+        if (
+          message.command.kind === "replace_presentation" ||
+          message.command.kind === "move_artifact_viewers" ||
+          message.command.kind === "move_annotations"
+        ) {
+          return;
+        }
+        // Workflow remove_nodes also prunes presentation links on the server.
+        if (message.command.kind === "remove_nodes") {
+          const removed = new Set(message.command.node_ids);
+          setArtifactViewers((current) => ({
+            ...current,
+            edges: current.edges.filter((edge) => !removed.has(edge.source)),
+          }));
+        }
+        return;
+      }
+      if (message.command.kind === "replace_presentation") {
+        const graphId = activeGraphIdRef.current;
+        if (!graphId) return;
+        replacePresentation(graphId, message.command.presentation);
+        return;
+      }
+      if (message.command.kind === "move_artifact_viewers") {
+        const positions = new Map(
+          message.command.positions.map((position) => [
+            position.viewer_id,
+            { x: position.x, y: position.y },
+          ]),
+        );
+        setArtifactViewers((current) => ({
+          ...current,
+          nodes: current.nodes.map((node) => {
+            const position = positions.get(node.id);
+            return position ? { ...node, position } : node;
+          }),
+        }));
+        return;
+      }
+      if (message.command.kind === "move_annotations") {
+        const positions = new Map(
+          message.command.positions.map((position) => [
+            position.annotation_id,
+            { x: position.x, y: position.y },
+          ]),
+        );
+        setArtifactViewers((current) => ({
+          ...current,
+          annotations: current.annotations.map((node) => {
+            const position = positions.get(node.id);
+            return position ? { ...node, position } : node;
+          }),
+        }));
+        return;
+      }
+      const localCommand = toLocalGraphCommand(
+        message.command,
+        authoredDocumentRef.current,
+      );
+      if (localCommand) {
+        applyAuthoringCommandsRef.current([localCommand], { syncRoom: false });
+        if (localCommand.kind === "remove_nodes") {
+          const removed = new Set(localCommand.node_ids);
+          setArtifactViewers((current) => ({
+            ...current,
+            edges: current.edges.filter((edge) => !removed.has(edge.source)),
+          }));
+        }
+        if (
+          message.command.kind === "replace_document" &&
+          message.command.document.presentation
+        ) {
+          const graphId = activeGraphIdRef.current;
+          if (graphId) {
+            replacePresentation(graphId, message.command.document.presentation);
+          }
+        }
+        return;
+      }
+      refreshCollaborativeHeadRef.current();
+    },
+    onCommandRejected: (message) => {
+      const isHeadConflict = message.error_code === "head_conflict";
+      if (!isHeadConflict) {
+        setRunError(message.detail || "A collaborative edit was rejected.");
+      }
+      refreshCollaborativeHeadRef.current({
+        errorMessage: isHeadConflict
+          ? null
+          : message.detail || "A collaborative edit was rejected.",
+      });
     },
     onTerminalClose: (reason) => {
-      const graphId = activeGraphIdRef.current;
       if (reason === "access_revoked" || reason === "graph_deleted") {
-        if (graphId) {
-          removeArtifactViewerDocument(graphId);
-        }
         purgeLocalGraphState();
         router.replace(`/workspaces/${encodeURIComponent(workspaceSlug)}`);
         return;
@@ -957,13 +1315,113 @@ export function Workbench({
       if (reason === "permissions_changed") {
         // Stopped traffic; leave remount/reload to the operator.
         // Protected caches are cleared so stale authority is not reused.
-        if (graphId) {
-          removeArtifactViewerDocument(graphId);
-        }
         purgeLocalGraphState();
       }
     },
   });
+  replaceHeadRef.current = graphRoom.replaceHead;
+  graphRoomHeadRef.current = graphRoom.head;
+  artifactViewerGraphIdRef.current = activeGraph?.id ?? null;
+  React.useEffect(() => {
+    roomCommandSyncRef.current = {
+      submitLocal: (commands, before) => {
+        if (!graphRoom.canSubmitCommands) return;
+        for (const command of commands) {
+          const roomCommand = toRoomGraphCommand(command, before);
+          if (!roomCommand) continue;
+          void graphRoom.submitCommand(roomCommand).catch((error: unknown) => {
+            if (
+              error instanceof GraphRoomCommandError &&
+              (error.errorCode === "superseded" ||
+                error.errorCode === "head_conflict")
+            ) {
+              return;
+            }
+            const detail =
+              error instanceof GraphRoomCommandError
+                ? error.message
+                : error instanceof Error
+                  ? error.message
+                  : "Collaborative sync failed.";
+            setRunError(detail);
+          });
+        }
+      },
+    };
+  }, [graphRoom.canSubmitCommands, graphRoom.submitCommand]);
+  React.useEffect(() => {
+    presentationRoomSyncRef.current = {
+      submitReplace: (state) => {
+        if (!graphRoom.canSubmitCommands) return;
+        const command = {
+          kind: "replace_presentation",
+          presentation: presentationFromArtifactViewers(state),
+        } as RoomGraphCommand;
+        void graphRoom.submitCommand(command).catch((error: unknown) => {
+          if (
+            error instanceof GraphRoomCommandError &&
+            (error.errorCode === "superseded" ||
+              error.errorCode === "head_conflict")
+          ) {
+            return;
+          }
+          const detail =
+            error instanceof GraphRoomCommandError
+              ? error.message
+              : error instanceof Error
+                ? error.message
+                : "Presentation sync failed.";
+          setRunError(detail);
+        });
+      },
+      submitMove: (positions) => {
+        if (!graphRoom.canSubmitCommands || !positions.length) return;
+        const command = {
+          kind: "move_artifact_viewers",
+          positions: [...positions],
+        } as RoomGraphCommand;
+        void graphRoom.submitCommand(command).catch((error: unknown) => {
+          if (
+            error instanceof GraphRoomCommandError &&
+            (error.errorCode === "superseded" ||
+              error.errorCode === "head_conflict")
+          ) {
+            return;
+          }
+          const detail =
+            error instanceof GraphRoomCommandError
+              ? error.message
+              : error instanceof Error
+                ? error.message
+                : "Presentation sync failed.";
+          setRunError(detail);
+        });
+      },
+      submitMoveAnnotations: (positions) => {
+        if (!graphRoom.canSubmitCommands || !positions.length) return;
+        const command = {
+          kind: "move_annotations",
+          positions: [...positions],
+        } as RoomGraphCommand;
+        void graphRoom.submitCommand(command).catch((error: unknown) => {
+          if (
+            error instanceof GraphRoomCommandError &&
+            (error.errorCode === "superseded" ||
+              error.errorCode === "head_conflict")
+          ) {
+            return;
+          }
+          const detail =
+            error instanceof GraphRoomCommandError
+              ? error.message
+              : error instanceof Error
+                ? error.message
+                : "Presentation sync failed.";
+          setRunError(detail);
+        });
+      },
+    };
+  }, [graphRoom.canSubmitCommands, graphRoom.submitCommand]);
   React.useEffect(() => {
     const graphId = activeGraph?.id;
     roomPersistenceRef.current = {
@@ -976,25 +1434,35 @@ export function Workbench({
           kind: "replace_document",
           name: draft.name,
           document: {
-            schema_version: 3,
+            schema_version: 4,
             nodes: draft.nodes ?? [],
             edges: draft.edges ?? [],
+            presentation: draft.presentation ?? emptyGraphPresentation(),
           },
         } as RoomGraphCommand;
-        const { head } = await graphRoom.submitCommand(command);
+        const { head: replacedHead } = await graphRoom.submitCommand(command);
+        const checkpointed = await checkpointGraph(workspaceId, graphId, {
+          expected_room_epoch: replacedHead.room_epoch,
+          expected_sequence: replacedHead.collaboration_sequence,
+        });
+        graphRoom.replaceHead(checkpointed.head);
         return {
           id: graphId,
-          revision: head.checkpoint_revision,
-          name: head.name,
-          nodes: head.nodes ?? [],
-          edges: head.edges ?? [],
+          revision: checkpointed.saved_revision,
+          name: checkpointed.head.name,
+          nodes: checkpointed.head.nodes ?? [],
+          edges: checkpointed.head.edges ?? [],
+          presentation:
+            checkpointed.head.presentation ?? emptyGraphPresentation(),
         };
       },
     };
   }, [
     activeGraph?.id,
     graphRoom.canSubmitCommands,
+    graphRoom.replaceHead,
     graphRoom.submitCommand,
+    workspaceId,
   ]);
   const {
     running,
@@ -1010,7 +1478,7 @@ export function Workbench({
     edges,
     activeGraph,
     currentFingerprint,
-    isDirty,
+    canMaterializeSavedGraph,
     nodeSecretStatuses,
     roomActiveExecution: graphRoom.activeExecution,
     setNodes,
@@ -1022,130 +1490,6 @@ export function Workbench({
     executionRunningRef.current = running;
   }, [running]);
 
-  React.useEffect(() => {
-    const graphId = activeGraph?.id ?? null;
-    if (!artifactViewersInitializedRef.current && !graphId) return;
-    if (artifactViewersInitializedRef.current && artifactViewers.graphId === graphId) {
-      return;
-    }
-    const frame = window.requestAnimationFrame(() => {
-      if (!artifactViewersInitializedRef.current) {
-        try {
-          const serialized = window.localStorage.getItem(
-            artifactViewerStorageKey(userId, workspaceId, graphId!),
-          );
-          const hydrated = serialized
-            ? hydrateArtifactViewerDocument(serialized, graphId!)
-            : { graphId: graphId!, nodes: [], edges: [], bindings: [] };
-          setArtifactViewers(
-            hydrated ?? {
-              graphId: graphId!,
-              nodes: [],
-              edges: [],
-              bindings: [],
-            },
-          );
-          setArtifactViewerPersistenceError(
-            serialized && !hydrated
-              ? "Saved Artifact Viewer layout was invalid and has been reset."
-              : null,
-          );
-        } catch {
-          setArtifactViewers({
-            graphId: graphId!,
-            nodes: [],
-            edges: [],
-            bindings: [],
-          });
-          setArtifactViewerPersistenceError(
-            "Artifact Viewer layout could not be loaded from browser storage.",
-          );
-        }
-        artifactViewersInitializedRef.current = true;
-        return;
-      }
-
-      if (artifactViewers.graphId === null && graphId) {
-        setArtifactViewers((current) => ({ ...current, graphId }));
-        return;
-      }
-      if (!graphId) {
-        setArtifactViewers({
-          graphId: null,
-          nodes: [],
-          edges: [],
-          bindings: [],
-        });
-        return;
-      }
-
-      try {
-        const serialized = window.localStorage.getItem(
-          artifactViewerStorageKey(userId, workspaceId, graphId),
-        );
-        const hydrated = serialized
-          ? hydrateArtifactViewerDocument(serialized, graphId)
-          : { graphId, nodes: [], edges: [], bindings: [] };
-        setArtifactViewers(
-          hydrated ?? { graphId, nodes: [], edges: [], bindings: [] },
-        );
-        setArtifactViewerPersistenceError(
-          serialized && !hydrated
-            ? "Saved Artifact Viewer layout was invalid and has been reset."
-            : null,
-        );
-      } catch {
-        setArtifactViewers({
-          graphId,
-          nodes: [],
-          edges: [],
-          bindings: [],
-        });
-        setArtifactViewerPersistenceError(
-          "Artifact Viewer layout could not be loaded from browser storage.",
-        );
-      }
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [activeGraph?.id, artifactViewers.graphId, userId, workspaceId]);
-
-  React.useEffect(() => {
-    const graphId = activeGraph?.id;
-    if (
-      !graphId ||
-      !artifactViewersInitializedRef.current ||
-      artifactViewers.graphId !== graphId
-    ) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      try {
-        window.localStorage.setItem(
-          artifactViewerStorageKey(userId, workspaceId, graphId),
-          serializeArtifactViewerDocument(
-            artifactViewers.nodes,
-            artifactViewers.edges,
-            artifactViewers.bindings,
-          ),
-        );
-        setArtifactViewerPersistenceError(null);
-      } catch {
-        setArtifactViewerPersistenceError(
-          "Artifact Viewer changes are available in this session but could not be saved in browser storage.",
-        );
-      }
-    }, 160);
-    return () => window.clearTimeout(timer);
-  }, [
-    activeGraph?.id,
-    artifactViewers.edges,
-    artifactViewers.bindings,
-    artifactViewers.graphId,
-    artifactViewers.nodes,
-    userId,
-    workspaceId,
-  ]);
-
   const graphOperationBusy = persistenceOperationBusy || running;
 
   React.useEffect(() => {
@@ -1153,12 +1497,15 @@ export function Workbench({
   }, [closeGraphBrowser, executionHistoryTarget]);
 
   React.useEffect(() => {
-    if (!flow || !nodes.length) return;
+    // Intentional refits only (graph open / blank / pane ready). Reading node
+    // count from the ref avoids depending on nodes.length, which would recenter
+    // the camera after duplicate/remove/add.
+    if (!flow || !nodesRef.current.length) return;
     const frame = window.requestAnimationFrame(
       () => void flow.fitView(WORKBENCH_FIT_VIEW_OPTIONS),
     );
     return () => window.cancelAnimationFrame(frame);
-  }, [fitRevision, flow, nodes.length]);
+  }, [fitRevision, flow]);
 
   const imageUploadWithoutImages = nodes.some(
     (node) =>
@@ -1170,21 +1517,47 @@ export function Workbench({
     () => nodes.flatMap((node) => (node.selected ? [node.id] : [])),
     [nodes],
   );
+  const selectedNodeIdsRef = React.useRef(selectedNodeIds);
+  selectedNodeIdsRef.current = selectedNodeIds;
+  // Last on-canvas pointer in flow coords. Presence replaces the whole snapshot,
+  // so selection/keepalive publishes must resend this or peers see cursor: null.
+  const presenceCursorRef = React.useRef<{ x: number; y: number } | null>(null);
+  const presenceOverCanvasRef = React.useRef(false);
+  const presenceDragRef = React.useRef<{
+    positions: TransientNodePosition[];
+    targetIds: string[];
+  } | null>(null);
+  const localDraggingNodeIdsRef = React.useRef<ReadonlySet<string>>(new Set());
+  const [localDragRevision, setLocalDragRevision] = React.useState(0);
+  const publishPresenceSnapshot = React.useCallback(() => {
+    if (!graphRoom.canPublishPresence) return;
+    const drag = presenceDragRef.current;
+    graphRoom.publishPresence({
+      cursor: presenceCursorRef.current,
+      selected_node_ids: selectedNodeIdsRef.current,
+      activity: drag ? "moving_nodes" : null,
+      activity_target_ids: drag?.targetIds ?? [],
+      transient_node_positions: drag?.positions ?? [],
+    });
+  }, [graphRoom.canPublishPresence, graphRoom.publishPresence]);
   const presenceSelectionKey = selectedNodeIds.join("\0");
   React.useEffect(() => {
+    publishPresenceSnapshot();
+  }, [presenceSelectionKey, publishPresenceSnapshot]);
+  // Server clears idle cursors after ~5s without updates; keepalives while parked.
+  React.useEffect(() => {
     if (!graphRoom.canPublishPresence) return;
-    graphRoom.publishPresence({
-      selected_node_ids: selectedNodeIds,
-      activity: null,
-      activity_target_ids: [],
-      transient_node_positions: [],
-    });
-  }, [
-    graphRoom.canPublishPresence,
-    graphRoom.publishPresence,
-    presenceSelectionKey,
-    selectedNodeIds,
-  ]);
+    const timer = window.setInterval(() => {
+      if (!presenceOverCanvasRef.current || !presenceCursorRef.current) return;
+      publishPresenceSnapshot();
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [graphRoom.canPublishPresence, publishPresenceSnapshot]);
+  const remoteDragPreviews = useRemoteDragPreviews(
+    graphRoom.participants,
+    graphRoom.localSessionId,
+    localDraggingNodeIdsRef,
+  );
   const selectedNodeCount = selectedNodeIds.length;
   const selectedNodesAreRunnable = nodes.every(
     (node) => !node.selected || workflowNodeIsSupported(node.data),
@@ -1244,16 +1617,8 @@ export function Workbench({
         message: runError,
       });
     }
-    if (artifactViewerPersistenceError) {
-      issues.push({
-        id: "presentation",
-        title: "Artifact Viewer",
-        message: artifactViewerPersistenceError,
-      });
-    }
     return issues;
   }, [
-    artifactViewerPersistenceError,
     persistenceError,
     registryError,
     runError,
@@ -1265,15 +1630,8 @@ export function Workbench({
     if (issue.id === "run") {
       dismissRunError(issue.message);
     }
-    if (issue.id === "presentation") {
-      setArtifactViewerPersistenceError((current) =>
-        current === issue.message ? null : current,
-      );
-    }
   }, [dismissPersistenceError, dismissRunError]);
-  const workflowGlobalIssueCount = globalIssues.filter(
-    (issue) => issue.id !== "presentation",
-  ).length;
+  const workflowGlobalIssueCount = globalIssues.length;
   const graphHasErrors =
     workflowGlobalIssueCount > 0 ||
     nodeErrorCount > 0 ||
@@ -1306,24 +1664,67 @@ export function Workbench({
         nodes: [],
         edges: [],
         bindings: [],
+        annotations: [],
       };
 
   const onNodesChange: OnNodesChange<CanvasNode> = React.useCallback(
     (changes) => {
+      const gridSettings = canvasGridSettingsRef.current;
+      const gridBypass = bypassSnapRef.current;
+      const snapNodeChangePosition = <
+        NodeT extends WorkflowNode | ArtifactViewerNode | AnnotationNode,
+      >(
+        change: NodeChange<NodeT>,
+      ): NodeChange<NodeT> => {
+        if (
+          change.type !== "position" ||
+          !change.position ||
+          !shouldSnapPosition(gridSettings, {
+            dragging: change.dragging === true,
+            bypass: gridBypass,
+          })
+        ) {
+          return change;
+        }
+        return {
+          ...change,
+          position: snapPosition(change.position, gridSettings.cellSize),
+        };
+      };
       const workflowNodeIds = new Set(nodes.map((node) => node.id));
       const artifactViewerIds = new Set(
         artifactViewers.nodes.map((node) => node.id),
       );
-      const workflowChanges = changes.filter((change) =>
-        change.type === "add" || change.type === "replace"
-          ? change.item.type === WORKFLOW_NODE_TYPE
-          : workflowNodeIds.has(change.id)
-      ) as NodeChange<WorkflowNode>[];
-      const artifactViewerChanges = changes.filter((change) =>
-        change.type === "add" || change.type === "replace"
-          ? change.item.type === ARTIFACT_VIEWER_NODE_TYPE
-          : artifactViewerIds.has(change.id)
-      ) as NodeChange<ArtifactViewerNode>[];
+      const annotationIds = new Set(
+        artifactViewers.annotations.map((node) => node.id),
+      );
+      const workflowChanges = changes
+        .filter((change) =>
+          change.type === "add" || change.type === "replace"
+            ? change.item.type === WORKFLOW_NODE_TYPE
+            : workflowNodeIds.has(change.id)
+        )
+        .map((change) =>
+          snapNodeChangePosition(change as NodeChange<WorkflowNode>),
+        ) as NodeChange<WorkflowNode>[];
+      const artifactViewerChanges = changes
+        .filter((change) =>
+          change.type === "add" || change.type === "replace"
+            ? change.item.type === ARTIFACT_VIEWER_NODE_TYPE
+            : artifactViewerIds.has(change.id)
+        )
+        .map((change) =>
+          snapNodeChangePosition(change as NodeChange<ArtifactViewerNode>),
+        ) as NodeChange<ArtifactViewerNode>[];
+      const annotationChanges = changes
+        .filter((change) =>
+          change.type === "add" || change.type === "replace"
+            ? change.item.type === ANNOTATION_NODE_TYPE
+            : annotationIds.has(change.id)
+        )
+        .map((change) =>
+          snapNodeChangePosition(change as NodeChange<AnnotationNode>),
+        ) as NodeChange<AnnotationNode>[];
       const rendererChanges = workflowChanges.filter(
         (change) => change.type === "add" || change.type === "replace",
       );
@@ -1335,10 +1736,52 @@ export function Workbench({
           change.type === "remove" ? [change.id] : []
         ),
       );
-      if (artifactViewerChanges.length) {
+      const movedArtifactViewers = artifactViewerChanges.flatMap((change) =>
+        change.type === "position" && !change.dragging && change.position
+          ? [{
+              viewer_id: change.id,
+              x: change.position.x,
+              y: change.position.y,
+            }]
+          : [],
+      );
+      // Local-only React Flow bookkeeping (drag, measure, select). Must apply in
+      // controlled mode or RF error #015 fires and remote mounts look flaky.
+      const localArtifactViewerChanges = artifactViewerChanges.filter(
+        (change) =>
+          change.type === "dimensions" ||
+          change.type === "select" ||
+          (change.type === "position" && change.dragging === true),
+      );
+      if (localArtifactViewerChanges.length) {
         setArtifactViewers((current) => ({
           ...current,
-          nodes: applyNodeChanges(artifactViewerChanges, current.nodes),
+          nodes: applyNodeChanges(localArtifactViewerChanges, current.nodes),
+        }));
+      }
+      if (movedArtifactViewers.length) {
+        setArtifactViewers((current) => ({
+          ...current,
+          nodes: applyNodeChanges(
+            artifactViewerChanges.filter(
+              (change) =>
+                change.type === "position" && change.dragging !== true,
+            ),
+            current.nodes,
+          ),
+        }));
+        presentationRoomSyncRef.current.submitMove(movedArtifactViewers);
+      }
+      const durableArtifactViewerChanges = artifactViewerChanges.filter(
+        (change) =>
+          change.type === "remove" ||
+          change.type === "add" ||
+          change.type === "replace",
+      );
+      if (durableArtifactViewerChanges.length || removedArtifactViewerIds.size) {
+        commitArtifactViewers((current) => ({
+          ...current,
+          nodes: applyNodeChanges(durableArtifactViewerChanges, current.nodes),
           bindings: removedArtifactViewerIds.size
             ? current.bindings.filter(
                 (binding) =>
@@ -1346,6 +1789,63 @@ export function Workbench({
                   !removedArtifactViewerIds.has(binding.targetViewerId),
               )
             : current.bindings,
+        }));
+      }
+      const removedAnnotationIds = new Set(
+        annotationChanges.flatMap((change) =>
+          change.type === "remove" ? [change.id] : []
+        ),
+      );
+      const movedAnnotations = annotationChanges.flatMap((change) =>
+        change.type === "position" && !change.dragging && change.position
+          ? [{
+              annotation_id: change.id,
+              x: change.position.x,
+              y: change.position.y,
+            }]
+          : [],
+      );
+      const localAnnotationChanges = annotationChanges.filter(
+        (change) =>
+          change.type === "dimensions" ||
+          change.type === "select" ||
+          (change.type === "position" && change.dragging === true),
+      );
+      if (localAnnotationChanges.length) {
+        setArtifactViewers((current) => ({
+          ...current,
+          annotations: applyNodeChanges(
+            localAnnotationChanges,
+            current.annotations,
+          ),
+        }));
+      }
+      if (movedAnnotations.length) {
+        setArtifactViewers((current) => ({
+          ...current,
+          annotations: applyNodeChanges(
+            annotationChanges.filter(
+              (change) =>
+                change.type === "position" && change.dragging !== true,
+            ),
+            current.annotations,
+          ),
+        }));
+        presentationRoomSyncRef.current.submitMoveAnnotations(movedAnnotations);
+      }
+      const durableAnnotationChanges = annotationChanges.filter(
+        (change) =>
+          change.type === "remove" ||
+          change.type === "add" ||
+          change.type === "replace",
+      );
+      if (durableAnnotationChanges.length || removedAnnotationIds.size) {
+        commitArtifactViewers((current) => ({
+          ...current,
+          annotations: applyNodeChanges(
+            durableAnnotationChanges,
+            current.annotations,
+          ),
         }));
       }
       if (removedArtifactViewerIds.size) {
@@ -1371,14 +1871,60 @@ export function Workbench({
         ),
       );
       if (removedWorkflowNodeIds.size) {
-        setArtifactViewers((current) => ({
+        commitArtifactViewers((current) => ({
           ...current,
           edges: current.edges.filter(
             (edge) => !removedWorkflowNodeIds.has(edge.source),
           ),
         }));
+        setNodeMeasurements((current) => {
+          let changed = false;
+          const next = { ...current };
+          for (const nodeId of removedWorkflowNodeIds) {
+            if (nodeId in next) {
+              delete next[nodeId];
+              changed = true;
+            }
+          }
+          return changed ? next : current;
+        });
+      }
+      const measuredUpdates = workflowChanges.flatMap((change) =>
+        change.type === "dimensions" &&
+          change.dimensions &&
+          typeof change.dimensions.width === "number" &&
+          typeof change.dimensions.height === "number"
+          ? [{
+              id: change.id,
+              width: change.dimensions.width,
+              height: change.dimensions.height,
+            }]
+          : [],
+      );
+      if (measuredUpdates.length) {
+        setNodeMeasurements((current) => {
+          let changed = false;
+          const next = { ...current };
+          for (const update of measuredUpdates) {
+            const previous = next[update.id];
+            if (
+              !previous ||
+              previous.width !== update.width ||
+              previous.height !== update.height
+            ) {
+              next[update.id] = {
+                width: update.width,
+                height: update.height,
+              };
+              changed = true;
+            }
+          }
+          return changed ? next : current;
+        });
       }
       const semanticChanges = graphCommandsFromNodeChanges(workflowChanges);
+      // Selection + in-drag position only. Dimensions are merged via
+      // nodeMeasurements so authored-document remounts cannot wipe them.
       const transientChanges = workflowChanges.filter(
         (change) =>
           change.type === "select" ||
@@ -1388,8 +1934,66 @@ export function Workbench({
         setNodes((current) => applyNodeChanges(transientChanges, current));
       }
       if (semanticChanges.length) applyAuthoringCommands(semanticChanges);
+
+      const draggingWorkflow = workflowChanges.flatMap((change) =>
+        change.type === "position" && change.dragging === true && change.position
+          ? [{ node_id: change.id, x: change.position.x, y: change.position.y }]
+          : [],
+      );
+      const draggingViewers = artifactViewerChanges.flatMap((change) =>
+        change.type === "position" && change.dragging === true && change.position
+          ? [{ node_id: change.id, x: change.position.x, y: change.position.y }]
+          : [],
+      );
+      const draggingAnnotations = annotationChanges.flatMap((change) =>
+        change.type === "position" && change.dragging === true && change.position
+          ? [{ node_id: change.id, x: change.position.x, y: change.position.y }]
+          : [],
+      );
+      const draggingPositions = [
+        ...draggingWorkflow,
+        ...draggingViewers,
+        ...draggingAnnotations,
+      ];
+      const dragEnded =
+        workflowChanges.some(
+          (change) => change.type === "position" && change.dragging === false,
+        ) ||
+        artifactViewerChanges.some(
+          (change) => change.type === "position" && change.dragging === false,
+        ) ||
+        annotationChanges.some(
+          (change) => change.type === "position" && change.dragging === false,
+        );
+      if (draggingPositions.length) {
+        const targetIds = draggingPositions.map((position) => position.node_id);
+        const nextDragging = new Set(targetIds);
+        const draggingChanged =
+          nextDragging.size !== localDraggingNodeIdsRef.current.size ||
+          targetIds.some((id) => !localDraggingNodeIdsRef.current.has(id));
+        localDraggingNodeIdsRef.current = nextDragging;
+        presenceDragRef.current = {
+          positions: draggingPositions,
+          targetIds,
+        };
+        if (draggingChanged) setLocalDragRevision((value) => value + 1);
+        publishPresenceSnapshot();
+      } else if (dragEnded && presenceDragRef.current) {
+        localDraggingNodeIdsRef.current = new Set();
+        presenceDragRef.current = null;
+        setLocalDragRevision((value) => value + 1);
+        publishPresenceSnapshot();
+      }
     },
-    [applyAuthoringCommands, artifactViewers.nodes, nodes, setNodes],
+    [
+      applyAuthoringCommands,
+      artifactViewers.annotations,
+      artifactViewers.nodes,
+      commitArtifactViewers,
+      nodes,
+      publishPresenceSnapshot,
+      setNodes,
+    ],
   );
 
   const invalidateWorkflowResults = React.useCallback(
@@ -1461,7 +2065,7 @@ export function Workbench({
         invalidateWorkflowResults([...changedTargetNodeIds], edges);
       }
       if (artifactViewerChanges.length) {
-        setArtifactViewers((current) => ({
+        commitArtifactViewers((current) => ({
           ...current,
           edges: applyEdgeChanges(
             artifactViewerChanges,
@@ -1476,7 +2080,7 @@ export function Workbench({
           ),
         );
         if (removedBindingIds.size) {
-          setArtifactViewers((current) => ({
+          commitArtifactViewers((current) => ({
             ...current,
             bindings: current.bindings.filter(
               (binding) => !removedBindingIds.has(binding.id),
@@ -1489,6 +2093,7 @@ export function Workbench({
       artifactViewers.bindings,
       artifactViewers.edges,
       applyAuthoringCommands,
+      commitArtifactViewers,
       edges,
       invalidateWorkflowResults,
       setEdges,
@@ -1545,7 +2150,7 @@ export function Workbench({
     connection: Connection,
     collectionMode: RunEdgeCollectionMode,
     route: ConnectionRoute,
-  ) => {
+  ): string | null => {
     let committedConnection = connection;
     let newlyBoundNodeId: string | null = null;
     const binding = route.artifactTypeBinding;
@@ -1568,7 +2173,7 @@ export function Workbench({
             existingBinding.schema_version !==
               binding.artifactType.schema_version))
       ) {
-        return;
+        return null;
       }
 
       const concreteHandleId = encodeHandleId({
@@ -1643,6 +2248,7 @@ export function Workbench({
       ? [newlyBoundNodeId, edge.target]
       : [edge.target];
     invalidateWorkflowResults(changedNodeIds, [...edges, edge]);
+    return edge.id;
   }, [
     applyAuthoringCommands,
     edges,
@@ -1732,7 +2338,7 @@ export function Workbench({
         effects: ["highlight", "focus"],
         emptySelection: "show_all",
       };
-      setArtifactViewers((current) => ({
+      commitArtifactViewers((current) => ({
         ...current,
         bindings: [...current.bindings, binding],
       }));
@@ -1750,7 +2356,7 @@ export function Workbench({
         targetHandle: ARTIFACT_VIEWER_INPUT_HANDLE,
         data: { sourcePortName: source.portName },
       };
-      setArtifactViewers((current) => ({
+      commitArtifactViewers((current) => ({
         ...current,
         edges: [
           ...current.edges.filter(
@@ -1769,43 +2375,61 @@ export function Workbench({
     );
     if (!collectionMode) return;
 
-    const candidates = connectionRoutesFor(
-      connection,
+    const source = decodeHandleId(connection.sourceHandle);
+    const target = decodeHandleId(connection.targetHandle);
+    const canonicalConnection: Connection = {
+      ...connection,
+      sourceHandle: canonicalHandleId(connection.sourceHandle),
+      targetHandle: canonicalHandleId(connection.targetHandle),
+    };
+    const allCandidates = connectionRoutesFor(
+      canonicalConnection,
       registry?.artifact_types ?? [],
       registry?.artifact_conversions ?? [],
     );
-    const candidate = candidates[0];
-    if (!candidate) return;
-    if (candidates.length === 1) {
-      addWorkflowEdge(connection, collectionMode, candidate);
-      return;
-    }
+    const candidates = orderFeedRoutes(
+      routesForHandleFeed(allCandidates, source?.feed),
+    );
+    const preferred = preferredWholeFeedRoute(candidates);
+    if (!preferred || !source || !target) return;
 
-    const source = decodeHandleId(connection.sourceHandle);
+    // Connect first with the whole output (or sole route), then offer fields.
+    const edgeId = addWorkflowEdge(
+      canonicalConnection,
+      collectionMode,
+      preferred,
+    );
+    if (!edgeId || candidates.length <= 1) return;
+
     const sourceNode = nodes.find((node) => node.id === connection.source);
-
-    const target = decodeHandleId(connection.targetHandle);
     const targetNode = nodes.find((node) => node.id === connection.target);
-    if (!source || !target || !sourceNode || !targetNode) {
-      return;
-    }
+    if (!sourceNode || !targetNode) return;
     const sourceArtifactType = decodedHandleArtifactType(source);
     const targetArtifactType = decodedHandleArtifactType(target);
 
+    const sourcePort = sourceNode.data.spec.outputs.find(
+      (port) => port.name === source.portName,
+    );
+    const targetPort = targetNode.data.spec.inputs.find(
+      (port) => port.name === target.portName,
+    );
     setPendingConnectionRoute({
-      connection,
+      connection: canonicalConnection,
       collectionMode,
       candidates,
+      refineEdgeId: edgeId,
+      preferredProjectionPath:
+        source?.feed?.kind === "projection" ? source.feed.path : undefined,
       source: {
         nodeTitle: sourceNode.data.spec.title,
-        portName: source.portName,
+        portName: sourcePort?.title ?? source.portName,
         artifactType: sourceArtifactType
           ? `${sourceArtifactType.id}@${sourceArtifactType.schema_version}`
           : `Any artifact · ${source.artifactTypeVariable}`,
       },
       target: {
         nodeTitle: targetNode.data.spec.title,
-        portName: target.portName,
+        portName: targetPort?.title ?? target.portName,
         artifactType: targetArtifactType
           ? `${targetArtifactType.id}@${targetArtifactType.schema_version}`
           : `Any artifact · ${target.artifactTypeVariable}`,
@@ -1813,6 +2437,7 @@ export function Workbench({
     });
   }, [
     addWorkflowEdge,
+    commitArtifactViewers,
     edges,
     isValidConnection,
     nodes,
@@ -1861,7 +2486,7 @@ export function Workbench({
     setNodes((current) =>
       current.map((node) => ({ ...node, selected: false })),
     );
-    setArtifactViewers((current) => ({
+    commitArtifactViewers((current) => ({
       ...current,
       nodes: [
         ...current.nodes.map((node) => ({ ...node, selected: false })),
@@ -1876,8 +2501,13 @@ export function Workbench({
           },
         },
       ],
+      annotations: current.annotations.map((node) => ({
+        ...node,
+        selected: false,
+      })),
     }));
     setLibraryOpen(false);
+    setShapesMenuOpen(false);
     closeGraphBrowser();
     if (flow && selectedSource) {
       window.requestAnimationFrame(() => {
@@ -1889,7 +2519,32 @@ export function Workbench({
         });
       });
     }
-  }, [closeGraphBrowser, flow, nodes, setNodes]);
+  }, [closeGraphBrowser, commitArtifactViewers, flow, nodes, setNodes]);
+
+  const addAnnotation = React.useCallback((kind: AnnotationKind) => {
+    const center = flow?.screenToFlowPosition({
+      x: window.innerWidth / 2,
+      y: window.innerHeight / 2,
+    }) ?? { x: 480, y: 240 };
+    const annotation = createAnnotationNode(kind, {
+      x: center.x - 80,
+      y: center.y - 60,
+    });
+    setNodes((current) =>
+      current.map((node) => ({ ...node, selected: false })),
+    );
+    commitArtifactViewers((current) => ({
+      ...current,
+      nodes: current.nodes.map((node) => ({ ...node, selected: false })),
+      annotations: [
+        ...current.annotations.map((node) => ({ ...node, selected: false })),
+        annotation,
+      ],
+    }));
+    setShapesMenuOpen(false);
+    setLibraryOpen(false);
+    closeGraphBrowser();
+  }, [closeGraphBrowser, commitArtifactViewers, flow, setNodes]);
 
   const duplicateSelectedNodes = React.useCallback(() => {
     const selectedNodes = nodes.filter((node) => node.selected);
@@ -1996,6 +2651,7 @@ export function Workbench({
               nodes,
               edges,
               registry?.artifact_conversions ?? [],
+              registry?.artifact_types ?? [],
             ),
           },
         };
@@ -2153,18 +2809,85 @@ export function Workbench({
     ],
   );
 
+  const annotationCanvasNodes = React.useMemo<AnnotationNode[]>(
+    () =>
+      activeArtifactViewers.annotations.map((node) => ({
+        ...node,
+        // Re-assert on every render so selection elevation never stacks above cards.
+        zIndex: ANNOTATION_Z_INDEX,
+        data: {
+          ...node.data,
+          onLayoutChange: updateAnnotationLayout,
+          onTextChange: updateAnnotationText,
+          onColorChange: updateAnnotationColor,
+          onRemoveNode: removeAnnotation,
+        },
+      })),
+    [
+      activeArtifactViewers.annotations,
+      removeAnnotation,
+      updateAnnotationColor,
+      updateAnnotationLayout,
+      updateAnnotationText,
+    ],
+  );
+
   const artifactViewerCanvasEdges = React.useMemo<ArtifactViewerEdge[]>(
     () => activeArtifactViewers.edges.map((edge) => {
       const sourceNode = nodes.find((node) => node.id === edge.source);
       const sourcePort = sourceNode?.data.spec.outputs.find(
         (port) => port.name === edge.data?.sourcePortName,
       );
-      const sourceArtifactType = sourceNode && sourcePort
+      const sourceArtifactTypeKey = sourceNode && sourcePort
         ? resolvedPortArtifactType(
             sourcePort,
             sourceNode.data.artifactTypeBindings,
           )
         : null;
+      const sourceArtifactType = sourceArtifactTypeKey
+        ? registry?.artifact_types.find(
+            (candidate) =>
+              candidate.key.id === sourceArtifactTypeKey.id &&
+              candidate.key.schema_version ===
+                sourceArtifactTypeKey.schema_version,
+          )
+        : undefined;
+      const projections = [...(sourceArtifactType?.field_projections ?? [])]
+        .sort((left, right) => left.title.localeCompare(right.title));
+      const routeOptions: WorkflowEdgeRouteOption[] = [
+        { conversionPath: [], conversionTitles: [] },
+        ...projections.map((projection) => ({
+          projection: { path: [...projection.path] },
+          projectionTitle: projection.title,
+          conversionPath: [],
+          conversionTitles: [],
+        })),
+      ];
+      if (
+        edge.data?.projection?.path.length &&
+        !routeOptions.some((route) =>
+          route.projection?.path.length === edge.data?.projection?.path.length &&
+          route.projection.path.every(
+            (segment, index) =>
+              segment === edge.data?.projection?.path[index],
+          ),
+        )
+      ) {
+        routeOptions.push({
+          projection: { path: [...edge.data.projection.path] },
+          conversionPath: [],
+          conversionTitles: [],
+        });
+      }
+      const activeProjectionTitle = routeOptions.find(
+        (route) =>
+          route.projection?.path.length ===
+            edge.data?.projection?.path.length &&
+          route.projection?.path.every(
+            (segment, index) =>
+              segment === edge.data?.projection?.path[index],
+          ),
+      )?.projectionTitle;
       const sourceHandle =
         sourceNode &&
           sourcePort &&
@@ -2183,16 +2906,30 @@ export function Workbench({
         type: ARTIFACT_VIEWER_EDGE_TYPE,
         sourceHandle,
         targetHandle: ARTIFACT_VIEWER_INPUT_HANDLE,
+        data: {
+          ...edge.data,
+          sourcePortName: edge.data?.sourcePortName ?? "",
+          projectionTitle: activeProjectionTitle,
+          routeOptions,
+          onUpdate: updateArtifactViewerEdge,
+          onRouteOffsetChange: updateArtifactViewerEdgeRoute,
+        },
         style: {
           ...edge.style,
-          stroke: sourceArtifactType
-            ? artifactTypeColor(sourceArtifactType.id, tokens.colorAccent)
+          stroke: sourceArtifactTypeKey
+            ? artifactTypeColor(sourceArtifactTypeKey.id, tokens.colorAccent)
             : tokens.colorAccent,
           strokeWidth: 2,
         },
       };
     }),
-    [activeArtifactViewers.edges, nodes],
+    [
+      activeArtifactViewers.edges,
+      nodes,
+      registry?.artifact_types,
+      updateArtifactViewerEdge,
+      updateArtifactViewerEdgeRoute,
+    ],
   );
 
   const artifactViewerInteractionCanvasEdges =
@@ -2225,30 +2962,73 @@ export function Workbench({
     );
 
   const allCanvasNodes = React.useMemo<CanvasNode[]>(() => {
-    const combined = [...canvasNodes, ...artifactViewerCanvasNodes];
+    const combined = [
+      ...annotationCanvasNodes,
+      ...canvasNodes,
+      ...artifactViewerCanvasNodes,
+    ];
+    const localDragging = localDraggingNodeIdsRef.current;
+    const alignIdlePosition = shouldSnapPosition(canvasGridSettings, {
+      dragging: false,
+      bypass: bypassSnap,
+    });
     return combined.map((node) => {
+      const preview =
+        !localDragging.has(node.id) ? remoteDragPreviews[node.id] : undefined;
+      let positioned = preview
+        ? {
+            ...node,
+            position: { x: preview.x, y: preview.y },
+            style: {
+              ...node.style,
+              // Ease between sparse presence samples without per-frame React writes.
+              transition: "transform 70ms linear",
+            },
+          }
+        : node;
+      // Keep idle cards on the lattice even when stored coords predate snapping.
+      if (
+        !preview &&
+        !localDragging.has(node.id) &&
+        alignIdlePosition
+      ) {
+        const snapped = snapPosition(
+          positioned.position,
+          canvasGridSettings.cellSize,
+        );
+        if (
+          snapped.x !== positioned.position.x ||
+          snapped.y !== positioned.position.y
+        ) {
+          positioned = { ...positioned, position: snapped };
+        }
+      }
       const remoteColor = remoteSelectionColor(
         graphRoom.participants,
         graphRoom.localSessionId,
         node.id,
       );
-      if (!remoteColor) return node;
+      if ((positioned.data.remoteSelectionColor ?? null) === remoteColor) {
+        return positioned;
+      }
       return {
-        ...node,
-        className: [node.className, "ns-remote-selected"]
-          .filter(Boolean)
-          .join(" "),
-        style: {
-          ...node.style,
-          boxShadow: `0 0 0 2px ${remoteColor}`,
+        ...positioned,
+        data: {
+          ...positioned.data,
+          remoteSelectionColor: remoteColor,
         },
-      };
+      } as CanvasNode;
     });
   }, [
+    annotationCanvasNodes,
     artifactViewerCanvasNodes,
+    bypassSnap,
+    canvasGridSettings,
     canvasNodes,
     graphRoom.localSessionId,
     graphRoom.participants,
+    localDragRevision,
+    remoteDragPreviews,
   ]);
   const allCanvasEdges = React.useMemo<CanvasEdge[]>(
     () => [
@@ -2262,6 +3042,90 @@ export function Workbench({
       canvasEdges,
     ],
   );
+
+  const snapSelectionToGrid = React.useCallback(() => {
+    const settings = canvasGridSettingsRef.current;
+    if (!settings.enabled || bypassSnapRef.current) return;
+    const selected = allCanvasNodes.filter((node) =>
+      selectedNodeIdSet.has(node.id)
+    );
+    if (!selected.length) return;
+    const cellSize = settings.cellSize;
+
+    if (settings.snapPosition) {
+      const workflowPositions = selected.flatMap((node) => {
+        if (node.type !== WORKFLOW_NODE_TYPE) return [];
+        const next = snapPosition(node.position, cellSize);
+        return [{ node_id: node.id, x: next.x, y: next.y }];
+      });
+      if (workflowPositions.length) {
+        applyAuthoringCommands([{
+          kind: "move_nodes",
+          positions: workflowPositions,
+        }]);
+      }
+      const viewerPositions = selected.flatMap((node) => {
+        if (node.type !== ARTIFACT_VIEWER_NODE_TYPE) return [];
+        const next = snapPosition(node.position, cellSize);
+        return [{ viewer_id: node.id, x: next.x, y: next.y }];
+      });
+      if (viewerPositions.length) {
+        const byId = new Map(
+          viewerPositions.map((position) => [position.viewer_id, position]),
+        );
+        setArtifactViewers((current) => ({
+          ...current,
+          nodes: current.nodes.map((node) => {
+            const next = byId.get(node.id);
+            return next
+              ? { ...node, position: { x: next.x, y: next.y } }
+              : node;
+          }),
+        }));
+        presentationRoomSyncRef.current.submitMove(viewerPositions);
+      }
+    }
+
+    if (settings.snapSize) {
+      for (const node of selected) {
+        if (node.type === WORKFLOW_NODE_TYPE) {
+          const current = node.data.layout;
+          const seed = {
+            width: current?.width ?? DEFAULT_NODE_WIDTH,
+            ...(current?.bodyHeight != null
+              ? { bodyHeight: current.bodyHeight }
+              : {}),
+            ...(current?.appendixHeight != null
+              ? { appendixHeight: current.appendixHeight }
+              : {}),
+          };
+          const axes = layoutSnapAxes(seed, ["width"]);
+          updateLayout(node.id, snapNodeLayout(seed, axes, cellSize));
+          continue;
+        }
+        if (node.type === ARTIFACT_VIEWER_NODE_TYPE) {
+          const current = node.data.layout;
+          const seed = {
+            width: current?.width ?? DEFAULT_NODE_WIDTH,
+            appendixHeight:
+              current?.appendixHeight ?? DEFAULT_APPENDIX_HEIGHT,
+          };
+          const snapped = snapNodeLayout(
+            seed,
+            ["width", "appendixHeight"],
+            cellSize,
+          );
+          updateArtifactViewerLayout(node.id, snapped);
+        }
+      }
+    }
+  }, [
+    allCanvasNodes,
+    applyAuthoringCommands,
+    selectedNodeIdSet,
+    updateArtifactViewerLayout,
+    updateLayout,
+  ]);
 
   const latestArtifactViewerActivity = React.useMemo(() => {
     let latest: {
@@ -2398,17 +3262,18 @@ export function Workbench({
             x: event.clientX,
             y: event.clientY,
           });
-          graphRoom.publishPresence({
-            cursor: position,
-            selected_node_ids: selectedNodeIds,
-          });
+          presenceOverCanvasRef.current = true;
+          presenceCursorRef.current = position;
+          publishPresenceSnapshot();
         }}
         onPointerLeave={() => {
-          if (!graphRoom.canPublishPresence) return;
-          graphRoom.publishPresence({
-            cursor: null,
-            selected_node_ids: selectedNodeIds,
-          });
+          presenceOverCanvasRef.current = false;
+          presenceCursorRef.current = null;
+          const wasDragging = presenceDragRef.current !== null;
+          presenceDragRef.current = null;
+          localDraggingNodeIdsRef.current = new Set();
+          if (wasDragging) setLocalDragRevision((value) => value + 1);
+          publishPresenceSnapshot();
         }}
       >
         <WorkflowCanvas
@@ -2423,8 +3288,14 @@ export function Workbench({
           onPaneClick={() => {
             setLibraryOpen(false);
             closeGraphBrowser();
+            setGridPanelOpen(false);
           }}
           animateEdges={running}
+          gridGap={
+            canvasGridSettings.showBackground
+              ? canvasGridSettings.cellSize
+              : null
+          }
         >
           <PresenceOverlay
             participants={graphRoom.participants}
@@ -2434,8 +3305,8 @@ export function Workbench({
             <NodeToolbar
               nodeId={selectedNodeIds}
               isVisible
-              position={Position.Bottom}
-              offset={16}
+              position={Position.Top}
+              offset={20}
               className={`ns-node-detail ${stylex.props(s.selectionToolbar).className}`}
             >
               <span {...stylex.props(s.selectionLabel)}>
@@ -2520,6 +3391,11 @@ export function Workbench({
         onCycleTheme={cycleTheme}
       />
 
+      <CanvasGridSettingsPanel
+        selectedCount={selectedNodeCount}
+        onSnapSelection={snapSelectionToGrid}
+      />
+
       <aside aria-label="Canvas actions" {...stylex.props(s.actionRail)}>
         <button
           type="button"
@@ -2530,6 +3406,7 @@ export function Workbench({
           {...stylex.props(s.railButton, s.railPrimary)}
           onClick={() => {
             closeGraphBrowser();
+            setGridPanelOpen(false);
             setLibraryOpen((open) => !open);
           }}
         >
@@ -2546,6 +3423,59 @@ export function Workbench({
           <Eye size={14} />
           <span {...stylex.props(s.railLabel)}>Viewer</span>
         </button>
+        <div {...stylex.props(s.shapesMenuWrap)}>
+          <button
+            type="button"
+            aria-label="Add shape or text"
+            aria-expanded={shapesMenuOpen}
+            aria-haspopup="menu"
+            title="Add documentation shapes"
+            {...stylex.props(
+              s.railButton,
+              shapesMenuOpen ? s.railPrimary : null,
+            )}
+            onClick={() => {
+              closeGraphBrowser();
+              setLibraryOpen(false);
+              setGridPanelOpen(false);
+              setShapesMenuOpen((open) => !open);
+            }}
+          >
+            <Type size={14} />
+            <span {...stylex.props(s.railLabel)}>Annotate</span>
+          </button>
+          {shapesMenuOpen ? (
+            <div role="menu" {...stylex.props(s.shapesMenu)}>
+              <button
+                type="button"
+                role="menuitem"
+                {...stylex.props(s.railButton)}
+                onClick={() => addAnnotation("text")}
+              >
+                <Type size={14} />
+                <span {...stylex.props(s.railLabel)}>Text</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                {...stylex.props(s.railButton)}
+                onClick={() => addAnnotation("rectangle")}
+              >
+                <Square size={14} />
+                <span {...stylex.props(s.railLabel)}>Square</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                {...stylex.props(s.railButton)}
+                onClick={() => addAnnotation("ellipse")}
+              >
+                <Circle size={14} />
+                <span {...stylex.props(s.railLabel)}>Circle</span>
+              </button>
+            </div>
+          ) : null}
+        </div>
         <button
           type="button"
           {...firefoxDynamicButtonProps}
@@ -2556,6 +3486,24 @@ export function Workbench({
         >
           <Maximize2 size={14} />
           <span {...stylex.props(s.railLabel)}>Fit</span>
+        </button>
+        <button
+          type="button"
+          aria-label="Grid lab"
+          aria-pressed={gridPanelOpen}
+          title="Experiment with canvas grid snapping"
+          {...stylex.props(
+            s.railButton,
+            gridPanelOpen ? s.railPrimary : null,
+          )}
+          onClick={() => {
+            closeGraphBrowser();
+            setLibraryOpen(false);
+            setGridPanelOpen((open) => !open);
+          }}
+        >
+          <Grid3x3 size={14} />
+          <span {...stylex.props(s.railLabel)}>Grid</span>
         </button>
         <span {...stylex.props(s.railDivider)} />
         <button
@@ -2568,6 +3516,7 @@ export function Workbench({
           onClick={() => {
             closeGraphBrowser();
             setLibraryOpen(false);
+            setGridPanelOpen(false);
             setExecutionHistoryTarget({ nodeId: null, executionId: null });
           }}
         >
@@ -2660,6 +3609,22 @@ export function Workbench({
         pendingRoute={pendingConnectionRoute}
         onSelect={(route) => {
           if (!pendingConnectionRoute) return;
+          const refineEdgeId = pendingConnectionRoute.refineEdgeId;
+          if (refineEdgeId) {
+            const selection = connectionRouteSelection(route);
+            updateEdge(refineEdgeId, {
+              route: {
+                projection: selection.projection
+                  ? { path: [...selection.projection.path] }
+                  : undefined,
+                conversionPath: selection.conversionPath.map((conversion) => ({
+                  id: conversion.id,
+                  version: conversion.version,
+                })),
+              },
+            });
+            return;
+          }
           addWorkflowEdge(
             pendingConnectionRoute.connection,
             pendingConnectionRoute.collectionMode,

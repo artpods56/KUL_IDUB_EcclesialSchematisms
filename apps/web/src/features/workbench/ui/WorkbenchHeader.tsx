@@ -3,12 +3,14 @@
 import * as stylex from "@stylexjs/stylex";
 import {
   ChevronDown,
+  LayoutGrid,
   LoaderCircle,
   Monitor,
   Moon,
   Save,
   Sun,
 } from "lucide-react";
+import Link from "next/link";
 
 import type { ThemePreference } from "@/components/theme";
 import { tokens } from "@/lib/stylex/tokens.stylex";
@@ -318,6 +320,14 @@ export function WorkbenchHeader({
               <Save size={13} />
             )}
           </button>
+          <Link
+            href="/workspaces"
+            aria-label="All workspaces"
+            title="All workspaces"
+            {...stylex.props(s.toolButton, s.identityAction)}
+          >
+            <LayoutGrid size={13} />
+          </Link>
           <button
             type="button"
             aria-label={

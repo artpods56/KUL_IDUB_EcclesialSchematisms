@@ -1,82 +1,149 @@
 "use client";
 
+import * as React from "react";
 import * as stylex from "@stylexjs/stylex";
 import {
   BaseEdge,
   EdgeLabelRenderer,
-  getBezierPath,
-  useReactFlow,
   type EdgeProps,
+  useReactFlow,
 } from "@xyflow/react";
-import { Eye, X } from "lucide-react";
+import { Check } from "lucide-react";
 
 import { tokens } from "@/lib/stylex/tokens.stylex";
+import {
+  feedChoicesFromRouteOptions,
+  projectionsEqual,
+} from "../../model/connection-feeds";
 import type {
   ArtifactViewerEdge,
+  ArtifactViewerEdgeData,
   CanvasEdge,
   CanvasNode,
 } from "../artifact-viewer";
+import type {
+  WorkflowEdgeRouteOffset,
+  WorkflowEdgeRouteOption,
+} from "../types";
+import { EdgeSelectorBlock } from "./EdgeSelectorBlock";
+import { applyHandleFanOffset, routedBezierPath } from "./edge-path";
+import { useEdgeFanOffsets } from "./useEdgeFanOffsets";
+import {
+  useEdgeRouteBendHandlers,
+  useResolvedEdgeRouteOffset,
+} from "./useEdgeRouteBend";
+
+/**
+ * Presentation link (workflow output → artifact viewer).
+ * Dashed stroke keeps it distinct from run edges; 2×1 selector matches workflow chrome.
+ */
 
 const s = stylex.create({
-  positioner: {
-    position: "absolute",
-    zIndex: 10,
-    pointerEvents: "all",
+  header: {
+    display: "grid",
+    gap: "3px",
+    padding: "10px 11px",
+    borderBottomWidth: 1,
+    borderBottomStyle: "solid",
+    borderBottomColor: tokens.colorBorder,
   },
-  label: {
-    minHeight: "23px",
-    display: "inline-flex",
+  title: { fontSize: tokens.fontSizeSm, fontWeight: 750 },
+  summary: {
+    color: tokens.colorSubtle,
+    fontSize: tokens.fontSizeXs,
+    lineHeight: 1.4,
+  },
+  section: {
+    display: "grid",
+    gap: "5px",
+    padding: "9px 11px 11px",
+  },
+  sectionTitle: {
+    color: tokens.colorMuted,
+    fontSize: "10px",
+    fontWeight: 800,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
+  },
+  option: {
+    width: "100%",
+    minHeight: "35px",
+    display: "grid",
+    gridTemplateColumns: "minmax(0,1fr) 16px",
     alignItems: "center",
-    overflow: "hidden",
+    gap: "7px",
+    padding: "6px 7px",
     borderWidth: 1,
     borderStyle: "solid",
-    borderColor: tokens.colorBorderStrong,
-    borderRadius: "9999px",
-    backgroundColor: tokens.colorSurfaceRaised,
-    boxShadow: tokens.shadowNode,
-    color: tokens.colorMuted,
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    fontSize: "9px",
-    fontWeight: 700,
-    pointerEvents: "all",
+    borderColor: {
+      default: tokens.colorBorder,
+      ":hover": tokens.colorAccentBorder,
+    },
+    borderRadius: "4px",
+    backgroundColor: {
+      default: tokens.colorSurfaceMuted,
+      ":hover": tokens.colorAccentSoft,
+    },
+    color: tokens.colorText,
+    cursor: "pointer",
+    textAlign: "left",
   },
-  labelSelected: {
+  optionActive: {
     borderColor: tokens.colorAccentBorder,
-    boxShadow: tokens.shadowNodeSelected,
-    color: tokens.colorTextEmphasis,
+    backgroundColor: tokens.colorAccentSoft,
   },
-  copy: {
-    minWidth: 0,
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "5px",
-    maxWidth: "170px",
-    paddingInline: "8px",
-  },
-  text: {
+  optionCopy: { minWidth: 0, display: "grid", gap: "2px" },
+  optionTitle: {
     overflow: "hidden",
+    fontSize: tokens.fontSizeXs,
+    fontWeight: 700,
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
-  removeButton: {
-    width: "23px",
-    height: "23px",
-    display: "grid",
-    placeItems: "center",
-    flexShrink: 0,
-    padding: 0,
-    borderWidth: 0,
-    borderLeftWidth: 1,
-    borderLeftStyle: "solid",
-    borderLeftColor: tokens.colorBorder,
-    backgroundColor: {
-      default: "transparent",
-      ":hover": tokens.colorDangerHover,
-    },
-    color: { default: tokens.colorSubtle, ":hover": tokens.colorDanger },
-    cursor: "pointer",
+  optionDescription: {
+    color: tokens.colorSubtle,
+    fontSize: "10px",
+    lineHeight: 1.35,
   },
+  check: { color: tokens.colorAccent },
 });
+
+function EdgeOption({
+  title,
+  description,
+  active,
+  onSelect,
+}: {
+  title: string;
+  description: string;
+  active: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      {...stylex.props(s.option, active ? s.optionActive : null)}
+      onClick={onSelect}
+    >
+      <span {...stylex.props(s.optionCopy)}>
+        <span {...stylex.props(s.optionTitle)}>{title}</span>
+        <span {...stylex.props(s.optionDescription)}>{description}</span>
+      </span>
+      {active ? <Check size={12} {...stylex.props(s.check)} /> : null}
+    </button>
+  );
+}
+
+function viewerChipLabel(
+  sourcePortName: string,
+  projection: ArtifactViewerEdgeData["projection"],
+  projectionTitle?: string,
+): string {
+  if (projection?.path.length) {
+    return `preview · ${projectionTitle ?? projection.path.join(".")}`;
+  }
+  return `preview · ${sourcePortName}`;
+}
 
 export default function ArtifactViewerEdgeControl({
   id,
@@ -92,21 +159,79 @@ export default function ArtifactViewerEdgeControl({
   selected,
 }: EdgeProps<ArtifactViewerEdge>) {
   const { deleteElements } = useReactFlow<CanvasNode, CanvasEdge>();
-  const [path, labelX, labelY] = getBezierPath({
-    sourceX,
-    sourceY,
+  const edgeData: ArtifactViewerEdgeData = data ?? { sourcePortName: "output" };
+  const sourcePortName = edgeData.sourcePortName || "output";
+  const fan = useEdgeFanOffsets(id, sourcePosition, targetPosition);
+  const source = applyHandleFanOffset(
+    { x: sourceX, y: sourceY },
     sourcePosition,
-    targetX,
-    targetY,
+    fan.source,
+  );
+  const target = applyHandleFanOffset(
+    { x: targetX, y: targetY },
     targetPosition,
+    fan.target,
+  );
+  const savedRouteOffset = edgeData.routeOffset ?? { x: 0, y: 0 };
+  const [draftRouteOffset, setDraftRouteOffset] =
+    React.useState<WorkflowEdgeRouteOffset | null>(null);
+  const rawRouteOffset = draftRouteOffset ?? savedRouteOffset;
+  const natural = routedBezierPath({
+    source,
+    target,
+    sourcePosition,
+    targetPosition,
+    routeOffset: { x: 0, y: 0 },
   });
-  const sourcePortName = data?.sourcePortName ?? "output";
+  const routeOffset = useResolvedEdgeRouteOffset(
+    natural.anchor,
+    rawRouteOffset,
+    draftRouteOffset != null,
+  );
+  const { anchor, path: edgePath } = routedBezierPath({
+    source,
+    target,
+    sourcePosition,
+    targetPosition,
+    routeOffset,
+  });
+  const bendHandlers = useEdgeRouteBendHandlers({
+    naturalAnchor: natural.anchor,
+    anchor,
+    savedRouteOffset,
+    routeOffset,
+    setDraftRouteOffset,
+    onRouteOffsetChange: edgeData.onRouteOffsetChange
+      ? (offset) => edgeData.onRouteOffsetChange?.(id, offset)
+      : undefined,
+  });
+  const routeOptions: readonly WorkflowEdgeRouteOption[] =
+    edgeData.routeOptions?.length
+      ? edgeData.routeOptions
+      : [
+          {
+            projection: edgeData.projection,
+            conversionPath: [],
+            conversionTitles: [],
+            projectionTitle: edgeData.projectionTitle,
+          },
+        ];
+  const feedChoices = feedChoicesFromRouteOptions(sourcePortName, routeOptions);
+  const activeProjectionTitle = routeOptions.find((route) =>
+    projectionsEqual(route.projection, edgeData.projection),
+  )?.projectionTitle;
+  const label = viewerChipLabel(
+    sourcePortName,
+    edgeData.projection,
+    activeProjectionTitle ?? edgeData.projectionTitle,
+  );
+  const onUpdate = edgeData.onUpdate;
 
   return (
     <>
       <BaseEdge
         id={id}
-        path={path}
+        path={edgePath}
         markerEnd={markerEnd}
         interactionWidth={24}
         style={{
@@ -117,42 +242,50 @@ export default function ArtifactViewerEdgeControl({
         }}
       />
       <EdgeLabelRenderer>
-        <div
-          className="nodrag nopan nowheel"
-          style={{
-            transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+        <EdgeSelectorBlock
+          anchor={anchor}
+          selected={selected}
+          label={label}
+          bendAriaLabel={`Bend preview connection ${label}`}
+          bendDragging={draftRouteOffset != null}
+          bendHandlers={bendHandlers}
+          editAriaLabel={`Edit preview feed ${label}`}
+          editTitle="Choose what this preview shows from the output"
+          removeAriaLabel={`Remove preview connection ${label}`}
+          onRemove={() => {
+            void deleteElements({ edges: [{ id }] });
           }}
-          {...stylex.props(s.positioner)}
         >
-          <div
-            aria-label={`Artifact viewer link from ${sourcePortName}`}
-            {...stylex.props(
-              s.label,
-              selected ? s.labelSelected : null,
-            )}
-          >
-            <span {...stylex.props(s.copy)}>
-              <Eye size={10} aria-hidden="true" />
-              <span {...stylex.props(s.text)}>
-                preview · {sourcePortName}
-              </span>
+          <header {...stylex.props(s.header)}>
+            <span {...stylex.props(s.title)}>What should the viewer show?</span>
+            <span {...stylex.props(s.summary)}>
+              Pick the whole output or a declared field projection.
             </span>
-            {selected ? (
-              <button
-                type="button"
-                aria-label={`Remove artifact viewer connection from ${sourcePortName}`}
-                title="Remove viewer connection"
-                {...stylex.props(s.removeButton)}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void deleteElements({ edges: [{ id }] });
-                }}
-              >
-                <X size={11} aria-hidden="true" />
-              </button>
-            ) : null}
-          </div>
-        </div>
+          </header>
+          <section {...stylex.props(s.section)}>
+            <span {...stylex.props(s.sectionTitle)}>Preview feed</span>
+            {onUpdate
+              ? feedChoices.map((choice) => (
+                  <EdgeOption
+                    key={choice.key}
+                    title={choice.title}
+                    description={choice.description}
+                    active={projectionsEqual(
+                      edgeData.projection,
+                      choice.route.projection,
+                    )}
+                    onSelect={() =>
+                      onUpdate(id, {
+                        projection: choice.route.projection
+                          ? { path: [...choice.route.projection.path] }
+                          : null,
+                      })
+                    }
+                  />
+                ))
+              : null}
+          </section>
+        </EdgeSelectorBlock>
       </EdgeLabelRenderer>
     </>
   );

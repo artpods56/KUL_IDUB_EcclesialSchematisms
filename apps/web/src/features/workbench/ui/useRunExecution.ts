@@ -13,7 +13,7 @@ import {
   type RunExecution,
 } from "@/lib/api";
 import { ApiError } from "@/lib/api/client";
-import { withMaterializedNodeRuns } from "../canvas/saved-graph";
+import { mergeMaterializedNodeRuns } from "../canvas/saved-graph";
 import {
   nodeSecretBindingReady,
   nodeSecretInputs,
@@ -77,6 +77,84 @@ function nodeExecutionIsTerminal(status: NodeExecutionStatus): boolean {
     status === "cancelled";
 }
 
+function withSharedExecutionTerminalNodes(
+  nodes: readonly WorkflowNode[],
+  executionNodeIds: ReadonlySet<string>,
+  response: RunExecution,
+): WorkflowNode[] {
+  if (response.status === "cancelled") {
+    return nodes.map((node) => {
+      if (
+        !executionNodeIds.has(node.id) ||
+        nodeExecutionIsTerminal(node.data.execution.status)
+      ) {
+        return node;
+      }
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          run: null,
+          execution: { status: "cancelled" },
+        },
+      };
+    });
+  }
+
+  if (response.result) {
+    const byNode = new Map(
+      response.result.node_runs.map((run) => [run.node_id, run]),
+    );
+    return nodes.map((node) => {
+      if (!executionNodeIds.has(node.id) && !byNode.has(node.id)) {
+        return node;
+      }
+      const run = byNode.get(node.id);
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          run: run ?? null,
+          execution: run
+            ? {
+                status: run.status,
+                error: run.error ?? (run.status === "failed"
+                  ? "This node failed without error details."
+                  : undefined),
+              }
+            : {
+                status: "skipped",
+                error: "The server did not return a result for this node.",
+              },
+        },
+      };
+    });
+  }
+
+  const executionMessage = response.error ??
+    "The execution ended without a workflow result.";
+  const failedNodeId = response.active_node_id;
+  return nodes.map((node) => {
+    if (
+      !executionNodeIds.has(node.id) ||
+      nodeExecutionIsTerminal(node.data.execution.status)
+    ) {
+      return node;
+    }
+    const failed = failedNodeId === null || node.id === failedNodeId;
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        run: null,
+        execution: failed
+          ? { status: "failed", error: executionMessage }
+          : { status: "idle" },
+      },
+    };
+  });
+}
+
 interface UseRunExecutionOptions {
   workspaceId: string;
   registryAvailable: boolean;
@@ -84,7 +162,8 @@ interface UseRunExecutionOptions {
   edges: readonly WorkflowEdge[];
   activeGraph: ActiveSavedGraph | null;
   currentFingerprint: string;
-  isDirty: boolean;
+  /** Workflow topology matches the saved revision (presentation may differ). */
+  canMaterializeSavedGraph: boolean;
   nodeSecretStatuses: NodeSecretStatusesByNode;
   /** Active execution discovered from the graph room (not only local start). */
   roomActiveExecution?: ActiveExecutionSummary | null;
@@ -104,7 +183,7 @@ export function useRunExecution({
   edges,
   activeGraph,
   currentFingerprint,
-  isDirty,
+  canMaterializeSavedGraph,
   nodeSecretStatuses,
   roomActiveExecution = null,
   setNodes,
@@ -128,6 +207,7 @@ export function useRunExecution({
   const progressFrameRef = React.useRef<number | null>(null);
   const runRequestReservedRef = React.useRef(false);
   const mountedRef = React.useRef(true);
+  const sharedObservationCancelRef = React.useRef<(() => void) | null>(null);
 
   const clearPendingProgress = React.useCallback(() => {
     if (progressFrameRef.current !== null) {
@@ -221,6 +301,8 @@ export function useRunExecution({
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      sharedObservationCancelRef.current?.();
+      sharedObservationCancelRef.current = null;
       executionEventStreamRef.current?.close();
       executionEventStreamRef.current = null;
       reconciliationWakeRef.current?.();
@@ -265,7 +347,7 @@ export function useRunExecution({
       return;
     }
 
-    if (scope === "selected" && activeGraph && !isDirty) {
+    if (scope === "selected" && canMaterializeSavedGraph && activeGraph) {
       try {
         const materializations = await getGraphMaterializations(
           workspaceId,
@@ -282,7 +364,7 @@ export function useRunExecution({
           );
           return;
         }
-        planningNodes = withMaterializedNodeRuns(
+        planningNodes = mergeMaterializedNodeRuns(
           planningNodes,
           materializations.node_runs,
         ).map((node) => ({
@@ -290,7 +372,7 @@ export function useRunExecution({
           data: { ...node.data, progress: null },
         }));
         setNodes((current) =>
-          withMaterializedNodeRuns(current, materializations.node_runs).map(
+          mergeMaterializedNodeRuns(current, materializations.node_runs).map(
             (node) => ({
               ...node,
               data: { ...node.data, progress: null },
@@ -415,7 +497,9 @@ export function useRunExecution({
     }));
     let eventSubscription: RunExecutionEventSubscription | null = null;
     try {
-      const materializesSavedGraph = Boolean(activeGraph && !isDirty);
+      const materializesSavedGraph = Boolean(
+        activeGraph && canMaterializeSavedGraph,
+      );
       const graphContext = materializesSavedGraph && activeGraph
         ? {
             graph_id: activeGraph.id,
@@ -1121,11 +1205,11 @@ export function useRunExecution({
     }
   }, [
     activeGraph,
+    canMaterializeSavedGraph,
     clearPendingProgress,
     currentFingerprint,
     edges,
     flushPendingProgress,
-    isDirty,
     isGraphSnapshotCurrent,
     nodeSecretStatuses,
     nodes,
@@ -1349,19 +1433,54 @@ export function useRunExecution({
       if (roomActiveExecution.status === "cancelling") {
         existing.cancellationRequested = true;
       }
-      return;
     }
+
+    // The local starter owns the stream/poll loop for its own request.
     if (runRequestReservedRef.current) {
       return;
     }
-    if (existing && !existing.finished && existing.executionId) {
+    if (
+      existing &&
+      !existing.finished &&
+      existing.executionId === discoveredId &&
+      sharedObservationCancelRef.current === null
+    ) {
       return;
+    }
+    if (
+      existing &&
+      existing.finished &&
+      existing.executionId === discoveredId
+    ) {
+      return;
+    }
+    if (
+      existing &&
+      !existing.finished &&
+      existing.executionId &&
+      existing.executionId !== discoveredId
+    ) {
+      return;
+    }
+    // Keep one observation loop alive across room status updates and
+    // execution.cleared; those must not tear down before terminal overlays apply.
+    if (sharedObservationCancelRef.current !== null) {
+      const observing = executionGuardRef.current;
+      if (
+        observing &&
+        !observing.finished &&
+        observing.executionId === discoveredId
+      ) {
+        return;
+      }
     }
 
     const executionGeneration = executionGenerationRef.current + 1;
     executionGenerationRef.current = executionGeneration;
     const planningActiveGraph = activeGraph;
     const planningFingerprint = currentFingerprint;
+    const overlaysCompatible = roomActiveExecution.overlays_compatible;
+    const executionNodeIds = new Set(roomActiveExecution.requested_node_ids);
     executionGuardRef.current = {
       generation: executionGeneration,
       executionId: discoveredId,
@@ -1387,6 +1506,25 @@ export function useRunExecution({
     setAnnouncement(
       `Observing shared execution started by ${roomActiveExecution.starter.display_name}.`,
     );
+    if (executionNodeIds.size && overlaysCompatible) {
+      setNodes((current) =>
+        current.map((node) =>
+          executionNodeIds.has(node.id)
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  run: null,
+                  execution: { status: "queued" },
+                  progress: null,
+                },
+              }
+            : node.data.progress
+              ? { ...node, data: { ...node.data, progress: null } }
+              : node
+        )
+      );
+    }
 
     let cancelled = false;
     const eventSubscription = subscribeRunExecutionEvents(
@@ -1406,34 +1544,141 @@ export function useRunExecution({
             return;
           }
           guard.lastEventSequence = event.sequence;
-          if (event.kind === "execution.status") {
-            guard.lastServerStatus = event.status;
-            guard.activeNodeId = event.active_node_id ?? guard.activeNodeId;
+
+          if (event.kind === "node.progress") {
+            if (!overlaysCompatible) return;
+            const outerNodeId = event.node_path[0];
+            if (!outerNodeId || !executionNodeIds.has(outerNodeId)) {
+              return;
+            }
+            const pending = pendingProgressBatchRef.current;
+            let activeBatch: PendingProgressBatch;
             if (
-              event.status === "cancelled" ||
-              event.status === "succeeded" ||
-              event.status === "failed"
+              pending?.generation === executionGeneration &&
+              pending.executionId === event.execution_id
             ) {
-              guard.terminalEventStatus = event.status;
+              activeBatch = pending;
+            } else {
+              activeBatch = {
+                generation: executionGeneration,
+                executionId: event.execution_id,
+                executionNodeIds,
+                progressByNode: new Map(),
+              };
+              pendingProgressBatchRef.current = activeBatch;
             }
-            if (event.status === "cancelling") {
-              guard.cancellationRequested = true;
-            }
-            setVisibleExecution((current) =>
-              current?.generation === executionGeneration &&
-                  current.executionId === discoveredId
-                ? {
-                    ...current,
-                    status: event.status,
-                    activeNodeId: event.active_node_id ?? current.activeNodeId,
-                  }
-                : current,
+            const nodeProgress = activeBatch.progressByNode.get(outerNodeId) ??
+              { events: [], omittedCount: 0 };
+            nodeProgress.events.push(event);
+            const overflow = Math.max(
+              0,
+              nodeProgress.events.length - MAX_PROGRESS_EVENTS_PER_NODE,
             );
+            if (overflow) {
+              nodeProgress.events.splice(0, overflow);
+              nodeProgress.omittedCount += overflow;
+            }
+            activeBatch.progressByNode.set(outerNodeId, nodeProgress);
+            if (progressFrameRef.current === null) {
+              progressFrameRef.current = window.requestAnimationFrame(() => {
+                progressFrameRef.current = null;
+                flushPendingProgress();
+              });
+            }
+            return;
           }
+
+          if (event.kind === "node.status") {
+            if (!overlaysCompatible || event.node_path.length !== 1) return;
+            const outerNodeId = event.node_path[0];
+            if (!outerNodeId || !executionNodeIds.has(outerNodeId)) {
+              return;
+            }
+            const nodeStatus =
+              guard.cancellationRequested && event.status === "running"
+                ? "cancelling"
+                : event.status;
+            if (nodeStatus === "running" || nodeStatus === "cancelling") {
+              guard.activeNodeId = outerNodeId;
+              setVisibleExecution((current) =>
+                current?.generation === executionGeneration &&
+                    current.executionId === event.execution_id
+                  ? { ...current, activeNodeId: outerNodeId }
+                  : current
+              );
+            }
+            setNodes((current) => {
+              const liveGuard = executionGuardRef.current;
+              if (
+                !liveGuard ||
+                liveGuard.generation !== executionGeneration ||
+                liveGuard.executionId !== event.execution_id ||
+                !isGraphSnapshotCurrent(
+                  liveGuard.planningActiveGraph,
+                  liveGuard.planningFingerprint,
+                )
+              ) {
+                return current;
+              }
+              return current.map((node) => {
+                if (node.id !== outerNodeId) return node;
+                if (
+                  nodeExecutionIsTerminal(node.data.execution.status) &&
+                  !nodeExecutionIsTerminal(nodeStatus)
+                ) {
+                  return node;
+                }
+                return {
+                  ...node,
+                  data: {
+                    ...node.data,
+                    run: null,
+                    execution: { status: nodeStatus },
+                  },
+                };
+              });
+            });
+            return;
+          }
+
+          if (event.kind !== "execution.status") {
+            return;
+          }
+          guard.lastServerStatus = event.status;
+          guard.activeNodeId = event.active_node_id ?? guard.activeNodeId;
+          if (
+            event.status === "cancelled" ||
+            event.status === "succeeded" ||
+            event.status === "failed"
+          ) {
+            guard.terminalEventStatus = event.status;
+          }
+          if (event.status === "cancelling") {
+            guard.cancellationRequested = true;
+          }
+          setVisibleExecution((current) =>
+            current?.generation === executionGeneration &&
+                current.executionId === discoveredId
+              ? {
+                  ...current,
+                  status: event.status,
+                  activeNodeId: event.active_node_id ?? current.activeNodeId,
+                }
+              : current,
+          );
         },
       },
     );
     executionEventStreamRef.current = eventSubscription;
+
+    const cancelObservation = () => {
+      cancelled = true;
+      eventSubscription.close();
+      if (executionEventStreamRef.current === eventSubscription) {
+        executionEventStreamRef.current = null;
+      }
+    };
+    sharedObservationCancelRef.current = cancelObservation;
 
     void (async () => {
       try {
@@ -1446,7 +1691,46 @@ export function useRunExecution({
           ) {
             return;
           }
-          const response = await getRunExecution(workspaceId, discoveredId);
+          let response: RunExecution;
+          try {
+            response = await getRunExecution(workspaceId, discoveredId);
+          } catch (pollFailure) {
+            if (cancelled || !mountedRef.current) return;
+            const liveGuard = executionGuardRef.current;
+            if (
+              !liveGuard ||
+              liveGuard.generation !== executionGeneration ||
+              liveGuard.executionId !== discoveredId
+            ) {
+              return;
+            }
+            if (
+              pollFailure instanceof ApiError &&
+              (pollFailure.status === 404 || pollFailure.status === 410)
+            ) {
+              liveGuard.finished = true;
+              setAnnouncement(
+                "Shared execution state is no longer available.",
+              );
+              setVisibleExecution((current) =>
+                current?.generation === executionGeneration ? null : current
+              );
+              setRunningScope(null);
+              return;
+            }
+            setVisibleExecution((current) =>
+              current?.generation === executionGeneration &&
+                  current.executionId === discoveredId
+                ? {
+                    ...current,
+                    statusError:
+                      "Shared execution status is unavailable. Retrying…",
+                  }
+                : current
+            );
+            await new Promise((resolve) => window.setTimeout(resolve, 500));
+            continue;
+          }
           if (cancelled || !mountedRef.current) return;
           const liveGuard = executionGuardRef.current;
           if (
@@ -1459,75 +1743,153 @@ export function useRunExecution({
           liveGuard.lastServerStatus = response.status;
           liveGuard.activeNodeId =
             response.active_node_id ?? liveGuard.activeNodeId;
-          setVisibleExecution((current) =>
-            current?.generation === executionGeneration &&
-                current.executionId === discoveredId
-              ? {
-                  ...current,
-                  status: response.status,
-                  activeNodeId:
-                    response.active_node_id ?? current.activeNodeId,
-                  statusError: null,
-                }
-              : current
-          );
-          if (
+          const terminal =
             response.status === "cancelled" ||
             response.status === "succeeded" ||
-            response.status === "failed"
-          ) {
-            liveGuard.finished = true;
+            response.status === "failed";
+          const responseSupersededByTerminalEvent =
+            liveGuard.terminalEventStatus !== null && !terminal;
+          const visibleStatus: RunExecution["status"] =
+            responseSupersededByTerminalEvent
+              ? liveGuard.terminalEventStatus ?? response.status
+              : liveGuard.cancellationRequested && !terminal
+                ? "cancelling"
+                : response.status;
+          const activeNodeId = responseSupersededByTerminalEvent
+            ? liveGuard.activeNodeId
+            : response.active_node_id ??
+              (terminal ? liveGuard.activeNodeId : null);
+          if (!responseSupersededByTerminalEvent) {
+            if (response.status === "cancelling") {
+              liveGuard.cancellationRequested = true;
+            }
+            setVisibleExecution((current) =>
+              current?.generation === executionGeneration &&
+                  current.executionId === discoveredId
+                ? {
+                    ...current,
+                    status: visibleStatus,
+                    activeNodeId,
+                    statusError: null,
+                  }
+                : current
+            );
+          }
+          if (!terminal) {
+            if (
+              overlaysCompatible &&
+              !responseSupersededByTerminalEvent &&
+              executionNodeIds.size
+            ) {
+              setNodes((current) => {
+                const statusGuard = executionGuardRef.current;
+                if (
+                  !statusGuard ||
+                  statusGuard.generation !== executionGeneration ||
+                  statusGuard.executionId !== discoveredId ||
+                  statusGuard.terminalEventStatus !== null ||
+                  !isGraphSnapshotCurrent(
+                    statusGuard.planningActiveGraph,
+                    statusGuard.planningFingerprint,
+                  )
+                ) {
+                  return current;
+                }
+                return current.map((node) => {
+                  if (
+                    !executionNodeIds.has(node.id) ||
+                    nodeExecutionIsTerminal(node.data.execution.status)
+                  ) {
+                    return node;
+                  }
+                  const active = node.id === activeNodeId;
+                  return {
+                    ...node,
+                    data: {
+                      ...node.data,
+                      run: null,
+                      execution: {
+                        status: active
+                          ? visibleStatus === "cancelling"
+                            ? "cancelling"
+                            : "running"
+                          : "queued",
+                      },
+                    },
+                  };
+                });
+              });
+            }
+            await new Promise((resolve) => window.setTimeout(resolve, 500));
+            continue;
+          }
+
+          flushPendingProgress();
+          liveGuard.finished = true;
+          const snapshotCurrent = isGraphSnapshotCurrent(
+            planningActiveGraph,
+            planningFingerprint,
+          );
+          if (!overlaysCompatible || !snapshotCurrent) {
+            setAnnouncement(
+              response.status === "cancelled"
+                ? "Shared execution cancelled, but its node states were not applied to this canvas."
+                : "Shared execution completed, but its results were not applied to this canvas.",
+            );
+          } else {
+            setNodes((current) => {
+              const applyGuard = executionGuardRef.current;
+              if (
+                !applyGuard ||
+                applyGuard.generation !== executionGeneration ||
+                applyGuard.executionId !== discoveredId ||
+                !isGraphSnapshotCurrent(
+                  applyGuard.planningActiveGraph,
+                  applyGuard.planningFingerprint,
+                )
+              ) {
+                return current;
+              }
+              return withSharedExecutionTerminalNodes(
+                current,
+                executionNodeIds,
+                response,
+              );
+            });
+            if (response.error) setRunError(response.error);
             setAnnouncement(
               response.status === "cancelled"
                 ? "Shared execution cancelled."
-                : response.status === "succeeded"
-                  ? "Shared execution completed."
-                  : "Shared execution failed.",
+                : response.status === "succeeded" ||
+                    response.result?.status === "succeeded"
+                  ? "Shared execution completed successfully."
+                  : "Shared execution completed with errors.",
             );
-            setVisibleExecution((current) =>
-              current?.generation === executionGeneration ? null : current
-            );
-            setRunningScope(null);
-            return;
           }
-          await new Promise((resolve) => window.setTimeout(resolve, 500));
-        }
-      } catch {
-        if (cancelled || !mountedRef.current) return;
-        const liveGuard = executionGuardRef.current;
-        if (
-          liveGuard?.generation === executionGeneration &&
-          liveGuard.executionId === discoveredId
-        ) {
           setVisibleExecution((current) =>
-            current?.generation === executionGeneration &&
-                current.executionId === discoveredId
-              ? {
-                  ...current,
-                  statusError: "Shared execution status is unavailable.",
-                }
-              : current
+            current?.generation === executionGeneration ? null : current
           );
+          setRunningScope(null);
+          return;
         }
       } finally {
         eventSubscription.close();
         if (executionEventStreamRef.current === eventSubscription) {
           executionEventStreamRef.current = null;
         }
+        if (sharedObservationCancelRef.current === cancelObservation) {
+          sharedObservationCancelRef.current = null;
+        }
       }
     })();
-
-    return () => {
-      cancelled = true;
-      eventSubscription.close();
-      if (executionEventStreamRef.current === eventSubscription) {
-        executionEventStreamRef.current = null;
-      }
-    };
   }, [
     activeGraph,
     currentFingerprint,
+    flushPendingProgress,
+    isGraphSnapshotCurrent,
     roomActiveExecution,
+    setNodes,
+    setRunError,
     workspaceId,
   ]);
 

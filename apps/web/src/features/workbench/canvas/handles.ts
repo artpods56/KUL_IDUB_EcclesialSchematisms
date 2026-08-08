@@ -5,12 +5,43 @@ import type {
   ArtifactTypeSpec,
   FieldProjection,
 } from "@/lib/api";
-import type { PortMeta } from "./types";
+import type { HandleFeedIntent, PortMeta } from "./types";
+
+export type { HandleFeedIntent };
+
+const HANDLE_FEED_PREFIX = "feed=";
+
+function encodeHandleFeedSegment(feed: HandleFeedIntent): string {
+  if (feed.kind === "whole") return `${HANDLE_FEED_PREFIX}whole`;
+  return `${HANDLE_FEED_PREFIX}proj/${feed.path.map(encodeURIComponent).join("/")}`;
+}
+
+function decodeHandleFeedSegment(segment: string): HandleFeedIntent | null {
+  if (!segment.startsWith(HANDLE_FEED_PREFIX)) return null;
+  const body = segment.slice(HANDLE_FEED_PREFIX.length);
+  if (body === "whole") return { kind: "whole" };
+  if (!body.startsWith("proj/")) return null;
+  try {
+    const path = body
+      .slice("proj/".length)
+      .split("/")
+      .filter(Boolean)
+      .map((segment) => decodeURIComponent(segment));
+    if (!path.length) return null;
+    return { kind: "projection", path };
+  } catch {
+    return null;
+  }
+}
+
+function isHandleFeedSegment(segment: string | undefined): boolean {
+  return typeof segment === "string" && segment.startsWith(HANDLE_FEED_PREFIX);
+}
 
 /**
  * Encode port type information into the React Flow handle id so that
  * `isValidConnection` can enforce typed artifact flow without extra
- * lookups.
+ * lookups. Optional {@link PortMeta.feed} marks catalog satellites.
  */
 export function encodeHandleId(port: PortMeta): string {
   const parts = port.artifactTypeVariable
@@ -29,7 +60,19 @@ export function encodeHandleId(port: PortMeta): string {
         port.direction,
       ];
   if (port.plugId) parts.push(port.plugId);
+  if (port.feed) parts.push(encodeHandleFeedSegment(port.feed));
   return parts.join("::");
+}
+
+/** Drop connect-time feed intent; persisted edges keep the canonical port handle. */
+export function canonicalHandleId(
+  id: string | null | undefined,
+): string | null {
+  const decoded = decodeHandleId(id);
+  if (!decoded) return id ?? null;
+  if (!decoded.feed) return id ?? null;
+  const { feed: _feed, ...port } = decoded;
+  return encodeHandleId(port);
 }
 
 interface DecodedHandleBase {
@@ -37,6 +80,7 @@ interface DecodedHandleBase {
   shape: PortMeta["shape"];
   direction: PortMeta["direction"];
   plugId?: string;
+  feed?: HandleFeedIntent;
 }
 
 interface DecodedConcreteHandle extends DecodedHandleBase {
@@ -58,12 +102,31 @@ export function decodeHandleId(
 ): DecodedHandle | null {
   if (!id) return null;
   const p = id.split("::");
-  if (p.length !== 5 && p.length !== 6) return null;
+  if (p.length < 5 || p.length > 7) return null;
   const shape = p[3];
   const direction = p[4];
   if (shape !== "one" && shape !== "many") return null;
   if (direction !== "input" && direction !== "output") return null;
-  if (p.length === 6 && !p[5]) return null;
+
+  let plugId: string | undefined;
+  let feed: HandleFeedIntent | undefined;
+  if (p.length === 6) {
+    if (isHandleFeedSegment(p[5])) {
+      const decodedFeed = decodeHandleFeedSegment(p[5]!);
+      if (!decodedFeed) return null;
+      feed = decodedFeed;
+    } else if (p[5]) {
+      plugId = p[5];
+    } else {
+      return null;
+    }
+  } else if (p.length === 7) {
+    if (!p[5] || !isHandleFeedSegment(p[6])) return null;
+    const decodedFeed = decodeHandleFeedSegment(p[6]!);
+    if (!decodedFeed) return null;
+    plugId = p[5];
+    feed = decodedFeed;
+  }
 
   if (p[2] === "$generic") {
     try {
@@ -74,7 +137,8 @@ export function decodeHandleId(
         artifactTypeVariable,
         shape,
         direction,
-        ...(p[5] ? { plugId: p[5] } : {}),
+        ...(plugId ? { plugId } : {}),
+        ...(feed ? { feed } : {}),
       };
     } catch {
       return null;
@@ -89,7 +153,8 @@ export function decodeHandleId(
     schemaVersion,
     shape,
     direction,
-    ...(p[5] ? { plugId: p[5] } : {}),
+    ...(plugId ? { plugId } : {}),
+    ...(feed ? { feed } : {}),
   };
 }
 

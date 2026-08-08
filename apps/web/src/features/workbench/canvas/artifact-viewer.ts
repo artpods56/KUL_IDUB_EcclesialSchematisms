@@ -1,12 +1,23 @@
-import type { Edge, Node, XYPosition } from "@xyflow/react";
+import type { Edge, Node } from "@xyflow/react";
+
+import type { CollaborativeHead, CreateSavedGraphRequest } from "@/lib/api";
 
 import {
-  clampNodeLayout,
+  annotationsFromPresentation,
+  serializeAnnotations,
+  type AnnotationNode,
+} from "./annotations";
+import {
+  hydrateNodeLayout,
+  serializeNodeLayout,
   type WorkflowNodeLayout,
 } from "./node-layout";
 import {
   WORKFLOW_NODE_TYPE,
   type WorkflowEdge,
+  type WorkflowEdgeProjection,
+  type WorkflowEdgeRouteOffset,
+  type WorkflowEdgeRouteOption,
   type WorkflowNodeData,
 } from "./types";
 import type {
@@ -16,6 +27,10 @@ import type {
   ArtifactViewerBinding,
   ArtifactViewerIncomingBinding,
 } from "./artifact-interactions";
+
+export type GraphPresentation = NonNullable<
+  CreateSavedGraphRequest["presentation"]
+>;
 
 export const ARTIFACT_VIEWER_NODE_TYPE = "notariusArtifactViewerNode";
 export const ARTIFACT_VIEWER_EDGE_TYPE = "notariusArtifactViewerEdge";
@@ -52,6 +67,8 @@ export interface ArtifactViewerNodeData extends Record<string, unknown> {
     activity: ArtifactViewerActivity | null,
   ) => void;
   onRemoveNode?: (nodeId: string) => void;
+  /** Ephemeral collaborator selection tint; never persisted. */
+  remoteSelectionColor?: string | null;
 }
 
 export type ArtifactViewerNode = Node<
@@ -59,8 +76,21 @@ export type ArtifactViewerNode = Node<
   typeof ARTIFACT_VIEWER_NODE_TYPE
 >;
 
+export interface ArtifactViewerEdgeUpdate {
+  projection?: WorkflowEdgeProjection | null;
+}
+
 export interface ArtifactViewerEdgeData extends Record<string, unknown> {
   sourcePortName: string;
+  projection?: WorkflowEdgeProjection;
+  projectionTitle?: string;
+  routeOffset?: WorkflowEdgeRouteOffset;
+  routeOptions?: readonly WorkflowEdgeRouteOption[];
+  onUpdate?: (edgeId: string, update: ArtifactViewerEdgeUpdate) => void;
+  onRouteOffsetChange?: (
+    edgeId: string,
+    offset: WorkflowEdgeRouteOffset,
+  ) => void;
 }
 
 export type ArtifactViewerEdge = Edge<
@@ -88,7 +118,10 @@ export type CanvasWorkflowNode = Node<
   WorkflowNodeData,
   typeof WORKFLOW_NODE_TYPE
 >;
-export type CanvasNode = CanvasWorkflowNode | ArtifactViewerNode;
+export type CanvasNode =
+  | CanvasWorkflowNode
+  | ArtifactViewerNode
+  | AnnotationNode;
 export type CanvasEdge =
   | WorkflowEdge
   | ArtifactViewerEdge
@@ -99,136 +132,69 @@ export interface ArtifactViewerCanvasState {
   nodes: ArtifactViewerNode[];
   edges: ArtifactViewerEdge[];
   bindings: ArtifactViewerBinding[];
+  annotations: AnnotationNode[];
 }
 
-interface PersistedArtifactViewer {
-  id: string;
-  position: XYPosition;
-  layout: WorkflowNodeLayout | null;
-  mode: string | null;
+export function emptyGraphPresentation(): GraphPresentation {
+  return { viewers: [], links: [], bindings: [], annotations: [] };
 }
 
-interface PersistedArtifactViewerLink {
-  id: string;
-  sourceNodeId: string;
-  sourcePortName: string;
-  targetViewerId: string;
-}
-
-interface ArtifactViewerDocumentV2 {
-  schemaVersion: 2;
-  viewers: PersistedArtifactViewer[];
-  links: PersistedArtifactViewerLink[];
-  bindings: ArtifactViewerBinding[];
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-}
-
-function finitePosition(value: unknown): XYPosition | null {
-  const candidate = record(value);
-  return candidate &&
-      typeof candidate.x === "number" &&
-      Number.isFinite(candidate.x) &&
-      typeof candidate.y === "number" &&
-      Number.isFinite(candidate.y)
-    ? { x: candidate.x, y: candidate.y }
-    : null;
-}
-
-function persistedLayout(value: unknown): WorkflowNodeLayout | null {
-  const candidate = record(value);
-  if (!candidate) return null;
-  return clampNodeLayout({
-    width: typeof candidate.width === "number" ? candidate.width : undefined,
-    bodyHeight:
-      typeof candidate.bodyHeight === "number"
-        ? candidate.bodyHeight
-        : undefined,
-    appendixHeight:
-      typeof candidate.appendixHeight === "number"
-        ? candidate.appendixHeight
-        : undefined,
-  });
-}
-
-export function artifactViewerStorageKey(
-  userId: string,
-  workspaceId: string,
-  graphId: string,
-): string {
-  return `ns-workbench-presentation:v2:${encodeURIComponent(userId)}:${encodeURIComponent(workspaceId)}:${encodeURIComponent(graphId)}`;
-}
-
-export function serializeArtifactViewerDocument(
-  nodes: readonly ArtifactViewerNode[],
-  edges: readonly ArtifactViewerEdge[],
-  bindings: readonly ArtifactViewerBinding[],
-): string {
-  const document: ArtifactViewerDocumentV2 = {
-    schemaVersion: 2,
-    viewers: nodes.map((node) => ({
+export function presentationFromArtifactViewers(
+  state: Pick<
+    ArtifactViewerCanvasState,
+    "nodes" | "edges" | "bindings" | "annotations"
+  >,
+): GraphPresentation {
+  return {
+    viewers: state.nodes.map((node) => ({
       id: node.id,
       position: { x: node.position.x, y: node.position.y },
-      layout: clampNodeLayout(node.data.layout),
+      layout: serializeNodeLayout(node.data.layout),
       mode: node.data.mode,
     })),
-    links: edges.map((edge) => ({
+    links: state.edges.map((edge) => ({
       id: edge.id,
-      sourceNodeId: edge.source,
-      sourcePortName: edge.data?.sourcePortName ?? "",
-      targetViewerId: edge.target,
+      source_node_id: edge.source,
+      source_port_name: edge.data?.sourcePortName ?? "",
+      target_viewer_id: edge.target,
+      projection: edge.data?.projection
+        ? { path: [...edge.data.projection.path] }
+        : null,
+      route_offset: edge.data?.routeOffset
+        ? { x: edge.data.routeOffset.x, y: edge.data.routeOffset.y }
+        : null,
     })),
-    bindings: bindings.map((binding) => ({
+    bindings: state.bindings.map((binding) => ({
       id: binding.id,
-      sourceViewerId: binding.sourceViewerId,
-      targetViewerId: binding.targetViewerId,
+      source_viewer_id: binding.sourceViewerId,
+      target_viewer_id: binding.targetViewerId,
       mappings: binding.mappings.map((mapping) => ({
-        sourceField: mapping.sourceField,
-        targetField: mapping.targetField,
+        source_field: mapping.sourceField,
+        target_field: mapping.targetField,
       })),
       effects: [...binding.effects],
-      emptySelection: binding.emptySelection,
+      empty_selection: binding.emptySelection,
     })),
+    annotations: serializeAnnotations(state.annotations),
   };
-  return JSON.stringify(document);
 }
 
-export function hydrateArtifactViewerDocument(
-  serialized: string,
+export function artifactViewersFromPresentation(
   graphId: string,
-): ArtifactViewerCanvasState | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(serialized);
-  } catch {
-    return null;
-  }
-  const document = record(parsed);
-  if (
-    (document?.schemaVersion !== 1 && document?.schemaVersion !== 2) ||
-    !Array.isArray(document.viewers) ||
-    !Array.isArray(document.links) ||
-    (document.schemaVersion === 2 && !Array.isArray(document.bindings))
-  ) {
-    return null;
-  }
-
+  presentation: GraphPresentation | null | undefined,
+): ArtifactViewerCanvasState {
+  const viewers = presentation?.viewers ?? [];
   const nodes: ArtifactViewerNode[] = [];
   const nodeIds = new Set<string>();
-  for (const value of document.viewers) {
-    const viewer = record(value);
-    const position = finitePosition(viewer?.position);
+  for (const viewer of viewers) {
+    if (!viewer.id || nodeIds.has(viewer.id)) continue;
+    const x = viewer.position?.x;
+    const y = viewer.position?.y;
     if (
-      !viewer ||
-      typeof viewer.id !== "string" ||
-      !viewer.id.startsWith("artifact-viewer-") ||
-      nodeIds.has(viewer.id) ||
-      !position ||
-      (viewer.mode !== null && typeof viewer.mode !== "string")
+      typeof x !== "number" ||
+      !Number.isFinite(x) ||
+      typeof y !== "number" ||
+      !Number.isFinite(y)
     ) {
       continue;
     }
@@ -236,10 +202,10 @@ export function hydrateArtifactViewerDocument(
     nodes.push({
       id: viewer.id,
       type: ARTIFACT_VIEWER_NODE_TYPE,
-      position,
+      position: { x, y },
       data: {
-        layout: persistedLayout(viewer.layout),
-        mode: viewer.mode,
+        layout: hydrateNodeLayout(viewer.layout ?? null),
+        mode: viewer.mode ?? null,
       },
     });
   }
@@ -247,95 +213,93 @@ export function hydrateArtifactViewerDocument(
   const edges: ArtifactViewerEdge[] = [];
   const edgeIds = new Set<string>();
   const connectedViewerIds = new Set<string>();
-  for (const value of document.links) {
-    const link = record(value);
+  for (const link of presentation?.links ?? []) {
     if (
-      !link ||
-      typeof link.id !== "string" ||
-      !link.id.startsWith("artifact-viewer-edge-") ||
+      !link.id ||
       edgeIds.has(link.id) ||
-      typeof link.sourceNodeId !== "string" ||
-      !link.sourceNodeId ||
-      typeof link.sourcePortName !== "string" ||
-      !link.sourcePortName ||
-      typeof link.targetViewerId !== "string" ||
-      !nodeIds.has(link.targetViewerId) ||
-      connectedViewerIds.has(link.targetViewerId)
+      !link.source_node_id ||
+      !link.source_port_name ||
+      !nodeIds.has(link.target_viewer_id) ||
+      connectedViewerIds.has(link.target_viewer_id)
     ) {
       continue;
     }
     edgeIds.add(link.id);
-    connectedViewerIds.add(link.targetViewerId);
+    connectedViewerIds.add(link.target_viewer_id);
+    const projectionPath = link.projection?.path;
+    const routeOffset = link.route_offset;
     edges.push({
       id: link.id,
       type: ARTIFACT_VIEWER_EDGE_TYPE,
-      source: link.sourceNodeId,
-      target: link.targetViewerId,
+      source: link.source_node_id,
+      target: link.target_viewer_id,
       targetHandle: ARTIFACT_VIEWER_INPUT_HANDLE,
-      data: { sourcePortName: link.sourcePortName },
+      data: {
+        sourcePortName: link.source_port_name,
+        ...(projectionPath?.length
+          ? { projection: { path: [...projectionPath] } }
+          : {}),
+        ...(routeOffset &&
+        typeof routeOffset.x === "number" &&
+        typeof routeOffset.y === "number"
+          ? { routeOffset: { x: routeOffset.x, y: routeOffset.y } }
+          : {}),
+      },
     });
   }
 
   const bindings: ArtifactViewerBinding[] = [];
   const bindingIds = new Set<string>();
-  if (document.schemaVersion === 2) {
-    for (const value of document.bindings as unknown[]) {
-      const binding = record(value);
-      if (
-        !binding ||
-        typeof binding.id !== "string" ||
-        !binding.id.startsWith("artifact-viewer-binding-") ||
-        bindingIds.has(binding.id) ||
-        typeof binding.sourceViewerId !== "string" ||
-        !nodeIds.has(binding.sourceViewerId) ||
-        typeof binding.targetViewerId !== "string" ||
-        !nodeIds.has(binding.targetViewerId) ||
-        binding.sourceViewerId === binding.targetViewerId ||
-        !Array.isArray(binding.mappings) ||
-        binding.mappings.length > 8 ||
-        !Array.isArray(binding.effects) ||
-        binding.effects.length === 0 ||
-        binding.effects.length > 3 ||
-        binding.emptySelection !== "show_all"
-      ) {
-        continue;
-      }
-      const mappings = binding.mappings.flatMap((value) => {
-        const mapping = record(value);
-        return mapping &&
-            typeof mapping.sourceField === "string" &&
-            mapping.sourceField.length <= 255 &&
-            typeof mapping.targetField === "string" &&
-            mapping.targetField.length <= 255
-          ? [{
-              sourceField: mapping.sourceField,
-              targetField: mapping.targetField,
-            }]
-          : [];
-      });
-      const validEffects = binding.effects.every(
-        (effect) =>
-          effect === "filter" ||
-          effect === "highlight" ||
-          effect === "focus",
-      );
-      if (mappings.length !== binding.mappings.length || !validEffects) {
-        continue;
-      }
-      const effects = [...new Set(binding.effects)] as ArtifactViewerBinding[
-        "effects"
-      ];
-      bindingIds.add(binding.id);
-      bindings.push({
-        id: binding.id,
-        sourceViewerId: binding.sourceViewerId,
-        targetViewerId: binding.targetViewerId,
-        mappings,
-        effects,
-        emptySelection: "show_all",
-      });
+  for (const binding of presentation?.bindings ?? []) {
+    if (
+      !binding.id ||
+      bindingIds.has(binding.id) ||
+      !nodeIds.has(binding.source_viewer_id) ||
+      !nodeIds.has(binding.target_viewer_id) ||
+      binding.source_viewer_id === binding.target_viewer_id
+    ) {
+      continue;
     }
+    const mappings = (binding.mappings ?? []).flatMap((mapping) =>
+      mapping.source_field && mapping.target_field
+        ? [{
+            sourceField: mapping.source_field,
+            targetField: mapping.target_field,
+          }]
+        : [],
+    );
+    const effects = [...new Set(binding.effects ?? [])].filter(
+      (effect): effect is ArtifactViewerBinding["effects"][number] =>
+        effect === "filter" ||
+        effect === "highlight" ||
+        effect === "focus",
+    );
+    if (effects.length === 0) continue;
+    bindingIds.add(binding.id);
+    bindings.push({
+      id: binding.id,
+      sourceViewerId: binding.source_viewer_id,
+      targetViewerId: binding.target_viewer_id,
+      mappings,
+      effects,
+      emptySelection: binding.empty_selection ?? "show_all",
+    });
   }
 
-  return { graphId, nodes, edges, bindings };
+  const annotations = annotationsFromPresentation(presentation);
+
+  return { graphId, nodes, edges, bindings, annotations };
+}
+
+export function presentationFromCollaborativeHead(
+  head: Pick<CollaborativeHead, "presentation">,
+): GraphPresentation {
+  const presentation = head.presentation;
+  if (!presentation) return emptyGraphPresentation();
+  return {
+    viewers: [...(presentation.viewers ?? [])],
+    links: [...(presentation.links ?? [])],
+    bindings: [...(presentation.bindings ?? [])],
+    annotations: [...(presentation.annotations ?? [])],
+  };
 }

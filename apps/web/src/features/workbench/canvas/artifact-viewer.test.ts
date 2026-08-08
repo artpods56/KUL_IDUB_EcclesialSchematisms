@@ -1,36 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  APPENDIX_HEIGHT_MIN,
-  LAYOUT_DIMENSION_MAX,
-  NODE_WIDTH_MIN,
-} from "./node-layout";
-import {
   ARTIFACT_VIEWER_EDGE_TYPE,
   ARTIFACT_VIEWER_INPUT_HANDLE,
   ARTIFACT_VIEWER_NODE_TYPE,
-  artifactViewerStorageKey,
-  hydrateArtifactViewerDocument,
-  serializeArtifactViewerDocument,
+  artifactViewersFromPresentation,
+  presentationFromArtifactViewers,
   type ArtifactViewerEdge,
   type ArtifactViewerNode,
 } from "./artifact-viewer";
 import type { ArtifactViewerBinding } from "./artifact-interactions";
 
-describe("artifact viewer storage", () => {
-  it("scopes documents by user, stable workspace UUID, and graph id", () => {
-    const first = artifactViewerStorageKey("user-1", "workspace-1", "graph-1");
-
-    expect(first).toBe(
-      "ns-workbench-presentation:v2:user-1:workspace-1:graph-1",
-    );
-    expect(artifactViewerStorageKey("user-2", "workspace-1", "graph-1")).not.toBe(first);
-    expect(artifactViewerStorageKey("user-1", "workspace-2", "graph-1")).not.toBe(first);
-    expect(artifactViewerStorageKey("user-1", "workspace-1", "graph-2")).not.toBe(first);
-    expect(artifactViewerStorageKey("user-1", "workspace-1", "team/west")).not.toBe(first);
-  });
-
-  it("round-trips only presentation geometry and semantic source identity", () => {
+describe("shared presentation", () => {
+  it("round-trips geometry and semantic source identity without runtime payload", () => {
     const nodes: ArtifactViewerNode[] = [
       {
         id: "artifact-viewer-1",
@@ -49,6 +31,12 @@ describe("artifact viewer storage", () => {
           content_url: "https://private.example/artifact",
           onRemoveNode: () => undefined,
         },
+      },
+      {
+        id: "artifact-viewer-2",
+        type: ARTIFACT_VIEWER_NODE_TYPE,
+        position: { x: 940, y: -88 },
+        data: { layout: null, mode: "map" },
       },
     ];
     const edges: ArtifactViewerEdge[] = [
@@ -81,29 +69,23 @@ describe("artifact viewer storage", () => {
         emptySelection: "show_all",
       },
     ];
-    nodes.push({
-      id: "artifact-viewer-2",
-      type: ARTIFACT_VIEWER_NODE_TYPE,
-      position: { x: 940, y: -88 },
-      data: { layout: null, mode: "map" },
-    });
 
-    const serialized = serializeArtifactViewerDocument(
+    const presentation = presentationFromArtifactViewers({
       nodes,
       edges,
       bindings,
-    );
+      annotations: [],
+    });
 
-    expect(JSON.parse(serialized)).toEqual({
-      schemaVersion: 2,
+    expect(presentation).toEqual({
       viewers: [
         {
           id: "artifact-viewer-1",
           position: { x: 412, y: -88 },
           layout: {
             width: 560,
-            bodyHeight: 240,
-            appendixHeight: 420,
+            body_height: 240,
+            appendix_height: 420,
           },
           mode: "raw",
         },
@@ -117,18 +99,36 @@ describe("artifact viewer storage", () => {
       links: [
         {
           id: "artifact-viewer-edge-1",
-          sourceNodeId: "source-node",
-          sourcePortName: "features",
-          targetViewerId: "artifact-viewer-1",
+          source_node_id: "source-node",
+          source_port_name: "features",
+          target_viewer_id: "artifact-viewer-1",
+          projection: null,
+          route_offset: null,
         },
       ],
-      bindings,
+      bindings: [
+        {
+          id: "artifact-viewer-binding-1",
+          source_viewer_id: "artifact-viewer-1",
+          target_viewer_id: "artifact-viewer-2",
+          mappings: [
+            {
+              source_field: "historical_name",
+              target_field: "transliteration",
+            },
+            { source_field: "district", target_field: "district" },
+          ],
+          effects: ["highlight", "focus"],
+          empty_selection: "show_all",
+        },
+      ],
+      annotations: [],
     });
-    expect(serialized).not.toContain("do-not-persist");
-    expect(serialized).not.toContain("private.example");
+    expect(JSON.stringify(presentation)).not.toContain("do-not-persist");
+    expect(JSON.stringify(presentation)).not.toContain("private.example");
 
     expect(
-      hydrateArtifactViewerDocument(serialized, "graph-1"),
+      artifactViewersFromPresentation("graph-1", presentation),
     ).toEqual({
       graphId: "graph-1",
       nodes: [
@@ -163,148 +163,142 @@ describe("artifact viewer storage", () => {
         },
       ],
       bindings,
+      annotations: [],
     });
   });
-});
 
-describe("artifact viewer document hydration", () => {
-  it.each([
-    ["invalid JSON", "{"],
-    ["wrong schema version", JSON.stringify({
-      schemaVersion: 3,
-      viewers: [],
-      links: [],
-    })],
-    ["v2 without bindings", JSON.stringify({
-      schemaVersion: 2,
-      viewers: [],
-      links: [],
-    })],
-    ["missing viewers", JSON.stringify({ schemaVersion: 1, links: [] })],
-    ["non-array links", JSON.stringify({
-      schemaVersion: 1,
-      viewers: [],
-      links: {},
-    })],
-  ])("rejects %s", (_case, serialized) => {
-    expect(hydrateArtifactViewerDocument(serialized, "graph-1")).toBeNull();
+  it("round-trips presentation link projection and route offset", () => {
+    const edges: ArtifactViewerEdge[] = [
+      {
+        id: "artifact-viewer-edge-1",
+        type: ARTIFACT_VIEWER_EDGE_TYPE,
+        source: "source-node",
+        target: "artifact-viewer-1",
+        targetHandle: ARTIFACT_VIEWER_INPUT_HANDLE,
+        data: {
+          sourcePortName: "items",
+          projection: { path: ["role"] },
+          routeOffset: { x: 12, y: -8 },
+        },
+      },
+    ];
+    const presentation = presentationFromArtifactViewers({
+      nodes: [
+        {
+          id: "artifact-viewer-1",
+          type: ARTIFACT_VIEWER_NODE_TYPE,
+          position: { x: 0, y: 0 },
+          data: { layout: null, mode: null },
+        },
+      ],
+      edges,
+      bindings: [],
+      annotations: [],
+    });
+
+    expect(presentation.links?.[0]).toEqual({
+      id: "artifact-viewer-edge-1",
+      source_node_id: "source-node",
+      source_port_name: "items",
+      target_viewer_id: "artifact-viewer-1",
+      projection: { path: ["role"] },
+      route_offset: { x: 12, y: -8 },
+    });
+
+    expect(
+      artifactViewersFromPresentation("graph-1", presentation).edges[0]?.data,
+    ).toEqual({
+      sourcePortName: "items",
+      projection: { path: ["role"] },
+      routeOffset: { x: 12, y: -8 },
+    });
   });
 
-  it("validates records, clamps layout, de-duplicates viewers, and keeps one link per viewer", () => {
-    const serialized = JSON.stringify({
-      schemaVersion: 1,
+  it("serializes viewer layout with API snake_case fields", () => {
+    const presentation = presentationFromArtifactViewers({
+      nodes: [
+        {
+          id: "artifact-viewer-1",
+          type: ARTIFACT_VIEWER_NODE_TYPE,
+          position: { x: 10, y: 20 },
+          data: {
+            layout: { width: 520, appendixHeight: 300 },
+            mode: "map",
+          },
+        },
+      ],
+      edges: [],
+      bindings: [],
+      annotations: [],
+    });
+
+    expect(presentation.viewers?.[0]?.layout).toEqual({
+      width: 520,
+      body_height: null,
+      appendix_height: 300,
+    });
+  });
+
+  it("hydrates API snake_case layout and drops invalid links", () => {
+    const state = artifactViewersFromPresentation("graph-1", {
       viewers: [
         {
           id: "artifact-viewer-1",
           position: { x: 10, y: 20 },
           layout: {
-            width: 10,
-            bodyHeight: LAYOUT_DIMENSION_MAX + 1,
-            appendixHeight: 20,
+            width: 520,
+            body_height: null,
+            appendix_height: 300,
           },
           mode: "map",
         },
         {
-          id: "artifact-viewer-1",
-          position: { x: 999, y: 999 },
-          layout: { width: 999 },
-          mode: "duplicate-must-not-win",
-        },
-        {
           id: "artifact-viewer-2",
           position: { x: -30, y: 44 },
-          layout: {
-            width: "not-a-number",
-            appendixHeight: 300,
-          },
-          mode: null,
-        },
-        {
-          id: "workflow-node",
-          position: { x: 0, y: 0 },
           layout: null,
           mode: null,
-        },
-        {
-          id: "artifact-viewer-invalid-position",
-          position: { x: "left", y: 0 },
-          layout: null,
-          mode: null,
-        },
-        {
-          id: "artifact-viewer-invalid-mode",
-          position: { x: 0, y: 0 },
-          layout: null,
-          mode: 42,
         },
       ],
       links: [
         {
           id: "artifact-viewer-edge-1",
-          sourceNodeId: "source-a",
-          sourcePortName: "image",
-          targetViewerId: "artifact-viewer-1",
+          source_node_id: "source-a",
+          source_port_name: "image",
+          target_viewer_id: "artifact-viewer-1",
         },
         {
           id: "artifact-viewer-edge-replacement",
-          sourceNodeId: "source-b",
-          sourcePortName: "features",
-          targetViewerId: "artifact-viewer-1",
-        },
-        {
-          id: "artifact-viewer-edge-1",
-          sourceNodeId: "source-c",
-          sourcePortName: "duplicate-edge-id",
-          targetViewerId: "artifact-viewer-2",
+          source_node_id: "source-b",
+          source_port_name: "features",
+          target_viewer_id: "artifact-viewer-1",
         },
         {
           id: "artifact-viewer-edge-2",
-          sourceNodeId: "source-d",
-          sourcePortName: "document",
-          targetViewerId: "artifact-viewer-2",
-        },
-        {
-          id: "artifact-viewer-edge-unknown-target",
-          sourceNodeId: "source-e",
-          sourcePortName: "table",
-          targetViewerId: "artifact-viewer-missing",
+          source_node_id: "source-d",
+          source_port_name: "document",
+          target_viewer_id: "artifact-viewer-2",
         },
         {
           id: "artifact-viewer-edge-empty-port",
-          sourceNodeId: "source-f",
-          sourcePortName: "",
-          targetViewerId: "artifact-viewer-2",
+          source_node_id: "source-f",
+          source_port_name: "",
+          target_viewer_id: "artifact-viewer-2",
+        },
+        {
+          id: "artifact-viewer-edge-unknown-target",
+          source_node_id: "source-e",
+          source_port_name: "table",
+          target_viewer_id: "artifact-viewer-missing",
         },
       ],
+      bindings: [],
     });
 
-    const hydrated = hydrateArtifactViewerDocument(serialized, "graph-1");
-
-    expect(hydrated?.nodes).toEqual([
-      {
-        id: "artifact-viewer-1",
-        type: ARTIFACT_VIEWER_NODE_TYPE,
-        position: { x: 10, y: 20 },
-        data: {
-          layout: {
-            width: NODE_WIDTH_MIN,
-            bodyHeight: LAYOUT_DIMENSION_MAX,
-            appendixHeight: APPENDIX_HEIGHT_MIN,
-          },
-          mode: "map",
-        },
-      },
-      {
-        id: "artifact-viewer-2",
-        type: ARTIFACT_VIEWER_NODE_TYPE,
-        position: { x: -30, y: 44 },
-        data: {
-          layout: { appendixHeight: 300 },
-          mode: null,
-        },
-      },
-    ]);
-    expect(hydrated?.edges).toEqual([
+    expect(state.nodes[0]?.data.layout).toEqual({
+      width: 520,
+      appendixHeight: 300,
+    });
+    expect(state.edges).toEqual([
       {
         id: "artifact-viewer-edge-1",
         type: ARTIFACT_VIEWER_EDGE_TYPE,
@@ -322,6 +316,5 @@ describe("artifact viewer document hydration", () => {
         data: { sourcePortName: "document" },
       },
     ]);
-    expect(hydrated?.bindings).toEqual([]);
   });
 });

@@ -330,6 +330,19 @@ function projectableFields(spec: ArtifactTypeSpec | undefined): FieldOption[] {
   });
 }
 
+function valueAtPath(
+  value: unknown,
+  path: readonly string[],
+): unknown {
+  let current = value;
+  for (const segment of path) {
+    const asRecord = record(current);
+    if (!asRecord || !(segment in asRecord)) return undefined;
+    current = asRecord[segment];
+  }
+  return current;
+}
+
 function pageWindow(count: number, current: number): (number | "gap")[] {
   if (count <= 7) {
     return Array.from({ length: count }, (_, index) => index + 1);
@@ -418,6 +431,7 @@ export function ArtifactPortPreview({
   previewHeight,
   modeChoice: controlledModeChoice,
   onModeChoiceChange,
+  feedProjection = null,
   interaction,
 }: {
   output: RunPortOutput;
@@ -425,6 +439,8 @@ export function ArtifactPortPreview({
   previewHeight: number;
   modeChoice?: string | null;
   onModeChoiceChange?: (mode: string) => void;
+  /** Edge-owned feed: whole output when null/empty, else project along path. */
+  feedProjection?: { path: readonly string[] } | null;
   interaction?: ArtifactViewerInteractionContext;
 }) {
   const { workspace } = useWorkspaceContext();
@@ -436,7 +452,9 @@ export function ArtifactPortPreview({
   const modeChoice = controlledModeChoice === undefined
     ? localModeChoice
     : controlledModeChoice;
-  const [field, setField] = React.useState("");
+  const [localField, setLocalField] = React.useState("");
+  const feedPath = feedProjection?.path.length ? feedProjection.path : null;
+  const fieldControlledByEdge = feedPath != null;
   const [requestedPayloadArtifactId, setRequestedPayloadArtifactId] =
     React.useState<string | null>(null);
 
@@ -503,23 +521,50 @@ export function ArtifactPortPreview({
         artifact.byte_size != null,
     ) && projectionPayloadByteSize <= EAGER_JSON_PREVIEW_BYTE_LIMIT;
   const fields = projectionPayloadsAreBounded ? candidateFields : [];
+  const feedProjectionDeferred =
+    fieldControlledByEdge && sequence && !projectionPayloadsAreBounded;
   const projectionDeferred =
-    candidateFields.length > 0 && !projectionPayloadsAreBounded;
-  const selectedField = fields.find((option) => option.name === field);
+    feedProjectionDeferred ||
+    (!fieldControlledByEdge &&
+      candidateFields.length > 0 &&
+      !projectionPayloadsAreBounded);
+  const localSelectedField = fields.find(
+    (option) => option.name === localField,
+  );
+  const edgeTopLevelField =
+    feedPath?.length === 1 && sequence && !feedProjectionDeferred
+      ? fields.find((option) => option.name === feedPath[0]) ??
+        (feedPath[0]
+          ? { name: feedPath[0], type: "unknown" }
+          : undefined)
+      : undefined;
+  const selectedField = fieldControlledByEdge
+    ? edgeTopLevelField
+    : localSelectedField;
+  const usesPathProjection =
+    fieldControlledByEdge &&
+    feedPath != null &&
+    !feedProjectionDeferred &&
+    !edgeTopLevelField &&
+    sequence;
+  const singleFeedProjection =
+    fieldControlledByEdge && feedPath != null && !sequence;
 
-  const projectionRequests = selectedField
-    ? artifacts.flatMap((artifact) => {
-        const url =
-          artifact.content_type === "application/json"
-            ? artifactContentUrl(workspace.id, artifact.content_url)
-            : null;
-        return url
-          ? [{ artifactId: artifact.artifact_id, url }]
-          : [];
-      })
-    : [];
+  const projectionRequests =
+    selectedField || usesPathProjection
+      ? artifacts.flatMap((artifact) => {
+          const url =
+            artifact.content_type === "application/json"
+              ? artifactContentUrl(workspace.id, artifact.content_url)
+              : null;
+          return url
+            ? [{ artifactId: artifact.artifact_id, url }]
+            : [];
+        })
+      : [];
   const projectionKey: SequencePayloadKey | null =
-    selectedField && projectionRequests.length === artifacts.length
+    (selectedField || usesPathProjection) &&
+    projectionRequests.length === artifacts.length
       ? ["artifact-json-sequence", output.port, projectionRequests]
       : null;
   const {
@@ -548,11 +593,23 @@ export function ArtifactPortPreview({
     modeChoice && projectionModes.includes(modeChoice as "pretty" | "raw")
       ? modeChoice
       : projectionModes[0];
+  const showingFeedProjection = Boolean(
+    selectedField || usesPathProjection || singleFeedProjection,
+  );
   const projectionMissingContent =
-    Boolean(selectedField) && projectionRequests.length !== artifacts.length;
+    Boolean(selectedField || usesPathProjection) &&
+    projectionRequests.length !== artifacts.length;
+  const singleFeedValue =
+    singleFeedProjection && feedPath && activePayload !== undefined
+      ? valueAtPath(activePayload, feedPath)
+      : undefined;
   const projectionFallback =
-    Boolean(selectedField) && (Boolean(projectionError) || projectionMissingContent);
-  const visibleModes = selectedField
+    showingFeedProjection &&
+    (Boolean(projectionError) ||
+      projectionMissingContent ||
+      (singleFeedProjection &&
+        (Boolean(activePayloadError) || jsonPayloadMissing)));
+  const visibleModes = showingFeedProjection
     ? projectionFallback
       ? META_ARTIFACT_RENDERER.modes
       : projectionModes
@@ -560,14 +617,23 @@ export function ArtifactPortPreview({
       ? []
       : renderer.modes;
   const projectedValues =
-    selectedField && projectionPayloads
-      ? artifacts.map(
-          (artifact) =>
-            record(projectionPayloads[artifact.artifact_id])?.[
-              selectedField.name
-            ],
-        )
-      : null;
+    selectedField || usesPathProjection
+      ? projectionPayloads
+        ? artifacts.map((artifact) => {
+            const payload = projectionPayloads[artifact.artifact_id];
+            if (usesPathProjection && feedPath) {
+              return valueAtPath(payload, feedPath);
+            }
+            if (!selectedField) return undefined;
+            return record(payload)?.[selectedField.name];
+          })
+        : null
+      : singleFeedProjection
+        ? [singleFeedValue]
+        : null;
+  const feedProjectionLabel = feedPath
+    ? feedPath.join(".")
+    : selectedField?.name;
   let payloadLoadingNotice =
     "This JSON artifact is not loaded automatically because its size is unknown.";
   if (explicitPayloadLoading) {
@@ -591,7 +657,7 @@ export function ArtifactPortPreview({
             {...stylex.props(s.modeToggle)}
           >
             {visibleModes.map((option) => {
-              const selectedMode = selectedField ? projectionMode : mode;
+              const selectedMode = showingFeedProjection ? projectionMode : mode;
               return (
                 <button
                   key={option}
@@ -617,12 +683,12 @@ export function ArtifactPortPreview({
           </div>
         ) : null}
       </div>
-      {fields.length ? (
+      {!fieldControlledByEdge && fields.length ? (
         <select
           aria-label="Project artifacts onto a field"
-          value={field}
+          value={localField}
           {...nodeInteractionProps(stylex.props(s.fieldSelect))}
-          onChange={(event) => setField(event.currentTarget.value)}
+          onChange={(event) => setLocalField(event.currentTarget.value)}
         >
           <option value="">whole objects</option>
           {fields.map((option) => (
@@ -634,31 +700,41 @@ export function ArtifactPortPreview({
       ) : null}
       {projectionDeferred ? (
         <span {...stylex.props(s.notice)}>
-          Field projection is disabled because this sequence is too large to
-          load safely in the browser.
+          {fieldControlledByEdge
+            ? `Field preview for .${feedPath?.join(".")} is disabled because this sequence is too large to load safely in the browser.`
+            : "Field projection is disabled because this sequence is too large to load safely in the browser."}
         </span>
       ) : null}
-      {selectedField ? (
+      {showingFeedProjection ? (
         <>
           <span {...stylex.props(s.projectionType)}>
-            list[{selectedField.type}] · {artifacts.length} items
+            {sequence
+              ? `list · .${feedProjectionLabel} · ${artifacts.length} items`
+              : `.${feedProjectionLabel}`}
           </span>
           <div
             {...nodeInteractionProps(stylex.props(s.body))}
             style={{ maxHeight: previewHeight }}
           >
-            {projectionLoading ? (
+            {projectionLoading ||
+            (singleFeedProjection &&
+              (activePayloadLoading || payloadDeferred)) ? (
               <span role="status" aria-live="polite" {...stylex.props(s.notice)}>
                 Loading projected values…
               </span>
-            ) : projectionError || projectionMissingContent ? (
+            ) : projectionError ||
+              projectionMissingContent ||
+              (singleFeedProjection &&
+                (Boolean(activePayloadError) || jsonPayloadMissing)) ? (
               <>
                 <p
                   role="alert"
                   title={
                     projectionError instanceof Error
                       ? projectionError.message
-                      : undefined
+                      : activePayloadError instanceof Error
+                        ? activePayloadError.message
+                        : undefined
                   }
                   {...stylex.props(s.notice, s.noticeError)}
                 >
@@ -672,9 +748,13 @@ export function ArtifactPortPreview({
             ) : projectedValues ? (
               projectionMode === "raw" ? (
                 <pre {...stylex.props(s.raw)}>
-                  {JSON.stringify(projectedValues, null, 2)}
+                  {JSON.stringify(
+                    sequence ? projectedValues : projectedValues[0],
+                    null,
+                    2,
+                  )}
                 </pre>
-              ) : (
+              ) : sequence ? (
                 <div {...stylex.props(s.projectedList)}>
                   {projectedValues.map((value, itemIndex) => (
                     <div key={itemIndex} {...stylex.props(s.projectedRow)}>
@@ -685,6 +765,8 @@ export function ArtifactPortPreview({
                     </div>
                   ))}
                 </div>
+              ) : (
+                <PrettyValue value={projectedValues[0] ?? "—"} />
               )
             ) : null}
           </div>

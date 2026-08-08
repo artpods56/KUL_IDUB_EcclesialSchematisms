@@ -35,6 +35,7 @@ import {
   EMPTY_ARTIFACT_KEY_SELECTION,
   type ArtifactViewerInteractionContext,
 } from "../artifact-interactions";
+import { RemoteSelectionRing } from "../../room/RemoteSelectionRing";
 import { handleStyle } from "../handle-style";
 import {
   resolvedAppendixHeight,
@@ -48,22 +49,32 @@ import {
 } from "../types";
 import { ArtifactPortPreview } from "./ArtifactsAppendix";
 import { LayoutResizeHandle } from "./LayoutResizeHandle";
+import { useShellGridFill } from "./useShellGridFill";
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 
 const s = stylex.create({
+  shellFrame: {
+    position: "relative",
+    boxSizing: "border-box",
+  },
   shell: {
     position: "relative",
-    display: "grid",
-    gap: "10px",
     width: "520px",
-    padding: "10px 12px 12px",
     overflow: "visible",
     borderRadius: tokens.radiusLg,
     backgroundColor: tokens.colorSurface,
     boxShadow: tokens.shadowNode,
     color: tokens.colorText,
     boxSizing: "border-box",
+  },
+  shellContent: {
+    display: "grid",
+    gap: "10px",
+    padding: "10px 12px 12px",
+    boxSizing: "border-box",
+    flexShrink: 0,
+    width: "100%",
   },
   selected: {
     boxShadow: tokens.shadowNodeSelected,
@@ -296,11 +307,14 @@ export default function ArtifactViewerNodeCard({
   const artifactContract = artifactShapeLabel
     ? `${artifactTypeLabel} · ${artifactShapeLabel}`
     : artifactTypeLabel;
+  const feedLabel = incomingEdge?.data?.projection?.path.length
+    ? `${sourcePort?.title ?? sourcePortName ?? "output"}.${incomingEdge.data.projection.path.join(".")}`
+    : (sourcePort?.title ?? sourcePortName ?? "output");
   const sourceLabel = !incomingEdge
     ? "No output connected"
     : sourceNode
-      ? `${sourceNode.data.spec.title} → ${sourcePort?.title ?? sourcePortName ?? "output"}`
-      : `${incomingEdge.source} → ${sourcePortName ?? "output"}`;
+      ? `${sourceNode.data.spec.title} → ${feedLabel}`
+      : `${incomingEdge.source} → ${feedLabel}`;
   const sourceIsBusy =
     sourceNode?.data.execution.status === "uploading" ||
     sourceNode?.data.execution.status === "queued" ||
@@ -322,6 +336,8 @@ export default function ArtifactViewerNodeCard({
   const layout = draftLayout ?? data.layout;
   const width = resolvedNodeWidth(layout);
   const previewHeight = resolvedAppendixHeight(layout);
+  const { contentRef, frameStyle, shellStyle, gridWidth, fillMinHeight } =
+    useShellGridFill(width);
   const outputRevision = renderableOutput?.artifacts
     .map((artifact) => artifact.artifact_id)
     .join(":") ?? "";
@@ -344,7 +360,15 @@ export default function ArtifactViewerNodeCard({
 
   React.useEffect(() => {
     updateNodeInternals(id);
-  }, [id, incomingEdge?.id, outputRevision, previewHeight, updateNodeInternals, width]);
+  }, [
+    fillMinHeight,
+    gridWidth,
+    id,
+    incomingEdge?.id,
+    outputRevision,
+    previewHeight,
+    updateNodeInternals,
+  ]);
 
   const commitLayout = (next: WorkflowNodeLayout | null) => {
     setDraftLayout(null);
@@ -353,136 +377,143 @@ export default function ArtifactViewerNodeCard({
   };
 
   return (
-    <article
-      aria-label="Artifact viewer"
-      data-testid="artifact-viewer-node"
-      {...stylex.props(s.shell, selected ? s.selected : null)}
-      style={{ width }}
-    >
-      <header {...stylex.props(s.header)}>
-        <button
-          type="button"
-          aria-label="Remove Artifact viewer"
-          title="Remove Artifact viewer"
-          {...interactionProps(stylex.props(s.removeButton))}
-          onClick={() => data.onRemoveNode?.(id)}
-        >
-          <X size={13} aria-hidden="true" />
-        </button>
-        <span {...stylex.props(s.heading)}>
-          <span {...stylex.props(s.titleRow)}>
-            <span {...stylex.props(s.title)}>Artifact Viewer</span>
-            <span title={artifactContract} {...stylex.props(s.contract)}>
-              {artifactContract}
-            </span>
-          </span>
-          <span title={sourceLabel} {...stylex.props(s.source)}>
-            {sourceLabel}
-          </span>
-        </span>
-        <span
-          aria-live="polite"
-          {...stylex.props(
-            s.status,
-            sourceIsBusy ? s.statusBusy : null,
-            !sourceIsBusy &&
-                (!incomingEdge ||
-                  (incomingEdge && !renderableOutput && sourceNode))
-              ? s.statusIdle
-              : null,
-            incomingEdge && !sourceNode ? s.statusUnavailable : null,
-          )}
-        >
-          {sourceIsBusy ? (
-            <LoaderCircle
-              size={10}
-              aria-hidden="true"
-              {...stylex.props(s.spinner)}
-            />
-          ) : !incomingEdge ? (
-            <Link2 size={10} aria-hidden="true" />
-          ) : !sourceNode ? (
-            <TriangleAlert size={10} aria-hidden="true" />
-          ) : renderableOutput ? (
-            <CheckCircle2 size={10} aria-hidden="true" />
-          ) : (
-            <Link2 size={10} aria-hidden="true" />
-          )}
-          {stateLabel}
-        </span>
-      </header>
-
-      <div {...stylex.props(s.inputRow)}>
-        <span {...stylex.props(s.inputTab)}>
-          Artifact <span {...stylex.props(s.inputKind)}>any</span>
-        </span>
-        <Handle
-          id={ARTIFACT_VIEWER_INPUT_HANDLE}
-          type="target"
-          position={Position.Left}
-          isConnectable={isConnectable}
-          aria-label="Input port Artifact, accepts Any artifact"
-          title="Accepts any artifact or artifact sequence. Connect an output here."
-          style={handleStyle("50%", tokens.colorAccent)}
-        />
-      </div>
-
-      <div {...stylex.props(s.interactionRow)}>
-        <span {...stylex.props(s.interactionTab)}>
-          <Link2 size={10} aria-hidden="true" />
-          linked input
-        </span>
-        <Handle
-          id={ARTIFACT_VIEWER_INTERACTION_INPUT_HANDLE}
-          type="target"
-          position={Position.Left}
-          isConnectable={isConnectable}
-          aria-label="Viewer interaction input"
-          title="Accept a key selection from another Artifact Viewer."
-          style={handleStyle("50%", tokens.colorInfo)}
-        />
-        <span {...stylex.props(s.interactionTab, s.interactionTabOutput)}>
-          selection
-          <Link2 size={10} aria-hidden="true" />
-        </span>
-        <Handle
-          id={ARTIFACT_VIEWER_INTERACTION_OUTPUT_HANDLE}
-          type="source"
-          position={Position.Right}
-          isConnectable={isConnectable}
-          aria-label="Viewer selection output"
-          title="Send this viewer's key selection to another Artifact Viewer."
-          style={handleStyle("50%", tokens.colorInfo)}
-        />
-      </div>
-
-      <div
-        {...interactionProps(stylex.props(s.viewport))}
-        style={{ height: previewHeight }}
+    <div {...stylex.props(s.shellFrame)} style={frameStyle}>
+      <article
+        aria-label="Artifact viewer"
+        data-testid="artifact-viewer-node"
+        {...stylex.props(s.shell, selected ? s.selected : null)}
+        style={shellStyle}
       >
-        {renderableOutput ? (
-          <ArtifactPortPreview
-            key={`${incomingEdge?.source}:${renderableOutput.port}:${outputRevision}`}
-            output={renderableOutput}
-            artifactTypes={registry?.artifact_types ?? []}
-            previewHeight={Math.max(120, previewHeight - 44)}
-            modeChoice={data.mode}
-            onModeChoiceChange={(mode) => data.onModeChange?.(id, mode)}
-            interaction={interaction}
+      <div ref={contentRef} {...stylex.props(s.shellContent)}>
+        {!selected && data.remoteSelectionColor ? (
+          <RemoteSelectionRing color={data.remoteSelectionColor} />
+        ) : null}
+        <header {...stylex.props(s.header)}>
+          <button
+            type="button"
+            aria-label="Remove Artifact viewer"
+            title="Remove Artifact viewer"
+            {...interactionProps(stylex.props(s.removeButton))}
+            onClick={() => data.onRemoveNode?.(id)}
+          >
+            <X size={13} aria-hidden="true" />
+          </button>
+          <span {...stylex.props(s.heading)}>
+            <span {...stylex.props(s.titleRow)}>
+              <span {...stylex.props(s.title)}>Artifact Viewer</span>
+              <span title={artifactContract} {...stylex.props(s.contract)}>
+                {artifactContract}
+              </span>
+            </span>
+            <span title={sourceLabel} {...stylex.props(s.source)}>
+              {sourceLabel}
+            </span>
+          </span>
+          <span
+            aria-live="polite"
+            {...stylex.props(
+              s.status,
+              sourceIsBusy ? s.statusBusy : null,
+              !sourceIsBusy &&
+                  (!incomingEdge ||
+                    (incomingEdge && !renderableOutput && sourceNode))
+                ? s.statusIdle
+                : null,
+              incomingEdge && !sourceNode ? s.statusUnavailable : null,
+            )}
+          >
+            {sourceIsBusy ? (
+              <LoaderCircle
+                size={10}
+                aria-hidden="true"
+                {...stylex.props(s.spinner)}
+              />
+            ) : !incomingEdge ? (
+              <Link2 size={10} aria-hidden="true" />
+            ) : !sourceNode ? (
+              <TriangleAlert size={10} aria-hidden="true" />
+            ) : renderableOutput ? (
+              <CheckCircle2 size={10} aria-hidden="true" />
+            ) : (
+              <Link2 size={10} aria-hidden="true" />
+            )}
+            {stateLabel}
+          </span>
+        </header>
+
+        <div {...stylex.props(s.inputRow)}>
+          <span {...stylex.props(s.inputTab)}>
+            Artifact <span {...stylex.props(s.inputKind)}>any</span>
+          </span>
+          <Handle
+            id={ARTIFACT_VIEWER_INPUT_HANDLE}
+            type="target"
+            position={Position.Left}
+            isConnectable={isConnectable}
+            aria-label="Input port Artifact, accepts Any artifact"
+            title="Accepts any artifact or artifact sequence. Connect an output here."
+            style={handleStyle("50%", tokens.colorAccent)}
           />
-        ) : (
-          <div {...stylex.props(s.empty)}>
-            <Link2 size={19} aria-hidden="true" />
-            <span {...stylex.props(s.emptyTitle)}>
-              {incomingEdge ? "No materialization yet" : "Connect an output"}
-            </span>
-            <span {...stylex.props(s.emptyCopy)}>
-              {incomingEdge
-                ? "The connected output has not produced an artifact for the current run."
-                : "The viewer chooses its renderer from the artifact connected to this generic input."}
-            </span>
-          </div>
-        )}
+        </div>
+
+        <div {...stylex.props(s.interactionRow)}>
+          <span {...stylex.props(s.interactionTab)}>
+            <Link2 size={10} aria-hidden="true" />
+            linked input
+          </span>
+          <Handle
+            id={ARTIFACT_VIEWER_INTERACTION_INPUT_HANDLE}
+            type="target"
+            position={Position.Left}
+            isConnectable={isConnectable}
+            aria-label="Viewer interaction input"
+            title="Accept a key selection from another Artifact Viewer."
+            style={handleStyle("50%", tokens.colorInfo)}
+          />
+          <span {...stylex.props(s.interactionTab, s.interactionTabOutput)}>
+            selection
+            <Link2 size={10} aria-hidden="true" />
+          </span>
+          <Handle
+            id={ARTIFACT_VIEWER_INTERACTION_OUTPUT_HANDLE}
+            type="source"
+            position={Position.Right}
+            isConnectable={isConnectable}
+            aria-label="Viewer selection output"
+            title="Send this viewer's key selection to another Artifact Viewer."
+            style={handleStyle("50%", tokens.colorInfo)}
+          />
+        </div>
+
+        <div
+          {...interactionProps(stylex.props(s.viewport))}
+          style={{ height: previewHeight }}
+        >
+          {renderableOutput ? (
+            <ArtifactPortPreview
+              key={`${incomingEdge?.source}:${renderableOutput.port}:${outputRevision}:${incomingEdge?.data?.projection?.path.join(".") ?? "whole"}`}
+              output={renderableOutput}
+              artifactTypes={registry?.artifact_types ?? []}
+              previewHeight={Math.max(120, previewHeight - 44)}
+              modeChoice={data.mode}
+              onModeChoiceChange={(mode) => data.onModeChange?.(id, mode)}
+              feedProjection={incomingEdge?.data?.projection ?? null}
+              interaction={interaction}
+            />
+          ) : (
+            <div {...stylex.props(s.empty)}>
+              <Link2 size={19} aria-hidden="true" />
+              <span {...stylex.props(s.emptyTitle)}>
+                {incomingEdge ? "No materialization yet" : "Connect an output"}
+              </span>
+              <span {...stylex.props(s.emptyCopy)}>
+                {incomingEdge
+                  ? "The connected output has not produced an artifact for the current run."
+                  : "The viewer chooses its renderer from the artifact connected to this generic input."}
+              </span>
+            </div>
+          )}
+        </div>
       </div>
 
       <LayoutResizeHandle
@@ -492,6 +523,7 @@ export default function ArtifactViewerNodeCard({
         onDraft={setDraftLayout}
         onCommit={commitLayout}
       />
-    </article>
+      </article>
+    </div>
   );
 }

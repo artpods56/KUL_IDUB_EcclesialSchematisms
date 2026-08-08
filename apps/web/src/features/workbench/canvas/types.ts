@@ -107,11 +107,18 @@ export function serializeWorkflowEdgeTransport(
   };
 }
 
+/** Connect-time feed intent on output catalog satellite handles. */
+export type HandleFeedIntent =
+  | { kind: "whole" }
+  | { kind: "projection"; path: readonly string[] };
+
 interface PortMetaBase {
   portName: string;
   shape: Port["shape"];
   direction: "input" | "output";
   plugId?: string;
+  /** Connect-time only; catalog satellites. Never persisted on saved edges. */
+  feed?: HandleFeedIntent;
 }
 
 /** Metadata encoded into React Flow handle ids for typed connections. */
@@ -223,6 +230,8 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   progress: WorkflowNodeProgress | null;
   /** Saved-graph identity and authoring state; never serialized with the graph. */
   historyContext: WorkflowNodeHistoryContext | null;
+  /** Ephemeral collaborator selection tint; never persisted. */
+  remoteSelectionColor?: string | null;
   onImagesSelected?: (nodeId: string, files: File[]) => void;
   onConfigChange?: (nodeId: string, name: string, value: unknown) => void;
   onLayoutChange?: (nodeId: string, layout: WorkflowNodeLayout | null) => void;

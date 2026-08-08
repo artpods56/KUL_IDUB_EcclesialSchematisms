@@ -23,6 +23,7 @@ import "@xyflow/react/dist/style.css";
 
 import { useTheme } from "@/components/theme";
 import { tokens } from "@/lib/stylex/tokens.stylex";
+import { ANNOTATION_NODE_TYPE } from "./annotations";
 import {
   ARTIFACT_VIEWER_EDGE_TYPE,
   ARTIFACT_VIEWER_INTERACTION_EDGE_TYPE,
@@ -34,6 +35,7 @@ import { connectionIsValid } from "./handles";
 import ArtifactViewerEdge from "./edges/ArtifactViewerEdge";
 import ArtifactViewerInteractionEdge from "./edges/ArtifactViewerInteractionEdge";
 import WorkflowEdgeControl from "./edges/WorkflowEdge";
+import AnnotationNode from "./nodes/AnnotationNode";
 import ArtifactViewerNode from "./nodes/ArtifactViewerNode";
 import WorkflowNodeCard from "./nodes/WorkflowNode";
 import {
@@ -45,6 +47,7 @@ import {
 export const nodeTypes: NodeTypes = {
   [WORKFLOW_NODE_TYPE]: WorkflowNodeCard,
   [ARTIFACT_VIEWER_NODE_TYPE]: ArtifactViewerNode,
+  [ANNOTATION_NODE_TYPE]: AnnotationNode,
 };
 
 export const edgeTypes: EdgeTypes = {
@@ -76,6 +79,8 @@ export interface WorkflowCanvasProps {
   ) => void;
   onPaneClick?: () => void;
   animateEdges?: boolean;
+  /** Background lattice gap in flow units; omit to hide the painted grid. */
+  gridGap?: number | null;
 }
 
 export function WorkflowCanvas({
@@ -90,6 +95,7 @@ export function WorkflowCanvas({
   onPaneReady,
   onPaneClick,
   animateEdges = false,
+  gridGap = 54,
 }: WorkflowCanvasProps) {
   const { resolved } = useTheme();
   const renderedEdges = React.useMemo(
@@ -121,6 +127,8 @@ export function WorkflowCanvas({
         minZoom={0.35}
         maxZoom={1.7}
         colorMode={resolved}
+        // Click on a handle is owned by port UI (e.g. expand fields); drag still connects.
+        connectOnClick={false}
         panOnScroll
         panOnDrag={[1, 2]}
         selectionOnDrag
@@ -142,12 +150,19 @@ export function WorkflowCanvas({
         }}
       >
         {children}
-        <Background
-          variant={BackgroundVariant.Lines}
-          gap={54}
-          size={0.65}
-          color={tokens.colorGrid}
-        />
+        {gridGap != null && gridGap > 0 ? (
+          <Background
+            variant={BackgroundVariant.Lines}
+            gap={gridGap}
+            // XYFlow draws lines at the pattern center and, when offset is 0,
+            // falls through `0 || gap/2` to a half-cell shift. Passing gap/2
+            // cancels the centered stroke so lines sit on world cell boundaries
+            // (same lattice our snap math uses).
+            offset={gridGap / 2}
+            lineWidth={1}
+            color={tokens.colorGrid}
+          />
+        ) : null}
         <Controls
           className="ns-flow-controls"
           showInteractive={false}

@@ -17,6 +17,7 @@ import {
   createWorkflowNodeData,
 } from "../canvas/types";
 import type { WorkflowNode } from "../model/execution-plan";
+import type { ActiveExecutionSummary } from "../room";
 import { deferred } from "./test/deferred";
 import { renderHook } from "./test/renderHook";
 import { useRunExecution } from "./useRunExecution";
@@ -99,11 +100,50 @@ function succeededExecution(nodeId = "node-1"): RunExecution {
       node_runs: [{
         node_id: nodeId,
         status: "succeeded",
-        outputs: [],
+        outputs: [{
+          port: "output",
+          kind: "single",
+          value: {
+            artifact_id: "artifact-1",
+            artifact_type: "text.plain",
+            schema_version: 1,
+          },
+          artifacts: [{
+            artifact_id: "artifact-1",
+            artifact_type: "text.plain",
+            content_type: "text/plain",
+            schema_version: 1,
+            byte_size: 4,
+          }],
+        }],
         error: null,
       }],
     },
   });
+}
+
+function roomExecution(
+  status: ActiveExecutionSummary["status"],
+  overrides: Partial<ActiveExecutionSummary> = {},
+): ActiveExecutionSummary {
+  return {
+    execution_id: executionId,
+    graph_revision: 1,
+    status,
+    scope: "selected-with-dependencies",
+    requested_node_ids: ["node-1"],
+    starter: {
+      actor_id: "actor-1",
+      display_name: "Owner",
+      color: "emerald",
+    },
+    active_node_id: status === "running" || status === "cancelling"
+      ? "node-1"
+      : null,
+    overlays_compatible: true,
+    cancellable: true,
+    ...overrides,
+  };
 }
 
 type HookOptions = Parameters<typeof useRunExecution>[0];
@@ -128,7 +168,7 @@ function hookHarness(
     edges: [],
     activeGraph: null,
     currentFingerprint: "fingerprint-1",
-    isDirty: true,
+    canMaterializeSavedGraph: false,
     nodeSecretStatuses: {},
     setNodes,
     setRunError,
@@ -767,7 +807,7 @@ describe("useRunExecution", () => {
         revision: 7,
         nodes: [],
       },
-      isDirty: false,
+      canMaterializeSavedGraph: true,
     });
     const hook = await renderHook(useRunExecution, harness.hookOptions);
 
@@ -792,7 +832,7 @@ describe("useRunExecution", () => {
         revision: 7,
         nodes: [],
       },
-      isDirty: false,
+      canMaterializeSavedGraph: true,
     });
     const hook = await renderHook(useRunExecution, harness.hookOptions);
 
@@ -817,7 +857,7 @@ describe("useRunExecution", () => {
         revision: 7,
         nodes: [],
       },
-      isDirty: true,
+      canMaterializeSavedGraph: false,
     });
     const hook = await renderHook(useRunExecution, harness.hookOptions);
 
@@ -883,6 +923,99 @@ describe("useRunExecution", () => {
     expect(hook.result.current.announcement).toContain(
       "graph changes prevented its results",
     );
+  });
+
+  it("applies shared execution results so remote artifact viewers can populate", async () => {
+    apiMocks.getRunExecution
+      .mockResolvedValueOnce(execution("running"))
+      .mockResolvedValueOnce(succeededExecution());
+    const harness = hookHarness({
+      roomActiveExecution: roomExecution("queued"),
+    });
+    const hook = await renderHook(useRunExecution, harness.hookOptions);
+
+    expect(hook.result.current.announcement).toContain("Observing shared execution");
+    expect(apiMocks.subscribeRunExecutionEvents).toHaveBeenCalledOnce();
+    expect(harness.nodes()[0]?.data.execution.status).toBe("running");
+
+    await React.act(async () => {
+      await hook.rerender({
+        ...harness.hookOptions,
+        roomActiveExecution: roomExecution("running"),
+      });
+    });
+    // Room lifecycle updates must not restart the observation subscription.
+    expect(apiMocks.subscribeRunExecutionEvents).toHaveBeenCalledOnce();
+
+    await React.act(async () => {
+      await hook.rerender({
+        ...harness.hookOptions,
+        roomActiveExecution: null,
+      });
+      await vi.advanceTimersByTimeAsync(500);
+    });
+
+    expect(harness.nodes()[0]?.data.execution.status).toBe("succeeded");
+    expect(harness.nodes()[0]?.data.run?.outputs[0]?.artifacts[0]?.artifact_id)
+      .toBe("artifact-1");
+    expect(hook.result.current.announcement).toBe(
+      "Shared execution completed successfully.",
+    );
+    expect(hook.result.current.visibleExecution).toBeNull();
+    expect(hook.result.current.running).toBe(false);
+  });
+
+  it("keeps shared observation alive across room status updates before terminal results", async () => {
+    const runningPoll = deferred<RunExecution>();
+    const terminalPoll = deferred<RunExecution>();
+    apiMocks.getRunExecution
+      .mockReturnValueOnce(runningPoll.promise)
+      .mockReturnValueOnce(terminalPoll.promise);
+    const harness = hookHarness({
+      roomActiveExecution: roomExecution("queued"),
+    });
+    const hook = await renderHook(useRunExecution, harness.hookOptions);
+
+    expect(hook.result.current.visibleExecution?.status).toBe("queued");
+    expect(apiMocks.subscribeRunExecutionEvents).toHaveBeenCalledOnce();
+
+    await React.act(async () => {
+      await hook.rerender({
+        ...harness.hookOptions,
+        roomActiveExecution: roomExecution("running"),
+      });
+    });
+    expect(apiMocks.subscribeRunExecutionEvents).toHaveBeenCalledOnce();
+    expect(hook.result.current.visibleExecution?.status).toBe("running");
+
+    await React.act(async () => {
+      await hook.rerender({
+        ...harness.hookOptions,
+        roomActiveExecution: roomExecution("cancelling"),
+      });
+    });
+    expect(apiMocks.subscribeRunExecutionEvents).toHaveBeenCalledOnce();
+    expect(hook.result.current.visibleExecution?.status).toBe("cancelling");
+
+    await React.act(async () => {
+      runningPoll.resolve(execution("cancelling"));
+      await Promise.resolve();
+    });
+    expect(harness.nodes()[0]?.data.execution.status).toBe("cancelling");
+
+    await React.act(async () => {
+      await hook.rerender({
+        ...harness.hookOptions,
+        roomActiveExecution: null,
+      });
+      await vi.advanceTimersByTimeAsync(500);
+      terminalPoll.resolve(execution("cancelled"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(harness.nodes()[0]?.data.execution.status).toBe("cancelled");
+    expect(hook.result.current.announcement).toBe("Shared execution cancelled.");
   });
 
   it("restores cancellation failures and permits retries after mismatched responses", async () => {

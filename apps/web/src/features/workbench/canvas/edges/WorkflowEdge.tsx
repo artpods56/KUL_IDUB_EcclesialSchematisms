@@ -2,120 +2,37 @@
 
 import * as React from "react";
 import * as stylex from "@stylexjs/stylex";
-import { Popover } from "@base-ui/react/popover";
 import {
   BaseEdge,
   EdgeLabelRenderer,
-  Position,
   type EdgeProps,
   useReactFlow,
-  useViewport,
 } from "@xyflow/react";
-import { Check, ChevronDown, GripVertical } from "lucide-react";
+import { Check } from "lucide-react";
 
 import { tokens } from "@/lib/stylex/tokens.stylex";
+import {
+  conversionPathsEqual,
+  edgeTransportChipLabel,
+  feedChoicesFromRouteOptions,
+  projectionsEqual,
+} from "../../model/connection-feeds";
 import type {
   WorkflowEdge,
   WorkflowEdgeData,
   WorkflowEdgeRoute,
-  WorkflowEdgeRouteOption,
   WorkflowEdgeRouteOffset,
+  WorkflowEdgeRouteOption,
 } from "../types";
+import { EdgeSelectorBlock } from "./EdgeSelectorBlock";
+import { applyHandleFanOffset, routedBezierPath } from "./edge-path";
+import { useEdgeFanOffsets } from "./useEdgeFanOffsets";
+import {
+  useEdgeRouteBendHandlers,
+  useResolvedEdgeRouteOffset,
+} from "./useEdgeRouteBend";
 
 const s = stylex.create({
-  positioner: {
-    position: "absolute",
-    pointerEvents: "all",
-    zIndex: 10,
-  },
-  controls: {
-    display: "inline-flex",
-    alignItems: "stretch",
-    overflow: "hidden",
-    borderWidth: 1,
-    borderStyle: "solid",
-    borderColor: tokens.colorBorderStrong,
-    borderRadius: "5px",
-    backgroundColor: tokens.colorSurfaceRaised,
-    boxShadow: tokens.shadowNode,
-    pointerEvents: "all",
-  },
-  controlsSelected: {
-    borderColor: tokens.colorAccentBorder,
-    boxShadow: tokens.shadowNodeSelected,
-  },
-  controlsDisabled: {
-    opacity: 0.78,
-  },
-  routeButton: {
-    width: "23px",
-    display: "grid",
-    placeItems: "center",
-    borderWidth: 0,
-    borderRightWidth: 1,
-    borderRightStyle: "solid",
-    borderRightColor: tokens.colorBorder,
-    backgroundColor: {
-      default: "transparent",
-      ":hover": tokens.colorAccentSoft,
-    },
-    color: { default: tokens.colorSubtle, ":hover": tokens.colorAccent },
-    cursor: "grab",
-    touchAction: "none",
-  },
-  routeButtonDragging: {
-    backgroundColor: tokens.colorAccentSoft,
-    color: tokens.colorAccent,
-    cursor: "grabbing",
-  },
-  editButton: {
-    minHeight: "25px",
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "5px",
-    maxWidth: "190px",
-    paddingInline: "7px",
-    borderWidth: 0,
-    backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
-    color: tokens.colorTextEmphasis,
-    cursor: "pointer",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    fontSize: tokens.fontSizeXs,
-    fontWeight: 700,
-  },
-  editLabel: {
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  removeButton: {
-    order: 2,
-    width: "25px",
-    display: "grid",
-    placeItems: "center",
-    borderWidth: 0,
-    borderLeftWidth: 1,
-    borderLeftStyle: "solid",
-    borderLeftColor: tokens.colorBorder,
-    backgroundColor: {
-      default: "transparent",
-      ":hover": tokens.colorDangerHover,
-    },
-    color: { default: tokens.colorSubtle, ":hover": tokens.colorDanger },
-    cursor: "pointer",
-  },
-  popup: {
-    width: "300px",
-    overflow: "hidden",
-    borderWidth: 1,
-    borderStyle: "solid",
-    borderColor: tokens.colorBorderStrong,
-    borderRadius: "7px",
-    backgroundColor: tokens.colorSurface,
-    boxShadow: tokens.shadowNodeSelected,
-    color: tokens.colorText,
-    zIndex: 50,
-  },
   header: {
     display: "grid",
     gap: "3px",
@@ -191,31 +108,6 @@ const s = stylex.create({
   check: { color: tokens.colorAccent },
 });
 
-function projectionsEqual(
-  left: WorkflowEdgeRoute["projection"],
-  right: WorkflowEdgeRoute["projection"],
-): boolean {
-  if (!left || !right) return left === right;
-  return (
-    left.path.length === right.path.length &&
-    left.path.every((segment, index) => segment === right.path[index])
-  );
-}
-
-function conversionPathsEqual(
-  left: WorkflowEdgeRoute["conversionPath"],
-  right: WorkflowEdgeRoute["conversionPath"],
-): boolean {
-  return (
-    left.length === right.length &&
-    left.every(
-      (conversion, index) =>
-        conversion.id === right[index]?.id &&
-        conversion.version === right[index]?.version,
-    )
-  );
-}
-
 function routeSelection(option: WorkflowEdgeRouteOption): WorkflowEdgeRoute {
   return {
     projection: option.projection
@@ -225,116 +117,6 @@ function routeSelection(option: WorkflowEdgeRouteOption): WorkflowEdgeRoute {
       id: conversion.id,
       version: conversion.version,
     })),
-  };
-}
-
-function projectionLabel(
-  sourcePortName: string,
-  projection: WorkflowEdgeData["projection"],
-): string {
-  if (!projection?.path.length) return sourcePortName;
-  return `${sourcePortName}.${projection.path.join(".")}`;
-}
-
-interface Point {
-  x: number;
-  y: number;
-}
-
-function midpoint(left: Point, right: Point): Point {
-  return {
-    x: (left.x + right.x) / 2,
-    y: (left.y + right.y) / 2,
-  };
-}
-
-function controlOffset(distance: number): number {
-  return distance >= 0 ? distance / 2 : 6.25 * Math.sqrt(-distance);
-}
-
-function bezierControlPoint(
-  position: Position,
-  start: Point,
-  end: Point,
-): Point {
-  switch (position) {
-    case Position.Left:
-      return {
-        x: start.x - controlOffset(start.x - end.x),
-        y: start.y,
-      };
-    case Position.Right:
-      return {
-        x: start.x + controlOffset(end.x - start.x),
-        y: start.y,
-      };
-    case Position.Top:
-      return {
-        x: start.x,
-        y: start.y - controlOffset(start.y - end.y),
-      };
-    case Position.Bottom:
-      return {
-        x: start.x,
-        y: start.y + controlOffset(end.y - start.y),
-      };
-  }
-}
-
-function routedBezierPath({
-  source,
-  target,
-  sourcePosition,
-  targetPosition,
-  routeOffset,
-}: {
-  source: Point;
-  target: Point;
-  sourcePosition: Position;
-  targetPosition: Position;
-  routeOffset: WorkflowEdgeRouteOffset;
-}): { anchor: Point; path: string } {
-  const sourceControl = bezierControlPoint(
-    sourcePosition,
-    source,
-    target,
-  );
-  const targetControl = bezierControlPoint(
-    targetPosition,
-    target,
-    source,
-  );
-
-  const sourceHalfControl = midpoint(source, sourceControl);
-  const controlMidpoint = midpoint(sourceControl, targetControl);
-  const targetHalfControl = midpoint(targetControl, target);
-  const sourceAnchorControl = midpoint(sourceHalfControl, controlMidpoint);
-  const targetAnchorControl = midpoint(controlMidpoint, targetHalfControl);
-  const naturalAnchor = midpoint(sourceAnchorControl, targetAnchorControl);
-  const anchor = {
-    x: naturalAnchor.x + routeOffset.x,
-    y: naturalAnchor.y + routeOffset.y,
-  };
-  const routedSourceAnchorControl = {
-    x: sourceAnchorControl.x + routeOffset.x,
-    y: sourceAnchorControl.y + routeOffset.y,
-  };
-  const routedTargetAnchorControl = {
-    x: targetAnchorControl.x + routeOffset.x,
-    y: targetAnchorControl.y + routeOffset.y,
-  };
-
-  return {
-    anchor,
-    path: [
-      `M${source.x},${source.y}`,
-      `C${sourceHalfControl.x},${sourceHalfControl.y}`,
-      `${routedSourceAnchorControl.x},${routedSourceAnchorControl.y}`,
-      `${anchor.x},${anchor.y}`,
-      `C${routedTargetAnchorControl.x},${routedTargetAnchorControl.y}`,
-      `${targetHalfControl.x},${targetHalfControl.y}`,
-      `${target.x},${target.y}`,
-    ].join(" "),
   };
 }
 
@@ -357,9 +139,7 @@ function EdgeOption({
     >
       <span {...stylex.props(s.optionCopy)}>
         <span {...stylex.props(s.optionTitle)}>{title}</span>
-        <span {...stylex.props(s.optionDescription)}>
-          {description}
-        </span>
+        <span {...stylex.props(s.optionDescription)}>{description}</span>
       </span>
       {active ? <Check size={12} {...stylex.props(s.check)} /> : null}
     </button>
@@ -379,8 +159,7 @@ export default function WorkflowEdgeControl({
   style,
   selected,
 }: EdgeProps<WorkflowEdge>) {
-  const { deleteElements, screenToFlowPosition } = useReactFlow();
-  const { zoom } = useViewport();
+  const { deleteElements } = useReactFlow();
   const edgeData: WorkflowEdgeData = data ?? {
     enabled: true,
     collectionMode: "direct",
@@ -389,22 +168,51 @@ export default function WorkflowEdgeControl({
   const enabled = edgeData.enabled !== false;
   const compatibilityIssues = edgeData.compatibilityIssues ?? [];
   const compatible = compatibilityIssues.length === 0;
+  const fan = useEdgeFanOffsets(id, sourcePosition, targetPosition);
+  const source = applyHandleFanOffset(
+    { x: sourceX, y: sourceY },
+    sourcePosition,
+    fan.source,
+  );
+  const target = applyHandleFanOffset(
+    { x: targetX, y: targetY },
+    targetPosition,
+    fan.target,
+  );
   const savedRouteOffset = edgeData.routeOffset ?? { x: 0, y: 0 };
   const [draftRouteOffset, setDraftRouteOffset] =
     React.useState<WorkflowEdgeRouteOffset | null>(null);
-  const dragRef = React.useRef<{
-    grabOffset: Point;
-    latestOffset: WorkflowEdgeRouteOffset;
-    pointerId: number;
-  } | null>(null);
-  const routeOffset = draftRouteOffset ?? savedRouteOffset;
+  const rawRouteOffset = draftRouteOffset ?? savedRouteOffset;
+  const natural = routedBezierPath({
+    source,
+    target,
+    sourcePosition,
+    targetPosition,
+    routeOffset: { x: 0, y: 0 },
+  });
+  const routeOffset = useResolvedEdgeRouteOffset(
+    natural.anchor,
+    rawRouteOffset,
+    draftRouteOffset != null,
+  );
   const { anchor, path: edgePath } = routedBezierPath({
-    source: { x: sourceX, y: sourceY },
-    target: { x: targetX, y: targetY },
+    source,
+    target,
     sourcePosition,
     targetPosition,
     routeOffset,
   });
+  const bendHandlers = useEdgeRouteBendHandlers({
+    naturalAnchor: natural.anchor,
+    anchor,
+    savedRouteOffset,
+    routeOffset,
+    setDraftRouteOffset,
+    onRouteOffsetChange: edgeData.onRouteOffsetChange
+      ? (offset) => edgeData.onRouteOffsetChange?.(id, offset)
+      : undefined,
+  });
+
   const sourcePortName = edgeData.sourcePortName ?? "output";
   const activeRoute: WorkflowEdgeRoute = {
     projection: edgeData.projection,
@@ -418,72 +226,25 @@ export default function WorkflowEdgeControl({
           conversionTitles: edgeData.conversionTitles ?? [],
         },
       ];
-  const valueOptions: Array<{
-    title: string;
-    description: string;
-    routes: WorkflowEdgeRouteOption[];
-  }> = [];
-  for (const route of routeOptions) {
-    const existing = valueOptions.find((option) =>
-      projectionsEqual(option.routes[0]?.projection, route.projection),
-    );
-    if (existing) {
-      existing.routes.push(route);
-      continue;
-    }
-    valueOptions.push({
-      title: route.projection
-        ? (route.projectionTitle ?? route.projection.path.join("."))
-        : "Whole output",
-      description: route.projection
-        ? route.projection.path.join(".")
-        : "Pass the complete source artifact.",
-      routes: [route],
-    });
-  }
-  const conversionOptions: Array<{
-    title: string;
-    description: string;
-    route: WorkflowEdgeRouteOption;
-  }> = [];
-  for (const route of routeOptions) {
-    if (!projectionsEqual(route.projection, activeRoute.projection)) continue;
-    if (
-      conversionOptions.some((option) =>
-        conversionPathsEqual(
-          option.route.conversionPath,
-          route.conversionPath,
-        ),
-      )
-    ) {
-      continue;
-    }
-    conversionOptions.push({
-      title: route.conversionPath.length
-        ? route.conversionTitles.join(" → ")
-        : "No conversion",
-      description: route.conversionPath.length
-        ? route.conversionPath
-            .map((conversion) => `${conversion.id}@${conversion.version}`)
-            .join(" → ")
-        : "Keep the selected artifact contract.",
-      route,
-    });
-  }
-  const allowedModes = edgeData.allowedCollectionModes ?? [edgeData.collectionMode];
-  const conversionLabel = activeRoute.conversionPath.length
-    ? ` → ${activeRoute.conversionPath
-        .map(
-          (conversion, index) =>
-            edgeData.conversionTitles?.[index] ?? conversion.id,
-        )
-        .join(" → ")}`
-    : "";
-  const routeLabel = `${projectionLabel(sourcePortName, edgeData.projection)}${conversionLabel}${
-    edgeData.collectionMode === "map" ? " · each" : ""
-  }`;
-  let label = enabled ? routeLabel : `${routeLabel} · disabled`;
-  if (!compatible) label = `${label} · unavailable`;
+  const feedChoices = feedChoicesFromRouteOptions(sourcePortName, routeOptions);
+  const activeProjectionTitle = routeOptions.find(
+    (route) =>
+      projectionsEqual(route.projection, activeRoute.projection) &&
+      conversionPathsEqual(route.conversionPath, activeRoute.conversionPath),
+  )?.projectionTitle;
+  const allowedModes = edgeData.allowedCollectionModes ?? [
+    edgeData.collectionMode,
+  ];
+  const showCollectionChooser = allowedModes.length > 1;
+  const label = edgeTransportChipLabel({
+    sourcePortName,
+    projection: edgeData.projection,
+    projectionTitle: activeProjectionTitle,
+    conversionTitles: edgeData.conversionTitles,
+    collectionMode: edgeData.collectionMode,
+    enabled,
+    compatible,
+  });
 
   return (
     <>
@@ -494,7 +255,9 @@ export default function WorkflowEdgeControl({
         style={{
           ...style,
           opacity: !compatible
-            ? (selected ? 0.82 : 0.58)
+            ? selected
+              ? 0.82
+              : 0.58
             : enabled
               ? style?.opacity
               : selected
@@ -507,310 +270,120 @@ export default function WorkflowEdgeControl({
         interactionWidth={24}
       />
       <EdgeLabelRenderer>
-        <div
-          className="nodrag nopan nowheel"
-          style={{
-            transform: `translate(-50%, -50%) translate(${anchor.x}px, ${anchor.y}px)`,
+        <EdgeSelectorBlock
+          anchor={anchor}
+          selected={selected}
+          disabled={!(enabled && compatible)}
+          label={label}
+          bendAriaLabel={`Bend connection ${label}`}
+          bendDragging={draftRouteOffset != null}
+          bendHandlers={bendHandlers}
+          editAriaLabel={
+            compatible
+              ? `Edit connection ${label}`
+              : `Connection unavailable: ${compatibilityIssues.join(" ")}`
+          }
+          editTitle={
+            compatible
+              ? "Edit what this connection feeds into the input"
+              : compatibilityIssues.join(" ")
+          }
+          editDisabled={!compatible}
+          removeAriaLabel={`Remove connection ${label}`}
+          onRemove={() => {
+            void deleteElements({ edges: [{ id }] });
           }}
-          {...stylex.props(s.positioner)}
         >
-          <div
-            style={{
-              transform: `scale(${Math.min(1 / Math.max(zoom, 0.01), 1.75)})`,
-              transformOrigin: "center",
-            }}
+          <header {...stylex.props(s.header)}>
+            <span {...stylex.props(s.title)}>What should arrive?</span>
+            <span {...stylex.props(s.summary)}>
+              This connection chooses the value fed into the input.
+            </span>
+          </header>
+
+          <section
             {...stylex.props(
-              s.controls,
-              selected ? s.controlsSelected : null,
-              enabled && compatible ? null : s.controlsDisabled,
+              s.section,
+              showCollectionChooser ? null : s.sectionLast,
             )}
           >
-            <button
-              type="button"
-              aria-label={`Bend connection ${label}`}
-              aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Home"
-              title="Drag or use arrow keys to bend · double-click or press Home to reset"
-              {...stylex.props(
-                s.routeButton,
-                draftRouteOffset ? s.routeButtonDragging : null,
-              )}
-              onClick={(event) => event.stopPropagation()}
-              onDoubleClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                edgeData.onRouteOffsetChange?.(id, { x: 0, y: 0 });
-              }}
-              onKeyDown={(event) => {
-                const step = (event.shiftKey ? 24 : 8) / Math.max(zoom, 0.01);
-                let nextOffset: WorkflowEdgeRouteOffset | null = null;
-                if (event.key === "Home") {
-                  nextOffset = { x: 0, y: 0 };
-                } else if (event.key === "ArrowLeft") {
-                  nextOffset = {
-                    x: savedRouteOffset.x - step,
-                    y: savedRouteOffset.y,
-                  };
-                } else if (event.key === "ArrowRight") {
-                  nextOffset = {
-                    x: savedRouteOffset.x + step,
-                    y: savedRouteOffset.y,
-                  };
-                } else if (event.key === "ArrowUp") {
-                  nextOffset = {
-                    x: savedRouteOffset.x,
-                    y: savedRouteOffset.y - step,
-                  };
-                } else if (event.key === "ArrowDown") {
-                  nextOffset = {
-                    x: savedRouteOffset.x,
-                    y: savedRouteOffset.y + step,
-                  };
-                }
-                if (!nextOffset) return;
-                event.preventDefault();
-                event.stopPropagation();
-                edgeData.onRouteOffsetChange?.(id, nextOffset);
-              }}
-              onPointerDown={(event) => {
-                if (event.button !== 0 || !edgeData.onRouteOffsetChange) return;
-                event.preventDefault();
-                event.stopPropagation();
-                const pointer = screenToFlowPosition({
-                  x: event.clientX,
-                  y: event.clientY,
-                });
-                event.currentTarget.setPointerCapture(event.pointerId);
-                dragRef.current = {
-                  pointerId: event.pointerId,
-                  grabOffset: {
-                    x: pointer.x - anchor.x,
-                    y: pointer.y - anchor.y,
-                  },
-                  latestOffset: savedRouteOffset,
-                };
-                setDraftRouteOffset(savedRouteOffset);
-              }}
-              onPointerMove={(event) => {
-                const drag = dragRef.current;
-                if (!drag || drag.pointerId !== event.pointerId) return;
-                event.preventDefault();
-                event.stopPropagation();
-                const pointer = screenToFlowPosition({
-                  x: event.clientX,
-                  y: event.clientY,
-                });
-                const nextOffset = {
-                  x: pointer.x - drag.grabOffset.x - (anchor.x - routeOffset.x),
-                  y: pointer.y - drag.grabOffset.y - (anchor.y - routeOffset.y),
-                };
-                drag.latestOffset = nextOffset;
-                setDraftRouteOffset(nextOffset);
-              }}
-              onPointerUp={(event) => {
-                const drag = dragRef.current;
-                if (!drag || drag.pointerId !== event.pointerId) return;
-                event.preventDefault();
-                event.stopPropagation();
-                dragRef.current = null;
-                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                  event.currentTarget.releasePointerCapture(event.pointerId);
-                }
-                edgeData.onRouteOffsetChange?.(id, drag.latestOffset);
-                setDraftRouteOffset(null);
-              }}
-              onPointerCancel={(event) => {
-                const drag = dragRef.current;
-                if (!drag || drag.pointerId !== event.pointerId) return;
-                event.stopPropagation();
-                dragRef.current = null;
-                setDraftRouteOffset(null);
-              }}
-              onLostPointerCapture={(event) => {
-                const drag = dragRef.current;
-                if (!drag || drag.pointerId !== event.pointerId) return;
-                dragRef.current = null;
-                setDraftRouteOffset(null);
-              }}
-            >
-              <GripVertical size={12} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              aria-label={`Remove connection ${label}`}
-              title="Remove connection"
-              {...stylex.props(s.removeButton)}
-              onClick={(event) => {
-                event.stopPropagation();
-                void deleteElements({ edges: [{ id }] });
-              }}
-            >
-              <span aria-hidden="true">×</span>
-            </button>
-            <Popover.Root>
-              <Popover.Trigger
+            <span {...stylex.props(s.sectionTitle)}>Feed</span>
+            {onUpdate
+              ? feedChoices.map((choice) => (
+                  <EdgeOption
+                    key={choice.key}
+                    title={choice.title}
+                    description={choice.description}
+                    active={
+                      projectionsEqual(
+                        activeRoute.projection,
+                        choice.route.projection,
+                      ) &&
+                      conversionPathsEqual(
+                        activeRoute.conversionPath,
+                        choice.route.conversionPath,
+                      )
+                    }
+                    onSelect={() =>
+                      onUpdate(id, {
+                        route: routeSelection(choice.route),
+                      })
+                    }
+                  />
+                ))
+              : null}
+          </section>
+
+          {showCollectionChooser ? (
+            <section {...stylex.props(s.section, s.sectionLast)}>
+              <span {...stylex.props(s.sectionTitle)}>How many times?</span>
+              <button
                 type="button"
-                disabled={!compatible}
-                aria-label={
-                  compatible
-                    ? `Edit connection ${label}`
-                    : `Connection unavailable: ${compatibilityIssues.join(" ")}`
+                disabled={!allowedModes.includes("direct")}
+                {...stylex.props(
+                  s.option,
+                  edgeData.collectionMode === "direct" ? s.optionActive : null,
+                )}
+                onClick={() =>
+                  edgeData.onUpdate?.(id, {
+                    collectionMode: "direct",
+                  })
                 }
-                title={
-                  compatible
-                    ? "Edit projection, conversion, and collection handling"
-                    : compatibilityIssues.join(" ")
-                }
-                {...stylex.props(s.editButton)}
               >
-                <span {...stylex.props(s.editLabel)}>{label}</span>
-                <ChevronDown size={11} />
-              </Popover.Trigger>
-              <Popover.Portal>
-                <Popover.Positioner
-                  side="bottom"
-                  align="center"
-                  sideOffset={7}
-                >
-                  <Popover.Popup
-                    className="nodrag nopan nowheel"
-                    {...stylex.props(s.popup)}
-                  >
-                    <header {...stylex.props(s.header)}>
-                      <span {...stylex.props(s.title)}>Connection</span>
-                      <span {...stylex.props(s.summary)}>
-                        This edge owns the value passed between the two ports.
-                      </span>
-                    </header>
-
-                    <section {...stylex.props(s.section)}>
-                      <span {...stylex.props(s.sectionTitle)}>Value</span>
-                      {onUpdate
-                        ? valueOptions.map((option) => {
-                            const route =
-                              option.routes.find((candidate) =>
-                                conversionPathsEqual(
-                                  candidate.conversionPath,
-                                  activeRoute.conversionPath,
-                                ),
-                              ) ??
-                              option.routes.find(
-                                (candidate) =>
-                                  candidate.conversionPath.length === 0,
-                              ) ??
-                              [...option.routes].sort(
-                                (left, right) =>
-                                  left.conversionPath.length -
-                                  right.conversionPath.length,
-                              )[0];
-                            if (!route) return null;
-                            return (
-                              <EdgeOption
-                                key={option.routes[0]?.projection?.path.join(".") ?? "whole"}
-                                title={option.title}
-                                description={option.description}
-                                active={projectionsEqual(
-                                  activeRoute.projection,
-                                  route.projection,
-                                )}
-                                onSelect={() =>
-                                  onUpdate(id, { route: routeSelection(route) })
-                                }
-                              />
-                            );
-                          })
-                        : null}
-                    </section>
-
-                    <section {...stylex.props(s.section)}>
-                      <span {...stylex.props(s.sectionTitle)}>Conversion path</span>
-                      {onUpdate
-                        ? conversionOptions.map((option) => (
-                            <EdgeOption
-                              key={
-                                option.route.conversionPath.length
-                                  ? option.route.conversionPath
-                                      .map(
-                                        (conversion) =>
-                                          `${conversion.id}@${conversion.version}`,
-                                      )
-                                      .join("|")
-                                  : "none"
-                              }
-                              title={option.title}
-                              description={option.description}
-                              active={conversionPathsEqual(
-                                activeRoute.conversionPath,
-                                option.route.conversionPath,
-                              )}
-                              onSelect={() =>
-                                onUpdate(id, {
-                                  route: routeSelection(option.route),
-                                })
-                              }
-                            />
-                          ))
-                        : null}
-                    </section>
-
-                    <section {...stylex.props(s.section, s.sectionLast)}>
-                      <span {...stylex.props(s.sectionTitle)}>Collection</span>
-                      <button
-                        type="button"
-                        disabled={!allowedModes.includes("direct")}
-                        {...stylex.props(
-                          s.option,
-                          edgeData.collectionMode === "direct"
-                            ? s.optionActive
-                            : null,
-                        )}
-                        onClick={() =>
-                          edgeData.onUpdate?.(id, { collectionMode: "direct" })
-                        }
-                      >
-                        <span {...stylex.props(s.optionCopy)}>
-                          <span {...stylex.props(s.optionTitle)}>
-                            Pass whole value
-                          </span>
-                          <span {...stylex.props(s.optionDescription)}>
-                            Invoke the target once with this edge value.
-                          </span>
-                        </span>
-                        {edgeData.collectionMode === "direct" ? (
-                          <Check size={12} {...stylex.props(s.check)} />
-                        ) : null}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!allowedModes.includes("map")}
-                        {...stylex.props(
-                          s.option,
-                          edgeData.collectionMode === "map"
-                            ? s.optionActive
-                            : null,
-                        )}
-                        onClick={() =>
-                          edgeData.onUpdate?.(id, { collectionMode: "map" })
-                        }
-                      >
-                        <span {...stylex.props(s.optionCopy)}>
-                          <span {...stylex.props(s.optionTitle)}>
-                            Map each item
-                          </span>
-                          <span {...stylex.props(s.optionDescription)}>
-                            Invoke the target once for every item in the list.
-                          </span>
-                        </span>
-                        {edgeData.collectionMode === "map" ? (
-                          <Check size={12} {...stylex.props(s.check)} />
-                        ) : null}
-                      </button>
-                    </section>
-                  </Popover.Popup>
-                </Popover.Positioner>
-              </Popover.Portal>
-            </Popover.Root>
-          </div>
-        </div>
+                <span {...stylex.props(s.optionCopy)}>
+                  <span {...stylex.props(s.optionTitle)}>Pass whole value</span>
+                  <span {...stylex.props(s.optionDescription)}>
+                    Invoke the target once with this feed.
+                  </span>
+                </span>
+                {edgeData.collectionMode === "direct" ? (
+                  <Check size={12} {...stylex.props(s.check)} />
+                ) : null}
+              </button>
+              <button
+                type="button"
+                disabled={!allowedModes.includes("map")}
+                {...stylex.props(
+                  s.option,
+                  edgeData.collectionMode === "map" ? s.optionActive : null,
+                )}
+                onClick={() =>
+                  edgeData.onUpdate?.(id, { collectionMode: "map" })
+                }
+              >
+                <span {...stylex.props(s.optionCopy)}>
+                  <span {...stylex.props(s.optionTitle)}>Map each item</span>
+                  <span {...stylex.props(s.optionDescription)}>
+                    Invoke the target once for every item.
+                  </span>
+                </span>
+                {edgeData.collectionMode === "map" ? (
+                  <Check size={12} {...stylex.props(s.check)} />
+                ) : null}
+              </button>
+            </section>
+          ) : null}
+        </EdgeSelectorBlock>
       </EdgeLabelRenderer>
     </>
   );

@@ -40,10 +40,64 @@ vi.mock("@xyflow/react", () => ({
   useEdges: () => [],
   useNodeConnections: () => [],
   useUpdateNodeInternals: () => xyflowMocks.updateNodeInternals,
+  useViewport: () => ({ zoom: 1, x: 0, y: 0 }),
+}));
+
+const gridSettingsMocks = vi.hoisted(() => ({
+  allowWorkflowCornerResize: false,
+}));
+
+vi.mock("../canvas-grid-settings", () => ({
+  useOptionalCanvasGridSettings: () => ({
+    settings: {
+      enabled: true,
+      showBackground: true,
+      snapPosition: true,
+      snapSize: true,
+      snapWhileDragging: false,
+      snapWhileResizing: true,
+      allowWorkflowCornerResize: gridSettingsMocks.allowWorkflowCornerResize,
+      cellSize: 50,
+    },
+    bypassSnap: false,
+  }),
 }));
 
 vi.mock("./LayoutResizeHandle", () => ({
-  LayoutResizeHandle: () => null,
+  LayoutResizeHandle: ({ ariaLabel }: { ariaLabel: string }) => (
+    <button type="button" data-testid="corner-resize" aria-label={ariaLabel} />
+  ),
+}));
+
+vi.mock("./TextareaBodyResizeHandle", () => ({
+  TextareaBodyResizeHandle: ({ ariaLabel }: { ariaLabel: string }) => (
+    <button
+      type="button"
+      data-testid="textarea-body-resize"
+      aria-label={ariaLabel}
+    />
+  ),
+}));
+
+vi.mock("@base-ui/react/popover", () => ({
+  Popover: {
+    Root: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    Trigger: ({
+      children,
+      ...props
+    }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+      children: React.ReactNode;
+    }) => (
+      <button type="button" {...props}>
+        {children}
+      </button>
+    ),
+    Portal: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    Positioner: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    Popup: ({ children }: { children: React.ReactNode }) => (
+      <div>{children}</div>
+    ),
+  },
 }));
 
 vi.mock("./type-inspector", () => ({
@@ -148,6 +202,7 @@ function fuzzyMatchSpec(): NodeSpec {
   };
 }
 
+
 function artifactQuerySpec(): NodeSpec {
   return {
     operator_id: "sql.artifacts.query",
@@ -192,6 +247,63 @@ function artifactQuerySpec(): NodeSpec {
       },
     ],
     outputs: [],
+  };
+}
+
+function textPipeSpec(): NodeSpec {
+  return {
+    operator_id: "text.pipe",
+    operator_version: 1,
+    plugin_slug: "text",
+    title: "Text pipe",
+    description: "Passes text through.",
+    catalog_visible: true,
+    config_schema: {},
+    input_schema: {},
+    output_schema: {},
+    inputs: [
+      {
+        name: "text",
+        title: "text",
+        description: null,
+        direction: "input",
+        artifact_type: { id: "text.plain", schema_version: 1 },
+        artifact_type_variable: null,
+        shape: "one",
+        accepted_shapes: ["one"],
+        instance_plugs: false,
+        variadic: false,
+        required: true,
+      },
+    ],
+    outputs: [
+      {
+        name: "text",
+        title: "text",
+        description: null,
+        direction: "output",
+        artifact_type: { id: "text.plain", schema_version: 1 },
+        artifact_type_variable: null,
+        shape: "one",
+        accepted_shapes: ["one"],
+        instance_plugs: false,
+        variadic: false,
+        required: false,
+      },
+      {
+        name: "meta",
+        title: "meta",
+        description: null,
+        direction: "output",
+        artifact_type: { id: "json.document", schema_version: 1 },
+        artifact_type_variable: null,
+        shape: "one",
+        accepted_shapes: ["one"],
+        instance_plugs: false,
+        variadic: false,
+        required: false,
+      },
+    ],
   };
 }
 
@@ -380,6 +492,7 @@ describe("WorkflowNode fixed numeric tuple fields", () => {
   });
 });
 
+
 describe("WorkflowNode string-list fields", () => {
   it("edits, appends, and removes string values through the node form", () => {
     const onConfigChange = vi.fn();
@@ -461,9 +574,101 @@ describe("WorkflowNode multiline fields", () => {
 
     const textarea = container.querySelector("textarea");
     expect(textarea?.value).toBe("select *\nfrom parcels");
-    const body = textarea?.parentElement?.parentElement?.parentElement;
-    expect(body?.style.minHeight).toBe("96px");
-    expect(body?.style.height).toBe("");
+    // host → field → configList → body
+    const sizedBody = textarea?.parentElement?.parentElement?.parentElement
+      ?.parentElement;
+    expect(sizedBody?.style.minHeight).toBe("96px");
+    expect(sizedBody?.style.height).toBe("");
+
+    React.act(() => root.unmount());
+  });
+
+  it("exposes a textarea field resize grip and hides corner resize by default", () => {
+    gridSettingsMocks.allowWorkflowCornerResize = false;
+    const data = createWorkflowNodeData(rawSqlStatementSpec());
+    data.config = { sql: "select 1" };
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    React.act(() => {
+      root.render(
+        <WorkflowNodeCard
+          {...({
+            id: "sql-statement",
+            data,
+            selected: false,
+          } as React.ComponentProps<typeof WorkflowNodeCard>)}
+        />,
+      );
+    });
+
+    expect(
+      container.querySelector('[data-testid="textarea-body-resize"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="corner-resize"]'),
+    ).toBeNull();
+
+    React.act(() => root.unmount());
+  });
+
+  it("shows the workflow corner resize handle when the lab flag is on", () => {
+    gridSettingsMocks.allowWorkflowCornerResize = true;
+    const data = createWorkflowNodeData(rawSqlStatementSpec());
+    data.config = { sql: "select 1" };
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    React.act(() => {
+      root.render(
+        <WorkflowNodeCard
+          {...({
+            id: "sql-statement",
+            data,
+            selected: false,
+          } as React.ComponentProps<typeof WorkflowNodeCard>)}
+        />,
+      );
+    });
+
+    expect(
+      container.querySelector('[data-testid="corner-resize"]'),
+    ).not.toBeNull();
+
+    gridSettingsMocks.allowWorkflowCornerResize = false;
+    React.act(() => root.unmount());
+  });
+});
+
+describe("WorkflowNode port rail", () => {
+  it("pairs inputs and outputs on shared lattice-tall rows before the body", () => {
+    const data = createWorkflowNodeData(textPipeSpec());
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    React.act(() => {
+      root.render(
+        <WorkflowNodeCard
+          {...({
+            id: "text-pipe",
+            data,
+            selected: false,
+          } as React.ComponentProps<typeof WorkflowNodeCard>)}
+        />,
+      );
+    });
+
+    const rail = container.querySelector('[data-testid="port-rail"]');
+    expect(rail).not.toBeNull();
+    const rows = [
+      ...container.querySelectorAll('[data-testid="port-rail-row"]'),
+    ] as HTMLElement[];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.style.height).toBe("50px");
+    expect(rows[1]?.style.height).toBe("50px");
+    // First row carries both the required input and the first output.
+    expect(rows[0]?.textContent).toContain("text");
+    expect(rows[0]?.textContent).toMatch(/\*/);
+    expect(rows[1]?.textContent).toContain("meta");
 
     React.act(() => root.unmount());
   });

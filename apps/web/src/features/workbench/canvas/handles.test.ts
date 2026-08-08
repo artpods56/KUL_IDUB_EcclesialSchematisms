@@ -8,6 +8,7 @@ import type {
 import {
   MAX_CONVERSION_PATH_CANDIDATES,
   MAX_CONVERSION_PATH_LENGTH,
+  canonicalHandleId,
   connectionRouteForSelection,
   connectionRouteSelection,
   connectionRoutesFor,
@@ -72,6 +73,29 @@ describe("typed handle ids", () => {
       direction: "input",
       plugId: "plug-1",
     });
+  });
+
+  it("round-trips catalog feed intent and strips it for canonical ids", () => {
+    const withFeed = encodeHandleId({
+      portName: "result",
+      artifactTypeId: "doc.ocr",
+      schemaVersion: 1,
+      shape: "one",
+      direction: "output",
+      feed: { kind: "projection", path: ["body", "text"] },
+    });
+
+    expect(decodeHandleId(withFeed)).toEqual({
+      portName: "result",
+      artifactTypeId: "doc.ocr",
+      schemaVersion: 1,
+      shape: "one",
+      direction: "output",
+      feed: { kind: "projection", path: ["body", "text"] },
+    });
+    expect(canonicalHandleId(withFeed)).toBe(
+      "result::doc.ocr::1::one::output",
+    );
   });
 });
 

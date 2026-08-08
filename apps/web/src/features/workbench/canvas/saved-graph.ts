@@ -92,6 +92,32 @@ export function withMaterializedNodeRuns(
   });
 }
 
+/** Overlay succeeded materializations without clearing unrelated local runs. */
+export function mergeMaterializedNodeRuns(
+  nodes: readonly SavedGraphWorkflowNode[],
+  nodeRuns: readonly RunNodeResult[],
+): SavedGraphWorkflowNode[] {
+  const runsByNodeId = new Map(
+    nodeRuns
+      .filter((run) => run.status === "succeeded")
+      .map((run) => [run.node_id, run]),
+  );
+  if (!runsByNodeId.size) return [...nodes];
+
+  return nodes.map((node) => {
+    const run = runsByNodeId.get(node.id);
+    if (!run) return node;
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        run,
+        execution: { status: "succeeded" },
+      },
+    };
+  });
+}
+
 export class SavedGraphHydrationError extends Error {
   constructor(message: string) {
     super(message);
@@ -244,8 +270,50 @@ function requireArtifactTypeBindings(
 export function savedGraphFingerprint(
   graph: CreateSavedGraphRequest,
 ): string {
+  const presentation = graph.presentation ?? {
+    viewers: [],
+    links: [],
+    bindings: [],
+    annotations: [],
+  };
   const normalized = {
     ...graph,
+    nodes: [...(graph.nodes ?? [])].sort((left, right) =>
+      left.id.localeCompare(right.id),
+    ),
+    edges: [...(graph.edges ?? [])]
+      .map((edge) => ({
+        ...edge,
+        enabled: edge.enabled ?? true,
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+    presentation: {
+      viewers: [...(presentation.viewers ?? [])].sort((left, right) =>
+        left.id.localeCompare(right.id),
+      ),
+      links: [...(presentation.links ?? [])].sort((left, right) =>
+        left.id.localeCompare(right.id),
+      ),
+      bindings: [...(presentation.bindings ?? [])].sort((left, right) =>
+        left.id.localeCompare(right.id),
+      ),
+      annotations: [...(presentation.annotations ?? [])].sort((left, right) =>
+        left.id.localeCompare(right.id),
+      ),
+    },
+  };
+  return JSON.stringify(sortedRecord(normalized));
+}
+
+/**
+ * Fingerprint of execution-relevant graph structure only.
+ * Presentation (viewers/annotations) must not block materialization.
+ */
+export function savedGraphExecutionFingerprint(
+  graph: CreateSavedGraphRequest,
+): string {
+  const normalized = {
+    name: graph.name,
     nodes: [...(graph.nodes ?? [])].sort((left, right) =>
       left.id.localeCompare(right.id),
     ),

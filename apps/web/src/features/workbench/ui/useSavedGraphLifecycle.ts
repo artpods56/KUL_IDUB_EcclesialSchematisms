@@ -20,8 +20,13 @@ import {
 import { ApiError } from "@/lib/api/client";
 import {
   hydrateSavedGraph,
+  savedGraphExecutionFingerprint,
   savedGraphFingerprint,
 } from "../canvas/saved-graph";
+import {
+  emptyGraphPresentation,
+  type GraphPresentation,
+} from "../canvas/artifact-viewer";
 import {
   authoredGraphDocument,
   createSavedGraphRequest,
@@ -53,6 +58,7 @@ export interface GraphRoomPersistenceAdapter {
     name: string;
     nodes: readonly SavedGraphNode[];
     edges: NonNullable<CreateSavedGraphRequest["edges"]>;
+    presentation?: CreateSavedGraphRequest["presentation"];
   }>;
 }
 
@@ -62,12 +68,19 @@ interface UseSavedGraphLifecycleOptions {
   initialGraphId: string | null;
   registry: NodeRegistry | undefined;
   document: AuthoredGraphDocument;
+  /** Shared Artifact Viewer presentation included in fingerprints and saves. */
+  presentation?: GraphPresentation;
   nodes: readonly WorkflowNode[];
   isExecutionRunning: () => boolean;
   uploading: boolean;
   replaceDocument: (
     document: AuthoredGraphDocument,
     overlayNodes?: readonly WorkflowNode[],
+  ) => void;
+  /** Apply shared presentation from head/checkpoint/save responses. */
+  replacePresentation: (
+    graphId: string,
+    presentation: GraphPresentation,
   ) => void;
   updateDocumentName: (name: string) => void;
   attachNodeCallbacks: (data: WorkflowNodeData) => WorkflowNodeData;
@@ -82,7 +95,6 @@ interface UseSavedGraphLifecycleOptions {
   closeNodeLibrary: () => void;
   requestCanvasRefit: () => void;
   refreshNodeRegistry: () => void | Promise<unknown>;
-  onGraphDeleted?: (graphId: string) => void;
   roomPersistence?: GraphRoomPersistenceAdapter | null;
 }
 
@@ -92,6 +104,8 @@ export interface UseSavedGraphLifecycleResult {
   setGraphName: (name: string) => void;
   currentFingerprint: string;
   isDirty: boolean;
+  /** True when workflow topology matches the saved revision (ignores presentation). */
+  canMaterializeSavedGraph: boolean;
   saving: boolean;
   openingGraphId: string | null;
   deletingGraphId: string | null;
@@ -127,10 +141,12 @@ export function useSavedGraphLifecycle({
   initialGraphId,
   registry,
   document,
+  presentation = emptyGraphPresentation(),
   nodes,
   isExecutionRunning,
   uploading,
   replaceDocument,
+  replacePresentation,
   updateDocumentName,
   attachNodeCallbacks,
   refreshNodeSecretStatuses,
@@ -140,7 +156,6 @@ export function useSavedGraphLifecycle({
   closeNodeLibrary,
   requestCanvasRefit,
   refreshNodeRegistry,
-  onGraphDeleted,
   roomPersistence = null,
 }: UseSavedGraphLifecycleOptions): UseSavedGraphLifecycleResult {
   const router = useRouter();
@@ -155,6 +170,8 @@ export function useSavedGraphLifecycle({
     React.useState<ActiveSavedGraph | null>(null);
   const [savedFingerprint, setSavedFingerprint] =
     React.useState<string | null>(null);
+  const [savedExecutionFingerprint, setSavedExecutionFingerprint] =
+    React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
   const [openingGraphId, setOpeningGraphId] = React.useState<string | null>(null);
   const [deletingGraphId, setDeletingGraphId] = React.useState<string | null>(null);
@@ -168,13 +185,21 @@ export function useSavedGraphLifecycle({
   const activeGraphRef = React.useRef<ActiveSavedGraph | null>(null);
 
   const currentDraft = React.useMemo(
-    () => createSavedGraphRequest(document),
-    [document],
+    () => createSavedGraphRequest(document, presentation),
+    [document, presentation],
   );
   const currentFingerprint = React.useMemo(
     () => savedGraphFingerprint(currentDraft),
     [currentDraft],
   );
+  const currentExecutionFingerprint = React.useMemo(
+    () => savedGraphExecutionFingerprint(currentDraft),
+    [currentDraft],
+  );
+  const rememberSavedDraft = React.useCallback((draft: CreateSavedGraphRequest) => {
+    setSavedFingerprint(savedGraphFingerprint(draft));
+    setSavedExecutionFingerprint(savedGraphExecutionFingerprint(draft));
+  }, []);
 
   React.useEffect(() => {
     currentFingerprintRef.current = currentFingerprint;
@@ -187,10 +212,18 @@ export function useSavedGraphLifecycle({
   const hasUnsavedDraft =
     document.nodes.length > 0 ||
     document.edges.length > 0 ||
+    (presentation.viewers?.length ?? 0) > 0 ||
+    (presentation.links?.length ?? 0) > 0 ||
+    (presentation.bindings?.length ?? 0) > 0 ||
     document.name.trim() !== NEW_GRAPH_NAME;
   const isDirty = activeGraph
     ? savedFingerprint !== currentFingerprint
     : hasUnsavedDraft;
+  const canMaterializeSavedGraph = Boolean(
+    activeGraph &&
+      savedExecutionFingerprint !== null &&
+      savedExecutionFingerprint === currentExecutionFingerprint,
+  );
   const persistenceOperationBusy = Boolean(
     saving || openingGraphId || deletingGraphId || uploading,
   );
@@ -225,11 +258,12 @@ export function useSavedGraphLifecycle({
   const showBlankGraph = React.useCallback(() => {
     documentGenerationRef.current += 1;
     openRequestRef.current?.abort();
-    replaceDocument({ name: NEW_GRAPH_NAME, nodes: [], edges: [] });
+    replaceDocument({ name: NEW_GRAPH_NAME, nodes: [], edges: [] }, []);
     clearGraphSecretStatuses();
     activeGraphRef.current = null;
     setActiveGraph(null);
     setSavedFingerprint(null);
+    setSavedExecutionFingerprint(null);
     clearPendingConnectionRoute();
     clearRunError();
     setPersistenceError(null);
@@ -299,6 +333,8 @@ export function useSavedGraphLifecycle({
         nodes: savedGraph.nodes ?? [],
         edges: savedGraph.edges ?? [],
       });
+      const responsePresentation =
+        savedGraph.presentation ?? emptyGraphPresentation();
       const nextActiveGraph = {
         id: savedGraph.id,
         revision: savedGraph.revision,
@@ -310,9 +346,10 @@ export function useSavedGraphLifecycle({
       }
       activeGraphRef.current = nextActiveGraph;
       setActiveGraph(nextActiveGraph);
-      setSavedFingerprint(
-        savedGraphFingerprint(createSavedGraphRequest(responseDocument)),
+      rememberSavedDraft(
+        createSavedGraphRequest(responseDocument, responsePresentation),
       );
+      replacePresentation(savedGraph.id, responsePresentation);
       if (createdGraph) {
         router.replace(
           workbenchGraphPath(workspaceSlug, savedGraph.id),
@@ -355,6 +392,8 @@ export function useSavedGraphLifecycle({
     openingGraphId,
     refreshNodeRegistry,
     refreshNodeSecretStatuses,
+    rememberSavedDraft,
+    replacePresentation,
     roomPersistence,
     router,
     saving,
@@ -370,6 +409,8 @@ export function useSavedGraphLifecycle({
       nodes: head.nodes ?? [],
       edges: head.edges ?? [],
     });
+    const responsePresentation =
+      head.presentation ?? emptyGraphPresentation();
     const nextActiveGraph = {
       id: head.graph_id,
       revision: head.checkpoint_revision,
@@ -378,12 +419,14 @@ export function useSavedGraphLifecycle({
     approvedRouteGraphIdRef.current = head.graph_id;
     activeGraphRef.current = nextActiveGraph;
     setActiveGraph(nextActiveGraph);
-    setSavedFingerprint(
-      savedGraphFingerprint(createSavedGraphRequest(responseDocument)),
+    rememberSavedDraft(
+      createSavedGraphRequest(responseDocument, responsePresentation),
     );
     setPersistenceError(null);
+    // Preserve execution overlays: room sync must not clear materialized pins.
     replaceDocument(responseDocument);
-  }, [replaceDocument]);
+    replacePresentation(head.graph_id, responsePresentation);
+  }, [rememberSavedDraft, replaceDocument, replacePresentation]);
 
   const purgeLocalGraphState = React.useCallback(() => {
     documentGenerationRef.current += 1;
@@ -391,6 +434,7 @@ export function useSavedGraphLifecycle({
     activeGraphRef.current = null;
     setActiveGraph(null);
     setSavedFingerprint(null);
+    setSavedExecutionFingerprint(null);
     setPersistenceError(null);
     setGraphBrowserOpen(false);
     clearGraphSecretStatuses();
@@ -401,13 +445,15 @@ export function useSavedGraphLifecycle({
       name: NEW_GRAPH_NAME,
       nodes: [],
       edges: [],
-    });
+    }, []);
+    replacePresentation("", emptyGraphPresentation());
   }, [
     clearGraphSecretStatuses,
     clearPendingConnectionRoute,
     clearRunError,
     closeNodeLibrary,
     replaceDocument,
+    replacePresentation,
   ]);
 
   const openSavedGraph = React.useCallback(async (
@@ -493,11 +539,14 @@ export function useSavedGraphLifecycle({
         nodes: savedGraph.nodes ?? [],
         edges: savedGraph.edges ?? [],
       });
+      const responsePresentation =
+        savedGraph.presentation ?? emptyGraphPresentation();
       const openedNodes = hydrated.nodes.map((node) => ({
         ...node,
         data: attachNodeCallbacks(node.data),
       }));
       replaceDocument(responseDocument, openedNodes);
+      replacePresentation(savedGraph.id, responsePresentation);
       const nextActiveGraph = {
         id: savedGraph.id,
         revision: savedGraph.revision,
@@ -505,8 +554,8 @@ export function useSavedGraphLifecycle({
       };
       activeGraphRef.current = nextActiveGraph;
       setActiveGraph(nextActiveGraph);
-      setSavedFingerprint(
-        savedGraphFingerprint(createSavedGraphRequest(responseDocument)),
+      rememberSavedDraft(
+        createSavedGraphRequest(responseDocument, responsePresentation),
       );
       await refreshNodeSecretStatuses(
         nextActiveGraph,
@@ -552,7 +601,9 @@ export function useSavedGraphLifecycle({
     currentFingerprint,
     refreshNodeSecretStatuses,
     registry,
+    rememberSavedDraft,
     replaceDocument,
+    replacePresentation,
     requestCanvasRefit,
     router,
     workspaceId,
@@ -629,7 +680,6 @@ export function useSavedGraphLifecycle({
     try {
       await deleteSavedGraph(workspaceId, graph.id, expectedRevision);
       if (!mountedRef.current) return;
-      onGraphDeleted?.(graph.id);
       void mutateSavedGraphs();
       void refreshNodeRegistry();
       if (
@@ -649,6 +699,7 @@ export function useSavedGraphLifecycle({
           activeGraphRef.current = null;
           setActiveGraph(null);
           setSavedFingerprint(null);
+          setSavedExecutionFingerprint(null);
           clearGraphSecretStatuses();
           setPersistenceError(
             "The saved graph was deleted. Changes made while deletion was in progress remain as an unsaved draft.",
@@ -685,7 +736,6 @@ export function useSavedGraphLifecycle({
     currentFingerprint,
     isDirty,
     mutateSavedGraphs,
-    onGraphDeleted,
     refreshNodeRegistry,
     router,
     showBlankGraph,
@@ -737,6 +787,7 @@ export function useSavedGraphLifecycle({
     setGraphName,
     currentFingerprint,
     isDirty,
+    canMaterializeSavedGraph,
     saving,
     openingGraphId,
     deletingGraphId,

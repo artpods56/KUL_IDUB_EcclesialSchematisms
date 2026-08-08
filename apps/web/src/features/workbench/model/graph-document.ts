@@ -132,11 +132,18 @@ export function authoredGraphDocument(
 
 export function createSavedGraphRequest(
   document: AuthoredGraphDocument,
+  presentation?: CreateSavedGraphRequest["presentation"],
 ): CreateSavedGraphRequest {
   return {
     name: document.name.trim(),
     nodes: document.nodes.map(projectSavedGraphNode),
     edges: document.edges.map(projectSavedGraphEdge),
+    presentation: presentation ?? {
+      viewers: [],
+      links: [],
+      bindings: [],
+      annotations: [],
+    },
   };
 }
 

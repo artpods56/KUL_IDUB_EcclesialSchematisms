@@ -17,7 +17,7 @@ import {
 
 /**
  * Port type inspector — a popover that renders the artifact payload schema
- * as a nested field tree, plus declared field projections.
+ * as a nested field tree, plus declared field projections (discovery only).
  */
 
 const s = stylex.create({
@@ -99,6 +99,12 @@ const s = stylex.create({
     lineHeight: 1.45,
   },
   emptyError: { color: tokens.colorDanger },
+  projectionHint: {
+    marginBottom: "6px",
+    color: tokens.colorSubtle,
+    fontSize: tokens.fontSizeXs,
+    lineHeight: 1.4,
+  },
   projection: {
     display: "flex",
     alignItems: "baseline",
@@ -274,11 +280,15 @@ export function PortTypePopover({
   port,
   shape,
   artifactTypeBindings = {},
+  open,
+  onOpenChange,
   children,
 }: {
   port: Port;
   shape: Port["shape"];
   artifactTypeBindings?: WorkflowArtifactTypeBindings;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   children: React.ReactNode;
 }) {
   const { workspace } = useWorkspaceContext();
@@ -306,7 +316,7 @@ export function PortTypePopover({
   const projections = spec?.field_projections ?? [];
 
   return (
-    <Popover.Root>
+    <Popover.Root open={open} onOpenChange={onOpenChange}>
       {children}
       <Popover.Portal>
         <Popover.Positioner
@@ -364,6 +374,13 @@ export function PortTypePopover({
             {projections.length ? (
               <section {...stylex.props(s.section)}>
                 <div {...stylex.props(s.sectionTitle)}>Projectable fields</div>
+                {port.direction === "output" ? (
+                  <p {...stylex.props(s.projectionHint)}>
+                    Drag this port to connect with the whole output. When fields
+                    are available, you can choose one on the connection after
+                    wiring.
+                  </p>
+                ) : null}
                 {projections.map((projection) => (
                   <div
                     key={projection.path.join(".")}

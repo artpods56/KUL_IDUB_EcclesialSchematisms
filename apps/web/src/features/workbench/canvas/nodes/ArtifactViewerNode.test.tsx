@@ -85,7 +85,9 @@ vi.mock("./ArtifactsAppendix", () => ({
 }));
 
 vi.mock("./LayoutResizeHandle", () => ({
-  LayoutResizeHandle: () => null,
+  LayoutResizeHandle: ({ ariaLabel }: { ariaLabel: string }) => (
+    <button type="button" data-testid="corner-resize" aria-label={ariaLabel} />
+  ),
 }));
 
 import type {
@@ -362,4 +364,11 @@ describe("ArtifactViewerNode", () => {
       expect(onModeChange).toHaveBeenCalledWith("artifact-viewer-1", "raw");
     },
   );
+
+  it("keeps a corner resize handle for the viewer viewport", () => {
+    const container = renderViewer();
+    expect(
+      container.querySelector('[data-testid="corner-resize"]'),
+    ).not.toBeNull();
+  });
 });

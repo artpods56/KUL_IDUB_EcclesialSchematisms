@@ -1,5 +1,6 @@
 import type {
   ArtifactConversionSpec,
+  ArtifactTypeKey,
   ArtifactTypeSpec,
 } from "@/lib/api";
 
@@ -7,6 +8,7 @@ import {
   connectionRoutesFor,
   connectionRouteSelection,
   decodeHandleId,
+  decodedHandleArtifactType,
   type ConnectionRoute,
 } from "../canvas/handles";
 import {
@@ -266,11 +268,34 @@ export function isConnectionAccepted(
   );
 }
 
+function projectionTitleForEdge(
+  edge: WorkflowEdge,
+  sourceHandleArtifactType: ArtifactTypeKey | null,
+  artifactTypes: readonly ArtifactTypeSpec[],
+): string | undefined {
+  const path = edge.data?.projection?.path;
+  if (!path?.length) return undefined;
+  if (!sourceHandleArtifactType) return path.join(".");
+  const sourceArtifact = artifactTypes.find(
+    (artifact) =>
+      artifact.key.id === sourceHandleArtifactType.id &&
+      artifact.key.schema_version === sourceHandleArtifactType.schema_version,
+  );
+  return (
+    sourceArtifact?.field_projections.find(
+      (projection) =>
+        projection.path.length === path.length &&
+        projection.path.every((segment, index) => segment === path[index]),
+    )?.title ?? path.join(".")
+  );
+}
+
 export function inputPlugBindingsForNode(
   node: GraphAuthoringNode,
   nodes: readonly GraphAuthoringNode[],
   edges: readonly WorkflowEdge[],
   artifactConversions: readonly GraphAuthoringConversion[],
+  artifactTypes: readonly ArtifactTypeSpec[] = [],
 ): Readonly<Record<string, WorkflowInputPlugBinding>> {
   if (!workflowNodeIsSupported(node.data)) return {};
   const bindings: Record<string, WorkflowInputPlugBinding> = {};
@@ -293,7 +318,11 @@ export function inputPlugBindingsForNode(
       );
       if (!sourceHandle || !sourceNode || !sourcePort) return;
 
-      const projectionLabel = edge.data?.projection?.path.join(".");
+      const projectionTitle = projectionTitleForEdge(
+        edge,
+        decodedHandleArtifactType(sourceHandle),
+        artifactTypes,
+      );
       const conversionLabels = (edge.data?.conversionPath ?? []).map(
         (requestedConversion) =>
           artifactConversions.find(
@@ -303,7 +332,7 @@ export function inputPlugBindingsForNode(
           )?.title ??
           `${requestedConversion.id}@${requestedConversion.version}`,
       );
-      const conversionLabel = [projectionLabel, ...conversionLabels]
+      const feedLabel = [projectionTitle, ...conversionLabels]
         .filter((label): label is string => Boolean(label))
         .join(" → ");
       const contributionLabel = collectContributionLabel(
@@ -313,7 +342,7 @@ export function inputPlugBindingsForNode(
       bindings[plug.id] = {
         sourceLabel: `${sourceNode.data.spec.title} · ${sourcePort.title ?? sourcePort.name}`,
         sourceShape: effectiveShapeForPort(sourceNode, sourcePort, edges),
-        ...(conversionLabel ? { conversionLabel } : {}),
+        ...(feedLabel ? { conversionLabel: feedLabel } : {}),
         ...(contributionLabel ? { contributionLabel } : {}),
       };
     });

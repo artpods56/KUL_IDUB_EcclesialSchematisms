@@ -15,9 +15,9 @@ import type { RunEdgeCollectionMode } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import type { ConnectionRoute } from "../canvas/handles";
 import {
-  connectionRouteDescription,
-  connectionRouteTitle,
-} from "../model/graph-authoring";
+  connectionRouteFeedDescription,
+  connectionRouteFeedTitle,
+} from "../model/connection-feeds";
 
 interface ConnectionEndpoint {
   nodeTitle: string;
@@ -31,6 +31,12 @@ export interface PendingConnectionRoute {
   candidates: ConnectionRoute[];
   source: ConnectionEndpoint;
   target: ConnectionEndpoint;
+  preferredProjectionPath?: readonly string[];
+  /**
+   * When set, the edge already exists (connect-first). Selecting a feed updates
+   * it; cancel keeps the initial whole-output route.
+   */
+  refineEdgeId?: string;
 }
 
 interface ConnectionRouteDialogProps {
@@ -122,6 +128,7 @@ const s = stylex.create({
     color: tokens.colorProjectionPath,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
     fontSize: tokens.fontSizeXs,
+    textAlign: "right",
   },
   projectionActions: {
     display: "flex",
@@ -156,9 +163,15 @@ export function ConnectionRouteDialog({
     >
       <DialogContent style={{ width: "430px" }}>
         <DialogHeader>
-          <DialogTitle>Choose a connection route</DialogTitle>
+          <DialogTitle>
+            {pendingRoute
+              ? `What should arrive at ${pendingRoute.target.portName}?`
+              : "What should arrive?"}
+          </DialogTitle>
           <DialogDescription>
-            More than one declared route can satisfy this input.
+            {pendingRoute?.refineEdgeId
+              ? "The connection is already in place with the whole output. Pick a field if you want something more specific."
+              : "Choose which value this connection feeds into the input."}
           </DialogDescription>
         </DialogHeader>
         <DialogBody>
@@ -166,9 +179,10 @@ export function ConnectionRouteDialog({
             <>
               <div {...stylex.props(s.projectionFlow)}>
                 <div {...stylex.props(s.projectionEndpoint)}>
-                  <span {...stylex.props(s.projectionDirection)}>Source</span>
+                  <span {...stylex.props(s.projectionDirection)}>From</span>
                   <span {...stylex.props(s.projectionEndpointName)}>
-                    {pendingRoute.source.nodeTitle} · {pendingRoute.source.portName}
+                    {pendingRoute.source.nodeTitle} ·{" "}
+                    {pendingRoute.source.portName}
                   </span>
                   <span {...stylex.props(s.projectionEndpointType)}>
                     {pendingRoute.source.artifactType}
@@ -181,9 +195,10 @@ export function ConnectionRouteDialog({
                   →
                 </span>
                 <div {...stylex.props(s.projectionEndpoint)}>
-                  <span {...stylex.props(s.projectionDirection)}>Target</span>
+                  <span {...stylex.props(s.projectionDirection)}>Into</span>
                   <span {...stylex.props(s.projectionEndpointName)}>
-                    {pendingRoute.target.nodeTitle} · {pendingRoute.target.portName}
+                    {pendingRoute.target.nodeTitle} ·{" "}
+                    {pendingRoute.target.portName}
                   </span>
                   <span {...stylex.props(s.projectionEndpointType)}>
                     {pendingRoute.target.artifactType}
@@ -191,32 +206,40 @@ export function ConnectionRouteDialog({
                 </div>
               </div>
               <p {...stylex.props(s.projectionPrompt)}>
-                Choose how this edge carries the value:
+                {pendingRoute.refineEdgeId
+                  ? "Keep the whole output, or feed a declared field:"
+                  : pendingRoute.preferredProjectionPath?.length
+                    ? "More than one way to deliver that field:"
+                    : "More than one compatible feed is available:"}
               </p>
               <div {...stylex.props(s.projectionChoices)}>
-                {pendingRoute.candidates.map((candidate, index) => (
-                  <button
-                    key={`${candidate.kind}-${connectionRouteDescription(pendingRoute.source.portName, candidate)}`}
-                    type="button"
-                    autoFocus={index === 0}
-                    aria-label={`Use ${connectionRouteTitle(candidate)} from ${pendingRoute.source.nodeTitle}`}
-                    {...stylex.props(s.projectionChoice)}
-                    onClick={() => {
-                      onSelect(candidate);
-                      onClose();
-                    }}
-                  >
-                    <span {...stylex.props(s.projectionChoiceTitle)}>
-                      {connectionRouteTitle(candidate)}
-                    </span>
-                    <span {...stylex.props(s.projectionChoicePath)}>
-                      {connectionRouteDescription(
-                        pendingRoute.source.portName,
-                        candidate,
-                      )}
-                    </span>
-                  </button>
-                ))}
+                {pendingRoute.candidates.map((candidate, index) => {
+                  const title = connectionRouteFeedTitle(candidate);
+                  const description = connectionRouteFeedDescription(
+                    pendingRoute.source.portName,
+                    candidate,
+                  );
+                  return (
+                    <button
+                      key={`${candidate.kind}-${description}-${index}`}
+                      type="button"
+                      autoFocus={index === 0}
+                      aria-label={`Feed ${title} from ${pendingRoute.source.nodeTitle}`}
+                      {...stylex.props(s.projectionChoice)}
+                      onClick={() => {
+                        onSelect(candidate);
+                        onClose();
+                      }}
+                    >
+                      <span {...stylex.props(s.projectionChoiceTitle)}>
+                        {title}
+                      </span>
+                      <span {...stylex.props(s.projectionChoicePath)}>
+                        {description}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
               <div {...stylex.props(s.projectionActions)}>
                 <button
@@ -224,7 +247,7 @@ export function ConnectionRouteDialog({
                   {...stylex.props(s.projectionCancel)}
                   onClick={onClose}
                 >
-                  Cancel
+                  {pendingRoute.refineEdgeId ? "Keep whole output" : "Cancel"}
                 </button>
               </div>
             </>

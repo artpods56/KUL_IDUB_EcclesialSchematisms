@@ -86,6 +86,7 @@ type LifecycleOptions = Parameters<typeof useSavedGraphLifecycle>[0];
 
 interface LifecycleCallbacks {
   replaceDocument: ReturnType<typeof vi.fn>;
+  replacePresentation: ReturnType<typeof vi.fn>;
   refreshNodeSecretStatuses: LifecycleOptions["refreshNodeSecretStatuses"];
   clearGraphSecretStatuses: ReturnType<typeof vi.fn>;
   clearPendingConnectionRoute: ReturnType<typeof vi.fn>;
@@ -116,6 +117,7 @@ function lifecycleOptions(
       document.nodes = nextDocument.nodes;
       document.edges = nextDocument.edges;
     }),
+    replacePresentation: vi.fn(),
     refreshNodeSecretStatuses,
     clearGraphSecretStatuses: vi.fn(),
     clearPendingConnectionRoute: vi.fn(),
@@ -138,6 +140,7 @@ function lifecycleOptions(
       isExecutionRunning: () => false,
       uploading: false,
       replaceDocument: callbacks.replaceDocument,
+      replacePresentation: callbacks.replacePresentation,
       updateDocumentName,
       attachNodeCallbacks: (data) => data,
       refreshNodeSecretStatuses: callbacks.refreshNodeSecretStatuses,

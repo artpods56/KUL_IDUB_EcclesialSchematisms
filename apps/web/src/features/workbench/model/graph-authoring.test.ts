@@ -717,12 +717,29 @@ describe("input-plug binding presentation", () => {
             title: "Normalize text",
           },
         ],
+        [
+          {
+            key: { id: "scalar.text", schema_version: 1 },
+            title: "Text",
+            payload_schema: {},
+            field_projections: [
+              {
+                path: ["body"],
+                target_artifact_type: {
+                  id: "scalar.text",
+                  schema_version: 1,
+                },
+                title: "Body",
+              },
+            ],
+          },
+        ],
       ),
     ).toEqual({
       active: {
         sourceLabel: "source node · Result",
         sourceShape: "one",
-        conversionLabel: "body → Normalize text",
+        conversionLabel: "Body → Normalize text",
         contributionLabel: "output 1–2",
       },
     });

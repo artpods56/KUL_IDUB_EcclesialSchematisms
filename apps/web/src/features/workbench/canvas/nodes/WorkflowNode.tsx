@@ -98,9 +98,18 @@ import {
   type WorkflowInputPlug,
   type WorkflowNodeData,
 } from "../types";
+import { useOptionalCanvasGridSettings } from "../canvas-grid-settings";
+import {
+  GRID_CELL_SIZE_DEFAULT,
+  PORT_RAIL_ROW_HEIGHT_CELLS,
+  lengthFromSpan,
+} from "../grid-layout";
+import { RemoteSelectionRing } from "../../room/RemoteSelectionRing";
 import { LayoutResizeHandle } from "./LayoutResizeHandle";
 import { NodeExecutionAppendix } from "./NodeExecutionAppendix";
+import { TextareaBodyResizeHandle } from "./TextareaBodyResizeHandle";
 import { PortTypePopover } from "./type-inspector";
+import { useShellGridFill } from "./useShellGridFill";
 import { VectorLayerStyleBody } from "./VectorLayerStyleBody";
 
 type WorkflowNode = Node<WorkflowNodeData, typeof WORKFLOW_NODE_TYPE>;
@@ -120,6 +129,11 @@ const s = stylex.create({
     color: tokens.colorText,
     fontSize: tokens.fontSizeSm,
     boxSizing: "border-box",
+  },
+  shellContent: {
+    boxSizing: "border-box",
+    flexShrink: 0,
+    width: "100%",
   },
   compatibilityShell: {
     borderWidth: 1,
@@ -194,6 +208,17 @@ const s = stylex.create({
       ":hover": tokens.colorSurfaceSunken,
     },
     color: tokens.colorTextDisabled,
+  },
+  textareaHost: {
+    position: "relative",
+    width: "100%",
+    minHeight: 0,
+  },
+  textareaHostFill: {
+    flex: "1 1 0%",
+    display: "flex",
+    flexDirection: "column",
+    minHeight: 0,
   },
   textareaFill: {
     flex: "1 1 0%",
@@ -365,6 +390,31 @@ const s = stylex.create({
     gap: "5px",
     paddingTop: "2px",
     paddingBottom: "14px",
+  },
+  /** Paired I/O rows — inputs left, outputs right, same lattice height. */
+  portRail: {
+    display: "grid",
+    paddingBlock: "2px",
+  },
+  portRailRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+    alignItems: "stretch",
+    boxSizing: "border-box",
+  },
+  portRailSlot: {
+    position: "relative",
+    minWidth: 0,
+    display: "flex",
+    alignItems: "center",
+  },
+  portRailSlotOut: {
+    justifyContent: "flex-end",
+  },
+  plugPorts: {
+    display: "grid",
+    gap: "5px",
+    paddingBlock: "2px",
   },
   genericTypes: {
     display: "grid",
@@ -562,6 +612,8 @@ const s = stylex.create({
   tabRow: {
     position: "relative",
     display: "flex",
+    width: "100%",
+    height: "100%",
     minHeight: "28px",
     alignItems: "center",
   },
@@ -1240,6 +1292,10 @@ const s = stylex.create({
     display: "grid",
     width: "fit-content",
   },
+  shellFrame: {
+    position: "relative",
+    boxSizing: "border-box",
+  },
   emptyBody: {
     padding: "0 16px 14px",
     color: tokens.colorSubtle,
@@ -1327,6 +1383,66 @@ function OptionalConnectionToggle({
   );
 }
 
+/**
+ * Shared port rail: one lattice-tall row per index, input on the left and
+ * output on the right so neighboring nodes can Lego-join on the same Y.
+ */
+function PortRail({
+  id,
+  data,
+  inputPorts,
+  outputPorts,
+}: {
+  id: string;
+  data: WorkflowNodeData;
+  inputPorts: readonly Port[];
+  outputPorts: readonly Port[];
+}) {
+  const grid = useOptionalCanvasGridSettings();
+  const cellSize = grid?.settings.cellSize ?? GRID_CELL_SIZE_DEFAULT;
+  const rowHeight = lengthFromSpan(PORT_RAIL_ROW_HEIGHT_CELLS, cellSize);
+  const rowCount = Math.max(inputPorts.length, outputPorts.length);
+  if (rowCount === 0) return null;
+
+  return (
+    <div data-testid="port-rail" {...stylex.props(s.portRail)}>
+      {Array.from({ length: rowCount }, (_, index) => {
+        const input = inputPorts[index];
+        const output = outputPorts[index];
+        return (
+          <div
+            key={`port-rail-row-${index}`}
+            data-testid="port-rail-row"
+            style={{ height: rowHeight }}
+            {...stylex.props(s.portRailRow)}
+          >
+            <div {...stylex.props(s.portRailSlot)}>
+              {input ? (
+                <PortTab
+                  id={id}
+                  data={data}
+                  port={input}
+                  shape={effectivePortShape(data, input)}
+                />
+              ) : null}
+            </div>
+            <div {...stylex.props(s.portRailSlot, s.portRailSlotOut)}>
+              {output ? (
+                <PortTab
+                  id={id}
+                  data={data}
+                  port={output}
+                  shape={effectivePortShape(data, output)}
+                />
+              ) : null}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function PortTab({
   id,
   data,
@@ -1410,7 +1526,7 @@ function PortTab({
         title={
           input
             ? `${accessibleLabel}. Connect a compatible output here.${port.description ? ` ${port.description}` : ""}`
-            : `${accessibleLabel}. Drag to a compatible input.${port.description ? ` ${port.description}` : ""}`
+            : `${accessibleLabel}. Drag to a compatible input. If fields are available, you can choose what arrives after connecting.${port.description ? ` ${port.description}` : ""}`
         }
         style={handleStyle("50%", color, port.variadic)}
       />
@@ -1454,7 +1570,7 @@ function InstancePlugRow({
   const connectionMeta = binding
     ? [
         binding.sourceShape === "many" ? "sequence" : "single",
-        binding.conversionLabel ? `via ${binding.conversionLabel}` : null,
+        binding.conversionLabel ? `feed ${binding.conversionLabel}` : null,
         binding.contributionLabel,
       ]
         .filter((label): label is string => Boolean(label))
@@ -1990,13 +2106,24 @@ function ConfigField({
   value,
   onChange,
   fillHeight = false,
+  layout = null,
+  onLayoutDraft,
+  onLayoutCommit,
 }: {
   field: SchemaField;
   value: unknown;
   onChange: (value: unknown) => void;
   fillHeight?: boolean;
+  layout?: WorkflowNodeLayout | null;
+  onLayoutDraft?: (layout: WorkflowNodeLayout | null) => void;
+  onLayoutCommit?: (layout: WorkflowNodeLayout | null) => void;
 }) {
   const fieldProps = stylex.props(s.field, fillHeight ? s.fieldSized : null);
+  const canResizeBody =
+    field.type === "string" &&
+    field.format === "textarea" &&
+    onLayoutDraft &&
+    onLayoutCommit;
   if (field.type === "number-tuple") {
     return (
       <NumberTupleConfigField
@@ -2073,20 +2200,35 @@ function ConfigField({
           ))}
         </select>
       ) : field.type === "string" && field.format === "textarea" ? (
-        <textarea
-          value={typeof value === "string" ? value : ""}
-          minLength={field.minLength}
-          maxLength={field.maxLength}
-          {...nodeInteractionProps(
-            stylex.props(
-              s.input,
-              s.textarea,
-              field.codeLanguage ? s.codeTextarea : null,
-              fillHeight ? s.textareaFill : s.textareaDefault,
-            ),
+        <div
+          {...stylex.props(
+            s.textareaHost,
+            fillHeight ? s.textareaHostFill : null,
           )}
-          onChange={(event) => onChange(event.currentTarget.value)}
-        />
+        >
+          <textarea
+            value={typeof value === "string" ? value : ""}
+            minLength={field.minLength}
+            maxLength={field.maxLength}
+            {...nodeInteractionProps(
+              stylex.props(
+                s.input,
+                s.textarea,
+                field.codeLanguage ? s.codeTextarea : null,
+                fillHeight ? s.textareaFill : s.textareaDefault,
+              ),
+            )}
+            onChange={(event) => onChange(event.currentTarget.value)}
+          />
+          {canResizeBody ? (
+            <TextareaBodyResizeHandle
+              layout={layout}
+              ariaLabel={`Resize ${field.title} field`}
+              onDraft={onLayoutDraft}
+              onCommit={onLayoutCommit}
+            />
+          ) : null}
+        </div>
       ) : (
         <input
           type={
@@ -3091,10 +3233,16 @@ function GenericBody({
   id,
   data,
   bodyHeight,
+  layout,
+  onLayoutDraft,
+  onLayoutCommit,
 }: {
   id: string;
   data: WorkflowNodeData;
   bodyHeight: number | null;
+  layout: WorkflowNodeLayout | null;
+  onLayoutDraft: (layout: WorkflowNodeLayout | null) => void;
+  onLayoutCommit: (layout: WorkflowNodeLayout | null) => void;
 }) {
   const fields = schemaFields(data.spec.config_schema);
   const secretInputs = nodeSecretInputs(data.spec);
@@ -3113,6 +3261,9 @@ function GenericBody({
             field={field}
             value={data.config[field.name]}
             fillHeight={sized && field.format === "textarea"}
+            layout={layout}
+            onLayoutDraft={onLayoutDraft}
+            onLayoutCommit={onLayoutCommit}
             onChange={(value) =>
               data.onConfigChange?.(id, field.name, value)
             }
@@ -3282,6 +3433,48 @@ function CompatibilityPort({
   );
 }
 
+function CompatibilityPortRail({
+  inputs,
+  outputs,
+}: {
+  inputs: IncompatibleWorkflowNodeCompatibility["inputs"];
+  outputs: IncompatibleWorkflowNodeCompatibility["outputs"];
+}) {
+  const grid = useOptionalCanvasGridSettings();
+  const cellSize = grid?.settings.cellSize ?? GRID_CELL_SIZE_DEFAULT;
+  const rowHeight = lengthFromSpan(PORT_RAIL_ROW_HEIGHT_CELLS, cellSize);
+  const rowCount = Math.max(inputs.length, outputs.length);
+  if (rowCount === 0) return null;
+
+  return (
+    <div data-testid="port-rail" {...stylex.props(s.portRail)}>
+      {Array.from({ length: rowCount }, (_, index) => {
+        const input = inputs[index];
+        const output = outputs[index];
+        return (
+          <div
+            key={`compat-rail-row-${index}`}
+            data-testid="port-rail-row"
+            style={{ height: rowHeight }}
+            {...stylex.props(s.portRailRow)}
+          >
+            <div {...stylex.props(s.portRailSlot)}>
+              {input ? (
+                <CompatibilityPort direction="input" endpoint={input} />
+              ) : null}
+            </div>
+            <div {...stylex.props(s.portRailSlot, s.portRailSlotOut)}>
+              {output ? (
+                <CompatibilityPort direction="output" endpoint={output} />
+              ) : null}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function IncompatibleWorkflowNodeCard({
   id,
   data,
@@ -3294,11 +3487,23 @@ function IncompatibleWorkflowNodeCard({
   compatibility: IncompatibleWorkflowNodeCompatibility;
 }) {
   const updateNodeInternals = useUpdateNodeInternals();
+  const grid = useOptionalCanvasGridSettings();
+  const allowCornerResize =
+    grid?.settings.allowWorkflowCornerResize ?? false;
   const [draftLayout, setDraftLayout] = React.useState<WorkflowNodeLayout | null>(
     null,
   );
   const layout = draftLayout ?? data.layout;
   const nodeWidth = resolvedNodeWidth(layout);
+  const {
+    contentRef,
+    frameStyle,
+    shellStyle,
+    gridWidth,
+    paintWidth,
+    gutter,
+    fillMinHeight,
+  } = useShellGridFill(nodeWidth);
   const endpointRevision = JSON.stringify({
     inputs: compatibility.inputs,
     outputs: compatibility.outputs,
@@ -3314,6 +3519,8 @@ function IncompatibleWorkflowNodeCard({
     updateNodeInternals(id);
   }, [
     endpointRevision,
+    fillMinHeight,
+    gridWidth,
     hasExecutionError,
     hasMaterialization,
     hasProgress,
@@ -3333,105 +3540,98 @@ function IncompatibleWorkflowNodeCard({
   );
 
   return (
-    <div {...stylex.props(s.shellStack)} style={{ width: nodeWidth }}>
-      <article
-        aria-label={`${data.spec.title} ${compatibility.status} node`}
-        {...stylex.props(
-          s.shell,
-          s.compatibilityShell,
-          selected ? s.selected : null,
-        )}
-        style={{ width: nodeWidth }}
-      >
-        <header {...stylex.props(s.header)}>
-          <span {...stylex.props(s.titleRow)}>
-            <TriangleAlert
-              size={14}
-              aria-hidden="true"
-              {...stylex.props(s.compatibilityIcon)}
-            />
-            <button
-              type="button"
-              aria-label={`Remove ${data.spec.title}`}
-              title={`Remove ${data.spec.title}`}
-              {...nodeInteractionProps(
-                stylex.props(s.headerButton, s.removeButton),
-              )}
-              onClick={() => data.onRemoveNode?.(id)}
+    <div {...stylex.props(s.shellStack)} style={{ width: gridWidth }}>
+      <div {...stylex.props(s.shellFrame)} style={frameStyle}>
+        <article
+          aria-label={`${data.spec.title} ${compatibility.status} node`}
+          {...stylex.props(
+            s.shell,
+            s.compatibilityShell,
+            selected ? s.selected : null,
+          )}
+          style={shellStyle}
+        >
+        {!selected && data.remoteSelectionColor ? (
+          <RemoteSelectionRing color={data.remoteSelectionColor} />
+        ) : null}
+        <div ref={contentRef} {...stylex.props(s.shellContent)}>
+          <header {...stylex.props(s.header)}>
+            <span {...stylex.props(s.titleRow)}>
+              <TriangleAlert
+                size={14}
+                aria-hidden="true"
+                {...stylex.props(s.compatibilityIcon)}
+              />
+              <button
+                type="button"
+                aria-label={`Remove ${data.spec.title}`}
+                title={`Remove ${data.spec.title}`}
+                {...nodeInteractionProps(
+                  stylex.props(s.headerButton, s.removeButton),
+                )}
+                onClick={() => data.onRemoveNode?.(id)}
+              >
+                <X size={13} />
+              </button>
+              <span {...stylex.props(s.title)} title={data.spec.title}>
+                {data.spec.title}
+              </span>
+              <span {...stylex.props(s.compatibilityBadge)}>
+                {compatibility.status}
+              </span>
+            </span>
+            <span {...stylex.props(s.operatorRow)}>
+              <span {...stylex.props(s.operatorCopy)}>
+                {data.spec.operator_id}@{data.spec.operator_version}
+              </span>
+            </span>
+          </header>
+          <CompatibilityPortRail
+            inputs={compatibility.inputs}
+            outputs={compatibility.outputs}
+          />
+          <div {...stylex.props(s.compatibilityBody)}>
+            {compatibility.issues.map((issue) => (
+              <p key={issue} role="status" {...stylex.props(s.compatibilityIssue)}>
+                {issue}
+              </p>
+            ))}
+            <details
+              {...nodeInteractionProps(stylex.props(s.compatibilityConfig))}
             >
-              <X size={13} />
-            </button>
-            <span {...stylex.props(s.title)} title={data.spec.title}>
-              {data.spec.title}
-            </span>
-            <span {...stylex.props(s.compatibilityBadge)}>
-              {compatibility.status}
-            </span>
-          </span>
-          <span {...stylex.props(s.operatorRow)}>
-            <span {...stylex.props(s.operatorCopy)}>
-              {data.spec.operator_id}@{data.spec.operator_version}
-            </span>
-          </span>
-        </header>
-        {compatibility.inputs.length ? (
-          <div {...stylex.props(s.tabs)}>
-            {compatibility.inputs.map((endpoint) => (
-              <CompatibilityPort
-                key={`input:${endpoint.portName}:${endpoint.plugId ?? ""}`}
-                direction="input"
-                endpoint={endpoint}
-              />
-            ))}
+              <summary {...stylex.props(s.compatibilityConfigSummary)}>
+                Saved configuration
+              </summary>
+              <pre {...stylex.props(s.compatibilityConfigValue)}>
+                {JSON.stringify(data.config, null, 2)}
+              </pre>
+            </details>
           </div>
-        ) : null}
-        <div {...stylex.props(s.compatibilityBody)}>
-          {compatibility.issues.map((issue) => (
-            <p key={issue} role="status" {...stylex.props(s.compatibilityIssue)}>
-              {issue}
-            </p>
-          ))}
-          <details
-            {...nodeInteractionProps(stylex.props(s.compatibilityConfig))}
-          >
-            <summary {...stylex.props(s.compatibilityConfigSummary)}>
-              Saved configuration
-            </summary>
-            <pre {...stylex.props(s.compatibilityConfigValue)}>
-              {JSON.stringify(data.config, null, 2)}
-            </pre>
-          </details>
         </div>
-        {compatibility.outputs.length ? (
-          <div {...stylex.props(s.tabsOutput)}>
-            {compatibility.outputs.map((endpoint) => (
-              <CompatibilityPort
-                key={`output:${endpoint.portName}`}
-                direction="output"
-                endpoint={endpoint}
-              />
-            ))}
-          </div>
+        {allowCornerResize ? (
+          <LayoutResizeHandle
+            layout={layout}
+            axes={["width"]}
+            ariaLabel={`Resize ${data.spec.title}`}
+            onDraft={setDraftLayout}
+            onCommit={commitLayout}
+          />
         ) : null}
-        <LayoutResizeHandle
-          layout={layout}
-          axes={["width"]}
-          ariaLabel={`Resize ${data.spec.title}`}
-          onDraft={setDraftLayout}
-          onCommit={commitLayout}
+        </article>
+      </div>
+      <div style={gutter ? { marginInline: gutter } : undefined}>
+        <NodeExecutionAppendix
+          nodeId={id}
+          nodeTitle={data.spec.title}
+          expanded={selected}
+          width={paintWidth}
+          execution={data.execution}
+          progress={data.progress}
+          run={data.run}
+          historyContext={data.historyContext}
+          onOpenHistory={data.onOpenExecutionHistory}
         />
-      </article>
-      <NodeExecutionAppendix
-        nodeId={id}
-        nodeTitle={data.spec.title}
-        expanded={selected}
-        width={nodeWidth}
-        execution={data.execution}
-        progress={data.progress}
-        run={data.run}
-        historyContext={data.historyContext}
-        onOpenHistory={data.onOpenExecutionHistory}
-      />
+      </div>
     </div>
   );
 }
@@ -3481,6 +3681,9 @@ function SupportedWorkflowNodeCard({
     .join("|");
   const incidentConnections = useNodeConnections({ id });
   const updateNodeInternals = useUpdateNodeInternals();
+  const grid = useOptionalCanvasGridSettings();
+  const allowCornerResize =
+    grid?.settings.allowWorkflowCornerResize ?? false;
   const measuredArtifactTypeBindings = data.artifactTypeBindings;
   const onHandlesMeasured = data.onHandlesMeasured;
   const [draftLayout, setDraftLayout] = React.useState<WorkflowNodeLayout | null>(
@@ -3488,6 +3691,15 @@ function SupportedWorkflowNodeCard({
   );
   const layout = draftLayout ?? data.layout;
   const nodeWidth = resolvedNodeWidth(layout);
+  const {
+    contentRef,
+    frameStyle,
+    shellStyle,
+    gridWidth,
+    paintWidth,
+    gutter,
+    fillMinHeight,
+  } = useShellGridFill(nodeWidth);
   const bodyHeight = resolvedBodyHeight(layout);
   const layoutRevision = [
     layout?.width ?? "",
@@ -3518,6 +3730,8 @@ function SupportedWorkflowNodeCard({
     data.spec.inputs.length,
     data.spec.outputs.length,
     fields.length,
+    fillMinHeight,
+    gridWidth,
     secretInputs.length,
     hasExecutionError,
     hasMaterialization,
@@ -3530,108 +3744,120 @@ function SupportedWorkflowNodeCard({
   ]);
 
   return (
-    <div {...stylex.props(s.shellStack)} style={{ width: nodeWidth }}>
-      <article
-        {...stylex.props(
-          s.shell,
-          selected ? s.selected : null,
-          data.execution.status === "running" ||
-              data.execution.status === "cancelling"
-            ? s.activeExecution
-            : null,
-          data.execution.status === "cancelling"
-            ? s.cancellingExecution
-            : null,
-        )}
-        style={{ width: nodeWidth }}
-      >
-        <NodeHeader id={id} data={data} />
-        <GenericArtifactTypeState
-          id={id}
-          data={data}
-          resettable={incidentConnections.length === 0}
-        />
-        {visibleInputPorts.length ? (
-          <div {...stylex.props(s.tabs)}>
-            {visibleInputPorts.map((port) => (
-              portHasInstancePlugs(port) ? (
-                <InstancePlugPort
-                  key={`in-${port.name}`}
-                  id={id}
-                  data={data}
-                  port={port}
-                />
-              ) : (
-                <PortTab
-                  key={`in-${port.name}`}
-                  id={id}
-                  data={data}
-                  port={port}
-                  shape={effectivePortShape(data, port)}
-                />
-              )
-            ))}
-          </div>
+    <div {...stylex.props(s.shellStack)} style={{ width: gridWidth }}>
+      <div {...stylex.props(s.shellFrame)} style={frameStyle}>
+        <article
+          {...stylex.props(
+            s.shell,
+            selected ? s.selected : null,
+            data.execution.status === "running" ||
+                data.execution.status === "cancelling"
+              ? s.activeExecution
+              : null,
+            data.execution.status === "cancelling"
+              ? s.cancellingExecution
+              : null,
+          )}
+          style={shellStyle}
+        >
+        {!selected && data.remoteSelectionColor ? (
+          <RemoteSelectionRing color={data.remoteSelectionColor} />
         ) : null}
-        {isSchemaBuilder ? (
-          <SchemaBuilderBody id={id} data={data} />
-        ) : isArtifactQuery ? (
-          <ArtifactQueryTablesBody id={id} data={data} />
-        ) : isFileUpload ? (
-          <FileUploadBody id={id} data={data} />
-        ) : isVectorLayer ? (
-          <>
-            <GenericBody id={id} data={data} bodyHeight={bodyHeight} />
-            <VectorLayerStyleBody id={id} data={data} />
-          </>
-        ) : hasConfig ? (
-          <GenericBody id={id} data={data} bodyHeight={bodyHeight} />
-        ) : (
-          <div {...stylex.props(s.spacer)} aria-hidden />
-        )}
-        {data.spec.outputs.length ? (
-          <div {...stylex.props(s.tabsOutput)}>
-            {data.spec.outputs.map((port) => (
-              <PortTab
-                key={`out-${port.name}`}
+        <div ref={contentRef} {...stylex.props(s.shellContent)}>
+          <NodeHeader id={id} data={data} />
+          <GenericArtifactTypeState
+            id={id}
+            data={data}
+            resettable={incidentConnections.length === 0}
+          />
+          <PortRail
+            id={id}
+            data={data}
+            inputPorts={visibleInputPorts.filter(
+              (port) => !portHasInstancePlugs(port),
+            )}
+            outputPorts={data.spec.outputs}
+          />
+          {visibleInputPorts.some((port) => portHasInstancePlugs(port)) ? (
+            <div {...stylex.props(s.plugPorts)}>
+              {visibleInputPorts
+                .filter((port) => portHasInstancePlugs(port))
+                .map((port) => (
+                  <InstancePlugPort
+                    key={`in-${port.name}`}
+                    id={id}
+                    data={data}
+                    port={port}
+                  />
+                ))}
+            </div>
+          ) : null}
+          {isSchemaBuilder ? (
+            <SchemaBuilderBody id={id} data={data} />
+          ) : isArtifactQuery ? (
+            <ArtifactQueryTablesBody id={id} data={data} />
+          ) : isFileUpload ? (
+            <FileUploadBody id={id} data={data} />
+          ) : isVectorLayer ? (
+            <>
+              <GenericBody
                 id={id}
                 data={data}
-                port={port}
-                shape={effectivePortShape(data, port)}
+                bodyHeight={bodyHeight}
+                layout={layout}
+                onLayoutDraft={setDraftLayout}
+                onLayoutCommit={commitLayout}
               />
-            ))}
-          </div>
+              <VectorLayerStyleBody id={id} data={data} />
+            </>
+          ) : hasConfig ? (
+            <GenericBody
+              id={id}
+              data={data}
+              bodyHeight={bodyHeight}
+              layout={layout}
+              onLayoutDraft={setDraftLayout}
+              onLayoutCommit={commitLayout}
+            />
+          ) : (
+            <div {...stylex.props(s.spacer)} aria-hidden />
+          )}
+          {!isFileUpload &&
+          !isSchemaBuilder &&
+          !isArtifactQuery &&
+          !hasConfig &&
+          !hasExecutionError &&
+          !data.spec.inputs.length &&
+          !data.spec.outputs.length ? (
+            <p {...stylex.props(s.emptyBody)}>
+              {data.spec.description || "No configuration for this operator."}
+            </p>
+          ) : null}
+        </div>
+        {allowCornerResize ? (
+          <LayoutResizeHandle
+            layout={layout}
+            axes={["width", "bodyHeight"]}
+            ariaLabel={`Resize ${data.spec.title}`}
+            onDraft={setDraftLayout}
+            onCommit={commitLayout}
+          />
         ) : null}
-        {!isFileUpload &&
-        !isSchemaBuilder &&
-        !isArtifactQuery &&
-        !hasConfig &&
-        !hasExecutionError &&
-        !data.spec.inputs.length &&
-        !data.spec.outputs.length ? (
-          <p {...stylex.props(s.emptyBody)}>
-            {data.spec.description || "No configuration for this operator."}
-          </p>
-        ) : null}
-        <LayoutResizeHandle
-          layout={layout}
-          axes={["width", "bodyHeight"]}
-          ariaLabel={`Resize ${data.spec.title}`}
-          onDraft={setDraftLayout}
-          onCommit={commitLayout}
+        </article>
+      </div>
+      <div style={gutter ? { marginInline: gutter } : undefined}>
+        <NodeExecutionAppendix
+          nodeId={id}
+          nodeTitle={data.spec.title}
+          expanded={selected}
+          width={paintWidth}
+          execution={data.execution}
+          progress={data.progress}
+          run={data.run}
+          historyContext={data.historyContext}
+          onOpenHistory={data.onOpenExecutionHistory}
         />
-      </article>
-      <NodeExecutionAppendix
-        nodeId={id}
-        nodeTitle={data.spec.title}
-        expanded={selected}
-        width={nodeWidth}
-        execution={data.execution}
-        progress={data.progress}
-        run={data.run}
-        historyContext={data.historyContext}
-        onOpenHistory={data.onOpenExecutionHistory}
-      />
+      </div>
     </div>
   );
 }
