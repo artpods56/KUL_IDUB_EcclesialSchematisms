@@ -19,12 +19,23 @@ import {
   type RoomGraphCommand,
   type RoomReadyMessage,
 } from "./protocol";
+import { applyRoomCommandToHead } from "./room-command-bridge";
 
 export type { GraphRoomStatus, GraphRoomTerminalReason, RoomGraphCommand };
 export type { ActiveExecutionSummary, PresenceParticipant, PresenceUpdateSubmit };
 export { ROOM_COMMAND_QUEUE_CAP, graphRoomWebSocketUrl };
 
 export const PRESENCE_CLIENT_MIN_INTERVAL_MS = 50;
+
+/** True when `incoming` should replace the session's confirmed head snapshot. */
+export function shouldReplaceCollaborativeHead(
+  current: CollaborativeHead | null | undefined,
+  incoming: CollaborativeHead,
+): boolean {
+  if (!current) return true;
+  if (current.room_epoch !== incoming.room_epoch) return true;
+  return incoming.collaboration_sequence >= current.collaboration_sequence;
+}
 
 export class GraphRoomCommandError extends Error {
   readonly errorCode: string;
@@ -43,11 +54,20 @@ export interface GraphRoomCommandResult {
   readonly accepted: GraphCommandAcceptedMessage | null;
 }
 
+export interface GraphRoomAcceptedMeta {
+  readonly local: boolean;
+}
+
 export interface GraphRoomSessionListeners {
   onStatusChange?: (status: GraphRoomStatus) => void;
   onReady?: (ready: RoomReadyMessage) => void;
   onRehydrate?: (head: CollaborativeHead) => void;
-  onCommandAccepted?: (message: GraphCommandAcceptedMessage) => void;
+  /** Session paused command drain until replaceHead supplies a full snapshot. */
+  onHeadRefreshRequired?: () => void;
+  onCommandAccepted?: (
+    message: GraphCommandAcceptedMessage,
+    meta: GraphRoomAcceptedMeta,
+  ) => void;
   onCommandRejected?: (message: GraphCommandRejectedMessage) => void;
   onPresenceChange?: (participants: readonly PresenceParticipant[]) => void;
   onActiveExecution?: (execution: ActiveExecutionSummary | null) => void;
@@ -99,6 +119,9 @@ export class GraphRoomSession {
 
   private readonly queue: QueuedCommand[] = [];
   private inFlight: QueuedCommand | null = null;
+  private readonly localCommandIds = new Set<string>();
+  /** When true, do not send queued commands until replaceHead restores a full snapshot. */
+  private awaitingHeadRehydration = false;
 
   constructor(options: GraphRoomSessionOptions) {
     this.workspaceId = options.workspaceId;
@@ -111,6 +134,7 @@ export class GraphRoomSession {
       onStatusChange: options.onStatusChange,
       onReady: options.onReady,
       onRehydrate: options.onRehydrate,
+      onHeadRefreshRequired: options.onHeadRefreshRequired,
       onCommandAccepted: options.onCommandAccepted,
       onCommandRejected: options.onCommandRejected,
       onPresenceChange: options.onPresenceChange,
@@ -233,9 +257,26 @@ export class GraphRoomSession {
       "disconnected",
       "Graph room disconnected before the command completed.",
     ));
+    this.localCommandIds.clear();
     this.setStatus("idle");
     this.ready = null;
     this.clearPresence();
+  }
+
+  /**
+   * Replace the cached collaborative head (checkpoint or conflict recovery).
+   * Ignores stale same-epoch snapshots so a late HTTP fetch cannot wipe a newer
+   * WebSocket-applied head (e.g. a just-accepted presentation).
+   */
+  replaceHead(head: CollaborativeHead): void {
+    if (!shouldReplaceCollaborativeHead(this.head, head)) {
+      this.awaitingHeadRehydration = false;
+      this.drainQueue();
+      return;
+    }
+    this.head = head;
+    this.awaitingHeadRehydration = false;
+    this.drainQueue();
   }
 
   submitCommand(command: RoomGraphCommand): Promise<GraphRoomCommandResult> {
@@ -248,6 +289,7 @@ export class GraphRoomSession {
         ),
       );
     }
+    this.supersedeQueuedSnapshotCommand(command);
     if (this.queue.length + (this.inFlight ? 1 : 0) >= ROOM_COMMAND_QUEUE_CAP) {
       return Promise.reject(
         new GraphRoomCommandError(
@@ -259,6 +301,7 @@ export class GraphRoomSession {
     }
 
     const commandId = this.createCommandId();
+    this.localCommandIds.add(commandId);
     return new Promise<GraphRoomCommandResult>((resolve, reject) => {
       this.queue.push({
         commandId,
@@ -343,7 +386,9 @@ export class GraphRoomSession {
     }
     if (message.type === "room.rehydrate") {
       this.head = message.head;
+      this.awaitingHeadRehydration = false;
       this.listeners.onRehydrate?.(message.head);
+      this.drainQueue();
       return;
     }
     if (message.type === "presence.join" || message.type === "presence.update") {
@@ -432,18 +477,57 @@ export class GraphRoomSession {
   }
 
   private applyAccepted(message: GraphCommandAcceptedMessage): void {
-    if (this.head && message.room_epoch === this.head.room_epoch) {
-      if (message.sequence > this.head.collaboration_sequence) {
+    const local = this.localCommandIds.delete(message.command_id);
+    let refreshRequired = false;
+    if (
+      this.head &&
+      message.room_epoch === this.head.room_epoch &&
+      message.sequence > this.head.collaboration_sequence
+    ) {
+      try {
+        this.head = applyRoomCommandToHead(
+          this.head,
+          message.command,
+          message.sequence,
+        );
+      } catch {
+        // Incremental apply failed; keep sequence markers and require a full snapshot.
         this.head = {
           ...this.head,
           collaboration_sequence: message.sequence,
         };
+        refreshRequired = true;
       }
+    } else if (
+      this.head &&
+      message.room_epoch === this.head.room_epoch &&
+      message.sequence === this.head.collaboration_sequence
+    ) {
+      // Sequence matched without a prior document apply (e.g. stale markers).
+      // Still fold the accepted command into the confirmed head.
+      try {
+        this.head = applyRoomCommandToHead(
+          this.head,
+          message.command,
+          message.sequence,
+        );
+      } catch {
+        refreshRequired = true;
+      }
+    } else if (
+      this.head &&
+      (message.room_epoch !== this.head.room_epoch ||
+        message.sequence > this.head.collaboration_sequence + 1)
+    ) {
+      refreshRequired = true;
     }
     if (this.inFlight?.commandId === message.command_id) {
       this.inFlight.accepted = message;
     }
-    this.listeners.onCommandAccepted?.(message);
+    this.listeners.onCommandAccepted?.(message, { local });
+    if (refreshRequired) {
+      this.requestHeadRefresh();
+    }
   }
 
   private applyReceipt(message: GraphCommandReceiptMessage): void {
@@ -463,27 +547,27 @@ export class GraphRoomSession {
       receipt: message,
       accepted: pending.accepted,
     });
+    if (message.requires_head_rehydration) {
+      this.requestHeadRefresh();
+      return;
+    }
     this.drainQueue();
   }
 
   private applyRejected(message: GraphCommandRejectedMessage): void {
-    this.listeners.onCommandRejected?.(message);
+    this.localCommandIds.delete(message.command_id);
     const pending = this.inFlight;
     if (!pending || pending.commandId !== message.command_id) {
+      this.listeners.onCommandRejected?.(message);
       return;
     }
-    if (
-      message.current_room_epoch !== null &&
-      message.current_sequence !== null &&
-      this.head
-    ) {
-      this.head = {
-        ...this.head,
-        room_epoch: message.current_room_epoch,
-        collaboration_sequence: message.current_sequence,
-      };
-    }
+    // Do not advance collaboration_sequence from the rejection alone — that
+    // skips applying a peer's accepted command at the same sequence, and lets
+    // the queue drain with a document that never received the winner.
+    // Pause drain until Workbench replaceHead() restores a full snapshot.
+    this.awaitingHeadRehydration = true;
     this.inFlight = null;
+    this.listeners.onCommandRejected?.(message);
     pending.reject(
       new GraphRoomCommandError(
         message.command_id,
@@ -491,11 +575,46 @@ export class GraphRoomSession {
         message.detail,
       ),
     );
-    this.drainQueue();
+  }
+
+  private requestHeadRefresh(): void {
+    if (this.awaitingHeadRehydration) {
+      this.listeners.onHeadRefreshRequired?.();
+      return;
+    }
+    this.awaitingHeadRehydration = true;
+    this.listeners.onHeadRefreshRequired?.();
+  }
+
+  private supersedeQueuedSnapshotCommand(command: RoomGraphCommand): void {
+    if (
+      command.kind !== "replace_presentation" &&
+      command.kind !== "replace_document"
+    ) {
+      return;
+    }
+    for (let index = this.queue.length - 1; index >= 0; index -= 1) {
+      const item = this.queue[index];
+      if (!item || item.sent || item.command.kind !== command.kind) continue;
+      this.queue.splice(index, 1);
+      this.localCommandIds.delete(item.commandId);
+      item.reject(
+        new GraphRoomCommandError(
+          item.commandId,
+          "superseded",
+          "A newer snapshot command replaced this queued command.",
+        ),
+      );
+    }
   }
 
   private drainQueue(): void {
-    if (this.inFlight || !this.canSubmitCommands() || this.head === null) {
+    if (
+      this.inFlight ||
+      this.awaitingHeadRehydration ||
+      !this.canSubmitCommands() ||
+      this.head === null
+    ) {
       return;
     }
     const next = this.queue.shift();

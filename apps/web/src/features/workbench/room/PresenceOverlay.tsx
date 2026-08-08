@@ -5,42 +5,41 @@ import * as stylex from "@stylexjs/stylex";
 import { ViewportPortal } from "@xyflow/react";
 
 import type { PresenceParticipant } from "./protocol";
-
-const ACTOR_COLOR: Record<string, string> = {
-  indigo: "#4f46e5",
-  emerald: "#059669",
-  amber: "#d97706",
-  rose: "#e11d48",
-  sky: "#0284c7",
-  violet: "#7c3aed",
-  teal: "#0d9488",
-  orange: "#ea580c",
-};
+import {
+  applyRemoteCursorSample,
+  beginRemoteCursorFade,
+  createRemoteCursorMotion,
+  stepRemoteCursorMotion,
+  type RemoteCursorMotion,
+} from "./remote-cursor-motion";
+import { actorColor } from "./remote-selection";
 
 const s = stylex.create({
   cursor: {
     position: "absolute",
+    left: 0,
+    top: 0,
     pointerEvents: "none",
     zIndex: 5,
     display: "grid",
     justifyItems: "start",
     gap: "2px",
-    transform: "translate(-2px, -2px)",
+    willChange: "transform, opacity",
   },
   pointer: {
-    width: "10px",
-    height: "10px",
-    borderRadius: "2px 10px 10px 10px",
-    borderWidth: 1,
-    borderStyle: "solid",
-    borderColor: "light-dark(#ffffff, #111214)",
-    boxShadow: "0 1px 2px rgba(0, 0, 0, 0.25)",
+    display: "block",
+    width: "20px",
+    height: "24px",
+    overflow: "visible",
+    filter: "drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.35))",
   },
   label: {
     maxWidth: "120px",
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
+    marginLeft: "12px",
+    marginTop: "-4px",
     padding: "1px 5px",
     borderRadius: "4px",
     color: "#fff",
@@ -89,10 +88,6 @@ const s = stylex.create({
   },
 });
 
-function actorColor(color: string): string {
-  return ACTOR_COLOR[color] ?? ACTOR_COLOR.indigo ?? "#4f46e5";
-}
-
 function activityLabel(activity: PresenceParticipant["activity"]): string | null {
   if (activity === "moving_nodes") return "moving";
   if (activity === "editing_node") return "editing";
@@ -100,14 +95,25 @@ function activityLabel(activity: PresenceParticipant["activity"]): string | null
   return null;
 }
 
+interface CursorTrack {
+  sessionId: string;
+  displayName: string;
+  color: string;
+  motion: RemoteCursorMotion;
+  element: HTMLDivElement | null;
+}
+
 export interface PresenceOverlayProps {
   participants: readonly PresenceParticipant[];
   localSessionId: string | null;
+  /** Injectable clock for tests. */
+  now?: () => number;
 }
 
 export function PresenceOverlay({
   participants,
   localSessionId,
+  now = () => performance.now(),
 }: PresenceOverlayProps) {
   const remote = React.useMemo(
     () =>
@@ -117,84 +123,198 @@ export function PresenceOverlay({
     [localSessionId, participants],
   );
 
-  if (remote.length === 0) return null;
+  const tracksRef = React.useRef(new Map<string, CursorTrack>());
+  const [cursorSessionIds, setCursorSessionIds] = React.useState<readonly string[]>(
+    [],
+  );
+  const rafRef = React.useRef<number | null>(null);
+  const lastFrameRef = React.useRef<number | null>(null);
+  const nowRef = React.useRef(now);
+  nowRef.current = now;
+
+  const publishCursorIds = React.useCallback(() => {
+    const ids = [...tracksRef.current.keys()];
+    setCursorSessionIds((current) =>
+      current.length === ids.length &&
+        current.every((id, index) => id === ids[index])
+        ? current
+        : ids,
+    );
+  }, []);
+
+  const ensureAnimationLoop = React.useCallback(() => {
+    if (rafRef.current !== null || tracksRef.current.size === 0) return;
+
+    const frame = (frameTime: number) => {
+      const previous = lastFrameRef.current ?? frameTime;
+      lastFrameRef.current = frameTime;
+      const dtMs = frameTime - previous;
+      const clock = nowRef.current();
+      let removed = false;
+
+      for (const [sessionId, track] of tracksRef.current) {
+        const next = stepRemoteCursorMotion(track.motion, clock, dtMs);
+        if (next === null) {
+          tracksRef.current.delete(sessionId);
+          removed = true;
+          continue;
+        }
+        track.motion = next;
+        const element = track.element;
+        if (element) {
+          element.style.transform =
+            `translate3d(${next.x}px, ${next.y}px, 0)`;
+          element.style.opacity = String(next.opacity);
+        }
+      }
+
+      if (removed) publishCursorIds();
+      if (tracksRef.current.size > 0) {
+        rafRef.current = window.requestAnimationFrame(frame);
+      } else {
+        rafRef.current = null;
+        lastFrameRef.current = null;
+      }
+    };
+
+    rafRef.current = window.requestAnimationFrame(frame);
+  }, [publishCursorIds]);
+
+  React.useEffect(() => {
+    return () => {
+      if (rafRef.current !== null) {
+        window.cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      lastFrameRef.current = null;
+    };
+  }, []);
+
+  // Merge presence samples into motion tracks (targets only — rAF owns display).
+  React.useEffect(() => {
+    const tracks = tracksRef.current;
+    const seen = new Set<string>();
+    const sampleAt = now();
+    let membershipChanged = false;
+
+    for (const participant of remote) {
+      const sessionId = participant.graph_room_session_id;
+      seen.add(sessionId);
+      const color = actorColor(participant.actor.color);
+      const existing = tracks.get(sessionId);
+      if (!participant.cursor) {
+        if (existing && !existing.motion.fadingOut) {
+          existing.motion = beginRemoteCursorFade(existing.motion);
+          existing.displayName = participant.actor.display_name;
+          existing.color = color;
+        }
+        continue;
+      }
+      if (!existing) {
+        tracks.set(sessionId, {
+          sessionId,
+          displayName: participant.actor.display_name,
+          color,
+          motion: createRemoteCursorMotion({
+            x: participant.cursor.x,
+            y: participant.cursor.y,
+            at: sampleAt,
+          }),
+          element: null,
+        });
+        membershipChanged = true;
+        continue;
+      }
+      existing.displayName = participant.actor.display_name;
+      existing.color = color;
+      existing.motion = applyRemoteCursorSample(existing.motion, {
+        x: participant.cursor.x,
+        y: participant.cursor.y,
+        at: sampleAt,
+      });
+    }
+
+    for (const [sessionId, track] of tracks) {
+      if (seen.has(sessionId) || track.motion.fadingOut) continue;
+      track.motion = beginRemoteCursorFade(track.motion);
+    }
+
+    if (membershipChanged) publishCursorIds();
+    ensureAnimationLoop();
+  }, [ensureAnimationLoop, now, publishCursorIds, remote]);
+
+  const cursorTracks = cursorSessionIds.flatMap((sessionId) => {
+    const track = tracksRef.current.get(sessionId);
+    return track ? [track] : [];
+  });
+
+  if (remote.length === 0 && cursorTracks.length === 0) return null;
 
   return (
     <>
-      <div {...stylex.props(s.strip)} aria-label="Collaborators">
-        {remote.map((participant) => {
-          const color = actorColor(participant.actor.color);
-          const activity = activityLabel(participant.activity);
-          return (
-            <span
-              key={participant.graph_room_session_id}
-              {...stylex.props(s.chip)}
-              title={participant.actor.display_name}
-            >
-              <span {...stylex.props(s.dot)} style={{ backgroundColor: color }} />
-              {participant.actor.display_name}
-              {activity ? (
-                <span {...stylex.props(s.activity)}>{activity}</span>
-              ) : null}
-            </span>
-          );
-        })}
-      </div>
-      <ViewportPortal>
-        {remote.map((participant) => {
-          if (!participant.cursor) return null;
-          const color = actorColor(participant.actor.color);
-          return (
-            <div
-              key={`cursor-${participant.graph_room_session_id}`}
-              {...stylex.props(s.cursor)}
-              style={{
-                left: participant.cursor.x,
-                top: participant.cursor.y,
-              }}
-            >
+      {remote.length > 0 ? (
+        <div {...stylex.props(s.strip)} aria-label="Collaborators">
+          {remote.map((participant) => {
+            const color = actorColor(participant.actor.color);
+            const activity = activityLabel(participant.activity);
+            return (
               <span
+                key={participant.graph_room_session_id}
+                {...stylex.props(s.chip)}
+                title={participant.actor.display_name}
+              >
+                <span {...stylex.props(s.dot)} style={{ backgroundColor: color }} />
+                {participant.actor.display_name}
+                {activity ? (
+                  <span {...stylex.props(s.activity)}>{activity}</span>
+                ) : null}
+              </span>
+            );
+          })}
+        </div>
+      ) : null}
+      {cursorTracks.length > 0 ? (
+        <ViewportPortal>
+          {cursorTracks.map((track) => (
+            <div
+              key={`cursor-${track.sessionId}`}
+              ref={(element) => {
+                const current = tracksRef.current.get(track.sessionId);
+                if (current) current.element = element;
+                if (element) {
+                  element.style.transform =
+                    `translate3d(${track.motion.x}px, ${track.motion.y}px, 0)`;
+                  element.style.opacity = String(track.motion.opacity);
+                }
+              }}
+              {...stylex.props(s.cursor)}
+              aria-hidden
+            >
+              <svg
                 {...stylex.props(s.pointer)}
-                style={{ backgroundColor: color }}
-              />
+                viewBox="0 0 24 24"
+                aria-hidden
+              >
+                {/* Classic OS-style pointer; tip is the hotspot at (0,0). */}
+                <path
+                  d="M0.6 0.6v17.4l4.9-4.7 3.5 8.1 2.9-1.3-3.6-7.9H18z"
+                  fill={track.color}
+                  stroke="#ffffff"
+                  strokeWidth="1.4"
+                  strokeLinejoin="round"
+                  paintOrder="stroke fill"
+                />
+              </svg>
               <span
                 {...stylex.props(s.label)}
-                style={{ backgroundColor: color }}
+                style={{ backgroundColor: track.color }}
               >
-                {participant.actor.display_name}
+                {track.displayName}
               </span>
             </div>
-          );
-        })}
-      </ViewportPortal>
+          ))}
+        </ViewportPortal>
+      ) : null}
     </>
   );
-}
-
-export function remoteSelectedNodeIds(
-  participants: readonly PresenceParticipant[],
-  localSessionId: string | null,
-): ReadonlySet<string> {
-  const ids = new Set<string>();
-  for (const participant of participants) {
-    if (participant.graph_room_session_id === localSessionId) continue;
-    for (const nodeId of participant.selected_node_ids) {
-      ids.add(nodeId);
-    }
-  }
-  return ids;
-}
-
-export function remoteSelectionColor(
-  participants: readonly PresenceParticipant[],
-  localSessionId: string | null,
-  nodeId: string,
-): string | null {
-  for (const participant of participants) {
-    if (participant.graph_room_session_id === localSessionId) continue;
-    if (participant.selected_node_ids.includes(nodeId)) {
-      return actorColor(participant.actor.color);
-    }
-  }
-  return null;
 }

@@ -12,6 +12,7 @@ import {
   GraphRoomCommandError,
   GraphRoomSession,
   graphRoomWebSocketUrl,
+  shouldReplaceCollaborativeHead,
 } from "./graph-room-session";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000007";
@@ -165,6 +166,37 @@ describe("graphRoomWebSocketUrl", () => {
     expect(graphRoomWebSocketUrl(WORKSPACE_ID, GRAPH_ID)).toBe(
       `${protocol}//${window.location.host}/api/v1/workspaces/${WORKSPACE_ID}/graphs/${GRAPH_ID}/room`,
     );
+  });
+});
+
+describe("shouldReplaceCollaborativeHead", () => {
+  const base = {
+    graph_id: GRAPH_ID,
+    room_epoch: ROOM_EPOCH,
+    collaboration_sequence: 5,
+    checkpoint_sequence: 1,
+    checkpoint_revision: 1,
+    name: "Room graph",
+    updated_at: "2026-08-07T10:00:00Z",
+    nodes: [],
+    edges: [],
+  };
+
+  it("accepts newer same-epoch snapshots and rejects older ones", () => {
+    expect(shouldReplaceCollaborativeHead(null, base)).toBe(true);
+    expect(
+      shouldReplaceCollaborativeHead(base, {
+        ...base,
+        collaboration_sequence: 6,
+      }),
+    ).toBe(true);
+    expect(
+      shouldReplaceCollaborativeHead(base, {
+        ...base,
+        collaboration_sequence: 4,
+        presentation: { viewers: [], links: [], bindings: [] },
+      }),
+    ).toBe(false);
   });
 });
 
@@ -333,6 +365,236 @@ describe("GraphRoomSession", () => {
       name: "GraphRoomCommandError",
       errorCode: "field_conflict",
     });
+  });
+
+  it("ignores stale replaceHead snapshots after a newer WebSocket accept", async () => {
+    const { session, socket } = connectReadySession({
+      workspaceId: WORKSPACE_ID,
+      graphId: GRAPH_ID,
+    });
+
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "graph.command.accepted",
+      command_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      room_epoch: ROOM_EPOCH,
+      sequence: 5,
+      actor: {
+        actor_id: ACTOR_ID,
+        display_name: "Owner",
+        color: "emerald",
+      },
+      graph_room_session_id: SESSION_ID,
+      command: {
+        kind: "replace_presentation",
+        presentation: {
+          viewers: [
+            {
+              id: "artifact-viewer-1",
+              position: { x: 10, y: 20 },
+              layout: null,
+              mode: null,
+            },
+          ],
+          links: [],
+          bindings: [],
+          annotations: [],
+        },
+      },
+    });
+    expect(session.getHead()?.collaboration_sequence).toBe(5);
+    expect(session.getHead()?.presentation?.viewers).toHaveLength(1);
+
+    session.replaceHead({
+      graph_id: GRAPH_ID,
+      room_epoch: ROOM_EPOCH,
+      collaboration_sequence: 4,
+      checkpoint_sequence: 1,
+      checkpoint_revision: 1,
+      name: "Room graph",
+      updated_at: "2026-08-07T10:00:00Z",
+      nodes: [],
+      edges: [],
+      presentation: { viewers: [], links: [], bindings: [] },
+    });
+
+    expect(session.getHead()?.collaboration_sequence).toBe(5);
+    expect(session.getHead()?.presentation?.viewers).toHaveLength(1);
+  });
+
+  it("pauses drain on head_conflict until replaceHead, and still applies peer accept", async () => {
+    const commandIds = [
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    ];
+    const onHeadRefreshRequired = vi.fn();
+    const { session, socket } = connectReadySession({
+      workspaceId: WORKSPACE_ID,
+      graphId: GRAPH_ID,
+      createCommandId: () => commandIds.shift() ?? crypto.randomUUID(),
+      onHeadRefreshRequired,
+    });
+
+    const conflicting = session.submitCommand({
+      kind: "replace_presentation",
+      presentation: { viewers: [], links: [], bindings: [], annotations: [] },
+    });
+    expect(socket.sent).toHaveLength(1);
+
+    const queued = session.submitCommand({
+      kind: "rename_graph",
+      name: "After conflict",
+      expected_name: "Room graph",
+    });
+    expect(socket.sent).toHaveLength(1);
+
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "graph.command.rejected",
+      command_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      error_code: "head_conflict",
+      detail: "Collaborative head moved: expected sequence 4, actual 5.",
+      current_room_epoch: ROOM_EPOCH,
+      current_sequence: 5,
+    });
+    await expect(conflicting).rejects.toMatchObject({
+      errorCode: "head_conflict",
+    });
+    // Rejection alone must not advance the confirmed sequence.
+    expect(session.getHead()?.collaboration_sequence).toBe(4);
+    expect(socket.sent).toHaveLength(1);
+
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "graph.command.accepted",
+      command_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      room_epoch: ROOM_EPOCH,
+      sequence: 5,
+      actor: {
+        actor_id: ACTOR_ID,
+        display_name: "Owner",
+        color: "emerald",
+      },
+      graph_room_session_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      command: {
+        kind: "rename_graph",
+        name: "Peer rename",
+        expected_name: "Room graph",
+      },
+    });
+    expect(session.getHead()?.collaboration_sequence).toBe(5);
+    expect(session.getHead()?.name).toBe("Peer rename");
+    // Still paused until a full snapshot lands.
+    expect(socket.sent).toHaveLength(1);
+
+    session.replaceHead({
+      ...session.getHead()!,
+      collaboration_sequence: 5,
+      name: "Peer rename",
+    });
+    expect(socket.sent).toHaveLength(2);
+    expect(JSON.parse(socket.sent[1]!)).toMatchObject({
+      type: "graph.command.submit",
+      observed_sequence: 5,
+      command: {
+        kind: "rename_graph",
+        name: "After conflict",
+      },
+    });
+    queued.catch(() => undefined);
+    expect(onHeadRefreshRequired).not.toHaveBeenCalled();
+  });
+
+  it("coalesces unsent replace_presentation commands", async () => {
+    const commandIds = [
+      "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+    ];
+    const { session, socket } = connectReadySession({
+      workspaceId: WORKSPACE_ID,
+      graphId: GRAPH_ID,
+      createCommandId: () => commandIds.shift() ?? crypto.randomUUID(),
+    });
+
+    const first = session.submitCommand({
+      kind: "replace_presentation",
+      presentation: {
+        viewers: [{ id: "artifact-viewer-1", position: { x: 1, y: 2 } }],
+        links: [],
+        bindings: [],
+        annotations: [],
+      },
+    });
+    expect(socket.sent).toHaveLength(1);
+
+    const second = session.submitCommand({
+      kind: "replace_presentation",
+      presentation: {
+        viewers: [{ id: "artifact-viewer-2", position: { x: 3, y: 4 } }],
+        links: [],
+        bindings: [],
+        annotations: [],
+      },
+    });
+    const third = session.submitCommand({
+      kind: "replace_presentation",
+      presentation: {
+        viewers: [{ id: "artifact-viewer-3", position: { x: 5, y: 6 } }],
+        links: [],
+        bindings: [],
+        annotations: [],
+      },
+    });
+    await expect(second).rejects.toMatchObject({ errorCode: "superseded" });
+    expect(socket.sent).toHaveLength(1);
+
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "graph.command.accepted",
+      command_id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      room_epoch: ROOM_EPOCH,
+      sequence: 5,
+      actor: {
+        actor_id: ACTOR_ID,
+        display_name: "Owner",
+        color: "emerald",
+      },
+      graph_room_session_id: SESSION_ID,
+      command: {
+        kind: "replace_presentation",
+        presentation: {
+          viewers: [{ id: "artifact-viewer-1", position: { x: 1, y: 2 } }],
+          links: [],
+          bindings: [],
+          annotations: [],
+        },
+      },
+    });
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "graph.command.receipt",
+      command_id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      outcome: "accepted",
+      accepted_room_epoch: ROOM_EPOCH,
+      accepted_sequence: 5,
+      current_room_epoch: ROOM_EPOCH,
+      current_sequence: 5,
+      deduplicated: false,
+      requires_head_rehydration: false,
+    });
+    await first;
+    expect(socket.sent).toHaveLength(2);
+    expect(JSON.parse(socket.sent[1]!)).toMatchObject({
+      observed_sequence: 5,
+      command: {
+        kind: "replace_presentation",
+        presentation: {
+          viewers: [{ id: "artifact-viewer-3", position: { x: 5, y: 6 } }],
+        },
+      },
+    });
+    third.catch(() => undefined);
   });
 
   it("replaces collaborative head state on room.rehydrate", () => {

@@ -7,13 +7,19 @@ import type { CollaborativeHead } from "@/lib/api";
 import {
   GraphRoomSession,
   type ActiveExecutionSummary,
+  type GraphRoomAcceptedMeta,
   type GraphRoomStatus,
   type GraphRoomTerminalReason,
   type PresenceParticipant,
   type PresenceUpdateSubmit,
   type RoomGraphCommand,
 } from "./graph-room-session";
-import type { ExecutionClearedMessage, RoomReadyMessage } from "./protocol";
+import type {
+  ExecutionClearedMessage,
+  GraphCommandAcceptedMessage,
+  GraphCommandRejectedMessage,
+  RoomReadyMessage,
+} from "./protocol";
 
 export interface GraphRoomSubmitResult {
   readonly receipt: Awaited<
@@ -39,6 +45,7 @@ export interface UseGraphRoomSessionResult {
   readonly submitCommand: (
     command: RoomGraphCommand,
   ) => Promise<GraphRoomSubmitResult>;
+  readonly replaceHead: (head: CollaborativeHead) => void;
   readonly publishPresence: (
     update: Omit<PresenceUpdateSubmit, "presence_sequence">,
   ) => boolean;
@@ -49,6 +56,12 @@ interface UseGraphRoomSessionOptions {
   graphId: string | null;
   onReady?: (ready: RoomReadyMessage) => void;
   onRehydrate?: (head: CollaborativeHead) => void;
+  onHeadRefreshRequired?: () => void;
+  onCommandAccepted?: (
+    message: GraphCommandAcceptedMessage,
+    meta: GraphRoomAcceptedMeta,
+  ) => void;
+  onCommandRejected?: (message: GraphCommandRejectedMessage) => void;
   onActiveExecution?: (execution: ActiveExecutionSummary | null) => void;
   onExecutionCleared?: (message: ExecutionClearedMessage) => void;
   onTerminalClose?: (reason: GraphRoomTerminalReason) => void;
@@ -59,6 +72,9 @@ export function useGraphRoomSession({
   graphId,
   onReady,
   onRehydrate,
+  onHeadRefreshRequired,
+  onCommandAccepted,
+  onCommandRejected,
   onActiveExecution,
   onExecutionCleared,
   onTerminalClose,
@@ -83,11 +99,17 @@ export function useGraphRoomSession({
 
   const onReadyRef = React.useRef(onReady);
   const onRehydrateRef = React.useRef(onRehydrate);
+  const onHeadRefreshRequiredRef = React.useRef(onHeadRefreshRequired);
+  const onCommandAcceptedRef = React.useRef(onCommandAccepted);
+  const onCommandRejectedRef = React.useRef(onCommandRejected);
   const onActiveExecutionRef = React.useRef(onActiveExecution);
   const onExecutionClearedRef = React.useRef(onExecutionCleared);
   const onTerminalCloseRef = React.useRef(onTerminalClose);
   onReadyRef.current = onReady;
   onRehydrateRef.current = onRehydrate;
+  onHeadRefreshRequiredRef.current = onHeadRefreshRequired;
+  onCommandAcceptedRef.current = onCommandAccepted;
+  onCommandRejectedRef.current = onCommandRejected;
   onActiveExecutionRef.current = onActiveExecution;
   onExecutionClearedRef.current = onExecutionCleared;
   onTerminalCloseRef.current = onTerminalClose;
@@ -124,6 +146,19 @@ export function useGraphRoomSession({
       onRehydrate: (nextHead) => {
         setHead(nextHead);
         onRehydrateRef.current?.(nextHead);
+      },
+      onHeadRefreshRequired: () => {
+        onHeadRefreshRequiredRef.current?.();
+      },
+      onCommandAccepted: (message, meta) => {
+        const nextHead = session.getHead();
+        if (nextHead) setHead(nextHead);
+        onCommandAcceptedRef.current?.(message, meta);
+      },
+      onCommandRejected: (message) => {
+        const nextHead = session.getHead();
+        if (nextHead) setHead(nextHead);
+        onCommandRejectedRef.current?.(message);
       },
       onPresenceChange: setParticipants,
       onActiveExecution: (execution) => {
@@ -171,6 +206,11 @@ export function useGraphRoomSession({
     [],
   );
 
+  const replaceHead = React.useCallback((nextHead: CollaborativeHead) => {
+    sessionRef.current?.replaceHead(nextHead);
+    setHead(nextHead);
+  }, []);
+
   const publishPresence = React.useCallback(
     (update: Omit<PresenceUpdateSubmit, "presence_sequence">): boolean => {
       return sessionRef.current?.publishPresence(update) ?? false;
@@ -197,6 +237,7 @@ export function useGraphRoomSession({
     participants,
     activeExecution,
     submitCommand,
+    replaceHead,
     publishPresence,
   };
 }

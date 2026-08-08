@@ -4,6 +4,8 @@ export {
   PRESENCE_CLIENT_MIN_INTERVAL_MS,
   ROOM_COMMAND_QUEUE_CAP,
   graphRoomWebSocketUrl,
+  shouldReplaceCollaborativeHead,
+  type GraphRoomAcceptedMeta,
   type GraphRoomCommandResult,
   type GraphRoomSessionListeners,
   type GraphRoomSessionOptions,
@@ -15,14 +17,21 @@ export {
   type RoomGraphCommand,
 } from "./graph-room-session";
 export {
-  PresenceOverlay,
+  applyRoomCommandToHead,
+  toLocalGraphCommand,
+  toRoomGraphCommand,
+} from "./room-command-bridge";
+export { PresenceOverlay } from "./PresenceOverlay";
+export { RemoteSelectionRing } from "./RemoteSelectionRing";
+export {
   remoteSelectedNodeIds,
   remoteSelectionColor,
-} from "./PresenceOverlay";
+} from "./remote-selection";
 export {
   useGraphRoomSession,
   type UseGraphRoomSessionResult,
 } from "./useGraphRoomSession";
+export { useRemoteDragPreviews } from "./useRemoteDragPreviews";
 export type {
   ExecutionActiveMessage,
   ExecutionClearedMessage,
@@ -31,6 +40,7 @@ export type {
   GraphCommandRejectedMessage,
   PresenceActivityKind,
   PresencePoint,
+  TransientNodePosition,
   RoomReadyMessage,
   RoomRehydrateMessage,
 } from "./protocol";
