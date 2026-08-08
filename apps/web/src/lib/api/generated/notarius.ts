@@ -882,6 +882,7 @@ export interface components {
             readonly name: string;
             /** Nodes */
             readonly nodes: readonly components["schemas"]["SavedGraphNodeModel-Output"][];
+            readonly presentation?: components["schemas"]["GraphPresentationDocumentModel-Output"];
             /**
              * Room Epoch
              * Format: uuid
@@ -943,6 +944,7 @@ export interface components {
             readonly name: string;
             /** Nodes */
             readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel-Input"][];
+            readonly presentation?: components["schemas"]["GraphPresentationDocumentModel-Input"];
         };
         /** DuplicateNodeCommand */
         readonly DuplicateNodeCommand: {
@@ -1393,6 +1395,194 @@ export interface components {
             /** Y */
             readonly y: number;
         };
+        /**
+         * GraphPresentationAnnotation
+         * @description Non-executable canvas decoration used to document a graph (Miro-like).
+         */
+        readonly GraphPresentationAnnotation: {
+            /**
+             * Color
+             * @default #475569
+             */
+            readonly color: string;
+            /** Id */
+            readonly id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "text" | "rectangle" | "ellipse";
+            readonly layout: components["schemas"]["SavedGraphAnnotationLayout"];
+            readonly position: components["schemas"]["GraphPoint"];
+            /**
+             * Text
+             * @default
+             */
+            readonly text: string;
+        };
+        /** GraphPresentationAnnotationModel */
+        readonly GraphPresentationAnnotationModel: {
+            /**
+             * Color
+             * @default #475569
+             */
+            readonly color: string;
+            /** Id */
+            readonly id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "text" | "rectangle" | "ellipse";
+            readonly layout: components["schemas"]["SavedGraphAnnotationLayoutModel"];
+            readonly position: components["schemas"]["GraphPointModel"];
+            /**
+             * Text
+             * @default
+             */
+            readonly text: string;
+        };
+        /** GraphPresentationBinding */
+        readonly GraphPresentationBinding: {
+            /** Effects */
+            readonly effects: readonly ("filter" | "highlight" | "focus")[];
+            /**
+             * Empty Selection
+             * @default show_all
+             * @constant
+             */
+            readonly empty_selection: "show_all";
+            /** Id */
+            readonly id: string;
+            /** Mappings */
+            readonly mappings: readonly components["schemas"]["GraphPresentationBindingMapping"][];
+            /** Source Viewer Id */
+            readonly source_viewer_id: string;
+            /** Target Viewer Id */
+            readonly target_viewer_id: string;
+        };
+        /** GraphPresentationBindingMapping */
+        readonly GraphPresentationBindingMapping: {
+            /** Source Field */
+            readonly source_field: string;
+            /** Target Field */
+            readonly target_field: string;
+        };
+        /** GraphPresentationBindingMappingModel */
+        readonly GraphPresentationBindingMappingModel: {
+            /** Source Field */
+            readonly source_field: string;
+            /** Target Field */
+            readonly target_field: string;
+        };
+        /** GraphPresentationBindingModel */
+        readonly GraphPresentationBindingModel: {
+            /** Effects */
+            readonly effects: readonly ("filter" | "highlight" | "focus")[];
+            /**
+             * Empty Selection
+             * @default show_all
+             * @constant
+             */
+            readonly empty_selection: "show_all";
+            /** Id */
+            readonly id: string;
+            /** Mappings */
+            readonly mappings: readonly components["schemas"]["GraphPresentationBindingMappingModel"][];
+            /** Source Viewer Id */
+            readonly source_viewer_id: string;
+            /** Target Viewer Id */
+            readonly target_viewer_id: string;
+        };
+        /** GraphPresentationDocument */
+        readonly GraphPresentationDocument: {
+            /**
+             * Annotations
+             * @default []
+             */
+            readonly annotations: readonly components["schemas"]["GraphPresentationAnnotation"][];
+            /**
+             * Bindings
+             * @default []
+             */
+            readonly bindings: readonly components["schemas"]["GraphPresentationBinding"][];
+            /**
+             * Links
+             * @default []
+             */
+            readonly links: readonly components["schemas"]["GraphPresentationLink"][];
+            /**
+             * Viewers
+             * @default []
+             */
+            readonly viewers: readonly components["schemas"]["GraphPresentationViewer"][];
+        };
+        /** GraphPresentationDocumentModel */
+        readonly "GraphPresentationDocumentModel-Input": {
+            /** Annotations */
+            readonly annotations?: readonly components["schemas"]["GraphPresentationAnnotationModel"][];
+            /** Bindings */
+            readonly bindings?: readonly components["schemas"]["GraphPresentationBindingModel"][];
+            /** Links */
+            readonly links?: readonly components["schemas"]["GraphPresentationLinkModel"][];
+            /** Viewers */
+            readonly viewers?: readonly components["schemas"]["GraphPresentationViewerModel"][];
+        };
+        /** GraphPresentationDocumentModel */
+        readonly "GraphPresentationDocumentModel-Output": {
+            /** Annotations */
+            readonly annotations?: readonly components["schemas"]["GraphPresentationAnnotationModel"][];
+            /** Bindings */
+            readonly bindings?: readonly components["schemas"]["GraphPresentationBindingModel"][];
+            /** Links */
+            readonly links?: readonly components["schemas"]["GraphPresentationLinkModel"][];
+            /** Viewers */
+            readonly viewers?: readonly components["schemas"]["GraphPresentationViewerModel"][];
+        };
+        /** GraphPresentationLink */
+        readonly GraphPresentationLink: {
+            /** Id */
+            readonly id: string;
+            readonly projection?: components["schemas"]["SavedGraphProjection"] | null;
+            readonly route_offset?: components["schemas"]["GraphPoint"] | null;
+            /** Source Node Id */
+            readonly source_node_id: string;
+            /** Source Port Name */
+            readonly source_port_name: string;
+            /** Target Viewer Id */
+            readonly target_viewer_id: string;
+        };
+        /** GraphPresentationLinkModel */
+        readonly GraphPresentationLinkModel: {
+            /** Id */
+            readonly id: string;
+            readonly projection?: components["schemas"]["SavedGraphProjectionModel"] | null;
+            readonly route_offset?: components["schemas"]["GraphPointModel"] | null;
+            /** Source Node Id */
+            readonly source_node_id: string;
+            /** Source Port Name */
+            readonly source_port_name: string;
+            /** Target Viewer Id */
+            readonly target_viewer_id: string;
+        };
+        /** GraphPresentationViewer */
+        readonly GraphPresentationViewer: {
+            /** Id */
+            readonly id: string;
+            readonly layout?: components["schemas"]["SavedGraphNodeLayout"] | null;
+            /** Mode */
+            readonly mode?: string | null;
+            readonly position: components["schemas"]["GraphPoint"];
+        };
+        /** GraphPresentationViewerModel */
+        readonly GraphPresentationViewerModel: {
+            /** Id */
+            readonly id: string;
+            readonly layout?: components["schemas"]["SavedGraphNodeLayoutModel"] | null;
+            /** Mode */
+            readonly mode?: string | null;
+            readonly position: components["schemas"]["GraphPointModel"];
+        };
         /** HTTPValidationError */
         readonly HTTPValidationError: {
             /** Detail */
@@ -1406,6 +1596,44 @@ export interface components {
             readonly filename: string;
             /** Upload Key */
             readonly upload_key: string;
+        };
+        /** MoveAnnotationPosition */
+        readonly MoveAnnotationPosition: {
+            /** Annotation Id */
+            readonly annotation_id: string;
+            /** X */
+            readonly x: number;
+            /** Y */
+            readonly y: number;
+        };
+        /** MoveAnnotationsCommand */
+        readonly MoveAnnotationsCommand: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "move_annotations";
+            /** Positions */
+            readonly positions: readonly components["schemas"]["MoveAnnotationPosition"][];
+        };
+        /** MoveArtifactViewerPosition */
+        readonly MoveArtifactViewerPosition: {
+            /** Viewer Id */
+            readonly viewer_id: string;
+            /** X */
+            readonly x: number;
+            /** Y */
+            readonly y: number;
+        };
+        /** MoveArtifactViewersCommand */
+        readonly MoveArtifactViewersCommand: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "move_artifact_viewers";
+            /** Positions */
+            readonly positions: readonly components["schemas"]["MoveArtifactViewerPosition"][];
         };
         /** MoveNodePosition */
         readonly MoveNodePosition: {
@@ -1693,6 +1921,15 @@ export interface components {
             /** Name */
             readonly name: string;
         };
+        /** ReplacePresentationCommand */
+        readonly ReplacePresentationCommand: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "replace_presentation";
+            readonly presentation: components["schemas"]["GraphPresentationDocument"];
+        };
         /** RunEdgeRequest */
         readonly RunEdgeRequest: {
             /**
@@ -1822,6 +2059,23 @@ export interface components {
              */
             readonly count: number;
         };
+        /**
+         * SavedGraphAnnotationLayout
+         * @description Axis-aligned size for a presentation annotation on the canvas.
+         */
+        readonly SavedGraphAnnotationLayout: {
+            /** Height */
+            readonly height: number;
+            /** Width */
+            readonly width: number;
+        };
+        /** SavedGraphAnnotationLayoutModel */
+        readonly SavedGraphAnnotationLayoutModel: {
+            /** Height */
+            readonly height: number;
+            /** Width */
+            readonly width: number;
+        };
         /** SavedGraphArtifactTypeBinding */
         readonly SavedGraphArtifactTypeBinding: {
             readonly artifact_type: components["schemas"]["ArtifactTypeKey"];
@@ -1854,12 +2108,13 @@ export interface components {
              * @default []
              */
             readonly nodes: readonly components["schemas"]["SavedGraphNode"][];
+            readonly presentation?: components["schemas"]["GraphPresentationDocument"];
             /**
              * Schema Version
-             * @default 3
+             * @default 4
              * @constant
              */
-            readonly schema_version: 3;
+            readonly schema_version: 4;
         };
         /** SavedGraphEdge */
         readonly SavedGraphEdge: {
@@ -2055,6 +2310,7 @@ export interface components {
             readonly name: string;
             /** Nodes */
             readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel-Output"][];
+            readonly presentation?: components["schemas"]["GraphPresentationDocumentModel-Output"];
             /** Revision */
             readonly revision: number;
             /**
@@ -2142,7 +2398,7 @@ export interface components {
         /** SubmitGraphCommandRequest */
         readonly SubmitGraphCommandRequest: {
             /** Command */
-            readonly command: components["schemas"]["RenameGraphCommand"] | components["schemas"]["AddNodeCommand"] | components["schemas"]["DuplicateNodeCommand"] | components["schemas"]["RemoveNodesCommand"] | components["schemas"]["MoveNodesCommand"] | components["schemas"]["UpdateNodeConfigurationCommand"] | components["schemas"]["UpdateNodeLayoutCommand"] | components["schemas"]["SetNodeInputPlugsCommand"] | components["schemas"]["UpdateNodeConfigurationAndInputPlugsCommand"] | components["schemas"]["SetNodeArtifactTypeBindingCommand"] | components["schemas"]["ClearNodeArtifactTypeBindingCommand"] | components["schemas"]["AddEdgeCommand"] | components["schemas"]["UpdateEdgeCommand"] | components["schemas"]["RemoveEdgesCommand"] | components["schemas"]["ReplaceDocumentCommand"];
+            readonly command: components["schemas"]["RenameGraphCommand"] | components["schemas"]["AddNodeCommand"] | components["schemas"]["DuplicateNodeCommand"] | components["schemas"]["RemoveNodesCommand"] | components["schemas"]["MoveNodesCommand"] | components["schemas"]["UpdateNodeConfigurationCommand"] | components["schemas"]["UpdateNodeLayoutCommand"] | components["schemas"]["SetNodeInputPlugsCommand"] | components["schemas"]["UpdateNodeConfigurationAndInputPlugsCommand"] | components["schemas"]["SetNodeArtifactTypeBindingCommand"] | components["schemas"]["ClearNodeArtifactTypeBindingCommand"] | components["schemas"]["AddEdgeCommand"] | components["schemas"]["UpdateEdgeCommand"] | components["schemas"]["RemoveEdgesCommand"] | components["schemas"]["ReplaceDocumentCommand"] | components["schemas"]["ReplacePresentationCommand"] | components["schemas"]["MoveArtifactViewersCommand"] | components["schemas"]["MoveAnnotationsCommand"];
             /**
              * Command Id
              * Format: uuid
@@ -2356,6 +2612,7 @@ export interface components {
             readonly name: string;
             /** Nodes */
             readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel-Input"][];
+            readonly presentation?: components["schemas"]["GraphPresentationDocumentModel-Input"];
         };
         /** UserResponse */
         readonly UserResponse: {

@@ -9,12 +9,17 @@ from notarius_core.domain.collaboration import (
     ClearNodeArtifactTypeBindingCommand,
     CollaborativeGraphHead,
     DuplicateNodeCommand,
+    MoveAnnotationPosition,
+    MoveAnnotationsCommand,
+    MoveArtifactViewerPosition,
+    MoveArtifactViewersCommand,
     MoveNodePosition,
     MoveNodesCommand,
     RemoveEdgesCommand,
     RemoveNodesCommand,
     RenameGraphCommand,
     ReplaceDocumentCommand,
+    ReplacePresentationCommand,
     SetNodeArtifactTypeBindingCommand,
     SetNodeInputPlugsCommand,
     UpdateEdgeCommand,
@@ -23,12 +28,18 @@ from notarius_core.domain.collaboration import (
     UpdateNodeLayoutCommand,
     apply_graph_command,
     command_hmac_digest,
+    command_requires_exact_sequence,
     empty_collaborative_document,
     sanitize_document_for_cross_workspace_copy,
 )
 from notarius_core.domain.errors import CollaborationCommandRejectedError
 from notarius_core.domain.saved_graphs import (
     GraphPoint,
+    GraphPresentationAnnotation,
+    GraphPresentationDocument,
+    GraphPresentationLink,
+    GraphPresentationViewer,
+    SavedGraphAnnotationLayout,
     SavedGraphArtifactTypeBinding,
     SavedGraphDocument,
     SavedGraphEdge,
@@ -414,3 +425,139 @@ def test_schema_builder_compound_rejects_partial_field_conflict() -> None:
     assert exc.value.error_code == "field_conflict"
     assert document.nodes[0].config_dict()["fields"][0]["id"] == "a"
     assert document.nodes[0].input_plugs[0].id == "a"
+
+
+def test_saved_graph_document_migrates_to_v4_with_empty_presentation() -> None:
+    document = SavedGraphDocument.model_validate(
+        {"schema_version": 3, "nodes": [], "edges": []}
+    )
+    assert document.schema_version == 4
+    assert document.presentation.viewers == ()
+    assert document.presentation.links == ()
+    assert document.presentation.bindings == ()
+    assert document.presentation.annotations == ()
+
+
+def test_replace_and_move_artifact_viewers() -> None:
+    document = SavedGraphDocument(nodes=(_node("n1"),))
+    presentation = GraphPresentationDocument(
+        viewers=(
+            GraphPresentationViewer(
+                id="artifact-viewer-1",
+                position=GraphPoint(x=10, y=20),
+            ),
+        ),
+        links=(
+            GraphPresentationLink(
+                id="artifact-viewer-edge-1",
+                source_node_id="n1",
+                source_port_name="out",
+                target_viewer_id="artifact-viewer-1",
+            ),
+        ),
+        annotations=(
+            GraphPresentationAnnotation(
+                id="annotation-1",
+                kind="text",
+                position=GraphPoint(x=1, y=2),
+                layout=SavedGraphAnnotationLayout(width=200, height=100),
+                text="hello",
+                color="#B45309",
+            ),
+        ),
+    )
+    replace = ReplacePresentationCommand(presentation=presentation)
+    assert command_requires_exact_sequence(replace)
+    _, with_presentation = apply_graph_command(
+        name="Graph",
+        document=document,
+        command=replace,
+    )
+    assert len(with_presentation.presentation.viewers) == 1
+    assert with_presentation.presentation.annotations[0].text == "hello"
+    _, moved = apply_graph_command(
+        name="Graph",
+        document=with_presentation,
+        command=MoveArtifactViewersCommand(
+            positions=(
+                MoveArtifactViewerPosition(
+                    viewer_id="artifact-viewer-1",
+                    x=99,
+                    y=11,
+                ),
+            ),
+        ),
+    )
+    assert moved.presentation.viewers[0].position == GraphPoint(x=99, y=11)
+    assert moved.presentation.links[0].source_node_id == "n1"
+    assert moved.presentation.annotations[0].text == "hello"
+
+
+def test_replace_and_move_annotations() -> None:
+    document = SavedGraphDocument()
+    presentation = GraphPresentationDocument(
+        annotations=(
+            GraphPresentationAnnotation(
+                id="annotation-1",
+                kind="rectangle",
+                position=GraphPoint(x=10, y=20),
+                layout=SavedGraphAnnotationLayout(width=120, height=80),
+                color="sky",
+            ),
+            GraphPresentationAnnotation(
+                id="annotation-2",
+                kind="ellipse",
+                position=GraphPoint(x=40, y=60),
+                layout=SavedGraphAnnotationLayout(width=160, height=160),
+            ),
+        ),
+    )
+    _, with_presentation = apply_graph_command(
+        name="Graph",
+        document=document,
+        command=ReplacePresentationCommand(presentation=presentation),
+    )
+    _, moved = apply_graph_command(
+        name="Graph",
+        document=with_presentation,
+        command=MoveAnnotationsCommand(
+            positions=(
+                MoveAnnotationPosition(
+                    annotation_id="annotation-1",
+                    x=77,
+                    y=88,
+                ),
+            ),
+        ),
+    )
+    assert moved.presentation.annotations[0].position == GraphPoint(x=77, y=88)
+    assert moved.presentation.annotations[1].position == GraphPoint(x=40, y=60)
+
+
+def test_remove_nodes_prunes_presentation_links() -> None:
+    document = SavedGraphDocument(
+        nodes=(_node("n1"), _node("n2")),
+        presentation=GraphPresentationDocument(
+            viewers=(
+                GraphPresentationViewer(
+                    id="artifact-viewer-1",
+                    position=GraphPoint(x=0, y=0),
+                ),
+            ),
+            links=(
+                GraphPresentationLink(
+                    id="artifact-viewer-edge-1",
+                    source_node_id="n1",
+                    source_port_name="out",
+                    target_viewer_id="artifact-viewer-1",
+                ),
+            ),
+        ),
+    )
+    _, pruned = apply_graph_command(
+        name="Graph",
+        document=document,
+        command=RemoveNodesCommand(node_ids=("n1",)),
+    )
+    assert pruned.presentation.viewers[0].id == "artifact-viewer-1"
+    assert pruned.presentation.links == ()

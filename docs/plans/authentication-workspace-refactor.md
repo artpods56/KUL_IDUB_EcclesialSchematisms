@@ -295,8 +295,7 @@ document. It does not copy:
 - node-secret ciphertext or configured status;
 - collaboration commands or room epoch;
 - execution history or idempotency receipts;
-- materialized outputs, invocation-cache entries, staged uploads, or artifacts;
-- personal Artifact Viewer state.
+- materialized outputs, invocation-cache entries, staged uploads, or artifacts.
 
 This is deliberately a copy rather than an ownership transfer. A later transfer
 would need an explicit, atomic policy for all dependent sensitive and runtime

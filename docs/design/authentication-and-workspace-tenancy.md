@@ -497,8 +497,7 @@ It does not copy:
 - source command journal, receipts, tombstones, or presence;
 - executions, history, active slot, or materializations;
 - invocation-cache entries;
-- uploads, artifacts, storage capabilities, or provenance; or
-- personal Artifact Viewer state.
+- uploads, artifacts, storage capabilities, or provenance.
 
 The copy rejects or explicitly clears cross-workspace upload, artifact, pinned
 output, module-graph, and nested-resource references. A future linked share

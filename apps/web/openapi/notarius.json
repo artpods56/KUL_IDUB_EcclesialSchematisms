@@ -507,6 +507,9 @@
             "title": "Nodes",
             "type": "array"
           },
+          "presentation": {
+            "$ref": "#/components/schemas/GraphPresentationDocumentModel-Output"
+          },
           "room_epoch": {
             "format": "uuid",
             "title": "Room Epoch",
@@ -636,6 +639,9 @@
             },
             "title": "Nodes",
             "type": "array"
+          },
+          "presentation": {
+            "$ref": "#/components/schemas/GraphPresentationDocumentModel-Input"
           }
         },
         "required": [
@@ -1989,6 +1995,572 @@
         "title": "GraphPointModel",
         "type": "object"
       },
+      "GraphPresentationAnnotation": {
+        "additionalProperties": false,
+        "description": "Non-executable canvas decoration used to document a graph (Miro-like).",
+        "properties": {
+          "color": {
+            "default": "#475569",
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Color",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "text",
+              "rectangle",
+              "ellipse"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "layout": {
+            "$ref": "#/components/schemas/SavedGraphAnnotationLayout"
+          },
+          "position": {
+            "$ref": "#/components/schemas/GraphPoint"
+          },
+          "text": {
+            "default": "",
+            "maxLength": 8000,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "position",
+          "layout"
+        ],
+        "title": "GraphPresentationAnnotation",
+        "type": "object"
+      },
+      "GraphPresentationAnnotationModel": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "default": "#475569",
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Color",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "text",
+              "rectangle",
+              "ellipse"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "layout": {
+            "$ref": "#/components/schemas/SavedGraphAnnotationLayoutModel"
+          },
+          "position": {
+            "$ref": "#/components/schemas/GraphPointModel"
+          },
+          "text": {
+            "default": "",
+            "maxLength": 8000,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "position",
+          "layout"
+        ],
+        "title": "GraphPresentationAnnotationModel",
+        "type": "object"
+      },
+      "GraphPresentationBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "effects": {
+            "items": {
+              "enum": [
+                "filter",
+                "highlight",
+                "focus"
+              ],
+              "type": "string"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Effects",
+            "type": "array"
+          },
+          "empty_selection": {
+            "const": "show_all",
+            "default": "show_all",
+            "title": "Empty Selection",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "mappings": {
+            "items": {
+              "$ref": "#/components/schemas/GraphPresentationBindingMapping"
+            },
+            "maxItems": 8,
+            "title": "Mappings",
+            "type": "array"
+          },
+          "source_viewer_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Source Viewer Id",
+            "type": "string"
+          },
+          "target_viewer_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Target Viewer Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source_viewer_id",
+          "target_viewer_id",
+          "mappings",
+          "effects"
+        ],
+        "title": "GraphPresentationBinding",
+        "type": "object"
+      },
+      "GraphPresentationBindingMapping": {
+        "additionalProperties": false,
+        "properties": {
+          "source_field": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Source Field",
+            "type": "string"
+          },
+          "target_field": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Target Field",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_field",
+          "target_field"
+        ],
+        "title": "GraphPresentationBindingMapping",
+        "type": "object"
+      },
+      "GraphPresentationBindingMappingModel": {
+        "additionalProperties": false,
+        "properties": {
+          "source_field": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Source Field",
+            "type": "string"
+          },
+          "target_field": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Target Field",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_field",
+          "target_field"
+        ],
+        "title": "GraphPresentationBindingMappingModel",
+        "type": "object"
+      },
+      "GraphPresentationBindingModel": {
+        "additionalProperties": false,
+        "properties": {
+          "effects": {
+            "items": {
+              "enum": [
+                "filter",
+                "highlight",
+                "focus"
+              ],
+              "type": "string"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Effects",
+            "type": "array"
+          },
+          "empty_selection": {
+            "const": "show_all",
+            "default": "show_all",
+            "title": "Empty Selection",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "mappings": {
+            "items": {
+              "$ref": "#/components/schemas/GraphPresentationBindingMappingModel"
+            },
+            "maxItems": 8,
+            "title": "Mappings",
+            "type": "array"
+          },
+          "source_viewer_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Source Viewer Id",
+            "type": "string"
+          },
+          "target_viewer_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Target Viewer Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source_viewer_id",
+          "target_viewer_id",
+          "mappings",
+          "effects"
+        ],
+        "title": "GraphPresentationBindingModel",
+        "type": "object"
+      },
+      "GraphPresentationDocument": {
+        "additionalProperties": false,
+        "properties": {
+          "annotations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GraphPresentationAnnotation"
+            },
+            "title": "Annotations",
+            "type": "array"
+          },
+          "bindings": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GraphPresentationBinding"
+            },
+            "title": "Bindings",
+            "type": "array"
+          },
+          "links": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GraphPresentationLink"
+            },
+            "title": "Links",
+            "type": "array"
+          },
+          "viewers": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GraphPresentationViewer"
+            },
+            "title": "Viewers",
+            "type": "array"
+          }
+        },
+        "title": "GraphPresentationDocument",
+        "type": "object"
+      },
+      "GraphPresentationDocumentModel-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "annotations": {
+            "items": {
+              "$ref": "#/components/schemas/GraphPresentationAnnotationModel"
+            },
+            "title": "Annotations",
+            "type": "array"
+          },
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/GraphPresentationBindingModel"
+            },
+            "title": "Bindings",
+            "type": "array"
+          },
+          "links": {
+            "items": {
+              "$ref": "#/components/schemas/GraphPresentationLinkModel"
+            },
+            "title": "Links",
+            "type": "array"
+          },
+          "viewers": {
+            "items": {
+              "$ref": "#/components/schemas/GraphPresentationViewerModel"
+            },
+            "title": "Viewers",
+            "type": "array"
+          }
+        },
+        "title": "GraphPresentationDocumentModel",
+        "type": "object"
+      },
+      "GraphPresentationDocumentModel-Output": {
+        "additionalProperties": false,
+        "properties": {
+          "annotations": {
+            "items": {
+              "$ref": "#/components/schemas/GraphPresentationAnnotationModel"
+            },
+            "title": "Annotations",
+            "type": "array"
+          },
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/GraphPresentationBindingModel"
+            },
+            "title": "Bindings",
+            "type": "array"
+          },
+          "links": {
+            "items": {
+              "$ref": "#/components/schemas/GraphPresentationLinkModel"
+            },
+            "title": "Links",
+            "type": "array"
+          },
+          "viewers": {
+            "items": {
+              "$ref": "#/components/schemas/GraphPresentationViewerModel"
+            },
+            "title": "Viewers",
+            "type": "array"
+          }
+        },
+        "title": "GraphPresentationDocumentModel",
+        "type": "object"
+      },
+      "GraphPresentationLink": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "projection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SavedGraphProjection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "route_offset": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GraphPoint"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_node_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Source Node Id",
+            "type": "string"
+          },
+          "source_port_name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Source Port Name",
+            "type": "string"
+          },
+          "target_viewer_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Target Viewer Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source_node_id",
+          "source_port_name",
+          "target_viewer_id"
+        ],
+        "title": "GraphPresentationLink",
+        "type": "object"
+      },
+      "GraphPresentationLinkModel": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "projection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SavedGraphProjectionModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "route_offset": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GraphPointModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_node_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Source Node Id",
+            "type": "string"
+          },
+          "source_port_name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Source Port Name",
+            "type": "string"
+          },
+          "target_viewer_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Target Viewer Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source_node_id",
+          "source_port_name",
+          "target_viewer_id"
+        ],
+        "title": "GraphPresentationLinkModel",
+        "type": "object"
+      },
+      "GraphPresentationViewer": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "layout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SavedGraphNodeLayout"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          },
+          "position": {
+            "$ref": "#/components/schemas/GraphPoint"
+          }
+        },
+        "required": [
+          "id",
+          "position"
+        ],
+        "title": "GraphPresentationViewer",
+        "type": "object"
+      },
+      "GraphPresentationViewerModel": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "layout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SavedGraphNodeLayoutModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          },
+          "position": {
+            "$ref": "#/components/schemas/GraphPointModel"
+          }
+        },
+        "required": [
+          "id",
+          "position"
+        ],
+        "title": "GraphPresentationViewerModel",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -2023,6 +2595,102 @@
           "byte_size"
         ],
         "title": "ImageUploadItemResponse",
+        "type": "object"
+      },
+      "MoveAnnotationPosition": {
+        "additionalProperties": false,
+        "properties": {
+          "annotation_id": {
+            "title": "Annotation Id",
+            "type": "string"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "annotation_id",
+          "x",
+          "y"
+        ],
+        "title": "MoveAnnotationPosition",
+        "type": "object"
+      },
+      "MoveAnnotationsCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "move_annotations",
+            "default": "move_annotations",
+            "title": "Kind",
+            "type": "string"
+          },
+          "positions": {
+            "items": {
+              "$ref": "#/components/schemas/MoveAnnotationPosition"
+            },
+            "minItems": 1,
+            "title": "Positions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "positions"
+        ],
+        "title": "MoveAnnotationsCommand",
+        "type": "object"
+      },
+      "MoveArtifactViewerPosition": {
+        "additionalProperties": false,
+        "properties": {
+          "viewer_id": {
+            "title": "Viewer Id",
+            "type": "string"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "viewer_id",
+          "x",
+          "y"
+        ],
+        "title": "MoveArtifactViewerPosition",
+        "type": "object"
+      },
+      "MoveArtifactViewersCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "move_artifact_viewers",
+            "default": "move_artifact_viewers",
+            "title": "Kind",
+            "type": "string"
+          },
+          "positions": {
+            "items": {
+              "$ref": "#/components/schemas/MoveArtifactViewerPosition"
+            },
+            "minItems": 1,
+            "title": "Positions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "positions"
+        ],
+        "title": "MoveArtifactViewersCommand",
         "type": "object"
       },
       "MoveNodePosition": {
@@ -2752,6 +3420,25 @@
         "title": "ReplaceDocumentCommand",
         "type": "object"
       },
+      "ReplacePresentationCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "replace_presentation",
+            "default": "replace_presentation",
+            "title": "Kind",
+            "type": "string"
+          },
+          "presentation": {
+            "$ref": "#/components/schemas/GraphPresentationDocument"
+          }
+        },
+        "required": [
+          "presentation"
+        ],
+        "title": "ReplacePresentationCommand",
+        "type": "object"
+      },
       "RunEdgeRequest": {
         "properties": {
           "collection_mode": {
@@ -3153,6 +3840,53 @@
         "title": "SampleRequest",
         "type": "object"
       },
+      "SavedGraphAnnotationLayout": {
+        "additionalProperties": false,
+        "description": "Axis-aligned size for a presentation annotation on the canvas.",
+        "properties": {
+          "height": {
+            "maximum": 16384.0,
+            "minimum": 24.0,
+            "title": "Height",
+            "type": "number"
+          },
+          "width": {
+            "maximum": 16384.0,
+            "minimum": 24.0,
+            "title": "Width",
+            "type": "number"
+          }
+        },
+        "required": [
+          "width",
+          "height"
+        ],
+        "title": "SavedGraphAnnotationLayout",
+        "type": "object"
+      },
+      "SavedGraphAnnotationLayoutModel": {
+        "additionalProperties": false,
+        "properties": {
+          "height": {
+            "maximum": 16384.0,
+            "minimum": 24.0,
+            "title": "Height",
+            "type": "number"
+          },
+          "width": {
+            "maximum": 16384.0,
+            "minimum": 24.0,
+            "title": "Width",
+            "type": "number"
+          }
+        },
+        "required": [
+          "width",
+          "height"
+        ],
+        "title": "SavedGraphAnnotationLayoutModel",
+        "type": "object"
+      },
       "SavedGraphArtifactTypeBinding": {
         "additionalProperties": false,
         "properties": {
@@ -3236,9 +3970,12 @@
             "title": "Nodes",
             "type": "array"
           },
+          "presentation": {
+            "$ref": "#/components/schemas/GraphPresentationDocument"
+          },
           "schema_version": {
-            "const": 3,
-            "default": 3,
+            "const": 4,
+            "default": 4,
             "title": "Schema Version",
             "type": "integer"
           }
@@ -3862,6 +4599,9 @@
             "title": "Nodes",
             "type": "array"
           },
+          "presentation": {
+            "$ref": "#/components/schemas/GraphPresentationDocumentModel-Output"
+          },
           "revision": {
             "title": "Revision",
             "type": "integer"
@@ -4066,11 +4806,14 @@
                 "add_node": "#/components/schemas/AddNodeCommand",
                 "clear_node_artifact_type_binding": "#/components/schemas/ClearNodeArtifactTypeBindingCommand",
                 "duplicate_node": "#/components/schemas/DuplicateNodeCommand",
+                "move_annotations": "#/components/schemas/MoveAnnotationsCommand",
+                "move_artifact_viewers": "#/components/schemas/MoveArtifactViewersCommand",
                 "move_nodes": "#/components/schemas/MoveNodesCommand",
                 "remove_edges": "#/components/schemas/RemoveEdgesCommand",
                 "remove_nodes": "#/components/schemas/RemoveNodesCommand",
                 "rename_graph": "#/components/schemas/RenameGraphCommand",
                 "replace_document": "#/components/schemas/ReplaceDocumentCommand",
+                "replace_presentation": "#/components/schemas/ReplacePresentationCommand",
                 "set_node_artifact_type_binding": "#/components/schemas/SetNodeArtifactTypeBindingCommand",
                 "set_node_input_plugs": "#/components/schemas/SetNodeInputPlugsCommand",
                 "update_edge": "#/components/schemas/UpdateEdgeCommand",
@@ -4125,6 +4868,15 @@
               },
               {
                 "$ref": "#/components/schemas/ReplaceDocumentCommand"
+              },
+              {
+                "$ref": "#/components/schemas/ReplacePresentationCommand"
+              },
+              {
+                "$ref": "#/components/schemas/MoveArtifactViewersCommand"
+              },
+              {
+                "$ref": "#/components/schemas/MoveAnnotationsCommand"
               }
             ],
             "title": "Command"
@@ -4700,6 +5452,9 @@
             },
             "title": "Nodes",
             "type": "array"
+          },
+          "presentation": {
+            "$ref": "#/components/schemas/GraphPresentationDocumentModel-Input"
           }
         },
         "required": [

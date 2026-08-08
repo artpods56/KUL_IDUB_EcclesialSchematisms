@@ -21,6 +21,9 @@ from notarius_core.domain.errors import CollaborationCommandRejectedError
 from notarius_core.domain.modules import GRAPH_MODULE_OPERATOR_PREFIX
 from notarius_core.domain.saved_graphs import (
     GraphPoint,
+    GraphPresentationAnnotation,
+    GraphPresentationDocument,
+    GraphPresentationViewer,
     SavedGraphArtifactTypeBinding,
     SavedGraphDocument,
     SavedGraphEdge,
@@ -65,6 +68,9 @@ class GraphCommandKind(StrEnum):
     UPDATE_EDGE = "update_edge"
     REMOVE_EDGES = "remove_edges"
     REPLACE_DOCUMENT = "replace_document"
+    REPLACE_PRESENTATION = "replace_presentation"
+    MOVE_ARTIFACT_VIEWERS = "move_artifact_viewers"
+    MOVE_ANNOTATIONS = "move_annotations"
 
 
 class CollaborationValue(BaseModel):
@@ -208,6 +214,39 @@ class ReplaceDocumentCommand(CollaborationValue):
         return _validated_graph_name(value)
 
 
+class ReplacePresentationCommand(CollaborationValue):
+    kind: Literal[GraphCommandKind.REPLACE_PRESENTATION] = (
+        GraphCommandKind.REPLACE_PRESENTATION
+    )
+    presentation: GraphPresentationDocument
+
+
+class MoveArtifactViewerPosition(CollaborationValue):
+    viewer_id: str
+    x: float
+    y: float
+
+
+class MoveArtifactViewersCommand(CollaborationValue):
+    kind: Literal[GraphCommandKind.MOVE_ARTIFACT_VIEWERS] = (
+        GraphCommandKind.MOVE_ARTIFACT_VIEWERS
+    )
+    positions: tuple[MoveArtifactViewerPosition, ...] = Field(min_length=1)
+
+
+class MoveAnnotationPosition(CollaborationValue):
+    annotation_id: str
+    x: float
+    y: float
+
+
+class MoveAnnotationsCommand(CollaborationValue):
+    kind: Literal[GraphCommandKind.MOVE_ANNOTATIONS] = (
+        GraphCommandKind.MOVE_ANNOTATIONS
+    )
+    positions: tuple[MoveAnnotationPosition, ...] = Field(min_length=1)
+
+
 GraphCommand = Annotated[
     RenameGraphCommand
     | AddNodeCommand
@@ -223,7 +262,10 @@ GraphCommand = Annotated[
     | AddEdgeCommand
     | UpdateEdgeCommand
     | RemoveEdgesCommand
-    | ReplaceDocumentCommand,
+    | ReplaceDocumentCommand
+    | ReplacePresentationCommand
+    | MoveArtifactViewersCommand
+    | MoveAnnotationsCommand,
     Field(discriminator="kind"),
 ]
 
@@ -266,7 +308,7 @@ def command_hmac_digest(
 
 
 def command_requires_exact_sequence(command: GraphCommand) -> bool:
-    return isinstance(command, ReplaceDocumentCommand)
+    return isinstance(command, (ReplaceDocumentCommand, ReplacePresentationCommand))
 
 
 def _json_equal(left: object, right: object) -> bool:
@@ -350,7 +392,48 @@ def sanitize_document_for_cross_workspace_copy(
         )
         for node in document.nodes
     )
-    return SavedGraphDocument(nodes=sanitized_nodes, edges=document.edges)
+    known_nodes = {node.id for node in sanitized_nodes}
+    presentation = GraphPresentationDocument(
+        viewers=document.presentation.viewers,
+        links=tuple(
+            link
+            for link in document.presentation.links
+            if link.source_node_id in known_nodes
+        ),
+        bindings=document.presentation.bindings,
+        annotations=document.presentation.annotations,
+    )
+    return SavedGraphDocument(
+        nodes=sanitized_nodes,
+        edges=document.edges,
+        presentation=presentation,
+    )
+
+
+def _viewer_or_raise(
+    document: SavedGraphDocument,
+    viewer_id: str,
+) -> GraphPresentationViewer:
+    for viewer in document.presentation.viewers:
+        if viewer.id == viewer_id:
+            return viewer
+    raise CollaborationCommandRejectedError(
+        code="missing_viewer",
+        message=f"Graph command targets missing artifact viewer {viewer_id}",
+    )
+
+
+def _annotation_or_raise(
+    document: SavedGraphDocument,
+    annotation_id: str,
+) -> GraphPresentationAnnotation:
+    for annotation in document.presentation.annotations:
+        if annotation.id == annotation_id:
+            return annotation
+    raise CollaborationCommandRejectedError(
+        code="missing_annotation",
+        message=f"Graph command targets missing annotation {annotation_id}",
+    )
 
 
 def apply_graph_command(
@@ -373,9 +456,8 @@ def apply_graph_command(
                 code="duplicate_node",
                 message=f"Graph command adds duplicate node {command.node.id}",
             )
-        return name, SavedGraphDocument(
+        return name, document.with_topology(
             nodes=(*document.nodes, command.node),
-            edges=document.edges,
         )
 
     if isinstance(command, DuplicateNodeCommand):
@@ -385,20 +467,20 @@ def apply_graph_command(
                 code="duplicate_node",
                 message=f"Graph command adds duplicate node {command.node.id}",
             )
-        return name, SavedGraphDocument(
+        return name, document.with_topology(
             nodes=(*document.nodes, command.node),
-            edges=document.edges,
         )
 
     if isinstance(command, RemoveNodesCommand):
         removed = set(command.node_ids)
-        return name, SavedGraphDocument(
+        return name, document.with_topology(
             nodes=tuple(node for node in document.nodes if node.id not in removed),
             edges=tuple(
                 edge
                 for edge in document.edges
                 if edge.from_node not in removed and edge.to_node not in removed
             ),
+            presentation=document.presentation.prune_for_removed_nodes(removed),
         )
 
     if isinstance(command, MoveNodesCommand):
@@ -408,14 +490,13 @@ def apply_graph_command(
             position.node_id: GraphPoint(x=position.x, y=position.y)
             for position in command.positions
         }
-        return name, SavedGraphDocument(
+        return name, document.with_topology(
             nodes=tuple(
                 node.model_copy(update={"position": positions[node.id]})
                 if node.id in positions
                 else node
                 for node in document.nodes
             ),
-            edges=document.edges,
         )
 
     if isinstance(command, UpdateNodeConfigurationCommand):
@@ -434,7 +515,7 @@ def apply_graph_command(
             config = dict(candidate.config_dict())
             config[command.field] = command.value
             updated_nodes.append(candidate.model_copy(update={"config": config}))
-        return name, SavedGraphDocument(nodes=tuple(updated_nodes), edges=document.edges)
+        return name, document.with_topology(nodes=tuple(updated_nodes))
 
     if isinstance(command, UpdateNodeLayoutCommand):
         node = _node_or_raise(document, command.node_id)
@@ -443,14 +524,13 @@ def apply_graph_command(
             _model_json(command.expected_layout),
         ):
             raise _field_conflict(f"Layout on node {command.node_id} changed")
-        return name, SavedGraphDocument(
+        return name, document.with_topology(
             nodes=tuple(
                 node.model_copy(update={"layout": command.layout})
                 if node.id == command.node_id
                 else node
                 for node in document.nodes
             ),
-            edges=document.edges,
         )
 
     if isinstance(command, SetNodeInputPlugsCommand):
@@ -460,14 +540,13 @@ def apply_graph_command(
             raise _field_conflict(
                 f"Input plugs on node {command.node_id} changed"
             )
-        return name, SavedGraphDocument(
+        return name, document.with_topology(
             nodes=tuple(
                 candidate.model_copy(update={"input_plugs": command.input_plugs})
                 if candidate.id == command.node_id
                 else candidate
                 for candidate in document.nodes
             ),
-            edges=document.edges,
         )
 
     if isinstance(command, UpdateNodeConfigurationAndInputPlugsCommand):
@@ -482,7 +561,7 @@ def apply_graph_command(
                 f"Input plugs on node {command.node_id} changed"
             )
         retained_plug_ids = {plug.id for plug in command.input_plugs}
-        return name, SavedGraphDocument(
+        return name, document.with_topology(
             nodes=tuple(
                 candidate.model_copy(
                     update={
@@ -516,7 +595,7 @@ def apply_graph_command(
             for binding in node.artifact_type_bindings
             if binding.variable != command.binding.variable
         )
-        return name, SavedGraphDocument(
+        return name, document.with_topology(
             nodes=tuple(
                 candidate.model_copy(
                     update={
@@ -527,7 +606,6 @@ def apply_graph_command(
                 else candidate
                 for candidate in document.nodes
             ),
-            edges=document.edges,
         )
 
     if isinstance(command, ClearNodeArtifactTypeBindingCommand):
@@ -538,7 +616,7 @@ def apply_graph_command(
                 f"Artifact type binding {command.variable!r} on node "
                 f"{command.node_id} changed"
             )
-        return name, SavedGraphDocument(
+        return name, document.with_topology(
             nodes=tuple(
                 candidate.model_copy(
                     update={
@@ -553,7 +631,6 @@ def apply_graph_command(
                 else candidate
                 for candidate in document.nodes
             ),
-            edges=document.edges,
         )
 
     if isinstance(command, AddEdgeCommand):
@@ -562,8 +639,7 @@ def apply_graph_command(
                 code="duplicate_edge",
                 message=f"Graph command adds duplicate edge {command.edge.id}",
             )
-        return name, SavedGraphDocument(
-            nodes=document.nodes,
+        return name, document.with_topology(
             edges=(*document.edges, command.edge),
         )
 
@@ -579,8 +655,7 @@ def apply_graph_command(
                 code="invalid_edge_update",
                 message="Update edge command cannot change edge id",
             )
-        return name, SavedGraphDocument(
-            nodes=document.nodes,
+        return name, document.with_topology(
             edges=tuple(
                 command.edge if edge.id == command.edge.id else edge
                 for edge in document.edges
@@ -589,8 +664,7 @@ def apply_graph_command(
 
     if isinstance(command, RemoveEdgesCommand):
         removed_edges = set(command.edge_ids)
-        return name, SavedGraphDocument(
-            nodes=document.nodes,
+        return name, document.with_topology(
             edges=tuple(
                 edge for edge in document.edges if edge.id not in removed_edges
             ),
@@ -598,6 +672,55 @@ def apply_graph_command(
 
     if isinstance(command, ReplaceDocumentCommand):
         return command.name, command.document
+
+    if isinstance(command, ReplacePresentationCommand):
+        return name, document.with_topology(presentation=command.presentation)
+
+    if isinstance(command, MoveArtifactViewersCommand):
+        for position in command.positions:
+            _viewer_or_raise(document, position.viewer_id)
+        positions = {
+            position.viewer_id: GraphPoint(x=position.x, y=position.y)
+            for position in command.positions
+        }
+        return name, document.with_topology(
+            presentation=GraphPresentationDocument(
+                viewers=tuple(
+                    viewer.model_copy(
+                        update={"position": positions[viewer.id]}
+                    )
+                    if viewer.id in positions
+                    else viewer
+                    for viewer in document.presentation.viewers
+                ),
+                links=document.presentation.links,
+                bindings=document.presentation.bindings,
+                annotations=document.presentation.annotations,
+            ),
+        )
+
+    if isinstance(command, MoveAnnotationsCommand):
+        for position in command.positions:
+            _annotation_or_raise(document, position.annotation_id)
+        positions = {
+            position.annotation_id: GraphPoint(x=position.x, y=position.y)
+            for position in command.positions
+        }
+        return name, document.with_topology(
+            presentation=GraphPresentationDocument(
+                viewers=document.presentation.viewers,
+                links=document.presentation.links,
+                bindings=document.presentation.bindings,
+                annotations=tuple(
+                    annotation.model_copy(
+                        update={"position": positions[annotation.id]}
+                    )
+                    if annotation.id in positions
+                    else annotation
+                    for annotation in document.presentation.annotations
+                ),
+            ),
+        )
 
     raise CollaborationCommandRejectedError(
         code="unsupported_command",
@@ -810,12 +933,17 @@ __all__ = [
     "GraphCommandKind",
     "GraphCommandReceipt",
     "GraphExecutionIdempotencyRecord",
+    "MoveAnnotationPosition",
+    "MoveAnnotationsCommand",
+    "MoveArtifactViewerPosition",
+    "MoveArtifactViewersCommand",
     "MoveNodePosition",
     "MoveNodesCommand",
     "RemoveEdgesCommand",
     "RemoveNodesCommand",
     "RenameGraphCommand",
     "ReplaceDocumentCommand",
+    "ReplacePresentationCommand",
     "SetNodeArtifactTypeBindingCommand",
     "SetNodeInputPlugsCommand",
     "UpdateEdgeCommand",

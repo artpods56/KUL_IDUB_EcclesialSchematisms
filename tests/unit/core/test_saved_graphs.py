@@ -9,7 +9,10 @@ from notarius_core.artifacts import ArtifactTypeKey
 from notarius_core.domain.errors import SavedGraphRevisionConflictError
 from notarius_core.domain.saved_graphs import (
     GraphPoint,
+    GraphPresentationAnnotation,
+    GraphPresentationDocument,
     SavedGraph,
+    SavedGraphAnnotationLayout,
     SavedGraphArtifactTypeBinding,
     SavedGraphDocument,
     SavedGraphConversion,
@@ -90,7 +93,7 @@ def test_saved_graph_document_migrates_v1_singular_conversion_in_memory() -> Non
         }
     )
 
-    assert document.schema_version == 3
+    assert document.schema_version == 4
     assert document.edges[0].conversion_path == (
         SavedGraphConversion(id="example.convert", version=3),
     )
@@ -131,7 +134,7 @@ def test_saved_graph_document_migrates_v2_bindings_to_v3() -> None:
         }
     )
 
-    assert document.schema_version == 3
+    assert document.schema_version == 4
     assert document.nodes[0].artifact_type_binding_map() == {
         "T": ArtifactTypeKey("example.value", 2)
     }
@@ -168,6 +171,59 @@ def test_saved_graph_node_layout_round_trips_and_rejects_empty_or_out_of_range()
     with pytest.raises(ValidationError):
         SavedGraphNodeLayout(width=16_385)
     assert SavedGraphNodeLayout(body_height=900).body_height == 900.0
+
+
+def test_presentation_annotations_round_trip_and_reject_shape_text() -> None:
+    annotation = GraphPresentationAnnotation(
+        id="annotation-note",
+        kind="text",
+        position=GraphPoint(x=1.0, y=2.0),
+        layout=SavedGraphAnnotationLayout(width=200, height=100),
+        text="Document this branch",
+        color="#b45309",
+    )
+    document = SavedGraphDocument(
+        presentation=GraphPresentationDocument(annotations=(annotation,)),
+    )
+    payload = document.model_dump(mode="json")
+    assert payload["presentation"]["annotations"][0]["text"] == (
+        "Document this branch"
+    )
+    assert payload["presentation"]["annotations"][0]["color"] == "#B45309"
+    assert SavedGraphDocument.model_validate(payload) == document
+
+    legacy = GraphPresentationAnnotation(
+        id="annotation-legacy",
+        kind="text",
+        position=GraphPoint(x=0.0, y=0.0),
+        layout=SavedGraphAnnotationLayout(width=80, height=80),
+        color="amber",
+    )
+    assert legacy.color == "#B45309"
+
+    with pytest.raises(ValidationError, match="must start with 'annotation-'"):
+        GraphPresentationAnnotation(
+            id="bad-id",
+            kind="rectangle",
+            position=GraphPoint(x=0.0, y=0.0),
+            layout=SavedGraphAnnotationLayout(width=80, height=80),
+        )
+    with pytest.raises(ValidationError, match="must not carry text"):
+        GraphPresentationAnnotation(
+            id="annotation-shape",
+            kind="ellipse",
+            position=GraphPoint(x=0.0, y=0.0),
+            layout=SavedGraphAnnotationLayout(width=80, height=80),
+            text="nope",
+        )
+    with pytest.raises(ValidationError):
+        GraphPresentationAnnotation(
+            id="annotation-bad-color",
+            kind="text",
+            position=GraphPoint(x=0.0, y=0.0),
+            layout=SavedGraphAnnotationLayout(width=80, height=80),
+            color="red",
+        )
 
 
 def test_saved_graph_node_config_is_deeply_immutable_and_serializable() -> None:

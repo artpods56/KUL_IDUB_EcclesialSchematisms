@@ -253,10 +253,246 @@ class SavedGraphEdge(SavedGraphValue):
         return migrated
 
 
+class GraphPresentationViewer(SavedGraphValue):
+    id: GraphIdentifier
+    position: GraphPoint
+    layout: SavedGraphNodeLayout | None = None
+    mode: str | None = Field(default=None, max_length=255)
+
+    @field_validator("id")
+    @classmethod
+    def validate_viewer_id(cls, value: str) -> str:
+        if not value.startswith("artifact-viewer-"):
+            raise ValueError(
+                "Presentation viewer id must start with 'artifact-viewer-'"
+            )
+        return value
+
+
+AnnotationKind = Literal["text", "rectangle", "ellipse"]
+AnnotationColor = Annotated[
+    str,
+    StringConstraints(pattern=r"^#[0-9A-Fa-f]{6}$"),
+]
+DEFAULT_ANNOTATION_COLOR = "#475569"
+_LEGACY_ANNOTATION_COLORS: Mapping[str, str] = MappingProxyType(
+    {
+        "slate": "#475569",
+        "amber": "#B45309",
+        "rose": "#BE123C",
+        "emerald": "#047857",
+        "sky": "#0369A1",
+        "violet": "#6D28D9",
+    }
+)
+
+
+class SavedGraphAnnotationLayout(SavedGraphValue):
+    """Axis-aligned size for a presentation annotation on the canvas."""
+
+    width: float = Field(ge=24, le=_LAYOUT_DIMENSION_MAX)
+    height: float = Field(ge=24, le=_LAYOUT_DIMENSION_MAX)
+
+
+class GraphPresentationAnnotation(SavedGraphValue):
+    """Non-executable canvas decoration used to document a graph (Miro-like)."""
+
+    id: GraphIdentifier
+    kind: AnnotationKind
+    position: GraphPoint
+    layout: SavedGraphAnnotationLayout
+    text: str = Field(default="", max_length=8_000)
+    color: AnnotationColor = DEFAULT_ANNOTATION_COLOR
+
+    @field_validator("id")
+    @classmethod
+    def validate_annotation_id(cls, value: str) -> str:
+        if not value.startswith("annotation-"):
+            raise ValueError("Presentation annotation id must start with 'annotation-'")
+        return value
+
+    @field_validator("color", mode="before")
+    @classmethod
+    def normalize_annotation_color(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        legacy = _LEGACY_ANNOTATION_COLORS.get(value)
+        if legacy is not None:
+            return legacy
+        if len(value) == 7 and value.startswith("#"):
+            return value.upper()
+        return value
+
+    @model_validator(mode="after")
+    def validate_text_for_kind(self) -> Self:
+        if self.kind != "text" and self.text.strip() != "":
+            # Non-text shapes may carry an empty caption placeholder only.
+            raise ValueError(
+                f"Presentation annotation {self.id} of kind {self.kind!r} "
+                "must not carry text"
+            )
+        return self
+
+
+class GraphPresentationLink(SavedGraphValue):
+    id: GraphIdentifier
+    source_node_id: GraphIdentifier
+    source_port_name: GraphIdentifier
+    target_viewer_id: GraphIdentifier
+    # Optional field projection applied when previewing the linked output.
+    projection: SavedGraphProjection | None = None
+    # Visual routing adjustment from the link's natural midpoint.
+    route_offset: GraphPoint | None = None
+
+    @field_validator("id")
+    @classmethod
+    def validate_link_id(cls, value: str) -> str:
+        if not value.startswith("artifact-viewer-edge-"):
+            raise ValueError(
+                "Presentation link id must start with 'artifact-viewer-edge-'"
+            )
+        return value
+
+
+class GraphPresentationBindingMapping(SavedGraphValue):
+    source_field: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)
+    ]
+    target_field: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)
+    ]
+
+
+class GraphPresentationBinding(SavedGraphValue):
+    id: GraphIdentifier
+    source_viewer_id: GraphIdentifier
+    target_viewer_id: GraphIdentifier
+    mappings: tuple[GraphPresentationBindingMapping, ...] = Field(max_length=8)
+    effects: tuple[Literal["filter", "highlight", "focus"], ...] = Field(
+        min_length=1,
+        max_length=3,
+    )
+    empty_selection: Literal["show_all"] = "show_all"
+
+    @field_validator("id")
+    @classmethod
+    def validate_binding_id(cls, value: str) -> str:
+        if not value.startswith("artifact-viewer-binding-"):
+            raise ValueError(
+                "Presentation binding id must start with 'artifact-viewer-binding-'"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def validate_binding_endpoints(self) -> Self:
+        if self.source_viewer_id == self.target_viewer_id:
+            raise ValueError("Presentation binding cannot target its source viewer")
+        if len(self.effects) != len(set(self.effects)):
+            raise ValueError("Presentation binding effects must be unique")
+        return self
+
+
+class GraphPresentationDocument(SavedGraphValue):
+    viewers: tuple[GraphPresentationViewer, ...] = ()
+    links: tuple[GraphPresentationLink, ...] = ()
+    bindings: tuple[GraphPresentationBinding, ...] = ()
+    annotations: tuple[GraphPresentationAnnotation, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_presentation(self) -> Self:
+        viewer_ids = [viewer.id for viewer in self.viewers]
+        if len(viewer_ids) != len(set(viewer_ids)):
+            raise ValueError("Presentation viewer ids must be unique")
+        known_viewers = set(viewer_ids)
+
+        link_ids = [link.id for link in self.links]
+        if len(link_ids) != len(set(link_ids)):
+            raise ValueError("Presentation link ids must be unique")
+        linked_viewers: set[str] = set()
+        for link in self.links:
+            if link.target_viewer_id not in known_viewers:
+                raise ValueError(
+                    f"Presentation link {link.id} references missing viewer "
+                    f"{link.target_viewer_id}"
+                )
+            if link.target_viewer_id in linked_viewers:
+                raise ValueError(
+                    f"Presentation viewer {link.target_viewer_id} accepts at most "
+                    "one link"
+                )
+            linked_viewers.add(link.target_viewer_id)
+
+        binding_ids = [binding.id for binding in self.bindings]
+        if len(binding_ids) != len(set(binding_ids)):
+            raise ValueError("Presentation binding ids must be unique")
+        for binding in self.bindings:
+            if binding.source_viewer_id not in known_viewers:
+                raise ValueError(
+                    f"Presentation binding {binding.id} references missing source "
+                    f"viewer {binding.source_viewer_id}"
+                )
+            if binding.target_viewer_id not in known_viewers:
+                raise ValueError(
+                    f"Presentation binding {binding.id} references missing target "
+                    f"viewer {binding.target_viewer_id}"
+                )
+
+        annotation_ids = [annotation.id for annotation in self.annotations]
+        if len(annotation_ids) != len(set(annotation_ids)):
+            raise ValueError("Presentation annotation ids must be unique")
+        return self
+
+    def prune_for_removed_nodes(
+        self,
+        removed_node_ids: set[str],
+    ) -> "GraphPresentationDocument":
+        if not removed_node_ids:
+            return self
+        return GraphPresentationDocument(
+            viewers=self.viewers,
+            links=tuple(
+                link
+                for link in self.links
+                if link.source_node_id not in removed_node_ids
+            ),
+            bindings=self.bindings,
+            annotations=self.annotations,
+        )
+
+    def prune_for_removed_viewers(
+        self,
+        removed_viewer_ids: set[str],
+    ) -> "GraphPresentationDocument":
+        if not removed_viewer_ids:
+            return self
+        viewers = tuple(
+            viewer for viewer in self.viewers if viewer.id not in removed_viewer_ids
+        )
+        known = {viewer.id for viewer in viewers}
+        return GraphPresentationDocument(
+            viewers=viewers,
+            links=tuple(
+                link for link in self.links if link.target_viewer_id in known
+            ),
+            bindings=tuple(
+                binding
+                for binding in self.bindings
+                if binding.source_viewer_id in known
+                and binding.target_viewer_id in known
+            ),
+            annotations=self.annotations,
+        )
+
+
+def empty_presentation() -> GraphPresentationDocument:
+    return GraphPresentationDocument()
+
+
 class SavedGraphDocument(SavedGraphValue):
-    schema_version: Literal[3] = 3
+    schema_version: Literal[4] = 4
     nodes: tuple[SavedGraphNode, ...] = ()
     edges: tuple[SavedGraphEdge, ...] = ()
+    presentation: GraphPresentationDocument = Field(default_factory=empty_presentation)
 
     @model_validator(mode="before")
     @classmethod
@@ -264,10 +500,21 @@ class SavedGraphDocument(SavedGraphValue):
         if not isinstance(value, Mapping):
             return value
         raw = cast(Mapping[object, object], value)
-        if raw.get("schema_version", 1) not in (1, 2):
-            return dict(raw)
         migrated = dict(raw)
-        migrated["schema_version"] = 3
+        version = migrated.get("schema_version", 1)
+        if version in (1, 2, 3):
+            migrated["schema_version"] = 4
+        if "presentation" not in migrated:
+            migrated["presentation"] = {
+                "viewers": [],
+                "links": [],
+                "bindings": [],
+                "annotations": [],
+            }
+        elif isinstance(migrated["presentation"], Mapping):
+            presentation = dict(cast(Mapping[object, object], migrated["presentation"]))
+            presentation.setdefault("annotations", [])
+            migrated["presentation"] = presentation
         return migrated
 
     @model_validator(mode="after")
@@ -322,7 +569,29 @@ class SavedGraphDocument(SavedGraphValue):
                     f"{edge.to_node} accepts at most one edge"
                 )
             connected_plugs.add(plug_key)
+
+        for link in self.presentation.links:
+            if link.source_node_id not in known_nodes:
+                raise ValueError(
+                    f"Presentation link {link.id} references missing source node "
+                    f"{link.source_node_id}"
+                )
         return self
+
+    def with_topology(
+        self,
+        *,
+        nodes: tuple[SavedGraphNode, ...] | None = None,
+        edges: tuple[SavedGraphEdge, ...] | None = None,
+        presentation: GraphPresentationDocument | None = None,
+    ) -> "SavedGraphDocument":
+        return SavedGraphDocument(
+            nodes=self.nodes if nodes is None else nodes,
+            edges=self.edges if edges is None else edges,
+            presentation=(
+                self.presentation if presentation is None else presentation
+            ),
+        )
 
 
 def _utc_now() -> datetime:

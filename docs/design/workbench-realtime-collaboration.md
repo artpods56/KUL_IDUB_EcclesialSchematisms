@@ -109,8 +109,9 @@ commands rather than remove revision safety.
 - Multiple concurrent executions for one saved graph.
 - Sharing a collaborator's viewport, open drawers, dialogs, or other private
   interface state.
-- Sharing Artifact Viewer layouts in the first delivery. They remain personal
-  browser state.
+- Sharing in-viewer selection/filter/highlight activity in the first delivery.
+  Structural Artifact Viewer documents (viewers, links, bindings) are shared on
+  the collaborative head.
 - Multi-process graph-room or execution ownership in the first delivery.
 - Designing login, account recovery, organization administration, invitations,
   or workspace billing. Those flows belong to the related authentication and
@@ -209,7 +210,8 @@ ephemeral observation, runtime state, and private interface state.
 | Node progress event | Execution event journal | No; bounded replay only | Yes |
 | Materialized node outputs | Materialization store | Exact graph revision | Yes, only on a matching revision |
 | Viewport, zoom, local selection, open library, drawers, dialogs, pending connection route, field draft, in-flight command, pending command queue | Graph room session | No | No |
-| Artifact Viewer document | Authenticated user | Personal browser storage keyed by stable user, workspace, and graph ids | No |
+| Artifact Viewer structural document (viewers, positions/layout/mode, links, bindings) | Workspace-scoped collaborative graph head | Durable head snapshot and command log (`replace_presentation`, `move_artifact_viewers`) | Yes, to actors with graph view capability |
+| In-viewer selection, filter/highlight/focus activity | Graph room session | No | No |
 | Secret values | Encrypted node-secret store | Protected server storage | Never |
 | Secret configured/unconfigured metadata | Node-secret module | Workspace-scoped server state | Authorized clients refetch after a bounded invalidation; values remain excluded |
 
@@ -218,12 +220,13 @@ execution results, and progress. The collaboration model retains that contract
 instead of serializing the current React Flow node object.
 
 Personal persistence must never use only a workspace slug and graph id.
-Graph-sensitive browser state such as the Artifact Viewer document is keyed by
-stable `(user_id, workspace_id, graph_id)`, cleared on sign-out, actor change, or view
-revocation, and re-keyed only after an authorized new-graph bootstrap succeeds.
-If cross-device personal state is added later, it is a separate user-owned
-resource rather than a field in the shared graph head. Device-wide preferences
-such as theme may remain outside that graph-sensitive key.
+Ephemeral browser state (viewport, local selection, in-viewer interaction) is
+keyed by stable `(user_id, workspace_id, graph_id)` when persisted at all,
+cleared on sign-out, actor change, or view revocation, and re-keyed only after
+an authorized new-graph bootstrap succeeds. Device-wide preferences such as
+theme may remain outside that graph-sensitive key. Artifact Viewer structure is
+not stored in browser localStorage; it lives only on the shared collaborative
+head / saved graph presentation.
 
 ## Target architecture
 
@@ -700,8 +703,9 @@ Viewer mode is a real read-only canvas mode. It disables React Flow node
 dragging and connection creation, graph and configuration inputs, mutation
 keyboard shortcuts, delete actions, command dispatch, Checkpoint, Run, Cancel,
 secret controls, and sharing controls as dictated by capabilities. It does not
-merely hide Save. Local pan, zoom, selection, inspection, and permitted
-Artifact Viewer work remain available and never mutate the collaborative head.
+merely hide Save. Local pan, zoom, selection, and inspection remain available.
+Structural Artifact Viewer edits still require `edit_graph` and mutate the
+collaborative head like other graph commands.
 
 ## Graph room protocol
 
@@ -1064,7 +1068,7 @@ request errors are best-effort browser-local observations and may differ between
 sessions. They never overwrite the shared lifecycle state.
 
 Only the execution portion of the activity bar is shared. Synchronization,
-reconnection, rejected local commands, private Artifact Viewer work, and other
+reconnection, rejected local commands, in-viewer interaction status, and other
 browser-local status remain local. The Workbench composes those local facts with
 the shared execution summary using an explicit display priority; it does not
 broadcast one browser's incidental UI status to the room.
@@ -1661,9 +1665,9 @@ Also cover typing a field and immediately invoking Run, Checkpoint, navigation,
 or browser close: the value must be flushed and confirmed before the action,
 or the user must receive an unsynchronized-change warning.
 
-Remote deletion or replacement of an Artifact Viewer source leaves the private
-viewer disconnected without broadcasting or deleting its layout. First graph
-creation re-keys that private viewer state only after bootstrap succeeds.
+Remote deletion of a workflow source node prunes shared presentation links to
+that node while leaving the viewer itself in place until a collaborator removes
+it. In-viewer selection/activity stays personal and is not rebroadcast.
 
 The pointer-drag connection test is mandatory because programmatic edge
 insertion does not verify React Flow handle geometry or pointer behavior.
@@ -1815,8 +1819,8 @@ production rollout:
 - How long should command payloads and audit records be retained after their
   replay value expires, while minimal deduplication tombstones remain for the
   workspace-owned graph's lifetime?
-- Should Artifact Viewer documents eventually become shared presentation
-  documents, or remain personal indefinitely?
+- Resolved: Artifact Viewer structural documents are shared presentation on the
+  collaborative head; in-viewer selection/activity remains personal.
 - What participant and graph-size limits define the first supported deployment?
 
 ## Acceptance of this proposal
