@@ -3,16 +3,18 @@
 import { ArrowUpRight, ShieldCheck, Users, Workflow } from "lucide-react";
 import Link from "next/link";
 
-import { useWorkspaceContext } from "./WorkspaceLayout";
+import {
+  useWorkspaceContext,
+  workspaceCanManageMembers,
+} from "./WorkspaceLayout";
 import { WorkspaceMembersDialog } from "./WorkspaceMembersDialog";
 import { useAuthSession } from "@/features/auth/AuthSessionBoundary";
-import { workspaceCanManageMembers } from "./WorkspaceLayout";
 
 export function WorkspaceOverview() {
   const { workspace } = useWorkspaceContext();
   const { session } = useAuthSession();
   const canManageMembers = workspaceCanManageMembers(workspace);
-  const isLocal = workspace.slug === "local";
+  const workbenchHref = `/workspaces/${encodeURIComponent(workspace.slug)}/graphs/new`;
 
   return (
     <div className="ns-workspace-overview">
@@ -24,11 +26,9 @@ export function WorkspaceOverview() {
         </div>
         <div className="ns-workspace-overview__actions">
           {canManageMembers ? <WorkspaceMembersDialog /> : null}
-          {isLocal ? (
-            <Link className="ns-workspace-button ns-workspace-button--primary" href="/workspaces/local/graphs/new">
-              Open workbench <ArrowUpRight size={14} />
-            </Link>
-          ) : null}
+          <Link className="ns-workspace-button ns-workspace-button--primary" href={workbenchHref}>
+            Open workbench <ArrowUpRight size={14} />
+          </Link>
         </div>
       </header>
 
@@ -41,7 +41,9 @@ export function WorkspaceOverview() {
           <ShieldCheck size={18} aria-hidden="true" />
         </div>
         <div className="ns-workspace-capabilities">
-          {workspace.capabilities.map((capability) => <span key={capability}>{capability.replaceAll("_", " ")}</span>)}
+          {workspace.capabilities.map((capability) => (
+            <span key={capability}>{capability.replaceAll("_", " ")}</span>
+          ))}
         </div>
       </section>
 
@@ -49,18 +51,30 @@ export function WorkspaceOverview() {
         <div className="ns-workspace-overview__section-heading">
           <div>
             <p className="ns-workspace-overview__eyebrow">SURFACE</p>
-            <h2 id="workspace-surface-heading">{isLocal ? "Graph workbench" : "Workspace operations"}</h2>
+            <h2 id="workspace-surface-heading">Graph workbench</h2>
           </div>
-          {isLocal ? <Workflow size={18} aria-hidden="true" /> : <Users size={18} aria-hidden="true" />}
+          {workspace.kind === "personal" ? (
+            <Workflow size={18} aria-hidden="true" />
+          ) : (
+            <Users size={18} aria-hidden="true" />
+          )}
         </div>
         <p className="ns-workspace-overview__copy">
-          {isLocal
-            ? "The current node canvas remains available for the local workspace while tenant graph routes are prepared."
-            : "This workspace is ready for overview and member operations. Tenant graph resources are not enabled here yet."}
+          Open the workbench to author graphs in this workspace. Create additional
+          shared workspaces from the{" "}
+          <Link href="/workspaces">workspaces directory</Link>.
         </p>
       </section>
 
-      <p className="ns-workspace-overview__identity">Signed in as user <button type="button" onClick={() => void navigator.clipboard.writeText(session.user_id)}>{session.user_id}</button></p>
+      <p className="ns-workspace-overview__identity">
+        Signed in as user{" "}
+        <button
+          type="button"
+          onClick={() => void navigator.clipboard.writeText(session.user_id)}
+        >
+          {session.user_id}
+        </button>
+      </p>
     </div>
   );
 }

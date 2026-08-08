@@ -4,6 +4,7 @@ import type { Workspace } from "@/lib/api";
 import {
   workspaceCanManageMembers,
   workspaceRouteAccessState,
+  workspaceRouteShowsRail,
 } from "./WorkspaceLayout";
 
 const workspace = (capabilities: readonly Workspace["capabilities"][number][]): Workspace => ({
@@ -25,5 +26,16 @@ describe("workspace route and capability state", () => {
   it("only exposes member management while the server capability is present", () => {
     expect(workspaceCanManageMembers(workspace(["manage_members"]))).toBe(true);
     expect(workspaceCanManageMembers(workspace([]))).toBe(false);
+  });
+
+  it("hides the workspace rail on graph workbench routes", () => {
+    expect(workspaceRouteShowsRail("/workspaces")).toBe(true);
+    expect(workspaceRouteShowsRail("/workspaces/local")).toBe(true);
+    expect(workspaceRouteShowsRail("/workspaces/local/graphs/new")).toBe(false);
+    expect(
+      workspaceRouteShowsRail(
+        "/workspaces/local/graphs/00000000-0000-0000-0000-000000000001",
+      ),
+    ).toBe(false);
   });
 });

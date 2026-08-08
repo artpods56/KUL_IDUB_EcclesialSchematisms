@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Copy, LogOut, Users, Workflow } from "lucide-react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 
 import { useAuthSession } from "@/features/auth/AuthSessionBoundary";
 import { useWorkspaces } from "@/hooks/use-api";
@@ -19,6 +19,11 @@ export type WorkspaceRouteAccessState = "available" | "missing" | "revoked";
 
 export function workspaceCanManageMembers(workspace: Workspace): boolean {
   return workspace.capabilities.includes("manage_members");
+}
+
+/** Graph workbench is full-bleed; keep the rail on directory/overview only. */
+export function workspaceRouteShowsRail(pathname: string): boolean {
+  return !/\/graphs(?:\/|$)/.test(pathname);
 }
 
 export function workspaceRouteAccessState(
@@ -125,10 +130,12 @@ function WorkspaceRouteStatus({ title, detail }: { title: string; detail: string
 
 export default function WorkspaceLayout({ children }: { children: React.ReactNode }) {
   const { workspaceSlug } = useParams<{ workspaceSlug: string }>();
+  const pathname = usePathname() ?? "";
   const { session, logout } = useAuthSession();
   const { data, error, mutate } = useWorkspaces(session.user_id);
   const [previouslyResolvedWorkspace, setPreviouslyResolvedWorkspace] =
     React.useState<Pick<Workspace, "slug" | "id"> | undefined>(undefined);
+  const showRail = workspaceRouteShowsRail(pathname);
 
   const workspace = data?.find((candidate) => candidate.slug === workspaceSlug);
   if (
@@ -166,12 +173,14 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
       }}
     >
       <div className="ns-workspace-frame">
-        <WorkspaceRail
-          workspaces={data}
-          activeSlug={workspace.slug}
-          userId={session.user_id}
-          onLogout={logout}
-        />
+        {showRail ? (
+          <WorkspaceRail
+            workspaces={data}
+            activeSlug={workspace.slug}
+            userId={session.user_id}
+            onLogout={logout}
+          />
+        ) : null}
         <main className="ns-workspace-frame__main">{children}</main>
       </div>
     </WorkspaceContext.Provider>

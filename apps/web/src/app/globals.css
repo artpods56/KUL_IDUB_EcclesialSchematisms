@@ -472,9 +472,21 @@
   font-size: 11px;
 }
 
+.ns-workspace-create__hint {
+  display: block;
+  margin-top: 6px;
+  color: light-dark(#8b9099, #747982);
+  font-size: 11px;
+}
+
+.ns-workspace-create__hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 .ns-workspace-create {
   display: flex;
   align-items: end;
+  flex-wrap: wrap;
   gap: 9px;
   padding: 16px 0;
   border-bottom: 1px solid light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.1));
