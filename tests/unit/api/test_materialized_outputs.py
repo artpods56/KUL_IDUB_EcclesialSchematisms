@@ -705,6 +705,65 @@ def test_full_run_persists_outputs_and_fresh_app_reuses_them_for_downstream_run(
         assert _output(downstream_result, "multiply").artifacts[0].text == "169"
 
 
+def test_graph_update_carries_compatible_materializations_to_new_revision(
+    durable_api: tuple[Settings, str],
+) -> None:
+    settings, _ = durable_api
+    with _client(settings) as client:
+        created = client.post(
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
+            json=_graph_payload(),
+        )
+        assert created.status_code == 201
+        graph = SavedGraphResponse.model_validate(created.json())
+
+        full_run = client.post(
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
+            json=_full_run_payload(str(graph.id), graph.revision),
+        )
+        assert full_run.status_code == 200
+
+        moved_payload = _graph_payload()
+        nodes = cast(list[dict[str, object]], moved_payload["nodes"])
+        nodes[0] = {
+            **nodes[0],
+            "position": {"x": 40, "y": 80},
+        }
+        updated = client.put(
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}",
+            json={**moved_payload, "expected_revision": graph.revision},
+        )
+        assert updated.status_code == 200
+        next_graph = SavedGraphResponse.model_validate(updated.json())
+        assert next_graph.revision == graph.revision + 1
+
+        previous = client.get(
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
+            params={"graph_revision": graph.revision},
+        )
+        carried = client.get(
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
+            params={"graph_revision": next_graph.revision},
+        )
+
+    assert previous.status_code == 200
+    assert carried.status_code == 200
+    previous_ids = {
+        node_run.node_id
+        for node_run in GraphMaterializationsResponse.model_validate(
+            previous.json()
+        ).node_runs
+    }
+    carried_ids = {
+        node_run.node_id
+        for node_run in GraphMaterializationsResponse.model_validate(
+            carried.json()
+        ).node_runs
+    }
+    assert previous_ids == {"nine", "four", "add", "multiply"}
+    assert carried_ids == previous_ids
+
+
 def test_downstream_run_without_materialization_returns_dependency_guidance(
     durable_api: tuple[Settings, str],
 ) -> None:

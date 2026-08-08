@@ -14,12 +14,18 @@ from notarius_core.domain.node_secrets import (
     JsonValue,
     node_secret_dependency_sha256,
 )
+from notarius_core.domain.materialized_outputs import (
+    materializations_for_compatible_nodes,
+)
 from notarius_core.domain.saved_graphs import (
     SavedGraph,
     SavedGraphDocument,
     SavedGraphRevision,
 )
 from notarius_core.plugins import PluginRegistry
+from notarius_core.ports.materialized_outputs import (
+    MaterializedNodeOutputsRepositoryPort,
+)
 from notarius_core.ports.saved_graphs import SavedGraphUnitOfWorkPort
 
 
@@ -143,6 +149,8 @@ class SavedGraphService:
         so callers set ``physically_remove_orphaned_secrets=False`` there.
         """
         graph.ensure_revision(expected_revision)
+        previous_revision = graph.revision
+        previous_document = graph.document
         await self._reconcile_node_secrets(
             unit_of_work,
             workspace_id=graph.workspace_id,
@@ -156,7 +164,45 @@ class SavedGraphService:
             expected_revision=expected_revision,
         )
         await unit_of_work.graphs.add_revision(graph.snapshot())
+        await self._carry_forward_compatible_materializations(
+            unit_of_work,
+            workspace_id=graph.workspace_id,
+            graph_id=graph.id,
+            previous_revision=previous_revision,
+            previous_document=previous_document,
+            next_document=document,
+            next_revision=graph.revision,
+        )
         return graph
+
+    async def _carry_forward_compatible_materializations(
+        self,
+        unit_of_work: SavedGraphUnitOfWorkPort,
+        *,
+        workspace_id: UUID,
+        graph_id: UUID,
+        previous_revision: int,
+        previous_document: SavedGraphDocument,
+        next_document: SavedGraphDocument,
+        next_revision: int,
+    ) -> None:
+        materialized_outputs = getattr(unit_of_work, "materialized_outputs", None)
+        if not isinstance(materialized_outputs, MaterializedNodeOutputsRepositoryPort):
+            return
+        previous = await materialized_outputs.list_for_graph(
+            workspace_id,
+            graph_id,
+            previous_revision,
+        )
+        if not previous:
+            return
+        for materialization in materializations_for_compatible_nodes(
+            previous_document=previous_document,
+            next_document=next_document,
+            previous_materializations=previous,
+            next_revision=next_revision,
+        ):
+            await materialized_outputs.upsert(materialization)
 
     async def _reconcile_node_secrets(
         self,

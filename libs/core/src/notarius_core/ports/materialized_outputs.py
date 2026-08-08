@@ -1,4 +1,4 @@
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
@@ -7,6 +7,7 @@ from notarius_core.ports.execution_history import ExecutionHistoryUnitOfWorkPort
 from notarius_core.ports.staged_uploads import StagedUploadRepositoryPort
 
 
+@runtime_checkable
 class MaterializedNodeOutputsRepositoryPort(Protocol):
     async def upsert(self, value: MaterializedNodeOutputs) -> None: ...
 
