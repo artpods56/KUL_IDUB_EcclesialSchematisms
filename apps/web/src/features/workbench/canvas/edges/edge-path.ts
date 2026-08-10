@@ -92,24 +92,89 @@ function compareFanOrder(
   return leftId.localeCompare(rightId);
 }
 
-function sortedFanGroup(
+function fanGroups(
   edges: readonly EdgeFanEndpoint[],
-  matches: (edge: EdgeFanEndpoint) => boolean,
-  orderPoints: ReadonlyMap<string, Point>,
-  axis: FanSortAxis,
-): EdgeFanEndpoint[] {
-  return edges
-    .filter(matches)
-    .slice()
-    .sort((left, right) =>
+  endpoint: "source" | "target",
+): EdgeFanEndpoint[][] {
+  const groupsByNode = new Map<
+    string,
+    Map<string | null | undefined, EdgeFanEndpoint[]>
+  >();
+  for (const edge of edges) {
+    const nodeId = edge[endpoint];
+    const handleId = endpoint === "source"
+      ? edge.sourceHandle
+      : edge.targetHandle;
+    const groupsByHandle = groupsByNode.get(nodeId) ?? new Map();
+    const group = groupsByHandle.get(handleId) ?? [];
+    group.push(edge);
+    groupsByHandle.set(handleId, group);
+    groupsByNode.set(nodeId, groupsByHandle);
+  }
+  return [...groupsByNode.values()].flatMap((groupsByHandle) =>
+    [...groupsByHandle.values()]
+  );
+}
+
+/** Compute every edge's fan slots together so callers can share the group work. */
+export function edgeFanOffsetsById(
+  edges: readonly EdgeFanEndpoint[],
+  {
+    sourceOrderPoints = new Map(),
+    targetOrderPoints = new Map(),
+    sourceAxis = "y",
+    targetAxis = "y",
+    spacing = FAN_SPACING,
+  }: {
+    sourceOrderPoints?: ReadonlyMap<string, Point>;
+    targetOrderPoints?: ReadonlyMap<string, Point>;
+    sourceAxis?: FanSortAxis;
+    targetAxis?: FanSortAxis;
+    spacing?: number;
+  } = {},
+): ReadonlyMap<string, EdgeFanOffsets> {
+  const offsetsById = new Map<string, EdgeFanOffsets>();
+  for (const edge of edges) {
+    offsetsById.set(edge.id, { source: 0, target: 0 });
+  }
+
+  for (const group of fanGroups(edges, "source")) {
+    const sorted = group.slice().sort((left, right) =>
       compareFanOrder(
-        orderPoints.get(left.id),
-        orderPoints.get(right.id),
-        axis,
+        sourceOrderPoints.get(left.id),
+        sourceOrderPoints.get(right.id),
+        sourceAxis,
         left.id,
         right.id,
-      ),
+      )
     );
+    for (const [index, edge] of sorted.entries()) {
+      const offsets = offsetsById.get(edge.id);
+      if (offsets) {
+        offsets.source = fanSlotOffset(index, sorted.length, spacing);
+      }
+    }
+  }
+
+  for (const group of fanGroups(edges, "target")) {
+    const sorted = group.slice().sort((left, right) =>
+      compareFanOrder(
+        targetOrderPoints.get(left.id),
+        targetOrderPoints.get(right.id),
+        targetAxis,
+        left.id,
+        right.id,
+      )
+    );
+    for (const [index, edge] of sorted.entries()) {
+      const offsets = offsetsById.get(edge.id);
+      if (offsets) {
+        offsets.target = fanSlotOffset(index, sorted.length, spacing);
+      }
+    }
+  }
+
+  return offsetsById;
 }
 
 /**
@@ -136,38 +201,13 @@ export function edgeFanOffsets(
     spacing?: number;
   } = {},
 ): EdgeFanOffsets {
-  const edge = edges.find((candidate) => candidate.id === edgeId);
-  if (!edge) return { source: 0, target: 0 };
-
-  const sourceGroup = sortedFanGroup(
-    edges,
-    (candidate) =>
-      candidate.source === edge.source &&
-      candidate.sourceHandle === edge.sourceHandle,
+  return edgeFanOffsetsById(edges, {
     sourceOrderPoints,
-    sourceAxis,
-  );
-  const targetGroup = sortedFanGroup(
-    edges,
-    (candidate) =>
-      candidate.target === edge.target &&
-      candidate.targetHandle === edge.targetHandle,
     targetOrderPoints,
+    sourceAxis,
     targetAxis,
-  );
-
-  return {
-    source: fanSlotOffset(
-      sourceGroup.findIndex((candidate) => candidate.id === edgeId),
-      sourceGroup.length,
-      spacing,
-    ),
-    target: fanSlotOffset(
-      targetGroup.findIndex((candidate) => candidate.id === edgeId),
-      targetGroup.length,
-      spacing,
-    ),
-  };
+    spacing,
+  }).get(edgeId) ?? { source: 0, target: 0 };
 }
 
 /** Shift a handle point along the axis perpendicular to its exit direction. */

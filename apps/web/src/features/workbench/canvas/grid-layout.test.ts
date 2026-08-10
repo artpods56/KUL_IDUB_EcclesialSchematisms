@@ -32,15 +32,16 @@ describe("grid layout", () => {
     expect(GRID_CELL_SIZE_DEFAULT).toBe(50);
     expect(GRID_SHELL_GUTTER).toBe(6);
     expect(DEFAULT_CANVAS_GRID_SETTINGS.cellSize).toBe(50);
+    expect(DEFAULT_CANVAS_GRID_SETTINGS.onlyRenderVisibleElements).toBe(false);
     expect(DEFAULT_CANVAS_GRID_SETTINGS.allowWorkflowCornerResize).toBe(false);
     expect(lengthFromSpan(STANDARD_NODE_WIDTH_CELLS, 50)).toBe(300);
   });
 
-  it("sizes edge selectors as 2×1 cells", () => {
-    expect(EDGE_SELECTOR_WIDTH_CELLS).toBe(2);
+  it("sizes edge selectors as 3×1 cells", () => {
+    expect(EDGE_SELECTOR_WIDTH_CELLS).toBe(3);
     expect(EDGE_SELECTOR_HEIGHT_CELLS).toBe(1);
-    expect(edgeSelectorBlockSize(50)).toEqual({ width: 100, height: 50 });
-    expect(edgeSelectorBlockSize(60)).toEqual({ width: 120, height: 60 });
+    expect(edgeSelectorBlockSize(50)).toEqual({ width: 150, height: 50 });
+    expect(edgeSelectorBlockSize(60)).toEqual({ width: 180, height: 60 });
   });
 
   it("uses one-cell port rail rows for Lego port alignment", () => {
@@ -139,6 +140,7 @@ describe("grid layout", () => {
         enabled: false,
         cellSize: 54.4,
         snapWhileDragging: true,
+        onlyRenderVisibleElements: true,
         allowWorkflowCornerResize: true,
       }),
     ).toEqual({
@@ -146,6 +148,7 @@ describe("grid layout", () => {
       enabled: false,
       cellSize: 54,
       snapWhileDragging: true,
+      onlyRenderVisibleElements: true,
       allowWorkflowCornerResize: true,
     });
   });

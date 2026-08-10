@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyHandleFanOffset,
   edgeFanOffsets,
+  edgeFanOffsetsById,
   fanSortAxis,
   routedBezierPath,
 } from "./edge-path";
@@ -106,6 +107,51 @@ describe("edgeFanOffsets", () => {
       edgeFanOffsets(incoming, "c", { targetOrderPoints, targetAxis: "y" })
         .target,
     ).toBe(7);
+  });
+
+  it("computes source and target fan groups together", () => {
+    const graphEdges = [
+      {
+        id: "a",
+        source: "s1",
+        target: "t1",
+        sourceHandle: "out",
+        targetHandle: "in-a",
+      },
+      {
+        id: "b",
+        source: "s1",
+        target: "t2",
+        sourceHandle: "out",
+        targetHandle: "in",
+      },
+      {
+        id: "c",
+        source: "s2",
+        target: "t2",
+        sourceHandle: "out-c",
+        targetHandle: "in",
+      },
+    ];
+
+    const offsets = edgeFanOffsetsById(graphEdges, {
+      sourceOrderPoints: new Map([
+        ["a", { x: 300, y: 0 }],
+        ["b", { x: 300, y: 100 }],
+        ["c", { x: 300, y: 100 }],
+      ]),
+      targetOrderPoints: new Map([
+        ["a", { x: 0, y: 0 }],
+        ["b", { x: 0, y: 0 }],
+        ["c", { x: 0, y: 100 }],
+      ]),
+      sourceAxis: "y",
+      targetAxis: "y",
+    });
+
+    expect(offsets.get("a")).toEqual({ source: -3.5, target: 0 });
+    expect(offsets.get("b")).toEqual({ source: 3.5, target: -3.5 });
+    expect(offsets.get("c")).toEqual({ source: 0, target: 3.5 });
   });
 });
 

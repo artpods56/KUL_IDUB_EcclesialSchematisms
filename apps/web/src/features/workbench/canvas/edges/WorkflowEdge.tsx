@@ -149,8 +149,10 @@ function EdgeOption({
 export default function WorkflowEdgeControl({
   id,
   data,
+  source: sourceNodeId,
   sourceX,
   sourceY,
+  target: targetNodeId,
   targetX,
   targetY,
   sourcePosition,
@@ -194,6 +196,8 @@ export default function WorkflowEdgeControl({
     natural.anchor,
     rawRouteOffset,
     draftRouteOffset != null,
+    sourceNodeId,
+    targetNodeId,
   );
   const { anchor, path: edgePath } = routedBezierPath({
     source,

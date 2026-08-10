@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useReactFlow, useViewport } from "@xyflow/react";
+import { useReactFlow, useStore, useViewport } from "@xyflow/react";
 
 import { useOptionalCanvasGridSettings } from "../canvas-grid-settings";
 import {
@@ -57,17 +57,29 @@ export function useEdgeRouteBendHandlers({
     screenToFlowPosition,
     grid,
   });
-  liveRef.current = {
-    naturalAnchor,
+  React.useLayoutEffect(() => {
+    liveRef.current = {
+      naturalAnchor,
+      anchor,
+      savedRouteOffset,
+      routeOffset,
+      setDraftRouteOffset,
+      onRouteOffsetChange,
+      zoom,
+      screenToFlowPosition,
+      grid,
+    };
+  }, [
     anchor,
-    savedRouteOffset,
-    routeOffset,
-    setDraftRouteOffset,
-    onRouteOffsetChange,
-    zoom,
-    screenToFlowPosition,
     grid,
-  };
+    naturalAnchor,
+    onRouteOffsetChange,
+    routeOffset,
+    savedRouteOffset,
+    screenToFlowPosition,
+    setDraftRouteOffset,
+    zoom,
+  ]);
 
   const snapOffset = React.useCallback(
     (offset: WorkflowEdgeRouteOffset, dragging: boolean) => {
@@ -235,13 +247,26 @@ export function useResolvedEdgeRouteOffset(
   naturalAnchor: Point,
   rawOffset: WorkflowEdgeRouteOffset,
   dragging: boolean,
+  sourceNodeId: string,
+  targetNodeId: string,
 ): WorkflowEdgeRouteOffset {
+  const endpointDragging = useStore(
+    React.useCallback(
+      (state) =>
+        state.nodeLookup.get(sourceNodeId)?.dragging === true ||
+        state.nodeLookup.get(targetNodeId)?.dragging === true,
+      [sourceNodeId, targetNodeId],
+    ),
+  );
   const grid = useOptionalCanvasGridSettings();
   const settings = grid?.settings;
   const bypass = grid?.bypassSnap ?? false;
   if (
     !settings ||
-    !shouldSnapPosition(settings, { dragging, bypass })
+    !shouldSnapPosition(settings, {
+      dragging: dragging || endpointDragging,
+      bypass,
+    })
   ) {
     return rawOffset;
   }

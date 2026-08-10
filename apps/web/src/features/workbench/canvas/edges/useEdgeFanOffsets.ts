@@ -4,10 +4,11 @@ import type { InternalNode, Node } from "@xyflow/react";
 import { Position, useStore } from "@xyflow/react";
 
 import {
-  edgeFanOffsets,
+  edgeFanOffsetsById,
   fanSortAxis,
   type EdgeFanEndpoint,
   type EdgeFanOffsets,
+  type FanSortAxis,
 } from "./edge-path";
 
 interface Point {
@@ -40,7 +41,7 @@ function handlePoint(
 
 function orderPointsForEdges(
   edges: readonly EdgeFanEndpoint[],
-  nodeLookup: Map<string, InternalNode<Node>>,
+  nodeLookup: ReadonlyMap<string, InternalNode<Node>>,
   far: "source" | "target",
 ): Map<string, Point> {
   const points = new Map<string, Point>();
@@ -54,30 +55,70 @@ function orderPointsForEdges(
   return points;
 }
 
+interface EdgeFanStoreState {
+  edges: readonly EdgeFanEndpoint[];
+  nodeLookup: ReadonlyMap<string, InternalNode<Node>>;
+}
+
+interface EdgeFanStateCache {
+  sourceOrderPoints: ReadonlyMap<string, Point>;
+  targetOrderPoints: ReadonlyMap<string, Point>;
+  offsetsByAxes: Map<string, ReadonlyMap<string, EdgeFanOffsets>>;
+}
+
+const fanStateCache = new WeakMap<object, EdgeFanStateCache>();
+
+function fanOffsetsForState(
+  state: EdgeFanStoreState,
+  sourceAxis: FanSortAxis,
+  targetAxis: FanSortAxis,
+): ReadonlyMap<string, EdgeFanOffsets> {
+  let cached = fanStateCache.get(state);
+  if (!cached) {
+    cached = {
+      sourceOrderPoints: orderPointsForEdges(
+        state.edges,
+        state.nodeLookup,
+        "target",
+      ),
+      targetOrderPoints: orderPointsForEdges(
+        state.edges,
+        state.nodeLookup,
+        "source",
+      ),
+      offsetsByAxes: new Map(),
+    };
+    fanStateCache.set(state, cached);
+  }
+
+  const axesKey = `${sourceAxis}:${targetAxis}`;
+  let offsets = cached.offsetsByAxes.get(axesKey);
+  if (!offsets) {
+    offsets = edgeFanOffsetsById(state.edges, {
+      sourceOrderPoints: cached.sourceOrderPoints,
+      targetOrderPoints: cached.targetOrderPoints,
+      sourceAxis,
+      targetAxis,
+    });
+    cached.offsetsByAxes.set(axesKey, offsets);
+  }
+  return offsets;
+}
+
 /** Live fan offsets; sibling order tracks the far-end handle as nodes move. */
 export function useEdgeFanOffsets(
   edgeId: string,
   sourcePosition: Position = Position.Right,
   targetPosition: Position = Position.Left,
 ): EdgeFanOffsets {
+  const sourceAxis = fanSortAxis(sourcePosition);
+  const targetAxis = fanSortAxis(targetPosition);
   return useStore(
     (state) =>
-      edgeFanOffsets(state.edges, edgeId, {
-        // Source-side fan: order by where each cable is going.
-        sourceOrderPoints: orderPointsForEdges(
-          state.edges,
-          state.nodeLookup,
-          "target",
-        ),
-        // Target-side fan: order by where each cable is coming from.
-        targetOrderPoints: orderPointsForEdges(
-          state.edges,
-          state.nodeLookup,
-          "source",
-        ),
-        sourceAxis: fanSortAxis(sourcePosition),
-        targetAxis: fanSortAxis(targetPosition),
-      }),
+      fanOffsetsForState(state, sourceAxis, targetAxis).get(edgeId) ?? {
+        source: 0,
+        target: 0,
+      },
     (left, right) =>
       left.source === right.source && left.target === right.target,
   );

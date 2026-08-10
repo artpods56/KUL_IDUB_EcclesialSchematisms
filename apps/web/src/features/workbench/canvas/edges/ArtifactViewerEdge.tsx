@@ -148,8 +148,10 @@ function viewerChipLabel(
 export default function ArtifactViewerEdgeControl({
   id,
   data,
+  source: sourceNodeId,
   sourceX,
   sourceY,
+  target: targetNodeId,
   targetX,
   targetY,
   sourcePosition,
@@ -187,6 +189,8 @@ export default function ArtifactViewerEdgeControl({
     natural.anchor,
     rawRouteOffset,
     draftRouteOffset != null,
+    sourceNodeId,
+    targetNodeId,
   );
   const { anchor, path: edgePath } = routedBezierPath({
     source,

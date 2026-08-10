@@ -7,7 +7,7 @@ import {
   type WorkflowNodeLayout,
 } from "./node-layout";
 
-/** Experimental canvas lattice — tweak via the Grid lab panel. */
+/** Experimental canvas lattice — tweak via the Canvas lab panel. */
 export const GRID_CELL_SIZE_MIN = 24;
 export const GRID_CELL_SIZE_MAX = 96;
 export const GRID_CELL_SIZE_DEFAULT = 50;
@@ -21,8 +21,12 @@ export const STANDARD_NODE_WIDTH_CELLS = 6;
  */
 export const PORT_RAIL_ROW_HEIGHT_CELLS = 1;
 
-/** Midpoint edge feed selector footprint on the lattice. */
-export const EDGE_SELECTOR_WIDTH_CELLS = 2;
+/**
+ * Midpoint edge feed selector footprint on the lattice. Two cells left the
+ * label about six characters once the menu and remove buttons took their side,
+ * which truncated most port names into meaninglessness.
+ */
+export const EDGE_SELECTOR_WIDTH_CELLS = 3;
 export const EDGE_SELECTOR_HEIGHT_CELLS = 1;
 
 export function edgeSelectorBlockSize(cellSize: number): {
@@ -59,6 +63,8 @@ export interface CanvasGridSettings {
   /** Master switch for snap behaviour (background can stay independent). */
   enabled: boolean;
   showBackground: boolean;
+  /** Let React Flow unmount nodes and edges outside the viewport. */
+  onlyRenderVisibleElements: boolean;
   snapPosition: boolean;
   snapSize: boolean;
   /** Magnetize positions during drag (not only on release). */
@@ -77,6 +83,7 @@ export interface CanvasGridSettings {
 export const DEFAULT_CANVAS_GRID_SETTINGS: CanvasGridSettings = {
   enabled: true,
   showBackground: true,
+  onlyRenderVisibleElements: false,
   snapPosition: true,
   snapSize: true,
   snapWhileDragging: false,
@@ -101,6 +108,8 @@ export function normalizeCanvasGridSettings(
   return {
     enabled: partial.enabled ?? base.enabled,
     showBackground: partial.showBackground ?? base.showBackground,
+    onlyRenderVisibleElements:
+      partial.onlyRenderVisibleElements ?? base.onlyRenderVisibleElements,
     snapPosition: partial.snapPosition ?? base.snapPosition,
     snapSize: partial.snapSize ?? base.snapSize,
     snapWhileDragging: partial.snapWhileDragging ?? base.snapWhileDragging,

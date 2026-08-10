@@ -94,18 +94,18 @@ function renderBlock(cellSize: number) {
 }
 
 describe("EdgeSelectorBlock", () => {
-  it("occupies 2×1 cells from the live grid cell size", () => {
+  it("occupies 3×1 cells from the live grid cell size", () => {
     const block = renderBlock(50);
-    expect(block.style.width).toBe("100px");
+    expect(block.style.width).toBe("150px");
     expect(block.style.height).toBe("50px");
-    expect(block.dataset.widthCells).toBe("2");
+    expect(block.dataset.widthCells).toBe("3");
     expect(block.dataset.heightCells).toBe("1");
     expect(block.dataset.cellSize).toBe("50");
   });
 
   it("resizes with a non-default cell size", () => {
     const block = renderBlock(60);
-    expect(block.style.width).toBe("120px");
+    expect(block.style.width).toBe("180px");
     expect(block.style.height).toBe("60px");
     expect(block.dataset.cellSize).toBe("60");
   });

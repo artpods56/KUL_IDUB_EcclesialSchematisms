@@ -234,7 +234,9 @@ export function EdgeSelectorBlock({
         )}
       >
         <span {...stylex.props(s.labelFace)}>
-          <span {...stylex.props(s.editLabel)}>{label}</span>
+          <span title={label} {...stylex.props(s.editLabel)}>
+            {label}
+          </span>
         </span>
         <Popover.Root>
           <Popover.Trigger
