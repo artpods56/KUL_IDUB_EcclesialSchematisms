@@ -38,6 +38,11 @@ from notarius_core.domain.execution_history import (
     GraphExecutionStatus,
 )
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
+from notarius_core.domain.module_library import (
+    Module,
+    ModulePublicationState,
+    ModuleRelease,
+)
 from notarius_core.domain.node_secrets import EncryptedNodeSecret
 from notarius_core.domain.collaboration import (
     CollaborativeGraphHead,
@@ -61,6 +66,7 @@ from notarius_core.ports.execution_history import (
 from notarius_core.ports.materialized_outputs import (
     MaterializedNodeOutputsRepositoryPort,
 )
+from notarius_core.ports.module_library import ModuleLibraryRepositoryPort
 from notarius_core.ports.node_secrets import NodeSecretRepositoryPort
 from notarius_core.ports.saved_graphs import SavedGraphRepositoryPort
 from notarius_core.ports.staged_uploads import StagedUploadRepositoryPort
@@ -1539,3 +1545,100 @@ class SqlCollaborationRepository:
             await self._session.execute(delete(schema.graph_active_execution_slots)),
         )
         return int(result.rowcount or 0)
+
+
+class SqlModuleLibraryRepository(ModuleLibraryRepositoryPort):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    @override
+    async def add(self, module: Module) -> None:
+        self._session.add(module)
+        await self._session.flush()
+
+    @override
+    async def add_release(self, release: ModuleRelease) -> None:
+        self._session.add(release)
+        await self._session.flush()
+
+    @override
+    async def get(self, workspace_id: UUID, module_id: UUID) -> Module | None:
+        return await self._session.scalar(
+            select(Module).where(
+                schema.modules.c.workspace_id == workspace_id,
+                schema.modules.c.id == module_id,
+            )
+        )
+
+    @override
+    async def get_by_source_graph(
+        self,
+        workspace_id: UUID,
+        source_graph_id: UUID,
+    ) -> Module | None:
+        return await self._session.scalar(
+            select(Module).where(
+                schema.modules.c.workspace_id == workspace_id,
+                schema.modules.c.source_graph_id == source_graph_id,
+            )
+        )
+
+    @override
+    async def get_release(
+        self,
+        workspace_id: UUID,
+        module_id: UUID,
+        revision: int,
+    ) -> ModuleRelease | None:
+        return await self._session.get(
+            ModuleRelease,
+            (workspace_id, module_id, revision),
+        )
+
+    @override
+    async def list_modules(self, workspace_id: UUID) -> list[Module]:
+        result = await self._session.scalars(
+            select(Module)
+            .where(schema.modules.c.workspace_id == workspace_id)
+            .order_by(
+                schema.modules.c.updated_at.desc(),
+                schema.modules.c.id.asc(),
+            )
+        )
+        return list(result)
+
+    @override
+    async def list_library(self, workspace_id: UUID) -> list[Module]:
+        result = await self._session.scalars(
+            select(Module)
+            .where(
+                schema.modules.c.workspace_id == workspace_id,
+                schema.modules.c.publication_state.in_(
+                    (
+                        ModulePublicationState.PUBLISHED,
+                        ModulePublicationState.DEPRECATED,
+                    )
+                ),
+            )
+            .order_by(
+                schema.modules.c.name.asc(),
+                schema.modules.c.id.asc(),
+            )
+        )
+        return list(result)
+
+    @override
+    async def list_releases(
+        self,
+        workspace_id: UUID,
+        module_id: UUID,
+    ) -> list[ModuleRelease]:
+        result = await self._session.scalars(
+            select(ModuleRelease)
+            .where(
+                schema.module_releases.c.workspace_id == workspace_id,
+                schema.module_releases.c.module_id == module_id,
+            )
+            .order_by(schema.module_releases.c.revision.desc())
+        )
+        return list(result)

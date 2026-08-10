@@ -23,6 +23,7 @@ from notarius_core.domain.execution_history import (
     GraphExecutionStatus,
 )
 from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
+from notarius_core.domain.module_library import Module, ModuleRelease
 from notarius_core.domain.node_secrets import EncryptedNodeSecret
 from notarius_core.domain.collaboration import CollaborativeGraphHead
 from notarius_core.domain.saved_graphs import SavedGraph, SavedGraphDocument
@@ -144,3 +145,5 @@ def start_mappers() -> None:
         CollaborativeGraphHead,
         schema.collaborative_graph_heads,
     )
+    mapper_registry.map_imperatively(Module, schema.modules)
+    mapper_registry.map_imperatively(ModuleRelease, schema.module_releases)

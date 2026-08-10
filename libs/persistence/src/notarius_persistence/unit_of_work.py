@@ -30,6 +30,10 @@ from notarius_core.ports.node_secrets import (
     NodeSecretRepositoryPort,
     NodeSecretUnitOfWorkPort,
 )
+from notarius_core.ports.module_library import (
+    ModuleLibraryRepositoryPort,
+    ModuleLibraryUnitOfWorkPort,
+)
 from notarius_core.ports.saved_graphs import (
     SavedGraphRepositoryPort,
     SavedGraphUnitOfWorkPort,
@@ -46,6 +50,7 @@ from notarius_persistence.adapters.repositories import (
     SqlIdentityRepository,
     SqlInvocationCacheRepository,
     SqlMaterializedNodeOutputsRepository,
+    SqlModuleLibraryRepository,
     SqlNodeSecretRepository,
     SqlSavedGraphRepository,
     SqlSecurityAuditRepository,
@@ -66,6 +71,7 @@ class _SqlAlchemyUnitOfWorkState:
     security_audit: SecurityAuditRepositoryPort
     staged_uploads: StagedUploadRepositoryPort
     collaboration: CollaborationRepositoryPort
+    modules: ModuleLibraryRepositoryPort
 
 
 class SqlAlchemyUnitOfWork(
@@ -76,6 +82,7 @@ class SqlAlchemyUnitOfWork(
     IdentityUnitOfWorkPort,
     StagedUploadUnitOfWorkPort,
     CollaborationUnitOfWorkPort,
+    ModuleLibraryUnitOfWorkPort,
 ):
     """Reusable task-local SQLAlchemy transaction boundary.
 
@@ -144,6 +151,11 @@ class SqlAlchemyUnitOfWork(
     def collaboration(self) -> CollaborationRepositoryPort:
         return self._entered_state().collaboration
 
+    @property
+    @override
+    def modules(self) -> ModuleLibraryRepositoryPort:
+        return self._entered_state().modules
+
     @override
     async def __aenter__(self) -> "SqlAlchemyUnitOfWork":
         if self._state.get() is not None:
@@ -162,6 +174,7 @@ class SqlAlchemyUnitOfWork(
                 security_audit=SqlSecurityAuditRepository(session),
                 staged_uploads=SqlStagedUploadRepository(session),
                 collaboration=SqlCollaborationRepository(session),
+                modules=SqlModuleLibraryRepository(session),
             )
         )
         return self
