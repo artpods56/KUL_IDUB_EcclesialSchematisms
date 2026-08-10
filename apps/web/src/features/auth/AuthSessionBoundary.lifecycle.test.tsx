@@ -26,6 +26,8 @@ import { AuthSessionBoundary, useAuthSession } from "./AuthSessionBoundary";
 const session = {
   id: "session-1",
   user_id: "user-1",
+  email: "owner@example.test",
+  display_name: "Ada Lovelace",
   created_at: "2026-01-01T00:00:00Z",
   expires_at: "2026-01-02T00:00:00Z",
   last_used_at: null,
@@ -122,7 +124,7 @@ describe("AuthSessionBoundary lifecycle", () => {
 
     resolveDelete?.();
     await act(async () => firstAttempt);
-    expect(container.textContent).toContain("Sign in to Notarius");
+    expect(container.textContent).toContain("Continue with SSO");
     await act(async () => root.unmount());
   });
 
@@ -134,7 +136,7 @@ describe("AuthSessionBoundary lifecycle", () => {
     await act(async () => root.render(<AuthSessionBoundary><ProtectedSurface onLogoutReady={captureLogout} /></AuthSessionBoundary>));
 
     await act(async () => logoutControl?.());
-    expect(container.textContent).toContain("Sign in to Notarius");
+    expect(container.textContent).toContain("Continue with SSO");
     expect(container.textContent).not.toContain("expired");
     await act(async () => root.unmount());
   });
@@ -154,7 +156,7 @@ describe("AuthSessionBoundary lifecycle", () => {
       container.querySelector("button")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(authMocks.deleteSession).toHaveBeenCalledTimes(2);
-    expect(container.textContent).toContain("Sign in to Notarius");
+    expect(container.textContent).toContain("Continue with SSO");
     await act(async () => root.unmount());
   });
 
@@ -173,7 +175,7 @@ describe("AuthSessionBoundary lifecycle", () => {
     await act(async () => {
       container.querySelector("button")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(container.textContent).toContain("Sign in to Notarius");
+    expect(container.textContent).toContain("Continue with SSO");
     await act(async () => root.unmount());
   });
 

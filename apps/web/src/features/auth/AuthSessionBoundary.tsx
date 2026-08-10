@@ -3,6 +3,7 @@
 import * as React from "react";
 import { SWRConfig, type Cache, type State } from "swr";
 
+import { BrandLoader, BrandWordmark } from "@/components/brand";
 import { deleteSession, getSession, oidcLoginUrl, safeReturnPath } from "@/lib/api/auth";
 import { ApiError, onUnauthorized } from "@/lib/api/client";
 import type { Session } from "@/lib/api/contract";
@@ -59,12 +60,18 @@ function AuthFrame({
   children: React.ReactNode;
 }) {
   if (state.kind === "loading") {
-    return <AuthStatus title="Checking session" detail="Opening your workspace…" />;
+    return (
+      <AuthStatus
+        title="Checking session"
+        detail="Opening your workspace…"
+        loading
+      />
+    );
   }
   if (state.kind === "signed-out") {
     return (
       <AuthStatus
-        title="Sign in to Notarius"
+        title="Sign in"
         detail="Your workspaces and graphs are available after authentication."
         action={<button type="button" onClick={openLogin}>Continue with SSO</button>}
       />
@@ -74,7 +81,7 @@ function AuthFrame({
     return (
       <AuthStatus
         title="Your session has expired"
-        detail="Sign in again to return to the same Notarius surface."
+        detail="Sign in again to return to the same surface."
         action={<button type="button" onClick={openLogin}>Sign in again</button>}
       />
     );
@@ -83,7 +90,7 @@ function AuthFrame({
     return (
       <AuthStatus
         title="Session service unavailable"
-        detail="Notarius could not confirm your session. Check the connection and try again."
+        detail="Could not confirm your session. Check the connection and try again."
         action={<button type="button" onClick={onRetry}>Try again</button>}
       />
     );
@@ -93,6 +100,7 @@ function AuthFrame({
       <AuthStatus
         title="Signing out"
         detail="Revoking this session…"
+        loading
       />
     );
   }
@@ -100,7 +108,7 @@ function AuthFrame({
     return (
       <AuthStatus
         title="Sign out could not be completed"
-        detail="The server could not revoke this session. Try again before leaving Notarius."
+        detail="The server could not revoke this session. Try again before leaving."
         action={<button type="button" onClick={onLogout}>Try sign out again</button>}
       />
     );
@@ -122,18 +130,30 @@ function AuthStatus({
   title,
   detail,
   action,
+  loading = false,
 }: {
   title: string;
   detail: string;
   action?: React.ReactNode;
+  loading?: boolean;
 }) {
   return (
     <main className="ns-auth-threshold">
-      <div className="ns-auth-threshold__mark" aria-hidden="true">N</div>
-      <p className="ns-auth-threshold__eyebrow">NOTARIUS</p>
-      <h1>{title}</h1>
-      <p className="ns-auth-threshold__detail">{detail}</p>
-      {action ? <div className="ns-auth-threshold__action">{action}</div> : null}
+      <div className="ns-auth-threshold__panel">
+        <div className="ns-auth-threshold__brand">
+          {loading ? (
+            <BrandLoader size={88} label={title} />
+          ) : (
+            <BrandWordmark height={72} />
+          )}
+        </div>
+        <div className="ns-auth-threshold__rule" aria-hidden="true" />
+        <div className="ns-auth-threshold__copy">
+          <h1>{title}</h1>
+          <p className="ns-auth-threshold__detail">{detail}</p>
+          {action ? <div className="ns-auth-threshold__action">{action}</div> : null}
+        </div>
+      </div>
     </main>
   );
 }

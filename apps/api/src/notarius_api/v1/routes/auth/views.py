@@ -159,10 +159,17 @@ async def get_session(
     request: Request,
     _actor: Annotated[ActorContext, Depends(browser_actor)],
 ) -> SessionResponse:
-    session = await get_identity(request.app).auth_service.current_session(request)
+    identity = get_identity(request.app)
+    session = await identity.auth_service.current_session(request)
+    async with identity.identity_uow_factory() as unit_of_work:
+        user = await unit_of_work.identity.get_user(session.user_id)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
     return SessionResponse(
         id=session.id,
         user_id=session.user_id,
+        email=user.email,
+        display_name=user.display_name,
         created_at=session.created_at,
         last_used_at=session.last_used_at,
         expires_at=session.expires_at,
@@ -188,13 +195,20 @@ async def list_sessions(
     request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
 ) -> list[SessionResponse]:
-    auth = get_identity(request.app).auth_service
+    identity = get_identity(request.app)
+    auth = identity.auth_service
     sessions = await auth.list_sessions(actor=actor)
     current = await auth.current_session(request)
+    async with identity.identity_uow_factory() as unit_of_work:
+        user = await unit_of_work.identity.get_user(actor.user_id)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
     return [
         SessionResponse(
             id=session.id,
             user_id=session.user_id,
+            email=user.email,
+            display_name=user.display_name,
             created_at=session.created_at,
             last_used_at=session.last_used_at,
             expires_at=session.expires_at,
