@@ -15,13 +15,6 @@ const xyflowMocks = vi.hoisted(() => ({
   updateNodeInternals: vi.fn(),
 }));
 
-import type { NodeSpec } from "@/lib/api";
-import {
-  compatibilityHandleId,
-  createWorkflowNodeData,
-} from "../types";
-import WorkflowNodeCard from "./WorkflowNode";
-
 vi.mock("@xyflow/react", () => ({
   Handle: ({
     id,
@@ -103,6 +96,17 @@ vi.mock("@base-ui/react/popover", () => ({
 vi.mock("./type-inspector", () => ({
   PortTypePopover: ({ children }: { children: React.ReactNode }) => children,
 }));
+
+import type { NodeSpec } from "@/lib/api";
+import {
+  compatibilityHandleId,
+  createWorkflowNodeData,
+} from "../types";
+import WorkflowNodeCard, {
+  configFieldLabelIsRedundant,
+  type ConfigBrick,
+} from "./WorkflowNode";
+import { fieldFootprint } from "./field-footprints";
 
 function unavailableSpec(): NodeSpec {
   return {
@@ -336,6 +340,189 @@ function rawSqlStatementSpec(): NodeSpec {
   };
 }
 
+/** Mirrors llm.openai_compatible.chat_completion: short fields plus a secret. */
+function chatCompletionSpec(): NodeSpec {
+  return {
+    operator_id: "llm.openai_compatible.chat_completion",
+    operator_version: 1,
+    plugin_slug: "llm",
+    title: "OpenAI-compatible Chat Completion",
+    description: "Calls an OpenAI-compatible Chat Completions endpoint.",
+    catalog_visible: true,
+    config_schema: {
+      type: "object",
+      properties: {
+        base_url: {
+          type: "string",
+          title: "Base Url",
+          description: "OpenAI-compatible API base URL, including its version path.",
+        },
+        model: {
+          type: "string",
+          title: "Model",
+          description: "Provider model identifier.",
+        },
+        temperature: {
+          type: "number",
+          title: "Temperature",
+          description: "Sampling temperature passed to the provider.",
+          minimum: 0,
+          maximum: 2,
+        },
+        timeout_ms: {
+          type: "integer",
+          title: "Timeout Ms",
+          description: "Maximum provider request time in milliseconds.",
+          minimum: 1000,
+        },
+        strict: {
+          type: "boolean",
+          title: "Strict",
+          description: "Whether the provider must enforce a connected JSON Schema.",
+        },
+      },
+    },
+    input_schema: {},
+    output_schema: {},
+    inputs: [],
+    outputs: [],
+    secret_inputs: [
+      {
+        name: "api_key",
+        title: "API key",
+        description: "Write-only bearer credential for the configured base URL.",
+        config_dependencies: ["base_url"],
+      },
+    ],
+  };
+}
+
+function renderNode(
+  id: string,
+  data: ReturnType<typeof createWorkflowNodeData>,
+  selected = false,
+  dragging = false,
+): { container: HTMLElement; root: ReturnType<typeof createRoot> } {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  React.act(() => {
+    root.render(
+      <WorkflowNodeCard
+        {...({ id, data, selected, dragging } as React.ComponentProps<
+          typeof WorkflowNodeCard
+        >)}
+      />,
+    );
+  });
+  return { container, root };
+}
+
+describe("WorkflowNode pickup", () => {
+  it("defers the pickup remeasure until the spring lift settles", async () => {
+    const data = createWorkflowNodeData(textPipeSpec());
+    const node = renderNode("text", data);
+
+    expect(
+      node.container.querySelector('[data-node-pickup-shadow="true"]')
+        ?.getAttribute("data-picked-up"),
+    ).toBe("false");
+    xyflowMocks.updateNodeInternals.mockClear();
+
+    React.act(() => {
+      node.root.render(
+        <WorkflowNodeCard
+          {...({
+            id: "text",
+            data,
+            selected: true,
+            dragging: false,
+          } as React.ComponentProps<typeof WorkflowNodeCard>)}
+        />,
+      );
+    });
+    expect(
+      node.container.querySelector('[data-node-pickup-shadow="true"]')
+        ?.getAttribute("data-picked-up"),
+    ).toBe("true");
+    // Option C rides a 200ms spring; handles remeasure per frame while it
+    // runs so edges track the lift instead of jumping at settle.
+    expect(xyflowMocks.updateNodeInternals).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(xyflowMocks.updateNodeInternals).toHaveBeenCalled(),
+    );
+    xyflowMocks.updateNodeInternals.mockClear();
+
+    React.act(() => {
+      node.root.render(
+        <WorkflowNodeCard
+          {...({
+            id: "text",
+            data,
+            selected: true,
+            dragging: true,
+          } as React.ComponentProps<typeof WorkflowNodeCard>)}
+        />,
+      );
+    });
+    expect(
+      node.container.querySelector('[data-node-pickup-shadow="true"]')
+        ?.getAttribute("data-dragging"),
+    ).toBe("true");
+    // A real drag snaps the spring and remeasures immediately for the drag loop.
+    expect(xyflowMocks.updateNodeInternals).toHaveBeenCalledOnce();
+
+    React.act(() => node.root.unmount());
+  });
+
+  it("hold-lifts the whole selection when holding one of its members", async () => {
+    const data = createWorkflowNodeData(textPipeSpec());
+    const first = renderNode("text-a", data, true);
+    const second = renderNode("text-b", data, true);
+
+    const plateOf = (node: { container: HTMLElement }) =>
+      node.container.querySelector('[data-node-pickup-shadow="true"]');
+    expect(plateOf(first)?.getAttribute("data-dragging")).toBe("false");
+    expect(plateOf(second)?.getAttribute("data-dragging")).toBe("false");
+
+    const stack = first.container.firstElementChild as HTMLElement;
+    React.act(() => {
+      // jsdom has no PointerEvent; React keys pointer handlers off the native
+      // type name, so a MouseEvent with the pointer type behaves the same.
+      stack.dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, button: 0 }),
+      );
+    });
+
+    // The hold promotion lands after HOLD_TO_LIFT_MS and lifts both members.
+    await React.act(async () => {
+      await vi.waitFor(() => {
+        expect(plateOf(first)?.getAttribute("data-dragging")).toBe("true");
+        expect(plateOf(second)?.getAttribute("data-dragging")).toBe("true");
+      });
+    });
+
+    React.act(() => {
+      window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+    });
+
+    await React.act(async () => {
+      await vi.waitFor(() => {
+        expect(plateOf(first)?.getAttribute("data-dragging")).toBe("false");
+        expect(plateOf(second)?.getAttribute("data-dragging")).toBe("false");
+      });
+    });
+
+    React.act(() => first.root.unmount());
+    React.act(() => second.root.unmount());
+  });
+});
+
+function brickAreas(container: HTMLElement): string[] {
+  return [
+    ...container.querySelectorAll<HTMLElement>('[data-testid="config-brick"]'),
+  ].map((brick) => `${brick.style.gridColumn} | ${brick.style.gridRow}`);
+}
+
 function enterInputValue(input: HTMLInputElement, value: string): void {
   const valueSetter = Object.getOwnPropertyDescriptor(
     HTMLInputElement.prototype,
@@ -345,6 +532,54 @@ function enterInputValue(input: HTMLInputElement, value: string): void {
   valueSetter.call(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
+
+describe("WorkflowNode module upgrade", () => {
+  it("shows an upgrade affordance when a newer library release exists", () => {
+    const onUpgradeModuleCall = vi.fn();
+    const data = createWorkflowNodeData({
+      operator_id: "graph.module.00000000-0000-4000-8000-000000000001",
+      operator_version: 1,
+      plugin_slug: "graph.module",
+      title: "Normalize text",
+      description: "Module call",
+      catalog_visible: true,
+      config_schema: {},
+      input_schema: {},
+      output_schema: {},
+      inputs: [],
+      outputs: [],
+      module_graph_id: "00000000-0000-4000-8000-000000000001",
+      module_graph_revision: 1,
+      module_id: "10000000-0000-4000-8000-000000000001",
+      is_current_library_release: false,
+    });
+    data.moduleUpgradeRelease = 2;
+    data.onUpgradeModuleCall = onUpgradeModuleCall;
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    React.act(() => {
+      root.render(
+        <WorkflowNodeCard
+          {...({
+            id: "module-call",
+            data,
+            selected: true,
+          } as React.ComponentProps<typeof WorkflowNodeCard>)}
+        />,
+      );
+    });
+
+    const upgradeButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Upgrade module call to release 2"]',
+    );
+    expect(upgradeButton).not.toBeNull();
+    expect(upgradeButton?.textContent).toContain("Upgrade to release 2");
+    React.act(() => upgradeButton?.click());
+    expect(onUpgradeModuleCall).toHaveBeenCalledWith("module-call");
+    React.act(() => root.unmount());
+  });
+});
 
 describe("WorkflowNode compatibility rendering", () => {
   it("renders an unsupported node with inert historical handles and removal", () => {
@@ -552,36 +787,222 @@ describe("WorkflowNode string-list fields", () => {
   });
 });
 
-describe("WorkflowNode multiline fields", () => {
-  it("treats a saved body height as a minimum so the textarea cannot escape the node", () => {
-    const data = createWorkflowNodeData(rawSqlStatementSpec());
-    data.config = { sql: "select *\nfrom parcels" };
-    data.layout = { bodyHeight: 96 };
+describe("WorkflowNode config lattice", () => {
+  it("packs bricks in schema order, pairing half-width fields on a shelf", () => {
+    const data = createWorkflowNodeData(chatCompletionSpec());
+    const { container, root } = renderNode("chat", data);
 
-    const container = document.createElement("div");
-    const root = createRoot(container);
-    React.act(() => {
-      root.render(
-        <WorkflowNodeCard
-          {...({
-            id: "sql-statement",
-            data,
-            selected: false,
-          } as React.ComponentProps<typeof WorkflowNodeCard>)}
-        />,
-      );
-    });
-
-    const textarea = container.querySelector("textarea");
-    expect(textarea?.value).toBe("select *\nfrom parcels");
-    // host → field → configList → body
-    const sizedBody = textarea?.parentElement?.parentElement?.parentElement
-      ?.parentElement;
-    expect(sizedBody?.style.minHeight).toBe("96px");
-    expect(sizedBody?.style.height).toBe("");
+    const board = container.querySelector<HTMLElement>(
+      '[data-testid="config-board"]',
+    );
+    expect(board?.style.gridTemplateColumns).toBe("repeat(6, minmax(0, 1fr))");
+    // 2 shelves of paired fields, a boolean shelf, then the 2-cell secret.
+    expect(board?.style.gridTemplateRows).toBe("repeat(5, minmax(50px, auto))");
+    expect(brickAreas(container)).toEqual([
+      "1 / span 3 | 1 / span 1",
+      "4 / span 3 | 1 / span 1",
+      "1 / span 3 | 2 / span 1",
+      "4 / span 3 | 2 / span 1",
+      // Compact 3×1 checkbox grows into the leftover half of its shelf.
+      "1 / span 6 | 3 / span 1",
+      "1 / span 6 | 4 / span 2",
+    ]);
+    // Schema order is preserved across the board.
+    const labels = [
+      ...container.querySelectorAll<HTMLElement>(
+        '[data-testid="config-brick"]',
+      ),
+    ].map((brick) => brick.textContent?.slice(0, 5));
+    expect(labels).toEqual([
+      "Base ",
+      "Model",
+      "Tempe",
+      "Timeo",
+      "Stric",
+      "API k",
+    ]);
 
     React.act(() => root.unmount());
   });
+
+  it("keeps the same shelf topology when widened so bricks stretch instead", () => {
+    const data = createWorkflowNodeData(chatCompletionSpec());
+    data.layout = { width: 600 };
+    const { container, root } = renderNode("chat", data);
+
+    const board = container.querySelector<HTMLElement>(
+      '[data-testid="config-board"]',
+    );
+    // 600px is still below 3× comfortable half-brick — packer stays at 6 cols
+    // and the 1fr tracks do the growing (labels get more characters).
+    expect(board?.style.gridTemplateColumns).toBe("repeat(6, minmax(0, 1fr))");
+    expect(board?.style.gridTemplateRows).toBe("repeat(5, minmax(50px, auto))");
+    expect(brickAreas(container)).toEqual([
+      "1 / span 3 | 1 / span 1",
+      "4 / span 3 | 1 / span 1",
+      "1 / span 3 | 2 / span 1",
+      "4 / span 3 | 2 / span 1",
+      "1 / span 6 | 3 / span 1",
+      "1 / span 6 | 4 / span 2",
+    ]);
+
+    React.act(() => root.unmount());
+  });
+
+  it("reflows into more columns once another comfortable half-brick fits", () => {
+    const data = createWorkflowNodeData(chatCompletionSpec());
+    data.layout = { width: 660 };
+    const { container, root } = renderNode("chat", data);
+
+    const board = container.querySelector<HTMLElement>(
+      '[data-testid="config-board"]',
+    );
+    expect(board?.style.gridTemplateColumns).toBe("repeat(9, minmax(0, 1fr))");
+    // Three shorts share the first shelf; timeout + short strict share the next
+    // and split the leftover three columns (5 + 4).
+    expect(brickAreas(container)).toEqual([
+      "1 / span 3 | 1 / span 1",
+      "4 / span 3 | 1 / span 1",
+      "7 / span 3 | 1 / span 1",
+      "1 / span 5 | 2 / span 1",
+      "6 / span 4 | 2 / span 1",
+      "1 / span 9 | 3 / span 2",
+    ]);
+
+    React.act(() => root.unmount());
+  });
+
+  it("grows the body past a saved height that cannot hold the bricks", () => {
+    const data = createWorkflowNodeData(rawSqlStatementSpec());
+    data.config = { sql: "select *\nfrom parcels" };
+    data.layout = { bodyHeight: 50 };
+    const { container, root } = renderNode("sql-statement", data);
+
+    const board = container.querySelector<HTMLElement>(
+      '[data-testid="config-board"]',
+    );
+    // One requested cell cannot hold a two-cell code brick.
+    expect(board?.style.gridTemplateRows).toBe("repeat(2, minmax(50px, auto))");
+    expect(brickAreas(container)).toEqual(["1 / span 6 | 1 / span 2"]);
+    expect(container.querySelector("textarea")?.value).toBe(
+      "select *\nfrom parcels",
+    );
+
+    React.act(() => root.unmount());
+  });
+
+  it("hands a taller saved body to the growable brick", () => {
+    const data = createWorkflowNodeData(rawSqlStatementSpec());
+    data.config = { sql: "select 1" };
+    data.layout = { bodyHeight: 300 };
+    const { container, root } = renderNode("sql-statement", data);
+
+    const board = container.querySelector<HTMLElement>(
+      '[data-testid="config-board"]',
+    );
+    expect(board?.style.gridTemplateRows).toBe("repeat(6, minmax(50px, auto))");
+    expect(brickAreas(container)).toEqual(["1 / span 6 | 1 / span 6"]);
+
+    React.act(() => root.unmount());
+  });
+});
+
+describe("configFieldLabelIsRedundant", () => {
+  function fieldBrick(
+    title: string,
+    type: "string" | "boolean" = "string",
+  ): ConfigBrick {
+    const field = {
+      name: "field",
+      title,
+      type,
+      required: false,
+      nullable: false,
+    } as const;
+    return {
+      kind: "field",
+      field: field as never,
+      footprint: fieldFootprint(field as never),
+    };
+  }
+
+  it("hides a lone field whose title the node title already contains", () => {
+    expect(
+      configFieldLabelIsRedundant("Text input", [fieldBrick("Text")]),
+    ).toBe(true);
+    expect(
+      configFieldLabelIsRedundant("Text input", [fieldBrick("Prompt")]),
+    ).toBe(false);
+    expect(
+      configFieldLabelIsRedundant("Text input", [
+        fieldBrick("Text"),
+        fieldBrick("Extra"),
+      ]),
+    ).toBe(false);
+    expect(
+      configFieldLabelIsRedundant("Strict mode", [fieldBrick("Strict", "boolean")]),
+    ).toBe(false);
+  });
+});
+
+describe("WorkflowNode header", () => {
+  it("keeps unselected chrome to the title and gates actions behind selection", () => {
+    const data = createWorkflowNodeData(chatCompletionSpec());
+    const unselected = renderNode("chat", data);
+    expect(
+      unselected.container.querySelector(
+        'button[aria-label="Actions for OpenAI-compatible Chat Completion"]',
+      ),
+    ).toBeNull();
+    expect(
+      unselected.container.querySelector(
+        'button[aria-label="About OpenAI-compatible Chat Completion"]',
+      ),
+    ).toBeNull();
+    expect(unselected.container.textContent).toContain(
+      "OpenAI-compatible Chat Completion",
+    );
+    expect(unselected.container.textContent).not.toContain(
+      "llm.openai_compatible.chat_completion@1",
+    );
+    React.act(() => unselected.root.unmount());
+
+    const removeNode = vi.fn();
+    data.onRemoveNode = removeNode;
+    const selected = renderNode("chat", data, true);
+    expect(
+      selected.container.querySelector(
+        'button[aria-label="Actions for OpenAI-compatible Chat Completion"]',
+      ),
+    ).not.toBeNull();
+    // Deleting is one level down the overflow menu, never a bare X on the chrome.
+    const deleteItem = [
+      ...selected.container.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((button) => button.textContent === "Delete node");
+    expect(deleteItem).toBeDefined();
+    React.act(() => deleteItem?.click());
+    expect(removeNode).toHaveBeenCalledWith("chat");
+    // Provenance now lives in the about popover instead of the card chrome.
+    expect(selected.container.textContent).toContain(
+      "llm.openai_compatible.chat_completion@1",
+    );
+    React.act(() => selected.root.unmount());
+  });
+
+  it("reports execution status without a badge row", () => {
+    const data = createWorkflowNodeData(chatCompletionSpec());
+    data.execution = { status: "failed", error: "Provider rejected the request" };
+    const { container, root } = renderNode("chat", data);
+
+    const status = container.querySelector('[aria-label="Execution failed"]');
+    expect(status).not.toBeNull();
+    expect(status?.textContent).toBe("");
+
+    React.act(() => root.unmount());
+  });
+});
+
+describe("WorkflowNode multiline fields", () => {
 
   it("exposes a textarea field resize grip and hides corner resize by default", () => {
     gridSettingsMocks.allowWorkflowCornerResize = false;
@@ -672,6 +1093,7 @@ describe("WorkflowNode port rail", () => {
 
     React.act(() => root.unmount());
   });
+
 });
 
 describe("WorkflowNode artifact table query relations", () => {

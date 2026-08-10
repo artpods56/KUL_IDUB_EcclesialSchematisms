@@ -49,6 +49,7 @@ import {
 } from "../types";
 import { ArtifactPortPreview } from "./ArtifactsAppendix";
 import { LayoutResizeHandle } from "./LayoutResizeHandle";
+import { usePickupLift } from "./usePickupLift";
 import { useShellGridFill } from "./useShellGridFill";
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
@@ -57,16 +58,56 @@ const s = stylex.create({
   shellFrame: {
     position: "relative",
     boxSizing: "border-box",
+    // Option C pickup: release settles quicker than the spring lift.
+    transitionProperty: {
+      default: "transform",
+      "@media (prefers-reduced-motion: reduce)": "none",
+    },
+    transitionDuration: "120ms",
+    transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
+  },
+  shellFrameActive: {
+    // Slight active-tier lift; the spring overshoot reads as the node waking
+    // up under the pointer.
+    transform: "translate3d(0, -2px, 0)",
+    transitionProperty: {
+      default: "transform",
+      "@media (prefers-reduced-motion: reduce)": "none",
+    },
+    transitionDuration: "200ms",
+    transitionTimingFunction: "cubic-bezier(0.34, 1.56, 0.64, 1)",
+  },
+  shellFrameDragged: {
+    // Full pickup: the node is carried above the canvas.
+    transform: "translate3d(0, -8px, 0)",
+    transitionProperty: {
+      default: "transform",
+      "@media (prefers-reduced-motion: reduce)": "none",
+    },
+    transitionDuration: "200ms",
+    transitionTimingFunction: "cubic-bezier(0.34, 1.56, 0.64, 1)",
   },
   shell: {
     position: "relative",
     width: "520px",
     overflow: "visible",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorBorder,
     borderRadius: tokens.radiusLg,
-    backgroundColor: tokens.colorSurface,
+    backgroundColor: tokens.colorChrome,
     boxShadow: tokens.shadowNode,
     color: tokens.colorText,
     boxSizing: "border-box",
+    cursor: "grab",
+    transitionProperty: {
+      default: "box-shadow",
+      "@media (prefers-reduced-motion: reduce)": "none",
+    },
+    // Hide (release) is quicker than pickup so the card never appears to snap
+    // away from a lingering ground plate.
+    transitionDuration: "90ms",
+    transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
   },
   shellContent: {
     display: "grid",
@@ -76,19 +117,54 @@ const s = stylex.create({
     flexShrink: 0,
     width: "100%",
   },
-  selected: {
-    boxShadow: tokens.shadowNodeSelected,
-    outlineWidth: "2px",
-    outlineStyle: "solid",
-    outlineColor: tokens.colorAccentBorder,
-    outlineOffset: "1px",
+  pickedUp: {
+    // Pair the lifted frame with a near-card shadow and a lower ground shadow.
+    boxShadow: tokens.shadowNodeRaised,
+    transitionDuration: "120ms",
+  },
+  dragging: { cursor: "grabbing" },
+  pickupShadow: {
+    // Geometry-neutral ground plate. Sits BEFORE the card in DOM order so the
+    // opaque shell paints over the overlap; the inline gutter-aware inset keeps
+    // the plate box tucked behind the lifted shell, so only the offset shadow
+    // reads as ground.
+    position: "absolute",
+    display: "block",
+    borderRadius: tokens.radiusLg,
+    boxShadow: tokens.shadowNodeActive,
+    opacity: 0,
+    pointerEvents: "none",
+    transform: "translate3d(0, 2px, 0) scale(0.97)",
+    transformOrigin: "50% 45%",
+    transitionProperty: {
+      default: "opacity, transform, box-shadow",
+      "@media (prefers-reduced-motion: reduce)": "none",
+    },
+    // Release settles quicker than pickup (opacity, transform, box-shadow).
+    transitionDuration: "70ms, 120ms, 120ms",
+    transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
+  },
+  pickupShadowActive: {
+    opacity: 0.5,
+    transform: "translate3d(0, 3px, 0)",
+    // Opacity and box-shadow ease while the transform rides the lift spring.
+    transitionDuration: "120ms, 200ms, 200ms",
+    transitionTimingFunction:
+      "cubic-bezier(0.22, 1, 0.36, 1), cubic-bezier(0.34, 1.56, 0.64, 1), cubic-bezier(0.22, 1, 0.36, 1)",
+  },
+  pickupShadowDragged: {
+    opacity: 0.9,
+    transform: "translate3d(0, 9px, 0) scale(1.02)",
+    boxShadow: tokens.shadowNodeDragged,
+    transitionDuration: "120ms, 200ms, 200ms",
+    transitionTimingFunction:
+      "cubic-bezier(0.22, 1, 0.36, 1), cubic-bezier(0.34, 1.56, 0.64, 1), cubic-bezier(0.22, 1, 0.36, 1)",
   },
   header: {
     minWidth: 0,
     display: "flex",
     alignItems: "center",
     gap: "8px",
-    cursor: "grab",
   },
   removeButton: {
     width: "22px",
@@ -121,7 +197,7 @@ const s = stylex.create({
   title: {
     color: tokens.colorTextEmphasis,
     fontSize: tokens.fontSizeMd,
-    fontWeight: 700,
+    fontWeight: 500,
     letterSpacing: "-0.01em",
   },
   contract: {
@@ -153,7 +229,7 @@ const s = stylex.create({
     flexShrink: 0,
     color: tokens.colorSuccess,
     fontSize: "9px",
-    fontWeight: 750,
+    fontWeight: 600,
     letterSpacing: "0.02em",
     textTransform: "uppercase",
   },
@@ -183,7 +259,7 @@ const s = stylex.create({
     backgroundColor: tokens.colorSurfaceMuted,
     color: tokens.colorTextEmphasis,
     fontSize: tokens.fontSizeXs,
-    fontWeight: 650,
+    fontWeight: 500,
   },
   inputKind: {
     color: tokens.colorSubtle,
@@ -208,7 +284,7 @@ const s = stylex.create({
     backgroundColor: tokens.colorSurfaceMuted,
     color: tokens.colorMuted,
     fontSize: "9px",
-    fontWeight: 700,
+    fontWeight: 500,
   },
   interactionTabOutput: {
     paddingInline: "10px 14px",
@@ -225,7 +301,7 @@ const s = stylex.create({
     alignContent: "center",
     gap: "8px",
     padding: "24px",
-    borderRadius: "10px",
+    borderRadius: tokens.radiusMd,
     backgroundColor: tokens.colorSurfaceMuted,
     color: tokens.colorSubtle,
     textAlign: "center",
@@ -234,7 +310,7 @@ const s = stylex.create({
   emptyTitle: {
     color: tokens.colorTextEmphasis,
     fontSize: tokens.fontSizeSm,
-    fontWeight: 750,
+    fontWeight: 600,
   },
   emptyCopy: {
     maxWidth: "290px",
@@ -256,6 +332,7 @@ export default function ArtifactViewerNodeCard({
   data,
   isConnectable,
   selected,
+  dragging,
 }: NodeProps<ArtifactViewerNode>) {
   const edges = useEdges<CanvasEdge>();
   const incomingEdge = edges.find(
@@ -330,14 +407,26 @@ export default function ArtifactViewerNodeCard({
           ? "Materialized"
           : "No artifact";
   const updateNodeInternals = useUpdateNodeInternals();
+  const { tier, pickedUp, draggedTier, liftRef, holdHandlers } = usePickupLift({
+    id,
+    selected,
+    dragging,
+    updateNodeInternals,
+  });
   const [draftLayout, setDraftLayout] = React.useState<WorkflowNodeLayout | null>(
     null,
   );
   const layout = draftLayout ?? data.layout;
   const width = resolvedNodeWidth(layout);
   const previewHeight = resolvedAppendixHeight(layout);
-  const { contentRef, frameStyle, shellStyle, gridWidth, fillMinHeight } =
-    useShellGridFill(width);
+  const {
+    contentRef,
+    frameStyle,
+    shellStyle,
+    gridWidth,
+    gutter,
+    fillMinHeight,
+  } = useShellGridFill(width);
   const outputRevision = renderableOutput?.artifacts
     .map((artifact) => artifact.artifact_id)
     .join(":") ?? "";
@@ -358,7 +447,7 @@ export default function ArtifactViewerNodeCard({
     [data, id],
   );
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     updateNodeInternals(id);
   }, [
     fillMinHeight,
@@ -377,11 +466,38 @@ export default function ArtifactViewerNodeCard({
   };
 
   return (
-    <div {...stylex.props(s.shellFrame)} style={frameStyle}>
+    <div
+      ref={liftRef}
+      {...holdHandlers}
+      {...stylex.props(
+        s.shellFrame,
+        tier === "active" ? s.shellFrameActive : null,
+        tier === "dragged" ? s.shellFrameDragged : null,
+      )}
+      style={frameStyle}
+    >
+      <span
+        aria-hidden="true"
+        data-node-pickup-shadow="true"
+        data-picked-up={pickedUp}
+        data-dragging={draggedTier}
+        {...stylex.props(
+          s.pickupShadow,
+          tier === "active" ? s.pickupShadowActive : null,
+          tier === "dragged" ? s.pickupShadowDragged : null,
+        )}
+        style={{
+          inset: `${gutter}px ${gutter + 10}px ${gutter + 12}px ${gutter + 10}px`,
+        }}
+      />
       <article
         aria-label="Artifact viewer"
         data-testid="artifact-viewer-node"
-        {...stylex.props(s.shell, selected ? s.selected : null)}
+        {...stylex.props(
+          s.shell,
+          pickedUp ? s.pickedUp : null,
+          draggedTier ? s.dragging : null,
+        )}
         style={shellStyle}
       >
       <div ref={contentRef} {...stylex.props(s.shellContent)}>

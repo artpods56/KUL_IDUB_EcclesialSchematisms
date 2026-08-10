@@ -83,7 +83,7 @@ const s = stylex.create({
     color: tokens.colorMuted,
     cursor: "pointer",
     fontSize: "9px",
-    fontWeight: 800,
+    fontWeight: 600,
     letterSpacing: "0.04em",
     textTransform: "uppercase",
   },
@@ -96,7 +96,7 @@ const s = stylex.create({
     color: tokens.colorSubtle,
     fontFamily: MONO,
     fontSize: "9px",
-    fontWeight: 700,
+    fontWeight: 600,
   },
   panel: {
     minWidth: 0,
@@ -158,7 +158,7 @@ const s = stylex.create({
     cursor: "pointer",
     fontFamily: MONO,
     fontSize: "9px",
-    fontWeight: 700,
+    fontWeight: 600,
   },
   omission: {
     margin: 0,
@@ -642,6 +642,17 @@ export function NodeExecutionAppendix({
         {footprint}
       </aside>
     );
+  }
+
+  // A node that has never run has nothing to put in either tab, and an empty
+  // Events/History pair is chrome reporting its own emptiness.
+  if (
+    execution.status === "idle" &&
+    eventCount === 0 &&
+    durableHistoryCount + temporaryHistoryCount === 0 &&
+    !historyError
+  ) {
+    return null;
   }
 
   return (

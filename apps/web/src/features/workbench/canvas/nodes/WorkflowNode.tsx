@@ -15,10 +15,12 @@ import {
 import {
   ArrowDown,
   ArrowUp,
+  Check,
   CircleHelp,
   ExternalLink,
   GripVertical,
   LoaderCircle,
+  MoreHorizontal,
   Plus,
   Power,
   RotateCcw,
@@ -103,12 +105,21 @@ import {
   GRID_CELL_SIZE_DEFAULT,
   PORT_RAIL_ROW_HEIGHT_CELLS,
   lengthFromSpan,
+  spanFromLength,
 } from "../grid-layout";
 import { RemoteSelectionRing } from "../../room/RemoteSelectionRing";
+import {
+  configBoardColumns,
+  fieldFootprint,
+  packFieldFootprints,
+  secretFootprint,
+  type FieldFootprint,
+} from "./field-footprints";
 import { LayoutResizeHandle } from "./LayoutResizeHandle";
 import { NodeExecutionAppendix } from "./NodeExecutionAppendix";
 import { TextareaBodyResizeHandle } from "./TextareaBodyResizeHandle";
 import { PortTypePopover } from "./type-inspector";
+import { usePickupLift } from "./usePickupLift";
 import { useShellGridFill } from "./useShellGridFill";
 import { VectorLayerStyleBody } from "./VectorLayerStyleBody";
 
@@ -122,13 +133,24 @@ const s = stylex.create({
     position: "relative",
     width: "300px",
     overflow: "visible",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorBorder,
     borderRadius: tokens.radiusLg,
-    backgroundColor: tokens.colorSurface,
-    boxShadow:
-      "0 1px 2px light-dark(rgba(20, 24, 32, 0.1), rgba(0, 0, 0, 0.38)), 0 8px 22px light-dark(rgba(20, 24, 32, 0.1), rgba(0, 0, 0, 0.32))",
+    backgroundColor: tokens.colorChrome,
+    boxShadow: tokens.shadowNode,
     color: tokens.colorText,
     fontSize: tokens.fontSizeSm,
     boxSizing: "border-box",
+    cursor: "grab",
+    transitionProperty: {
+      default: "box-shadow",
+      "@media (prefers-reduced-motion: reduce)": "none",
+    },
+    // Hide (release) is quicker than pickup so the card never appears to snap
+    // away from a lingering ground plate.
+    transitionDuration: "90ms",
+    transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
   },
   shellContent: {
     boxSizing: "border-box",
@@ -156,7 +178,7 @@ const s = stylex.create({
     backgroundColor: tokens.colorSurfaceSunken,
     color: tokens.colorMuted,
     fontSize: "9px",
-    fontWeight: 800,
+    fontWeight: 600,
     letterSpacing: "0.05em",
     lineHeight: 1,
     textTransform: "uppercase",
@@ -185,7 +207,7 @@ const s = stylex.create({
     color: tokens.colorSubtle,
     cursor: "pointer",
     fontSize: "10px",
-    fontWeight: 700,
+    fontWeight: 600,
   },
   compatibilityConfigValue: {
     maxHeight: "150px",
@@ -231,29 +253,68 @@ const s = stylex.create({
   textareaDefault: {
     height: "96px",
   },
-  selected: {
-    boxShadow: `0 2px 5px light-dark(rgba(107, 82, 212, 0.16), rgba(128, 103, 232, 0.22)), 0 12px 30px light-dark(rgba(20, 24, 32, 0.14), rgba(0, 0, 0, 0.46)), 0 0 0 2px ${tokens.colorAccentBorder}`,
+  pickedUp: {
+    // A near-card shadow travels with the lifted shell; the separate plate
+    // below stays closer to the canvas to make the separation legible.
+    boxShadow: tokens.shadowNodeRaised,
+    transitionDuration: "120ms",
   },
-  activeExecution: {
-    outlineWidth: "2px",
-    outlineStyle: "solid",
-    outlineColor: tokens.colorInfo,
-    outlineOffset: "3px",
-    animationName: {
-      default: "ns-node-active-pulse",
+  dragging: {
+    cursor: "grabbing",
+  },
+  pickupShadow: {
+    // Geometry-neutral ground plate. Sits BEFORE the card in DOM order so the
+    // opaque shell paints over the overlap; the inline gutter-aware inset keeps
+    // the plate box tucked behind the lifted shell, so only the offset shadow
+    // reads as ground.
+    position: "absolute",
+    display: "block",
+    borderRadius: tokens.radiusLg,
+    boxShadow: tokens.shadowNodeActive,
+    opacity: 0,
+    pointerEvents: "none",
+    transform: "translate3d(0, 2px, 0) scale(0.97)",
+    transformOrigin: "50% 45%",
+    transitionProperty: {
+      default: "opacity, transform, box-shadow",
       "@media (prefers-reduced-motion: reduce)": "none",
     },
-    animationDuration: "1500ms",
-    animationIterationCount: "infinite",
-    animationTimingFunction: "ease-in-out",
+    // Release settles quicker than pickup (opacity, transform, box-shadow).
+    transitionDuration: "70ms, 120ms, 120ms",
+    transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
   },
-  cancellingExecution: {
-    outlineColor: tokens.colorWarning,
+  pickupShadowActive: {
+    opacity: 0.5,
+    transform: "translate3d(0, 3px, 0)",
+    // Opacity and box-shadow ease while the transform rides the lift spring.
+    transitionDuration: "120ms, 200ms, 200ms",
+    transitionTimingFunction:
+      "cubic-bezier(0.22, 1, 0.36, 1), cubic-bezier(0.34, 1.56, 0.64, 1), cubic-bezier(0.22, 1, 0.36, 1)",
+  },
+  pickupShadowDragged: {
+    opacity: 0.9,
+    transform: "translate3d(0, 9px, 0) scale(1.02)",
+    boxShadow: tokens.shadowNodeDragged,
+    transitionDuration: "120ms, 200ms, 200ms",
+    transitionTimingFunction:
+      "cubic-bezier(0.22, 1, 0.36, 1), cubic-bezier(0.34, 1.56, 0.64, 1), cubic-bezier(0.22, 1, 0.36, 1)",
   },
   header: {
     display: "grid",
     gap: "2px",
     padding: "12px 16px 12px 12px",
+  },
+  /**
+   * Slim chrome: one lattice cell of tax at most. Only the title is always
+   * painted; actions and provenance are gated behind selection.
+   */
+  headerSlim: {
+    minWidth: 0,
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
+    minHeight: "34px",
+    padding: "5px 10px 3px 12px",
   },
   titleRow: {
     minWidth: 0,
@@ -276,12 +337,44 @@ const s = stylex.create({
     color: { default: tokens.colorSubtle, ":hover": tokens.colorText },
     cursor: "pointer",
   },
+  /** Unsupported cards keep a direct remove: removal is the only repair. */
   removeButton: {
     backgroundColor: {
       default: tokens.colorSurface,
       ":hover": tokens.colorDangerHover,
     },
     color: { default: tokens.colorSubtle, ":hover": tokens.colorDanger },
+  },
+  /** Destructive actions live behind the overflow menu, never on the chrome. */
+  nodeMenu: {
+    minWidth: "150px",
+    display: "grid",
+    padding: "4px",
+    borderRadius: tokens.radiusMd,
+    backgroundColor: tokens.colorSurface,
+    boxShadow: tokens.shadowNodeSelected,
+    color: tokens.colorText,
+    zIndex: 50,
+  },
+  nodeMenuItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    padding: "6px 8px",
+    borderWidth: 0,
+    borderRadius: tokens.radiusSm,
+    backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
+    color: tokens.colorText,
+    cursor: "pointer",
+    fontSize: tokens.fontSizeSm,
+    textAlign: "left",
+  },
+  nodeMenuItemDanger: {
+    backgroundColor: {
+      default: "transparent",
+      ":hover": tokens.colorDangerHover,
+    },
+    color: { default: tokens.colorDanger, ":hover": tokens.colorDanger },
   },
   title: {
     minWidth: 0,
@@ -290,43 +383,23 @@ const s = stylex.create({
     marginLeft: "4px",
     color: tokens.colorText,
     fontSize: tokens.fontSizeMd,
-    fontWeight: 650,
+    fontWeight: 500,
     letterSpacing: "-0.01em",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
-  executionBadge: {
-    height: "18px",
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "4px",
+  /** Compact execution status stays visible without adding shell chrome. */
+  executionDot: {
+    width: "8px",
+    height: "8px",
     flexShrink: 0,
-    paddingInline: "6px",
     borderRadius: "9999px",
-    backgroundColor: tokens.colorSurfaceRaised,
-    color: tokens.colorMuted,
-    fontSize: "9px",
-    fontWeight: 750,
-    letterSpacing: "0.02em",
-    lineHeight: 1,
-    textTransform: "uppercase",
+    backgroundColor: tokens.colorMuted,
   },
-  executionBadgeInfo: {
-    backgroundColor: "light-dark(rgba(74, 143, 212, 0.12), rgba(96, 165, 250, 0.16))",
-    color: tokens.colorInfo,
-  },
-  executionBadgeWarning: {
-    backgroundColor: "light-dark(rgba(201, 146, 15, 0.12), rgba(251, 191, 36, 0.15))",
-    color: tokens.colorWarning,
-  },
-  executionBadgeSuccess: {
-    backgroundColor: "light-dark(rgba(42, 157, 124, 0.11), rgba(67, 197, 158, 0.14))",
-    color: tokens.colorSuccess,
-  },
-  executionBadgeDanger: {
-    backgroundColor: tokens.colorDangerHover,
-    color: tokens.colorDanger,
-  },
+  executionDotSuccess: { backgroundColor: tokens.colorSuccess },
+  executionDotDanger: { backgroundColor: tokens.colorDanger },
+  executionSpinner: { flexShrink: 0, color: tokens.colorInfo },
+  executionSpinnerWarning: { color: tokens.colorWarning },
   operatorRow: {
     minWidth: 0,
     display: "flex",
@@ -361,24 +434,56 @@ const s = stylex.create({
     color: tokens.colorMuted,
     cursor: "pointer",
     fontSize: "10px",
-    fontWeight: 700,
+    fontWeight: 600,
+  },
+  upgradeModuleCall: {
+    flexShrink: 0,
+    minHeight: "22px",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "3px",
+    paddingInline: "6px",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorBorder,
+    borderRadius: "4px",
+    backgroundColor: {
+      default: tokens.colorSurface,
+      ":hover": tokens.colorHover,
+    },
+    color: tokens.colorText,
+    cursor: "pointer",
+    fontSize: "10px",
+    fontWeight: 600,
   },
   helpPopup: {
     width: "280px",
     display: "grid",
     gap: "6px",
     padding: "11px 13px",
-    borderRadius: "12px",
+    borderRadius: tokens.radiusLg,
     backgroundColor: tokens.colorSurface,
     boxShadow: tokens.shadowNodeSelected,
     color: tokens.colorText,
     zIndex: 50,
   },
-  helpTitle: { fontSize: tokens.fontSizeSm, fontWeight: 750 },
+  helpTitle: { fontSize: tokens.fontSizeSm, fontWeight: 600 },
   helpDescription: {
     color: tokens.colorMuted,
     fontSize: tokens.fontSizeXs,
     lineHeight: 1.5,
+  },
+  /** Provenance moved off the card chrome and into the about popover. */
+  helpFooter: {
+    minWidth: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+    paddingTop: "6px",
+    borderTopWidth: 1,
+    borderTopStyle: "solid",
+    borderTopColor: tokens.colorDivider,
   },
   tabs: {
     display: "grid",
@@ -449,7 +554,7 @@ const s = stylex.create({
   genericTypeBound: {
     color: tokens.colorTextEmphasis,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    fontWeight: 650,
+    fontWeight: 500,
   },
   resetType: {
     minHeight: "22px",
@@ -463,7 +568,7 @@ const s = stylex.create({
     color: { default: tokens.colorMuted, ":hover": tokens.colorText },
     cursor: "pointer",
     fontSize: "10px",
-    fontWeight: 650,
+    fontWeight: 500,
   },
   resetTypeDisabled: {
     color: tokens.colorSubtle,
@@ -495,7 +600,7 @@ const s = stylex.create({
     color: tokens.colorTextEmphasis,
     cursor: "pointer",
     fontSize: tokens.fontSizeXs,
-    fontWeight: 700,
+    fontWeight: 600,
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
@@ -518,7 +623,7 @@ const s = stylex.create({
     alignItems: "center",
     gap: "4px",
     padding: "3px 4px 3px 28px",
-    borderRadius: "9px",
+    borderRadius: tokens.radiusMd,
     backgroundColor: tokens.colorSurfaceMuted,
   },
   plugRowDragging: {
@@ -599,7 +704,7 @@ const s = stylex.create({
     marginInline: "8px",
     paddingInline: "8px",
     borderWidth: 0,
-    borderRadius: "8px",
+    borderRadius: tokens.radiusMd,
     backgroundColor: {
       default: tokens.colorSurfaceMuted,
       ":hover": tokens.colorHoverStrong,
@@ -607,7 +712,7 @@ const s = stylex.create({
     color: tokens.colorMuted,
     cursor: "pointer",
     fontSize: tokens.fontSizeXs,
-    fontWeight: 650,
+    fontWeight: 500,
   },
   tabRow: {
     position: "relative",
@@ -616,6 +721,7 @@ const s = stylex.create({
     height: "100%",
     minHeight: "28px",
     alignItems: "center",
+    cursor: "crosshair",
   },
   tabRowOut: { justifyContent: "flex-end" },
   tab: {
@@ -714,20 +820,29 @@ const s = stylex.create({
   body: {
     display: "grid",
     gap: "9px",
-    padding: "0 16px 14px",
+    padding: "0 16px 6px",
     minHeight: 0,
   },
-  bodySized: {
-    display: "flex",
-    flexDirection: "column",
-    minHeight: 0,
-    boxSizing: "border-box",
+  /**
+   * Config bricks sit on the lattice: columns come from the node width, rows
+   * are whole cells that may stretch when a brick's content outgrows them.
+   * Row gap stays 0 so the packed cell count still predicts the body height;
+   * the slack inside each brick is the visual gutter.
+   */
+  configBoard: {
+    display: "grid",
+    columnGap: "10px",
+    rowGap: 0,
+    minWidth: 0,
+    alignItems: "stretch",
   },
-  configListSized: {
-    flex: "1 1 0%",
+  /** The reserved gutter below every brick is what separates adjacent shelves. */
+  configBrick: {
+    minWidth: 0,
     minHeight: 0,
     display: "flex",
     flexDirection: "column",
+    paddingBottom: "8px",
   },
   fieldSized: {
     flex: "1 1 0%",
@@ -743,7 +858,7 @@ const s = stylex.create({
     justifyContent: "center",
     gap: "7px",
     borderWidth: 0,
-    borderRadius: "10px",
+    borderRadius: tokens.radiusMd,
     backgroundColor: {
       default: tokens.colorSurfaceMuted,
       ":hover": tokens.colorHover,
@@ -775,7 +890,7 @@ const s = stylex.create({
     gap: "6px",
     minHeight: "28px",
     paddingInline: "10px 4px",
-    borderRadius: "8px",
+    borderRadius: tokens.radiusMd,
     backgroundColor: tokens.colorSurfaceMuted,
   },
   fileIndex: {
@@ -811,8 +926,7 @@ const s = stylex.create({
     fontSize: tokens.fontSizeXs,
     lineHeight: 1.45,
   },
-  configList: { display: "grid", gap: "9px" },
-  field: { display: "grid", gap: "4px" },
+  field: { display: "grid", alignContent: "start", gap: "4px" },
   tupleField: {
     minWidth: 0,
     margin: 0,
@@ -855,7 +969,7 @@ const s = stylex.create({
     display: "grid",
     placeItems: "center",
     borderWidth: 0,
-    borderRadius: "8px",
+    borderRadius: tokens.radiusMd,
     backgroundColor: {
       default: tokens.colorSurfaceMuted,
       ":hover": tokens.colorDangerHover,
@@ -871,7 +985,7 @@ const s = stylex.create({
     justifyContent: "center",
     gap: "5px",
     borderWidth: 0,
-    borderRadius: "8px",
+    borderRadius: tokens.radiusMd,
     backgroundColor: {
       default: tokens.colorSurfaceMuted,
       ":hover": tokens.colorHover,
@@ -879,31 +993,43 @@ const s = stylex.create({
     color: tokens.colorTextEmphasis,
     cursor: "pointer",
     fontSize: tokens.fontSizeXs,
-    fontWeight: 650,
+    fontWeight: 500,
     opacity: { ":disabled": 0.4 },
   },
   fieldLabel: {
+    minWidth: 0,
     flexShrink: 0,
     display: "flex",
     alignItems: "center",
     gap: "3px",
     color: tokens.colorTextEmphasis,
     fontSize: tokens.fontSizeSm,
-    fontWeight: 650,
+    fontWeight: 500,
     textTransform: "capitalize",
   },
-  fieldDescription: {
-    flexShrink: 0,
-    color: tokens.colorSubtle,
-    fontSize: tokens.fontSizeXs,
-    lineHeight: 1.4,
+  fieldLabelText: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  srOnly: {
+    position: "absolute",
+    width: "1px",
+    height: "1px",
+    margin: "-1px",
+    padding: 0,
+    overflow: "hidden",
+    clipPath: "inset(50%)",
+    whiteSpace: "nowrap",
+    borderWidth: 0,
   },
   input: {
     width: "100%",
     height: "31px",
     paddingInline: "10px",
     borderWidth: 0,
-    borderRadius: "8px",
+    borderRadius: tokens.radiusMd,
     outline: {
       default: "none",
       ":focus": `2px solid ${tokens.colorAccentBorder}`,
@@ -922,26 +1048,46 @@ const s = stylex.create({
     fontSize: tokens.fontSizeXs,
     tabSize: 2,
   },
-  checkRow: {
-    minHeight: "30px",
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    color: tokens.colorTextEmphasis,
-    fontSize: tokens.fontSizeSm,
-    fontWeight: 650,
-  },
-  check: { accentColor: tokens.colorAccent },
-  required: { color: tokens.colorWarning, fontSize: tokens.fontSizeSm },
-  secretList: {
+  /** Same height as text inputs so boolean bricks align on a shared shelf. */
+  checkBox: {
+    position: "relative",
+    width: "31px",
+    height: "31px",
+    flexShrink: 0,
     display: "grid",
-    gap: "10px",
-    paddingTop: "10px",
-    borderTopWidth: "1px",
-    borderTopStyle: "solid",
-    borderTopColor: tokens.colorDivider,
+    placeItems: "center",
+    borderWidth: 0,
+    borderRadius: tokens.radiusMd,
+    backgroundColor: tokens.colorSurfaceMuted,
+    color: tokens.colorAccent,
+    cursor: "pointer",
+    outline: {
+      default: "none",
+      ":focus-within": `2px solid ${tokens.colorAccentBorder}`,
+    },
   },
-  secretField: { display: "grid", gap: "5px" },
+  checkBoxChecked: {
+    backgroundColor: { default: tokens.colorAccentSoft },
+    boxShadow: `inset 0 0 0 1px ${tokens.colorAccent}`,
+  },
+  checkInput: {
+    position: "absolute",
+    inset: 0,
+    margin: 0,
+    opacity: 0,
+    cursor: "pointer",
+  },
+  checkMark: {
+    opacity: 0,
+    transform: "scale(0.85)",
+  },
+  checkMarkChecked: {
+    opacity: 1,
+    transform: "scale(1)",
+  },
+  /** Structural schema metadata, so it stays out of the port/type colour range. */
+  required: { color: tokens.colorSubtle, fontSize: tokens.fontSizeSm },
+  secretField: { display: "grid", alignContent: "start", gap: "5px" },
   secretHeader: {
     minWidth: 0,
     display: "flex",
@@ -953,7 +1099,7 @@ const s = stylex.create({
     flexShrink: 0,
     color: tokens.colorSubtle,
     fontSize: "10px",
-    fontWeight: 750,
+    fontWeight: 600,
   },
   secretStatusConfigured: { color: tokens.colorSuccess },
   secretStatusStale: { color: tokens.colorWarning },
@@ -973,7 +1119,7 @@ const s = stylex.create({
     gap: "5px",
     paddingInline: "9px",
     borderWidth: 0,
-    borderRadius: "8px",
+    borderRadius: tokens.radiusMd,
     backgroundColor: {
       default: tokens.colorAccentSoft,
       ":hover": tokens.colorHoverStrong,
@@ -981,7 +1127,7 @@ const s = stylex.create({
     color: tokens.colorTextEmphasis,
     cursor: "pointer",
     fontSize: "10px",
-    fontWeight: 750,
+    fontWeight: 600,
   },
   secretButtonDisabled: {
     backgroundColor: tokens.colorSurfaceMuted,
@@ -1012,7 +1158,7 @@ const s = stylex.create({
     },
     cursor: "pointer",
     fontSize: "10px",
-    fontWeight: 650,
+    fontWeight: 500,
   },
   secretRemoveDisabled: {
     color: tokens.colorTextDisabled,
@@ -1038,7 +1184,7 @@ const s = stylex.create({
   schemaMetadataLabel: {
     color: tokens.colorMuted,
     fontSize: "10px",
-    fontWeight: 700,
+    fontWeight: 600,
   },
   schemaCompactInput: {
     width: "100%",
@@ -1070,7 +1216,7 @@ const s = stylex.create({
     color: tokens.colorMuted,
     cursor: "pointer",
     fontSize: "10px",
-    fontWeight: 700,
+    fontWeight: 600,
     whiteSpace: "nowrap",
   },
   schemaToggleActive: {
@@ -1090,7 +1236,7 @@ const s = stylex.create({
   schemaFieldsTitle: {
     color: tokens.colorTextEmphasis,
     fontSize: tokens.fontSizeXs,
-    fontWeight: 750,
+    fontWeight: 600,
   },
   schemaFieldsCount: { color: tokens.colorSubtle, fontSize: "10px" },
   schemaFieldList: {
@@ -1100,7 +1246,7 @@ const s = stylex.create({
   schemaEmpty: {
     margin: 0,
     padding: "12px 10px",
-    borderRadius: "8px",
+    borderRadius: tokens.radiusMd,
     backgroundColor: tokens.colorSurfaceMuted,
     color: tokens.colorSubtle,
     fontSize: tokens.fontSizeXs,
@@ -1113,7 +1259,7 @@ const s = stylex.create({
     display: "grid",
     gap: "5px",
     padding: "6px 6px 6px 28px",
-    borderRadius: "9px",
+    borderRadius: tokens.radiusMd,
     backgroundColor: tokens.colorSurfaceMuted,
   },
   schemaFieldRowDragging: {
@@ -1153,7 +1299,7 @@ const s = stylex.create({
   },
   queryRelationSourceBound: {
     color: tokens.colorTextEmphasis,
-    fontWeight: 650,
+    fontWeight: 500,
   },
   schemaFieldGrip: {
     width: "18px",
@@ -1188,7 +1334,7 @@ const s = stylex.create({
     backgroundColor: tokens.colorSurface,
     color: tokens.colorTextEmphasis,
     fontSize: "10px",
-    fontWeight: 650,
+    fontWeight: 500,
   },
   schemaFieldDetail: {
     minWidth: 0,
@@ -1207,7 +1353,7 @@ const s = stylex.create({
     color: tokens.colorSubtle,
     cursor: "pointer",
     fontSize: "10px",
-    fontWeight: 700,
+    fontWeight: 600,
   },
   schemaRequiredActive: {
     backgroundColor: tokens.colorAccentSoft,
@@ -1250,7 +1396,7 @@ const s = stylex.create({
   schemaItemLabel: {
     color: tokens.colorSubtle,
     fontSize: "10px",
-    fontWeight: 700,
+    fontWeight: 600,
   },
   schemaConnection: {
     overflow: "hidden",
@@ -1259,7 +1405,7 @@ const s = stylex.create({
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
-  schemaConnectionBound: { color: tokens.colorTextEmphasis, fontWeight: 650 },
+  schemaConnectionBound: { color: tokens.colorTextEmphasis, fontWeight: 500 },
   schemaConnectionRow: {
     minWidth: 0,
     display: "flex",
@@ -1277,7 +1423,7 @@ const s = stylex.create({
     justifyContent: "center",
     gap: "5px",
     borderWidth: 0,
-    borderRadius: "8px",
+    borderRadius: tokens.radiusMd,
     backgroundColor: {
       default: tokens.colorSurfaceMuted,
       ":hover": tokens.colorHoverStrong,
@@ -1285,12 +1431,40 @@ const s = stylex.create({
     color: tokens.colorMuted,
     cursor: "pointer",
     fontSize: tokens.fontSizeXs,
-    fontWeight: 700,
+    fontWeight: 600,
   },
   shellStack: {
     position: "relative",
     display: "grid",
     width: "fit-content",
+    // Option C pickup: release settles quicker than the spring lift.
+    transitionProperty: {
+      default: "transform",
+      "@media (prefers-reduced-motion: reduce)": "none",
+    },
+    transitionDuration: "120ms",
+    transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
+  },
+  shellStackActive: {
+    // Slight active-tier lift; the spring overshoot reads as the node waking
+    // up under the pointer.
+    transform: "translate3d(0, -2px, 0)",
+    transitionProperty: {
+      default: "transform",
+      "@media (prefers-reduced-motion: reduce)": "none",
+    },
+    transitionDuration: "200ms",
+    transitionTimingFunction: "cubic-bezier(0.34, 1.56, 0.64, 1)",
+  },
+  shellStackDragged: {
+    // Full pickup: the node is carried above the canvas.
+    transform: "translate3d(0, -8px, 0)",
+    transitionProperty: {
+      default: "transform",
+      "@media (prefers-reduced-motion: reduce)": "none",
+    },
+    transitionDuration: "200ms",
+    transitionTimingFunction: "cubic-bezier(0.34, 1.56, 0.64, 1)",
   },
   shellFrame: {
     position: "relative",
@@ -1887,6 +2061,27 @@ function GenericArtifactTypeState({
   );
 }
 
+/**
+ * Descriptions ride the label tooltip instead of taking a line in the brick:
+ * they are schema documentation you read once, not state you monitor.
+ */
+function FieldLabelText({
+  title,
+  description,
+}: {
+  title: string;
+  description?: string | null;
+}) {
+  return (
+    <span
+      title={description ? `${title} — ${description}` : title}
+      {...stylex.props(s.fieldLabelText)}
+    >
+      {title}
+    </span>
+  );
+}
+
 function numberTupleValue(value: unknown, length: number): number[] | null {
   if (
     !Array.isArray(value) ||
@@ -1971,12 +2166,16 @@ function NumberTupleConfigField({
   return (
     <fieldset {...stylex.props(s.field, s.tupleField)}>
       <legend {...stylex.props(s.fieldLabel)}>
-        {field.title}
+        <FieldLabelText
+          title={field.title}
+          description={
+            field.nullable
+              ? `${field.description ?? ""} Leave every value blank to use no bounds.`.trim()
+              : field.description
+          }
+        />
         {field.required ? <span {...stylex.props(s.required)}>*</span> : null}
       </legend>
-      {field.description ? (
-        <span {...stylex.props(s.fieldDescription)}>{field.description}</span>
-      ) : null}
       <div {...stylex.props(s.tupleGrid)}>
         {field.items.map((item, index) => (
           <label key={`${item.title}:${index}`} {...stylex.props(s.tupleItem)}>
@@ -2018,10 +2217,6 @@ function NumberTupleConfigField({
         <span role="alert" {...stylex.props(s.tupleError)}>
           Enter all {itemCount} values as numbers within the shown ranges.
         </span>
-      ) : field.nullable ? (
-        <span {...stylex.props(s.fieldDescription)}>
-          Leave every value blank to use no bounds.
-        </span>
       ) : null}
     </fieldset>
   );
@@ -2049,12 +2244,9 @@ function StringListConfigField({
   return (
     <fieldset {...stylex.props(s.field, s.tupleField)}>
       <legend {...stylex.props(s.fieldLabel)}>
-        {field.title}
+        <FieldLabelText title={field.title} description={field.description} />
         {field.required ? <span {...stylex.props(s.required)}>*</span> : null}
       </legend>
-      {field.description ? (
-        <span {...stylex.props(s.fieldDescription)}>{field.description}</span>
-      ) : null}
       <div {...stylex.props(s.stringList)}>
         {values.map((item, index) => (
           <div key={index} {...stylex.props(s.stringListRow)}>
@@ -2106,6 +2298,7 @@ function ConfigField({
   value,
   onChange,
   fillHeight = false,
+  labelHidden = false,
   layout = null,
   onLayoutDraft,
   onLayoutCommit,
@@ -2114,11 +2307,14 @@ function ConfigField({
   value: unknown;
   onChange: (value: unknown) => void;
   fillHeight?: boolean;
+  /** Kept for assistive tech when the node title already names the field. */
+  labelHidden?: boolean;
   layout?: WorkflowNodeLayout | null;
   onLayoutDraft?: (layout: WorkflowNodeLayout | null) => void;
   onLayoutCommit?: (layout: WorkflowNodeLayout | null) => void;
 }) {
   const fieldProps = stylex.props(s.field, fillHeight ? s.fieldSized : null);
+  const labelProps = stylex.props(s.fieldLabel, labelHidden ? s.srOnly : null);
   const canResizeBody =
     field.type === "string" &&
     field.format === "textarea" &&
@@ -2143,36 +2339,40 @@ function ConfigField({
     );
   }
   if (field.type === "boolean") {
+    const checked = value === true;
     return (
       <label {...fieldProps}>
-        <span {...stylex.props(s.checkRow)}>
-          <input
-            type="checkbox"
-            checked={value === true}
-            {...nodeInteractionProps(stylex.props(s.check))}
-            onChange={(event) => onChange(event.currentTarget.checked)}
-          />
-          {field.title}
+        <span {...labelProps}>
+          <FieldLabelText title={field.title} description={field.description} />
           {field.required ? <span {...stylex.props(s.required)}>*</span> : null}
         </span>
-        {field.description ? (
-          <span {...stylex.props(s.fieldDescription)}>
-            {field.description}
-          </span>
-        ) : null}
+        <span
+          {...stylex.props(s.checkBox, checked ? s.checkBoxChecked : null)}
+        >
+          <input
+            type="checkbox"
+            checked={checked}
+            aria-label={field.title}
+            {...nodeInteractionProps(stylex.props(s.checkInput))}
+            onChange={(event) => onChange(event.currentTarget.checked)}
+          />
+          <Check
+            size={16}
+            strokeWidth={2.5}
+            aria-hidden
+            {...stylex.props(s.checkMark, checked ? s.checkMarkChecked : null)}
+          />
+        </span>
       </label>
     );
   }
 
   return (
     <label {...fieldProps}>
-      <span {...stylex.props(s.fieldLabel)}>
-        {field.title}
+      <span {...labelProps}>
+        <FieldLabelText title={field.title} description={field.description} />
         {field.required ? <span {...stylex.props(s.required)}>*</span> : null}
       </span>
-      {field.description ? (
-        <span {...stylex.props(s.fieldDescription)}>{field.description}</span>
-      ) : null}
       {field.enumValues ? (
         <select
           value={
@@ -2317,7 +2517,9 @@ function SecretInputField({
       }}
     >
       <div {...stylex.props(s.secretHeader)}>
-        <span {...stylex.props(s.fieldLabel)}>{input.title}</span>
+        <span {...stylex.props(s.fieldLabel)}>
+          <FieldLabelText title={input.title} />
+        </span>
         <span
           role="status"
           {...stylex.props(
@@ -3229,6 +3431,57 @@ function ArtifactQueryTablesBody({
   );
 }
 
+export type ConfigBrick =
+  | { kind: "field"; field: SchemaField; footprint: FieldFootprint }
+  | {
+      kind: "secret";
+      input: WorkflowNodeSecretInput;
+      footprint: FieldFootprint;
+    };
+
+/**
+ * A lone field whose title the node title already contains ("Text" on a "Text
+ * input" node) names the same thing twice. The label stays in the accessibility
+ * tree; only its row is reclaimed. Booleans keep theirs — a bare checkbox
+ * reads as nothing at all.
+ */
+export function configFieldLabelIsRedundant(
+  nodeTitle: string,
+  bricks: readonly ConfigBrick[],
+): boolean {
+  const only = bricks.length === 1 ? bricks[0] : undefined;
+  if (only?.kind !== "field" || only.field.type === "boolean") return false;
+  const squash = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const title = squash(only.field.title);
+  return title.length > 0 && squash(nodeTitle).includes(title);
+}
+
+function configBricks(data: WorkflowNodeData): ConfigBrick[] {
+  return [
+    ...schemaFields(data.spec.config_schema).map(
+      (field): ConfigBrick => ({
+        kind: "field",
+        field,
+        footprint: fieldFootprint(field),
+      }),
+    ),
+    ...nodeSecretInputs(data.spec).map(
+      (input): ConfigBrick => ({
+        kind: "secret",
+        input,
+        footprint: secretFootprint(),
+      }),
+    ),
+  ];
+}
+
+/**
+ * Config inputs are packed onto the body lattice in schema order. Widening the
+ * node stretches the existing bricks first (more room for labels/descriptions);
+ * packing only adds columns once another half-brick can stay comfortably wide.
+ * A saved body height is only a request — the board grows whenever the ordered
+ * bricks need more rows.
+ */
 function GenericBody({
   id,
   data,
@@ -3244,49 +3497,91 @@ function GenericBody({
   onLayoutDraft: (layout: WorkflowNodeLayout | null) => void;
   onLayoutCommit: (layout: WorkflowNodeLayout | null) => void;
 }) {
-  const fields = schemaFields(data.spec.config_schema);
-  const secretInputs = nodeSecretInputs(data.spec);
-  if (!fields.length && !secretInputs.length) return null;
-  const sized = bodyHeight !== null;
+  const grid = useOptionalCanvasGridSettings();
+  const bricks = configBricks(data);
+  if (!bricks.length) return null;
+
+  const cellSize = grid?.settings.cellSize ?? GRID_CELL_SIZE_DEFAULT;
+  const labelHidden = configFieldLabelIsRedundant(data.spec.title, bricks);
+  const board = packFieldFootprints(
+    bricks.map((brick) => brick.footprint),
+    {
+      columns: configBoardColumns(resolvedNodeWidth(layout), cellSize),
+      minRows: bodyHeight === null ? 0 : spanFromLength(bodyHeight, cellSize),
+    },
+  );
 
   return (
-    <div
-      {...stylex.props(s.body, sized ? s.bodySized : null)}
-      style={sized ? { minHeight: bodyHeight } : undefined}
-    >
-      <div {...stylex.props(s.configList, sized ? s.configListSized : null)}>
-        {fields.map((field) => (
-          <ConfigField
-            key={field.name}
-            field={field}
-            value={data.config[field.name]}
-            fillHeight={sized && field.format === "textarea"}
-            layout={layout}
-            onLayoutDraft={onLayoutDraft}
-            onLayoutCommit={onLayoutCommit}
-            onChange={(value) =>
-              data.onConfigChange?.(id, field.name, value)
-            }
-          />
-        ))}
-        {secretInputs.length ? (
-          <div {...stylex.props(s.secretList)}>
-            {secretInputs.map((input) => (
-              <SecretInputField
-                key={`${data.secretInputScope}:${input.name}:${nodeSecretDependencyRevision(input, data.config)}`}
-                id={id}
-                data={data}
-                input={input}
-              />
-            ))}
-          </div>
-        ) : null}
+    <div {...stylex.props(s.body)}>
+      <div
+        data-testid="config-board"
+        {...stylex.props(s.configBoard)}
+        style={{
+          gridTemplateColumns: `repeat(${board.columns}, minmax(0, 1fr))`,
+          gridTemplateRows: `repeat(${board.rows}, minmax(${cellSize}px, auto))`,
+        }}
+      >
+        {board.placements.map((placement) => {
+          const brick = bricks[placement.index];
+          if (!brick) return null;
+          const fillsCell = brick.footprint.growY === true;
+          return (
+            <div
+              key={
+                brick.kind === "field"
+                  ? `field:${brick.field.name}`
+                  : `secret:${brick.input.name}`
+              }
+              data-testid="config-brick"
+              {...stylex.props(s.configBrick)}
+              style={{
+                gridColumn: `${placement.col + 1} / span ${placement.w}`,
+                gridRow: `${placement.row + 1} / span ${placement.h}`,
+              }}
+            >
+              {brick.kind === "field" ? (
+                <ConfigField
+                  field={brick.field}
+                  value={data.config[brick.field.name]}
+                  fillHeight={fillsCell}
+                  labelHidden={labelHidden}
+                  layout={layout}
+                  onLayoutDraft={onLayoutDraft}
+                  onLayoutCommit={onLayoutCommit}
+                  onChange={(value) =>
+                    data.onConfigChange?.(id, brick.field.name, value)
+                  }
+                />
+              ) : (
+                <SecretInputField
+                  key={`${data.secretInputScope}:${brick.input.name}:${nodeSecretDependencyRevision(brick.input, data.config)}`}
+                  id={id}
+                  data={data}
+                  input={brick.input}
+                />
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function NodeHeader({ id, data }: { id: string; data: WorkflowNodeData }) {
+/**
+ * One cell of chrome: the title always reads, everything else (about popover
+ * with provenance, removal) appears once the node is selected. Execution keeps
+ * only a status tell here — the status icon and appendix carry the detail.
+ */
+function NodeHeader({
+  id,
+  data,
+  selected,
+}: {
+  id: string;
+  data: WorkflowNodeData;
+  selected: boolean;
+}) {
   const executionLabel = data.execution.status === "idle"
     ? null
     : data.execution.status;
@@ -3296,94 +3591,129 @@ function NodeHeader({ id, data }: { id: string; data: WorkflowNodeData }) {
     data.execution.status === "cancelling";
 
   return (
-    <header {...stylex.props(s.header)}>
-      <span {...stylex.props(s.titleRow)}>
-        <Popover.Root>
-          <Popover.Trigger
-            type="button"
-            aria-label={`About ${data.spec.title}`}
-            title={`About ${data.spec.title}`}
-            {...nodeInteractionProps(stylex.props(s.headerButton))}
-          >
-            <CircleHelp size={13} />
-          </Popover.Trigger>
-          <Popover.Portal>
-            <Popover.Positioner side="top" align="start" sideOffset={7}>
-              <Popover.Popup
-                {...nodeInteractionProps(stylex.props(s.helpPopup))}
-              >
-                <span {...stylex.props(s.helpTitle)}>{data.spec.title}</span>
-                <span {...stylex.props(s.helpDescription)}>
-                  {data.spec.description ||
-                    "No description is available for this node."}
-                </span>
-              </Popover.Popup>
-            </Popover.Positioner>
-          </Popover.Portal>
-        </Popover.Root>
-        <button
-          type="button"
-          aria-label={`Remove ${data.spec.title}`}
-          title={`Remove ${data.spec.title}`}
-          {...nodeInteractionProps(
-            stylex.props(s.headerButton, s.removeButton),
-          )}
-          onClick={() => data.onRemoveNode?.(id)}
-        >
-          <X size={13} />
-        </button>
-        <span {...stylex.props(s.title)} title={data.spec.title}>
-          {data.spec.title}
-        </span>
-        {executionLabel ? (
-          <span
+    <header {...stylex.props(s.headerSlim)}>
+      <span {...stylex.props(s.title)} title={data.spec.title}>
+        {data.spec.title}
+      </span>
+      {executionLabel ? (
+        executionIsBusy ? (
+          <LoaderCircle
+            size={11}
+            role="status"
             aria-label={`Execution ${executionLabel}`}
             {...stylex.props(
-              s.executionBadge,
-              data.execution.status === "uploading" ||
-                  data.execution.status === "running"
-                ? s.executionBadgeInfo
-                : null,
+              s.spinner,
+              s.executionSpinner,
               data.execution.status === "cancelling"
-                ? s.executionBadgeWarning
-                : null,
-              data.execution.status === "succeeded"
-                ? s.executionBadgeSuccess
-                : null,
-              data.execution.status === "failed"
-                ? s.executionBadgeDanger
+                ? s.executionSpinnerWarning
                 : null,
             )}
-          >
-            {executionIsBusy ? (
-              <LoaderCircle size={9} {...stylex.props(s.spinner)} />
-            ) : null}
-            {executionLabel}
-          </span>
-        ) : null}
-      </span>
-      <span {...stylex.props(s.operatorRow)}>
-        <span {...stylex.props(s.operatorCopy)} title={data.spec.description}>
-          {typeof data.spec.module_graph_revision === "number"
-            ? `Module · r${data.spec.module_graph_revision}`
-            : `${data.spec.operator_id}@${data.spec.operator_version}`}
-        </span>
-        {data.spec.module_graph_id && data.onOpenModuleSource ? (
-          <button
-            type="button"
-            aria-label={`Open source graph for ${data.spec.title}`}
-            title="Open source graph"
-            {...nodeInteractionProps(stylex.props(s.openModuleSource))}
-            onClick={() => {
-              if (!data.spec.module_graph_id) return;
-              data.onOpenModuleSource?.(data.spec.module_graph_id);
-            }}
-          >
-            <ExternalLink size={9} />
-            Source
-          </button>
-        ) : null}
-      </span>
+          />
+        ) : (
+          <span
+            role="status"
+            aria-label={`Execution ${executionLabel}`}
+            title={`Execution ${executionLabel}`}
+            {...stylex.props(
+              s.executionDot,
+              data.execution.status === "succeeded"
+                ? s.executionDotSuccess
+                : null,
+              data.execution.status === "failed" ? s.executionDotDanger : null,
+            )}
+          />
+        )
+      ) : null}
+      {selected ? (
+        <>
+          {typeof data.moduleUpgradeRelease === "number" &&
+          data.onUpgradeModuleCall ? (
+            <button
+              type="button"
+              aria-label={`Upgrade module call to release ${data.moduleUpgradeRelease}`}
+              title={`Upgrade to release ${data.moduleUpgradeRelease}`}
+              {...nodeInteractionProps(stylex.props(s.upgradeModuleCall))}
+              onClick={() => data.onUpgradeModuleCall?.(id)}
+            >
+              <ArrowUp size={11} />
+              Upgrade to release {data.moduleUpgradeRelease}
+            </button>
+          ) : null}
+          <Popover.Root>
+            <Popover.Trigger
+              type="button"
+              aria-label={`About ${data.spec.title}`}
+              title={`About ${data.spec.title}`}
+              {...nodeInteractionProps(stylex.props(s.headerButton))}
+            >
+              <CircleHelp size={13} />
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Positioner side="top" align="start" sideOffset={7}>
+                <Popover.Popup
+                  {...nodeInteractionProps(stylex.props(s.helpPopup))}
+                >
+                  <span {...stylex.props(s.helpTitle)}>{data.spec.title}</span>
+                  <span {...stylex.props(s.helpDescription)}>
+                    {data.spec.description ||
+                      "No description is available for this node."}
+                  </span>
+                  <span {...stylex.props(s.helpFooter)}>
+                    <span {...stylex.props(s.operatorCopy)}>
+                      {typeof data.spec.module_graph_revision === "number"
+                        ? `Module · r${data.spec.module_graph_revision}`
+                        : `${data.spec.operator_id}@${data.spec.operator_version}`}
+                    </span>
+                    {data.spec.module_graph_id && data.onOpenModuleSource ? (
+                      <button
+                        type="button"
+                        aria-label={`Open source graph for ${data.spec.title}`}
+                        title="Open source graph"
+                        {...nodeInteractionProps(
+                          stylex.props(s.openModuleSource),
+                        )}
+                        onClick={() => {
+                          if (!data.spec.module_graph_id) return;
+                          data.onOpenModuleSource?.(data.spec.module_graph_id);
+                        }}
+                      >
+                        <ExternalLink size={9} />
+                        Source
+                      </button>
+                    ) : null}
+                  </span>
+                </Popover.Popup>
+              </Popover.Positioner>
+            </Popover.Portal>
+          </Popover.Root>
+          <Popover.Root>
+            <Popover.Trigger
+              type="button"
+              aria-label={`Actions for ${data.spec.title}`}
+              title={`Actions for ${data.spec.title}`}
+              {...nodeInteractionProps(stylex.props(s.headerButton))}
+            >
+              <MoreHorizontal size={13} />
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Positioner side="bottom" align="end" sideOffset={6}>
+                <Popover.Popup
+                  {...nodeInteractionProps(stylex.props(s.nodeMenu))}
+                >
+                  <button
+                    type="button"
+                    {...stylex.props(s.nodeMenuItem, s.nodeMenuItemDanger)}
+                    onClick={() => data.onRemoveNode?.(id)}
+                  >
+                    <Trash2 size={13} />
+                    Delete node
+                  </button>
+                </Popover.Popup>
+              </Popover.Positioner>
+            </Popover.Portal>
+          </Popover.Root>
+        </>
+      ) : null}
     </header>
   );
 }
@@ -3479,14 +3809,22 @@ function IncompatibleWorkflowNodeCard({
   id,
   data,
   selected,
+  dragging,
   compatibility,
 }: {
   id: string;
   data: WorkflowNodeData;
   selected: boolean;
+  dragging: boolean;
   compatibility: IncompatibleWorkflowNodeCompatibility;
 }) {
   const updateNodeInternals = useUpdateNodeInternals();
+  const { tier, pickedUp, draggedTier, liftRef, holdHandlers } = usePickupLift({
+    id,
+    selected,
+    dragging,
+    updateNodeInternals,
+  });
   const grid = useOptionalCanvasGridSettings();
   const allowCornerResize =
     grid?.settings.allowWorkflowCornerResize ?? false;
@@ -3515,7 +3853,7 @@ function IncompatibleWorkflowNodeCard({
   );
   const hasSavedHistory = Boolean(data.historyContext?.graphId);
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     updateNodeInternals(id);
   }, [
     endpointRevision,
@@ -3526,7 +3864,6 @@ function IncompatibleWorkflowNodeCard({
     hasProgress,
     hasSavedHistory,
     id,
-    selected,
     updateNodeInternals,
   ]);
 
@@ -3540,14 +3877,38 @@ function IncompatibleWorkflowNodeCard({
   );
 
   return (
-    <div {...stylex.props(s.shellStack)} style={{ width: gridWidth }}>
+    <div
+      ref={liftRef}
+      {...holdHandlers}
+      {...stylex.props(
+        s.shellStack,
+        tier === "active" ? s.shellStackActive : null,
+        tier === "dragged" ? s.shellStackDragged : null,
+      )}
+      style={{ width: gridWidth }}
+    >
       <div {...stylex.props(s.shellFrame)} style={frameStyle}>
+        <span
+          aria-hidden="true"
+          data-node-pickup-shadow="true"
+          data-picked-up={pickedUp}
+          data-dragging={draggedTier}
+          {...stylex.props(
+            s.pickupShadow,
+            tier === "active" ? s.pickupShadowActive : null,
+            tier === "dragged" ? s.pickupShadowDragged : null,
+          )}
+          style={{
+            inset: `${gutter}px ${gutter + 10}px ${gutter + 12}px ${gutter + 10}px`,
+          }}
+        />
         <article
           aria-label={`${data.spec.title} ${compatibility.status} node`}
           {...stylex.props(
             s.shell,
             s.compatibilityShell,
-            selected ? s.selected : null,
+            pickedUp ? s.pickedUp : null,
+            draggedTier ? s.dragging : null,
           )}
           style={shellStyle}
         >
@@ -3640,6 +4001,7 @@ function SupportedWorkflowNodeCard({
   id,
   data,
   selected,
+  dragging,
 }: NodeProps<WorkflowNode>) {
   const fields = schemaFields(data.spec.config_schema);
   const secretInputs = nodeSecretInputs(data.spec);
@@ -3681,6 +4043,12 @@ function SupportedWorkflowNodeCard({
     .join("|");
   const incidentConnections = useNodeConnections({ id });
   const updateNodeInternals = useUpdateNodeInternals();
+  const { tier, pickedUp, draggedTier, liftRef, holdHandlers } = usePickupLift({
+    id,
+    selected,
+    dragging,
+    updateNodeInternals,
+  });
   const grid = useOptionalCanvasGridSettings();
   const allowCornerResize =
     grid?.settings.allowWorkflowCornerResize ?? false;
@@ -3711,7 +4079,7 @@ function SupportedWorkflowNodeCard({
     window.requestAnimationFrame(() => updateNodeInternals(id));
   };
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     // React Flow measures handles in the animation frame queued here. Queue the
     // readiness callback afterward so a concrete generic handle is registered
     // before Workbench publishes an edge that targets it.
@@ -3739,24 +4107,40 @@ function SupportedWorkflowNodeCard({
     hasSavedHistory,
     onHandlesMeasured,
     id,
-    selected,
     updateNodeInternals,
   ]);
 
   return (
-    <div {...stylex.props(s.shellStack)} style={{ width: gridWidth }}>
+    <div
+      ref={liftRef}
+      {...holdHandlers}
+      {...stylex.props(
+        s.shellStack,
+        tier === "active" ? s.shellStackActive : null,
+        tier === "dragged" ? s.shellStackDragged : null,
+      )}
+      style={{ width: gridWidth }}
+    >
       <div {...stylex.props(s.shellFrame)} style={frameStyle}>
+        <span
+          aria-hidden="true"
+          data-node-pickup-shadow="true"
+          data-picked-up={pickedUp}
+          data-dragging={draggedTier}
+          {...stylex.props(
+            s.pickupShadow,
+            tier === "active" ? s.pickupShadowActive : null,
+            tier === "dragged" ? s.pickupShadowDragged : null,
+          )}
+          style={{
+            inset: `${gutter}px ${gutter + 10}px ${gutter + 12}px ${gutter + 10}px`,
+          }}
+        />
         <article
           {...stylex.props(
             s.shell,
-            selected ? s.selected : null,
-            data.execution.status === "running" ||
-                data.execution.status === "cancelling"
-              ? s.activeExecution
-              : null,
-            data.execution.status === "cancelling"
-              ? s.cancellingExecution
-              : null,
+            pickedUp ? s.pickedUp : null,
+            draggedTier ? s.dragging : null,
           )}
           style={shellStyle}
         >
@@ -3764,7 +4148,7 @@ function SupportedWorkflowNodeCard({
           <RemoteSelectionRing color={data.remoteSelectionColor} />
         ) : null}
         <div ref={contentRef} {...stylex.props(s.shellContent)}>
-          <NodeHeader id={id} data={data} />
+          <NodeHeader id={id} data={data} selected={selected ?? false} />
           <GenericArtifactTypeState
             id={id}
             data={data}
@@ -3871,6 +4255,7 @@ function WorkflowNodeCard(props: NodeProps<WorkflowNode>) {
       id={props.id}
       data={props.data}
       selected={props.selected}
+      dragging={props.dragging}
       compatibility={props.data.compatibility}
     />
   );

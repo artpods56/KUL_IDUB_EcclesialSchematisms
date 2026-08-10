@@ -20,6 +20,12 @@ import {
  * as a nested field tree, plus declared field projections (discovery only).
  */
 
+/**
+ * The trigger is a small inspect control on the port pill. Offset keeps the
+ * popover clear of the node shell and of an edge drag starting on the same port.
+ */
+const PORT_POPOVER_OFFSET = 24;
+
 const s = stylex.create({
   popup: {
     width: "320px",
@@ -85,7 +91,7 @@ const s = stylex.create({
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
     fontSize: tokens.fontSizeXs,
   },
-  required: { color: tokens.colorWarning },
+  required: { color: tokens.colorSubtle },
   fieldType: {
     marginLeft: "auto",
     color: tokens.colorSubtle,
@@ -322,7 +328,7 @@ export function PortTypePopover({
         <Popover.Positioner
           side={port.direction === "input" ? "left" : "right"}
           align="start"
-          sideOffset={10}
+          sideOffset={PORT_POPOVER_OFFSET}
         >
           <Popover.Popup
             className={`nodrag nowheel ${stylex.props(s.popup).className}`}

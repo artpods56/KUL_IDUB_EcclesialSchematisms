@@ -222,6 +222,8 @@ function viewerEdge(): ArtifactViewerEdge {
 
 function renderViewer(
   overrides: Partial<ArtifactViewerNodeData> = {},
+  selected = false,
+  dragging = false,
 ): HTMLDivElement {
   const container = document.createElement("div");
   const root = createRoot(container);
@@ -244,7 +246,8 @@ function renderViewer(
         {...({
           id: node.id,
           data: node.data,
-          selected: false,
+          selected,
+          dragging,
           isConnectable: true,
         } as React.ComponentProps<typeof ArtifactViewerNodeCard>)}
       />,
@@ -267,6 +270,25 @@ afterEach(() => {
 });
 
 describe("ArtifactViewerNode", () => {
+  it("drives pickup depth from selection and active dragging", () => {
+    const resting = renderViewer();
+    const selected = renderViewer({}, true);
+    const dragging = renderViewer({}, false, true);
+
+    expect(
+      resting.querySelector('[data-node-pickup-shadow="true"]')
+        ?.getAttribute("data-picked-up"),
+    ).toBe("false");
+    expect(
+      selected.querySelector('[data-node-pickup-shadow="true"]')
+        ?.getAttribute("data-picked-up"),
+    ).toBe("true");
+    expect(
+      dragging.querySelector('[data-node-pickup-shadow="true"]')
+        ?.getAttribute("data-dragging"),
+    ).toBe("true");
+  });
+
   it("invites a generic artifact connection while disconnected", () => {
     const container = renderViewer();
 

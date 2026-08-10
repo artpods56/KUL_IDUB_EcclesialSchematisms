@@ -220,6 +220,78 @@ function buttonWithText(
 }
 
 describe("NodeExecutionAppendix", () => {
+  it("stays off the canvas when a selected idle node has never run", async () => {
+    const { container } = await renderAppendix({
+      expanded: true,
+      execution: { status: "idle" },
+      progress: null,
+      run: null,
+    });
+    expect(container.querySelector("aside")).toBeNull();
+    expect(container.textContent).toBe("");
+  });
+
+  it("does not mount loading chrome while checking saved history for an idle node", async () => {
+    let resolveHistory!: (value: GraphExecutionList) => void;
+    apiMocks.listGraphExecutions.mockReturnValue(new Promise((resolve) => {
+      resolveHistory = resolve;
+    }));
+    const { container } = await renderAppendix({
+      expanded: true,
+      execution: { status: "idle" },
+      progress: null,
+      run: null,
+      historyContext: {
+        workspaceId: "workspace-1",
+        graphId: "graph-1",
+        isDirty: false,
+      },
+    });
+
+    expect(apiMocks.listGraphExecutions).toHaveBeenCalledWith(
+      "workspace-1",
+      "graph-1",
+      { limit: 5, nodeId: "node-a" },
+    );
+    expect(container.querySelector("aside")).toBeNull();
+    expect(container.textContent).toBe("");
+
+    await React.act(async () => {
+      resolveHistory({ items: [], next_cursor: null });
+    });
+
+    expect(container.querySelector("aside")).toBeNull();
+    expect(container.textContent).toBe("");
+  });
+
+  it("reveals durable saved history after the idle-node check completes", async () => {
+    const previousExecution = summary("execution-1");
+    apiMocks.listGraphExecutions.mockResolvedValue({
+      items: [previousExecution],
+      next_cursor: null,
+    });
+    apiMocks.getGraphExecution.mockResolvedValue(detail(previousExecution, [
+      nodeResult("node-a", [output("result", ["historic-artifact"])]),
+    ]));
+
+    const { container } = await renderAppendix({
+      expanded: true,
+      execution: { status: "idle" },
+      progress: null,
+      run: null,
+      historyContext: {
+        workspaceId: "workspace-1",
+        graphId: "graph-1",
+        isDirty: false,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain("History 1");
+    });
+    expect(container.querySelector("aside")).not.toBeNull();
+  });
+
   it("renders one collapsed footprint for the latest event, error, or materialization", async () => {
     const { container, rerender } = await renderAppendix({
       execution: { status: "running" },
