@@ -153,12 +153,15 @@ revision, tip, broken/valid, deprecated
 
 ## Explicit non-resolutions
 
-This note does **not** decide:
+This note does **not** decide product vocabulary or surface chrome. Those are
+resolved in the conceptual model and interaction/surface docs.
 
-- Notarius vocabulary winners
-- Whether publish is a flag or a separate object
-- Cross-workspace grant vs copy
-- Browse UI structure
+## Binding product decisions (see conceptual model)
+
+v1 uses an explicit Module + Publish release into a workspace library (not tip
+auto-catalog), Owner-only Deprecate/Withdraw with no hard delete, insert-time
+older-release pick, and library entry from Workbench and workspace overview.
+Import is copy-by-value. See [modules-conceptual-model.md](modules-conceptual-model.md).
 
 ## Next step
 

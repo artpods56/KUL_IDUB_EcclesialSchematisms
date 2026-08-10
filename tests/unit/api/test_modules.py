@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import Field, SecretStr, StrictStr
 
+from notarius_core.application.modules import ModuleLibraryService
 from notarius_core.application.saved_graphs import SavedGraphService
 from notarius_core.artifacts import (
     InMemoryUnitOfWork,
@@ -36,10 +37,13 @@ from notarius_api.services.composition import (
     build_workbench_components,
 )
 from notarius_api.settings import Settings
+from notarius_api.v1.routes.modules.dependencies import module_library_service
 from notarius_api.v1.routes.node_secrets.dependencies import node_secret_service
 from notarius_api.v1.routes.saved_graphs.dependencies import saved_graph_service
 
 from tests.unit.api.conftest import install_workbench_dependency_overrides
+
+WORKSPACE = "00000000-0000-0000-0000-000000000007"
 
 
 SECRET_MODULE_PLUGIN = Plugin(
@@ -195,6 +199,10 @@ def module_client(tmp_path: Path) -> Iterator[TestClient]:
         lambda: SqlAlchemyUnitOfWork(database.sessions),
         registry,
     )
+    module_library = ModuleLibraryService(
+        lambda: SqlAlchemyUnitOfWork(database.sessions),
+        registry,
+    )
     node_secrets = NodeSecretService(
         unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
         plugin_registry=registry,
@@ -206,6 +214,7 @@ def module_client(tmp_path: Path) -> Iterator[TestClient]:
         workspace=tmp_path / "workbench",
         unit_of_work=InMemoryUnitOfWork(),
         saved_graphs=saved_graphs,
+        module_library=module_library,
         node_secrets=node_secrets,
     )
     application = create_app(
@@ -219,6 +228,7 @@ def module_client(tmp_path: Path) -> Iterator[TestClient]:
     install_workbench_dependency_overrides(application, components)
     application.dependency_overrides[saved_graph_service] = lambda: saved_graphs
     application.dependency_overrides[node_secret_service] = lambda: node_secrets
+    application.dependency_overrides[module_library_service] = lambda: module_library
     with TestClient(application) as client:
         yield client
     asyncio.run(database.dispose())
@@ -578,15 +588,27 @@ def _module_node_run(
 def test_saved_graph_module_is_discoverable_and_executes_once(
     module_client: TestClient,
 ) -> None:
-    created = module_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_text_module_payload()).json()
+    created = module_client.post(
+        f"/v1/workspaces/{WORKSPACE}/graphs",
+        json=_text_module_payload(),
+    ).json()
     graph_id = created["id"]
 
-    registry_response = module_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes")
+    unpublished = module_client.get(f"/v1/workspaces/{WORKSPACE}/nodes").json()
+    assert all(node.get("module_graph_id") != graph_id for node in unpublished["nodes"])
+
+    published = module_client.post(
+        f"/v1/workspaces/{WORKSPACE}/modules/publish",
+        json={"source_graph_id": graph_id},
+    )
+    assert published.status_code == 201, published.text
+
+    registry_response = module_client.get(f"/v1/workspaces/{WORKSPACE}/nodes")
     assert registry_response.status_code == 200
     registry = registry_response.json()
     assert {
         "slug": "graph.module",
-        "title": "Modules",
+        "title": "Workspace library",
         "origin": "module",
     } in registry["plugins"]
     module_spec = next(
@@ -595,11 +617,10 @@ def test_saved_graph_module_is_discoverable_and_executes_once(
     assert module_spec["operator_id"] == f"graph.module.{graph_id}"
     assert module_spec["module_graph_revision"] == 1
     assert module_spec["catalog_visible"] is True
+    assert module_spec["publication_state"] == "published"
     assert [port["name"] for port in module_spec["inputs"]] == ["text"]
     assert [port["name"] for port in module_spec["outputs"]] == ["result"]
-    assert all(
-        module["graph_id"] != graph_id for module in registry["unavailable_modules"]
-    )
+    assert registry["unavailable_modules"] == []
 
     response = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
@@ -864,9 +885,19 @@ def test_nested_map_events_append_each_local_invocation_index(
 def test_module_uses_existing_map_semantics_and_keeps_revision_pinned(
     module_client: TestClient,
 ) -> None:
-    created = module_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_text_module_payload()).json()
+    created = module_client.post(
+        f"/v1/workspaces/{WORKSPACE}/graphs",
+        json=_text_module_payload(),
+    ).json()
     graph_id = created["id"]
     operator_id = f"graph.module.{graph_id}"
+    assert (
+        module_client.post(
+            f"/v1/workspaces/{WORKSPACE}/modules/publish",
+            json={"source_graph_id": graph_id},
+        ).status_code
+        == 201
+    )
 
     mapped_response = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
@@ -924,20 +955,27 @@ def test_module_uses_existing_map_semantics_and_keeps_revision_pinned(
     update_payload = _text_module_payload(replacement="X")
     update_payload["expected_revision"] = 1
     updated_response = module_client.put(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}",
+        f"/v1/workspaces/{WORKSPACE}/graphs/{graph_id}",
         json=update_payload,
     )
     assert updated_response.status_code == 200
     assert updated_response.json()["revision"] == 2
+    assert (
+        module_client.post(
+            f"/v1/workspaces/{WORKSPACE}/modules/publish",
+            json={"source_graph_id": graph_id, "revision": 2},
+        ).status_code
+        == 201
+    )
 
-    registry = module_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes").json()
+    registry = module_client.get(f"/v1/workspaces/{WORKSPACE}/nodes").json()
     module_specs = [
         node for node in registry["nodes"] if node["module_graph_id"] == graph_id
     ]
-    assert [
+    assert sorted(
         (spec["module_graph_revision"], spec["catalog_visible"])
         for spec in module_specs
-    ] == [(2, True), (1, False)]
+    ) == [(1, False), (2, True)]
 
     pinned_response = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
@@ -978,11 +1016,18 @@ def test_nested_module_omits_absent_optional_input_and_disabled_edges(
     module_client: TestClient,
 ) -> None:
     created = module_client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
+        f"/v1/workspaces/{WORKSPACE}/graphs",
         json=_optional_input_module_payload(),
     ).json()
     graph_id = created["id"]
-    registry = module_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes").json()
+    assert (
+        module_client.post(
+            f"/v1/workspaces/{WORKSPACE}/modules/publish",
+            json={"source_graph_id": graph_id},
+        ).status_code
+        == 201
+    )
+    registry = module_client.get(f"/v1/workspaces/{WORKSPACE}/nodes").json()
     module_spec = next(
         node for node in registry["nodes"] if node["module_graph_id"] == graph_id
     )
@@ -1081,7 +1126,7 @@ def test_module_catalog_rejects_optional_input_targeting_required_input(
     module_client: TestClient,
 ) -> None:
     created = module_client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
+        f"/v1/workspaces/{WORKSPACE}/graphs",
         json=_text_module_payload(
             name="Invalid optional input",
             input_required=False,
@@ -1094,23 +1139,21 @@ def test_module_catalog_rejects_optional_input_targeting_required_input(
         "(text.replace@1)"
     )
 
-    registry = module_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes").json()
-    assert all(
-        node["module_graph_id"] != graph_id
-        for node in registry["nodes"]
-        if node["plugin_slug"] == "graph.module"
+    publish = module_client.post(
+        f"/v1/workspaces/{WORKSPACE}/modules/publish",
+        json={"source_graph_id": graph_id},
     )
-    assert registry["unavailable_modules"] == [
-        {
-            "graph_id": graph_id,
-            "revision": 1,
-            "name": "Invalid optional input",
-            "reason": reason,
-        }
-    ]
+    assert publish.status_code == 422
+    assert reason in publish.json()["detail"]
+
+    registry = module_client.get(f"/v1/workspaces/{WORKSPACE}/nodes").json()
+    assert all(
+        node.get("module_graph_id") != graph_id for node in registry["nodes"]
+    )
+    assert registry["unavailable_modules"] == []
 
     response = module_client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
+        f"/v1/workspaces/{WORKSPACE}/runs",
         json={
             "nodes": [
                 {
@@ -1133,7 +1176,7 @@ def test_module_catalog_reports_invalid_boundary_wiring(
     module_client: TestClient,
 ) -> None:
     created = module_client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
+        f"/v1/workspaces/{WORKSPACE}/graphs",
         json={
             "name": "Input without output",
             "nodes": [
@@ -1151,24 +1194,18 @@ def test_module_catalog_reports_invalid_boundary_wiring(
     ).json()
     graph_id = created["id"]
 
-    registry = module_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes").json()
-    unavailable = [
-        module
-        for module in registry["unavailable_modules"]
-        if module["graph_id"] == graph_id
+    publish = module_client.post(
+        f"/v1/workspaces/{WORKSPACE}/modules/publish",
+        json={"source_graph_id": graph_id},
+    )
+    assert publish.status_code == 422
+    assert "Module Input boundary must connect its 'value' output" in publish.json()[
+        "detail"
     ]
-    assert len(unavailable) == 1
-    assert unavailable[0]["revision"] == 1
-    assert unavailable[0]["name"] == "Input without output"
-    assert (
-        "Module Input boundary must connect its 'value' output"
-        in unavailable[0]["reason"]
-    )
-    assert all(
-        node["module_graph_id"] != graph_id
-        for node in registry["nodes"]
-        if node["plugin_slug"] == "graph.module"
-    )
+
+    registry = module_client.get(f"/v1/workspaces/{WORKSPACE}/nodes").json()
+    assert registry["unavailable_modules"] == []
+    assert all(node.get("module_graph_id") != graph_id for node in registry["nodes"])
 
 
 def test_module_catalog_ignores_graphs_without_module_boundaries(
@@ -1377,3 +1414,61 @@ def test_exact_module_revision_cycle_reports_the_nested_path(
     assert "Graph module cycle detected" in error
     assert f"graph.module.{first['id']}@2" in error
     assert f"graph.module.{second['id']}@2" in error
+
+
+def test_withdrawn_module_stays_executable_for_pinned_calls(
+    module_client: TestClient,
+) -> None:
+    created = module_client.post(
+        f"/v1/workspaces/{WORKSPACE}/graphs",
+        json=_text_module_payload(),
+    ).json()
+    graph_id = created["id"]
+    published = module_client.post(
+        f"/v1/workspaces/{WORKSPACE}/modules/publish",
+        json={"source_graph_id": graph_id},
+    ).json()
+    module_id = published["id"]
+
+    withdraw = module_client.post(
+        f"/v1/workspaces/{WORKSPACE}/modules/{module_id}/withdraw",
+    )
+    assert withdraw.status_code == 200
+    assert withdraw.json()["publication_state"] == "withdrawn"
+
+    registry = module_client.get(f"/v1/workspaces/{WORKSPACE}/nodes").json()
+    assert all(node.get("module_graph_id") != graph_id for node in registry["nodes"])
+
+    response = module_client.post(
+        f"/v1/workspaces/{WORKSPACE}/runs",
+        json={
+            "nodes": [
+                {
+                    "id": "source",
+                    "operator_id": "text.input",
+                    "operator_version": 1,
+                    "config": {"text": "a"},
+                },
+                {
+                    "id": "module",
+                    "operator_id": f"graph.module.{graph_id}",
+                    "operator_version": 1,
+                    "config": {},
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "source",
+                    "from_port": "text",
+                    "to_node": "module",
+                    "to_port": "text",
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert result["status"] == "succeeded"
+    output = cast(list[dict[str, object]], _module_node_run(result)["outputs"])[0]
+    artifacts = cast(list[dict[str, object]], output["artifacts"])
+    assert artifacts[0]["text"] == '"A"'

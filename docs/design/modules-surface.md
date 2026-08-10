@@ -174,34 +174,37 @@ Use these unless lower layers change:
 
 ---
 
-## Cross-layer issues (resolve before polishing UI)
+## Cross-layer issues (resolved for v1)
 
-1. Publish / Withdraw **capability** (who sees the affordances) — conceptual
-   model open question.
-2. **Hard delete** vs Withdraw only — affects whether surface offers Destroy.
-3. **Import lineage** — don’t show “imported from” until decided.
-4. Interaction open: library entry points, older-release insert, upgrade
-   one-click, import landing, Viewer read-only contract.
-5. Auto-catalog of valid tips must be removed or gated in product behaviour —
-   surface copy alone cannot fix silent publish.
+1. **Capabilities:** Publish release = Editor + Owner; Deprecate + Withdraw =
+   Owner only. Surface hides/disables accordingly.
+2. **No hard delete:** Surface offers Deprecate / Withdraw only — never Destroy.
+3. **Import lineage** — don’t show “imported from” until decided (still open).
+4. **Library entry points:** Workbench and workspace graphs overview.
+5. **Older-release insert:** Module contract includes a release picker.
+6. Auto-catalog of valid tips must be removed — surface copy alone cannot fix
+   silent publish.
+
+## Remaining cross-layer / polish
+
+- Upgrade one-click vs always through Module contract
+- Import landing place
+- Viewer read-only Module contract from Add node
+- Rename propagation
 
 ---
 
-## Surface decisions to make now
+## Surface decisions for implementation
 
-1. **Add node naming** — rename dialog from “Node catalog” to **Add node**
-   (recommended) vs keep catalog as umbrella title with Workspace library
-   inside.
+1. **Add node naming** — rename dialog from “Node catalog” to **Add node**.
 2. **Module visual token** — distinct from External badge; include state chip
    (published/deprecated) + release number in one consistent cluster.
 3. **Unavailable tips** — remove from Add node; show as publish readiness on
    source graph only.
-4. **Withdraw confirm pattern** — reuse existing destructive dialog pattern vs
-   inline library confirm.
-5. **Success feedback** — toast vs inline banner for Publish (align with
+4. **Withdraw confirm pattern** — Dialog with pin-safe copy (not hard delete).
+5. **Success feedback** — toast/inline success for Publish (align with
    Workbench global issue/toast patterns).
-6. **Deprecated in Add node** — muted row + confirm on Insert, or hide unless
-   “Show deprecated” is on.
+6. **Deprecated in Add node** — muted row + confirm on Insert.
 
 ### Deferred
 

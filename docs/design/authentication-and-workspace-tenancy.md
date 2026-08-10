@@ -223,6 +223,8 @@ interpretation. The server remains authoritative.
 | Create graphs and copy a graph into the workspace | no | yes | yes |
 | Submit graph commands and create checkpoints | no | yes | yes |
 | Start or cancel graph execution | no | yes | yes |
+| Publish a Module release into the workspace library | no | yes | yes |
+| Deprecate or withdraw a Module from the workspace library | no | no | yes |
 | Configure or remove node secrets | no | no | yes |
 | Delete a graph | no | no | yes |
 | Manage workspace members | no | no | yes |

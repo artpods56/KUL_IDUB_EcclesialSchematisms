@@ -1,11 +1,35 @@
 import type { Metadata } from "next";
+
 import "./globals.css";
 import { Providers } from "@/components/providers";
+import { BRAND_NAME_DISPLAY } from "@/components/brand";
 
 export const metadata: Metadata = {
-  title: "Notarius Workbench",
+  title: `${BRAND_NAME_DISPLAY}`,
   description:
-    "A node-first workbench for testing typed artifact graphs and nested-field projections.",
+    "A graph-native workbench for building and testing typed artifact workflows.",
+  icons: {
+    icon: [
+      {
+        url: "/assets/favicon/favicon-16x16.png",
+        sizes: "16x16",
+        type: "image/png",
+      },
+      {
+        url: "/assets/favicon/favicon-32x32.png",
+        sizes: "32x32",
+        type: "image/png",
+      },
+    ],
+    apple: [
+      {
+        url: "/assets/favicon/apple-touch-icon.png",
+        sizes: "180x180",
+        type: "image/png",
+      },
+    ],
+  },
+  manifest: "/assets/favicon/site.webmanifest",
 };
 
 const themeScript = `

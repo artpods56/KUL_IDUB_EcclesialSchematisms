@@ -263,7 +263,7 @@ callable.
 | --- | --- |
 | History | Module releases are immutable; callers keep pins |
 | Relationship temporality | “Current library release” means the release offered for new inserts *now*; existing calls do not move |
-| Deletion | Withdrawing hides from the library; deleting the source graph / Module entirely is an engineering+policy question — see open questions |
+| Deletion | No hard delete in v1: Withdraw (and Deprecate) only. Existing Module calls keep resolving pinned releases; do not destroy releases out from under pins |
 | Cross-workspace | **Import** copies a release into the destination workspace as a new source graph + Module; no live cross-workspace Module reference |
 | Read model lag | UX requirement: after Publish/Withdraw, the active workspace library reflects the change before the user inserts again — how fresh is an open engineering question |
 
@@ -307,20 +307,33 @@ copy-graph-into-workspace). It must not mean “publish module.”
 **Edit** on a Module is rejected as a CTA — users **Open source graph**, edit
 the Saved graph, then **Publish release**.
 
-## Open questions
+## Resolved decisions (binding)
 
-1. **Hard delete:** Can an Owner destroy a Module and its releases, or only
-   Withdraw? What happens to Module calls that still pin destroyed releases?
-2. **Rename propagation:** When the source graph is renamed, does the Module
+1. **No hard delete (v1):** Retirement is **Deprecate** and **Withdraw from
+   library**. Owners do not destroy Modules or releases out from under pins.
+   Deprecated/withdrawn Modules’ existing Module calls remain executable as long
+   as the underlying node/operator code can execute the pinned release.
+2. **Who may Publish / Deprecate / Withdraw:**
+   - **Publish release** — Editor + Owner (`publish_module`)
+   - **Deprecate** and **Withdraw** — Owner only (`manage_module_library`);
+     soft stewardship matches Owner-only withdraw, not Editor
+3. **Insert release choice:** Composers may pick an older Module release at
+   insert time (not only the current library release). Upgrade still repins to a
+   chosen release (typically a newer one).
+4. **Library entry points:** Workbench **and** workspace graphs overview.
+5. **v1 scope:** Full breadboard (C) — Publish + Add node library listing +
+   Workspace library manage (deprecate/withdraw) + Import into workspace. No
+   instance-public modules.
+
+## Remaining open questions
+
+1. **Rename propagation:** When the source graph is renamed, does the Module
    name follow, stay independent, or prompt on next publish?
-3. **Who may Publish / Withdraw:** Owner-only, or any Editor? (Capability
-   mapping — engineering+product.)
-4. **Imported Module lineage:** Does the destination Module record that it was
+2. **Imported Module lineage:** Does the destination Module record that it was
    imported from another workspace’s release, or is lineage discarded like
-   graph copy today?
-5. **Nested optional-input rules** and execution semantics stay as today’s
+   graph copy today? (v1 UI does not promise lineage.)
+3. **Nested optional-input rules** and execution semantics stay as today’s
    runtime contracts; this model does not reopen them.
-6. **Browse/insert places** — see [modules-interaction-flow.md](modules-interaction-flow.md).
 
 ## Next step
 

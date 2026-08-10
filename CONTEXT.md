@@ -264,7 +264,18 @@ with `external` origin. A plugin does not declare its own origin. Plugins depend
 inward on core contracts and ports, never on the API host or concrete storage
 adapters.
 
-### Node catalog
+### Module (workspace library)
+
+A reusable workflow building block hosted by a workspace library. A Saved graph
+with Module Input/Output boundaries is only a candidate until someone
+**publishes a release**. Call sites pin an immutable Module release
+(`graph.module.{source_graph_id}@{revision}`). Publication states are
+published, deprecated, and withdrawn. Withdraw hides a Module from Add node /
+library browse; existing pins keep resolving. There is no hard delete of
+releases in v1. Cross-workspace reuse is **Import into workspace** (copy-by-value).
+Publish release requires Editor or Owner; Deprecate and Withdraw require Owner.
+
+### Node catalog / Add node
 
 The host's built-in catalog contains only broadly reusable operation families:
 Image, Sequence, Arithmetic, Text, Schema, Prompt, and Table. A built-in artifact type

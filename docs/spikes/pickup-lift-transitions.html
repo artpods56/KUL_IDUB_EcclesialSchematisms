@@ -1,0 +1,292 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Pickup lift transition spike — Notarius workbench</title>
+<style>
+  /* Spike for choosing how the node pickup (lift + ground shadow) transitions.
+     Three tiers: inactive (flat) → active/click (−2px lift) → dragged (−8px lift).
+     Interact: click a card = active, keep the button held (~150ms) or press & move =
+     dragged, release = back to active, click outside the card = inactive.
+     The black line is a simulated React Flow edge connected on the right; it re-measures
+     the handle exactly when the real implementation would call updateNodeInternals, so you
+     can SEE the edge-follow lag each approach trades for motion.
+     Toggle slow-mo to judge timing. ?auto=active taps to active, ?auto=hold hold-lifts,
+     ?auto=drag auto-drags. */
+  :root {
+    --ts: 1;
+    --ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --colorBg: #FFFFFF; --colorChrome: #FFFFFF; --colorBorder: #D9D9D9;
+    --colorText: #111111; --colorMuted: #6B6B6B; --bodyBg: #FAFAFA; --bodyBorder: #EFEFEF;
+    --shadowNode: 0 1px 2px rgba(17,17,17,.06), 0 0 0 0 rgba(17,17,17,0), 0 0 0 0 rgba(17,17,17,0);
+    --shadowNodeRaised: 0 1px 2px rgba(17,17,17,.06), 0 6px 16px rgba(17,17,17,.07), 0 14px 32px rgba(17,17,17,0);
+    --shadowNodeSelected: 0 4px 8px rgba(17,17,17,.07), 0 10px 20px rgba(17,17,17,.09), 0 18px 36px rgba(17,17,17,.07);
+    --shadowNodeDragged: 0 12px 24px rgba(17,17,17,.12), 0 28px 52px rgba(17,17,17,.18), 0 60px 110px rgba(17,17,17,.16);
+  }
+  body { margin:0; background:var(--colorBg); color:var(--colorText);
+         font:13px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif; padding:28px 32px 60px; }
+  h1 { font-size:16px; margin:0 0 4px; }
+  .sub { color:var(--colorMuted); margin:0 0 14px; max-width:1020px; }
+  .controls { margin:0 0 20px; display:flex; gap:14px; align-items:center; color:var(--colorMuted); }
+  .grid { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:14px 24px; max-width:1240px; }
+  .demo { border:1px solid var(--bodyBorder); border-radius:10px; padding:12px 14px 6px; background:#FCFCFD; }
+  .demo h2 { font-size:12px; margin:0 0 2px; }
+  .demo .tag { color:var(--colorMuted); font-size:11px; margin:0 0 4px; }
+  .stage { position:relative; height:216px; user-select:none; touch-action:none; }
+  svg.edge { position:absolute; inset:0; width:100%; height:100%; overflow:visible; }
+  .edge line { stroke:#111; stroke-width:2; }
+  .edge circle { fill:#111; }
+  .anchor { position:absolute; right:8px; top:86px; width:8px; height:8px; border-radius:50%; background:var(--colorMuted); }
+  .stack { position:absolute; left:64px; top:44px; display:grid; width:210px; cursor:grab; }
+  .demo.dragging .stack { cursor:grabbing; }
+  .frame { position:relative; padding:6px; }
+  .plate { position:absolute; inset:6px 16px 18px 16px; border-radius:8px; box-shadow:var(--shadowNodeSelected);
+           opacity:0; pointer-events:none; transform:translate3d(0,2px,0) scale(.97); transform-origin:50% 45%; }
+  .demo.dragging .plate { box-shadow:var(--shadowNodeDragged); }
+  .shell { position:relative; border:1px solid var(--colorBorder); border-radius:8px; background:var(--colorChrome);
+           box-shadow:var(--shadowNode); padding:10px 12px 12px;
+           transition:box-shadow calc(.09s*var(--ts)) var(--ease); }
+  .demo.selected .shell, .demo.dragging .shell { box-shadow:var(--shadowNodeRaised); transition-duration:calc(.12s*var(--ts)); }
+  .shell .title { font-weight:500; font-size:12px; }
+  .shell .body { margin-top:8px; height:52px; border-radius:6px; background:var(--bodyBg); border:1px solid var(--bodyBorder); }
+  .handleDot { position:absolute; right:-5px; top:44%; width:10px; height:10px; border-radius:50%; background:#8a5a2b; border:2px solid #fff; }
+  /* A — baseline (shipped): lifts instant; plate fades; edge follows immediately. */
+  .demo-a.selected .stack { transform:translate3d(0,-2px,0); }
+  .demo-a.dragging .stack { transform:translate3d(0,-8px,0); }
+  .demo-a .plate { transition:opacity calc(.07s*var(--ts)) var(--ease), transform calc(.07s*var(--ts)) var(--ease),
+                   box-shadow calc(.11s*var(--ts)) var(--ease); }
+  .demo-a.selected .plate { opacity:.5; transform:translate3d(0,3px,0); transition-duration:calc(.11s*var(--ts)); }
+  .demo-a.dragging .plate { opacity:.9; transform:translate3d(0,9px,0) scale(1.02); transition-duration:calc(.11s*var(--ts)); }
+  /* B — synced ease-out: lift + plate share one 120ms curve; edge waits for transitionend. */
+  .demo-b .stack { transition:transform calc(.09s*var(--ts)) var(--ease); }
+  .demo-b.selected .stack { transform:translate3d(0,-2px,0); transition-duration:calc(.12s*var(--ts)); }
+  .demo-b.dragging .stack { transform:translate3d(0,-8px,0); transition-duration:calc(.12s*var(--ts)); }
+  .demo-b .plate { transition:opacity calc(.07s*var(--ts)) var(--ease), transform calc(.09s*var(--ts)) var(--ease),
+                   box-shadow calc(.12s*var(--ts)) var(--ease); }
+  .demo-b.selected .plate { opacity:.5; transform:translate3d(0,3px,0); transition-duration:calc(.12s*var(--ts)); }
+  .demo-b.dragging .plate { opacity:.9; transform:translate3d(0,9px,0) scale(1.02); transition-duration:calc(.12s*var(--ts)); }
+  /* C — spring overshoot: tactile back-out lift; edge deferred the longest. */
+  .demo-c .stack { transition:transform calc(.12s*var(--ts)) var(--ease); }
+  .demo-c.selected .stack { transform:translate3d(0,-2px,0); transition:transform calc(.2s*var(--ts)) var(--spring); }
+  .demo-c.dragging .stack { transform:translate3d(0,-8px,0); transition:transform calc(.2s*var(--ts)) var(--spring); }
+  .demo-c .plate { transition:opacity calc(.07s*var(--ts)) var(--ease), transform calc(.12s*var(--ts)) var(--ease),
+                   box-shadow calc(.12s*var(--ts)) var(--ease); }
+  .demo-c.selected .plate, .demo-c.dragging .plate { opacity:.9; transform:translate3d(0,9px,0) scale(1.02);
+                      transition:opacity calc(.12s*var(--ts)) var(--ease), transform calc(.2s*var(--ts)) var(--spring),
+                      box-shadow calc(.2s*var(--ts)) var(--ease); }
+  .demo-c.selected .plate { opacity:.5; transform:translate3d(0,3px,0); }
+  /* D — instant lift, shadow bloom: handle-safe; perceived motion comes from the plate. */
+  .demo-d.selected .stack { transform:translate3d(0,-2px,0); }
+  .demo-d.dragging .stack { transform:translate3d(0,-8px,0); }
+  .demo-d .plate { transition:opacity calc(.07s*var(--ts)) var(--ease), transform calc(.09s*var(--ts)) var(--ease),
+                   box-shadow calc(.18s*var(--ts)) var(--ease); }
+  .demo-d.selected .plate { opacity:.5; transform:translate3d(0,3px,0) scale(1);
+                      transition:opacity calc(.07s*var(--ts)) var(--ease), transform calc(.18s*var(--ts)) var(--ease); }
+  .demo-d.dragging .plate { opacity:.9; transform:translate3d(0,9px,0) scale(1.02);
+                      transition:opacity calc(.07s*var(--ts)) var(--ease), transform calc(.18s*var(--ts)) var(--ease); }
+  /* E — WAAPI interruptible: JS drives stack+plate; drag start finishes the animation. */
+  .demo-e .plate { transition:box-shadow calc(.12s*var(--ts)) var(--ease); }
+  table { border-collapse:collapse; margin:26px 0 10px; max-width:1240px; width:100%; font-size:12px; }
+  th, td { border:1px solid var(--bodyBorder); padding:6px 9px; text-align:left; vertical-align:top; }
+  th { background:#FAFAFA; }
+  .notes { max-width:1240px; color:var(--colorMuted); font-size:12px; }
+  .notes b { color:var(--colorText); }
+</style>
+</head>
+<body>
+<h1>Pickup lift transition spike</h1>
+<p class="sub">Click a card to activate it (slight −2px lift); keep the button held (≈150ms) or press &amp; drag to raise it to
+the full −8px pickup; release to settle back to the active lift; click outside a card to deselect. The black line simulates a React Flow edge connected on the right:
+its endpoint re-measures exactly when the real code would call <code>updateNodeInternals</code>, so any edge-follow lag
+each approach trades for motion is visible. Use slow-mo to judge timing.</p>
+<div class="controls"><label><input type="checkbox" id="slowmo" /> slow-mo ×4</label></div>
+<div class="grid">
+  <section class="demo demo-a" data-approach="a">
+    <h2>A · Baseline (shipped)</h2>
+    <p class="tag">click −2px / drag −8px instant · plate 110ms in / 70ms out · edge follows now</p>
+    <div class="stage"><span class="anchor"></span>
+      <svg class="edge"><line x1="14" y1="90" x2="0" y2="0"></line><circle r="3" cx="0" cy="0"></circle></svg>
+      <div class="stack"><div class="frame"><span class="plate"></span>
+        <article class="shell"><div class="title">Text pipe</div><div class="body"></div><span class="handleDot"></span></article>
+      </div></div>
+    </div>
+  </section>
+  <section class="demo demo-b" data-approach="b">
+    <h2>B · Synced ease-out 120ms</h2>
+    <p class="tag">one curve for both lifts (120ms) · edge on transitionend (≤120ms stale)</p>
+    <div class="stage"><span class="anchor"></span>
+      <svg class="edge"><line x1="14" y1="90" x2="0" y2="0"></line><circle r="3" cx="0" cy="0"></circle></svg>
+      <div class="stack"><div class="frame"><span class="plate"></span>
+        <article class="shell"><div class="title">Text pipe</div><div class="body"></div><span class="handleDot"></span></article>
+      </div></div>
+    </div>
+  </section>
+  <section class="demo demo-c" data-approach="c">
+    <h2>C · Spring overshoot 200ms</h2>
+    <p class="tag">back-out lifts (200ms) · edge deferred ≤200ms</p>
+    <div class="stage"><span class="anchor"></span>
+      <svg class="edge"><line x1="14" y1="90" x2="0" y2="0"></line><circle r="3" cx="0" cy="0"></circle></svg>
+      <div class="stack"><div class="frame"><span class="plate"></span>
+        <article class="shell"><div class="title">Text pipe</div><div class="body"></div><span class="handleDot"></span></article>
+      </div></div>
+    </div>
+  </section>
+  <section class="demo demo-d" data-approach="d">
+    <h2>D · Instant lift + shadow bloom</h2>
+    <p class="tag">lifts instant · plate blooms 180ms · edge follows now</p>
+    <div class="stage"><span class="anchor"></span>
+      <svg class="edge"><line x1="14" y1="90" x2="0" y2="0"></line><circle r="3" cx="0" cy="0"></circle></svg>
+      <div class="stack"><div class="frame"><span class="plate"></span>
+        <article class="shell"><div class="title">Text pipe</div><div class="body"></div><span class="handleDot"></span></article>
+      </div></div>
+    </div>
+  </section>
+  <section class="demo demo-e" data-approach="e">
+    <h2>E · WAAPI, drag-interruptible</h2>
+    <p class="tag">element.animate lifts · drag start finishes + re-measures</p>
+    <div class="stage"><span class="anchor"></span>
+      <svg class="edge"><line x1="14" y1="90" x2="0" y2="0"></line><circle r="3" cx="0" cy="0"></circle></svg>
+      <div class="stack"><div class="frame"><span class="plate"></span>
+        <article class="shell"><div class="title">Text pipe</div><div class="body"></div><span class="handleDot"></span></article>
+      </div></div>
+    </div>
+  </section>
+</div>
+<table>
+  <tr><th></th><th>Pickup motion</th><th>Drop motion</th><th>Edge follow</th><th>Cost in the real app</th></tr>
+  <tr><td><b>A</b> baseline</td><td>click snaps −2px, drag −8px; shadow fades</td><td>snap down; fast fade</td><td>immediate (remeasure on pickup)</td><td>shipped today (single −4px tier)</td></tr>
+  <tr><td><b>B</b> synced ease-out</td><td>−2px/−8px glides on one curve (120ms)</td><td>smooth 90ms settle</td><td>≤120ms stale per state change, then snaps</td><td>low: CSS transitions on the lift tiers + <code>updateNodeInternals</code> on <code>transitionend</code>, snap+remeasure if a drag starts mid-flight</td></tr>
+  <tr><td><b>C</b> spring overshoot</td><td>tactile back-out to −2px, then −8px (200ms)</td><td>settle with slight undershoot</td><td>≤200ms stale</td><td>low–med: same as B, longer stale window; overshoot also shifts handles ±1px mid-flight</td></tr>
+  <tr><td><b>D</b> shadow bloom</td><td>lifts instant; plate blooms (scale+fade 180ms)</td><td>snap + fast fade</td><td>immediate</td><td>lowest: pure CSS timing, zero handle risk; motion is implied, not literal</td></tr>
+  <tr><td><b>E</b> WAAPI interruptible</td><td>B's glides via <code>element.animate</code></td><td>reverse animate 90ms</td><td>stale only until drag start / finish</td><td>med: JS animations on stack+plate, <code>finish()</code> + remeasure on first drag frame; cleanest interruption semantics</td></tr>
+</table>
+<p class="notes"><b>Mapping to the app:</b> the animated element is the same <code>shellStack</code>/<code>shellFrame</code> that carries
+<code>shellStackPickedUp</code>/<code>shellFramePickedUp</code> today; "remeasure" = the existing
+<code>updateNodeInternals(id)</code> layout-effect call (move it to <code>transitionend</code>/animation finish for B–E).
+The interrupt guard for B/E is the first <code>position</code> change / <code>onNodeDragStart</code> after selection:
+add a no-transition class, snap to the lifted transform, remeasure now. The two lift tiers (−2px active, −8px dragging)
+become a new active style tier on the same elements, with the plate at reduced opacity while merely active.
+Recommendation: compare B and E in slow-mo; pick D if any edge drift is unacceptable. Respect
+<code>prefers-reduced-motion</code> by collapsing all durations to 0 (the app already gates shadow transitions the same way).</p>
+<p class="notes"><b>Ship note (option C, implemented):</b> the app upgrades the deferred remeasure shown here to a bounded
+rAF loop that remeasures handle bounds every frame while the spring runs (stopped on <code>transitionend</code>, 260ms
+fallback), so connected edges glide with the handles and never jump at settle. Real drags still snap the lift and
+remeasure once, immediately. Same per-frame cost class as dragging the node itself — reads only, no layout writes.</p>
+<script>
+"use strict";
+const scale = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ts")) || 1;
+document.getElementById("slowmo").addEventListener("change", (e) => {
+  document.documentElement.style.setProperty("--ts", e.target.checked ? "4" : "1");
+});
+
+function drawEdge(demo) {
+  const s = demo.querySelector(".stage").getBoundingClientRect();
+  const a = demo.querySelector(".anchor").getBoundingClientRect();
+  const h = demo.querySelector(".handleDot").getBoundingClientRect();
+  const line = demo.querySelector("line"), tip = demo.querySelector("circle");
+  const ax = a.left + a.width / 2 - s.left, ay = a.top + a.height / 2 - s.top;
+  const hx = h.left + h.width / 2 - s.left, hy = h.top + h.height / 2 - s.top;
+  line.setAttribute("x1", ax); line.setAttribute("y1", ay);
+  line.setAttribute("x2", hx); line.setAttribute("y2", hy);
+  tip.setAttribute("cx", hx); tip.setAttribute("cy", hy);
+}
+
+function setup(demo) {
+  const approach = demo.dataset.approach;
+  const stack = demo.querySelector(".stack");
+  const plate = demo.querySelector(".plate");
+  const EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
+  const LIFT = { rest: 0, selected: -2, dragging: -8 };
+  const PLATE_O = { rest: 0, selected: 0.5, dragging: 0.9 };
+  const PLATE_T = { rest: "translate3d(0,2px,0) scale(.97)", selected: "translate3d(0,3px,0)",
+                    dragging: "translate3d(0,9px,0) scale(1.02)" };
+  const SHOW = { b: 120, c: 200, e: 120 }, HIDE = { b: 90, c: 120, e: 90 };
+  const HOLD_MS = 150; // holding the press this long (without moving) lifts to the dragged tier
+  let state = "rest", deferT = 0, anims = null, holdT = 0;
+  let down = false, moved = false, sx = 0, sy = 0;
+
+  const remeasure = () => drawEdge(demo);
+  const stopAnims = () => { if (anims) { anims.forEach((a) => a.cancel()); anims = null; } };
+  const cur = (el) => { const t = getComputedStyle(el).transform; return t === "none" ? "translate3d(0,0,0)" : t; };
+
+  function waapiTo(next, dur) {
+    stopAnims();
+    const a1 = stack.animate([{ transform: cur(stack) }, { transform: `translate3d(0,${LIFT[next]}px,0)` }],
+      { duration: dur, easing: EASE, fill: "forwards" });
+    const a2 = plate.animate([{ opacity: getComputedStyle(plate).opacity, transform: cur(plate) },
+      { opacity: PLATE_O[next], transform: PLATE_T[next] }], { duration: dur, easing: EASE, fill: "forwards" });
+    anims = [a1, a2];
+    a1.onfinish = () => { anims = null; remeasure(); };
+  }
+
+  function setState(next) {
+    if (next === state) return;
+    clearTimeout(deferT);
+    state = next;
+    demo.classList.toggle("selected", next !== "rest");
+    demo.classList.toggle("dragging", next === "dragging");
+    if (approach === "e") {
+      if (anims && next === "dragging") {
+        anims.forEach((a) => a.finish());
+        waapiTo(next, 0);
+        remeasure();
+      } else {
+        waapiTo(next, (next === "rest" ? HIDE.e : SHOW.e) * scale());
+      }
+    } else if (approach === "a" || approach === "d") {
+      requestAnimationFrame(remeasure);
+    } else {
+      deferT = setTimeout(remeasure, (next === "rest" ? HIDE[approach] : SHOW[approach]) * scale());
+    }
+  }
+
+  stack.addEventListener("pointerdown", (e) => {
+    down = true; moved = false; sx = e.clientX; sy = e.clientY;
+    try { stack.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
+    if (state === "rest") { setState("selected"); }
+    clearTimeout(holdT);
+    holdT = setTimeout(() => { if (down && !moved) { setState("dragging"); } }, HOLD_MS * scale());
+  });
+  stack.addEventListener("pointermove", (e) => {
+    if (!down) return;
+    const mx = e.clientX - sx, my = e.clientY - sy;
+    if (!moved && Math.hypot(mx, my) > 3) { moved = true; clearTimeout(holdT); setState("dragging"); }
+    if (moved) { stack.style.translate = `${mx}px ${my}px`; remeasure(); }
+  });
+  const release = () => {
+    if (!down) return;
+    down = false;
+    clearTimeout(holdT);
+    stack.style.translate = "";
+    if (state === "dragging") { setState("selected"); }
+  };
+  stack.addEventListener("pointerup", release);
+  stack.addEventListener("pointercancel", release);
+  demo.querySelector(".stage").addEventListener("pointerdown", (e) => {
+    if (!stack.contains(e.target)) { setState("rest"); }
+  });
+
+  remeasure();
+}
+document.querySelectorAll(".demo").forEach(setup);
+window.addEventListener("resize", () => document.querySelectorAll(".demo").forEach(drawEdge));
+
+if (new URLSearchParams(location.search).has("auto")) {
+  const mode = new URLSearchParams(location.search).get("auto");
+  setTimeout(() => {
+    document.querySelectorAll(".demo").forEach((d) => {
+      const st = d.querySelector(".stack");
+      const r = st.getBoundingClientRect();
+      const pd = () => st.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: r.left + 10, clientY: r.top + 10 }));
+      const pu = () => st.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+      const pm = () => st.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: r.left + 60, clientY: r.top + 10 }));
+      if (mode === "active") { pd(); setTimeout(pu, 80); }      // quick tap: settles at the active tier
+      else if (mode === "drag") { pd(); pm(); }                 // press + move: dragged tier, translated
+      else { pd(); }                                            // hold in place: dragged tier via hold timer
+    });
+  }, 150);
+}
+</script>
+</body>
+</html>

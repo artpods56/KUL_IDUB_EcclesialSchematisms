@@ -44,6 +44,12 @@ def test_openapi_contains_exact_public_routes() -> None:
         "/v1/workspaces/{workspace_id}/graphs/{graph_id}/materializations",
         "/v1/workspaces/{workspace_id}/graphs/{graph_id}/node-secrets",
         "/v1/workspaces/{workspace_id}/graphs/{graph_id}/nodes/{node_id}/secrets/{name}",
+        "/v1/workspaces/{workspace_id}/modules",
+        "/v1/workspaces/{workspace_id}/modules/import",
+        "/v1/workspaces/{workspace_id}/modules/publish",
+        "/v1/workspaces/{workspace_id}/modules/{module_id}",
+        "/v1/workspaces/{workspace_id}/modules/{module_id}/deprecate",
+        "/v1/workspaces/{workspace_id}/modules/{module_id}/withdraw",
         "/v1/workspaces/{workspace_id}/nodes",
         "/v1/workspaces/{workspace_id}/runs",
         "/v1/workspaces/{workspace_id}/samples",
@@ -108,12 +114,14 @@ def test_openapi_contains_exact_public_routes() -> None:
         "checkpoint_graph",
         "execute_graph",
         "cancel_execution",
+        "publish_module",
     }
     assert pat_request_schema["properties"]["scopes"]["items"] == {
         "$ref": "#/components/schemas/PersonalAccessTokenScope"
     }
     assert "manage_members" not in pat_scope_schema["enum"]
     assert "manage_secrets" not in pat_scope_schema["enum"]
+    assert "manage_module_library" not in pat_scope_schema["enum"]
     assert "rename_workspace" not in pat_scope_schema["enum"]
 
     assert "GeoPageResponse" not in schema["components"]["schemas"]

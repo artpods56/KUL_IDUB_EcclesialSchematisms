@@ -92,16 +92,17 @@ Add node
 - open Workspace library → Workspace library
 - cancel / dismiss → Workbench canvas
 [ search field; groups: Built-in, External, Workspace library modules;
-  module rows show name, release number, published|deprecated;
+  module rows show name, current release number, published|deprecated;
   empty: "No published modules in this workspace" + affordance
   "Open workspace library"; loading; error retry ]
 
 Module contract (insert)
+- pick release (current library release default; older releases allowed)
 - insert module call → Workbench canvas (new Module call selected)
 - open source graph → Source graph workbench
 - back → Add node
 - cancel → Workbench canvas
-[ module name, description, state; release number (current library release);
+[ module name, description, state; release picker across published releases;
   module ports in/out with types and requiredness; deprecated warning if any;
   disabled Insert when module is source of active graph (self-call) ]
 
@@ -145,7 +146,7 @@ graph LR
 | Deprecated | Visible with badge; Insert allowed after explicit confirm on Module contract |
 | Withdrawn | Not listed in Add node or library; existing calls remain on canvas |
 | Insert failure | Stay on Module contract; error + retry; no partial node |
-| Post-insert | Return to canvas with new Module call selected; pin = current library release at confirm time |
+| Post-insert | Return to canvas with new Module call selected; pin = chosen Module release at confirm time (defaults to current library release) |
 | Newer release exists | Module call shows upgrade affordance → Module contract (upgrade) |
 | Upgrade cancel | Stay on Module call; pin unchanged |
 | Concurrent withdraw during inspect | Insert fails with “no longer in library”; return to Add node refreshed |
@@ -201,7 +202,7 @@ graph LR
 | First publish | Creates Module; requires name (default from graph name); enters Published |
 | Later publish | New Module release; becomes current library release; old releases remain for pins |
 | Concurrent edit / revision mismatch | Failure on Publish release; stay with refresh tip + retry |
-| Permission denied | Affordance hidden or error on confirm (capability open question) |
+| Permission denied | Affordance hidden or error on confirm; Publish requires Editor/Owner; Deprecate/Withdraw require Owner |
 | Post-publish | Toast/inline success on source graph; library and Add node reflect new release before next insert (freshness requirement from conceptual model) |
 
 ---
@@ -292,28 +293,33 @@ graph LR
 - **Simpler alternative rejected:** Publishing automatically on every valid tip
   checkpoint — rejected by conceptual model (silent library pollution).
 
-## Open decisions
+## Resolved decisions (binding)
 
-1. **Workspace library entry points** — from Workbench only, also from
-   workspace graphs overview, or both?
-2. **Release picker on insert** — always current library release, or allow
-   picking an older release at insert time?
-3. **Upgrade UX** — one-click to current library release vs always through
+1. **Workspace library entry points** — both Workbench and workspace graphs
+   overview.
+2. **Release picker on insert** — allow picking an older Module release at
+   insert time (not only the current library release).
+3. **Capabilities:** Publish release = Editor + Owner; Deprecate + Withdraw =
+   Owner only.
+4. **No hard delete:** Withdraw/Deprecate only; pins keep resolving.
+5. **v1 scope:** Full breadboard (C) — Publish, Add node library listing,
+   Workspace library manage, Import into workspace.
+
+## Remaining open decisions
+
+1. **Upgrade UX** — one-click to current library release vs always through
    Module contract?
-4. **Import landing** — destination library vs new source graph workbench?
-5. **Empty library education** — link to a specific graph, graphs list, or
+2. **Import landing** — destination library vs new source graph workbench?
+3. **Empty library education** — link to a specific graph, graphs list, or
    short inline steps only?
-6. **Viewer role** — can Viewers open Module contract read-only from Add node
+4. **Viewer role** — can Viewers open Module contract read-only from Add node
    without Insert?
-7. Unresolved conceptual-model items (hard delete, rename, publish capability,
-   import lineage) still constrain copy and affordance visibility.
+5. Rename propagation and import lineage remain open in the conceptual model.
 
 ## Risks
 
 - Conceptual model is a **hypothesis** without research; browse places may be
   wrong if “library” is not how users think.
-- Who may Publish/Withdraw is unsettled — breadboards assume an Editor-or-Owner
-  can see stewardship affordances; may need Owner-only variants.
 - Collaboration freshness after Publish (multiplayer Add node open during
   publish) needs an engineering rule so Insert does not offer a stale release.
 - Surface work must not collapse Module back into “another plugin row” without
