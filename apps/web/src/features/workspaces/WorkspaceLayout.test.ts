@@ -2,18 +2,27 @@ import { describe, expect, it } from "vitest";
 
 import type { Workspace } from "@/lib/api";
 import {
+  isPersonalWorkspace,
+  isSharedWithMe,
+  sessionDisplayName,
+  sessionInitials,
   workspaceCanManageMembers,
+  workspaceDisplayName,
   workspaceRouteAccessState,
-  workspaceRouteShowsRail,
+  workspaceRouteGraphId,
 } from "./WorkspaceLayout";
 
-const workspace = (capabilities: readonly Workspace["capabilities"][number][]): Workspace => ({
+const workspace = (
+  capabilities: readonly Workspace["capabilities"][number][],
+  overrides: Partial<Workspace> = {},
+): Workspace => ({
   id: "workspace-1",
   name: "Operations",
   slug: "operations",
   kind: "shared",
   role: "owner",
   capabilities,
+  ...overrides,
 });
 
 describe("workspace route and capability state", () => {
@@ -28,14 +37,59 @@ describe("workspace route and capability state", () => {
     expect(workspaceCanManageMembers(workspace([]))).toBe(false);
   });
 
-  it("hides the workspace rail on graph workbench routes", () => {
-    expect(workspaceRouteShowsRail("/workspaces")).toBe(true);
-    expect(workspaceRouteShowsRail("/workspaces/local")).toBe(true);
-    expect(workspaceRouteShowsRail("/workspaces/local/graphs/new")).toBe(false);
+  it("resolves the open graph so the rail can highlight it", () => {
+    expect(workspaceRouteGraphId("/workspaces/local")).toBeNull();
+    expect(workspaceRouteGraphId("/workspaces/local/graphs/new")).toBeNull();
     expect(
-      workspaceRouteShowsRail(
+      workspaceRouteGraphId(
         "/workspaces/local/graphs/00000000-0000-0000-0000-000000000001",
       ),
-    ).toBe(false);
+    ).toBe("00000000-0000-0000-0000-000000000001");
+    expect(
+      workspaceRouteGraphId(
+        "/workspaces/local/graphs/00000000-0000-0000-0000-000000000001/runs",
+      ),
+    ).toBe("00000000-0000-0000-0000-000000000001");
+  });
+
+  it("classifies personal and shared-with-me workspaces for the directory", () => {
+    expect(isPersonalWorkspace(workspace([], { kind: "personal", role: "owner" }))).toBe(true);
+    expect(isSharedWithMe(workspace([], { kind: "shared", role: "editor" }))).toBe(true);
+    expect(isSharedWithMe(workspace([], { kind: "shared", role: "owner" }))).toBe(false);
+  });
+
+  it("labels personal workspaces as Personal in the UI", () => {
+    expect(
+      workspaceDisplayName(
+        workspace([], { kind: "personal", name: "Personal workspace" }),
+      ),
+    ).toBe("Personal");
+    expect(workspaceDisplayName(workspace([], { name: "Operations" }))).toBe(
+      "Operations",
+    );
+  });
+
+  it("derives account label and initials from the session profile", () => {
+    expect(
+      sessionDisplayName({
+        display_name: "Ada Lovelace",
+        email: "ada@example.test",
+        user_id: "user-1",
+      }),
+    ).toBe("Ada Lovelace");
+    expect(
+      sessionInitials({
+        display_name: "Ada Lovelace",
+        email: "ada@example.test",
+        user_id: "user-1",
+      }),
+    ).toBe("AL");
+    expect(
+      sessionInitials({
+        display_name: null,
+        email: "ada@example.test",
+        user_id: "user-1",
+      }),
+    ).toBe("AD");
   });
 });

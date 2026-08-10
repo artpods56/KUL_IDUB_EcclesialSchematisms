@@ -3,9 +3,11 @@ import * as stylex from "@stylexjs/stylex";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 
 export const workbenchStyles = stylex.create({
+  /* Sits beside the docked workspace rail; floating chrome anchors to this box. */
   shell: {
     position: "relative",
-    width: "100%",
+    marginInlineStart: "var(--ns-rail-width, 0px)",
+    width: "calc(100% - var(--ns-rail-width, 0px))",
     height: "100svh",
     overflow: "hidden",
     backgroundColor: tokens.colorBg,
@@ -35,41 +37,35 @@ export const workbenchStyles = stylex.create({
     color: { default: tokens.colorOnAccent, ":disabled": tokens.colorTextDisabled },
     fontWeight: 700,
   },
-  actionRail: {
+  /* Canvas tools dock over the canvas; the left edge belongs to app navigation. */
+  toolDock: {
     position: "absolute",
     zIndex: 20,
-    top: "70px",
-    left: "13px",
-    width: {
-      default: "118px",
-      "@media (max-width: 640px)": "44px",
-    },
-    display: "grid",
-    gap: "3px",
+    bottom: "18px",
+    left: "50%",
+    display: "flex",
+    alignItems: "center",
+    gap: "2px",
     padding: "6px",
     borderWidth: 1,
     borderStyle: "solid",
     borderColor: tokens.colorBorder,
-    borderRadius: "14px",
+    borderRadius: "12px",
     backgroundColor: tokens.colorChrome,
     boxShadow: tokens.shadowNode,
+    transform: "translateX(-50%)",
   },
   railButton: {
-    width: "100%",
+    position: "relative",
+    flexShrink: 0,
+    width: "34px",
     height: "34px",
     display: "flex",
     alignItems: "center",
-    justifyContent: {
-      default: "flex-start",
-      "@media (max-width: 640px)": "center",
-    },
-    gap: "8px",
-    paddingInline: {
-      default: "9px",
-      "@media (max-width: 640px)": 0,
-    },
+    justifyContent: "center",
+    paddingInline: 0,
     borderWidth: 0,
-    borderRadius: "9px",
+    borderRadius: "6px",
     backgroundColor: {
       default: "transparent",
       ":hover": tokens.colorHover,
@@ -81,11 +77,17 @@ export const workbenchStyles = stylex.create({
       ":disabled": tokens.colorTextDisabled,
     },
     cursor: { default: "pointer", ":disabled": "not-allowed" },
+    transitionDuration: "120ms",
+    transitionProperty: "background-color, color",
+  },
+  railMenuButton: {
+    width: "100%",
+    justifyContent: "flex-start",
+    gap: "8px",
+    paddingInline: "9px",
     fontSize: tokens.fontSizeSm,
     fontWeight: 650,
     textAlign: "left",
-    transitionDuration: "120ms",
-    transitionProperty: "background-color, color",
   },
   railPrimary: {
     backgroundColor: {
@@ -106,24 +108,40 @@ export const workbenchStyles = stylex.create({
       ":disabled": tokens.colorTextDisabled,
     },
   },
+  /* Kept in the DOM so each icon button still has an accessible name. */
   railLabel: {
-    display: {
-      default: "inline",
-      "@media (max-width: 640px)": "none",
-    },
+    position: "absolute",
+    width: "1px",
+    height: "1px",
+    margin: "-1px",
+    padding: 0,
+    overflow: "hidden",
+    clipPath: "inset(50%)",
+    whiteSpace: "nowrap",
+  },
+  railMenuLabel: {
+    position: "static",
+    width: "auto",
+    height: "auto",
+    margin: 0,
+    overflow: "visible",
+    clipPath: "none",
   },
   railDivider: {
-    height: "1px",
-    marginBlock: "3px",
+    width: "1px",
+    height: "20px",
+    flexShrink: 0,
+    marginInline: "4px",
     backgroundColor: tokens.colorDivider,
   },
   shapesMenuWrap: {
     position: "relative",
+    display: "flex",
   },
   shapesMenu: {
     position: "absolute",
-    left: "calc(100% + 8px)",
-    top: 0,
+    left: 0,
+    bottom: "calc(100% + 8px)",
     display: "grid",
     gap: "3px",
     minWidth: "132px",

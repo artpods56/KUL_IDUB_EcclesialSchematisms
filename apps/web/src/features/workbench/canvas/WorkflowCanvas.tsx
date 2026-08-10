@@ -79,6 +79,8 @@ export interface WorkflowCanvasProps {
   ) => void;
   onPaneClick?: () => void;
   animateEdges?: boolean;
+  /** Unmount nodes and edges outside the viewport. */
+  onlyRenderVisibleElements?: boolean;
   /** Background lattice gap in flow units; omit to hide the painted grid. */
   gridGap?: number | null;
 }
@@ -95,6 +97,7 @@ export function WorkflowCanvas({
   onPaneReady,
   onPaneClick,
   animateEdges = false,
+  onlyRenderVisibleElements = false,
   gridGap = 54,
 }: WorkflowCanvasProps) {
   const { resolved } = useTheme();
@@ -134,6 +137,7 @@ export function WorkflowCanvas({
         selectionOnDrag
         multiSelectionKeyCode="Shift"
         zoomOnDoubleClick={false}
+        onlyRenderVisibleElements={onlyRenderVisibleElements}
         proOptions={{ hideAttribution: true }}
         defaultEdgeOptions={{
           animated: false,

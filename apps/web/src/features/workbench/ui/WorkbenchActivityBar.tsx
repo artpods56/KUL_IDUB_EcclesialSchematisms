@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 
+import { BrandLoader } from "@/components/brand";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 
 export type WorkbenchActivityTone =
@@ -40,7 +41,7 @@ const s = stylex.create({
   bar: {
     position: "absolute",
     zIndex: 30,
-    bottom: "18px",
+    bottom: "78px",
     left: "50%",
     width: "min(460px, calc(100vw - 32px))",
     minHeight: "52px",
@@ -68,6 +69,10 @@ const s = stylex.create({
     borderRadius: "9px",
     backgroundColor: tokens.colorAccentSoft,
     color: tokens.colorAccent,
+  },
+  indicatorBrand: {
+    backgroundColor: "transparent",
+    color: tokens.colorText,
   },
   indicatorSuccess: {
     backgroundColor: "light-dark(rgba(42, 157, 124, 0.12), rgba(67, 197, 158, 0.15))",
@@ -175,7 +180,7 @@ function ActivityIcon({ tone }: { tone: WorkbenchActivityTone }) {
   if (tone === "success") return <CircleCheck size={15} />;
   if (tone === "warning") return <TriangleAlert size={15} />;
   if (tone === "error") return <CircleAlert size={15} />;
-  return <LoaderCircle size={15} {...stylex.props(s.spinner)} />;
+  return <BrandLoader size={28} decorative />;
 }
 
 function ActionIcon({ kind }: { kind: WorkbenchActivityAction["kind"] }) {
@@ -190,6 +195,8 @@ export function WorkbenchActivityBar({
   activity: WorkbenchActivity;
 }) {
   const { action } = activity;
+  const brandIndicator =
+    activity.tone === "working" || activity.tone === "cancelling";
   return (
     <aside
       aria-label={`${activity.eyebrow}: ${activity.title}`}
@@ -199,11 +206,9 @@ export function WorkbenchActivityBar({
         aria-hidden="true"
         {...stylex.props(
           s.indicator,
+          brandIndicator ? s.indicatorBrand : null,
           activity.tone === "success" ? s.indicatorSuccess : null,
-          activity.tone === "warning" ||
-              activity.tone === "cancelling"
-            ? s.indicatorWarning
-            : null,
+          activity.tone === "warning" ? s.indicatorWarning : null,
           activity.tone === "error" ? s.indicatorError : null,
         )}
       >

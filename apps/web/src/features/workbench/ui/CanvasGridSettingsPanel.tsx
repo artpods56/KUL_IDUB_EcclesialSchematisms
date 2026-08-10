@@ -266,20 +266,20 @@ export function CanvasGridSettingsPanel({
 
   return (
     <aside
-      aria-label="Canvas grid lab"
+      aria-label="Canvas lab"
       {...stylex.props(s.panel)}
     >
       <header {...stylex.props(s.header)}>
         <Grid3x3 size={16} {...stylex.props(s.icon)} />
         <div {...stylex.props(s.titleBlock)}>
-          <h2 {...stylex.props(s.title)}>Grid lab</h2>
+          <h2 {...stylex.props(s.title)}>Canvas lab</h2>
           <p {...stylex.props(s.subtitle)}>
-            Experimental snap settings — stored in this browser only.
+            Experimental canvas settings — stored in this browser only.
           </p>
         </div>
         <button
           type="button"
-          aria-label="Reset grid settings"
+          aria-label="Reset canvas settings"
           title="Reset to defaults"
           {...stylex.props(s.iconButton)}
           onClick={resetSettings}
@@ -288,13 +288,27 @@ export function CanvasGridSettingsPanel({
         </button>
         <button
           type="button"
-          aria-label="Close grid lab"
+          aria-label="Close canvas lab"
           {...stylex.props(s.iconButton)}
           onClick={() => setPanelOpen(false)}
         >
           <X size={14} />
         </button>
       </header>
+
+      <div {...stylex.props(s.section)}>
+        <Toggle
+          label="Render visible elements only"
+          checked={settings.onlyRenderVisibleElements}
+          onChange={(onlyRenderVisibleElements) =>
+            patchSettings({ onlyRenderVisibleElements })
+          }
+        />
+        <p {...stylex.props(s.hint)}>
+          Reduces work on large canvases by unmounting offscreen nodes and
+          edges. Temporary table and map view state can reset when you pan away.
+        </p>
+      </div>
 
       <div {...stylex.props(s.section)}>
         <Toggle

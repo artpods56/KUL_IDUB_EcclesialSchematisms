@@ -10,11 +10,13 @@ import { cx } from "@/lib/utils";
 const s = stylex.create({
   overlay: {
     position: "fixed",
+    zIndex: 100,
     inset: 0,
     backgroundColor: "light-dark(rgba(15, 18, 25, 0.35), rgba(2, 6, 20, 0.62))",
   },
   content: {
     position: "fixed",
+    zIndex: 100,
     left: "50%",
     top: "50%",
     transform: "translate(-50%, -50%)",
