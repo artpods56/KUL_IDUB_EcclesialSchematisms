@@ -49,8 +49,11 @@ def test_role_policy_is_explicit_and_owner_is_the_union_of_capabilities() -> Non
     assert viewer.grants(WorkspaceCapability.VIEW_GRAPH)
     assert not viewer.grants(WorkspaceCapability.EDIT_GRAPH)
     assert editor.grants(WorkspaceCapability.CHECKPOINT_GRAPH)
+    assert editor.grants(WorkspaceCapability.PUBLISH_MODULE)
+    assert not editor.grants(WorkspaceCapability.MANAGE_MODULE_LIBRARY)
     assert not editor.grants(WorkspaceCapability.MANAGE_SECRETS)
     assert owner.capabilities == frozenset(WorkspaceCapability)
+    assert owner.grants(WorkspaceCapability.MANAGE_MODULE_LIBRARY)
 
     with pytest.raises(CapabilityDeniedError) as denied:
         WorkspaceAccess(
@@ -171,6 +174,8 @@ def test_security_audit_requires_explicit_safe_attribution() -> None:
 def test_personal_access_tokens_exclude_administration_capabilities() -> None:
     assert WorkspaceCapability.MANAGE_MEMBERS not in PAT_ALLOWED_CAPABILITIES
     assert WorkspaceCapability.MANAGE_SECRETS not in PAT_ALLOWED_CAPABILITIES
+    assert WorkspaceCapability.MANAGE_MODULE_LIBRARY not in PAT_ALLOWED_CAPABILITIES
+    assert WorkspaceCapability.PUBLISH_MODULE in PAT_ALLOWED_CAPABILITIES
     with pytest.raises(ValueError, match="scope is not available"):
         PersonalAccessToken(
             user_id=UUID(int=1),

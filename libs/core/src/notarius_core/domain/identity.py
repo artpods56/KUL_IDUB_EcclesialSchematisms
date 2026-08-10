@@ -40,6 +40,8 @@ class WorkspaceCapability(StrEnum):
     CHECKPOINT_GRAPH = "checkpoint_graph"
     EXECUTE_GRAPH = "execute_graph"
     CANCEL_EXECUTION = "cancel_execution"
+    PUBLISH_MODULE = "publish_module"
+    MANAGE_MODULE_LIBRARY = "manage_module_library"
     MANAGE_SECRETS = "manage_secrets"
     DELETE_GRAPH = "delete_graph"
     MANAGE_MEMBERS = "manage_members"
@@ -73,6 +75,7 @@ _ROLE_CAPABILITIES: dict[WorkspaceRole, frozenset[WorkspaceCapability]] = {
             WorkspaceCapability.CHECKPOINT_GRAPH,
             WorkspaceCapability.EXECUTE_GRAPH,
             WorkspaceCapability.CANCEL_EXECUTION,
+            WorkspaceCapability.PUBLISH_MODULE,
         }
     ),
     WorkspaceRole.OWNER: frozenset(WorkspaceCapability),
@@ -89,6 +92,7 @@ PAT_ALLOWED_CAPABILITIES = frozenset(
         WorkspaceCapability.CHECKPOINT_GRAPH,
         WorkspaceCapability.EXECUTE_GRAPH,
         WorkspaceCapability.CANCEL_EXECUTION,
+        WorkspaceCapability.PUBLISH_MODULE,
     }
 )
 
@@ -214,7 +218,7 @@ class Workspace:
         _require_aware(self.updated_at, "Workspace update timestamp")
 
     @classmethod
-    def personal(cls, *, owner_user_id: UUID, name: str = "Personal workspace") -> "Workspace":
+    def personal(cls, *, owner_user_id: UUID, name: str = "Personal") -> "Workspace":
         return cls(
             slug=personal_workspace_slug(owner_user_id),
             name=name,
