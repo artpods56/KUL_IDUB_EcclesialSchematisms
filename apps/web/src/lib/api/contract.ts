@@ -134,6 +134,13 @@ export type NodeRegistry =
   paths["/v1/workspaces/{workspace_id}/nodes"]["get"]["responses"][200]["content"]["application/json"];
 export type UnavailableGraphModule =
   Schemas["UnavailableGraphModuleResponse"];
+export type ModulePublicationState = Schemas["ModulePublicationState"];
+export type ModuleLibraryEntry = Schemas["ModuleResponse"];
+export type ModuleRelease = Schemas["ModuleReleaseResponse"];
+export type ModuleList = Schemas["ModuleListResponse"];
+export type PublishModuleReleaseRequest = Schemas["PublishModuleReleaseRequest"];
+export type ImportModuleReleaseRequest = Schemas["ImportModuleReleaseRequest"];
+export type ImportModuleReleaseResponse = Schemas["ImportModuleReleaseResponse"];
 export type UploadResponse =
   paths["/v1/workspaces/{workspace_id}/uploads"]["post"]["responses"][200]["content"]["application/json"];
 export type RunScopeInput = Schemas["GraphExecutionScope"];

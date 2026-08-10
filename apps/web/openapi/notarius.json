@@ -2597,6 +2597,254 @@
         "title": "ImageUploadItemResponse",
         "type": "object"
       },
+      "ImportModuleReleaseRequest": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "source_module_id": {
+            "format": "uuid",
+            "title": "Source Module Id",
+            "type": "string"
+          },
+          "source_workspace_id": {
+            "format": "uuid",
+            "title": "Source Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_workspace_id",
+          "source_module_id"
+        ],
+        "title": "ImportModuleReleaseRequest",
+        "type": "object"
+      },
+      "ImportModuleReleaseResponse": {
+        "properties": {
+          "graph_id": {
+            "format": "uuid",
+            "title": "Graph Id",
+            "type": "string"
+          },
+          "module": {
+            "$ref": "#/components/schemas/ModuleResponse"
+          }
+        },
+        "required": [
+          "graph_id",
+          "module"
+        ],
+        "title": "ImportModuleReleaseResponse",
+        "type": "object"
+      },
+      "ModuleListResponse": {
+        "properties": {
+          "modules": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleResponse"
+            },
+            "title": "Modules",
+            "type": "array"
+          }
+        },
+        "required": [
+          "modules"
+        ],
+        "title": "ModuleListResponse",
+        "type": "object"
+      },
+      "ModulePortResponse": {
+        "properties": {
+          "artifact_type": {
+            "$ref": "#/components/schemas/ArtifactTypeKeyResponse"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "direction": {
+            "title": "Direction",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "direction",
+          "artifact_type",
+          "required"
+        ],
+        "title": "ModulePortResponse",
+        "type": "object"
+      },
+      "ModulePublicationState": {
+        "enum": [
+          "published",
+          "deprecated",
+          "withdrawn"
+        ],
+        "title": "ModulePublicationState",
+        "type": "string"
+      },
+      "ModuleReleaseResponse": {
+        "properties": {
+          "is_current_library_release": {
+            "default": false,
+            "title": "Is Current Library Release",
+            "type": "boolean"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "source_graph_id": {
+            "format": "uuid",
+            "title": "Source Graph Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision",
+          "source_graph_id",
+          "published_at"
+        ],
+        "title": "ModuleReleaseResponse",
+        "type": "object"
+      },
+      "ModuleResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "current_library_release": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Library Release"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/ModulePortResponse"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "outputs": {
+            "items": {
+              "$ref": "#/components/schemas/ModulePortResponse"
+            },
+            "title": "Outputs",
+            "type": "array"
+          },
+          "publication_state": {
+            "$ref": "#/components/schemas/ModulePublicationState"
+          },
+          "releases": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleReleaseResponse"
+            },
+            "title": "Releases",
+            "type": "array"
+          },
+          "source_graph_id": {
+            "format": "uuid",
+            "title": "Source Graph Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "source_graph_id",
+          "name",
+          "publication_state",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ModuleResponse",
+        "type": "object"
+      },
       "MoveAnnotationPosition": {
         "additionalProperties": false,
         "properties": {
@@ -2877,6 +3125,17 @@
             "title": "Inputs",
             "type": "array"
           },
+          "is_current_library_release": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Current Library Release"
+          },
           "module_graph_id": {
             "anyOf": [
               {
@@ -2901,6 +3160,18 @@
             ],
             "title": "Module Graph Revision"
           },
+          "module_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Module Id"
+          },
           "operator_id": {
             "title": "Operator Id",
             "type": "string"
@@ -2924,6 +3195,16 @@
           "plugin_slug": {
             "title": "Plugin Slug",
             "type": "string"
+          },
+          "publication_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModulePublicationState"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "secret_inputs": {
             "items": {
@@ -3155,7 +3436,8 @@
           "edit_graph",
           "checkpoint_graph",
           "execute_graph",
-          "cancel_execution"
+          "cancel_execution",
+          "publish_module"
         ],
         "title": "PersonalAccessTokenScope",
         "type": "string"
@@ -3322,6 +3604,57 @@
         ],
         "title": "PortShape",
         "type": "string"
+      },
+      "PublishModuleReleaseRequest": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "source_graph_id": {
+            "format": "uuid",
+            "title": "Source Graph Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_graph_id"
+        ],
+        "title": "PublishModuleReleaseRequest",
+        "type": "object"
       },
       "RemoveEdgesCommand": {
         "additionalProperties": false,
@@ -4674,6 +5007,28 @@
             "title": "Current",
             "type": "boolean"
           },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
           "expires_at": {
             "format": "date-time",
             "title": "Expires At",
@@ -4721,7 +5076,9 @@
           "last_used_at",
           "expires_at",
           "revoked_at",
-          "current"
+          "current",
+          "display_name",
+          "email"
         ],
         "title": "SessionResponse",
         "type": "object"
@@ -5574,6 +5931,8 @@
           "checkpoint_graph",
           "execute_graph",
           "cancel_execution",
+          "publish_module",
+          "manage_module_library",
           "manage_secrets",
           "delete_graph",
           "manage_members",
@@ -8721,6 +9080,344 @@
         "summary": "Change Member Role",
         "tags": [
           "workspaces"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/modules": {
+      "get": {
+        "operationId": "list_modules_v1_workspaces__workspace_id__modules_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModuleListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Modules",
+        "tags": [
+          "modules"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/modules/import": {
+      "post": {
+        "operationId": "import_module_release_v1_workspaces__workspace_id__modules_import_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportModuleReleaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportModuleReleaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Import Module Release",
+        "tags": [
+          "modules"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/modules/publish": {
+      "post": {
+        "operationId": "publish_module_release_v1_workspaces__workspace_id__modules_publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishModuleReleaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModuleResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Publish Module Release",
+        "tags": [
+          "modules"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/modules/{module_id}": {
+      "get": {
+        "operationId": "get_module_v1_workspaces__workspace_id__modules__module_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "module_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Module Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModuleResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Module",
+        "tags": [
+          "modules"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/modules/{module_id}/deprecate": {
+      "post": {
+        "operationId": "deprecate_module_v1_workspaces__workspace_id__modules__module_id__deprecate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "module_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Module Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModuleResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Deprecate Module",
+        "tags": [
+          "modules"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/modules/{module_id}/withdraw": {
+      "post": {
+        "operationId": "withdraw_module_v1_workspaces__workspace_id__modules__module_id__withdraw_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "module_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Module Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModuleResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Withdraw Module",
+        "tags": [
+          "modules"
         ]
       }
     },

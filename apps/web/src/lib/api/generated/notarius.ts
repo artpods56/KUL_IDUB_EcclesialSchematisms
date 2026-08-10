@@ -574,6 +574,108 @@ export interface paths {
         readonly patch: operations["change_member_role_v1_workspaces__workspace_id__members__user_id__patch"];
         readonly trace?: never;
     };
+    readonly "/v1/workspaces/{workspace_id}/modules": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List Modules */
+        readonly get: operations["list_modules_v1_workspaces__workspace_id__modules_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/modules/{module_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Module */
+        readonly get: operations["get_module_v1_workspaces__workspace_id__modules__module_id__get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/modules/{module_id}/deprecate": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Deprecate Module */
+        readonly post: operations["deprecate_module_v1_workspaces__workspace_id__modules__module_id__deprecate_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/modules/{module_id}/withdraw": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Withdraw Module */
+        readonly post: operations["withdraw_module_v1_workspaces__workspace_id__modules__module_id__withdraw_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/modules/import": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Import Module Release */
+        readonly post: operations["import_module_release_v1_workspaces__workspace_id__modules_import_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/modules/publish": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Publish Module Release */
+        readonly post: operations["publish_module_release_v1_workspaces__workspace_id__modules_publish_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/workspaces/{workspace_id}/nodes": {
         readonly parameters: {
             readonly query?: never;
@@ -1597,6 +1699,115 @@ export interface components {
             /** Upload Key */
             readonly upload_key: string;
         };
+        /** ImportModuleReleaseRequest */
+        readonly ImportModuleReleaseRequest: {
+            /** Name */
+            readonly name?: string | null;
+            /** Revision */
+            readonly revision?: number | null;
+            /**
+             * Source Module Id
+             * Format: uuid
+             */
+            readonly source_module_id: string;
+            /**
+             * Source Workspace Id
+             * Format: uuid
+             */
+            readonly source_workspace_id: string;
+        };
+        /** ImportModuleReleaseResponse */
+        readonly ImportModuleReleaseResponse: {
+            /**
+             * Graph Id
+             * Format: uuid
+             */
+            readonly graph_id: string;
+            readonly module: components["schemas"]["ModuleResponse"];
+        };
+        /** ModuleListResponse */
+        readonly ModuleListResponse: {
+            /** Modules */
+            readonly modules: readonly components["schemas"]["ModuleResponse"][];
+        };
+        /** ModulePortResponse */
+        readonly ModulePortResponse: {
+            readonly artifact_type: components["schemas"]["ArtifactTypeKeyResponse"];
+            /** Description */
+            readonly description?: string | null;
+            /** Direction */
+            readonly direction: string;
+            /** Name */
+            readonly name: string;
+            /** Required */
+            readonly required: boolean;
+        };
+        /**
+         * ModulePublicationState
+         * @enum {string}
+         */
+        readonly ModulePublicationState: "published" | "deprecated" | "withdrawn";
+        /** ModuleReleaseResponse */
+        readonly ModuleReleaseResponse: {
+            /**
+             * Is Current Library Release
+             * @default false
+             */
+            readonly is_current_library_release: boolean;
+            /**
+             * Published At
+             * Format: date-time
+             */
+            readonly published_at: string;
+            /** Revision */
+            readonly revision: number;
+            /**
+             * Source Graph Id
+             * Format: uuid
+             */
+            readonly source_graph_id: string;
+        };
+        /** ModuleResponse */
+        readonly ModuleResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Current Library Release */
+            readonly current_library_release?: number | null;
+            /** Description */
+            readonly description?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Inputs */
+            readonly inputs?: readonly components["schemas"]["ModulePortResponse"][];
+            /** Name */
+            readonly name: string;
+            /** Outputs */
+            readonly outputs?: readonly components["schemas"]["ModulePortResponse"][];
+            readonly publication_state: components["schemas"]["ModulePublicationState"];
+            /** Releases */
+            readonly releases?: readonly components["schemas"]["ModuleReleaseResponse"][];
+            /**
+             * Source Graph Id
+             * Format: uuid
+             */
+            readonly source_graph_id: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            readonly workspace_id: string;
+        };
         /** MoveAnnotationPosition */
         readonly MoveAnnotationPosition: {
             /** Annotation Id */
@@ -1706,10 +1917,14 @@ export interface components {
             };
             /** Inputs */
             readonly inputs: readonly components["schemas"]["PortResponse"][];
+            /** Is Current Library Release */
+            readonly is_current_library_release?: boolean | null;
             /** Module Graph Id */
             readonly module_graph_id?: string | null;
             /** Module Graph Revision */
             readonly module_graph_revision?: number | null;
+            /** Module Id */
+            readonly module_id?: string | null;
             /** Operator Id */
             readonly operator_id: string;
             /** Operator Version */
@@ -1722,6 +1937,7 @@ export interface components {
             readonly outputs: readonly components["schemas"]["PortResponse"][];
             /** Plugin Slug */
             readonly plugin_slug: string;
+            readonly publication_state?: components["schemas"]["ModulePublicationState"] | null;
             /** Secret Inputs */
             readonly secret_inputs?: readonly components["schemas"]["NodeSecretInputResponse"][];
             /** Title */
@@ -1815,7 +2031,7 @@ export interface components {
          * PersonalAccessTokenScope
          * @enum {string}
          */
-        readonly PersonalAccessTokenScope: "view_graph" | "view_artifacts" | "view_materializations" | "view_history" | "view_execution" | "create_graph" | "edit_graph" | "checkpoint_graph" | "execute_graph" | "cancel_execution";
+        readonly PersonalAccessTokenScope: "view_graph" | "view_artifacts" | "view_materializations" | "view_history" | "view_execution" | "create_graph" | "edit_graph" | "checkpoint_graph" | "execute_graph" | "cancel_execution" | "publish_module";
         /** PinnedOutputRequest */
         readonly PinnedOutputRequest: {
             /** From Node */
@@ -1878,6 +2094,20 @@ export interface components {
          * @enum {string}
          */
         readonly PortShape: "one" | "many";
+        /** PublishModuleReleaseRequest */
+        readonly PublishModuleReleaseRequest: {
+            /** Description */
+            readonly description?: string | null;
+            /** Name */
+            readonly name?: string | null;
+            /** Revision */
+            readonly revision?: number | null;
+            /**
+             * Source Graph Id
+             * Format: uuid
+             */
+            readonly source_graph_id: string;
+        };
         /** RemoveEdgesCommand */
         readonly RemoveEdgesCommand: {
             /** Edge Ids */
@@ -2349,6 +2579,10 @@ export interface components {
             readonly created_at: string;
             /** Current */
             readonly current: boolean;
+            /** Display Name */
+            readonly display_name: string | null;
+            /** Email */
+            readonly email: string | null;
             /**
              * Expires At
              * Format: date-time
@@ -2650,7 +2884,7 @@ export interface components {
          * WorkspaceCapability
          * @enum {string}
          */
-        readonly WorkspaceCapability: "view_graph" | "view_artifacts" | "view_materializations" | "view_history" | "view_execution" | "join_graph_room" | "publish_presence" | "create_graph" | "edit_graph" | "checkpoint_graph" | "execute_graph" | "cancel_execution" | "manage_secrets" | "delete_graph" | "manage_members" | "rename_workspace";
+        readonly WorkspaceCapability: "view_graph" | "view_artifacts" | "view_materializations" | "view_history" | "view_execution" | "join_graph_room" | "publish_presence" | "create_graph" | "edit_graph" | "checkpoint_graph" | "execute_graph" | "cancel_execution" | "publish_module" | "manage_module_library" | "manage_secrets" | "delete_graph" | "manage_members" | "rename_workspace";
         /** WorkspaceCreateRequest */
         readonly WorkspaceCreateRequest: {
             /** Name */
@@ -4358,6 +4592,203 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["WorkspaceMemberResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly list_modules_v1_workspaces__workspace_id__modules_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ModuleListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly get_module_v1_workspaces__workspace_id__modules__module_id__get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly module_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ModuleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly deprecate_module_v1_workspaces__workspace_id__modules__module_id__deprecate_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly module_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ModuleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly withdraw_module_v1_workspaces__workspace_id__modules__module_id__withdraw_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly module_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ModuleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly import_module_release_v1_workspaces__workspace_id__modules_import_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ImportModuleReleaseRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ImportModuleReleaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly publish_module_release_v1_workspaces__workspace_id__modules_publish_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PublishModuleReleaseRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ModuleResponse"];
                 };
             };
             /** @description Validation Error */
