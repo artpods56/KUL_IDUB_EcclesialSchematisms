@@ -38,12 +38,12 @@ import type {
   NodeRegistry,
   NodeSpec,
   Port,
-  UnavailableGraphModule,
 } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import {
   catalogNodeSpecs,
   catalogPluginSections,
+  moduleReleaseSpecs,
 } from "../model/node-catalog";
 
 const MODULE_PLUGIN_SLUG = "graph.module";
@@ -55,6 +55,7 @@ interface NodeSelectorProps {
   onOpenChange: (open: boolean) => void;
   onAddNode: (spec: NodeSpec) => void;
   onOpenGraph?: (graphId: string) => void;
+  onOpenWorkspaceLibrary?: () => void;
 }
 
 interface CompatibleNode {
@@ -1101,37 +1102,6 @@ function PortList({ direction, ports, registry }: PortListProps) {
   );
 }
 
-function UnavailableModuleCard({
-  module,
-  onOpenGraph,
-}: {
-  module: UnavailableGraphModule;
-  onOpenGraph?: (graphId: string) => void;
-}) {
-  return (
-    <div {...stylex.props(s.unavailableCard)}>
-      <div {...stylex.props(s.unavailableHeader)}>
-        <div>
-          <div {...stylex.props(s.unavailableTitle)}>{module.name}</div>
-          <div {...stylex.props(s.unavailableMeta)}>revision {module.revision}</div>
-        </div>
-        {onOpenGraph ? (
-          <button
-            type="button"
-            title={`Open ${module.name}`}
-            {...stylex.props(s.openGraphButton)}
-            onClick={() => onOpenGraph(module.graph_id)}
-          >
-            <ExternalLink size={10} />
-            Open
-          </button>
-        ) : null}
-      </div>
-      <p {...stylex.props(s.unavailableReason)}>{module.reason}</p>
-    </div>
-  );
-}
-
 export function NodeSelector({
   open,
   registry,
@@ -1139,10 +1109,14 @@ export function NodeSelector({
   onOpenChange,
   onAddNode,
   onOpenGraph,
+  onOpenWorkspaceLibrary,
 }: NodeSelectorProps) {
   const [query, setQuery] = React.useState("");
   const [pluginFilter, setPluginFilter] = React.useState<string | null>(null);
   const [selectedNodeKey, setSelectedNodeKey] = React.useState<string | null>(null);
+  const [selectedReleaseKey, setSelectedReleaseKey] = React.useState<string | null>(
+    null,
+  );
 
   const pluginSections = catalogPluginSections(registry);
   const catalogNodes = React.useMemo(
@@ -1153,7 +1127,6 @@ export function NodeSelector({
     () => ({ ...registry, nodes: catalogNodes }),
     [catalogNodes, registry],
   );
-  const unavailableModules = registry.unavailable_modules ?? [];
   const showingModules = pluginFilter === MODULE_PLUGIN_SLUG;
   const activeEditingModule = React.useMemo(
     () =>
@@ -1177,9 +1150,33 @@ export function NodeSelector({
     }),
     [catalogNodes, normalizedQuery, pluginFilter, registry],
   );
-  const selectedSpec = filteredNodes.find(
+  const listedSpec = filteredNodes.find(
     (spec) => nodeKey(spec) === selectedNodeKey,
   ) ?? filteredNodes[0] ?? null;
+  React.useEffect(() => {
+    setSelectedReleaseKey(null);
+  }, [listedSpec?.module_id, listedSpec?.module_graph_id]);
+  const moduleReleases = React.useMemo(
+    () =>
+      listedSpec?.plugin_slug === MODULE_PLUGIN_SLUG
+        ? moduleReleaseSpecs(
+            registry,
+            listedSpec.module_id,
+            listedSpec.module_graph_id,
+          )
+        : [],
+    [listedSpec, registry],
+  );
+  const selectedSpec = React.useMemo(() => {
+    if (!listedSpec) return null;
+    if (listedSpec.plugin_slug !== MODULE_PLUGIN_SLUG) return listedSpec;
+    return (
+      moduleReleases.find((spec) => nodeKey(spec) === selectedReleaseKey) ??
+      moduleReleases.find((spec) => spec.catalog_visible !== false) ??
+      moduleReleases[0] ??
+      listedSpec
+    );
+  }, [listedSpec, moduleReleases, selectedReleaseKey]);
   const selectedFields = selectedSpec
     ? schemaFields(selectedSpec.config_schema)
     : [];
@@ -1201,11 +1198,13 @@ export function NodeSelector({
   const activePluginTitle = pluginFilter
     ? pluginFor(registry, pluginFilter).title
     : "All nodes";
+  const isModuleSelection = selectedPlugin?.origin === "module";
+  const isDeprecatedModule = selectedSpec?.publication_state === "deprecated";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        aria-label="Node catalog"
+        aria-label="Add node"
         style={{
           width: "min(1120px, calc(100vw - 40px))",
           maxWidth: "none",
@@ -1219,18 +1218,18 @@ export function NodeSelector({
               <span {...stylex.props(s.titleIcon)}>
                 <Workflow size={15} />
               </span>
-              <DialogTitle {...stylex.props(s.title)}>Node catalog</DialogTitle>
+              <DialogTitle {...stylex.props(s.title)}>Add node</DialogTitle>
             </div>
             <DialogDescription {...stylex.props(s.description)}>
-              Browse built-in nodes, saved graph modules, and registered external
-              plugins, then inspect contracts before adding a node.
+              Browse built-in nodes, workspace library modules, and external
+              plugins. Inspect the contract before inserting.
             </DialogDescription>
           </div>
           <div {...stylex.props(s.searchWrap)}>
             <Search size={14} {...stylex.props(s.searchIcon)} />
             <input
               autoFocus
-              aria-label="Search node catalog"
+              aria-label="Search nodes"
               value={query}
               placeholder="Search nodes, ports, types, or settings…"
               {...stylex.props(s.search)}
@@ -1240,8 +1239,8 @@ export function NodeSelector({
         </div>
 
         <div {...stylex.props(s.layout)}>
-          <nav aria-label="Node catalog groups" {...stylex.props(s.pluginPane)}>
-            <div {...stylex.props(s.paneLabel)}>Catalog</div>
+          <nav aria-label="Add node groups" {...stylex.props(s.pluginPane)}>
+            <div {...stylex.props(s.paneLabel)}>Groups</div>
             <div {...stylex.props(s.pluginList)}>
               <button
                 type="button"
@@ -1381,9 +1380,8 @@ export function NodeSelector({
               }) : (
                 <div {...stylex.props(s.empty)}>
                   <span>
-                    {showingModules &&
-                    (unavailableModules.length > 0 || activeEditingModule)
-                      ? "No catalog-visible modules match the current search."
+                    {showingModules
+                      ? "No published modules match the current search."
                       : "No nodes match the current category and search."}
                   </span>
                   <button
@@ -1399,10 +1397,9 @@ export function NodeSelector({
                 </div>
               )}
             </div>
-            {showingModules &&
-            (activeEditingModule || unavailableModules.length > 0) ? (
+            {showingModules ? (
               <div
-                aria-label="Module availability"
+                aria-label="Workspace library notes"
                 {...stylex.props(s.moduleDiagnostics)}
               >
                 {activeEditingModule ? (
@@ -1411,21 +1408,24 @@ export function NodeSelector({
                     the graph currently being edited.
                   </p>
                 ) : null}
-                {unavailableModules.length ? (
-                  <>
-                    <div {...stylex.props(s.moduleDiagnosticsTitle)}>
-                      Unavailable as modules · {unavailableModules.length}
-                    </div>
-                    <div {...stylex.props(s.unavailableList)}>
-                      {unavailableModules.map((module) => (
-                        <UnavailableModuleCard
-                          key={`${module.graph_id}:${module.revision}`}
-                          module={module}
-                          onOpenGraph={onOpenGraph}
-                        />
-                      ))}
-                    </div>
-                  </>
+                {filteredNodes.length === 0 && !normalizedQuery ? (
+                  <p {...stylex.props(s.moduleDiagnosticsNote)}>
+                    No published modules in this workspace yet. Open a source
+                    graph, declare Module Input/Output boundaries, then Publish
+                    release.
+                    {onOpenWorkspaceLibrary ? (
+                      <>
+                        {" "}
+                        <button
+                          type="button"
+                          {...stylex.props(s.resetButton)}
+                          onClick={onOpenWorkspaceLibrary}
+                        >
+                          Open workspace library
+                        </button>
+                      </>
+                    ) : null}
+                  </p>
                 ) : null}
               </div>
             ) : null}
@@ -1454,16 +1454,47 @@ export function NodeSelector({
                         {selectedPlugin.origin === "external"
                           ? "External"
                           : selectedPlugin.origin === "module"
-                            ? `Module · r${selectedSpec.module_graph_revision}`
+                            ? `Module · release ${selectedSpec.module_graph_revision}${
+                                selectedSpec.publication_state
+                                  ? ` · ${selectedSpec.publication_state}`
+                                  : ""
+                              }`
                             : "Built-in"}
                       </span>
                     </div>
                     <h3 {...stylex.props(s.inspectorTitle)}>{selectedSpec.title}</h3>
                     <div {...stylex.props(s.operatorId)}>
                       {typeof selectedSpec.module_graph_revision === "number"
-                        ? `Saved graph module · revision ${selectedSpec.module_graph_revision}`
+                        ? `Module contract · release ${selectedSpec.module_graph_revision}`
                         : `${selectedSpec.operator_id}@${selectedSpec.operator_version}`}
                     </div>
+                    {isModuleSelection && moduleReleases.length > 1 ? (
+                      <label {...stylex.props(s.operatorId)}>
+                        Release{" "}
+                        <select
+                          aria-label="Module release"
+                          value={nodeKey(selectedSpec)}
+                          onChange={(event) =>
+                            setSelectedReleaseKey(event.currentTarget.value)
+                          }
+                        >
+                          {moduleReleases.map((release) => (
+                            <option key={nodeKey(release)} value={nodeKey(release)}>
+                              Release {release.module_graph_revision}
+                              {release.is_current_library_release
+                                ? " (current)"
+                                : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    {isDeprecatedModule ? (
+                      <p {...stylex.props(s.moduleDiagnosticsNote)}>
+                        This Module is deprecated. New inserts are discouraged;
+                        existing pins keep working.
+                      </p>
+                    ) : null}
                     {selectedSpec.module_graph_id && onOpenGraph ? (
                       <button
                         type="button"
@@ -1576,15 +1607,34 @@ export function NodeSelector({
 
                 <footer {...stylex.props(s.inspectorFooter)}>
                   <span {...stylex.props(s.footerHint)}>
-                    Added at the center of the current canvas view.
+                    {isModuleSelection
+                      ? "Inserts a Module call pinned to the selected release."
+                      : "Added at the center of the current canvas view."}
                   </span>
                   <button
                     type="button"
-                    title={`Add ${selectedSpec.title} to the workflow`}
+                    title={
+                      isModuleSelection
+                        ? `Insert module call for ${selectedSpec.title}`
+                        : `Add ${selectedSpec.title} to the workflow`
+                    }
                     {...stylex.props(s.addButton)}
-                    onClick={() => onAddNode(selectedSpec)}
+                    onClick={() => {
+                      if (
+                        isDeprecatedModule &&
+                        !window.confirm(
+                          `Insert deprecated Module “${selectedSpec.title}”? New inserts are discouraged.`,
+                        )
+                      ) {
+                        return;
+                      }
+                      onAddNode(selectedSpec);
+                    }}
                   >
-                    <Plus size={14} /> Add {selectedSpec.title}
+                    <Plus size={14} />{" "}
+                    {isModuleSelection
+                      ? "Insert module call"
+                      : `Add ${selectedSpec.title}`}
                   </button>
                 </footer>
               </>

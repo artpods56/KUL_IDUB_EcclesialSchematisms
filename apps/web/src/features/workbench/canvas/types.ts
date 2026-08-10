@@ -270,6 +270,9 @@ export interface WorkflowNodeData extends Record<string, unknown> {
     artifactTypeBindings: WorkflowArtifactTypeBindings,
   ) => void;
   onOpenModuleSource?: (graphId: string) => void;
+  /** When set, the pinned Module call can upgrade to this library release. */
+  moduleUpgradeRelease?: number | null;
+  onUpgradeModuleCall?: (nodeId: string) => void;
   onOpenExecutionHistory?: (nodeId: string, executionId?: string) => void;
 }
 

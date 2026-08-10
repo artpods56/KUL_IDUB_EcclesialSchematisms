@@ -6,8 +6,10 @@ import Link from "next/link";
 import {
   useWorkspaceContext,
   workspaceCanManageMembers,
+  workspaceDisplayName,
 } from "./WorkspaceLayout";
 import { WorkspaceMembersDialog } from "./WorkspaceMembersDialog";
+import { WorkspaceLibraryDialog } from "./WorkspaceLibraryDialog";
 import { useAuthSession } from "@/features/auth/AuthSessionBoundary";
 
 export function WorkspaceOverview() {
@@ -20,12 +22,13 @@ export function WorkspaceOverview() {
     <div className="ns-workspace-overview">
       <header className="ns-workspace-overview__header">
         <div>
-          <p className="ns-workspace-overview__eyebrow">WORKSPACE / {workspace.kind}</p>
-          <h1>{workspace.name}</h1>
+          <p className="ns-workspace-overview__eyebrow">Workspace / {workspace.kind}</p>
+          <h1>{workspaceDisplayName(workspace)}</h1>
           <p className="ns-workspace-overview__slug">/{workspace.slug} · {workspace.role}</p>
         </div>
         <div className="ns-workspace-overview__actions">
           {canManageMembers ? <WorkspaceMembersDialog /> : null}
+          <WorkspaceLibraryDialog workspace={workspace} />
           <Link className="ns-workspace-button ns-workspace-button--primary" href={workbenchHref}>
             Open workbench <ArrowUpRight size={14} />
           </Link>
@@ -60,8 +63,9 @@ export function WorkspaceOverview() {
           )}
         </div>
         <p className="ns-workspace-overview__copy">
-          Open the workbench to author graphs in this workspace. Create additional
-          shared workspaces from the{" "}
+          Open the workbench to author graphs in this workspace, or manage the
+          workspace module library from the header. Create additional shared
+          workspaces from the{" "}
           <Link href="/workspaces">workspaces directory</Link>.
         </p>
       </section>

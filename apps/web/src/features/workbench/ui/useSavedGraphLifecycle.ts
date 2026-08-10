@@ -122,7 +122,7 @@ export interface UseSavedGraphLifecycleResult {
   savedGraphsError: string | null;
   refreshSavedGraphs: () => void;
   requestNewGraph: () => void;
-  saveCurrentGraph: () => Promise<void>;
+  saveCurrentGraph: (nameOverride?: string) => Promise<void>;
   openSavedGraph: (graphId: string) => Promise<void>;
   removeSavedGraph: (graph: SavedGraphSummary) => Promise<void>;
   syncFromCollaborativeHead: (head: CollaborativeHead) => void;
@@ -292,19 +292,20 @@ export function useSavedGraphLifecycle({
     router.push(path, { scroll: false });
   }, [confirmDiscard, router, showBlankGraph, workspaceSlug]);
 
-  const saveCurrentGraph = React.useCallback(async () => {
+  const saveCurrentGraph = React.useCallback(async (nameOverride?: string) => {
     if (
       isExecutionRunning() ||
       saving ||
       openingGraphId ||
       deletingGraphId
     ) return;
-    if (!currentDraft.name) {
+    const submittedDraft = nameOverride?.trim()
+      ? { ...currentDraft, name: nameOverride.trim() }
+      : currentDraft;
+    if (!submittedDraft.name) {
       setPersistenceError("Enter a graph name before saving.");
       return;
     }
-
-    const submittedDraft = currentDraft;
     const documentGeneration = documentGenerationRef.current;
     setSaving(true);
     setPersistenceError(null);

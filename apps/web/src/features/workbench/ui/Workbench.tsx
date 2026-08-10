@@ -24,11 +24,13 @@ import {
   History,
   LoaderCircle,
   Maximize2,
+  Package,
   Play,
   Plus,
   Square,
   Trash2,
   Type,
+  Upload,
   Workflow,
 } from "lucide-react";
 
@@ -47,9 +49,13 @@ import {
 } from "./ConnectionRouteDialog";
 import { CanvasGridSettingsPanel } from "./CanvasGridSettingsPanel";
 import { workbenchStyles as s } from "./Workbench.styles";
-import { WorkbenchHeader } from "./WorkbenchHeader";
 import { NodeSelector } from "./NodeSelector";
-import { SavedGraphBrowser } from "./SavedGraphBrowser";
+import { PublishModuleDialog } from "./PublishModuleDialog";
+import { WorkspaceLibraryDialog } from "@/features/workspaces/WorkspaceLibraryDialog";
+import { useWorkspaceContext } from "@/features/workspaces/WorkspaceLayout";
+import { usePublishWorkbenchChrome } from "./WorkbenchChromeContext";
+import { renameSavedGraphRemote } from "@/features/workspaces/graph-actions";
+import type { SavedGraphSummary } from "@/lib/api";
 import { CanvasGridSettingsProvider, useCanvasGridSettings } from "../canvas/canvas-grid-settings";
 import {
   layoutSnapAxes,
@@ -69,6 +75,7 @@ import {
 import { useRunExecution } from "./useRunExecution";
 import {
   GraphRoomCommandError,
+  PRESENCE_CLIENT_MIN_INTERVAL_MS,
   PresenceOverlay,
   remoteSelectionColor,
   shouldReplaceCollaborativeHead,
@@ -159,7 +166,6 @@ import {
 import type { ArtifactQueryRelation } from "../canvas/query-artifact-tables";
 import type { SchemaBuilderField } from "../canvas/schema-builder";
 import { serializeNodeLayout } from "../canvas/node-layout";
-import { useTheme } from "@/components/theme";
 import {
   isFileUploadOperator,
   WORKFLOW_EDGE_TYPE,
@@ -202,6 +208,7 @@ import {
   selectedNodeAndAncestorIds,
   type WorkflowNode,
 } from "../model/execution-plan";
+import { moduleCallUpgradeTarget } from "../model/node-catalog";
 import { workbenchGraphPath } from "../routes";
 import { useNodeRegistry } from "@/hooks/use-api";
 import {
@@ -258,7 +265,6 @@ function WorkbenchBody({
     error: registryError,
     mutate: refreshNodeRegistry,
   } = useNodeRegistry(workspaceId);
-  const { preference, cycleTheme } = useTheme();
   const {
     settings: canvasGridSettings,
     bypassSnap,
@@ -291,6 +297,8 @@ function WorkbenchBody({
   const [selectedEdgeIdSet, setSelectedEdgeIdSet] =
     React.useState<ReadonlySet<string>>(new Set());
   const [positionOverrides, setPositionOverrides] =
+    React.useState<Record<string, { x: number; y: number }>>({});
+  const [transientNodePositions, setTransientNodePositions] =
     React.useState<Record<string, { x: number; y: number }>>({});
   // React Flow keeps nodes at visibility:hidden until measured width/height are
   // present on the controlled node objects. Authored-document hydration never
@@ -351,10 +359,11 @@ function WorkbenchBody({
     );
     setPositionOverrides(() => {
       const next: Record<string, { x: number; y: number }> = {};
+      const authoredNodesById = new Map(
+        authoredDocumentRef.current.nodes.map((node) => [node.id, node]),
+      );
       for (const node of nextNodes) {
-        const authoredNode = authoredDocumentRef.current.nodes.find(
-          (candidate) => candidate.id === node.id,
-        );
+        const authoredNode = authoredNodesById.get(node.id);
         if (
           authoredNode &&
           (authoredNode.position.x !== node.position.x ||
@@ -409,7 +418,20 @@ function WorkbenchBody({
   const [flow, setFlow] = React.useState<
     ReactFlowInstance<CanvasNode, CanvasEdge>
   >();
+  const { workspace } = useWorkspaceContext();
   const [libraryOpen, setLibraryOpen] = React.useState(false);
+  const [workspaceLibraryOpen, setWorkspaceLibraryOpen] = React.useState(false);
+  const [publishModuleOpen, setPublishModuleOpen] = React.useState(false);
+  const canPublishModule = workspace.capabilities.includes("publish_module");
+  const graphHasModuleBoundaries = React.useMemo(
+    () =>
+      nodes.some(
+        (node) =>
+          node.data.spec.operator_id === "module.input" ||
+          node.data.spec.operator_id === "module.output",
+      ),
+    [nodes],
+  );
   const [executionHistoryTarget, setExecutionHistoryTarget] = React.useState<{
     nodeId: string | null;
     executionId: string | null;
@@ -963,8 +985,44 @@ function WorkbenchBody({
     setExecutionHistoryTarget({ nodeId, executionId: executionId ?? null });
   }, []);
 
+  const upgradeModuleCall = React.useCallback(
+    (nodeId: string) => {
+      if (!registry) return;
+      const node = nodesRef.current.find((candidate) => candidate.id === nodeId);
+      if (!node || !workflowNodeIsSupported(node.data)) return;
+      const target = moduleCallUpgradeTarget(registry, node.data.spec);
+      if (!target) return;
+      const before = authoredDocumentRef.current;
+      const authoredNode = before.nodes.find(
+        (candidate) => candidate.id === nodeId,
+      );
+      if (!authoredNode) return;
+      const nextDocument: AuthoredGraphDocument = {
+        ...before,
+        nodes: before.nodes.map((candidate) =>
+          candidate.id === nodeId
+            ? {
+                ...candidate,
+                operator_id: target.operator_id,
+                operator_version: target.operator_version,
+              }
+            : candidate,
+        ),
+      };
+      applyAuthoringCommands([{ kind: "replace_document", document: nextDocument }]);
+      setSelectedNodeIdSet(new Set([nodeId]));
+      setSelectedEdgeIdSet(new Set());
+      setRunError(null);
+    },
+    [applyAuthoringCommands, registry],
+  );
+
   const attachNodeCallbacks = React.useCallback(
     (data: WorkflowNodeData): WorkflowNodeData => {
+      const upgradeTarget =
+        registry && workflowNodeIsSupported(data)
+          ? moduleCallUpgradeTarget(registry, data.spec)
+          : null;
       if (!workflowNodeIsSupported(data)) {
         return {
           ...data,
@@ -981,6 +1039,8 @@ function WorkbenchBody({
           onResetArtifactTypeBinding: undefined,
           onHandlesMeasured: undefined,
           onOpenModuleSource: undefined,
+          moduleUpgradeRelease: null,
+          onUpgradeModuleCall: undefined,
           onOpenExecutionHistory: openNodeExecutionHistory,
         };
       }
@@ -1004,6 +1064,8 @@ function WorkbenchBody({
         onOpenModuleSource: data.spec.module_graph_id
           ? openGraphInNewTab
           : undefined,
+        moduleUpgradeRelease: upgradeTarget?.module_graph_revision ?? null,
+        onUpgradeModuleCall: upgradeTarget ? upgradeModuleCall : undefined,
         onOpenExecutionHistory: openNodeExecutionHistory,
       };
     },
@@ -1013,6 +1075,7 @@ function WorkbenchBody({
       handleNodeHandlesMeasured,
       openGraphInNewTab,
       openNodeExecutionHistory,
+      registry,
       removeNode,
       removeNodeInputPlug,
       handleRemoveImageUpload,
@@ -1022,6 +1085,7 @@ function WorkbenchBody({
       updateLayout,
       updateArtifactQueryRelations,
       updateSchemaBuilderFields,
+      upgradeModuleCall,
     ],
   );
 
@@ -1052,6 +1116,7 @@ function WorkbenchBody({
     setSelectedNodeIdSet(new Set());
     setSelectedEdgeIdSet(new Set());
     setPositionOverrides({});
+    setTransientNodePositions({});
     setNodeMeasurements({});
   }, [dispatchAuthoringState]);
   const replacePresentation = React.useCallback((
@@ -1522,37 +1587,73 @@ function WorkbenchBody({
   // Last on-canvas pointer in flow coords. Presence replaces the whole snapshot,
   // so selection/keepalive publishes must resend this or peers see cursor: null.
   const presenceCursorRef = React.useRef<{ x: number; y: number } | null>(null);
+  const presenceClientPointRef = React.useRef<{ x: number; y: number } | null>(
+    null,
+  );
+  const presenceClientPointDirtyRef = React.useRef(false);
   const presenceOverCanvasRef = React.useRef(false);
   const presenceDragRef = React.useRef<{
     positions: TransientNodePosition[];
     targetIds: string[];
   } | null>(null);
   const localDraggingNodeIdsRef = React.useRef<ReadonlySet<string>>(new Set());
-  const [localDragRevision, setLocalDragRevision] = React.useState(0);
-  const publishPresenceSnapshot = React.useCallback(() => {
-    if (!graphRoom.canPublishPresence) return;
-    const drag = presenceDragRef.current;
-    graphRoom.publishPresence({
-      cursor: presenceCursorRef.current,
-      selected_node_ids: selectedNodeIdsRef.current,
-      activity: drag ? "moving_nodes" : null,
-      activity_target_ids: drag?.targetIds ?? [],
-      transient_node_positions: drag?.positions ?? [],
-    });
-  }, [graphRoom.canPublishPresence, graphRoom.publishPresence]);
+  const presencePublishTimerRef = React.useRef<number | null>(null);
+  const lastPresencePublishAtRef = React.useRef(0);
+  const canPublishRoomPresence = graphRoom.canPublishPresence;
+  const publishRoomPresence = graphRoom.publishPresence;
+  const schedulePresenceSnapshot = React.useCallback(() => {
+    if (!canPublishRoomPresence) return;
+    if (presencePublishTimerRef.current !== null) return;
+
+    const elapsed = Date.now() - lastPresencePublishAtRef.current;
+    const delay = Math.max(0, PRESENCE_CLIENT_MIN_INTERVAL_MS - elapsed);
+    presencePublishTimerRef.current = window.setTimeout(() => {
+      presencePublishTimerRef.current = null;
+      if (!canPublishRoomPresence) return;
+
+      const clientPoint = presenceClientPointRef.current;
+      if (presenceClientPointDirtyRef.current && clientPoint && flow) {
+        presenceCursorRef.current = flow.screenToFlowPosition(clientPoint);
+        presenceClientPointDirtyRef.current = false;
+      }
+
+      const drag = presenceDragRef.current;
+      const published = publishRoomPresence({
+        cursor: presenceCursorRef.current,
+        selected_node_ids: selectedNodeIdsRef.current,
+        activity: drag ? "moving_nodes" : null,
+        activity_target_ids: drag?.targetIds ?? [],
+        transient_node_positions: drag?.positions ?? [],
+      });
+      if (published) lastPresencePublishAtRef.current = Date.now();
+    }, delay);
+  }, [canPublishRoomPresence, flow, publishRoomPresence]);
+  React.useEffect(() => {
+    if (graphRoom.canPublishPresence) return;
+    if (presencePublishTimerRef.current !== null) {
+      window.clearTimeout(presencePublishTimerRef.current);
+      presencePublishTimerRef.current = null;
+    }
+    lastPresencePublishAtRef.current = 0;
+  }, [graphRoom.canPublishPresence]);
+  React.useEffect(() => () => {
+    if (presencePublishTimerRef.current !== null) {
+      window.clearTimeout(presencePublishTimerRef.current);
+    }
+  }, []);
   const presenceSelectionKey = selectedNodeIds.join("\0");
   React.useEffect(() => {
-    publishPresenceSnapshot();
-  }, [presenceSelectionKey, publishPresenceSnapshot]);
+    schedulePresenceSnapshot();
+  }, [presenceSelectionKey, schedulePresenceSnapshot]);
   // Server clears idle cursors after ~5s without updates; keepalives while parked.
   React.useEffect(() => {
     if (!graphRoom.canPublishPresence) return;
     const timer = window.setInterval(() => {
       if (!presenceOverCanvasRef.current || !presenceCursorRef.current) return;
-      publishPresenceSnapshot();
+      schedulePresenceSnapshot();
     }, 2000);
     return () => window.clearInterval(timer);
-  }, [graphRoom.canPublishPresence, publishPresenceSnapshot]);
+  }, [graphRoom.canPublishPresence, schedulePresenceSnapshot]);
   const remoteDragPreviews = useRemoteDragPreviews(
     graphRoom.participants,
     graphRoom.localSessionId,
@@ -1631,31 +1732,6 @@ function WorkbenchBody({
       dismissRunError(issue.message);
     }
   }, [dismissPersistenceError, dismissRunError]);
-  const workflowGlobalIssueCount = globalIssues.length;
-  const graphHasErrors =
-    workflowGlobalIssueCount > 0 ||
-    nodeErrorCount > 0 ||
-    compatibilityIssueCount > 0;
-  const graphNeedsAttention =
-    compatibilityIssueCount > 0 ||
-    imageUploadWithoutImages ||
-    missingRequiredInputs.length > 0;
-  const canvasStatusMessage = runningScope === "selected"
-    ? "running selected nodes · latest upstream outputs are pinned"
-    : runningScope === "selected-with-dependencies"
-      ? "running selected nodes and all upstream dependencies"
-      : workflowGlobalIssueCount
-        ? `${workflowGlobalIssueCount} workflow issue${workflowGlobalIssueCount === 1 ? "" : "s"}`
-        : compatibilityIssueCount
-          ? `${compatibilityIssueCount} compatibility issue${compatibilityIssueCount === 1 ? "" : "s"}`
-        : nodeErrorCount
-          ? `${nodeErrorCount} node issue${nodeErrorCount === 1 ? "" : "s"}`
-          : !registry
-            ? "loading live registry…"
-            : imageUploadWithoutImages
-              ? "choose images before running"
-              : connectionInstruction ?? "all required inputs connected · ready to run";
-
   const activeArtifactViewers = artifactViewers.graphId ===
       (activeGraph?.id ?? null)
     ? artifactViewers
@@ -1671,6 +1747,51 @@ function WorkbenchBody({
     (changes) => {
       const gridSettings = canvasGridSettingsRef.current;
       const gridBypass = bypassSnapRef.current;
+      const draggingPositions = changes.flatMap((change) => {
+        if (
+          change.type !== "position" ||
+          change.dragging !== true ||
+          !change.position
+        ) {
+          return [];
+        }
+        const position = shouldSnapPosition(gridSettings, {
+          dragging: true,
+          bypass: gridBypass,
+        })
+          ? snapPosition(change.position, gridSettings.cellSize)
+          : change.position;
+        return [{ node_id: change.id, x: position.x, y: position.y }];
+      });
+      if (draggingPositions.length) {
+        const targetIds = draggingPositions.map((position) => position.node_id);
+        localDraggingNodeIdsRef.current = new Set(targetIds);
+        presenceDragRef.current = {
+          positions: draggingPositions,
+          targetIds,
+        };
+        const nextTransientPositions = Object.fromEntries(
+          draggingPositions.map((position) => [
+            position.node_id,
+            { x: position.x, y: position.y },
+          ]),
+        );
+        setTransientNodePositions((current) => {
+          const currentIds = Object.keys(current);
+          if (
+            currentIds.length === targetIds.length &&
+            targetIds.every((id) =>
+              current[id]?.x === nextTransientPositions[id]?.x &&
+              current[id]?.y === nextTransientPositions[id]?.y
+            )
+          ) {
+            return current;
+          }
+          return nextTransientPositions;
+        });
+        schedulePresenceSnapshot();
+        if (draggingPositions.length === changes.length) return;
+      }
       const snapNodeChangePosition = <
         NodeT extends WorkflowNode | ArtifactViewerNode | AnnotationNode,
       >(
@@ -1745,13 +1866,12 @@ function WorkbenchBody({
             }]
           : [],
       );
-      // Local-only React Flow bookkeeping (drag, measure, select). Must apply in
-      // controlled mode or RF error #015 fires and remote mounts look flaky.
+      // Local-only React Flow bookkeeping. Drag positions stay in the transient
+      // canvas overlay below so semantic viewer state remains referentially stable.
       const localArtifactViewerChanges = artifactViewerChanges.filter(
         (change) =>
           change.type === "dimensions" ||
-          change.type === "select" ||
-          (change.type === "position" && change.dragging === true),
+          change.type === "select",
       );
       if (localArtifactViewerChanges.length) {
         setArtifactViewers((current) => ({
@@ -1808,8 +1928,7 @@ function WorkbenchBody({
       const localAnnotationChanges = annotationChanges.filter(
         (change) =>
           change.type === "dimensions" ||
-          change.type === "select" ||
-          (change.type === "position" && change.dragging === true),
+          change.type === "select",
       );
       if (localAnnotationChanges.length) {
         setArtifactViewers((current) => ({
@@ -1923,38 +2042,16 @@ function WorkbenchBody({
         });
       }
       const semanticChanges = graphCommandsFromNodeChanges(workflowChanges);
-      // Selection + in-drag position only. Dimensions are merged via
-      // nodeMeasurements so authored-document remounts cannot wipe them.
-      const transientChanges = workflowChanges.filter(
-        (change) =>
-          change.type === "select" ||
-          (change.type === "position" && change.dragging === true),
+      // Selection is renderer bookkeeping. The early in-drag path above avoids
+      // routing pointer samples through setNodes and rebuilding semantic overlays.
+      const selectionChanges = workflowChanges.filter(
+        (change) => change.type === "select",
       );
-      if (transientChanges.length) {
-        setNodes((current) => applyNodeChanges(transientChanges, current));
+      if (selectionChanges.length) {
+        setNodes((current) => applyNodeChanges(selectionChanges, current));
       }
       if (semanticChanges.length) applyAuthoringCommands(semanticChanges);
 
-      const draggingWorkflow = workflowChanges.flatMap((change) =>
-        change.type === "position" && change.dragging === true && change.position
-          ? [{ node_id: change.id, x: change.position.x, y: change.position.y }]
-          : [],
-      );
-      const draggingViewers = artifactViewerChanges.flatMap((change) =>
-        change.type === "position" && change.dragging === true && change.position
-          ? [{ node_id: change.id, x: change.position.x, y: change.position.y }]
-          : [],
-      );
-      const draggingAnnotations = annotationChanges.flatMap((change) =>
-        change.type === "position" && change.dragging === true && change.position
-          ? [{ node_id: change.id, x: change.position.x, y: change.position.y }]
-          : [],
-      );
-      const draggingPositions = [
-        ...draggingWorkflow,
-        ...draggingViewers,
-        ...draggingAnnotations,
-      ];
       const dragEnded =
         workflowChanges.some(
           (change) => change.type === "position" && change.dragging === false,
@@ -1965,24 +2062,13 @@ function WorkbenchBody({
         annotationChanges.some(
           (change) => change.type === "position" && change.dragging === false,
         );
-      if (draggingPositions.length) {
-        const targetIds = draggingPositions.map((position) => position.node_id);
-        const nextDragging = new Set(targetIds);
-        const draggingChanged =
-          nextDragging.size !== localDraggingNodeIdsRef.current.size ||
-          targetIds.some((id) => !localDraggingNodeIdsRef.current.has(id));
-        localDraggingNodeIdsRef.current = nextDragging;
-        presenceDragRef.current = {
-          positions: draggingPositions,
-          targetIds,
-        };
-        if (draggingChanged) setLocalDragRevision((value) => value + 1);
-        publishPresenceSnapshot();
-      } else if (dragEnded && presenceDragRef.current) {
+      if (dragEnded) {
         localDraggingNodeIdsRef.current = new Set();
         presenceDragRef.current = null;
-        setLocalDragRevision((value) => value + 1);
-        publishPresenceSnapshot();
+        setTransientNodePositions((current) =>
+          Object.keys(current).length ? {} : current
+        );
+        schedulePresenceSnapshot();
       }
     },
     [
@@ -1991,7 +2077,7 @@ function WorkbenchBody({
       artifactViewers.nodes,
       commitArtifactViewers,
       nodes,
-      publishPresenceSnapshot,
+      schedulePresenceSnapshot,
       setNodes,
     ],
   );
@@ -2967,25 +3053,33 @@ function WorkbenchBody({
       ...canvasNodes,
       ...artifactViewerCanvasNodes,
     ];
-    const localDragging = localDraggingNodeIdsRef.current;
+    const localDragging = new Set(Object.keys(transientNodePositions));
     const alignIdlePosition = shouldSnapPosition(canvasGridSettings, {
       dragging: false,
       bypass: bypassSnap,
     });
     return combined.map((node) => {
-      const preview =
-        !localDragging.has(node.id) ? remoteDragPreviews[node.id] : undefined;
-      let positioned = preview
+      const transientPosition = transientNodePositions[node.id];
+      let positioned = transientPosition
         ? {
             ...node,
-            position: { x: preview.x, y: preview.y },
-            style: {
-              ...node.style,
-              // Ease between sparse presence samples without per-frame React writes.
-              transition: "transform 70ms linear",
-            },
+            position: transientPosition,
+            dragging: true,
           }
         : node;
+      const preview =
+        !localDragging.has(node.id) ? remoteDragPreviews[node.id] : undefined;
+      if (preview) {
+        positioned = {
+          ...positioned,
+          position: { x: preview.x, y: preview.y },
+          style: {
+            ...positioned.style,
+            // Ease between sparse presence samples without per-frame React writes.
+            transition: "transform 70ms linear",
+          },
+        };
+      }
       // Keep idle cards on the lattice even when stored coords predate snapping.
       if (
         !preview &&
@@ -3027,8 +3121,8 @@ function WorkbenchBody({
     canvasNodes,
     graphRoom.localSessionId,
     graphRoom.participants,
-    localDragRevision,
     remoteDragPreviews,
+    transientNodePositions,
   ]);
   const allCanvasEdges = React.useMemo<CanvasEdge[]>(
     () => [
@@ -3243,6 +3337,58 @@ function WorkbenchBody({
         }
       : null;
 
+  const chromeValue = React.useMemo(
+    () => ({
+      activeGraphId: activeGraph?.id ?? null,
+      graphName,
+      isDirty,
+      saving,
+      canSave:
+        !saving &&
+        !running &&
+        !openingGraphId &&
+        !deletingGraphId &&
+        Boolean(activeGraph ? isDirty : true),
+      save: async () => {
+        let name = graphName.trim();
+        if (!name || name === "Untitled workflow") {
+          const next = window.prompt("Name this graph", name || "");
+          if (!next?.trim()) return;
+          name = next.trim().slice(0, 160);
+          setGraphName(name);
+        }
+        await saveCurrentGraph(name);
+      },
+      renameGraph: async (graph: SavedGraphSummary, name: string) => {
+        if (activeGraph?.id === graph.id) {
+          setGraphName(name);
+          await saveCurrentGraph(name);
+          return;
+        }
+        await renameSavedGraphRemote(workspaceId, graph, name);
+        void refreshSavedGraphs();
+      },
+      deleteGraph: async (graph: SavedGraphSummary) => {
+        await removeSavedGraph(graph);
+      },
+    }),
+    [
+      activeGraph,
+      deletingGraphId,
+      graphName,
+      isDirty,
+      openingGraphId,
+      refreshSavedGraphs,
+      removeSavedGraph,
+      running,
+      saveCurrentGraph,
+      saving,
+      setGraphName,
+      workspaceId,
+    ],
+  );
+  usePublishWorkbenchChrome(chromeValue);
+
   return (
     <main {...stylex.props(s.shell)}>
       <span
@@ -3258,22 +3404,20 @@ function WorkbenchBody({
         aria-label="Workflow canvas"
         onPointerMove={(event) => {
           if (!graphRoom.canPublishPresence || !flow) return;
-          const position = flow.screenToFlowPosition({
+          presenceOverCanvasRef.current = true;
+          presenceClientPointRef.current = {
             x: event.clientX,
             y: event.clientY,
-          });
-          presenceOverCanvasRef.current = true;
-          presenceCursorRef.current = position;
-          publishPresenceSnapshot();
+          };
+          presenceClientPointDirtyRef.current = true;
+          schedulePresenceSnapshot();
         }}
         onPointerLeave={() => {
           presenceOverCanvasRef.current = false;
+          presenceClientPointRef.current = null;
+          presenceClientPointDirtyRef.current = false;
           presenceCursorRef.current = null;
-          const wasDragging = presenceDragRef.current !== null;
-          presenceDragRef.current = null;
-          localDraggingNodeIdsRef.current = new Set();
-          if (wasDragging) setLocalDragRevision((value) => value + 1);
-          publishPresenceSnapshot();
+          schedulePresenceSnapshot();
         }}
       >
         <WorkflowCanvas
@@ -3295,6 +3439,9 @@ function WorkbenchBody({
             canvasGridSettings.showBackground
               ? canvasGridSettings.cellSize
               : null
+          }
+          onlyRenderVisibleElements={
+            canvasGridSettings.onlyRenderVisibleElements
           }
         >
           <PresenceOverlay
@@ -3356,47 +3503,12 @@ function WorkbenchBody({
         <WorkbenchActivityBar activity={workbenchActivity} />
       ) : null}
 
-      <WorkbenchHeader
-        graphName={graphName}
-        activeGraphRevision={activeGraph?.revision ?? null}
-        isDirty={isDirty}
-        saving={saving}
-        saveDisabled={
-          saving ||
-          running ||
-          Boolean(openingGraphId) ||
-          Boolean(deletingGraphId) ||
-          !graphName.trim() ||
-          Boolean(activeGraph && !isDirty)
-        }
-        nodeCount={nodes.length}
-        edgeCount={edges.length}
-        graphStatus={
-          graphHasErrors
-            ? "error"
-            : running
-              ? "running"
-              : graphNeedsAttention
-                ? "incomplete"
-                : "ready"
-        }
-        canvasStatusMessage={canvasStatusMessage}
-        themePreference={preference}
-        onToggleGraphBrowser={() => {
-          setExecutionHistoryTarget(null);
-          toggleGraphBrowser();
-        }}
-        onGraphNameChange={setGraphName}
-        onSaveGraph={() => void saveCurrentGraph()}
-        onCycleTheme={cycleTheme}
-      />
-
       <CanvasGridSettingsPanel
         selectedCount={selectedNodeCount}
         onSnapSelection={snapSelectionToGrid}
       />
 
-      <aside aria-label="Canvas actions" {...stylex.props(s.actionRail)}>
+      <aside aria-label="Canvas actions" {...stylex.props(s.toolDock)}>
         <button
           type="button"
           {...firefoxDynamicButtonProps}
@@ -3407,12 +3519,45 @@ function WorkbenchBody({
           onClick={() => {
             closeGraphBrowser();
             setGridPanelOpen(false);
+            setWorkspaceLibraryOpen(false);
             setLibraryOpen((open) => !open);
           }}
         >
           <Plus size={14} />
           <span {...stylex.props(s.railLabel)}>Node</span>
         </button>
+        <button
+          type="button"
+          aria-label="Workspace library"
+          title="Workspace library"
+          {...stylex.props(s.railButton)}
+          onClick={() => {
+            closeGraphBrowser();
+            setGridPanelOpen(false);
+            setLibraryOpen(false);
+            setWorkspaceLibraryOpen(true);
+          }}
+        >
+          <Package size={14} />
+          <span {...stylex.props(s.railLabel)}>Library</span>
+        </button>
+        {canPublishModule && graphHasModuleBoundaries && activeGraph ? (
+          <button
+            type="button"
+            aria-label="Publish release"
+            title="Publish module release"
+            disabled={running}
+            {...stylex.props(s.railButton)}
+            onClick={() => {
+              closeGraphBrowser();
+              setLibraryOpen(false);
+              setPublishModuleOpen(true);
+            }}
+          >
+            <Upload size={14} />
+            <span {...stylex.props(s.railLabel)}>Publish</span>
+          </button>
+        ) : null}
         <button
           type="button"
           aria-label="Add Artifact Viewer"
@@ -3449,29 +3594,33 @@ function WorkbenchBody({
               <button
                 type="button"
                 role="menuitem"
-                {...stylex.props(s.railButton)}
+                {...stylex.props(s.railButton, s.railMenuButton)}
                 onClick={() => addAnnotation("text")}
               >
                 <Type size={14} />
-                <span {...stylex.props(s.railLabel)}>Text</span>
+                <span {...stylex.props(s.railLabel, s.railMenuLabel)}>Text</span>
               </button>
               <button
                 type="button"
                 role="menuitem"
-                {...stylex.props(s.railButton)}
+                {...stylex.props(s.railButton, s.railMenuButton)}
                 onClick={() => addAnnotation("rectangle")}
               >
                 <Square size={14} />
-                <span {...stylex.props(s.railLabel)}>Square</span>
+                <span {...stylex.props(s.railLabel, s.railMenuLabel)}>
+                  Square
+                </span>
               </button>
               <button
                 type="button"
                 role="menuitem"
-                {...stylex.props(s.railButton)}
+                {...stylex.props(s.railButton, s.railMenuButton)}
                 onClick={() => addAnnotation("ellipse")}
               >
                 <Circle size={14} />
-                <span {...stylex.props(s.railLabel)}>Circle</span>
+                <span {...stylex.props(s.railLabel, s.railMenuLabel)}>
+                  Circle
+                </span>
               </button>
             </div>
           ) : null}
@@ -3489,9 +3638,9 @@ function WorkbenchBody({
         </button>
         <button
           type="button"
-          aria-label="Grid lab"
+          aria-label="Canvas lab"
           aria-pressed={gridPanelOpen}
-          title="Experiment with canvas grid snapping"
+          title="Experiment with canvas behavior"
           {...stylex.props(
             s.railButton,
             gridPanelOpen ? s.railPrimary : null,
@@ -3503,7 +3652,7 @@ function WorkbenchBody({
           }}
         >
           <Grid3x3 size={14} />
-          <span {...stylex.props(s.railLabel)}>Grid</span>
+          <span {...stylex.props(s.railLabel)}>Canvas</span>
         </button>
         <span {...stylex.props(s.railDivider)} />
         <button
@@ -3561,24 +3710,6 @@ function WorkbenchBody({
         />
       </Toast.Provider>
 
-      {graphBrowserOpen ? (
-        <SavedGraphBrowser
-          graphs={savedGraphs}
-          activeGraphId={activeGraph?.id ?? null}
-          openingGraphId={openingGraphId}
-          deletingGraphId={deletingGraphId}
-          busy={graphOperationBusy}
-          loading={savedGraphsLoading}
-          refreshing={savedGraphsRefreshing}
-          error={savedGraphsError}
-          onClose={closeGraphBrowser}
-          onNew={requestNewGraph}
-          onOpen={(graphId) => void openSavedGraph(graphId)}
-          onDelete={(graph) => void removeSavedGraph(graph)}
-          onRefresh={() => void refreshSavedGraphs()}
-        />
-      ) : null}
-
       {executionHistoryTarget ? (
         <ExecutionHistoryDrawer
           key={`${activeGraph?.id ?? "unsaved"}:${executionHistoryTarget.nodeId ?? "all"}:${executionHistoryTarget.executionId ?? "latest"}`}
@@ -3602,6 +3733,35 @@ function WorkbenchBody({
           onOpenChange={setLibraryOpen}
           onAddNode={addCatalogNode}
           onOpenGraph={openGraphInNewTab}
+          onOpenWorkspaceLibrary={() => {
+            setLibraryOpen(false);
+            setWorkspaceLibraryOpen(true);
+          }}
+        />
+      ) : null}
+
+      <WorkspaceLibraryDialog
+        workspace={workspace}
+        open={workspaceLibraryOpen}
+        onOpenChange={setWorkspaceLibraryOpen}
+        showTrigger={false}
+        onOpenSourceGraph={openGraphInNewTab}
+        onLibraryChanged={() => {
+          void refreshNodeRegistry();
+        }}
+      />
+
+      {activeGraph ? (
+        <PublishModuleDialog
+          open={publishModuleOpen}
+          onOpenChange={setPublishModuleOpen}
+          workspaceId={workspaceId}
+          sourceGraphId={activeGraph.id}
+          graphName={graphName}
+          revision={activeGraph.revision}
+          onPublished={() => {
+            void refreshNodeRegistry();
+          }}
         />
       ) : null}
 

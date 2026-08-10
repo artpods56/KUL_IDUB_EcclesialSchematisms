@@ -27,10 +27,16 @@ vi.mock("./WorkspaceLayout", () => ({
   useWorkspaceContext: () => ({ workspace: workspaceState.workspace }),
   workspaceCanManageMembers: (workspace: typeof workspaceState.workspace) =>
     workspace.capabilities.includes("manage_members"),
+  workspaceDisplayName: (workspace: { name: string; kind: string }) =>
+    workspace.kind === "personal" ? "Personal" : workspace.name,
 }));
 
 vi.mock("./WorkspaceMembersDialog", () => ({
   WorkspaceMembersDialog: () => <div data-member-dialog>member dialog</div>,
+}));
+
+vi.mock("./WorkspaceLibraryDialog", () => ({
+  WorkspaceLibraryDialog: () => <div data-library-dialog>library dialog</div>,
 }));
 
 vi.mock("next/link", () => ({
