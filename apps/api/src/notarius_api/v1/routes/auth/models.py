@@ -15,6 +15,8 @@ from notarius_core.domain.identity import (
 class SessionResponse(BaseModel):
     id: UUID
     user_id: UUID
+    email: str | None
+    display_name: str | None
     created_at: datetime
     last_used_at: datetime | None
     expires_at: datetime
@@ -88,6 +90,7 @@ class PersonalAccessTokenScope(StrEnum):
     CHECKPOINT_GRAPH = "checkpoint_graph"
     EXECUTE_GRAPH = "execute_graph"
     CANCEL_EXECUTION = "cancel_execution"
+    PUBLISH_MODULE = "publish_module"
 
 
 class PersonalAccessTokenCreateRequest(BaseModel):

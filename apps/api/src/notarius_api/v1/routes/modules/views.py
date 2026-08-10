@@ -1,0 +1,230 @@
+from uuid import UUID
+
+from fastapi import APIRouter, HTTPException, Request, status
+
+from notarius_core.domain.errors import CapabilityDeniedError, NotFoundError
+from notarius_core.domain.identity import WorkspaceCapability
+from notarius_core.domain.module_library import ModuleLibraryError
+from notarius_core.domain.modules import GraphModuleDefinition, GraphModuleReference
+
+from notarius_api.app_state import get_identity, get_resources
+from notarius_api.v1.routes.auth.dependencies import require_workspace_capability
+from notarius_api.v1.routes.catalog.services import (
+    GraphModuleCatalog,
+    GraphModuleCatalogError,
+)
+from notarius_api.v1.routes.modules.dependencies import ModuleLibraryDependency
+from notarius_api.v1.routes.modules.models import (
+    ImportModuleReleaseRequest,
+    ImportModuleReleaseResponse,
+    ModuleListResponse,
+    ModuleResponse,
+    PublishModuleReleaseRequest,
+)
+
+
+router = APIRouter(prefix="/workspaces/{workspace_id}/modules", tags=["modules"])
+
+
+async def _definition_for_module(
+    catalog: GraphModuleCatalog,
+    *,
+    workspace_id: UUID,
+    source_graph_id: UUID,
+    revision: int | None,
+) -> GraphModuleDefinition | None:
+    if revision is None:
+        return None
+    try:
+        return await catalog.get_definition(
+            GraphModuleReference(graph_id=source_graph_id, revision=revision),
+            workspace_id=workspace_id,
+        )
+    except (NotFoundError, GraphModuleCatalogError):
+        return None
+
+
+@router.get("", response_model=ModuleListResponse)
+async def list_modules(
+    service: ModuleLibraryDependency,
+    access: require_workspace_capability(WorkspaceCapability.VIEW_GRAPH),
+    request: Request,
+) -> ModuleListResponse:
+    catalog = get_resources(request.app).graph_modules
+    modules = await service.list_library(access.workspace_id)
+    responses: list[ModuleResponse] = []
+    for module in modules:
+        releases = await service.list_releases(access.workspace_id, module.id)
+        definition = await _definition_for_module(
+            catalog,
+            workspace_id=access.workspace_id,
+            source_graph_id=module.source_graph_id,
+            revision=module.current_library_release,
+        )
+        responses.append(
+            ModuleResponse.from_module(
+                module,
+                releases=releases,
+                definition=definition,
+            )
+        )
+    return ModuleListResponse(modules=responses)
+
+
+@router.get("/{module_id}", response_model=ModuleResponse)
+async def get_module(
+    module_id: UUID,
+    service: ModuleLibraryDependency,
+    access: require_workspace_capability(WorkspaceCapability.VIEW_GRAPH),
+    request: Request,
+) -> ModuleResponse:
+    catalog = get_resources(request.app).graph_modules
+    try:
+        module = await service.get(access.workspace_id, module_id)
+        releases = await service.list_releases(access.workspace_id, module_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    definition = await _definition_for_module(
+        catalog,
+        workspace_id=access.workspace_id,
+        source_graph_id=module.source_graph_id,
+        revision=module.current_library_release,
+    )
+    return ModuleResponse.from_module(
+        module,
+        releases=releases,
+        definition=definition,
+    )
+
+
+@router.post(
+    "/publish",
+    response_model=ModuleResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def publish_module_release(
+    body: PublishModuleReleaseRequest,
+    service: ModuleLibraryDependency,
+    access: require_workspace_capability(WorkspaceCapability.PUBLISH_MODULE),
+) -> ModuleResponse:
+    try:
+        module, _release, definition = await service.publish_release(
+            workspace_id=access.workspace_id,
+            source_graph_id=body.source_graph_id,
+            published_by_user_id=access.actor.user_id,
+            revision=body.revision,
+            name=body.name,
+            description=body.description,
+        )
+        releases = await service.list_releases(access.workspace_id, module.id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ModuleLibraryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return ModuleResponse.from_module(
+        module,
+        releases=releases,
+        definition=definition,
+    )
+
+
+@router.post("/{module_id}/deprecate", response_model=ModuleResponse)
+async def deprecate_module(
+    module_id: UUID,
+    service: ModuleLibraryDependency,
+    access: require_workspace_capability(WorkspaceCapability.MANAGE_MODULE_LIBRARY),
+    request: Request,
+) -> ModuleResponse:
+    catalog = get_resources(request.app).graph_modules
+    try:
+        module = await service.deprecate(
+            workspace_id=access.workspace_id,
+            module_id=module_id,
+        )
+        releases = await service.list_releases(access.workspace_id, module_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ModuleLibraryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    definition = await _definition_for_module(
+        catalog,
+        workspace_id=access.workspace_id,
+        source_graph_id=module.source_graph_id,
+        revision=module.current_library_release,
+    )
+    return ModuleResponse.from_module(
+        module,
+        releases=releases,
+        definition=definition,
+    )
+
+
+@router.post("/{module_id}/withdraw", response_model=ModuleResponse)
+async def withdraw_module(
+    module_id: UUID,
+    service: ModuleLibraryDependency,
+    access: require_workspace_capability(WorkspaceCapability.MANAGE_MODULE_LIBRARY),
+) -> ModuleResponse:
+    try:
+        module = await service.withdraw(
+            workspace_id=access.workspace_id,
+            module_id=module_id,
+        )
+        releases = await service.list_releases(access.workspace_id, module_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ModuleLibraryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return ModuleResponse.from_module(module, releases=releases)
+
+
+@router.post(
+    "/import",
+    response_model=ImportModuleReleaseResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_module_release(
+    body: ImportModuleReleaseRequest,
+    service: ModuleLibraryDependency,
+    access: require_workspace_capability(WorkspaceCapability.CREATE_GRAPH),
+    request: Request,
+) -> ImportModuleReleaseResponse:
+    if body.source_workspace_id == access.workspace_id:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Import into the same workspace is not supported; "
+                "publish locally instead"
+            ),
+        )
+    identity = get_identity(request.app)
+    try:
+        await identity.identity_service.authorize(
+            actor=access.actor,
+            workspace_id=body.source_workspace_id,
+            capability=WorkspaceCapability.VIEW_GRAPH,
+        )
+    except CapabilityDeniedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    try:
+        graph, module, release, definition = await service.import_release(
+            source_workspace_id=body.source_workspace_id,
+            source_module_id=body.source_module_id,
+            source_revision=body.revision,
+            destination_workspace_id=access.workspace_id,
+            created_by_user_id=access.actor.user_id,
+            name=body.name,
+        )
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ModuleLibraryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return ImportModuleReleaseResponse.from_import(
+        graph,
+        module,
+        releases=[release],
+        definition=definition,
+    )

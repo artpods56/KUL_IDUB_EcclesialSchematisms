@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from notarius_core.artifacts import InMemoryUnitOfWork
+from notarius_core.application.modules import ModuleLibraryService
 from notarius_core.application.saved_graphs import SavedGraphService
 from notarius_core.operators.arithmetic import (
     IntegerValueOutputWriter,
@@ -84,6 +85,7 @@ def build_workbench_components(
     storage_backend: str = "local",
     bucket: str = _WORKBENCH_BUCKET,
     saved_graphs: SavedGraphService | None = None,
+    module_library: ModuleLibraryService | None = None,
     node_secrets: NodeSecretResolverPort | None = None,
 ) -> WorkbenchComponents:
     resolved_workspace = (
@@ -132,7 +134,11 @@ def build_workbench_components(
     writer_registry = ArtifactWriterRegistry(writers)
 
     artifacts = ArtifactService(resolved_unit_of_work, resolved_storage)
-    modules = GraphModuleCatalog(saved_graphs, plugin_registry)
+    modules = GraphModuleCatalog(
+        saved_graphs,
+        plugin_registry,
+        module_library=module_library,
+    )
     materializations = MaterializationService(
         resolved_unit_of_work,
         artifacts,

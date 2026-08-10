@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 from notarius_core.application.collaboration import CollaborationService
 from notarius_core.application.identity import IdentityService
+from notarius_core.application.modules import ModuleLibraryService
 from notarius_core.application.saved_graphs import SavedGraphService
 from notarius_core.plugins import PluginRegistry
 from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
@@ -42,6 +43,7 @@ class AppResources:
     plugin_registry: PluginRegistry
     uploads: ImageUploadService
     graph_modules: GraphModuleCatalog
+    module_library: ModuleLibraryService
     run_graph: RunGraph
     execution_manager: RunExecutionManager
     execution_history: ExecutionHistoryService

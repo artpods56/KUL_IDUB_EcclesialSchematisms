@@ -6,6 +6,7 @@ from pydantic.errors import PydanticInvalidForJsonSchema
 
 from notarius_core.artifacts import ArtifactFieldProjection, ArtifactTypeSpec
 from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
+from notarius_core.domain.module_library import ModulePublicationState
 from notarius_core.nodes import (
     ArtifactTypeVariable,
     InputPortSpec,
@@ -233,6 +234,9 @@ class NodeSpecResponse(ApiResponse):
     secret_inputs: list[NodeSecretInputResponse] = Field(default_factory=list)
     module_graph_id: UUID | None = None
     module_graph_revision: int | None = Field(default=None, ge=1)
+    module_id: UUID | None = None
+    publication_state: ModulePublicationState | None = None
+    is_current_library_release: bool | None = None
     catalog_visible: bool = True
 
     @model_validator(mode="after")
@@ -296,6 +300,9 @@ class NodeSpecResponse(ApiResponse):
             ],
             module_graph_id=definition.reference.graph_id,
             module_graph_revision=definition.reference.revision,
+            module_id=entry.module_id,
+            publication_state=entry.publication_state,
+            is_current_library_release=entry.is_current_library_release,
             catalog_visible=entry.catalog_visible,
         )
 
@@ -339,7 +346,7 @@ class NodeRegistryResponse(ApiResponse):
             + [
                 PluginSpecResponse(
                     slug=GRAPH_MODULE_PLUGIN_SLUG,
-                    title="Modules",
+                    title="Workspace library",
                     origin=PluginOrigin.MODULE,
                 )
             ],

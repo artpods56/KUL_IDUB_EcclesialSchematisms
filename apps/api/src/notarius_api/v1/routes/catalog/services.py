@@ -1,8 +1,10 @@
 from dataclasses import dataclass
 from uuid import UUID
 
+from notarius_core.application.modules import ModuleLibraryService
 from notarius_core.application.saved_graphs import SavedGraphService
 from notarius_core.domain.errors import NotFoundError
+from notarius_core.domain.module_library import ModulePublicationState
 from notarius_core.domain.modules import (
     MODULE_INPUT_OPERATOR_ID,
     MODULE_OUTPUT_OPERATOR_ID,
@@ -32,6 +34,9 @@ class GraphModuleCatalogError(RuntimeError):
 class GraphModuleCatalogEntry:
     definition: GraphModuleDefinition
     catalog_visible: bool
+    module_id: UUID | None = None
+    publication_state: ModulePublicationState | None = None
+    is_current_library_release: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,53 +60,43 @@ def document_has_module_boundary(document: SavedGraphDocument) -> bool:
 
 
 class GraphModuleCatalog:
-    """Discovers valid saved-graph revisions exposed as graph modules."""
+    """Resolves published module releases for browse and any pin for execution."""
 
     def __init__(
         self,
         saved_graphs: SavedGraphService | None,
         plugin_registry: PluginRegistry,
+        module_library: ModuleLibraryService | None = None,
     ) -> None:
         self._saved_graphs = saved_graphs
         self._plugin_registry = plugin_registry
+        self._module_library = module_library
 
     async def list(self, workspace_id: UUID) -> GraphModuleCatalogListing:
-        if self._saved_graphs is None:
+        if self._module_library is None or self._saved_graphs is None:
             return GraphModuleCatalogListing(entries=[], unavailable=[])
         entries: list[GraphModuleCatalogEntry] = []
-        unavailable: list[UnavailableGraphModule] = []
-        for graph in await self._saved_graphs.list(workspace_id):
-            for revision in await self._saved_graphs.list_revisions(
-                workspace_id,
-                graph.id,
-            ):
-                is_tip = revision.revision == graph.revision
-                try:
-                    definition = GraphModuleDefinition.from_saved_graph_revision(
-                        revision
-                    )
-                    await self._validate_optional_input_targets(
-                        definition,
-                        workspace_id=workspace_id,
-                    )
-                except GraphModuleDefinitionError as exc:
-                    if is_tip and document_has_module_boundary(revision.document):
-                        unavailable.append(
-                            UnavailableGraphModule(
-                                graph_id=revision.graph_id,
-                                revision=revision.revision,
-                                name=revision.name,
-                                reason=str(exc),
-                            )
-                        )
-                    continue
-                entries.append(
-                    GraphModuleCatalogEntry(
-                        definition=definition,
-                        catalog_visible=is_tip,
-                    )
+        for module, release, definition in await self._module_library.catalog_definitions(
+            workspace_id
+        ):
+            try:
+                await self._validate_optional_input_targets(
+                    definition,
+                    workspace_id=workspace_id,
                 )
-        return GraphModuleCatalogListing(entries=entries, unavailable=unavailable)
+            except GraphModuleDefinitionError:
+                continue
+            is_current = module.current_library_release == release.revision
+            entries.append(
+                GraphModuleCatalogEntry(
+                    definition=definition,
+                    catalog_visible=is_current,
+                    module_id=module.id,
+                    publication_state=module.publication_state,
+                    is_current_library_release=is_current,
+                )
+            )
+        return GraphModuleCatalogListing(entries=entries, unavailable=[])
 
     async def get_definition(
         self,
