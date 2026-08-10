@@ -88,6 +88,29 @@ describe("Workbench authored document adapter", () => {
     }]);
   });
 
+  it("authors one durable command when a multi-node drag stops", () => {
+    expect(graphCommandsFromNodeChanges([
+      {
+        id: "source",
+        type: "position",
+        position: { x: 40, y: 50 },
+        dragging: false,
+      },
+      {
+        id: "target",
+        type: "position",
+        position: { x: 340, y: 50 },
+        dragging: false,
+      },
+    ])).toEqual([{
+      kind: "move_nodes",
+      positions: [
+        { node_id: "source", x: 40, y: 50 },
+        { node_id: "target", x: 340, y: 50 },
+      ],
+    }]);
+  });
+
   it("keeps move overlays and scopes config invalidation", () => {
     const moved = reduceWorkbenchAuthoringState(state(), {
       kind: "apply_commands",
