@@ -53,7 +53,11 @@ from notarius_api.v1.routes.collaboration.views import router as collaboration_r
 from notarius_api.v1.routes.executions.views import router as executions_router
 from notarius_api.v1.routes.node_secrets.services import NodeSecretService
 from notarius_api.v1.routes.node_secrets.views import router as node_secrets_router
-from notarius_api.v1.routes.saved_graphs.views import router as saved_graphs_router
+from notarius_api.v1.routes.saved_graphs.views import (
+    browser_router as graph_browser_router,
+    folder_router as graph_folders_router,
+    router as saved_graphs_router,
+)
 from notarius_api.v1.routes.uploads.views import router as uploads_router
 from notarius_api.v1.routes.workspaces.views import (
     router as workspaces_router,
@@ -450,6 +454,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     application.include_router(auth_router, prefix="/v1")
     application.include_router(workspaces_router, prefix="/v1")
+    application.include_router(graph_browser_router, prefix="/v1")
+    application.include_router(graph_folders_router, prefix="/v1")
     application.include_router(saved_graphs_router, prefix="/v1")
     application.include_router(collaboration_router, prefix="/v1")
     application.include_router(node_secrets_router, prefix="/v1")

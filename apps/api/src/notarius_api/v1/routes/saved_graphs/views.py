@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 
 from notarius_core.domain.collaboration import (
@@ -14,13 +14,17 @@ from notarius_core.domain.errors import (
     CollaborationHeadConflictError,
     CollaborationIdempotencyMismatchError,
     CollaborationUncheckpointedError,
+    GraphFolderNameConflictError,
     MissingCollaborativeHeadError,
     NotFoundError,
     SavedGraphRevisionConflictError,
 )
-from notarius_core.domain.identity import WorkspaceCapability
+from notarius_core.domain.identity import ActorContext, WorkspaceCapability
 
-from notarius_api.v1.routes.auth.dependencies import require_workspace_capability
+from notarius_api.v1.routes.auth.dependencies import (
+    browser_actor,
+    require_workspace_capability,
+)
 from notarius_api.v1.routes.collaboration.publish import (
     close_graph_room,
     publish_accepted_command,
@@ -35,15 +39,103 @@ from .models import (
     CopyExactHeadRequest,
     CreateSavedGraphRequest,
     GraphCommandReceiptResponse,
+    AssignGraphFolderRequest,
+    GraphBrowserListResponse,
+    GraphFolderListResponse,
+    GraphFolderResponse,
+    GraphFolderWriteRequest,
+    GraphOrganizationResponse,
     SavedGraphListResponse,
     SavedGraphResponse,
     SubmitGraphCommandRequest,
     SubmitGraphCommandResponse,
     UpdateSavedGraphRequest,
+    UserGraphStateResponse,
 )
 
 
 router = APIRouter(prefix="/workspaces/{workspace_id}/graphs", tags=["saved graphs"])
+browser_router = APIRouter(prefix="/graphs", tags=["graph browser"])
+folder_router = APIRouter(
+    prefix="/workspaces/{workspace_id}/graph-folders",
+    tags=["graph folders"],
+)
+
+
+@browser_router.get("", response_model=GraphBrowserListResponse)
+async def list_accessible_graphs(
+    service: SavedGraphDependency,
+    actor: Annotated[ActorContext, Depends(browser_actor)],
+) -> GraphBrowserListResponse:
+    return GraphBrowserListResponse.from_items(
+        await service.list_accessible(actor)
+    )
+
+
+@folder_router.get("", response_model=GraphFolderListResponse)
+async def list_graph_folders(
+    service: SavedGraphDependency,
+    access: require_workspace_capability(WorkspaceCapability.VIEW_GRAPH),
+) -> GraphFolderListResponse:
+    folders = await service.list_folders(
+        actor=access.actor,
+        workspace_id=access.workspace_id,
+    )
+    return GraphFolderListResponse.from_folders(folders)
+
+
+@folder_router.post(
+    "",
+    response_model=GraphFolderResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_graph_folder(
+    request: GraphFolderWriteRequest,
+    service: SavedGraphDependency,
+    access: require_workspace_capability(WorkspaceCapability.EDIT_GRAPH),
+) -> GraphFolderResponse:
+    try:
+        folder = await service.create_folder(
+            actor=access.actor,
+            workspace_id=access.workspace_id,
+            name=request.name,
+        )
+    except GraphFolderNameConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return GraphFolderResponse.from_folder(folder)
+
+
+@folder_router.patch("/{folder_id}", response_model=GraphFolderResponse)
+async def rename_graph_folder(
+    folder_id: UUID,
+    request: GraphFolderWriteRequest,
+    service: SavedGraphDependency,
+    access: require_workspace_capability(WorkspaceCapability.EDIT_GRAPH),
+) -> GraphFolderResponse:
+    try:
+        folder = await service.rename_folder(
+            actor=access.actor,
+            workspace_id=access.workspace_id,
+            folder_id=folder_id,
+            name=request.name,
+        )
+    except GraphFolderNameConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return GraphFolderResponse.from_folder(folder)
+
+
+@folder_router.delete("/{folder_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_graph_folder(
+    folder_id: UUID,
+    service: SavedGraphDependency,
+    access: require_workspace_capability(WorkspaceCapability.EDIT_GRAPH),
+) -> Response:
+    await service.delete_folder(
+        actor=access.actor,
+        workspace_id=access.workspace_id,
+        folder_id=folder_id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("", response_model=SavedGraphListResponse)
@@ -53,6 +145,94 @@ async def list_saved_graphs(
 ) -> SavedGraphListResponse:
     graphs = await service.list(access.workspace_id)
     return SavedGraphListResponse.from_graphs(graphs)
+
+
+@router.put("/{graph_id}/folder", response_model=GraphOrganizationResponse)
+async def assign_graph_folder(
+    graph_id: UUID,
+    request: AssignGraphFolderRequest,
+    service: SavedGraphDependency,
+    access: require_workspace_capability(WorkspaceCapability.EDIT_GRAPH),
+) -> GraphOrganizationResponse:
+    organization = await service.assign_folder(
+        actor=access.actor,
+        workspace_id=access.workspace_id,
+        graph_id=graph_id,
+        folder_id=request.folder_id,
+    )
+    return GraphOrganizationResponse.from_organization(organization)
+
+
+@router.put("/{graph_id}/archive", response_model=GraphOrganizationResponse)
+async def archive_graph(
+    graph_id: UUID,
+    service: SavedGraphDependency,
+    access: require_workspace_capability(WorkspaceCapability.EDIT_GRAPH),
+) -> GraphOrganizationResponse:
+    organization = await service.archive(
+        actor=access.actor,
+        workspace_id=access.workspace_id,
+        graph_id=graph_id,
+    )
+    return GraphOrganizationResponse.from_organization(organization)
+
+
+@router.delete("/{graph_id}/archive", response_model=GraphOrganizationResponse)
+async def restore_graph(
+    graph_id: UUID,
+    service: SavedGraphDependency,
+    access: require_workspace_capability(WorkspaceCapability.EDIT_GRAPH),
+) -> GraphOrganizationResponse:
+    organization = await service.restore(
+        actor=access.actor,
+        workspace_id=access.workspace_id,
+        graph_id=graph_id,
+    )
+    return GraphOrganizationResponse.from_organization(organization)
+
+
+@router.put("/{graph_id}/star", response_model=UserGraphStateResponse)
+async def star_graph(
+    graph_id: UUID,
+    service: SavedGraphDependency,
+    access: require_workspace_capability(WorkspaceCapability.VIEW_GRAPH),
+) -> UserGraphStateResponse:
+    state = await service.set_starred(
+        actor=access.actor,
+        workspace_id=access.workspace_id,
+        graph_id=graph_id,
+        starred=True,
+    )
+    return UserGraphStateResponse.from_state(state)
+
+
+@router.delete("/{graph_id}/star", response_model=UserGraphStateResponse)
+async def unstar_graph(
+    graph_id: UUID,
+    service: SavedGraphDependency,
+    access: require_workspace_capability(WorkspaceCapability.VIEW_GRAPH),
+) -> UserGraphStateResponse:
+    state = await service.set_starred(
+        actor=access.actor,
+        workspace_id=access.workspace_id,
+        graph_id=graph_id,
+        starred=False,
+    )
+    return UserGraphStateResponse.from_state(state)
+
+
+@router.post("/{graph_id}/opened", response_model=UserGraphStateResponse)
+async def record_graph_open(
+    graph_id: UUID,
+    service: SavedGraphDependency,
+    access: require_workspace_capability(WorkspaceCapability.VIEW_GRAPH),
+) -> UserGraphStateResponse:
+    state = await service.record_open(
+        actor=access.actor,
+        workspace_id=access.workspace_id,
+        graph_id=graph_id,
+    )
+    return UserGraphStateResponse.from_state(state)
 
 
 @router.post(

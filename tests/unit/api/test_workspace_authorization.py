@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -197,6 +197,216 @@ def _assert_not_found(response: Response, *, context: object) -> None:
 def _assert_forbidden(response: Response, *, context: object) -> None:
     assert response.status_code == 403, (context, response.status_code, response.text)
     assert response.json() == {"detail": "Forbidden"}
+
+
+def test_global_graph_browser_is_authorized_and_keeps_user_state_private(
+    authz_client: tuple[TestClient, ActorSwitcher, UUID],
+) -> None:
+    client, actor, _ = authz_client
+    graph_a_id, _ = _create_graph(
+        client,
+        actor,
+        workspace_id=WORKSPACE_A,
+        user_id=OWNER_A_ID,
+        name="Workspace A draft",
+    )
+    graph_b_id, _ = _create_graph(
+        client,
+        actor,
+        workspace_id=WORKSPACE_B,
+        user_id=OWNER_B_ID,
+        name="Workspace B private",
+    )
+
+    actor.as_user(OWNER_A_ID)
+    head = client.get(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/head")).json()
+    renamed = client.post(
+        _api(WORKSPACE_A, f"/graphs/{graph_a_id}/commands"),
+        json={
+            "command_id": str(uuid4()),
+            "room_epoch": head["room_epoch"],
+            "observed_sequence": head["collaboration_sequence"],
+            "command": {
+                "kind": "rename_graph",
+                "name": "Current live-head name",
+                "expected_name": "Workspace A draft",
+            },
+        },
+    )
+    assert renamed.status_code == 200, renamed.text
+
+    created_folder = client.post(
+        _api(WORKSPACE_A, "/graph-folders"),
+        json={"name": "Research"},
+    )
+    assert created_folder.status_code == 201, created_folder.text
+    folder_id = created_folder.json()["id"]
+    assigned = client.put(
+        _api(WORKSPACE_A, f"/graphs/{graph_a_id}/folder"),
+        json={"folder_id": folder_id},
+    )
+    assert assigned.status_code == 200, assigned.text
+    assert assigned.json()["folder_id"] == folder_id
+    assert client.put(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/star")).status_code == 200
+    opened = client.post(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/opened"))
+    assert opened.status_code == 200, opened.text
+    assert opened.json()["last_opened_at"] is not None
+
+    owner_a_browser = client.get("/v1/graphs")
+    assert owner_a_browser.status_code == 200, owner_a_browser.text
+    assert [graph["id"] for graph in owner_a_browser.json()["graphs"]] == [
+        str(graph_a_id)
+    ]
+    owner_a_row = owner_a_browser.json()["graphs"][0]
+    assert owner_a_row["location"] == {
+        "id": str(WORKSPACE_A),
+        "name": "Workspace A",
+        "kind": "shared",
+    }
+    assert owner_a_row["folder"] == {"id": folder_id, "name": "Research"}
+    assert owner_a_row["starred"] is True
+    assert owner_a_row["last_opened_at"] is not None
+    assert owner_a_row["draft"] == {
+        "name": "Current live-head name",
+        "head_sequence": 2,
+        "checkpoint_sequence": 1,
+        "checkpoint_revision": 1,
+        "updated_at": renamed.json()["head"]["updated_at"],
+        "node_count": 0,
+        "edge_count": 0,
+    }
+    assert owner_a_row["creator"] == {
+        "id": str(OWNER_A_ID),
+        "display_name": "Owner A",
+    }
+
+    actor.as_user(VIEWER_A_ID)
+    viewer_browser = client.get("/v1/graphs")
+    assert viewer_browser.status_code == 200, viewer_browser.text
+    viewer_row = viewer_browser.json()["graphs"][0]
+    assert viewer_row["id"] == str(graph_a_id)
+    assert viewer_row["starred"] is False
+    assert viewer_row["last_opened_at"] is None
+    _assert_forbidden(
+        client.put(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/archive")),
+        context="viewer archive graph",
+    )
+    _assert_forbidden(
+        client.post(
+            _api(WORKSPACE_A, "/graph-folders"),
+            json={"name": "Viewer folder"},
+        ),
+        context="viewer create folder",
+    )
+    assert client.put(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/star")).status_code == 200
+
+    actor.as_user(OWNER_A_ID)
+    owner_a_row_after_viewer_star = client.get("/v1/graphs").json()["graphs"][0]
+    assert owner_a_row_after_viewer_star["starred"] is True
+    unstarred = client.delete(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/star"))
+    assert unstarred.status_code == 200, unstarred.text
+    assert unstarred.json()["starred"] is False
+    assert client.get("/v1/graphs").json()["graphs"][0]["starred"] is False
+
+    archived = client.put(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/archive"))
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["archived"] is True
+    assert client.get("/v1/graphs").json()["graphs"][0]["archived"] is True
+    restored = client.delete(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/archive"))
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["archived"] is False
+
+    actor.as_user(BOTH_ID)
+    both_browser = client.get("/v1/graphs")
+    assert both_browser.status_code == 200, both_browser.text
+    assert {graph["id"] for graph in both_browser.json()["graphs"]} == {
+        str(graph_a_id),
+        str(graph_b_id),
+    }
+
+    actor.as_user(OWNER_B_ID)
+    revoked = client.delete(_api(WORKSPACE_B, f"/members/{BOTH_ID}"))
+    assert revoked.status_code == 204, revoked.text
+    actor.as_user(BOTH_ID)
+    after_revocation = client.get("/v1/graphs")
+    assert after_revocation.status_code == 200, after_revocation.text
+    assert [graph["id"] for graph in after_revocation.json()["graphs"]] == [
+        str(graph_a_id)
+    ]
+
+
+def test_folder_assignment_cannot_cross_workspace_and_delete_unfiles_graphs(
+    authz_client: tuple[TestClient, ActorSwitcher, UUID],
+) -> None:
+    client, actor, _ = authz_client
+    graph_a_id, _ = _create_graph(
+        client,
+        actor,
+        workspace_id=WORKSPACE_A,
+        user_id=OWNER_A_ID,
+        name="Folder boundary",
+    )
+
+    actor.as_user(OWNER_B_ID)
+    foreign_folder = client.post(
+        _api(WORKSPACE_B, "/graph-folders"),
+        json={"name": "Foreign"},
+    )
+    assert foreign_folder.status_code == 201, foreign_folder.text
+
+    actor.as_user(OWNER_A_ID)
+    rejected = client.put(
+        _api(WORKSPACE_A, f"/graphs/{graph_a_id}/folder"),
+        json={"folder_id": foreign_folder.json()["id"]},
+    )
+    _assert_not_found(rejected, context="cross-workspace folder assignment")
+
+    own_folder = client.post(
+        _api(WORKSPACE_A, "/graph-folders"),
+        json={"name": "Temporary"},
+    )
+    assert own_folder.status_code == 201, own_folder.text
+    own_folder_id = own_folder.json()["id"]
+    renamed = client.patch(
+        _api(WORKSPACE_A, f"/graph-folders/{own_folder_id}"),
+        json={"name": "  Renamed  "},
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["name"] == "Renamed"
+    listed_folders = client.get(_api(WORKSPACE_A, "/graph-folders"))
+    assert listed_folders.status_code == 200, listed_folders.text
+    assert listed_folders.json()["folders"] == [renamed.json()]
+    duplicate = client.post(
+        _api(WORKSPACE_A, "/graph-folders"),
+        json={"name": "Renamed"},
+    )
+    assert duplicate.status_code == 409, duplicate.text
+    assert (
+        client.put(
+            _api(WORKSPACE_A, f"/graphs/{graph_a_id}/folder"),
+            json={"folder_id": own_folder_id},
+        ).status_code
+        == 200
+    )
+    unfiled = client.put(
+        _api(WORKSPACE_A, f"/graphs/{graph_a_id}/folder"),
+        json={"folder_id": None},
+    )
+    assert unfiled.status_code == 200, unfiled.text
+    assert unfiled.json()["folder_id"] is None
+    assert (
+        client.put(
+            _api(WORKSPACE_A, f"/graphs/{graph_a_id}/folder"),
+            json={"folder_id": own_folder_id},
+        ).status_code
+        == 200
+    )
+
+    deleted = client.delete(_api(WORKSPACE_A, f"/graph-folders/{own_folder_id}"))
+    assert deleted.status_code == 204, deleted.text
+    row = client.get("/v1/graphs").json()["graphs"][0]
+    assert row["id"] == str(graph_a_id)
+    assert row["folder"] is None
 
 
 def test_non_member_cannot_read_or_write_other_workspace_by_uuid(

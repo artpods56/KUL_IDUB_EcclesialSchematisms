@@ -6,8 +6,15 @@ from pydantic import ValidationError
 
 from notarius_core.domain.errors import (
     ConcurrentWriteError,
+    GraphFolderNameConflictError,
     NotFoundError,
     SavedGraphRevisionConflictError,
+    UserDisabledError,
+)
+from notarius_core.domain.identity import (
+    ActorContext,
+    WorkspaceAccess,
+    WorkspaceCapability,
 )
 from notarius_core.domain.node_secrets import (
     InvalidNodeSecretDependenciesError,
@@ -18,9 +25,18 @@ from notarius_core.domain.materialized_outputs import (
     materializations_for_compatible_nodes,
 )
 from notarius_core.domain.saved_graphs import (
+    GraphBrowserItem,
+    GraphFolder,
+    GraphOrganization,
     SavedGraph,
     SavedGraphDocument,
     SavedGraphRevision,
+    UserGraphState,
+)
+from notarius_core.domain.security_audit import (
+    SecurityAuditActorKind,
+    SecurityAuditEvent,
+    SecurityAuditOutcome,
 )
 from notarius_core.plugins import PluginRegistry
 from notarius_core.ports.materialized_outputs import (
@@ -92,9 +108,378 @@ class SavedGraphService:
                 raise NotFoundError("Saved graph", str(graph_id))
             return await unit_of_work.graphs.list_revisions(workspace_id, graph_id)
 
+    async def list_accessible(self, actor: ActorContext) -> list[GraphBrowserItem]:
+        async with self._unit_of_work_factory() as unit_of_work:
+            return await unit_of_work.graphs.list_accessible(actor.user_id)
+
+    async def create_folder(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        name: str,
+    ) -> GraphFolder:
+        folder = GraphFolder(workspace_id=workspace_id, name=name)
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_capability(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+                capability=WorkspaceCapability.EDIT_GRAPH,
+            )
+            existing = await unit_of_work.graphs.get_folder_by_name(
+                workspace_id,
+                folder.name,
+            )
+            if existing is not None:
+                raise GraphFolderNameConflictError(
+                    workspace_id=workspace_id,
+                    name=folder.name,
+                )
+            await unit_of_work.graphs.add_folder(folder)
+            await unit_of_work.security_audit.add(
+                SecurityAuditEvent(
+                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                    user_id=actor.user_id,
+                    credential_reference=actor.credential_reference,
+                    workspace_id=workspace_id,
+                    operation="graph.folder.create",
+                    outcome=SecurityAuditOutcome.SUCCESS,
+                    resource_type="graph_folder",
+                    resource_id=str(folder.id),
+                )
+            )
+            await unit_of_work.commit()
+        return folder
+
+    async def list_folders(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+    ) -> list[GraphFolder]:
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_capability(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+                capability=WorkspaceCapability.VIEW_GRAPH,
+            )
+            return await unit_of_work.graphs.list_folders(workspace_id)
+
     async def list(self, workspace_id: UUID) -> list[SavedGraph]:
         async with self._unit_of_work_factory() as unit_of_work:
             return await unit_of_work.graphs.list(workspace_id)
+
+    async def rename_folder(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        folder_id: UUID,
+        name: str,
+    ) -> GraphFolder:
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_capability(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+                capability=WorkspaceCapability.EDIT_GRAPH,
+            )
+            folder = await unit_of_work.graphs.get_folder(workspace_id, folder_id)
+            if folder is None:
+                raise NotFoundError("Graph folder", str(folder_id))
+            normalized_name = GraphFolder(
+                workspace_id=workspace_id,
+                name=name,
+            ).name
+            existing = await unit_of_work.graphs.get_folder_by_name(
+                workspace_id,
+                normalized_name,
+            )
+            if existing is not None and existing.id != folder.id:
+                raise GraphFolderNameConflictError(
+                    workspace_id=workspace_id,
+                    name=normalized_name,
+                )
+            folder.rename(normalized_name)
+            await unit_of_work.graphs.save_folder(folder)
+            await unit_of_work.security_audit.add(
+                SecurityAuditEvent(
+                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                    user_id=actor.user_id,
+                    credential_reference=actor.credential_reference,
+                    workspace_id=workspace_id,
+                    operation="graph.folder.rename",
+                    outcome=SecurityAuditOutcome.SUCCESS,
+                    resource_type="graph_folder",
+                    resource_id=str(folder.id),
+                )
+            )
+            await unit_of_work.commit()
+        return folder
+
+    async def delete_folder(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        folder_id: UUID,
+    ) -> None:
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_capability(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+                capability=WorkspaceCapability.EDIT_GRAPH,
+            )
+            folder = await unit_of_work.graphs.get_folder(workspace_id, folder_id)
+            if folder is None:
+                raise NotFoundError("Graph folder", str(folder_id))
+            await unit_of_work.graphs.unfile_graphs_in_folder(
+                workspace_id,
+                folder_id,
+            )
+            await unit_of_work.graphs.remove_folder(folder)
+            await unit_of_work.security_audit.add(
+                SecurityAuditEvent(
+                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                    user_id=actor.user_id,
+                    credential_reference=actor.credential_reference,
+                    workspace_id=workspace_id,
+                    operation="graph.folder.delete",
+                    outcome=SecurityAuditOutcome.SUCCESS,
+                    resource_type="graph_folder",
+                    resource_id=str(folder.id),
+                )
+            )
+            await unit_of_work.commit()
+
+    async def assign_folder(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        graph_id: UUID,
+        folder_id: UUID | None,
+    ) -> GraphOrganization:
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_capability(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+                capability=WorkspaceCapability.EDIT_GRAPH,
+            )
+            graph = await unit_of_work.graphs.get(workspace_id, graph_id)
+            if graph is None:
+                raise NotFoundError("Saved graph", str(graph_id))
+            if folder_id is not None:
+                folder = await unit_of_work.graphs.get_folder(workspace_id, folder_id)
+                if folder is None:
+                    raise NotFoundError("Graph folder", str(folder_id))
+            organization = await unit_of_work.graphs.get_organization(
+                workspace_id=workspace_id,
+                graph_id=graph_id,
+            )
+            if organization is None:
+                organization = GraphOrganization(
+                    workspace_id=workspace_id,
+                    graph_id=graph_id,
+                )
+            organization.assign_folder(folder_id)
+            await unit_of_work.graphs.save_organization(organization)
+            await unit_of_work.security_audit.add(
+                SecurityAuditEvent(
+                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                    user_id=actor.user_id,
+                    credential_reference=actor.credential_reference,
+                    workspace_id=workspace_id,
+                    operation="graph.folder.assign",
+                    outcome=SecurityAuditOutcome.SUCCESS,
+                    resource_type="saved_graph",
+                    resource_id=str(graph.id),
+                )
+            )
+            await unit_of_work.commit()
+        return organization
+
+    async def archive(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> GraphOrganization:
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_capability(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+                capability=WorkspaceCapability.EDIT_GRAPH,
+            )
+            graph = await unit_of_work.graphs.get(workspace_id, graph_id)
+            if graph is None:
+                raise NotFoundError("Saved graph", str(graph_id))
+            organization = await unit_of_work.graphs.get_organization(
+                workspace_id=workspace_id,
+                graph_id=graph_id,
+            )
+            if organization is None:
+                organization = GraphOrganization(
+                    workspace_id=workspace_id,
+                    graph_id=graph_id,
+                )
+            organization.archive()
+            await unit_of_work.graphs.save_organization(organization)
+            await unit_of_work.security_audit.add(
+                SecurityAuditEvent(
+                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                    user_id=actor.user_id,
+                    credential_reference=actor.credential_reference,
+                    workspace_id=workspace_id,
+                    operation="graph.archive",
+                    outcome=SecurityAuditOutcome.SUCCESS,
+                    resource_type="saved_graph",
+                    resource_id=str(graph.id),
+                )
+            )
+            await unit_of_work.commit()
+        return organization
+
+    async def restore(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> GraphOrganization:
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_capability(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+                capability=WorkspaceCapability.EDIT_GRAPH,
+            )
+            graph = await unit_of_work.graphs.get(workspace_id, graph_id)
+            if graph is None:
+                raise NotFoundError("Saved graph", str(graph_id))
+            organization = await unit_of_work.graphs.get_organization(
+                workspace_id=workspace_id,
+                graph_id=graph_id,
+            )
+            if organization is None:
+                organization = GraphOrganization(
+                    workspace_id=workspace_id,
+                    graph_id=graph_id,
+                )
+            organization.restore()
+            await unit_of_work.graphs.save_organization(organization)
+            await unit_of_work.security_audit.add(
+                SecurityAuditEvent(
+                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                    user_id=actor.user_id,
+                    credential_reference=actor.credential_reference,
+                    workspace_id=workspace_id,
+                    operation="graph.restore",
+                    outcome=SecurityAuditOutcome.SUCCESS,
+                    resource_type="saved_graph",
+                    resource_id=str(graph.id),
+                )
+            )
+            await unit_of_work.commit()
+        return organization
+
+    async def set_starred(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        graph_id: UUID,
+        starred: bool,
+    ) -> UserGraphState:
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_capability(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+                capability=WorkspaceCapability.VIEW_GRAPH,
+            )
+            graph = await unit_of_work.graphs.get(workspace_id, graph_id)
+            if graph is None:
+                raise NotFoundError("Saved graph", str(graph_id))
+            state = await unit_of_work.graphs.get_user_state(
+                workspace_id=workspace_id,
+                graph_id=graph_id,
+                user_id=actor.user_id,
+            )
+            if state is None:
+                state = UserGraphState(
+                    workspace_id=workspace_id,
+                    graph_id=graph_id,
+                    user_id=actor.user_id,
+                )
+            state.set_starred(starred)
+            await unit_of_work.graphs.save_user_state(state)
+            await unit_of_work.commit()
+        return state
+
+    async def record_open(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> UserGraphState:
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_capability(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+                capability=WorkspaceCapability.VIEW_GRAPH,
+            )
+            graph = await unit_of_work.graphs.get(workspace_id, graph_id)
+            if graph is None:
+                raise NotFoundError("Saved graph", str(graph_id))
+            state = await unit_of_work.graphs.get_user_state(
+                workspace_id=workspace_id,
+                graph_id=graph_id,
+                user_id=actor.user_id,
+            )
+            if state is None:
+                state = UserGraphState(
+                    workspace_id=workspace_id,
+                    graph_id=graph_id,
+                    user_id=actor.user_id,
+                )
+            state.record_open()
+            await unit_of_work.graphs.save_user_state(state)
+            await unit_of_work.commit()
+        return state
+
+    async def _require_capability(
+        self,
+        unit_of_work: SavedGraphUnitOfWorkPort,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        capability: WorkspaceCapability,
+    ) -> WorkspaceAccess:
+        user = await unit_of_work.identity.get_user(actor.user_id)
+        if user is None or not user.active:
+            raise UserDisabledError(f"User {actor.user_id} is disabled")
+        membership = await unit_of_work.identity.get_membership(
+            workspace_id=workspace_id,
+            user_id=actor.user_id,
+        )
+        if membership is None or not membership.is_active:
+            raise NotFoundError("Workspace", str(workspace_id))
+        access = WorkspaceAccess(
+            actor=actor,
+            workspace_id=workspace_id,
+            membership=membership,
+        )
+        access.require(capability)
+        return access
 
     async def replace(
         self,

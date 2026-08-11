@@ -268,6 +268,29 @@ class SecurityAuditOutcomeType(TypeDecorator[SecurityAuditOutcome]):
         return None if value is None else SecurityAuditOutcome(value)
 
 
+graph_folders = Table(
+    "graph_folders",
+    metadata,
+    Column("id", SaUuid(as_uuid=True), primary_key=True),
+    Column(
+        "workspace_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("name", String(160), nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
+    UniqueConstraint("workspace_id", "id", name="uq_graph_folders_workspace_id_id"),
+    UniqueConstraint(
+        "workspace_id",
+        "name",
+        name="uq_graph_folders_workspace_id_name",
+    ),
+    Index("ix_graph_folders_workspace_name", "workspace_id", "name"),
+)
+
+
 saved_graphs = Table(
     "saved_graphs",
     metadata,
@@ -322,6 +345,68 @@ saved_graph_revisions = Table(
         "workspace_id",
         "graph_id",
         "revision",
+    ),
+)
+
+
+graph_organizations = Table(
+    "graph_organizations",
+    metadata,
+    Column("workspace_id", SaUuid(as_uuid=True), primary_key=True),
+    Column("graph_id", SaUuid(as_uuid=True), primary_key=True),
+    Column("folder_id", SaUuid(as_uuid=True), nullable=True),
+    Column("archived_at", UTCDateTime(), nullable=True),
+    Column("updated_at", UTCDateTime(), nullable=False),
+    ForeignKeyConstraint(
+        ("workspace_id", "graph_id"),
+        ("saved_graphs.workspace_id", "saved_graphs.id"),
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ("workspace_id", "folder_id"),
+        ("graph_folders.workspace_id", "graph_folders.id"),
+        ondelete="RESTRICT",
+    ),
+    Index(
+        "ix_graph_organizations_workspace_folder_archived",
+        "workspace_id",
+        "folder_id",
+        "archived_at",
+    ),
+)
+
+
+user_graph_states = Table(
+    "user_graph_states",
+    metadata,
+    Column(
+        "workspace_id",
+        SaUuid(as_uuid=True),
+        primary_key=True,
+    ),
+    Column("graph_id", SaUuid(as_uuid=True), primary_key=True),
+    Column(
+        "user_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("starred", Boolean, nullable=False, default=False),
+    Column("last_opened_at", UTCDateTime(), nullable=True),
+    ForeignKeyConstraint(
+        ("workspace_id", "graph_id"),
+        ("saved_graphs.workspace_id", "saved_graphs.id"),
+        ondelete="CASCADE",
+    ),
+    Index(
+        "ix_user_graph_states_user_starred",
+        "user_id",
+        "starred",
+    ),
+    Index(
+        "ix_user_graph_states_user_last_opened",
+        "user_id",
+        "last_opened_at",
     ),
 )
 
@@ -1075,7 +1160,7 @@ modules = Table(
     ForeignKeyConstraint(
         ("workspace_id", "source_graph_id"),
         ("saved_graphs.workspace_id", "saved_graphs.id"),
-        ondelete="RESTRICT",
+        name="fk_modules_source_graph_id_saved_graphs",
     ),
     CheckConstraint(
         "publication_state IN ('published', 'deprecated', 'withdrawn')",

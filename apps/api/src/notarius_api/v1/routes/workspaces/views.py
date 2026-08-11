@@ -85,6 +85,54 @@ _WORKSPACE_FAILURE_ROUTES: dict[str, WorkspaceFailureRoute] = {
         resource_type="personal_access_token",
         resource_path_param="token_id",
     ),
+    "list_graph_folders": WorkspaceFailureRoute(
+        operation="graph.folder.list",
+        resource_type="graph_folder",
+    ),
+    "create_graph_folder": WorkspaceFailureRoute(
+        operation="graph.folder.create",
+        resource_type="graph_folder",
+    ),
+    "rename_graph_folder": WorkspaceFailureRoute(
+        operation="graph.folder.rename",
+        resource_type="graph_folder",
+        resource_path_param="folder_id",
+    ),
+    "delete_graph_folder": WorkspaceFailureRoute(
+        operation="graph.folder.delete",
+        resource_type="graph_folder",
+        resource_path_param="folder_id",
+    ),
+    "assign_graph_folder": WorkspaceFailureRoute(
+        operation="graph.folder.assign",
+        resource_type="saved_graph",
+        resource_path_param="graph_id",
+    ),
+    "archive_graph": WorkspaceFailureRoute(
+        operation="graph.archive",
+        resource_type="saved_graph",
+        resource_path_param="graph_id",
+    ),
+    "restore_graph": WorkspaceFailureRoute(
+        operation="graph.restore",
+        resource_type="saved_graph",
+        resource_path_param="graph_id",
+    ),
+    "star_graph": WorkspaceFailureRoute(
+        operation="graph.star",
+        resource_type="saved_graph",
+        resource_path_param="graph_id",
+    ),
+    "unstar_graph": WorkspaceFailureRoute(
+        operation="graph.unstar",
+        resource_type="saved_graph",
+        resource_path_param="graph_id",
+    ),
+    "record_graph_open": WorkspaceFailureRoute(
+        operation="graph.open.record",
+        resource_type="saved_graph",
+        resource_path_param="graph_id",
+    ),
 }
 
 

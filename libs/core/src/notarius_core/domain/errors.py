@@ -76,6 +76,18 @@ class SavedGraphRevisionConflictError(NotariusCoreError):
         )
 
 
+class GraphFolderNameConflictError(NotariusCoreError):
+    """Raised when one workspace already has a folder with the requested name."""
+
+    def __init__(self, *, workspace_id: UUID, name: str) -> None:
+        self.workspace_id = workspace_id
+        self.name = name
+        super().__init__(
+            f"Graph folder name {name!r} is already in use in workspace "
+            f"{workspace_id}"
+        )
+
+
 class CollaborationError(NotariusCoreError):
     """Base error for collaborative head and command workflows."""
 

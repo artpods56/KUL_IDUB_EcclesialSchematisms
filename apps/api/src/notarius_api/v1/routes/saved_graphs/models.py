@@ -24,6 +24,9 @@ from notarius_core.domain.saved_graphs import (
     AnnotationKind,
     DEFAULT_ANNOTATION_COLOR,
     GraphPoint,
+    GraphBrowserItem,
+    GraphFolder,
+    GraphOrganization,
     GraphPresentationAnnotation,
     GraphPresentationBinding,
     GraphPresentationBindingMapping,
@@ -40,7 +43,9 @@ from notarius_core.domain.saved_graphs import (
     SavedGraphNode,
     SavedGraphNodeLayout,
     SavedGraphProjection,
+    UserGraphState,
 )
+from notarius_core.domain.identity import WorkspaceKind
 
 from notarius_api.v1.models import (
     ArtifactTypeBindingModel,
@@ -602,6 +607,174 @@ class SavedGraphListResponse(SavedGraphApiModel):
     ) -> "SavedGraphListResponse":
         return cls(
             graphs=[SavedGraphSummaryResponse.from_graph(graph) for graph in graphs]
+        )
+
+
+class GraphFolderWriteRequest(SavedGraphApiModel):
+    name: str = Field(min_length=1, max_length=160)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class GraphFolderResponse(SavedGraphApiModel):
+    id: UUID
+    name: str
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_folder(cls, folder: GraphFolder) -> "GraphFolderResponse":
+        return cls(
+            id=folder.id,
+            name=folder.name,
+            created_at=folder.created_at,
+            updated_at=folder.updated_at,
+        )
+
+
+class GraphFolderListResponse(SavedGraphApiModel):
+    folders: list[GraphFolderResponse]
+
+    @classmethod
+    def from_folders(cls, folders: list[GraphFolder]) -> "GraphFolderListResponse":
+        return cls(
+            folders=[GraphFolderResponse.from_folder(folder) for folder in folders]
+        )
+
+
+class AssignGraphFolderRequest(SavedGraphApiModel):
+    folder_id: UUID | None
+
+
+class GraphOrganizationResponse(SavedGraphApiModel):
+    folder_id: UUID | None
+    archived: bool
+    archived_at: datetime | None
+    updated_at: datetime
+
+    @classmethod
+    def from_organization(
+        cls,
+        organization: GraphOrganization,
+    ) -> "GraphOrganizationResponse":
+        return cls(
+            folder_id=organization.folder_id,
+            archived=organization.is_archived,
+            archived_at=organization.archived_at,
+            updated_at=organization.updated_at,
+        )
+
+
+class UserGraphStateResponse(SavedGraphApiModel):
+    starred: bool
+    last_opened_at: datetime | None
+
+    @classmethod
+    def from_state(cls, state: UserGraphState) -> "UserGraphStateResponse":
+        return cls(
+            starred=state.starred,
+            last_opened_at=state.last_opened_at,
+        )
+
+
+class GraphBrowserLocationResponse(SavedGraphApiModel):
+    id: UUID
+    name: str
+    kind: WorkspaceKind
+
+
+class GraphBrowserFolderResponse(SavedGraphApiModel):
+    id: UUID
+    name: str
+
+
+class GraphBrowserCreatorResponse(SavedGraphApiModel):
+    id: UUID
+    display_name: str | None
+
+
+class GraphBrowserDraftResponse(SavedGraphApiModel):
+    name: str
+    head_sequence: int = Field(ge=0)
+    checkpoint_sequence: int = Field(ge=0)
+    checkpoint_revision: int = Field(ge=1)
+    updated_at: datetime
+    node_count: int = Field(ge=0)
+    edge_count: int = Field(ge=0)
+
+
+class GraphBrowserItemResponse(SavedGraphApiModel):
+    id: UUID
+    location: GraphBrowserLocationResponse
+    folder: GraphBrowserFolderResponse | None
+    archived: bool
+    archived_at: datetime | None
+    starred: bool
+    last_opened_at: datetime | None
+    updated_at: datetime
+    draft: GraphBrowserDraftResponse
+    creator: GraphBrowserCreatorResponse | None
+
+    @classmethod
+    def from_item(cls, item: GraphBrowserItem) -> "GraphBrowserItemResponse":
+        updated_at = item.draft.updated_at
+        if (
+            item.organization_updated_at is not None
+            and item.organization_updated_at > updated_at
+        ):
+            updated_at = item.organization_updated_at
+        return cls(
+            id=item.id,
+            location=GraphBrowserLocationResponse(
+                id=item.location.id,
+                name=item.location.name,
+                kind=item.location.kind,
+            ),
+            folder=(
+                None
+                if item.folder is None
+                else GraphBrowserFolderResponse(
+                    id=item.folder.id,
+                    name=item.folder.name,
+                )
+            ),
+            archived=item.is_archived,
+            archived_at=item.archived_at,
+            starred=item.starred,
+            last_opened_at=item.last_opened_at,
+            updated_at=updated_at,
+            draft=GraphBrowserDraftResponse(
+                name=item.draft.name,
+                head_sequence=item.draft.head_sequence,
+                checkpoint_sequence=item.draft.checkpoint_sequence,
+                checkpoint_revision=item.draft.checkpoint_revision,
+                updated_at=item.draft.updated_at,
+                node_count=item.draft.node_count,
+                edge_count=item.draft.edge_count,
+            ),
+            creator=(
+                None
+                if item.creator is None
+                else GraphBrowserCreatorResponse(
+                    id=item.creator.id,
+                    display_name=item.creator.display_name,
+                )
+            ),
+        )
+
+
+class GraphBrowserListResponse(SavedGraphApiModel):
+    graphs: list[GraphBrowserItemResponse]
+
+    @classmethod
+    def from_items(cls, items: list[GraphBrowserItem]) -> "GraphBrowserListResponse":
+        return cls(
+            graphs=[GraphBrowserItemResponse.from_item(item) for item in items]
         )
 
 

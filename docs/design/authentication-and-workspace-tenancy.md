@@ -79,6 +79,11 @@ flowchart LR
     User --> Membership["Workspace membership"]
     Membership --> Workspace["Workspace\npersonal or shared"]
     Workspace --> Graph["Saved graph aggregate"]
+    Workspace --> Folder["One-level graph folders"]
+    Graph --> Organization["Folder and archive state"]
+    Folder --> Organization
+    User --> PersonalState["Starred and last-opened"]
+    Graph --> PersonalState
     Graph --> Collaboration["Head, commands, checkpoints"]
     Graph --> Execution["Executions and materializations"]
     Workspace --> Resource["Artifacts, uploads, cache"]
@@ -116,6 +121,21 @@ The tenant, sharing boundary, and owner of graphs and workspace resources.
 
 “Team” and “organization” are product-language synonyms for a shared
 workspace. They do not introduce additional aggregates.
+
+The graph browser may present a personal Workspace as **My graphs** and a shared
+Workspace as a Team save/share location. That presentation does not create a
+new owner or weaken the Workspace boundary.
+
+### Graph organization
+
+A `GraphFolder` is one-level organization inside exactly one Workspace. A null
+folder is `Unfiled`; folders never nest. `GraphOrganization` stores shared
+folder assignment and archive lifecycle metadata beside, not inside, the
+collaborative graph document. `UserGraphState` stores starred and last-opened
+activity for one `(user_id, workspace_id, graph_id)` and is never shared graph
+state or an authorization grant. See
+[graph browser organization](graph-browser-organization.md) for the API and
+read-model contract.
 
 ### Workspace membership
 
@@ -190,6 +210,10 @@ The following invariants apply:
 - Removing a member never reparents or deletes workspace data.
 - A command actor or execution starter is attribution, not ownership.
 - No graph child can be moved independently into another workspace.
+- Folder assignment cannot cross workspaces, and deleting a folder unfiles its
+  graphs rather than deleting or moving them.
+- Archive is graph lifecycle metadata; Starred and Recent are current-user
+  projections and do not alter shared graph state.
 - Every independently queried repository operation requires `workspace_id`.
 - SQL predicates include workspace scope; a global UUID lookup followed by a
   Python permission check is not the ordinary path.
@@ -203,6 +227,9 @@ Representative repository contracts are:
 ```text
 saved_graphs.get(workspace_id, graph_id)
 saved_graphs.get_revision(workspace_id, graph_id, revision)
+saved_graphs.get_folder(workspace_id, folder_id)
+saved_graphs.get_user_state(workspace_id, graph_id, user_id)
+saved_graphs.list_accessible(user_id)  # joins current active memberships
 artifacts.get(workspace_id, artifact_id)
 executions.get(workspace_id, execution_id)
 invocation_cache.get(workspace_id, key_sha256)
@@ -218,10 +245,12 @@ interpretation. The server remains authoritative.
 | Capability | Viewer | Editor | Owner |
 | --- | :---: | :---: | :---: |
 | List/open graphs and checkpoints | yes | yes | yes |
+| Star/unstar graphs and record personal recent activity | yes | yes | yes |
 | View artifacts, history, materializations, and active execution | yes | yes | yes |
 | Join a graph room and publish bounded presence | yes | yes | yes |
 | Create graphs and copy a graph into the workspace | no | yes | yes |
 | Submit graph commands and create checkpoints | no | yes | yes |
+| Manage graph folders and archive/restore graphs | no | yes | yes |
 | Start or cancel graph execution | no | yes | yes |
 | Publish a Module release into the workspace library | no | yes | yes |
 | Deprecate or withdraw a Module from the workspace library | no | no | yes |

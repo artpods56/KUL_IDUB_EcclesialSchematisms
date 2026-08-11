@@ -275,8 +275,12 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "graph_execution_node_results",
             "graph_execution_requested_nodes",
             "graph_executions",
+            "graph_folders",
+            "graph_organizations",
             "invocation_cache_entries",
             "materialized_node_outputs",
+            "module_releases",
+            "modules",
             "node_secrets",
             "users",
             "oidc_identities",
@@ -290,6 +294,7 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "saved_graphs",
             "saved_graph_revisions",
             "staged_uploads",
+            "user_graph_states",
         }
     command.check(config)
 
@@ -312,8 +317,12 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "graph_execution_node_results",
             "graph_execution_requested_nodes",
             "graph_executions",
+            "graph_folders",
+            "graph_organizations",
             "invocation_cache_entries",
             "materialized_node_outputs",
+            "module_releases",
+            "modules",
             "node_secrets",
             "users",
             "oidc_identities",
@@ -327,6 +336,7 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "saved_graphs",
             "saved_graph_revisions",
             "staged_uploads",
+            "user_graph_states",
         }
 
     get_settings.cache_clear()

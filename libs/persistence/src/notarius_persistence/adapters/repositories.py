@@ -1,5 +1,5 @@
 from collections.abc import Collection
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import cast, override
 from uuid import UUID
 
@@ -26,8 +26,13 @@ from notarius_core.domain.identity import (
     Workspace,
     WorkspaceKind,
     WorkspaceMembership,
+    WorkspaceRole,
 )
-from notarius_core.domain.errors import NotFoundError, ObjectAlreadyExistsError
+from notarius_core.domain.errors import (
+    GraphFolderNameConflictError,
+    NotFoundError,
+    ObjectAlreadyExistsError,
+)
 from notarius_core.domain.execution_history import (
     GraphExecution,
     GraphExecutionCursor,
@@ -52,7 +57,19 @@ from notarius_core.domain.collaboration import (
     GraphCommandReceipt,
     GraphExecutionIdempotencyRecord,
 )
-from notarius_core.domain.saved_graphs import SavedGraph, SavedGraphRevision
+from notarius_core.domain.saved_graphs import (
+    GraphBrowserCreator,
+    GraphBrowserDraft,
+    GraphBrowserFolder,
+    GraphBrowserItem,
+    GraphBrowserLocation,
+    GraphFolder,
+    GraphOrganization,
+    SavedGraph,
+    SavedGraphDocument,
+    SavedGraphRevision,
+    UserGraphState,
+)
 from notarius_core.domain.security_audit import SecurityAuditEvent
 from notarius_core.domain.staged_uploads import StagedUpload
 from notarius_core.ports.identity import (
@@ -533,6 +550,204 @@ class SqlSavedGraphRepository(SavedGraphRepositoryPort):
         ]
 
     @override
+    async def list_accessible(self, user_id: UUID) -> list[GraphBrowserItem]:
+        graphs = schema.saved_graphs
+        memberships = schema.workspace_memberships
+        workspaces = schema.workspaces
+        folders = schema.graph_folders
+        organizations = schema.graph_organizations
+        states = schema.user_graph_states
+        heads = schema.collaborative_graph_heads
+        active_user = schema.users.alias("active_graph_browser_user")
+        creator = schema.users.alias("graph_creator")
+        rows = (
+            await self._session.execute(
+                select(
+                    graphs.c.id,
+                    organizations.c.archived_at,
+                    organizations.c.updated_at.label("organization_updated_at"),
+                    heads.c.name.label("head_name"),
+                    heads.c.document.label("head_document"),
+                    heads.c.collaboration_sequence,
+                    heads.c.checkpoint_sequence,
+                    heads.c.checkpoint_revision,
+                    heads.c.updated_at.label("head_updated_at"),
+                    workspaces.c.id.label("workspace_id"),
+                    workspaces.c.name.label("workspace_name"),
+                    workspaces.c.kind.label("workspace_kind"),
+                    folders.c.id.label("folder_id"),
+                    folders.c.name.label("folder_name"),
+                    states.c.starred,
+                    states.c.last_opened_at,
+                    creator.c.id.label("creator_id"),
+                    creator.c.display_name.label("creator_display_name"),
+                )
+                .select_from(
+                    graphs.join(
+                        memberships,
+                        and_(
+                            memberships.c.workspace_id == graphs.c.workspace_id,
+                            memberships.c.user_id == user_id,
+                            memberships.c.revoked_at.is_(None),
+                            memberships.c.role.in_(
+                                (
+                                    WorkspaceRole.VIEWER.value,
+                                    WorkspaceRole.EDITOR.value,
+                                    WorkspaceRole.OWNER.value,
+                                )
+                            ),
+                        ),
+                    )
+                    .join(
+                        active_user,
+                        and_(
+                            active_user.c.id == user_id,
+                            active_user.c.active.is_(True),
+                        ),
+                    )
+                    .join(workspaces, workspaces.c.id == graphs.c.workspace_id)
+                    .join(
+                        heads,
+                        and_(
+                            heads.c.workspace_id == graphs.c.workspace_id,
+                            heads.c.graph_id == graphs.c.id,
+                        ),
+                    )
+                    .outerjoin(
+                        organizations,
+                        and_(
+                            organizations.c.workspace_id == graphs.c.workspace_id,
+                            organizations.c.graph_id == graphs.c.id,
+                        ),
+                    )
+                    .outerjoin(
+                        folders,
+                        and_(
+                            folders.c.workspace_id == graphs.c.workspace_id,
+                            folders.c.id == organizations.c.folder_id,
+                        ),
+                    )
+                    .outerjoin(
+                        states,
+                        and_(
+                            states.c.workspace_id == graphs.c.workspace_id,
+                            states.c.graph_id == graphs.c.id,
+                            states.c.user_id == user_id,
+                        ),
+                    )
+                    .outerjoin(creator, creator.c.id == graphs.c.created_by_user_id)
+                )
+                .order_by(
+                    heads.c.updated_at.desc(),
+                    graphs.c.id.asc(),
+                )
+            )
+        ).mappings()
+        items: list[GraphBrowserItem] = []
+        for row in rows:
+            document = cast(SavedGraphDocument, row["head_document"])
+            folder_id = cast(UUID | None, row["folder_id"])
+            creator_id = cast(UUID | None, row["creator_id"])
+            items.append(
+                GraphBrowserItem(
+                    id=cast(UUID, row["id"]),
+                    draft=GraphBrowserDraft(
+                        name=cast(str, row["head_name"]),
+                        head_sequence=cast(int, row["collaboration_sequence"]),
+                        checkpoint_sequence=cast(int, row["checkpoint_sequence"]),
+                        checkpoint_revision=cast(int, row["checkpoint_revision"]),
+                        updated_at=cast(datetime, row["head_updated_at"]),
+                        node_count=len(document.nodes),
+                        edge_count=len(document.edges),
+                    ),
+                    location=GraphBrowserLocation(
+                        id=cast(UUID, row["workspace_id"]),
+                        name=cast(str, row["workspace_name"]),
+                        kind=WorkspaceKind(cast(str, row["workspace_kind"])),
+                    ),
+                    folder=(
+                        None
+                        if folder_id is None
+                        else GraphBrowserFolder(
+                            id=folder_id,
+                            name=cast(str, row["folder_name"]),
+                        )
+                    ),
+                    archived_at=cast(datetime | None, row["archived_at"]),
+                    starred=bool(row["starred"]),
+                    last_opened_at=cast(
+                        datetime | None,
+                        row["last_opened_at"],
+                    ),
+                    organization_updated_at=cast(
+                        datetime | None,
+                        row["organization_updated_at"],
+                    ),
+                    creator=(
+                        None
+                        if creator_id is None
+                        else GraphBrowserCreator(
+                            id=creator_id,
+                            display_name=cast(
+                                str | None,
+                                row["creator_display_name"],
+                            ),
+                        )
+                    ),
+                )
+            )
+        return items
+
+    @override
+    async def add_folder(self, folder: GraphFolder) -> None:
+        self._session.add(folder)
+        try:
+            await self._session.flush()
+        except IntegrityError as exc:
+            raise GraphFolderNameConflictError(
+                workspace_id=folder.workspace_id,
+                name=folder.name,
+            ) from exc
+
+    @override
+    async def get_folder(
+        self,
+        workspace_id: UUID,
+        folder_id: UUID,
+    ) -> GraphFolder | None:
+        return await self._session.scalar(
+            select(GraphFolder).where(
+                schema.graph_folders.c.workspace_id == workspace_id,
+                schema.graph_folders.c.id == folder_id,
+            )
+        )
+
+    @override
+    async def get_folder_by_name(
+        self,
+        workspace_id: UUID,
+        name: str,
+    ) -> GraphFolder | None:
+        return await self._session.scalar(
+            select(GraphFolder).where(
+                schema.graph_folders.c.workspace_id == workspace_id,
+                schema.graph_folders.c.name == name,
+            )
+        )
+
+    @override
+    async def list_folders(self, workspace_id: UUID) -> list[GraphFolder]:
+        result = await self._session.scalars(
+            select(GraphFolder)
+            .where(schema.graph_folders.c.workspace_id == workspace_id)
+            .order_by(
+                schema.graph_folders.c.name.asc(),
+                schema.graph_folders.c.id.asc(),
+            )
+        )
+        return list(result)
+
+    @override
     async def list(self, workspace_id: UUID) -> list[SavedGraph]:
         result = await self._session.scalars(
             select(SavedGraph).order_by(
@@ -542,6 +757,74 @@ class SqlSavedGraphRepository(SavedGraphRepositoryPort):
             .where(schema.saved_graphs.c.workspace_id == workspace_id)
         )
         return list(result)
+
+    @override
+    async def save_folder(self, folder: GraphFolder) -> None:
+        self._session.add(folder)
+        try:
+            await self._session.flush()
+        except IntegrityError as exc:
+            raise GraphFolderNameConflictError(
+                workspace_id=folder.workspace_id,
+                name=folder.name,
+            ) from exc
+
+    @override
+    async def unfile_graphs_in_folder(
+        self,
+        workspace_id: UUID,
+        folder_id: UUID,
+    ) -> None:
+        await self._session.execute(
+            update(schema.graph_organizations)
+            .where(
+                schema.graph_organizations.c.workspace_id == workspace_id,
+                schema.graph_organizations.c.folder_id == folder_id,
+            )
+            .values(folder_id=None, updated_at=datetime.now(UTC))
+        )
+
+    @override
+    async def remove_folder(self, folder: GraphFolder) -> None:
+        await self._session.execute(
+            delete(schema.graph_folders).where(
+                schema.graph_folders.c.workspace_id == folder.workspace_id,
+                schema.graph_folders.c.id == folder.id,
+            )
+        )
+
+    @override
+    async def get_organization(
+        self,
+        *,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> GraphOrganization | None:
+        return await self._session.get(
+            GraphOrganization,
+            (workspace_id, graph_id),
+        )
+
+    @override
+    async def save_organization(self, organization: GraphOrganization) -> None:
+        self._session.add(organization)
+
+    @override
+    async def get_user_state(
+        self,
+        *,
+        workspace_id: UUID,
+        graph_id: UUID,
+        user_id: UUID,
+    ) -> UserGraphState | None:
+        return await self._session.get(
+            UserGraphState,
+            (workspace_id, graph_id, user_id),
+        )
+
+    @override
+    async def save_user_state(self, state: UserGraphState) -> None:
+        self._session.add(state)
 
     @override
     async def remove(self, workspace_id: UUID, graph: SavedGraph) -> None:

@@ -26,7 +26,13 @@ from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
 from notarius_core.domain.module_library import Module, ModuleRelease
 from notarius_core.domain.node_secrets import EncryptedNodeSecret
 from notarius_core.domain.collaboration import CollaborativeGraphHead
-from notarius_core.domain.saved_graphs import SavedGraph, SavedGraphDocument
+from notarius_core.domain.saved_graphs import (
+    GraphFolder,
+    GraphOrganization,
+    SavedGraph,
+    SavedGraphDocument,
+    UserGraphState,
+)
 from notarius_core.domain.security_audit import SecurityAuditEvent
 from notarius_core.domain.staged_uploads import StagedUpload
 
@@ -82,6 +88,7 @@ def start_mappers() -> None:
     if mapper_registry.mappers:
         return
 
+    mapper_registry.map_imperatively(GraphFolder, schema.graph_folders)
     mapper_registry.map_imperatively(
         SavedGraph,
         schema.saved_graphs,
@@ -92,6 +99,11 @@ def start_mappers() -> None:
         SavedGraphRevisionRecord,
         schema.saved_graph_revisions,
     )
+    mapper_registry.map_imperatively(
+        GraphOrganization,
+        schema.graph_organizations,
+    )
+    mapper_registry.map_imperatively(UserGraphState, schema.user_graph_states)
     mapper_registry.map_imperatively(
         ArtifactObject,
         schema.artifact_objects,

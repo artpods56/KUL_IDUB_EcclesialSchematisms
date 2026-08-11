@@ -6,10 +6,13 @@ from uuid import UUID
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from notarius_core.artifacts import ArtifactTypeKey
 from notarius_core.domain.errors import ConcurrentWriteError
 from notarius_core.domain.saved_graphs import (
+    GraphFolder,
+    GraphOrganization,
     GraphPoint,
     SavedGraph,
     SavedGraphArtifactTypeBinding,
@@ -20,6 +23,7 @@ from notarius_core.domain.saved_graphs import (
     SavedGraphNode,
     SavedGraphProjection,
     SavedGraphRevision,
+    UserGraphState,
 )
 
 from notarius_persistence.database import Database, create_database
@@ -28,6 +32,8 @@ from notarius_persistence.unit_of_work import SqlAlchemySavedGraphUnitOfWork
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000001")
+OTHER_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000002")
+USER_ID = UUID("00000000-0000-0000-0000-000000000003")
 
 
 @pytest.fixture
@@ -43,6 +49,22 @@ async def database(tmp_path: Path) -> AsyncIterator[Database]:
                 "VALUES (:id, 'local', 'Local', 'shared', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
             ),
             {"id": WORKSPACE_ID.hex},
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO workspaces "
+                "(id, slug, name, kind, created_at, updated_at) "
+                "VALUES (:id, 'other', 'Other', 'shared', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            ),
+            {"id": OTHER_WORKSPACE_ID.hex},
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO users "
+                "(id, active, created_at, updated_at) "
+                "VALUES (:id, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            ),
+            {"id": USER_ID.hex},
         )
     try:
         yield created
@@ -105,6 +127,89 @@ def _graph(
         created_at=updated_at,
         updated_at=updated_at,
     )
+
+
+@pytest.mark.asyncio
+async def test_graph_organization_and_user_state_round_trip_separately(
+    database: Database,
+) -> None:
+    graph = SavedGraph(
+        workspace_id=WORKSPACE_ID,
+        name="Organized graph",
+        document=_document(),
+    )
+    folder = GraphFolder(workspace_id=WORKSPACE_ID, name="Research")
+    organization = GraphOrganization(
+        workspace_id=WORKSPACE_ID,
+        graph_id=graph.id,
+        folder_id=folder.id,
+    )
+    organization.archive(
+        archived_at=datetime(2026, 8, 11, 8, 0, tzinfo=UTC),
+    )
+    state = UserGraphState(
+        workspace_id=WORKSPACE_ID,
+        graph_id=graph.id,
+        user_id=USER_ID,
+        starred=True,
+        last_opened_at=datetime(2026, 8, 11, 9, 0, tzinfo=UTC),
+    )
+
+    async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
+        await unit_of_work.graphs.add(graph)
+        await unit_of_work.graphs.add_folder(folder)
+        await unit_of_work.graphs.save_organization(organization)
+        await unit_of_work.graphs.save_user_state(state)
+        await unit_of_work.commit()
+
+    async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
+        loaded_organization = await unit_of_work.graphs.get_organization(
+            workspace_id=WORKSPACE_ID,
+            graph_id=graph.id,
+        )
+        loaded_state = await unit_of_work.graphs.get_user_state(
+            workspace_id=WORKSPACE_ID,
+            graph_id=graph.id,
+            user_id=USER_ID,
+        )
+
+    assert loaded_organization is not None
+    assert loaded_organization.folder_id == folder.id
+    assert loaded_organization.is_archived
+    assert loaded_state is not None
+    assert loaded_state.starred is True
+    assert loaded_state.last_opened_at == datetime(2026, 8, 11, 9, 0, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_database_rejects_cross_workspace_folder_assignment(
+    database: Database,
+) -> None:
+    graph = SavedGraph(
+        workspace_id=WORKSPACE_ID,
+        name="Tenant-scoped graph",
+        document=SavedGraphDocument(),
+    )
+    foreign_folder = GraphFolder(
+        workspace_id=OTHER_WORKSPACE_ID,
+        name="Foreign",
+    )
+
+    async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
+        await unit_of_work.graphs.add(graph)
+        await unit_of_work.graphs.add_folder(foreign_folder)
+        await unit_of_work.commit()
+
+    with pytest.raises(IntegrityError, match="FOREIGN KEY constraint failed"):
+        async with SqlAlchemySavedGraphUnitOfWork(database.sessions) as unit_of_work:
+            await unit_of_work.graphs.save_organization(
+                GraphOrganization(
+                    workspace_id=WORKSPACE_ID,
+                    graph_id=graph.id,
+                    folder_id=foreign_folder.id,
+                )
+            )
+            await unit_of_work.commit()
 
 
 @pytest.mark.asyncio

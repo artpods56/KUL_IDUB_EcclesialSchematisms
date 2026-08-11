@@ -22,6 +22,10 @@ boundary.
 | `OidcIdentity` | Exact `(issuer, subject)` link from the configured OpenID Connect provider to one `User`. |
 | `Workspace` | Sole collaboration and tenancy boundary. `personal` has one owner and no other members; `shared` holds `viewer` / `editor` / `owner` memberships. |
 | `WorkspaceMembership` | Active or revoked role of one user in one workspace, with a monotonic authorization version. |
+| `Graph` | Primary user object and post-login destination. Every graph is durably owned by exactly one Workspace even when that Workspace is presented as `My graphs` or a Team save/share location. |
+| `GraphFolder` | Optional one-level organization of graphs inside exactly one Workspace. A graph with no folder is `Unfiled`; folders never nest and never widen access. |
+| `GraphOrganization` | Workspace-shared graph metadata for optional folder assignment and archive lifecycle state. It is separate from the collaborative graph document and its immutable checkpoints. |
+| `UserGraphState` | Per-user state for one workspace-owned graph: starred and last-opened activity. It is never shared graph state and never grants access. |
 | `OidcLoginTransaction` | Short-lived, single-use Authorization Code + PKCE handshake state. |
 | `AuthSession` | Opaque, revocable browser session (raw secret never persisted). |
 | `PersonalAccessToken` (`PAT`) | Workspace-bound bearer credential for Streamable HTTP MCP; effective permission is token scope ∩ current membership. |
