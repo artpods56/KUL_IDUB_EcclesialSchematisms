@@ -35,6 +35,7 @@ from notarius_core.domain.saved_graphs import (
 )
 from notarius_core.domain.security_audit import SecurityAuditEvent
 from notarius_core.domain.staged_uploads import StagedUpload
+from notarius_core.domain.templates import Template
 
 from notarius_persistence import schema
 
@@ -159,3 +160,4 @@ def start_mappers() -> None:
     )
     mapper_registry.map_imperatively(Module, schema.modules)
     mapper_registry.map_imperatively(ModuleRelease, schema.module_releases)
+    mapper_registry.map_imperatively(Template, schema.templates)

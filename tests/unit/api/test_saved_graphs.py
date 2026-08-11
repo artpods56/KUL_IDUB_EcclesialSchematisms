@@ -125,6 +125,7 @@ def test_saved_graph_crud_round_trip(builtin_client: TestClient) -> None:
             {
                 "id": str(graph_id),
                 "name": "Parish index draft",
+                "folder": None,
                 "revision": 1,
                 "node_count": 2,
                 "edge_count": 1,

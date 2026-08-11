@@ -279,6 +279,18 @@ library browse; existing pins keep resolving. There is no hard delete of
 releases in v1. Cross-workspace reuse is **Import into workspace** (copy-by-value).
 Publish release requires Editor or Owner; Deprecate and Withdraw require Owner.
 
+### Template (New graph library)
+
+An immutable, sanitized copy source captured from one exact Saved graph
+revision. **Use template** creates a new independent Saved graph in an explicit
+My graphs or Team save location, with a chosen name and optional one-level
+Folder. It copies graph structure and safe configuration by value, but never
+secrets, execution history, materialized artifacts, uploads, caches, or invalid
+runtime capabilities. Later source or Template changes never mutate an existing
+copy. Templates appear in New graph / Library; unlike Modules, they are not
+callable, do not have contracts or pinned releases, and are not inserted as
+nodes.
+
 ### Node catalog / Add node
 
 The host's built-in catalog contains only broadly reusable operation families:

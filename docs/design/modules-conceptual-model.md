@@ -1,9 +1,9 @@
-# Modules conceptual model
+# Templates and Modules conceptual model
 
 - **Status:** Draft hypothesis; belief-based (domain map without user research)
-- **Date:** 2026-08-08
-- **Audience:** Designers and engineers changing module publish, library scope,
-  catalog browse, or nested module execution
+- **Date:** 2026-08-11
+- **Audience:** Designers and engineers changing template copy, module publish,
+  library scope, catalog browse, or nested module execution
 - **Document type:** Explanation — Layers of Product Design conceptual model
 - **Related:** [modules domain map](modules-domain.md),
   [modules interaction structure](modules-interaction-flow.md),
@@ -13,19 +13,21 @@
 
 ## Summary
 
-This note decides how Notarius models **reusable subgraphs and workspace
-libraries**. It resolves the domain harvest into objects, relationships,
-states, and ubiquitous language. It is not a database schema, wireframe, or
-browse-UI spec.
+This note decides how Notarius models two deliberately different forms of
+**graph reuse**: Templates create independent graph copies, while Modules are
+callable pinned releases. It resolves the domain harvest into objects,
+relationships, states, and ubiquitous language. It is not a database schema,
+wireframe, or browse-UI spec.
 
 **Hypothesis flag:** Built from the belief-based [domain map](modules-domain.md).
 Revisit once observed behaviour or research challenges these decisions.
 
 ### Core job
 
-Publish a validated workflow building block into a workspace library, call a
-pinned release from other graphs, and import a release into another workspace
-without live cross-tenant references.
+Save an exact graph revision as a reusable copy source, or publish a validated
+workflow building block that other graphs can call through an immutable pinned
+release. Both forms of reuse preserve the Workspace tenancy boundary without
+creating live cross-tenant references.
 
 ### Material
 
@@ -61,7 +63,9 @@ workspace’s module library.
 **Decision:** “Personal toolkit” and “team library” are roles of a Workspace,
 not separate objects. A personal workspace library is private to its owner; a
 shared workspace library is visible to members according to existing
-capabilities. There is no instance-public or org-wide library in this model.
+capabilities. Product surfaces translate those backend locations into **My
+graphs** and named **Team** save/share locations. There is no instance-public
+or org-wide library in this model.
 
 ---
 
@@ -76,6 +80,7 @@ module boundaries.
 
 - belongs to one Workspace
 - may be the source graph of zero or one Module
+- may be the source graph of zero or many Templates
 - contains zero or many Module calls
 
 **Actions:** Edit, Checkpoint, Declare module boundaries (add Module Input /
@@ -83,6 +88,48 @@ Module Output), Open, Copy into workspace (existing share-by-copy).
 
 **Decision:** A Saved graph with boundaries is only a *candidate* until a Module
 is published from it. Boundaries alone do not list it in the library.
+
+---
+
+### Template
+
+**What it is:** An immutable, sanitized snapshot of one exact Saved graph
+revision that can create new independent Saved graphs.
+
+**Attributes users care about:** name, description, source graph and revision,
+creator, source location, node/connection summary, and lifecycle state
+(`active` or `archived`). Name and description may be edited; the captured
+graph document and source revision may not.
+
+**Relationships:**
+
+- belongs to one Workspace (its source/save location)
+- derives from exactly one Saved graph revision
+- creates zero or many independent Saved graphs
+
+**Actions:**
+
+- **Save as template** — capture a chosen exact revision after removing runtime
+  and security state
+- **Use template** — choose a destination save location, graph name, and
+  optional one-level Folder, then create and open a new independent graph
+- **Edit template details** — change only descriptive metadata
+- **Archive template** — withdraw it from new use without changing graphs that
+  were already created from it
+
+**Decision:** Template is a copy source, not a callable unit and not a synonym
+for Module. Using it copies graph structure and safe configuration by value. It
+does not copy secrets, execution history, materialized artifacts, uploads,
+caches, or invalid runtime capabilities. Source edits, Template metadata or
+lifecycle changes, and later copies never mutate graphs already created from
+the Template. There is no Template release/version series, inheritance,
+marketplace, category, or tag model.
+
+**Authorization decision:** Template reads and use are authorized through the
+source Workspace; graph creation is authorized independently at the chosen
+destination Workspace. A user who can read the source and create in the
+destination may use a Template across those locations through this explicit
+copy operation. The resulting graph belongs only to the destination Workspace.
 
 ---
 
@@ -194,7 +241,7 @@ the Module’s home workspace is the active workspace), Remove.
 | subgraph | Authoring structure inside a Saved graph, not a durable object |
 | building block | Synonym → Module |
 | draft | State of source work / unpublished candidate, not an object |
-| fork | Outcome of Import, not a persistent type |
+| fork | Outcome of Import or Use template, not a persistent type |
 | dependency | Relationship via Module call → Module release |
 | practitioner | User (existing) |
 
@@ -203,7 +250,10 @@ the Module’s home workspace is the active workspace), Remove.
 ```mermaid
 erDiagram
   Workspace ||--o{ SavedGraph : owns
+  Workspace ||--o{ Template : owns
   Workspace ||--o{ Module : "hosts as home library"
+  SavedGraph ||--o{ Template : "supplies exact revision"
+  Template ||--o{ SavedGraph : "creates independent copy"
   SavedGraph ||--o| Module : "authors as source graph"
   Module ||--|{ ModuleRelease : has
   Module ||--o| ModuleRelease : "offers as current library release"
@@ -240,6 +290,23 @@ stateDiagram-v2
 A Module does not exist until the first successful **Publish release**. A Saved
 graph may declare boundaries and still have no Module.
 
+### Template availability state
+
+```mermaid
+stateDiagram-v2
+  [*] --> Active: Save as template
+  Active --> Archived: Archive template
+```
+
+| State | New graph / Library | Existing graph copies |
+| --- | --- | --- |
+| Active | Listed and usable | Independent and unchanged |
+| Archived | Hidden and unavailable for new use | Independent and unchanged |
+
+Archiving is withdrawal, not deletion. The immutable snapshot remains so its
+provenance and audit history are not rewritten; restoring archived Templates is
+outside the current contract.
+
 ### Source graph readiness (authoring, not Module state)
 
 ```mermaid
@@ -262,6 +329,7 @@ callable.
 | Topic | Decision |
 | --- | --- |
 | History | Module releases are immutable; callers keep pins |
+| Template history | One Template captures one exact revision; saving another snapshot creates another Template, not a version |
 | Relationship temporality | “Current library release” means the release offered for new inserts *now*; existing calls do not move |
 | Deletion | No hard delete in v1: Withdraw (and Deprecate) only. Existing Module calls keep resolving pinned releases; do not destroy releases out from under pins |
 | Cross-workspace | **Import** copies a release into the destination workspace as a new source graph + Module; no live cross-workspace Module reference |
@@ -273,7 +341,8 @@ callable.
 
 | Term | Rejected alternatives | Decision |
 | --- | --- | --- |
-| Module | building block, component, package, template | Product name for the reusable callable unit |
+| Template | starter, blueprint, reusable graph | Immutable exact-revision copy source; Use template creates an independent graph |
+| Module | building block, component, package | Product name for the reusable callable unit; never use Template as its synonym |
 | Module release | tip-as-catalog-entry, version (alone), checkpoint | Immutable callable pin; number aligns with source graph revision |
 | Module contract | API, signature, interface | Callable ports of one release |
 | Module port / port name | public name, public port | Avoid “public” = visibility |
@@ -282,6 +351,7 @@ callable.
 | Source graph | project, upstream module graph | The Saved graph a Module is authored from |
 | Saved graph | project, pipeline, notebook | Keep existing CONTEXT.md term |
 | Workspace | project (as tenant) | Keep existing tenancy term |
+| Folder | nested folder, directory tree | Optional one-level organization inside a Workspace; not a tenancy boundary |
 
 **Visibility language:** Prefer **published / deprecated / withdrawn** and
 **personal vs shared workspace**. Do not use **public/private module** for
@@ -292,6 +362,9 @@ library scope — “private” already collides with personal workspace and
 
 | Verb | Applies to | Rejected alternatives | Decision |
 | --- | --- | --- | --- |
+| Save as template | Saved graph revision | Publish template, make module | Capture a sanitized immutable copy source from that exact revision |
+| Use template | Template → destination Workspace | Insert template, call template, track template | Create a new independent Saved graph with an explicit name and optional Folder |
+| Archive template | Template | Delete template | Withdraw from new use; existing copies are unaffected |
 | Publish release | Module (creates Module on first success) | Share, expose, make public, sync tip | Deliberate offer of a validated revision to the workspace library |
 | Deprecate | Module | Soft-delete, hide | Still visible as legacy; discourage new inserts |
 | Withdraw | Module | Unpublish, remove, delete | Hide from library; keep pins resolving |
@@ -320,10 +393,15 @@ the Saved graph, then **Publish release**.
 3. **Insert release choice:** Composers may pick an older Module release at
    insert time (not only the current library release). Upgrade still repins to a
    chosen release (typically a newer one).
-4. **Library entry points:** Workbench **and** workspace graphs overview.
+4. **Library entry points:** Templates appear in **New graph / Library**;
+   Modules appear in **Add node / Library**. Template use creates and directly
+   opens a graph; Module insertion creates a pinned call node.
 5. **v1 scope:** Full breadboard (C) — Publish + Add node library listing +
    Workspace library manage (deprecate/withdraw) + Import into workspace. No
    instance-public modules.
+6. **Template v1 scope:** Exact-revision Save as template + browse/search/read +
+   descriptive metadata update + archive + explicit destination copy. No
+   version tracking, marketplace behavior, tags/categories, or inheritance.
 
 ## Remaining open questions
 

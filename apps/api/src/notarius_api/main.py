@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from notarius_core.application.collaboration import CollaborationService
 from notarius_core.application.modules import ModuleLibraryService
 from notarius_core.application.saved_graphs import SavedGraphService
+from notarius_core.application.templates import TemplateService
 from notarius_core.application.identity import IdentityService
 from notarius_core.domain.errors import (
     CapabilityDeniedError,
@@ -47,6 +48,7 @@ from notarius_api.v1.routes.auth.views import router as auth_router
 from notarius_api.v1.routes.artifacts.views import router as artifacts_router
 from notarius_api.v1.routes.catalog.views import router as catalog_router
 from notarius_api.v1.routes.modules.views import router as modules_router
+from notarius_api.v1.routes.templates.views import router as templates_router
 from notarius_api.v1.routes.collaboration.hub import GraphRoomHub
 from notarius_api.v1.routes.collaboration.publish import ActiveExecutionRoomPublisher
 from notarius_api.v1.routes.collaboration.views import router as collaboration_router
@@ -286,6 +288,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     lambda: SqlAlchemyUnitOfWork(database.sessions),
                     registry,
                 )
+                templates = TemplateService(
+                    lambda: SqlAlchemyUnitOfWork(database.sessions)
+                )
                 collaboration = CollaborationService(
                     lambda: SqlAlchemyUnitOfWork(database.sessions),
                     registry,
@@ -323,6 +328,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     uploads=components.uploads,
                     graph_modules=components.modules,
                     module_library=module_library,
+                    templates=templates,
                     run_graph=components.run_graph,
                     execution_manager=components.execution_manager,
                     execution_history=components.execution_history,
@@ -461,6 +467,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(node_secrets_router, prefix="/v1")
     application.include_router(catalog_router, prefix="/v1")
     application.include_router(modules_router, prefix="/v1")
+    application.include_router(templates_router, prefix="/v1")
     application.include_router(uploads_router, prefix="/v1")
     application.include_router(executions_router, prefix="/v1")
     application.include_router(artifacts_router, prefix="/v1")

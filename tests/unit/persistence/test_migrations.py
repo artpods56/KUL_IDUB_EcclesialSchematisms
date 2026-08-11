@@ -295,6 +295,7 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "saved_graph_revisions",
             "staged_uploads",
             "user_graph_states",
+            "templates",
         }
     command.check(config)
 
@@ -337,6 +338,7 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "saved_graph_revisions",
             "staged_uploads",
             "user_graph_states",
+            "templates",
         }
 
     get_settings.cache_clear()

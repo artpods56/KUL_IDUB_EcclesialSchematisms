@@ -90,6 +90,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/graphs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List Accessible Graphs */
+        readonly get: operations["list_accessible_graphs_v1_graphs_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/workspaces": {
         readonly parameters: {
             readonly query?: never;
@@ -347,6 +364,42 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/workspaces/{workspace_id}/graph-folders": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List Graph Folders */
+        readonly get: operations["list_graph_folders_v1_workspaces__workspace_id__graph_folders_get"];
+        readonly put?: never;
+        /** Create Graph Folder */
+        readonly post: operations["create_graph_folder_v1_workspaces__workspace_id__graph_folders_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/graph-folders/{folder_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Delete Graph Folder */
+        readonly delete: operations["delete_graph_folder_v1_workspaces__workspace_id__graph_folders__folder_id__delete"];
+        readonly options?: never;
+        readonly head?: never;
+        /** Rename Graph Folder */
+        readonly patch: operations["rename_graph_folder_v1_workspaces__workspace_id__graph_folders__folder_id__patch"];
+        readonly trace?: never;
+    };
     readonly "/v1/workspaces/{workspace_id}/graphs": {
         readonly parameters: {
             readonly query?: never;
@@ -379,6 +432,24 @@ export interface paths {
         readonly post?: never;
         /** Delete Saved Graph */
         readonly delete: operations["delete_saved_graph_v1_workspaces__workspace_id__graphs__graph_id__delete"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/graphs/{graph_id}/archive": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /** Archive Graph */
+        readonly put: operations["archive_graph_v1_workspaces__workspace_id__graphs__graph_id__archive_put"];
+        readonly post?: never;
+        /** Restore Graph */
+        readonly delete: operations["restore_graph_v1_workspaces__workspace_id__graphs__graph_id__archive_delete"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -452,6 +523,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/workspaces/{workspace_id}/graphs/{graph_id}/folder": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /** Assign Graph Folder */
+        readonly put: operations["assign_graph_folder_v1_workspaces__workspace_id__graphs__graph_id__folder_put"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/workspaces/{workspace_id}/graphs/{graph_id}/head": {
         readonly parameters: {
             readonly query?: never;
@@ -516,6 +604,41 @@ export interface paths {
         readonly post?: never;
         /** Delete Node Secret */
         readonly delete: operations["delete_node_secret_v1_workspaces__workspace_id__graphs__graph_id__nodes__node_id__secrets__name__delete"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/graphs/{graph_id}/opened": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Record Graph Open */
+        readonly post: operations["record_graph_open_v1_workspaces__workspace_id__graphs__graph_id__opened_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/graphs/{graph_id}/star": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /** Star Graph */
+        readonly put: operations["star_graph_v1_workspaces__workspace_id__graphs__graph_id__star_put"];
+        readonly post?: never;
+        /** Unstar Graph */
+        readonly delete: operations["unstar_graph_v1_workspaces__workspace_id__graphs__graph_id__star_delete"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -762,6 +885,76 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/workspaces/{workspace_id}/templates": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List Templates */
+        readonly get: operations["list_templates_v1_workspaces__workspace_id__templates_get"];
+        readonly put?: never;
+        /** Create Template */
+        readonly post: operations["create_template_v1_workspaces__workspace_id__templates_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/templates/{template_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Template */
+        readonly get: operations["get_template_v1_workspaces__workspace_id__templates__template_id__get"];
+        /** Update Template Metadata */
+        readonly put: operations["update_template_metadata_v1_workspaces__workspace_id__templates__template_id__put"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/templates/{template_id}/archive": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Archive Template */
+        readonly post: operations["archive_template_v1_workspaces__workspace_id__templates__template_id__archive_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/templates/{template_id}/instantiate": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Instantiate Template */
+        readonly post: operations["instantiate_template_v1_workspaces__workspace_id__templates__template_id__instantiate_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/workspaces/{workspace_id}/uploads": {
         readonly parameters: {
             readonly query?: never;
@@ -931,6 +1124,11 @@ export interface components {
             /** Title */
             readonly title: string;
         };
+        /** AssignGraphFolderRequest */
+        readonly AssignGraphFolderRequest: {
+            /** Folder Id */
+            readonly folder_id: string | null;
+        };
         /** Body_upload_file_v1_workspaces__workspace_id__uploads_post */
         readonly Body_upload_file_v1_workspaces__workspace_id__uploads_post: {
             /** File */
@@ -1047,6 +1245,20 @@ export interface components {
             /** Nodes */
             readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel-Input"][];
             readonly presentation?: components["schemas"]["GraphPresentationDocumentModel-Input"];
+        };
+        /** CreateTemplateRequest */
+        readonly CreateTemplateRequest: {
+            /** Description */
+            readonly description?: string | null;
+            /** Name */
+            readonly name: string;
+            /**
+             * Source Graph Id
+             * Format: uuid
+             */
+            readonly source_graph_id: string;
+            /** Source Revision */
+            readonly source_revision: number;
         };
         /** DuplicateNodeCommand */
         readonly DuplicateNodeCommand: {
@@ -1337,6 +1549,87 @@ export interface components {
             readonly outline: components["schemas"]["GeoLineStyle"];
             readonly point: components["schemas"]["GeoPointStyle"];
         };
+        /** GraphBrowserCreatorResponse */
+        readonly GraphBrowserCreatorResponse: {
+            /** Display Name */
+            readonly display_name: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+        };
+        /** GraphBrowserDraftResponse */
+        readonly GraphBrowserDraftResponse: {
+            /** Checkpoint Revision */
+            readonly checkpoint_revision: number;
+            /** Checkpoint Sequence */
+            readonly checkpoint_sequence: number;
+            /** Edge Count */
+            readonly edge_count: number;
+            /** Head Sequence */
+            readonly head_sequence: number;
+            /** Name */
+            readonly name: string;
+            /** Node Count */
+            readonly node_count: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
+        /** GraphBrowserFolderResponse */
+        readonly GraphBrowserFolderResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+        };
+        /** GraphBrowserItemResponse */
+        readonly GraphBrowserItemResponse: {
+            /** Archived */
+            readonly archived: boolean;
+            /** Archived At */
+            readonly archived_at: string | null;
+            readonly creator: components["schemas"]["GraphBrowserCreatorResponse"] | null;
+            readonly draft: components["schemas"]["GraphBrowserDraftResponse"];
+            readonly folder: components["schemas"]["GraphBrowserFolderResponse"] | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Last Opened At */
+            readonly last_opened_at: string | null;
+            readonly location: components["schemas"]["GraphBrowserLocationResponse"];
+            /** Starred */
+            readonly starred: boolean;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
+        /** GraphBrowserListResponse */
+        readonly GraphBrowserListResponse: {
+            /** Graphs */
+            readonly graphs: readonly components["schemas"]["GraphBrowserItemResponse"][];
+        };
+        /** GraphBrowserLocationResponse */
+        readonly GraphBrowserLocationResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            readonly kind: components["schemas"]["WorkspaceKind"];
+            /** Name */
+            readonly name: string;
+        };
         /** GraphCommandReceiptResponse */
         readonly GraphCommandReceiptResponse: {
             /** Accepted Sequence */
@@ -1459,6 +1752,36 @@ export interface components {
             /** Workflow Run Id */
             readonly workflow_run_id: string | null;
         };
+        /** GraphFolderListResponse */
+        readonly GraphFolderListResponse: {
+            /** Folders */
+            readonly folders: readonly components["schemas"]["GraphFolderResponse"][];
+        };
+        /** GraphFolderResponse */
+        readonly GraphFolderResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
+        /** GraphFolderWriteRequest */
+        readonly GraphFolderWriteRequest: {
+            /** Name */
+            readonly name: string;
+        };
         /** GraphMaterializationsResponse */
         readonly GraphMaterializationsResponse: {
             /**
@@ -1482,6 +1805,20 @@ export interface components {
             readonly graph_revision: number;
             /** Secrets */
             readonly secrets: readonly components["schemas"]["NodeSecretStatusResponse"][];
+        };
+        /** GraphOrganizationResponse */
+        readonly GraphOrganizationResponse: {
+            /** Archived */
+            readonly archived: boolean;
+            /** Archived At */
+            readonly archived_at: string | null;
+            /** Folder Id */
+            readonly folder_id: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
         };
         /** GraphPoint */
         readonly GraphPoint: {
@@ -1724,6 +2061,18 @@ export interface components {
              */
             readonly graph_id: string;
             readonly module: components["schemas"]["ModuleResponse"];
+        };
+        /** InstantiateTemplateRequest */
+        readonly InstantiateTemplateRequest: {
+            /**
+             * Destination Workspace Id
+             * Format: uuid
+             */
+            readonly destination_workspace_id: string;
+            /** Folder Id */
+            readonly folder_id?: string | null;
+            /** Name */
+            readonly name: string;
         };
         /** ModuleListResponse */
         readonly ModuleListResponse: {
@@ -2759,6 +3108,86 @@ export interface components {
          * @enum {string}
          */
         readonly TableValueType: "text" | "integer" | "number" | "decimal" | "boolean" | "date" | "datetime" | "json" | "binary" | "unknown" | "mixed";
+        /** TemplateInstantiationResponse */
+        readonly TemplateInstantiationResponse: {
+            /**
+             * Destination Workspace Id
+             * Format: uuid
+             */
+            readonly destination_workspace_id: string;
+            /** Folder Id */
+            readonly folder_id?: string | null;
+            /**
+             * Graph Id
+             * Format: uuid
+             */
+            readonly graph_id: string;
+            /** Graph Name */
+            readonly graph_name: string;
+            /**
+             * Source Workspace Id
+             * Format: uuid
+             */
+            readonly source_workspace_id: string;
+            /**
+             * Template Id
+             * Format: uuid
+             */
+            readonly template_id: string;
+        };
+        /** TemplateListResponse */
+        readonly TemplateListResponse: {
+            /** Templates */
+            readonly templates: readonly components["schemas"]["TemplateResponse"][];
+        };
+        /** TemplateResponse */
+        readonly TemplateResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Created By User Id */
+            readonly created_by_user_id?: string | null;
+            /** Description */
+            readonly description?: string | null;
+            /** Edge Count */
+            readonly edge_count: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Node Count */
+            readonly node_count: number;
+            /**
+             * Source Graph Id
+             * Format: uuid
+             */
+            readonly source_graph_id: string;
+            /** Source Graph Name */
+            readonly source_graph_name: string;
+            /** Source Revision */
+            readonly source_revision: number;
+            readonly state: components["schemas"]["TemplateState"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            readonly workspace_id: string;
+        };
+        /**
+         * TemplateState
+         * @enum {string}
+         */
+        readonly TemplateState: "active" | "archived";
         /** UnavailableGraphModuleResponse */
         readonly UnavailableGraphModuleResponse: {
             /**
@@ -2848,6 +3277,20 @@ export interface components {
             readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel-Input"][];
             readonly presentation?: components["schemas"]["GraphPresentationDocumentModel-Input"];
         };
+        /** UpdateTemplateMetadataRequest */
+        readonly UpdateTemplateMetadataRequest: {
+            /** Description */
+            readonly description?: string | null;
+            /** Name */
+            readonly name: string;
+        };
+        /** UserGraphStateResponse */
+        readonly UserGraphStateResponse: {
+            /** Last Opened At */
+            readonly last_opened_at: string | null;
+            /** Starred */
+            readonly starred: boolean;
+        };
         /** UserResponse */
         readonly UserResponse: {
             /** Active */
@@ -2884,7 +3327,7 @@ export interface components {
          * WorkspaceCapability
          * @enum {string}
          */
-        readonly WorkspaceCapability: "view_graph" | "view_artifacts" | "view_materializations" | "view_history" | "view_execution" | "join_graph_room" | "publish_presence" | "create_graph" | "edit_graph" | "checkpoint_graph" | "execute_graph" | "cancel_execution" | "publish_module" | "manage_module_library" | "manage_secrets" | "delete_graph" | "manage_members" | "rename_workspace";
+        readonly WorkspaceCapability: "view_graph" | "view_artifacts" | "view_materializations" | "view_history" | "view_execution" | "join_graph_room" | "publish_presence" | "create_graph" | "edit_graph" | "checkpoint_graph" | "execute_graph" | "cancel_execution" | "publish_module" | "manage_module_library" | "create_template" | "manage_template_library" | "manage_secrets" | "delete_graph" | "manage_members" | "rename_workspace";
         /** WorkspaceCreateRequest */
         readonly WorkspaceCreateRequest: {
             /** Name */
@@ -3096,6 +3539,26 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly list_accessible_graphs_v1_graphs_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GraphBrowserListResponse"];
                 };
             };
         };
@@ -3957,6 +4420,138 @@ export interface operations {
             };
         };
     };
+    readonly list_graph_folders_v1_workspaces__workspace_id__graph_folders_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GraphFolderListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly create_graph_folder_v1_workspaces__workspace_id__graph_folders_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["GraphFolderWriteRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GraphFolderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly delete_graph_folder_v1_workspaces__workspace_id__graph_folders__folder_id__delete: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly folder_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly rename_graph_folder_v1_workspaces__workspace_id__graph_folders__folder_id__patch: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly folder_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["GraphFolderWriteRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GraphFolderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     readonly list_saved_graphs_v1_workspaces__workspace_id__graphs_get: {
         readonly parameters: {
             readonly query?: never;
@@ -4125,6 +4720,70 @@ export interface operations {
             };
         };
     };
+    readonly archive_graph_v1_workspaces__workspace_id__graphs__graph_id__archive_put: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly graph_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GraphOrganizationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly restore_graph_v1_workspaces__workspace_id__graphs__graph_id__archive_delete: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly graph_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GraphOrganizationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     readonly checkpoint_graph_v1_workspaces__workspace_id__graphs__graph_id__checkpoint_post: {
         readonly parameters: {
             readonly query?: never;
@@ -4255,6 +4914,42 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["GraphExecutionDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly assign_graph_folder_v1_workspaces__workspace_id__graphs__graph_id__folder_put: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly graph_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AssignGraphFolderRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GraphOrganizationResponse"];
                 };
             };
             /** @description Validation Error */
@@ -4426,6 +5121,102 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly record_graph_open_v1_workspaces__workspace_id__graphs__graph_id__opened_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly graph_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UserGraphStateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly star_graph_v1_workspaces__workspace_id__graphs__graph_id__star_put: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly graph_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UserGraphStateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly unstar_graph_v1_workspaces__workspace_id__graphs__graph_id__star_delete: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly graph_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UserGraphStateResponse"];
+                };
             };
             /** @description Validation Error */
             readonly 422: {
@@ -4986,6 +5777,211 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["ImageUploadItemResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly list_templates_v1_workspaces__workspace_id__templates_get: {
+        readonly parameters: {
+            readonly query?: {
+                readonly include_archived?: boolean;
+                readonly q?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TemplateListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly create_template_v1_workspaces__workspace_id__templates_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CreateTemplateRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TemplateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly get_template_v1_workspaces__workspace_id__templates__template_id__get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly template_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TemplateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly update_template_metadata_v1_workspaces__workspace_id__templates__template_id__put: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly template_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["UpdateTemplateMetadataRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TemplateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly archive_template_v1_workspaces__workspace_id__templates__template_id__archive_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly template_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TemplateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly instantiate_template_v1_workspaces__workspace_id__templates__template_id__instantiate_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly template_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["InstantiateTemplateRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TemplateInstantiationResponse"];
                 };
             };
             /** @description Validation Error */

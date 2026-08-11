@@ -124,6 +124,8 @@ export type SavedGraphNode = Schemas["SavedGraphNodeModel-Output"];
 export type SavedGraphEdge = Schemas["SavedGraphEdgeModel"];
 export type SavedGraphSummary =
   Schemas["SavedGraphSummaryResponse"];
+export type GraphFolder = Schemas["GraphFolderResponse"];
+export type GraphFolderList = Schemas["GraphFolderListResponse"];
 export type NodeSecretInput = Schemas["NodeSecretInputResponse"];
 export type NodeSecretStatus = Schemas["NodeSecretStatusResponse"];
 export type GraphNodeSecrets = Schemas["GraphNodeSecretsResponse"];
@@ -141,6 +143,16 @@ export type ModuleList = Schemas["ModuleListResponse"];
 export type PublishModuleReleaseRequest = Schemas["PublishModuleReleaseRequest"];
 export type ImportModuleReleaseRequest = Schemas["ImportModuleReleaseRequest"];
 export type ImportModuleReleaseResponse = Schemas["ImportModuleReleaseResponse"];
+export type TemplateState = Schemas["TemplateState"];
+export type GraphTemplate = Schemas["TemplateResponse"];
+export type TemplateList = Schemas["TemplateListResponse"];
+export type CreateTemplateRequest = Schemas["CreateTemplateRequest"];
+export type UpdateTemplateMetadataRequest =
+  Schemas["UpdateTemplateMetadataRequest"];
+export type InstantiateTemplateRequest =
+  Schemas["InstantiateTemplateRequest"];
+export type TemplateInstantiationResponse =
+  Schemas["TemplateInstantiationResponse"];
 export type UploadResponse =
   paths["/v1/workspaces/{workspace_id}/uploads"]["post"]["responses"][200]["content"]["application/json"];
 export type RunScopeInput = Schemas["GraphExecutionScope"];

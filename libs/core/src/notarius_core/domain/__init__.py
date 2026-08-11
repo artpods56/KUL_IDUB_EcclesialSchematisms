@@ -28,6 +28,7 @@ from notarius_core.domain.security_audit import (
     SecurityAuditEvent,
     SecurityAuditOutcome,
 )
+from notarius_core.domain.templates import Template, TemplateLibraryError, TemplateState
 
 __all__ = [
     "GraphModuleDefinition",
@@ -52,4 +53,7 @@ __all__ = [
     "SecurityAuditActorKind",
     "SecurityAuditEvent",
     "SecurityAuditOutcome",
+    "Template",
+    "TemplateLibraryError",
+    "TemplateState",
 ]

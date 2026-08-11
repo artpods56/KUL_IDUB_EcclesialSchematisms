@@ -34,6 +34,7 @@ from notarius_core.domain.identity import (
     WorkspaceRole,
 )
 from notarius_core.domain.module_library import ModulePublicationState
+from notarius_core.domain.templates import TemplateState
 from notarius_core.domain.security_audit import (
     SecurityAuditActorKind,
     SecurityAuditOutcome,
@@ -224,6 +225,27 @@ class ModulePublicationStateType(TypeDecorator[ModulePublicationState]):
     ) -> ModulePublicationState | None:
         del dialect
         return None if value is None else ModulePublicationState(value)
+
+
+class TemplateStateType(TypeDecorator[TemplateState]):
+    impl = String(16)
+    cache_ok = True
+
+    def process_bind_param(
+        self,
+        value: TemplateState | None,
+        dialect: Dialect,
+    ) -> str | None:
+        del dialect
+        return None if value is None else TemplateState(value).value
+
+    def process_result_value(
+        self,
+        value: str | None,
+        dialect: Dialect,
+    ) -> TemplateState | None:
+        del dialect
+        return None if value is None else TemplateState(value)
 
 
 class SecurityAuditActorKindType(TypeDecorator[SecurityAuditActorKind]):
@@ -1210,4 +1232,40 @@ module_releases = Table(
         "module_id",
         "revision",
     ),
+)
+
+
+templates = Table(
+    "templates",
+    metadata,
+    Column("id", SaUuid(as_uuid=True), primary_key=True),
+    Column(
+        "workspace_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    Column("source_graph_id", SaUuid(as_uuid=True), nullable=False),
+    Column("source_revision", Integer, nullable=False),
+    Column("source_graph_name", String(160), nullable=False),
+    Column("snapshot_document", SavedGraphDocumentType(), nullable=False),
+    Column("name", String(160), nullable=False),
+    Column("description", String(1000), nullable=True),
+    Column("state", TemplateStateType(), nullable=False),
+    Column(
+        "created_by_user_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    ),
+    Column("created_at", UTCDateTime(), nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
+    UniqueConstraint("workspace_id", "id", name="uq_templates_workspace_id_id"),
+    CheckConstraint("source_revision >= 1", name="template_source_revision"),
+    CheckConstraint(
+        "state IN ('active', 'archived')",
+        name="template_state",
+    ),
+    Index("ix_templates_workspace_name", "workspace_id", "name"),
+    Index("ix_templates_workspace_updated_at", "workspace_id", "updated_at"),
 )

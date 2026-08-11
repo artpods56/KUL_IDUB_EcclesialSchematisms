@@ -72,6 +72,7 @@ from notarius_core.domain.saved_graphs import (
 )
 from notarius_core.domain.security_audit import SecurityAuditEvent
 from notarius_core.domain.staged_uploads import StagedUpload
+from notarius_core.domain.templates import Template, TemplateState
 from notarius_core.ports.identity import (
     IdentityRepositoryPort,
     SecurityAuditRepositoryPort,
@@ -87,6 +88,7 @@ from notarius_core.ports.module_library import ModuleLibraryRepositoryPort
 from notarius_core.ports.node_secrets import NodeSecretRepositoryPort
 from notarius_core.ports.saved_graphs import SavedGraphRepositoryPort
 from notarius_core.ports.staged_uploads import StagedUploadRepositoryPort
+from notarius_core.ports.templates import TemplateRepositoryPort
 
 from notarius_persistence import schema
 from notarius_persistence.orm import GraphExecutionRecord, SavedGraphRevisionRecord
@@ -1923,5 +1925,60 @@ class SqlModuleLibraryRepository(ModuleLibraryRepositoryPort):
                 schema.module_releases.c.module_id == module_id,
             )
             .order_by(schema.module_releases.c.revision.desc())
+        )
+        return list(result)
+
+
+class SqlTemplateRepository(TemplateRepositoryPort):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    @override
+    async def add(self, template: Template) -> None:
+        self._session.add(template)
+        await self._session.flush()
+
+    @override
+    async def get(
+        self,
+        workspace_id: UUID,
+        template_id: UUID,
+    ) -> Template | None:
+        return await self._session.scalar(
+            select(Template).where(
+                schema.templates.c.workspace_id == workspace_id,
+                schema.templates.c.id == template_id,
+            )
+        )
+
+    @override
+    async def list(
+        self,
+        workspace_id: UUID,
+        *,
+        query: str | None,
+        include_archived: bool,
+    ) -> list[Template]:
+        statement = select(Template).where(
+            schema.templates.c.workspace_id == workspace_id
+        )
+        if not include_archived:
+            statement = statement.where(
+                schema.templates.c.state == TemplateState.ACTIVE
+            )
+        if query is not None:
+            pattern = f"%{query.lower()}%"
+            statement = statement.where(
+                or_(
+                    func.lower(schema.templates.c.name).like(pattern),
+                    func.lower(schema.templates.c.description).like(pattern),
+                    func.lower(schema.templates.c.source_graph_name).like(pattern),
+                )
+            )
+        result = await self._session.scalars(
+            statement.order_by(
+                schema.templates.c.name.asc(),
+                schema.templates.c.id.asc(),
+            )
         )
         return list(result)

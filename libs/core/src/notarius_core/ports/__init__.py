@@ -39,6 +39,7 @@ from notarius_core.ports.staged_uploads import (
     StagedUploadRepositoryPort,
     StagedUploadUnitOfWorkPort,
 )
+from notarius_core.ports.templates import TemplateRepositoryPort, TemplateUnitOfWorkPort
 
 __all__ = [
     "CollaborationRepositoryPort",
@@ -66,4 +67,6 @@ __all__ = [
     "UnavailableNodeSecretResolver",
     "StagedUploadRepositoryPort",
     "StagedUploadUnitOfWorkPort",
+    "TemplateRepositoryPort",
+    "TemplateUnitOfWorkPort",
 ]

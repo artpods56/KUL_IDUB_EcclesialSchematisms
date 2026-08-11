@@ -42,6 +42,7 @@ from notarius_core.ports.staged_uploads import (
     StagedUploadRepositoryPort,
     StagedUploadUnitOfWorkPort,
 )
+from notarius_core.ports.templates import TemplateRepositoryPort, TemplateUnitOfWorkPort
 
 from notarius_persistence.adapters.repositories import (
     SqlArtifactRepository,
@@ -55,6 +56,7 @@ from notarius_persistence.adapters.repositories import (
     SqlSavedGraphRepository,
     SqlSecurityAuditRepository,
     SqlStagedUploadRepository,
+    SqlTemplateRepository,
 )
 
 
@@ -72,6 +74,7 @@ class _SqlAlchemyUnitOfWorkState:
     staged_uploads: StagedUploadRepositoryPort
     collaboration: CollaborationRepositoryPort
     modules: ModuleLibraryRepositoryPort
+    templates: TemplateRepositoryPort
 
 
 class SqlAlchemyUnitOfWork(
@@ -83,6 +86,7 @@ class SqlAlchemyUnitOfWork(
     StagedUploadUnitOfWorkPort,
     CollaborationUnitOfWorkPort,
     ModuleLibraryUnitOfWorkPort,
+    TemplateUnitOfWorkPort,
 ):
     """Reusable task-local SQLAlchemy transaction boundary.
 
@@ -156,6 +160,11 @@ class SqlAlchemyUnitOfWork(
     def modules(self) -> ModuleLibraryRepositoryPort:
         return self._entered_state().modules
 
+    @property
+    @override
+    def templates(self) -> TemplateRepositoryPort:
+        return self._entered_state().templates
+
     @override
     async def __aenter__(self) -> "SqlAlchemyUnitOfWork":
         if self._state.get() is not None:
@@ -175,6 +184,7 @@ class SqlAlchemyUnitOfWork(
                 staged_uploads=SqlStagedUploadRepository(session),
                 collaboration=SqlCollaborationRepository(session),
                 modules=SqlModuleLibraryRepository(session),
+                templates=SqlTemplateRepository(session),
             )
         )
         return self
