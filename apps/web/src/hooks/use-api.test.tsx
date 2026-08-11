@@ -70,26 +70,36 @@ afterEach(() => {
 });
 
 describe("useAllWorkspacesGraphs", () => {
-  it("fans out one typed request per workspace and preserves partial failures", async () => {
-    apiMocks.request.mockImplementation(
-      async (_method: string, path: string) => {
-        if (path.includes("workspace-personal")) {
-          return {
-            graphs: [
-              {
-                id: "graph-1",
-                name: "Invoice intake",
-                node_count: 2,
-                edge_count: 1,
-                revision: 3,
-                updated_at: "2026-08-10T12:00:00Z",
-              },
-            ],
-          };
-        }
-        throw new Error("Team location unavailable");
-      },
-    );
+  it("loads every authorized graph through one aggregate request", async () => {
+    apiMocks.request.mockResolvedValue({
+      graphs: [
+        {
+          id: "graph-1",
+          location: {
+            id: personal.id,
+            slug: personal.slug,
+            name: personal.name,
+            kind: personal.kind,
+          },
+          folder: null,
+          archived: false,
+          archived_at: null,
+          starred: true,
+          last_opened_at: "2026-08-10T12:00:00Z",
+          updated_at: "2026-08-10T12:00:00Z",
+          draft: {
+            name: "Invoice intake",
+            head_sequence: 4,
+            checkpoint_sequence: 3,
+            checkpoint_revision: 3,
+            updated_at: "2026-08-10T12:00:00Z",
+            node_count: 2,
+            edge_count: 1,
+          },
+          creator: null,
+        },
+      ],
+    });
 
     const container = document.createElement("div");
     document.body.append(container);
@@ -109,21 +119,20 @@ describe("useAllWorkspacesGraphs", () => {
     });
 
     await vi.waitFor(() => expect(latest?.graphs).toHaveLength(1));
-    expect(apiMocks.request.mock.calls).toEqual([
-      ["GET", "/v1/workspaces/workspace-personal/graphs"],
-      ["GET", "/v1/workspaces/workspace-team/graphs"],
-    ]);
+    expect(apiMocks.request).toHaveBeenCalledOnce();
+    expect(apiMocks.request).toHaveBeenCalledWith("GET", "/v1/me/graphs");
     expect(latest?.graphs?.[0]?.location).toEqual({
       id: personal.id,
       slug: personal.slug,
       name: personal.name,
       kind: personal.kind,
     });
-    expect(latest?.failures).toHaveLength(1);
-    expect(latest?.failures[0]?.location.name).toBe("Atlas");
+    expect(latest?.graphs?.[0]?.name).toBe("Invoice intake");
+    expect(latest?.graphs?.[0]?.starred).toBe(true);
+    expect(latest?.error).toBeNull();
 
     await act(async () => latest?.retry());
-    await vi.waitFor(() => expect(apiMocks.request).toHaveBeenCalledTimes(4));
+    await vi.waitFor(() => expect(apiMocks.request).toHaveBeenCalledTimes(2));
 
     await act(async () => root.unmount());
   });

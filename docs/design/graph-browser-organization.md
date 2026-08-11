@@ -57,7 +57,7 @@ sequence, or create a checkpoint.
 
 ## Authorization and disclosure boundary
 
-`GET /v1/graphs` performs one repository query for the authenticated user. The
+`GET /v1/me/graphs` performs one repository query for the authenticated user. The
 query joins only active memberships and includes only the `viewer`, `editor`,
 and `owner` roles. Workspace and graph predicates are applied before rows are
 materialized; a UUID or browser filter never widens access.
@@ -80,7 +80,7 @@ Revoked memberships and disabled users fail closed.
 
 | Operation | Route | Required capability | Behavior |
 | --- | --- | --- | --- |
-| Global list | `GET /v1/graphs` | authenticated active membership per row | Returns only authorized rows. |
+| Authorized aggregate list | `GET /v1/me/graphs` | authenticated active membership per row | Returns only authorized rows. |
 | List folders | `GET /v1/workspaces/{workspace_id}/graph-folders` | `view_graph` | Lists one Workspace's folders. |
 | Create folder | `POST /v1/workspaces/{workspace_id}/graph-folders` | `edit_graph` | Rejects a duplicate name with `409`. |
 | Rename folder | `PATCH /v1/workspaces/{workspace_id}/graph-folders/{folder_id}` | `edit_graph` | Keeps folder identity stable. |

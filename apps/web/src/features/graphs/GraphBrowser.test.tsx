@@ -34,15 +34,7 @@ const browserState = vi.hoisted(() => ({
       kind: "personal" | "shared";
     };
   }> | null,
-  failures: [] as Array<{
-    location: {
-      id: string;
-      name: string;
-      slug: string;
-      kind: "personal" | "shared";
-    };
-    error: Error;
-  }>,
+  graphsError: null as Error | null,
   isLoading: false,
 }));
 
@@ -77,7 +69,7 @@ vi.mock("@/hooks/use-api", () => ({
   }),
   useAllWorkspacesGraphs: () => ({
     graphs: browserState.graphs,
-    failures: browserState.failures,
+    error: browserState.graphsError,
     isLoading: browserState.isLoading,
     retry: browserState.retryGraphs,
   }),
@@ -188,7 +180,7 @@ beforeEach(() => {
     graph("graph-personal", "Invoice intake", personal),
     graph("graph-team", "Quarterly plan", team),
   ];
-  browserState.failures = [];
+  browserState.graphsError = null;
   browserState.isLoading = false;
 });
 
@@ -261,28 +253,10 @@ describe("graph-first browser", () => {
 
     browserState.graphs = [];
     browserState.isLoading = false;
-    browserState.failures = [
-      { location: graph("x", "x", personal).location, error: new Error("offline") },
-      { location: graph("y", "y", team).location, error: new Error("offline") },
-    ];
+    browserState.graphsError = new Error("offline");
     const failed = await renderBrowser();
     expect(failed.textContent).toContain("Graphs couldn't be loaded");
     await click(button(failed, "Retry"));
-    expect(browserState.retryGraphs).toHaveBeenCalledOnce();
-  });
-
-  it("keeps successful locations usable during a partial failure", async () => {
-    browserState.graphs = [graph("graph-team", "Quarterly plan", team)];
-    browserState.failures = [
-      { location: graph("x", "x", personal).location, error: new Error("offline") },
-    ];
-    const container = await renderBrowser();
-
-    expect(container.textContent).toContain(
-      "Some graphs couldn't be loaded from My graphs.",
-    );
-    expect(container.textContent).toContain("Quarterly plan");
-    await click(button(container, "Retry"));
     expect(browserState.retryGraphs).toHaveBeenCalledOnce();
   });
 

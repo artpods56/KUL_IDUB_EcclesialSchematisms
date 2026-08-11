@@ -55,7 +55,7 @@ from .models import (
 
 
 router = APIRouter(prefix="/workspaces/{workspace_id}/graphs", tags=["saved graphs"])
-browser_router = APIRouter(prefix="/graphs", tags=["graph browser"])
+browser_router = APIRouter(prefix="/me/graphs", tags=["graph browser"])
 folder_router = APIRouter(
     prefix="/workspaces/{workspace_id}/graph-folders",
     tags=["graph folders"],

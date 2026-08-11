@@ -90,7 +90,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/v1/graphs": {
+    readonly "/v1/me/graphs": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -98,7 +98,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List Accessible Graphs */
-        readonly get: operations["list_accessible_graphs_v1_graphs_get"];
+        readonly get: operations["list_accessible_graphs_v1_me_graphs_get"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -1629,6 +1629,8 @@ export interface components {
             readonly kind: components["schemas"]["WorkspaceKind"];
             /** Name */
             readonly name: string;
+            /** Slug */
+            readonly slug: string;
         };
         /** GraphCommandReceiptResponse */
         readonly GraphCommandReceiptResponse: {
@@ -3543,7 +3545,7 @@ export interface operations {
             };
         };
     };
-    readonly list_accessible_graphs_v1_graphs_get: {
+    readonly list_accessible_graphs_v1_me_graphs_get: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;

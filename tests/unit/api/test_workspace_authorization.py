@@ -252,7 +252,7 @@ def test_global_graph_browser_is_authorized_and_keeps_user_state_private(
     assert opened.status_code == 200, opened.text
     assert opened.json()["last_opened_at"] is not None
 
-    owner_a_browser = client.get("/v1/graphs")
+    owner_a_browser = client.get("/v1/me/graphs")
     assert owner_a_browser.status_code == 200, owner_a_browser.text
     assert [graph["id"] for graph in owner_a_browser.json()["graphs"]] == [
         str(graph_a_id)
@@ -260,6 +260,7 @@ def test_global_graph_browser_is_authorized_and_keeps_user_state_private(
     owner_a_row = owner_a_browser.json()["graphs"][0]
     assert owner_a_row["location"] == {
         "id": str(WORKSPACE_A),
+        "slug": "workspace-a",
         "name": "Workspace A",
         "kind": "shared",
     }
@@ -281,7 +282,7 @@ def test_global_graph_browser_is_authorized_and_keeps_user_state_private(
     }
 
     actor.as_user(VIEWER_A_ID)
-    viewer_browser = client.get("/v1/graphs")
+    viewer_browser = client.get("/v1/me/graphs")
     assert viewer_browser.status_code == 200, viewer_browser.text
     viewer_row = viewer_browser.json()["graphs"][0]
     assert viewer_row["id"] == str(graph_a_id)
@@ -301,23 +302,23 @@ def test_global_graph_browser_is_authorized_and_keeps_user_state_private(
     assert client.put(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/star")).status_code == 200
 
     actor.as_user(OWNER_A_ID)
-    owner_a_row_after_viewer_star = client.get("/v1/graphs").json()["graphs"][0]
+    owner_a_row_after_viewer_star = client.get("/v1/me/graphs").json()["graphs"][0]
     assert owner_a_row_after_viewer_star["starred"] is True
     unstarred = client.delete(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/star"))
     assert unstarred.status_code == 200, unstarred.text
     assert unstarred.json()["starred"] is False
-    assert client.get("/v1/graphs").json()["graphs"][0]["starred"] is False
+    assert client.get("/v1/me/graphs").json()["graphs"][0]["starred"] is False
 
     archived = client.put(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/archive"))
     assert archived.status_code == 200, archived.text
     assert archived.json()["archived"] is True
-    assert client.get("/v1/graphs").json()["graphs"][0]["archived"] is True
+    assert client.get("/v1/me/graphs").json()["graphs"][0]["archived"] is True
     restored = client.delete(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/archive"))
     assert restored.status_code == 200, restored.text
     assert restored.json()["archived"] is False
 
     actor.as_user(BOTH_ID)
-    both_browser = client.get("/v1/graphs")
+    both_browser = client.get("/v1/me/graphs")
     assert both_browser.status_code == 200, both_browser.text
     assert {graph["id"] for graph in both_browser.json()["graphs"]} == {
         str(graph_a_id),
@@ -328,7 +329,7 @@ def test_global_graph_browser_is_authorized_and_keeps_user_state_private(
     revoked = client.delete(_api(WORKSPACE_B, f"/members/{BOTH_ID}"))
     assert revoked.status_code == 204, revoked.text
     actor.as_user(BOTH_ID)
-    after_revocation = client.get("/v1/graphs")
+    after_revocation = client.get("/v1/me/graphs")
     assert after_revocation.status_code == 200, after_revocation.text
     assert [graph["id"] for graph in after_revocation.json()["graphs"]] == [
         str(graph_a_id)
@@ -404,7 +405,7 @@ def test_folder_assignment_cannot_cross_workspace_and_delete_unfiles_graphs(
 
     deleted = client.delete(_api(WORKSPACE_A, f"/graph-folders/{own_folder_id}"))
     assert deleted.status_code == 204, deleted.text
-    row = client.get("/v1/graphs").json()["graphs"][0]
+    row = client.get("/v1/me/graphs").json()["graphs"][0]
     assert row["id"] == str(graph_a_id)
     assert row["folder"] is None
 

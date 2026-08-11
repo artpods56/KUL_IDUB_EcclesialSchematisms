@@ -124,6 +124,8 @@ export type SavedGraphNode = Schemas["SavedGraphNodeModel-Output"];
 export type SavedGraphEdge = Schemas["SavedGraphEdgeModel"];
 export type SavedGraphSummary =
   Schemas["SavedGraphSummaryResponse"];
+export type GraphBrowserGraph = Schemas["GraphBrowserItemResponse"];
+export type GraphBrowserList = Schemas["GraphBrowserListResponse"];
 export type GraphFolder = Schemas["GraphFolderResponse"];
 export type GraphFolderList = Schemas["GraphFolderListResponse"];
 export type NodeSecretInput = Schemas["NodeSecretInputResponse"];

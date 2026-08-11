@@ -788,6 +788,7 @@ class SavedGraphRevision:
 @dataclass(frozen=True, slots=True)
 class GraphBrowserLocation:
     id: UUID
+    slug: str
     name: str
     kind: WorkspaceKind
 

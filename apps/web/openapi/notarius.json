@@ -1816,10 +1816,15 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
           }
         },
         "required": [
           "id",
+          "slug",
           "name",
           "kind"
         ],
@@ -6992,9 +6997,9 @@
         ]
       }
     },
-    "/v1/graphs": {
+    "/v1/me/graphs": {
       "get": {
-        "operationId": "list_accessible_graphs_v1_graphs_get",
+        "operationId": "list_accessible_graphs_v1_me_graphs_get",
         "responses": {
           "200": {
             "content": {

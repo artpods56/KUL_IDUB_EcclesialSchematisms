@@ -684,6 +684,7 @@ class UserGraphStateResponse(SavedGraphApiModel):
 
 class GraphBrowserLocationResponse(SavedGraphApiModel):
     id: UUID
+    slug: str
     name: str
     kind: WorkspaceKind
 
@@ -732,6 +733,7 @@ class GraphBrowserItemResponse(SavedGraphApiModel):
             id=item.id,
             location=GraphBrowserLocationResponse(
                 id=item.location.id,
+                slug=item.location.slug,
                 name=item.location.name,
                 kind=item.location.kind,
             ),

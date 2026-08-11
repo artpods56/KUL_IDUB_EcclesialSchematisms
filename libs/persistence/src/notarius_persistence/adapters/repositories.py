@@ -575,6 +575,7 @@ class SqlSavedGraphRepository(SavedGraphRepositoryPort):
                     heads.c.checkpoint_revision,
                     heads.c.updated_at.label("head_updated_at"),
                     workspaces.c.id.label("workspace_id"),
+                    workspaces.c.slug.label("workspace_slug"),
                     workspaces.c.name.label("workspace_name"),
                     workspaces.c.kind.label("workspace_kind"),
                     folders.c.id.label("folder_id"),
@@ -664,6 +665,7 @@ class SqlSavedGraphRepository(SavedGraphRepositoryPort):
                     ),
                     location=GraphBrowserLocation(
                         id=cast(UUID, row["workspace_id"]),
+                        slug=cast(str, row["workspace_slug"]),
                         name=cast(str, row["workspace_name"]),
                         kind=WorkspaceKind(cast(str, row["workspace_kind"])),
                     ),

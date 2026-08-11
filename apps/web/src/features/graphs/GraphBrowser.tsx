@@ -120,11 +120,6 @@ export function GraphBrowser() {
       ? filteredGraphs.slice(0, RECENT_GRAPH_LIMIT)
       : filteredGraphs;
   const totalGraphCount = graphState.graphs?.length ?? 0;
-  const allGraphLocationsFailed = Boolean(
-    workspaces?.length &&
-      graphState.failures.length === workspaces.length &&
-      totalGraphCount === 0,
-  );
 
   const startGraph = React.useCallback(() => {
     if (createLocations.length === 1) {
@@ -263,12 +258,12 @@ export function GraphBrowser() {
               Teams &amp; access
             </Link>
           </section>
-        ) : allGraphLocationsFailed ? (
+        ) : graphState.error ? (
           <section className="ns-graphs__state" role="alert">
             <Workflow size={22} aria-hidden="true" />
             <div>
               <h2>Graphs couldn&apos;t be loaded</h2>
-              <p>None of your graph locations responded.</p>
+              <p>Check your connection, then try again.</p>
             </div>
             <button
               type="button"
@@ -280,21 +275,7 @@ export function GraphBrowser() {
           </section>
         ) : (
           <>
-            {graphState.failures.length > 0 ? (
-              <div className="ns-graphs__partial" role="status">
-                <p>
-                  Some graphs couldn&apos;t be loaded from{" "}
-                  {graphState.failures
-                    .map((failure) => workspaceDisplayName(failure.location))
-                    .join(", ")}.
-                </p>
-                <button type="button" onClick={() => void graphState.retry()}>
-                  Retry
-                </button>
-              </div>
-            ) : null}
-
-            {totalGraphCount === 0 && graphState.failures.length === 0 ? (
+            {totalGraphCount === 0 ? (
               <section className="ns-graphs__state ns-graphs__state--empty">
                 <Workflow size={22} aria-hidden="true" />
                 <div>

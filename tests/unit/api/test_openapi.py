@@ -19,7 +19,7 @@ def test_openapi_contains_exact_public_routes() -> None:
     schema = app.openapi()
 
     assert set(schema["paths"]) == {
-        "/v1/graphs",
+        "/v1/me/graphs",
         "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/content",
         "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/geo/query",
         "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/geo/render",
