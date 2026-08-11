@@ -110,12 +110,12 @@ export function WorkspaceGraphPanel({
     <div
       ref={panelRef}
       role="dialog"
-      aria-label="All graphs"
+      aria-label="Quick graph switcher"
       className="ns-graph-panel"
     >
       <div className="ns-graph-panel__header">
         <p className="ns-graph-panel__title">
-          All graphs
+          Quick switch
           {total > 0 ? (
             <span className="ns-graph-panel__count">{total}</span>
           ) : null}
@@ -123,7 +123,7 @@ export function WorkspaceGraphPanel({
         <button
           type="button"
           className="ns-graph-panel__icon-button"
-          aria-label="Close all graphs"
+          aria-label="Close quick graph switcher"
           onClick={onClose}
         >
           <X size={14} aria-hidden="true" />
@@ -149,7 +149,7 @@ export function WorkspaceGraphPanel({
           <p className="ns-graph-panel__empty">
             {query.trim()
               ? "No graphs match that search."
-              : "No graphs in this workspace yet. Use New graph in the sidebar to start one."}
+              : "No graphs in this location yet. Use New graph in the sidebar to start one."}
           </p>
         ) : (
           graphs.map((graph) => (

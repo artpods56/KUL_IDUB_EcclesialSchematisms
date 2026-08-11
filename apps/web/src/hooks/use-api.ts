@@ -11,6 +11,7 @@ import {
   type Workspace,
   type WorkspaceMember,
 } from "@/lib/api";
+import { request } from "@/lib/api/client";
 
 /** Keyed SWR hooks over the Grafy API (global fetcher is `apiFetcher`). */
 
@@ -37,27 +38,114 @@ export function useWorkspaces(userId: string | undefined) {
   );
 }
 
+export type GraphLocation = Pick<
+  Workspace,
+  "id" | "slug" | "name" | "kind"
+>;
+
+export interface LocatedGraph extends SavedGraphSummary {
+  location: GraphLocation;
+}
+
+export interface GraphLocationFailure {
+  location: GraphLocation;
+  error: Error;
+}
+
+export interface AllWorkspacesGraphsResult {
+  graphs: readonly LocatedGraph[] | null;
+  failures: readonly GraphLocationFailure[];
+  isLoading: boolean;
+  retry: () => Promise<void>;
+}
+
+interface WorkspaceGraphLoad {
+  workspaceId: string;
+  data: SavedGraphList | null;
+  error: Error | null;
+}
+
 export function useAllWorkspacesGraphs(
-  workspaces: readonly { id: string; slug: string }[] | undefined,
-) {
-  const keys = (workspaces ?? []).map((w) =>
-    `/v1/workspaces/${encodeURIComponent(w.id)}/graphs`,
+  workspaces: readonly Workspace[] | undefined,
+): AllWorkspacesGraphsResult {
+  const workspaceIds = workspaces?.map((workspace) => workspace.id);
+  const loads = useSWR<readonly WorkspaceGraphLoad[]>(
+    workspaceIds && workspaceIds.length > 0
+      ? ["all-workspaces-graphs", ...workspaceIds]
+      : null,
+    async ([, ...ids]: readonly string[]) =>
+      Promise.all(
+        ids.map(async (workspaceId): Promise<WorkspaceGraphLoad> => {
+          try {
+            const data = await request<SavedGraphList>(
+              "GET",
+              `/v1/workspaces/${encodeURIComponent(workspaceId)}/graphs`,
+            );
+            return { workspaceId, data, error: null };
+          } catch (caught) {
+            const error =
+              caught instanceof Error
+                ? caught
+                : new Error("The graph list request failed.");
+            return { workspaceId, data: null, error };
+          }
+        }),
+      ),
+    { shouldRetryOnError: false },
   );
-  const graphs = useSWR<SavedGraphList[]>(keys);
-  return React.useMemo(() => {
-    if (!graphs.data || !workspaces) return null;
-    const all: (SavedGraphSummary & {
-      _workspace: { id: string; slug: string };
-    })[] = [];
-    for (let i = 0; i < workspaces.length; i++) {
-      for (const g of graphs.data[i]?.graphs ?? []) {
-        all.push({ ...g, _workspace: workspaces[i]! });
+
+  const state = React.useMemo(() => {
+    if (!workspaces) {
+      return { graphs: null, failures: [] };
+    }
+    if (workspaces.length === 0) {
+      return { graphs: [], failures: [] };
+    }
+    if (!loads.data) {
+      return { graphs: null, failures: [] };
+    }
+
+    const locations = new Map(
+      workspaces.map((workspace) => [workspace.id, workspace] as const),
+    );
+    const graphs: LocatedGraph[] = [];
+    const failures: GraphLocationFailure[] = [];
+
+    for (const load of loads.data) {
+      const workspace = locations.get(load.workspaceId);
+      if (!workspace) continue;
+      const location: GraphLocation = {
+        id: workspace.id,
+        slug: workspace.slug,
+        name: workspace.name,
+        kind: workspace.kind,
+      };
+      if (load.error) {
+        failures.push({ location, error: load.error });
+        continue;
+      }
+      for (const graph of load.data?.graphs ?? []) {
+        graphs.push({ ...graph, location });
       }
     }
-    return all.sort((a, b) =>
-      Date.parse(b.updated_at) - Date.parse(a.updated_at),
+
+    graphs.sort(
+      (left, right) =>
+        Date.parse(right.updated_at) - Date.parse(left.updated_at),
     );
-  }, [graphs.data, workspaces]);
+    return { graphs, failures };
+  }, [loads.data, workspaces]);
+
+  const retry = React.useCallback(async () => {
+    if (!workspaceIds?.length) return;
+    await loads.mutate();
+  }, [loads, workspaceIds]);
+
+  return {
+    ...state,
+    isLoading: Boolean(workspaces?.length) && loads.isLoading,
+    retry,
+  };
 }
 
 export function useWorkspaceMembers(

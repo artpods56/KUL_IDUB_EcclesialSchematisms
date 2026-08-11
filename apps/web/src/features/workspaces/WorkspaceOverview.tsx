@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, ShieldCheck, Users, Workflow } from "lucide-react";
+import { ArrowUpRight, Users, Workflow } from "lucide-react";
 import Link from "next/link";
 
 import {
@@ -8,77 +8,76 @@ import {
   workspaceCanManageMembers,
   workspaceDisplayName,
 } from "./WorkspaceLayout";
-import { WorkspaceMembersDialog } from "./WorkspaceMembersDialog";
 import { WorkspaceLibraryDialog } from "./WorkspaceLibraryDialog";
-import { useAuthSession } from "@/features/auth/AuthSessionBoundary";
+import { WorkspaceMembersDialog } from "./WorkspaceMembersDialog";
 
 export function WorkspaceOverview() {
   const { workspace } = useWorkspaceContext();
-  const { session } = useAuthSession();
   const canManageMembers = workspaceCanManageMembers(workspace);
-  const workbenchHref = `/workspaces/${encodeURIComponent(workspace.slug)}/graphs/new`;
+  const label = workspaceDisplayName(workspace);
 
   return (
     <div className="ns-workspace-overview">
       <header className="ns-workspace-overview__header">
         <div>
-          <p className="ns-workspace-overview__eyebrow">Workspace / {workspace.kind}</p>
-          <h1>{workspaceDisplayName(workspace)}</h1>
-          <p className="ns-workspace-overview__slug">/{workspace.slug} · {workspace.role}</p>
+          <p className="ns-workspace-overview__eyebrow">
+            {workspace.kind === "personal" ? "Personal settings" : "Team settings"}
+          </p>
+          <h1>{label}</h1>
+          <p className="ns-workspace-overview__copy">
+            {workspace.kind === "personal"
+              ? "This is the private location for your graphs."
+              : `Manage access and shared resources for ${label}.`}
+          </p>
         </div>
         <div className="ns-workspace-overview__actions">
-          {canManageMembers ? <WorkspaceMembersDialog /> : null}
+          {workspace.kind === "shared" && canManageMembers ? (
+            <WorkspaceMembersDialog />
+          ) : null}
           <WorkspaceLibraryDialog workspace={workspace} />
-          <Link className="ns-workspace-button ns-workspace-button--primary" href={workbenchHref}>
-            Open workbench <ArrowUpRight size={14} />
+          <Link className="ns-workspace-button" href="/graphs">
+            Browse graphs <ArrowUpRight size={14} aria-hidden="true" />
           </Link>
         </div>
       </header>
 
-      <section className="ns-workspace-overview__section" aria-labelledby="workspace-access-heading">
-        <div className="ns-workspace-overview__section-heading">
-          <div>
-            <p className="ns-workspace-overview__eyebrow">ACCESS</p>
-            <h2 id="workspace-access-heading">Server-authorized capabilities</h2>
-          </div>
-          <ShieldCheck size={18} aria-hidden="true" />
-        </div>
-        <div className="ns-workspace-capabilities">
-          {workspace.capabilities.map((capability) => (
-            <span key={capability}>{capability.replaceAll("_", " ")}</span>
-          ))}
-        </div>
-      </section>
-
-      <section className="ns-workspace-overview__section" aria-labelledby="workspace-surface-heading">
-        <div className="ns-workspace-overview__section-heading">
-          <div>
-            <p className="ns-workspace-overview__eyebrow">SURFACE</p>
-            <h2 id="workspace-surface-heading">Graph workbench</h2>
-          </div>
-          {workspace.kind === "personal" ? (
-            <Workflow size={18} aria-hidden="true" />
-          ) : (
+      {workspace.kind === "shared" ? (
+        <section
+          className="ns-workspace-overview__section"
+          aria-labelledby="team-access-heading"
+        >
+          <div className="ns-workspace-overview__section-heading">
+            <div>
+              <p className="ns-workspace-overview__eyebrow">Access</p>
+              <h2 id="team-access-heading">Team members</h2>
+            </div>
             <Users size={18} aria-hidden="true" />
-          )}
+          </div>
+          <p className="ns-workspace-overview__copy">
+            Graphs saved here are available according to this Team&apos;s access.
+            {canManageMembers
+              ? " Use Manage members to update access."
+              : " Ask a Team owner when access needs to change."}
+          </p>
+        </section>
+      ) : null}
+
+      <section
+        className="ns-workspace-overview__section"
+        aria-labelledby="graph-location-heading"
+      >
+        <div className="ns-workspace-overview__section-heading">
+          <div>
+            <p className="ns-workspace-overview__eyebrow">Graphs</p>
+            <h2 id="graph-location-heading">{label}</h2>
+          </div>
+          <Workflow size={18} aria-hidden="true" />
         </div>
         <p className="ns-workspace-overview__copy">
-          Open the workbench to author graphs in this workspace, or manage the
-          workspace module library from the header. Create additional shared
-          workspaces from the{" "}
-          <Link href="/workspaces">workspaces directory</Link>.
+          Open the graph browser to find or create work in this location. The
+          location keeps its graphs and related data together.
         </p>
       </section>
-
-      <p className="ns-workspace-overview__identity">
-        Signed in as user{" "}
-        <button
-          type="button"
-          onClick={() => void navigator.clipboard.writeText(session.user_id)}
-        >
-          {session.user_id}
-        </button>
-      </p>
     </div>
   );
 }

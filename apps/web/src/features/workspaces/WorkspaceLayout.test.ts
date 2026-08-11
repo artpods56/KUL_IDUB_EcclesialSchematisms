@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import type { Workspace } from "@/lib/api";
 import {
-  isPersonalWorkspace,
-  isSharedWithMe,
   sessionDisplayName,
   sessionInitials,
   workspaceCanManageMembers,
@@ -52,18 +50,12 @@ describe("workspace route and capability state", () => {
     ).toBe("00000000-0000-0000-0000-000000000001");
   });
 
-  it("classifies personal and shared-with-me workspaces for the directory", () => {
-    expect(isPersonalWorkspace(workspace([], { kind: "personal", role: "owner" }))).toBe(true);
-    expect(isSharedWithMe(workspace([], { kind: "shared", role: "editor" }))).toBe(true);
-    expect(isSharedWithMe(workspace([], { kind: "shared", role: "owner" }))).toBe(false);
-  });
-
-  it("labels personal workspaces as Personal in the UI", () => {
+  it("labels a personal workspace as My graphs in the UI", () => {
     expect(
       workspaceDisplayName(
         workspace([], { kind: "personal", name: "Personal workspace" }),
       ),
-    ).toBe("Personal");
+    ).toBe("My graphs");
     expect(workspaceDisplayName(workspace([], { name: "Operations" }))).toBe(
       "Operations",
     );

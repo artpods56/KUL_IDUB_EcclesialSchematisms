@@ -37,7 +37,7 @@ function createProtectedSWRCache(): Cache<unknown> {
 }
 
 function readReturnPath(): string {
-  if (typeof window === "undefined") return "/workspaces";
+  if (typeof window === "undefined") return "/graphs";
   return safeReturnPath(`${window.location.pathname}${window.location.search}`);
 }
 
@@ -63,7 +63,7 @@ function AuthFrame({
     return (
       <AuthStatus
         title="Checking session"
-        detail="Opening your workspace…"
+        detail="Opening your graphs…"
         loading
       />
     );
@@ -72,7 +72,7 @@ function AuthFrame({
     return (
       <AuthStatus
         title="Sign in"
-        detail="Your workspaces and graphs are available after authentication."
+        detail="Your graphs and Team locations are available after authentication."
         action={<button type="button" onClick={openLogin}>Continue with SSO</button>}
       />
     );

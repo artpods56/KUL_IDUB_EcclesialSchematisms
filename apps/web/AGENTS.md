@@ -19,20 +19,21 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 ## Routing
 
-- `src/app/page.tsx` is the **home screen** (`/`). After authentication, users
-  land here with a greeting, recent graphs, and workspace quick links. It is
-  **not** a redirect.
-- `/workspaces` is the full workspace directory with search, sort, and
-  create/join dialogs. Accessible from the home screen's "All workspaces" link
-  and from the sidebar rail.
-- `/workspaces/{slug}` is the workspace overview. `/workspaces/{slug}/graphs/{id}`
-  is the workbench canvas.
+- Graph is the primary user object. `src/app/page.tsx` (`/`) and `/graphs` both
+  render the canonical cross-location graph browser after authentication.
+- `/workspaces` is the secondary **Teams & access** administration surface.
+  A personal workspace is presented as **My graphs**; a shared workspace is
+  presented by its Team name. Do not expose slugs, roles, capabilities, or user
+  UUIDs on graph-authoring surfaces.
+- `/workspaces/{slug}` remains the location administration overview and
+  `/workspaces/{slug}/graphs/{id}` remains the workspace-scoped workbench route.
+  These routes preserve tenancy but are not the primary discovery hierarchy.
 
 ## Shared components and call sites
 
-- `WorkspaceRail` is used in **two** call sites: the home page (`page.tsx`) and
-  the workspace layout (`[workspaceSlug]/layout.tsx`). Any prop added outside
-  the core interface must be optional.
+- `WorkspaceRail` is used by `GraphBrowser`, the Teams & access page, and the
+  workspace layout (`[workspaceSlug]/layout.tsx`). Any prop added outside the
+  core interface must be optional.
 - `graphAgeLabel`, `sortGraphsByRecency`, and `filterGraphsByQuery` live in
   `WorkspaceGraphPanel.tsx` — they are reused outside the panel and should
   remain importable.
@@ -56,9 +57,10 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 ## API hooks
 
-- Cross-workspace data (e.g., graphs from all workspaces) requires explicit
-  multi-key SWR usage. See `useAllWorkspacesGraphs` in
-  `src/hooks/use-api.ts` for the pattern.
+- Cross-workspace data (e.g., graphs from all workspaces) requires an explicit,
+  typed multi-request SWR key and fetcher. See `useAllWorkspacesGraphs` in
+  `src/hooks/use-api.ts`; do not pass an array of URLs to the global string
+  fetcher.
 - Barrel exports: `src/lib/api/index.ts` re-exports everything.
   Features like `useAuthSession` must be imported from their full file path
   unless a barrel exists.

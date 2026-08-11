@@ -28,7 +28,7 @@ vi.mock("./WorkspaceLayout", () => ({
   workspaceCanManageMembers: (workspace: typeof workspaceState.workspace) =>
     workspace.capabilities.includes("manage_members"),
   workspaceDisplayName: (workspace: { name: string; kind: string }) =>
-    workspace.kind === "personal" ? "Personal" : workspace.name,
+    workspace.kind === "personal" ? "My graphs" : workspace.name,
 }));
 
 vi.mock("./WorkspaceMembersDialog", () => ({
@@ -59,6 +59,10 @@ describe("WorkspaceOverview capability transition", () => {
 
     await act(async () => root.render(<WorkspaceOverview />));
     expect(container.querySelector("[data-member-dialog]")).not.toBeNull();
+    expect(container.textContent).not.toContain("/operations");
+    expect(container.textContent).not.toContain("owner");
+    expect(container.textContent).not.toContain("manage_members");
+    expect(container.textContent).not.toContain("user-1");
 
     workspaceState.workspace = { ...workspaceState.workspace, capabilities: [] };
     await act(async () => root.render(<WorkspaceOverview />));
