@@ -50,7 +50,10 @@ import {
 import { CanvasGridSettingsPanel } from "./CanvasGridSettingsPanel";
 import { workbenchStyles as s } from "./Workbench.styles";
 import { NodeSelector } from "./NodeSelector";
-import { PublishModuleDialog } from "./PublishModuleDialog";
+import {
+  PublishModuleDialog,
+  type ModuleBoundarySummary,
+} from "./PublishModuleDialog";
 import { WorkspaceLibraryDialog } from "@/features/workspaces/WorkspaceLibraryDialog";
 import { useWorkspaceContext } from "@/features/workspaces/WorkspaceLayout";
 import { usePublishWorkbenchChrome } from "./WorkbenchChromeContext";
@@ -421,16 +424,45 @@ function WorkbenchBody({
   const { workspace } = useWorkspaceContext();
   const [libraryOpen, setLibraryOpen] = React.useState(false);
   const [workspaceLibraryOpen, setWorkspaceLibraryOpen] = React.useState(false);
+  const [workspaceLibraryFocusId, setWorkspaceLibraryFocusId] =
+    React.useState<string | null>(null);
   const [publishModuleOpen, setPublishModuleOpen] = React.useState(false);
   const canPublishModule = workspace.capabilities.includes("publish_module");
-  const graphHasModuleBoundaries = React.useMemo(
+  const canEditModuleSource = workspace.capabilities.includes("edit_graph");
+  const moduleBoundarySummaries = React.useMemo<
+    readonly ModuleBoundarySummary[]
+  >(
     () =>
-      nodes.some(
-        (node) =>
-          node.data.spec.operator_id === "module.input" ||
-          node.data.spec.operator_id === "module.output",
-      ),
-    [nodes],
+      nodes.flatMap((node) => {
+        const operatorId = node.data.spec.operator_id;
+        if (operatorId !== "module.input" && operatorId !== "module.output") {
+          return [];
+        }
+        const direction = operatorId === "module.input" ? "input" : "output";
+        const portName = node.data.config.public_name;
+        const description = node.data.config.description;
+        const artifactType = node.data.artifactTypeBindings.T;
+        const connectionCount = edges.filter(
+          (edge) =>
+            edge.data?.enabled !== false &&
+            (direction === "input"
+              ? edge.source === node.id
+              : edge.target === node.id),
+        ).length;
+        return [
+          {
+            id: node.id,
+            direction,
+            portName: typeof portName === "string" ? portName : null,
+            description: typeof description === "string" ? description : null,
+            artifactType: artifactType
+              ? `${artifactType.id}@${artifactType.schema_version}`
+              : null,
+            connectionCount,
+          },
+        ];
+      }),
+    [edges, nodes],
   );
   const [executionHistoryTarget, setExecutionHistoryTarget] = React.useState<{
     nodeId: string | null;
@@ -3528,36 +3560,41 @@ function WorkbenchBody({
         </button>
         <button
           type="button"
-          aria-label="Workspace library"
-          title="Workspace library"
+          aria-label="Module library"
+          title="Open the Module library"
           {...stylex.props(s.railButton)}
           onClick={() => {
             closeGraphBrowser();
             setGridPanelOpen(false);
             setLibraryOpen(false);
+            setWorkspaceLibraryFocusId(null);
             setWorkspaceLibraryOpen(true);
           }}
         >
           <Package size={14} />
           <span {...stylex.props(s.railLabel)}>Library</span>
         </button>
-        {canPublishModule && graphHasModuleBoundaries && activeGraph ? (
-          <button
-            type="button"
-            aria-label="Publish release"
-            title="Publish module release"
-            disabled={running}
-            {...stylex.props(s.railButton)}
-            onClick={() => {
-              closeGraphBrowser();
-              setLibraryOpen(false);
-              setPublishModuleOpen(true);
-            }}
-          >
-            <Upload size={14} />
-            <span {...stylex.props(s.railLabel)}>Publish</span>
-          </button>
-        ) : null}
+        <button
+          type="button"
+          aria-label="Module setup"
+          title={
+            running
+              ? "Stop the current execution before opening Module setup"
+              : "Set up and publish this graph as a Module"
+          }
+          disabled={running}
+          {...stylex.props(s.railButton)}
+          onClick={() => {
+            closeGraphBrowser();
+            setGridPanelOpen(false);
+            setLibraryOpen(false);
+            setWorkspaceLibraryOpen(false);
+            setPublishModuleOpen(true);
+          }}
+        >
+          <Upload size={14} />
+          <span {...stylex.props(s.railLabel)}>Module</span>
+        </button>
         <button
           type="button"
           aria-label="Add Artifact Viewer"
@@ -3735,6 +3772,7 @@ function WorkbenchBody({
           onOpenGraph={openGraphInNewTab}
           onOpenWorkspaceLibrary={() => {
             setLibraryOpen(false);
+            setWorkspaceLibraryFocusId(null);
             setWorkspaceLibraryOpen(true);
           }}
         />
@@ -3745,25 +3783,54 @@ function WorkbenchBody({
         open={workspaceLibraryOpen}
         onOpenChange={setWorkspaceLibraryOpen}
         showTrigger={false}
+        focusedModuleId={workspaceLibraryFocusId}
         onOpenSourceGraph={openGraphInNewTab}
-        onLibraryChanged={() => {
-          void refreshNodeRegistry();
-        }}
+        onLibraryChanged={() => refreshNodeRegistry()}
       />
 
-      {activeGraph ? (
-        <PublishModuleDialog
-          open={publishModuleOpen}
-          onOpenChange={setPublishModuleOpen}
-          workspaceId={workspaceId}
-          sourceGraphId={activeGraph.id}
-          graphName={graphName}
-          revision={activeGraph.revision}
-          onPublished={() => {
-            void refreshNodeRegistry();
-          }}
-        />
-      ) : null}
+      <PublishModuleDialog
+        key={`${activeGraph?.id ?? "unsaved"}:${graphName}`}
+        open={publishModuleOpen}
+        onOpenChange={setPublishModuleOpen}
+        workspaceId={workspaceId}
+        sourceGraphId={activeGraph?.id ?? null}
+        graphName={graphName}
+        revision={activeGraph?.revision ?? null}
+        isDirty={isDirty}
+        canPublish={canPublishModule}
+        canEdit={canEditModuleSource}
+        boundaries={moduleBoundarySummaries}
+        canAddInputBoundary={Boolean(
+          registry?.nodes.some((spec) => spec.operator_id === "module.input"),
+        )}
+        canAddOutputBoundary={Boolean(
+          registry?.nodes.some((spec) => spec.operator_id === "module.output"),
+        )}
+        onAddBoundary={(direction) => {
+          const operatorId =
+            direction === "input" ? "module.input" : "module.output";
+          const spec = registry?.nodes.find(
+            (candidate) => candidate.operator_id === operatorId,
+          );
+          if (spec) addCatalogNode(spec);
+        }}
+        onSelectBoundary={(nodeId) => {
+          setSelectedNodeIdSet(new Set([nodeId]));
+          setSelectedEdgeIdSet(new Set());
+          void flow?.fitView({
+            nodes: [{ id: nodeId }],
+            padding: 0.45,
+            duration: 220,
+          });
+        }}
+        onViewModule={(moduleId) => {
+          setPublishModuleOpen(false);
+          setWorkspaceLibraryFocusId(moduleId);
+          setWorkspaceLibraryOpen(true);
+        }}
+        onOpenSourceGraph={openGraphInNewTab}
+        onPublished={() => refreshNodeRegistry()}
+      />
 
       <ConnectionRouteDialog
         pendingRoute={pendingConnectionRoute}
