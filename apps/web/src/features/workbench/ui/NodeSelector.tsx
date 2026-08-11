@@ -7,7 +7,6 @@ import {
   ArrowUpFromLine,
   Cable,
   ExternalLink,
-  Package,
   Plus,
   Search,
   Settings2,
@@ -41,19 +40,43 @@ import type {
 } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import {
+  catalogNodesForGoal,
   catalogNodeSpecs,
-  catalogPluginSections,
   moduleReleaseSpecs,
+  NODE_GOAL_CATEGORIES,
+  type NodeGoalCategoryId,
 } from "../model/node-catalog";
 
 const MODULE_PLUGIN_SLUG = "graph.module";
 
-interface NodeSelectorProps {
+/** A port-scoped Add node invocation using the same routes as canvas wiring. */
+export type NodeSelectorCompatibilityContext =
+  | {
+      direction: "upstream";
+      port: Port & { readonly direction: "input" };
+    }
+  | {
+      direction: "downstream";
+      port: Port & { readonly direction: "output" };
+    };
+
+export interface NodeSelectorProps {
   open: boolean;
   registry: NodeRegistry;
   activeGraphId: string | null;
+  /** Limits results to nodes that can connect to the invoking port. */
+  compatibility?: NodeSelectorCompatibilityContext;
+  /** User-facing reason the registry could not be loaded. */
+  errorMessage?: string | null;
+  loading?: boolean;
+  /** Keeps inspection available while disabling graph mutation for viewers. */
+  canInsert?: boolean;
+  insertDisabledReason?: string;
+  /** Controlled-dialog opener, forwarded to Base UI's finalFocus contract. */
+  returnFocusRef?: React.RefObject<HTMLElement | null>;
   onOpenChange: (open: boolean) => void;
   onAddNode: (spec: NodeSpec) => void;
+  onRetry?: () => void;
   onOpenGraph?: (graphId: string) => void;
   onOpenWorkspaceLibrary?: () => void;
 }
@@ -174,6 +197,37 @@ function compatiblePortPairs(
   return pairs;
 }
 
+function portsCanConnect(
+  source: Port,
+  target: Port,
+  registry: NodeRegistry,
+): boolean {
+  if (!shapesAreCompatible(source, target)) return false;
+  return connectionRoutesFor(
+    {
+      sourceHandle: encodeHandleId(portMetaForPort(source)),
+      targetHandle: encodeHandleId(portMetaForPort(target)),
+    },
+    registry.artifact_types,
+    registry.artifact_conversions,
+  ).length > 0;
+}
+
+function nodeMatchesCompatibility(
+  spec: NodeSpec,
+  compatibility: NodeSelectorCompatibilityContext,
+  registry: NodeRegistry,
+): boolean {
+  if (compatibility.direction === "upstream") {
+    return spec.outputs.some((output) =>
+      portsCanConnect(output, compatibility.port, registry),
+    );
+  }
+  return spec.inputs.some((input) =>
+    portsCanConnect(compatibility.port, input, registry),
+  );
+}
+
 function compatibleNodes(
   selected: NodeSpec,
   direction: "upstream" | "downstream",
@@ -276,7 +330,7 @@ const s = stylex.create({
   header: {
     display: "grid",
     gridTemplateColumns: {
-      default: "minmax(0, 1fr) minmax(280px, 390px)",
+      default: "minmax(220px, 0.55fr) minmax(360px, 1.45fr)",
       "@media (max-width: 720px)": "1fr",
     },
     alignItems: "center",
@@ -320,7 +374,7 @@ const s = stylex.create({
   },
   search: {
     width: "100%",
-    height: "36px",
+    height: "40px",
     padding: "0 12px 0 34px",
     borderWidth: 1,
     borderStyle: "solid",
@@ -329,7 +383,10 @@ const s = stylex.create({
       ":focus": tokens.colorAccent,
     },
     borderRadius: tokens.radiusSm,
-    outline: "none",
+    outlineColor: tokens.colorAccent,
+    outlineStyle: "solid",
+    outlineOffset: "2px",
+    outlineWidth: { default: 0, ":focus-visible": "2px" },
     backgroundColor: tokens.colorSurfaceSunken,
     color: tokens.colorText,
     fontSize: tokens.fontSizeSm,
@@ -339,167 +396,14 @@ const s = stylex.create({
     flex: 1,
     display: "grid",
     gridTemplateColumns: {
-      default: "180px 300px minmax(0, 1fr)",
-      "@media (max-width: 900px)": "155px 260px minmax(0, 1fr)",
+      default: "minmax(300px, 0.72fr) minmax(0, 1.28fr)",
+      "@media (max-width: 900px)": "minmax(280px, 0.82fr) minmax(0, 1.18fr)",
       "@media (max-width: 720px)": "1fr",
     },
     gridTemplateRows: {
       default: "minmax(0, 1fr)",
-      "@media (max-width: 720px)": "auto minmax(180px, 0.65fr) minmax(280px, 1.35fr)",
+      "@media (max-width: 720px)": "minmax(230px, 0.8fr) minmax(300px, 1.2fr)",
     },
-  },
-  pluginPane: {
-    minWidth: 0,
-    minHeight: 0,
-    display: "flex",
-    flexDirection: "column",
-    borderRightWidth: {
-      default: 1,
-      "@media (max-width: 720px)": 0,
-    },
-    borderRightStyle: "solid",
-    borderRightColor: tokens.colorBorder,
-    borderBottomWidth: {
-      default: 0,
-      "@media (max-width: 720px)": 1,
-    },
-    borderBottomStyle: "solid",
-    borderBottomColor: tokens.colorBorder,
-    backgroundColor: tokens.colorSurfaceMuted,
-  },
-  paneLabel: {
-    padding: "14px 14px 8px",
-    color: tokens.colorSubtle,
-    fontSize: "10px",
-    fontWeight: 800,
-    letterSpacing: "0.12em",
-    textTransform: "uppercase",
-  },
-  pluginList: {
-    minHeight: 0,
-    display: "flex",
-    flexDirection: {
-      default: "column",
-      "@media (max-width: 720px)": "row",
-    },
-    gap: "2px",
-    alignItems: {
-      default: "stretch",
-      "@media (max-width: 720px)": "center",
-    },
-    padding: {
-      default: "0 8px 12px",
-      "@media (max-width: 720px)": "0 10px 10px",
-    },
-    overflowX: {
-      default: "hidden",
-      "@media (max-width: 720px)": "auto",
-    },
-    overflowY: {
-      default: "auto",
-      "@media (max-width: 720px)": "hidden",
-    },
-  },
-  pluginSection: {
-    minWidth: 0,
-    display: "flex",
-    flexDirection: {
-      default: "column",
-      "@media (max-width: 720px)": "row",
-    },
-    alignItems: {
-      default: "stretch",
-      "@media (max-width: 720px)": "center",
-    },
-    flexShrink: 0,
-    gap: "2px",
-    marginTop: {
-      default: "5px",
-      "@media (max-width: 720px)": 0,
-    },
-    paddingTop: {
-      default: "5px",
-      "@media (max-width: 720px)": 0,
-    },
-    paddingLeft: {
-      default: 0,
-      "@media (max-width: 720px)": "7px",
-    },
-    borderTopWidth: {
-      default: 1,
-      "@media (max-width: 720px)": 0,
-    },
-    borderTopStyle: "solid",
-    borderTopColor: tokens.colorDivider,
-    borderLeftWidth: {
-      default: 0,
-      "@media (max-width: 720px)": 1,
-    },
-    borderLeftStyle: "solid",
-    borderLeftColor: tokens.colorDivider,
-  },
-  pluginSectionLabel: {
-    padding: {
-      default: "5px 8px 3px",
-      "@media (max-width: 720px)": "0 5px 0 0",
-    },
-    color: tokens.colorSubtle,
-    fontSize: "9px",
-    fontWeight: 820,
-    letterSpacing: "0.1em",
-    textTransform: "uppercase",
-    whiteSpace: "nowrap",
-  },
-  pluginSectionEmpty: {
-    padding: {
-      default: "5px 8px 7px",
-      "@media (max-width: 720px)": "0 8px 0 0",
-    },
-    color: tokens.colorSubtle,
-    fontSize: "10px",
-    whiteSpace: "nowrap",
-  },
-  pluginButton: {
-    position: "relative",
-    minWidth: 0,
-    minHeight: "38px",
-    display: "grid",
-    gridTemplateColumns: "16px minmax(0, 1fr) auto",
-    alignItems: "center",
-    gap: "7px",
-    padding: "7px 8px",
-    borderWidth: 0,
-    borderRadius: "5px",
-    backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
-    color: tokens.colorMuted,
-    cursor: "pointer",
-    flexShrink: 0,
-    textAlign: "left",
-    whiteSpace: "nowrap",
-    transitionProperty: "background-color, color",
-    transitionDuration: "120ms",
-  },
-  pluginButtonActive: {
-    backgroundColor: tokens.colorAccentSoft,
-    color: tokens.colorTextEmphasis,
-  },
-  pluginIcon: { color: tokens.colorSubtle },
-  pluginIconActive: { color: tokens.colorAccent },
-  pluginName: {
-    overflow: "hidden",
-    fontSize: tokens.fontSizeSm,
-    fontWeight: 680,
-    textOverflow: "ellipsis",
-  },
-  pluginMeta: {
-    display: "flex",
-    alignItems: "center",
-    gap: "5px",
-  },
-  pluginCount: {
-    color: tokens.colorSubtle,
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    fontSize: "10px",
   },
   originBadge: {
     minHeight: "17px",
@@ -545,12 +449,9 @@ const s = stylex.create({
     borderBottomColor: tokens.colorBorder,
   },
   nodePaneHeader: {
-    minHeight: "51px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: "12px",
-    padding: "10px 13px",
+    display: "grid",
+    gap: "9px",
+    padding: "11px 12px 10px",
     borderBottomWidth: 1,
     borderBottomStyle: "solid",
     borderBottomColor: tokens.colorBorder,
@@ -567,6 +468,55 @@ const s = stylex.create({
     color: tokens.colorSubtle,
     fontSize: tokens.fontSizeXs,
     whiteSpace: "nowrap",
+  },
+  resultHeading: {
+    minWidth: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "12px",
+  },
+  categoryToolbar: {
+    display: "flex",
+    gap: "4px",
+    paddingBottom: "1px",
+    overflowX: "auto",
+  },
+  categoryButton: {
+    minHeight: "28px",
+    flexShrink: 0,
+    paddingInline: "8px",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "transparent",
+    borderRadius: tokens.radiusSm,
+    outlineColor: tokens.colorAccent,
+    outlineStyle: "solid",
+    outlineOffset: "1px",
+    outlineWidth: { default: 0, ":focus-visible": "2px" },
+    backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
+    color: tokens.colorSubtle,
+    cursor: "pointer",
+    fontSize: tokens.fontSizeXs,
+    fontWeight: 680,
+    whiteSpace: "nowrap",
+  },
+  categoryButtonActive: {
+    borderColor: tokens.colorBorder,
+    backgroundColor: tokens.colorSurfaceRaised,
+    color: tokens.colorTextEmphasis,
+  },
+  compatibilityBanner: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "7px 12px",
+    borderBottomWidth: 1,
+    borderBottomStyle: "solid",
+    borderBottomColor: tokens.colorDivider,
+    backgroundColor: tokens.colorSurfaceMuted,
+    color: tokens.colorMuted,
+    fontSize: tokens.fontSizeXs,
   },
   nodeList: { minHeight: 0, overflowY: "auto" },
   nodeButton: {
@@ -587,6 +537,10 @@ const s = stylex.create({
     backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
     color: tokens.colorText,
     cursor: "pointer",
+    outlineColor: tokens.colorAccent,
+    outlineStyle: "solid",
+    outlineOffset: "-3px",
+    outlineWidth: { default: 0, ":focus-visible": "2px" },
     textAlign: "left",
     transitionProperty: "background-color, border-color",
     transitionDuration: "120ms",
@@ -647,52 +601,8 @@ const s = stylex.create({
     borderTopColor: tokens.colorBorder,
     backgroundColor: tokens.colorSurfaceMuted,
   },
-  moduleDiagnosticsTitle: {
-    color: tokens.colorMuted,
-    fontSize: "10px",
-    fontWeight: 800,
-    letterSpacing: "0.08em",
-    textTransform: "uppercase",
-  },
   moduleDiagnosticsNote: {
     color: tokens.colorSubtle,
-    fontSize: tokens.fontSizeXs,
-    lineHeight: 1.45,
-  },
-  unavailableList: {
-    display: "grid",
-    gap: "8px",
-  },
-  unavailableCard: {
-    display: "grid",
-    gap: "6px",
-    padding: "9px 10px",
-    borderWidth: 1,
-    borderStyle: "solid",
-    borderColor: tokens.colorBorder,
-    borderRadius: "7px",
-    backgroundColor: tokens.colorSurface,
-  },
-  unavailableHeader: {
-    minWidth: 0,
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: "8px",
-  },
-  unavailableTitle: {
-    minWidth: 0,
-    color: tokens.colorTextEmphasis,
-    fontSize: tokens.fontSizeSm,
-    fontWeight: 700,
-  },
-  unavailableMeta: {
-    color: tokens.colorSubtle,
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    fontSize: "10px",
-  },
-  unavailableReason: {
-    color: tokens.colorMuted,
     fontSize: tokens.fontSizeXs,
     lineHeight: 1.45,
   },
@@ -713,6 +623,10 @@ const s = stylex.create({
     },
     color: tokens.colorMuted,
     cursor: "pointer",
+    outlineColor: tokens.colorAccent,
+    outlineStyle: "solid",
+    outlineOffset: "2px",
+    outlineWidth: { default: 0, ":focus-visible": "2px" },
     fontSize: "10px",
     fontWeight: 700,
   },
@@ -730,6 +644,10 @@ const s = stylex.create({
     backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
     color: tokens.colorMuted,
     cursor: "pointer",
+    outlineColor: tokens.colorAccent,
+    outlineStyle: "solid",
+    outlineOffset: "2px",
+    outlineWidth: { default: 0, ":focus-visible": "2px" },
     fontSize: tokens.fontSizeXs,
     fontWeight: 700,
   },
@@ -984,10 +902,19 @@ const s = stylex.create({
     backgroundColor: { default: tokens.colorAccent, ":hover": tokens.colorAccentHover },
     color: tokens.colorOnAccent,
     cursor: "pointer",
+    outlineColor: tokens.colorAccent,
+    outlineStyle: "solid",
+    outlineOffset: "2px",
+    outlineWidth: { default: 0, ":focus-visible": "2px" },
     fontSize: tokens.fontSizeSm,
     fontWeight: 750,
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
+  },
+  addButtonDisabled: {
+    backgroundColor: tokens.colorAccentDisabled,
+    color: tokens.colorTextDisabled,
+    cursor: "not-allowed",
   },
 });
 
@@ -1106,28 +1033,48 @@ export function NodeSelector({
   open,
   registry,
   activeGraphId,
+  compatibility,
+  errorMessage = null,
+  loading = false,
+  canInsert = true,
+  insertDisabledReason = "You do not have permission to edit this graph.",
+  returnFocusRef: providedReturnFocusRef,
   onOpenChange,
   onAddNode,
+  onRetry,
   onOpenGraph,
   onOpenWorkspaceLibrary,
 }: NodeSelectorProps) {
   const [query, setQuery] = React.useState("");
-  const [pluginFilter, setPluginFilter] = React.useState<string | null>(null);
-  const [selectedNodeKey, setSelectedNodeKey] = React.useState<string | null>(null);
-  const [selectedReleaseKey, setSelectedReleaseKey] = React.useState<string | null>(
-    null,
+  const [category, setCategory] = React.useState<NodeGoalCategoryId>(
+    compatibility ? "all" : "suggested",
   );
+  const [selectedNodeKey, setSelectedNodeKey] = React.useState<string | null>(null);
+  const [selectedRelease, setSelectedRelease] = React.useState<{
+    moduleKey: string;
+    releaseKey: string;
+  } | null>(null);
+  const resultRefs = React.useRef(new Map<string, HTMLButtonElement>());
+  const categoryRefs = React.useRef(new Map<NodeGoalCategoryId, HTMLButtonElement>());
+  const wasOpen = React.useRef(false);
 
-  const pluginSections = catalogPluginSections(registry);
   const catalogNodes = React.useMemo(
     () => catalogNodeSpecs(registry, activeGraphId),
     [activeGraphId, registry],
+  );
+  const compatibleCatalogNodes = React.useMemo(
+    () => compatibility
+      ? catalogNodes.filter((spec) =>
+          nodeMatchesCompatibility(spec, compatibility, registry),
+        )
+      : catalogNodes,
+    [catalogNodes, compatibility, registry],
   );
   const catalogRegistry = React.useMemo(
     () => ({ ...registry, nodes: catalogNodes }),
     [catalogNodes, registry],
   );
-  const showingModules = pluginFilter === MODULE_PLUGIN_SLUG;
+  const showingModules = category === "reuse";
   const activeEditingModule = React.useMemo(
     () =>
       activeGraphId
@@ -1140,22 +1087,33 @@ export function NodeSelector({
     [activeGraphId, registry.nodes],
   );
 
+  React.useEffect(() => {
+    if (open && !wasOpen.current) {
+      setQuery("");
+      setCategory(compatibility ? "all" : "suggested");
+      setSelectedNodeKey(null);
+      setSelectedRelease(null);
+    }
+    wasOpen.current = open;
+  }, [compatibility, open]);
+
   const normalizedQuery = query.trim().toLowerCase();
   const filteredNodes = React.useMemo(
-    () => catalogNodes.filter((spec) => {
-      if (pluginFilter && spec.plugin_slug !== pluginFilter) return false;
-      if (!normalizedQuery) return true;
-      return nodeSearchText(spec, pluginFor(registry, spec.plugin_slug))
-        .includes(normalizedQuery);
-    }),
-    [catalogNodes, normalizedQuery, pluginFilter, registry],
+    () => {
+      if (loading || errorMessage) return [];
+      return catalogNodesForGoal(compatibleCatalogNodes, category).filter(
+        (spec) =>
+          !normalizedQuery ||
+          nodeSearchText(spec, pluginFor(registry, spec.plugin_slug)).includes(
+            normalizedQuery,
+          ),
+      );
+    },
+    [category, compatibleCatalogNodes, errorMessage, loading, normalizedQuery, registry],
   );
   const listedSpec = filteredNodes.find(
     (spec) => nodeKey(spec) === selectedNodeKey,
   ) ?? filteredNodes[0] ?? null;
-  React.useEffect(() => {
-    setSelectedReleaseKey(null);
-  }, [listedSpec?.module_id, listedSpec?.module_graph_id]);
   const moduleReleases = React.useMemo(
     () =>
       listedSpec?.plugin_slug === MODULE_PLUGIN_SLUG
@@ -1170,13 +1128,18 @@ export function NodeSelector({
   const selectedSpec = React.useMemo(() => {
     if (!listedSpec) return null;
     if (listedSpec.plugin_slug !== MODULE_PLUGIN_SLUG) return listedSpec;
+    const moduleKey = listedSpec.module_id ?? listedSpec.module_graph_id;
+    const selectedReleaseKey =
+      moduleKey && selectedRelease?.moduleKey === moduleKey
+        ? selectedRelease.releaseKey
+        : null;
     return (
       moduleReleases.find((spec) => nodeKey(spec) === selectedReleaseKey) ??
       moduleReleases.find((spec) => spec.catalog_visible !== false) ??
       moduleReleases[0] ??
       listedSpec
     );
-  }, [listedSpec, moduleReleases, selectedReleaseKey]);
+  }, [listedSpec, moduleReleases, selectedRelease]);
   const selectedFields = selectedSpec
     ? schemaFields(selectedSpec.config_schema)
     : [];
@@ -1195,20 +1158,74 @@ export function NodeSelector({
   const selectedPlugin = selectedSpec
     ? pluginFor(registry, selectedSpec.plugin_slug)
     : null;
-  const activePluginTitle = pluginFilter
-    ? pluginFor(registry, pluginFilter).title
-    : "All nodes";
+  const activeCategoryTitle = NODE_GOAL_CATEGORIES.find(
+    (candidate) => candidate.id === category,
+  )?.title ?? "Nodes";
   const isModuleSelection = selectedPlugin?.origin === "module";
   const isDeprecatedModule = selectedSpec?.publication_state === "deprecated";
+  const activeResultId = listedSpec
+    ? `node-selector-result-${nodeKey(listedSpec)}`
+    : undefined;
+  const compatibilityPortTitle = compatibility
+    ? compatibility.port.title ?? compatibility.port.name
+    : null;
+  const resultStatus = loading
+    ? "Loading nodes…"
+    : errorMessage
+      ? "Nodes could not be loaded."
+      : filteredNodes.length === 0
+        ? "No nodes found."
+        : `${filteredNodes.length} ${filteredNodes.length === 1 ? "node" : "nodes"}.`;
+
+  const selectCategory = (nextCategory: NodeGoalCategoryId) => {
+    setCategory(nextCategory);
+    setSelectedNodeKey(null);
+  };
+
+  const focusCategoryAt = (index: number) => {
+    const boundedIndex = Math.max(
+      0,
+      Math.min(index, NODE_GOAL_CATEGORIES.length - 1),
+    );
+    const nextCategory = NODE_GOAL_CATEGORIES[boundedIndex];
+    if (!nextCategory) return;
+    selectCategory(nextCategory.id);
+    categoryRefs.current.get(nextCategory.id)?.focus();
+  };
+
+  const focusResultAt = (index: number) => {
+    if (!filteredNodes.length) return;
+    const boundedIndex = Math.max(0, Math.min(index, filteredNodes.length - 1));
+    const nextSpec = filteredNodes[boundedIndex];
+    if (!nextSpec) return;
+    const key = nodeKey(nextSpec);
+    setSelectedNodeKey(key);
+    resultRefs.current.get(key)?.focus();
+  };
+
+  const insertSelected = () => {
+    if (!selectedSpec || !canInsert) return;
+    if (
+      isDeprecatedModule &&
+      !window.confirm(
+        `Insert deprecated Module “${selectedSpec.title}”? New inserts are discouraged. Existing pinned calls keep working.`,
+      )
+    ) {
+      return;
+    }
+    onAddNode(selectedSpec);
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        aria-label="Add node"
+        aria-labelledby="node-selector-title"
+        aria-describedby="node-selector-description"
+        finalFocus={providedReturnFocusRef}
         style={{
-          width: "min(1120px, calc(100vw - 40px))",
+          width: "min(1040px, calc(100vw - 40px))",
           maxWidth: "none",
-          height: "min(760px, calc(100vh - 40px))",
+          height: "min(720px, calc(100vh - 40px))",
           maxHeight: "none",
         }}
       >
@@ -1218,11 +1235,15 @@ export function NodeSelector({
               <span {...stylex.props(s.titleIcon)}>
                 <Workflow size={15} />
               </span>
-              <DialogTitle {...stylex.props(s.title)}>Add node</DialogTitle>
+              <DialogTitle id="node-selector-title" {...stylex.props(s.title)}>
+                Add node
+              </DialogTitle>
             </div>
-            <DialogDescription {...stylex.props(s.description)}>
-              Browse built-in nodes, workspace library modules, and external
-              plugins. Inspect the contract before inserting.
+            <DialogDescription
+              id="node-selector-description"
+              {...stylex.props(s.description)}
+            >
+              Search, inspect the contract, then insert into the current graph.
             </DialogDescription>
           </div>
           <div {...stylex.props(s.searchWrap)}>
@@ -1230,125 +1251,168 @@ export function NodeSelector({
             <input
               autoFocus
               aria-label="Search nodes"
+              aria-autocomplete="list"
+              aria-controls="node-selector-results"
+              aria-activedescendant={activeResultId}
               value={query}
               placeholder="Search nodes, ports, types, or settings…"
               {...stylex.props(s.search)}
-              onChange={(event) => setQuery(event.currentTarget.value)}
+              onChange={(event) => {
+                const nextQuery = event.currentTarget.value;
+                setQuery(nextQuery);
+                setCategory(
+                  nextQuery.trim() || compatibility ? "all" : "suggested",
+                );
+                setSelectedNodeKey(null);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  focusResultAt(0);
+                } else if (event.key === "Enter") {
+                  event.preventDefault();
+                  insertSelected();
+                }
+              }}
             />
           </div>
         </div>
 
         <div {...stylex.props(s.layout)}>
-          <nav aria-label="Add node groups" {...stylex.props(s.pluginPane)}>
-            <div {...stylex.props(s.paneLabel)}>Groups</div>
-            <div {...stylex.props(s.pluginList)}>
-              <button
-                type="button"
-                aria-pressed={pluginFilter === null}
-                {...stylex.props(
-                  s.pluginButton,
-                  pluginFilter === null ? s.pluginButtonActive : null,
-                )}
-                onClick={() => setPluginFilter(null)}
-              >
-                <Workflow
-                  size={14}
-                  {...stylex.props(
-                    s.pluginIcon,
-                    pluginFilter === null ? s.pluginIconActive : null,
-                  )}
-                />
-                <span {...stylex.props(s.pluginName)}>All nodes</span>
-                <span {...stylex.props(s.pluginCount)}>{catalogNodes.length}</span>
-              </button>
-              {pluginSections.map((section) => (
-                <section
-                  key={section.origin}
-                  aria-labelledby={`node-catalog-${section.origin}`}
-                  {...stylex.props(s.pluginSection)}
-                >
-                  <h3
-                    id={`node-catalog-${section.origin}`}
-                    {...stylex.props(s.pluginSectionLabel)}
-                  >
-                    {section.title}
-                  </h3>
-                  {section.plugins.length ? section.plugins.map((plugin) => {
-                    const active = pluginFilter === plugin.slug;
-                    const count = catalogNodes.filter(
-                      (spec) => spec.plugin_slug === plugin.slug,
-                    ).length;
-                    return (
-                      <button
-                        key={plugin.slug}
-                        type="button"
-                        aria-pressed={active}
-                        {...stylex.props(
-                          s.pluginButton,
-                          active ? s.pluginButtonActive : null,
-                        )}
-                        onClick={() => setPluginFilter(plugin.slug)}
-                      >
-                        <Package
-                          size={14}
-                          {...stylex.props(
-                            s.pluginIcon,
-                            active ? s.pluginIconActive : null,
-                          )}
-                        />
-                        <span {...stylex.props(s.pluginName)}>{plugin.title}</span>
-                        <span {...stylex.props(s.pluginMeta)}>
-                          {plugin.origin === "external" ? (
-                            <span
-                              {...stylex.props(
-                                s.originBadge,
-                                s.originBadgeExternal,
-                              )}
-                            >
-                              External
-                            </span>
-                          ) : plugin.origin === "module" ? (
-                            <span {...stylex.props(s.originBadge)}>
-                              Module
-                            </span>
-                          ) : null}
-                          <span {...stylex.props(s.pluginCount)}>{count}</span>
-                        </span>
-                      </button>
-                    );
-                  }) : (
-                    <span {...stylex.props(s.pluginSectionEmpty)}>
-                      None registered
-                    </span>
-                  )}
-                </section>
-              ))}
-            </div>
-          </nav>
-
-          <section aria-label="Nodes" {...stylex.props(s.nodePane)}>
+          <section aria-labelledby="node-selector-results-heading" {...stylex.props(s.nodePane)}>
             <header {...stylex.props(s.nodePaneHeader)}>
-              <h3 {...stylex.props(s.nodePaneTitle)}>{activePluginTitle}</h3>
-              <span {...stylex.props(s.resultCount)}>
-                {filteredNodes.length} {filteredNodes.length === 1 ? "node" : "nodes"}
-              </span>
+              <div {...stylex.props(s.resultHeading)}>
+                <h3 id="node-selector-results-heading" {...stylex.props(s.nodePaneTitle)}>
+                  {activeCategoryTitle}
+                </h3>
+                <span
+                  role={errorMessage ? "alert" : "status"}
+                  aria-live={errorMessage ? "assertive" : "polite"}
+                  aria-atomic="true"
+                  {...stylex.props(s.resultCount)}
+                >
+                  {resultStatus}
+                </span>
+              </div>
+              <div
+                role="toolbar"
+                aria-label="Node categories"
+                aria-orientation="horizontal"
+                {...stylex.props(s.categoryToolbar)}
+              >
+                {NODE_GOAL_CATEGORIES.map((goal, index) => {
+                  const active = category === goal.id;
+                  const count = catalogNodesForGoal(
+                    compatibleCatalogNodes,
+                    goal.id,
+                  ).length;
+                  return (
+                    <button
+                      key={goal.id}
+                      ref={(element) => {
+                        if (element) categoryRefs.current.set(goal.id, element);
+                        else categoryRefs.current.delete(goal.id);
+                      }}
+                      type="button"
+                      tabIndex={active ? 0 : -1}
+                      aria-label={`${goal.title}, ${count} ${count === 1 ? "node" : "nodes"}`}
+                      aria-pressed={active}
+                      {...stylex.props(
+                        s.categoryButton,
+                        active ? s.categoryButtonActive : null,
+                      )}
+                      onClick={() => selectCategory(goal.id)}
+                      onKeyDown={(event) => {
+                        if (event.key === "ArrowRight") {
+                          event.preventDefault();
+                          focusCategoryAt(index + 1);
+                        } else if (event.key === "ArrowLeft") {
+                          event.preventDefault();
+                          focusCategoryAt(index - 1);
+                        } else if (event.key === "Home") {
+                          event.preventDefault();
+                          focusCategoryAt(0);
+                        } else if (event.key === "End") {
+                          event.preventDefault();
+                          focusCategoryAt(NODE_GOAL_CATEGORIES.length - 1);
+                        }
+                      }}
+                    >
+                      {goal.title}
+                    </button>
+                  );
+                })}
+              </div>
             </header>
-            <div {...stylex.props(s.nodeList)}>
-              {filteredNodes.length ? filteredNodes.map((spec) => {
+            {compatibility && compatibilityPortTitle ? (
+              <div id="node-selector-compatibility" {...stylex.props(s.compatibilityBanner)}>
+                <Cable size={12} aria-hidden="true" />
+                Showing nodes that can connect {compatibility.direction === "upstream" ? "to" : "from"}{" "}
+                <strong>{compatibilityPortTitle}</strong>.
+              </div>
+            ) : null}
+            <div
+              id="node-selector-results"
+              role="listbox"
+              aria-label="Node results"
+              aria-busy={loading}
+              aria-activedescendant={activeResultId}
+              {...stylex.props(s.nodeList)}
+            >
+              {errorMessage ? (
+                <div {...stylex.props(s.empty)}>
+                  <span>Nodes couldn’t be loaded. {errorMessage}</span>
+                  {onRetry ? (
+                    <button type="button" {...stylex.props(s.resetButton)} onClick={onRetry}>
+                      Try again
+                    </button>
+                  ) : null}
+                </div>
+              ) : loading ? (
+                <div {...stylex.props(s.empty)}>Loading nodes…</div>
+              ) : filteredNodes.length ? filteredNodes.map((spec, index) => {
                 const owner = pluginFor(registry, spec.plugin_slug);
-                const active = selectedSpec
-                  ? nodeKey(spec) === nodeKey(selectedSpec)
+                const key = nodeKey(spec);
+                const active = listedSpec
+                  ? key === nodeKey(listedSpec)
                   : false;
+                const moduleState = spec.publication_state ?? "published";
                 return (
                   <button
-                    key={nodeKey(spec)}
+                    key={key}
+                    id={`node-selector-result-${key}`}
+                    ref={(element) => {
+                      if (element) resultRefs.current.set(key, element);
+                      else resultRefs.current.delete(key);
+                    }}
                     type="button"
-                    aria-pressed={active}
+                    role="option"
+                    tabIndex={active ? 0 : -1}
+                    aria-selected={active}
                     {...stylex.props(
                       s.nodeButton,
                       active ? s.nodeButtonActive : null,
                     )}
-                    onClick={() => setSelectedNodeKey(nodeKey(spec))}
+                    onClick={() => setSelectedNodeKey(key)}
+                    onFocus={() => setSelectedNodeKey(key)}
+                    onKeyDown={(event) => {
+                      if (event.key === "ArrowDown") {
+                        event.preventDefault();
+                        focusResultAt(index + 1);
+                      } else if (event.key === "ArrowUp") {
+                        event.preventDefault();
+                        focusResultAt(index - 1);
+                      } else if (event.key === "Home") {
+                        event.preventDefault();
+                        focusResultAt(0);
+                      } else if (event.key === "End") {
+                        event.preventDefault();
+                        focusResultAt(filteredNodes.length - 1);
+                      } else if (event.key === "Enter") {
+                        event.preventDefault();
+                        insertSelected();
+                      }
+                    }}
                   >
                     <span {...stylex.props(s.nodeCopy)}>
                       <span {...stylex.props(s.nodeTitleRow)}>
@@ -1364,7 +1428,7 @@ export function NodeSelector({
                           </span>
                         ) : owner.origin === "module" ? (
                           <span {...stylex.props(s.originBadge)}>
-                            Module · r{spec.module_graph_revision}
+                            Module · release {spec.module_graph_revision} · {moduleState}
                           </span>
                         ) : null}
                       </span>
@@ -1380,24 +1444,28 @@ export function NodeSelector({
               }) : (
                 <div {...stylex.props(s.empty)}>
                   <span>
-                    {showingModules
-                      ? "No published modules match the current search."
-                      : "No nodes match the current category and search."}
+                    {compatibility
+                      ? "No nodes match this port and the current search or category."
+                      : showingModules
+                        ? "No published Modules match the current search."
+                        : "No nodes match the current search or category."}
                   </span>
-                  <button
-                    type="button"
-                    {...stylex.props(s.resetButton)}
-                    onClick={() => {
-                      setQuery("");
-                      setPluginFilter(null);
-                    }}
-                  >
-                    Reset filters
-                  </button>
+                  {normalizedQuery || category !== "suggested" ? (
+                    <button
+                      type="button"
+                      {...stylex.props(s.resetButton)}
+                      onClick={() => {
+                        setQuery("");
+                        selectCategory(compatibility ? "all" : "suggested");
+                      }}
+                    >
+                      Reset search and category
+                    </button>
+                  ) : null}
                 </div>
               )}
             </div>
-            {showingModules ? (
+            {showingModules && !loading && !errorMessage ? (
               <div
                 aria-label="Workspace library notes"
                 {...stylex.props(s.moduleDiagnostics)}
@@ -1410,9 +1478,9 @@ export function NodeSelector({
                 ) : null}
                 {filteredNodes.length === 0 && !normalizedQuery ? (
                   <p {...stylex.props(s.moduleDiagnosticsNote)}>
-                    No published modules in this workspace yet. Open a source
-                    graph, declare Module Input/Output boundaries, then Publish
-                    release.
+                    {compatibility
+                      ? "No published Modules in this workspace can connect to this port."
+                      : "No published Modules in this workspace yet. Open a source graph, declare Module Input/Output boundaries, then Publish release."}
                     {onOpenWorkspaceLibrary ? (
                       <>
                         {" "}
@@ -1431,7 +1499,11 @@ export function NodeSelector({
             ) : null}
           </section>
 
-          <aside aria-label="Node information" {...stylex.props(s.inspector)}>
+          <aside
+            aria-label="Node information"
+            aria-labelledby={selectedSpec ? "node-selector-inspector-title" : undefined}
+            {...stylex.props(s.inspector)}
+          >
             {selectedSpec && selectedPlugin ? (
               <>
                 <div
@@ -1441,7 +1513,9 @@ export function NodeSelector({
                   <header {...stylex.props(s.inspectorHeader)}>
                     <div {...stylex.props(s.inspectorProvenance)}>
                       <div {...stylex.props(s.eyebrow)}>
-                        {selectedPlugin.title}
+                        {isModuleSelection
+                          ? `Module · release ${selectedSpec.module_graph_revision}`
+                          : selectedPlugin.title}
                       </div>
                       <span
                         {...stylex.props(
@@ -1454,15 +1528,13 @@ export function NodeSelector({
                         {selectedPlugin.origin === "external"
                           ? "External"
                           : selectedPlugin.origin === "module"
-                            ? `Module · release ${selectedSpec.module_graph_revision}${
-                                selectedSpec.publication_state
-                                  ? ` · ${selectedSpec.publication_state}`
-                                  : ""
-                              }`
+                            ? selectedSpec.publication_state ?? "published"
                             : "Built-in"}
                       </span>
                     </div>
-                    <h3 {...stylex.props(s.inspectorTitle)}>{selectedSpec.title}</h3>
+                    <h3 id="node-selector-inspector-title" {...stylex.props(s.inspectorTitle)}>
+                      {selectedSpec.title}
+                    </h3>
                     <div {...stylex.props(s.operatorId)}>
                       {typeof selectedSpec.module_graph_revision === "number"
                         ? `Module contract · release ${selectedSpec.module_graph_revision}`
@@ -1474,9 +1546,15 @@ export function NodeSelector({
                         <select
                           aria-label="Module release"
                           value={nodeKey(selectedSpec)}
-                          onChange={(event) =>
-                            setSelectedReleaseKey(event.currentTarget.value)
-                          }
+                          onChange={(event) => {
+                            const moduleKey =
+                              listedSpec.module_id ?? listedSpec.module_graph_id;
+                            if (!moduleKey) return;
+                            setSelectedRelease({
+                              moduleKey,
+                              releaseKey: event.currentTarget.value,
+                            });
+                          }}
                         >
                           {moduleReleases.map((release) => (
                             <option key={nodeKey(release)} value={nodeKey(release)}>
@@ -1549,7 +1627,9 @@ export function NodeSelector({
                   <section {...stylex.props(s.section)}>
                     <div {...stylex.props(s.sectionTitleRow)}>
                       <Workflow size={13} {...stylex.props(s.sectionIcon)} />
-                      <h3 {...stylex.props(s.sectionTitle)}>Ports</h3>
+                      <h3 {...stylex.props(s.sectionTitle)}>
+                        {isModuleSelection ? "Module contract" : "Ports"}
+                      </h3>
                     </div>
                     <div {...stylex.props(s.portGrid)}>
                       <PortList
@@ -1606,30 +1686,29 @@ export function NodeSelector({
                 </div>
 
                 <footer {...stylex.props(s.inspectorFooter)}>
-                  <span {...stylex.props(s.footerHint)}>
-                    {isModuleSelection
-                      ? "Inserts a Module call pinned to the selected release."
-                      : "Added at the center of the current canvas view."}
+                  <span id="node-selector-insert-hint" {...stylex.props(s.footerHint)}>
+                    {!canInsert
+                      ? insertDisabledReason
+                      : isModuleSelection
+                        ? "Inserts a Module call pinned to the selected immutable release."
+                        : "Added at the center of the current canvas view."}
                   </span>
                   <button
                     type="button"
+                    disabled={!canInsert}
+                    aria-describedby="node-selector-insert-hint"
                     title={
-                      isModuleSelection
+                      !canInsert
+                        ? insertDisabledReason
+                        : isModuleSelection
                         ? `Insert module call for ${selectedSpec.title}`
                         : `Add ${selectedSpec.title} to the workflow`
                     }
-                    {...stylex.props(s.addButton)}
-                    onClick={() => {
-                      if (
-                        isDeprecatedModule &&
-                        !window.confirm(
-                          `Insert deprecated Module “${selectedSpec.title}”? New inserts are discouraged.`,
-                        )
-                      ) {
-                        return;
-                      }
-                      onAddNode(selectedSpec);
-                    }}
+                    {...stylex.props(
+                      s.addButton,
+                      !canInsert ? s.addButtonDisabled : null,
+                    )}
+                    onClick={insertSelected}
                   >
                     <Plus size={14} />{" "}
                     {isModuleSelection
@@ -1640,7 +1719,11 @@ export function NodeSelector({
               </>
             ) : (
               <div {...stylex.props(s.empty)}>
-                Select a node to inspect its contract.
+                {loading
+                  ? "Loading node details…"
+                  : errorMessage
+                    ? "Node details are unavailable until the list loads."
+                    : "Select a node to inspect its contract."}
               </div>
             )}
           </aside>

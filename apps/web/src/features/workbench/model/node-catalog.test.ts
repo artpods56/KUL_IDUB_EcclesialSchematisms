@@ -1,15 +1,32 @@
 import { describe, expect, it } from "vitest";
 
-import type { NodeRegistry, NodeSpec } from "@/lib/api";
+import type { NodeRegistry, NodeSpec, Port } from "@/lib/api";
 import {
+  catalogNodesForGoal,
   catalogNodeSpecs,
-  catalogPluginSections,
   moduleCallUpgradeTarget,
+  nodeGoalCategory,
 } from "./node-catalog";
 
 const FIRST_GRAPH_ID = "00000000-0000-4000-8000-000000000001";
 const SECOND_GRAPH_ID = "00000000-0000-4000-8000-000000000002";
 const FIRST_MODULE_ID = "10000000-0000-4000-8000-000000000001";
+
+function port(name: string, direction: Port["direction"]): Port {
+  return {
+    name,
+    title: name,
+    description: null,
+    direction,
+    artifact_type: { id: "scalar.text", schema_version: 1 },
+    artifact_type_variable: null,
+    shape: "one",
+    accepted_shapes: ["one"],
+    instance_plugs: false,
+    variadic: false,
+    required: true,
+  };
+}
 
 function nodeSpec(
   operatorId: string,
@@ -88,19 +105,6 @@ function registry(): NodeRegistry {
 }
 
 describe("node catalog modules", () => {
-  it("groups workspace library separately from built-in and external plugins", () => {
-    const sections = catalogPluginSections(registry());
-
-    expect(sections.map((section) => section.title)).toEqual([
-      "Built-in",
-      "Workspace library",
-      "External",
-    ]);
-    expect(sections[1]?.plugins).toEqual([
-      { slug: "graph.module", title: "Workspace library", origin: "module" },
-    ]);
-  });
-
   it("offers only visible revisions and excludes the graph being edited", () => {
     const available = catalogNodeSpecs(registry(), FIRST_GRAPH_ID);
 
@@ -134,5 +138,66 @@ describe("node catalog modules", () => {
     expect(
       moduleCallUpgradeTarget(registry(), target!),
     ).toBeNull();
+  });
+});
+
+describe("node catalog goals", () => {
+  it("derives user-goal categories from node contracts and searchable metadata", () => {
+    const start = nodeSpec("table.file.import", "builtin");
+    const transform = {
+      ...nodeSpec("text.replace", "builtin"),
+      inputs: [port("text", "input")],
+      outputs: [port("text", "output")],
+    };
+    const analyze = {
+      ...transform,
+      operator_id: "table.markdown.extract",
+      title: "Extract tables",
+    };
+    const present = {
+      ...transform,
+      operator_id: "gis.map.compose",
+      title: "Compose map",
+    };
+    const reuse = registry().nodes[2]!;
+
+    expect([
+      nodeGoalCategory(start),
+      nodeGoalCategory(transform),
+      nodeGoalCategory(analyze),
+      nodeGoalCategory(present),
+      nodeGoalCategory(reuse),
+    ]).toEqual(["start", "transform", "analyze", "present", "reuse"]);
+  });
+
+  it("builds a small deterministic suggested set across available goals", () => {
+    const nodes = [
+      nodeSpec("text.input", "builtin"),
+      {
+        ...nodeSpec("text.replace", "builtin"),
+        inputs: [port("text", "input")],
+        outputs: [port("text", "output")],
+      },
+      {
+        ...nodeSpec("ocr.extract", "external"),
+        inputs: [port("image", "input")],
+        outputs: [port("text", "output")],
+      },
+      ...registry().nodes.filter((spec) => spec.catalog_visible !== false),
+    ];
+
+    const suggested = catalogNodesForGoal(nodes, "suggested");
+
+    expect(suggested.length).toBeLessThanOrEqual(6);
+    expect(suggested.slice(0, 4).map(nodeGoalCategory)).toEqual([
+      "start",
+      "transform",
+      "analyze",
+      "reuse",
+    ]);
+    expect(catalogNodesForGoal(nodes, "reuse")).toEqual([
+      registry().nodes[2],
+      registry().nodes[3],
+    ]);
   });
 });
