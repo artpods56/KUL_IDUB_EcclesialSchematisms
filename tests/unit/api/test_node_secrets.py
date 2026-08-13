@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import text
 
+from notarius_core.application.collaboration import CollaborationService
 from notarius_core.application.saved_graphs import SavedGraphService
 from notarius_core.artifacts import NodeConfig, NodeInput, NodeOutput
 from notarius_core.domain.saved_graphs import (
@@ -1060,6 +1061,17 @@ def test_node_secret_routes_never_return_secret_value(tmp_path: Path) -> None:
             registry,
         )
         graph = await _saved_secret_graph(saved_graphs)
+        collaboration = CollaborationService(
+            lambda: SqlAlchemyUnitOfWork(database.sessions),
+            registry,
+            command_hmac_key=b"node-secret-route-test-hmac-key",
+            command_hmac_key_version=1,
+            saved_graphs=saved_graphs,
+        )
+        await collaboration.initialize_head_for_existing_graph(
+            workspace_id=WORKSPACE_ID,
+            graph_id=graph.id,
+        )
         service = NodeSecretService(
             unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
             plugin_registry=registry,

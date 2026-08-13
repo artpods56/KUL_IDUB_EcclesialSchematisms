@@ -1496,7 +1496,7 @@ class SqlNodeSecretRepository(NodeSecretRepositoryPort):
         name: str,
     ) -> None:
         await self._session.execute(
-            delete(schema.node_secrets).where(
+            delete(EncryptedNodeSecret).where(
                 schema.node_secrets.c.workspace_id == workspace_id,
                 schema.node_secrets.c.graph_id == graph_id,
                 schema.node_secrets.c.node_id == node_id,
