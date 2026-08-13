@@ -21,6 +21,7 @@ def test_openapi_contains_exact_public_routes() -> None:
     assert set(schema["paths"]) == {
         "/v1/me/graphs",
         "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/content",
+        "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/download",
         "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/geo/query",
         "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/geo/render",
         "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/table/cell",
@@ -88,6 +89,20 @@ def test_openapi_contains_exact_public_routes() -> None:
         schema["paths"]["/v1/workspaces/{workspace_id}/graphs/{graph_id}/checkpoint"]
     ) == {"post"}
     assert set(schema["paths"]["/v1/workspaces/{workspace_id}/executions"]) == {"post"}
+    synchronous_run_responses = schema["paths"][
+        "/v1/workspaces/{workspace_id}/runs"
+    ]["post"]["responses"]
+    assert synchronous_run_responses["429"]["content"]["application/json"][
+        "schema"
+    ] == {"$ref": "#/components/schemas/RunExecutionCapacityErrorResponse"}
+    assert "Retry-After" in synchronous_run_responses["429"]["headers"]
+    execution_start_responses = schema["paths"][
+        "/v1/workspaces/{workspace_id}/executions"
+    ]["post"]["responses"]
+    assert execution_start_responses["429"]["content"]["application/json"][
+        "schema"
+    ] == {"$ref": "#/components/schemas/RunExecutionCapacityErrorResponse"}
+    assert "Retry-After" in execution_start_responses["429"]["headers"]
     security_schemes = schema["components"]["securitySchemes"]
     session_scheme_name = next(
         name

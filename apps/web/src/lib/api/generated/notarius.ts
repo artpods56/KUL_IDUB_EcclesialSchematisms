@@ -142,6 +142,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/download": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get Artifact Download */
+        readonly get: operations["get_artifact_download_v1_workspaces__workspace_id__artifacts__artifact_id__download_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/geo/query": {
         readonly parameters: {
             readonly query?: never;
@@ -1023,6 +1040,15 @@ export interface components {
                 readonly [key: string]: components["schemas"]["ArtifactInteractionScalar"];
             };
         };
+        /** ArtifactExportFormatResponse */
+        readonly ArtifactExportFormatResponse: {
+            /** Content Type */
+            readonly content_type: string;
+            /** Filename */
+            readonly filename: string;
+            /** Format */
+            readonly format: string;
+        };
         readonly ArtifactInteractionScalar: string | number | boolean | null;
         /** ArtifactRef */
         readonly ArtifactRef: {
@@ -1081,6 +1107,8 @@ export interface components {
             readonly content_type: string;
             /** Content Url */
             readonly content_url?: string | null;
+            /** Download Formats */
+            readonly download_formats?: readonly components["schemas"]["ArtifactExportFormatResponse"][];
             /** Metadata */
             readonly metadata?: {
                 readonly [key: string]: unknown;
@@ -1114,6 +1142,8 @@ export interface components {
         };
         /** ArtifactTypeSpecResponse */
         readonly ArtifactTypeSpecResponse: {
+            /** Export Formats */
+            readonly export_formats?: readonly components["schemas"]["ArtifactExportFormatResponse"][];
             /** Field Projections */
             readonly field_projections: readonly components["schemas"]["FieldProjectionResponse"][];
             readonly key: components["schemas"]["ArtifactTypeKeyResponse"];
@@ -2533,6 +2563,22 @@ export interface components {
             /** To Port */
             readonly to_port: string;
         };
+        /** RunExecutionCapacityErrorDetail */
+        readonly RunExecutionCapacityErrorDetail: {
+            /**
+             * Error Code
+             * @constant
+             */
+            readonly error_code: "execution_capacity_exceeded";
+            /** Max Active Executions */
+            readonly max_active_executions: number;
+            /** Message */
+            readonly message: string;
+        };
+        /** RunExecutionCapacityErrorResponse */
+        readonly RunExecutionCapacityErrorResponse: {
+            readonly detail: components["schemas"]["RunExecutionCapacityErrorDetail"];
+        };
         /** RunExecutionResponse */
         readonly RunExecutionResponse: {
             /** Active Node Id */
@@ -3648,6 +3694,85 @@ export interface operations {
                     readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
                 };
             };
+            /** @description Response too large */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Artifact content is unavailable */
+            readonly 500: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly get_artifact_download_v1_workspaces__workspace_id__artifacts__artifact_id__download_get: {
+        readonly parameters: {
+            readonly query?: {
+                readonly format?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly artifact_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": unknown;
+                };
+            };
+            /** @description Unsupported format */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Artifact not found */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
+            /** @description Response too large */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
             /** @description Validation Error */
             readonly 422: {
                 headers: {
@@ -4262,6 +4387,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
                 };
             };
+            /** @description Response too large */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkbenchErrorResponse"];
+                };
+            };
             /** @description Requested byte range is not satisfiable */
             readonly 416: {
                 headers: {
@@ -4320,6 +4454,17 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The process-wide active execution limit is exhausted */
+            readonly 429: {
+                headers: {
+                    /** @description Minimum delay before retrying, in seconds */
+                    readonly "Retry-After"?: number;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunExecutionCapacityErrorResponse"];
                 };
             };
         };
@@ -5753,6 +5898,17 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The process-wide active execution limit is exhausted */
+            readonly 429: {
+                headers: {
+                    /** @description Minimum delay before retrying, in seconds */
+                    readonly "Retry-After"?: number;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunExecutionCapacityErrorResponse"];
                 };
             };
         };

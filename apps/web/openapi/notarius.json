@@ -121,6 +121,29 @@
         "title": "ArtifactExactMatchRow",
         "type": "object"
       },
+      "ArtifactExportFormatResponse": {
+        "properties": {
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "format": {
+            "title": "Format",
+            "type": "string"
+          }
+        },
+        "required": [
+          "format",
+          "content_type",
+          "filename"
+        ],
+        "title": "ArtifactExportFormatResponse",
+        "type": "object"
+      },
       "ArtifactInteractionScalar": {
         "anyOf": [
           {
@@ -258,6 +281,13 @@
             ],
             "title": "Content Url"
           },
+          "download_formats": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactExportFormatResponse"
+            },
+            "title": "Download Formats",
+            "type": "array"
+          },
           "metadata": {
             "additionalProperties": true,
             "title": "Metadata",
@@ -358,6 +388,13 @@
       },
       "ArtifactTypeSpecResponse": {
         "properties": {
+          "export_formats": {
+            "items": {
+              "$ref": "#/components/schemas/ArtifactExportFormatResponse"
+            },
+            "title": "Export Formats",
+            "type": "array"
+          },
           "field_projections": {
             "items": {
               "$ref": "#/components/schemas/FieldProjectionResponse"
@@ -4275,6 +4312,43 @@
         "title": "RunEdgeRequest",
         "type": "object"
       },
+      "RunExecutionCapacityErrorDetail": {
+        "properties": {
+          "error_code": {
+            "const": "execution_capacity_exceeded",
+            "title": "Error Code",
+            "type": "string"
+          },
+          "max_active_executions": {
+            "minimum": 1.0,
+            "title": "Max Active Executions",
+            "type": "integer"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error_code",
+          "message",
+          "max_active_executions"
+        ],
+        "title": "RunExecutionCapacityErrorDetail",
+        "type": "object"
+      },
+      "RunExecutionCapacityErrorResponse": {
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/RunExecutionCapacityErrorDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "RunExecutionCapacityErrorResponse",
+        "type": "object"
+      },
       "RunExecutionResponse": {
         "properties": {
           "active_node_id": {
@@ -7141,6 +7215,16 @@
             },
             "description": "Artifact not found"
           },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Response too large"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -7168,6 +7252,115 @@
           }
         ],
         "summary": "Get Artifact Content",
+        "tags": [
+          "workbench"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/download": {
+      "get": {
+        "operationId": "get_artifact_download_v1_workspaces__workspace_id__artifacts__artifact_id__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "json",
+              "maxLength": 32,
+              "minLength": 1,
+              "pattern": "^[a-z0-9_.-]+$",
+              "title": "Format",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported format"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact not found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Response too large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Artifact content is unavailable"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Artifact Download",
         "tags": [
           "workbench"
         ]
@@ -8193,6 +8386,16 @@
             },
             "description": "Artifact not found"
           },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbenchErrorResponse"
+                }
+              }
+            },
+            "description": "Response too large"
+          },
           "416": {
             "description": "Requested byte range is not satisfiable"
           },
@@ -8273,6 +8476,25 @@
               }
             },
             "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunExecutionCapacityErrorResponse"
+                }
+              }
+            },
+            "description": "The process-wide active execution limit is exhausted",
+            "headers": {
+              "Retry-After": {
+                "description": "Minimum delay before retrying, in seconds",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -10931,6 +11153,25 @@
               }
             },
             "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunExecutionCapacityErrorResponse"
+                }
+              }
+            },
+            "description": "The process-wide active execution limit is exhausted",
+            "headers": {
+              "Retry-After": {
+                "description": "Minimum delay before retrying, in seconds",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
           }
         },
         "security": [
