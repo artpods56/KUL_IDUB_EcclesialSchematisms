@@ -2,7 +2,7 @@ from pathlib import Path
 import re
 
 
-def test_compose_gateway_and_forwarded_proxy_trust_are_identical() -> None:
+def test_compose_trusts_configured_docker_subnet_for_forwarded_headers() -> None:
     repository = Path(__file__).parents[3]
     compose = (repository / "infra/docker/compose.yaml").read_text()
     env_example = (repository / "infra/docker/.env.production.example").read_text()
@@ -25,7 +25,8 @@ def test_compose_gateway_and_forwarded_proxy_trust_are_identical() -> None:
     assert forwarded_allow_ips is not None
     assert gateway is not None
     assert subnet is not None
-    assert forwarded_allow_ips.group(1) == gateway.group(1)
+    assert forwarded_allow_ips.group(1) == subnet.group(1)
+    assert forwarded_allow_ips.group(1) != gateway.group(1)
     assert gateway.group(1) == "${NOTARIUS_DOCKER_GATEWAY:-172.30.0.1}"
     assert subnet.group(1) == "${NOTARIUS_DOCKER_SUBNET:-172.30.0.0/24}"
 
@@ -38,6 +39,62 @@ def test_compose_gateway_and_forwarded_proxy_trust_are_identical() -> None:
     assert env_values["NOTARIUS_DOCKER_SUBNET"] == "172.30.0.0/24"
 
 
+def test_compose_injects_complete_oidc_configuration_and_requires_keys() -> None:
+    repository = Path(__file__).parents[3]
+    compose = (repository / "infra/docker/compose.yaml").read_text()
+    env_example = (repository / "infra/docker/.env.production.example").read_text()
+
+    required_nonempty = (
+        "NOTARIUS_OIDC_ISSUER",
+        "NOTARIUS_OIDC_CLIENT_ID",
+        "NOTARIUS_OIDC_AUTH_WRAPPING_KEY",
+        "NOTARIUS_CREDENTIAL_ENCRYPTION_KEY",
+        "NOTARIUS_COMMAND_HMAC_KEY",
+    )
+    for variable in required_nonempty:
+        assert re.search(
+            rf"^\s*{variable}:\s*\$\{{{variable}:\?[^}}]+\}}\s*$",
+            compose,
+            re.MULTILINE,
+        ), f"{variable} must fail Compose interpolation when unset or empty"
+
+    assert re.search(
+        r"^\s*NOTARIUS_OIDC_CLIENT_SECRET:\s*$",
+        compose,
+        re.MULTILINE,
+    )
+    assert (
+        "NOTARIUS_OIDC_ALLOWED_SIGNING_ALGORITHMS: "
+        '${NOTARIUS_OIDC_ALLOWED_SIGNING_ALGORITHMS:-["RS256"]}' in compose
+    )
+    assert (
+        "NOTARIUS_OIDC_AUTH_WRAPPING_KEY_VERSION: "
+        "${NOTARIUS_OIDC_AUTH_WRAPPING_KEY_VERSION:-1}" in compose
+    )
+
+    env_values = dict(
+        line.split("=", maxsplit=1)
+        for line in env_example.splitlines()
+        if line and not line.startswith("#") and "=" in line
+    )
+    for variable in required_nonempty:
+        assert variable in env_values
+    assert env_values["NOTARIUS_OIDC_ALLOWED_SIGNING_ALGORITHMS"] == '["RS256"]'
+    assert env_values["NOTARIUS_OIDC_AUTH_WRAPPING_KEY_VERSION"] == "1"
+
+
+def test_compose_injects_staged_upload_hard_limit() -> None:
+    repository = Path(__file__).parents[3]
+    compose = (repository / "infra/docker/compose.yaml").read_text()
+    env_example = (repository / "infra/docker/.env.production.example").read_text()
+
+    assert (
+        "NOTARIUS_STAGED_UPLOAD_MAX_BYTES: "
+        "${NOTARIUS_STAGED_UPLOAD_MAX_BYTES:-67108864}" in compose
+    )
+    assert "NOTARIUS_STAGED_UPLOAD_MAX_BYTES=67108864" in env_example
+
+
 def test_nginx_gateway_routes_web_api_and_mcp_to_same_origin_upstreams() -> None:
     repository = Path(__file__).parents[3]
     nginx = (repository / "infra/docker/gateway/nginx.conf").read_text()
@@ -47,6 +104,7 @@ def test_nginx_gateway_routes_web_api_and_mcp_to_same_origin_upstreams() -> None
     assert "upstream notarius_web" in nginx
     assert "server web:3000;" in nginx
     assert "listen 8080;" in nginx
+    assert "client_max_body_size 65m;" in nginx
 
     root_location = re.search(
         r"location\s+/\s*\{(.*?)\n\s*\}",
@@ -84,7 +142,7 @@ def test_compose_publishes_loopback_gateway_and_keeps_api_web_internal() -> None
         "${NOTARIUS_BIND_ADDRESS:-127.0.0.1}:${NOTARIUS_GATEWAY_PORT:-8080}:8080"
         in compose
     )
-    assert "NOTARIUS_REQUIRE_SINGLE_API_OWNER: \"true\"" in compose
+    assert 'NOTARIUS_REQUIRE_SINGLE_API_OWNER: "true"' in compose
     assert 'WEB_CONCURRENCY: "1"' in compose
 
     # API and web stay on the Compose network; only gateway (and Prefect SSH
@@ -108,3 +166,27 @@ def test_compose_publishes_loopback_gateway_and_keeps_api_web_internal() -> None
 
     assert "--workers" not in dockerfile
     assert "notarius_api.main:app" in dockerfile
+
+
+def test_production_api_does_not_install_untrusted_sql_in_process() -> None:
+    repository = Path(__file__).parents[3]
+    dockerfile = (repository / "infra/docker/api.Dockerfile").read_text()
+
+    production_target = dockerfile.split("FROM source AS api-plugins", maxsplit=1)[1]
+    production_target = production_target.split("FROM source AS api", maxsplit=1)[0]
+    assert "--extra gis --extra llm --extra ocr" in production_target
+    assert "--extra sql" not in production_target
+
+
+def test_compose_api_healthcheck_uses_dependency_readiness() -> None:
+    repository = Path(__file__).parents[3]
+    compose = (repository / "infra/docker/compose.yaml").read_text()
+    api_block = re.search(
+        r"^  api:\n(.*?)(?=^  [a-z]|\Z)",
+        compose,
+        re.MULTILINE | re.DOTALL,
+    )
+
+    assert api_block is not None
+    assert "http://127.0.0.1:8000/ready" in api_block.group(1)
+    assert "http://127.0.0.1:8000/health" not in api_block.group(1)

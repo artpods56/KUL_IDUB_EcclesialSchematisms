@@ -29,6 +29,11 @@ from ..models import (
     RunRequest,
 )
 from ..services import ExecutionHistoryService
+from .admission import (
+    ExecutionAdmissionLease,
+    ExecutionAdmissionLimiter,
+    RunExecutionCapacityError,
+)
 from .control import RunExecutionControl
 from .models import GraphExecutionResult
 from .run_graph import RunGraph
@@ -222,6 +227,7 @@ class _RunExecutionRecord:
     execution_id: UUID
     control: RunExecutionControl
     journal: _RunExecutionEventJournal
+    admission_lease: ExecutionAdmissionLease
     history_execution: GraphExecution | None = None
     starter: ActorPresentation | None = None
     overlays_compatible: bool = True
@@ -279,6 +285,7 @@ class RunExecutionManager:
         execution_history: ExecutionHistoryService | None = None,
         terminal_retention: int = 100,
         event_capacity: int = 256,
+        admission_limiter: ExecutionAdmissionLimiter | None = None,
     ) -> None:
         if terminal_retention < 1:
             raise ValueError("Execution terminal retention must be at least one")
@@ -288,6 +295,9 @@ class RunExecutionManager:
         self._execution_history = execution_history
         self._terminal_retention = terminal_retention
         self._event_capacity = event_capacity
+        self._admission_limiter = (
+            admission_limiter or ExecutionAdmissionLimiter(2)
+        )
         self._executions: dict[UUID, _RunExecutionRecord] = {}
         self._terminal_order: deque[UUID] = deque()
         self._lock = asyncio.Lock()
@@ -325,45 +335,52 @@ class RunExecutionManager:
         async with self._lock:
             if self._shutting_down:
                 raise RuntimeError("Run execution manager is shutting down")
+            admission_lease = self._admission_limiter.acquire()
             execution_id = uuid4()
-            history_execution: GraphExecution | None = None
-            if request.graph_id is not None and request.graph_revision is not None:
-                if self._execution_history is None:
-                    raise RuntimeError(
-                        "Saved graph execution history is not configured"
+            try:
+                history_execution: GraphExecution | None = None
+                if request.graph_id is not None and request.graph_revision is not None:
+                    if self._execution_history is None:
+                        raise RuntimeError(
+                            "Saved graph execution history is not configured"
+                        )
+                    requested_node_ids: list[str] = []
+                    seen_node_ids: set[str] = set()
+                    for node in request.nodes:
+                        if node.id in seen_node_ids:
+                            continue
+                        seen_node_ids.add(node.id)
+                        requested_node_ids.append(node.id)
+                    history_execution = await self._execution_history.create_queued(
+                        workspace_id=workspace_id,
+                        execution_id=execution_id,
+                        graph_id=request.graph_id,
+                        graph_revision=request.graph_revision,
+                        scope=request.scope,
+                        requested_node_ids=tuple(requested_node_ids),
                     )
-                requested_node_ids: list[str] = []
-                seen_node_ids: set[str] = set()
-                for node in request.nodes:
-                    if node.id in seen_node_ids:
-                        continue
-                    seen_node_ids.add(node.id)
-                    requested_node_ids.append(node.id)
-                history_execution = await self._execution_history.create_queued(
+                journal = _RunExecutionEventJournal(execution_id, self._event_capacity)
+                control = RunExecutionControl(journal)
+                record = _RunExecutionRecord(
                     workspace_id=workspace_id,
                     execution_id=execution_id,
-                    graph_id=request.graph_id,
-                    graph_revision=request.graph_revision,
-                    scope=request.scope,
-                    requested_node_ids=tuple(requested_node_ids),
+                    control=control,
+                    journal=journal,
+                    admission_lease=admission_lease,
+                    history_execution=history_execution,
+                    starter=starter,
+                    overlays_compatible=overlays_compatible,
                 )
-            journal = _RunExecutionEventJournal(execution_id, self._event_capacity)
-            control = RunExecutionControl(journal)
-            record = _RunExecutionRecord(
-                workspace_id=workspace_id,
-                execution_id=execution_id,
-                control=control,
-                journal=journal,
-                history_execution=history_execution,
-                starter=starter,
-                overlays_compatible=overlays_compatible,
-            )
-            self._executions[execution_id] = record
-            control.publish_execution_status("queued", None)
-            task = asyncio.create_task(
-                self._run(execution_id, request.model_copy(deep=True)),
-                name=f"notarius-run-{execution_id}",
-            )
+                self._executions[execution_id] = record
+                control.publish_execution_status("queued", None)
+                task = asyncio.create_task(
+                    self._run(execution_id, request.model_copy(deep=True)),
+                    name=f"notarius-run-{execution_id}",
+                )
+            except BaseException:
+                self._executions.pop(execution_id, None)
+                admission_lease.release()
+                raise
             record.task = task
             task.add_done_callback(
                 lambda completed, owned_id=execution_id: self._task_done(
@@ -617,6 +634,7 @@ class RunExecutionManager:
             record.status = status
             record.task = None
             record.result = result
+            record.admission_lease.release()
             if history_error is None:
                 record.error = error
             elif error is None:
@@ -714,6 +732,7 @@ def _render_exception_chain(exception: BaseException) -> str:
 __all__ = [
     "RunExecutionEventBatch",
     "RunExecutionEventSubscription",
+    "RunExecutionCapacityError",
     "RunExecutionManager",
     "RunExecutionSnapshot",
     "RunExecutionStatus",

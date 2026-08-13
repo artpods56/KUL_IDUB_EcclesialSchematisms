@@ -9,6 +9,7 @@ from notarius_api.v1.routes.auth.dependencies import require_workspace_capabilit
 
 from .dependencies import ImageUploadDependency
 from .models import ImageUploadItemResponse, SampleRequest
+from .services import StagedUploadTooLargeError
 
 
 router = APIRouter(prefix="/workspaces/{workspace_id}", tags=["workbench"])
@@ -31,6 +32,8 @@ async def upload_file(
             stream=file.file,
         )
         return ImageUploadItemResponse.from_item(item)
+    except StagedUploadTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     except WorkbenchOperationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

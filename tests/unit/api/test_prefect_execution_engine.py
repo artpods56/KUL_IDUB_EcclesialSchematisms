@@ -44,6 +44,9 @@ from notarius_api.services.composition import (
 )
 
 
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
+
+
 @dataclass(frozen=True, slots=True)
 class ObservedInvocation:
     workflow_run_id: UUID
@@ -301,6 +304,7 @@ async def test_prefect_map_items_overlap_and_reduce_in_source_order(
     )
     run_task = asyncio.create_task(
         components.run_graph.run(
+            WORKSPACE_ID,
             RunRequest(
                 nodes=[
                     RunNodeRequest(
@@ -364,7 +368,8 @@ async def test_prefect_map_items_overlap_and_reduce_in_source_order(
     assert isinstance(mapped_output, ArtifactRefSequence)
     resolver = IntegerValueResolver(uow=unit_of_work)
     assert [
-        await resolver.resolve(item_ref) for item_ref in mapped_output.item_refs
+        await resolver.resolve(item_ref, WORKSPACE_ID)
+        for item_ref in mapped_output.item_refs
     ] == [11, 12]
 
 
@@ -375,6 +380,7 @@ async def test_prefect_execution_preserves_map_order_and_uses_prefect_run_ids(
     sensitive_marker = "prefect-must-not-store-this-value"
     components, unit_of_work = build_prefect_components(tmp_path / "workbench")
     result = await components.run_graph.run(
+        WORKSPACE_ID,
         RunRequest(
             nodes=[
                 RunNodeRequest(
@@ -437,7 +443,8 @@ async def test_prefect_execution_preserves_map_order_and_uses_prefect_run_ids(
     assert isinstance(mapped_output, ArtifactRefSequence)
     integer_resolver = IntegerValueResolver(uow=unit_of_work)
     assert [
-        await integer_resolver.resolve(item_ref) for item_ref in mapped_output.item_refs
+        await integer_resolver.resolve(item_ref, WORKSPACE_ID)
+        for item_ref in mapped_output.item_refs
     ] == [21, 22, 23]
 
     once_invocations = [
@@ -501,6 +508,7 @@ async def test_failed_node_fails_prefect_flow_and_skips_downstream(
 ) -> None:
     components, _unit_of_work = build_prefect_components(tmp_path / "workbench")
     result = await components.run_graph.run(
+        WORKSPACE_ID,
         RunRequest(
             nodes=[
                 RunNodeRequest(
@@ -595,6 +603,7 @@ async def test_prefect_task_retry_reuses_task_run_and_records_attempt_count(
         task_retries=1,
     )
     result = await components.run_graph.run(
+        WORKSPACE_ID,
         RunRequest(
             nodes=[
                 RunNodeRequest(
@@ -663,6 +672,7 @@ async def test_prefect_managed_execution_cancels_active_node(tmp_path: Path) -> 
     components, _unit_of_work = build_prefect_components(tmp_path / "workbench")
     BlockingIntegerNode.started = asyncio.Event()
     execution = await components.execution_manager.start(
+        WORKSPACE_ID,
         RunRequest(
             nodes=[
                 RunNodeRequest(
@@ -674,14 +684,20 @@ async def test_prefect_managed_execution_cancels_active_node(tmp_path: Path) -> 
         )
     )
     await asyncio.wait_for(BlockingIntegerNode.started.wait(), timeout=10)
-    running = await components.execution_manager.get(execution.execution_id)
+    running = await components.execution_manager.get(
+        WORKSPACE_ID,
+        execution.execution_id,
+    )
     assert running.status == "running"
     assert running.active_node_id == "blocking"
 
-    await components.execution_manager.cancel(execution.execution_id)
+    await components.execution_manager.cancel(WORKSPACE_ID, execution.execution_id)
     async with asyncio.timeout(10):
         while True:
-            terminal = await components.execution_manager.get(execution.execution_id)
+            terminal = await components.execution_manager.get(
+                WORKSPACE_ID,
+                execution.execution_id,
+            )
             if terminal.status == "cancelled":
                 break
             await asyncio.sleep(0.01)

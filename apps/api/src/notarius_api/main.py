@@ -1,9 +1,11 @@
 import asyncio
 import logging
+import os
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Literal
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import (
     http_exception_handler as default_http_exception_handler,
@@ -13,6 +15,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
+from sqlalchemy import text
 
 from notarius_core.application.collaboration import CollaborationService
 from notarius_core.application.modules import ModuleLibraryService
@@ -310,12 +313,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     storage=storage,
                     execution_backend=resolved_settings.execution_backend,
                     map_max_concurrency=resolved_settings.map_max_concurrency,
+                    max_active_executions=resolved_settings.max_active_executions,
                     prefect_task_retries=resolved_settings.prefect_task_retries,
                     prefect_task_retry_delay_seconds=(
                         resolved_settings.prefect_task_retry_delay_seconds
                     ),
                     storage_backend=resolved_settings.storage_backend,
                     bucket=resolved_settings.storage_bucket,
+                    staged_upload_max_bytes=resolved_settings.staged_upload_max_bytes,
                     saved_graphs=saved_graphs,
                     module_library=module_library,
                     node_secrets=node_secrets,
@@ -330,6 +335,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     module_library=module_library,
                     templates=templates,
                     run_graph=components.run_graph,
+                    execution_admission=components.execution_admission,
                     execution_manager=components.execution_manager,
                     execution_history=components.execution_history,
                     materializations=components.materializations,
@@ -454,6 +460,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.add_api_route(
         "/health",
         health,
+        methods=["GET"],
+        response_model=HealthResponse,
+        include_in_schema=False,
+    )
+
+    async def readiness(request: Request) -> HealthResponse:
+        try:
+            async with asyncio.timeout(3.0):
+                if not hasattr(request.app.state, "resources"):
+                    raise RuntimeError("Application resources are not initialized")
+                async with database.engine.connect() as connection:
+                    await connection.execute(text("SELECT 1"))
+                if resolved_settings.execution_backend == "prefect":
+                    prefect_api_url = os.getenv("PREFECT_API_URL", "").strip()
+                    if prefect_api_url == "":
+                        raise RuntimeError("Prefect API URL is not configured")
+                    async with httpx.AsyncClient(
+                        timeout=2.0,
+                        follow_redirects=False,
+                        trust_env=False,
+                    ) as client:
+                        response = await client.get(
+                            f"{prefect_api_url.rstrip('/')}/health"
+                        )
+                    response.raise_for_status()
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Service unavailable",
+            ) from exc
+        return HealthResponse(status="ok")
+
+    application.add_api_route(
+        "/ready",
+        readiness,
         methods=["GET"],
         response_model=HealthResponse,
         include_in_schema=False,

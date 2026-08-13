@@ -12,15 +12,18 @@ from notarius_core.domain.errors import (
     SavedGraphRevisionConflictError,
 )
 from notarius_core.domain.execution_history import GraphExecutionStatus
+from notarius_core.domain.identity import WorkspaceCapability
 
 from notarius_api.services.errors import (
     ArtifactContentUnavailableError,
     WorkbenchOperationError,
 )
+from notarius_api.v1.routes.auth.dependencies import require_workspace_capability
 from notarius_api.v1.routes.collaboration.publish import actor_presentation_for
 from notarius_api.v1.routes.saved_graphs.dependencies import SavedGraphDependency
 
 from .dependencies import (
+    ExecutionAdmissionLimiterDependency,
     ExecutionHistoryDependency,
     MaterializationDependency,
     RunExecutionManagerDependency,
@@ -33,13 +36,13 @@ from .models import (
     GraphExecutionListResponse,
     GraphExecutionNodeResultResponse,
     GraphMaterializationsResponse,
+    RunExecutionCapacityErrorDetail,
+    RunExecutionCapacityErrorResponse,
     RunExecutionResponse,
     RunRequest,
     RunResponse,
 )
-from notarius_core.domain.identity import WorkspaceCapability
-
-from notarius_api.v1.routes.auth.dependencies import require_workspace_capability
+from .runtime.admission import RunExecutionCapacityError
 
 
 router = APIRouter(prefix="/workspaces/{workspace_id}", tags=["executions"])
@@ -53,18 +56,49 @@ ExecutionNodeFilter = Annotated[
 ]
 
 
-@router.post("/runs", response_model=RunResponse)
+@router.post(
+    "/runs",
+    response_model=RunResponse,
+    responses={
+        429: {
+            "description": "The process-wide active execution limit is exhausted",
+            "model": RunExecutionCapacityErrorResponse,
+            "headers": {
+                "Retry-After": {
+                    "description": "Minimum delay before retrying, in seconds",
+                    "schema": {"type": "integer", "minimum": 1},
+                }
+            },
+        }
+    },
+)
 async def run_graph(
     request: RunRequest,
     service: RunGraphDependency,
+    admission_limiter: ExecutionAdmissionLimiterDependency,
     presenter: RunResultPresenterDependency,
     access: require_workspace_capability(WorkspaceCapability.EXECUTE_GRAPH),
 ) -> RunResponse:
     try:
-        execution = await service.run(access.workspace_id, request)
-        return await presenter.run_response(access.workspace_id, execution)
+        admission_lease = admission_limiter.acquire()
+        try:
+            execution = await service.run(access.workspace_id, request)
+            return await presenter.run_response(access.workspace_id, execution)
+        finally:
+            admission_lease.release()
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RunExecutionCapacityError as exc:
+        detail = RunExecutionCapacityErrorDetail(
+            error_code=exc.error_code,
+            message=str(exc),
+            max_active_executions=exc.max_active_executions,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=detail.model_dump(mode="json"),
+            headers={"Retry-After": "1"},
+        ) from exc
     except SavedGraphRevisionConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ArtifactContentUnavailableError as exc:
@@ -77,6 +111,18 @@ async def run_graph(
     "/executions",
     response_model=RunExecutionResponse,
     status_code=202,
+    responses={
+        429: {
+            "description": "The process-wide active execution limit is exhausted",
+            "model": RunExecutionCapacityErrorResponse,
+            "headers": {
+                "Retry-After": {
+                    "description": "Minimum delay before retrying, in seconds",
+                    "schema": {"type": "integer", "minimum": 1},
+                }
+            },
+        }
+    },
 )
 async def start_graph_execution(
     request: RunRequest,
@@ -95,6 +141,17 @@ async def start_graph_execution(
         return await presenter.execution_response(execution)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RunExecutionCapacityError as exc:
+        detail = RunExecutionCapacityErrorDetail(
+            error_code=exc.error_code,
+            message=str(exc),
+            max_active_executions=exc.max_active_executions,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=detail.model_dump(mode="json"),
+            headers={"Retry-After": "1"},
+        ) from exc
     except CollaborationActiveExecutionError as exc:
         raise HTTPException(
             status_code=409,

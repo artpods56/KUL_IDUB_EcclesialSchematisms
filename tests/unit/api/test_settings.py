@@ -9,15 +9,18 @@ def test_execution_defaults_to_prefect_with_bounded_map_concurrency(
 ) -> None:
     monkeypatch.delenv("NOTARIUS_EXECUTION_BACKEND", raising=False)
     monkeypatch.delenv("NOTARIUS_MAP_MAX_CONCURRENCY", raising=False)
+    monkeypatch.delenv("NOTARIUS_MAX_ACTIVE_EXECUTIONS", raising=False)
     monkeypatch.delenv("NOTARIUS_PREFECT_TASK_RETRIES", raising=False)
     monkeypatch.delenv(
         "NOTARIUS_PREFECT_TASK_RETRY_DELAY_SECONDS",
         raising=False,
     )
-    settings = Settings()
+    # Defaults must be tested independently from a developer's local .env.
+    settings = Settings(_env_file=None)
 
     assert settings.execution_backend == "prefect"
     assert settings.map_max_concurrency == 4
+    assert settings.max_active_executions == 2
     assert settings.prefect_task_retries == 0
     assert settings.prefect_task_retry_delay_seconds == 0
 
@@ -48,6 +51,20 @@ def test_map_max_concurrency_must_be_positive() -> None:
         Settings(map_max_concurrency=0)
 
 
+def test_max_active_executions_can_be_selected_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NOTARIUS_MAX_ACTIVE_EXECUTIONS", "6")
+
+    assert Settings().max_active_executions == 6
+
+
+@pytest.mark.parametrize("value", [0, 33])
+def test_max_active_executions_is_bounded(value: int) -> None:
+    with pytest.raises(ValidationError):
+        Settings(max_active_executions=value)
+
+
 def test_prefect_task_retry_settings_must_not_be_negative() -> None:
     with pytest.raises(ValidationError):
         Settings(prefect_task_retries=-1)
@@ -58,6 +75,29 @@ def test_prefect_task_retry_settings_must_not_be_negative() -> None:
 def test_oidc_signing_algorithms_are_strictly_allowlisted() -> None:
     with pytest.raises(ValidationError):
         Settings(oidc_allowed_signing_algorithms=("none",))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("oidc_client_id", ""),
+        ("oidc_auth_wrapping_key", SecretStr("")),
+        ("oidc_client_secret", SecretStr("")),
+    ],
+)
+def test_oidc_configuration_rejects_empty_security_values(
+    field: str,
+    value: str | SecretStr,
+) -> None:
+    configured: dict[str, object] = {
+        "oidc_issuer": "https://issuer.example.test",
+        "oidc_client_id": "notarius-web",
+        "oidc_auth_wrapping_key": SecretStr("wrapping-key"),
+    }
+    configured[field] = value
+
+    with pytest.raises(ValidationError):
+        Settings.model_validate(configured)
 
 
 def test_database_url_is_redacted_from_serialized_settings() -> None:

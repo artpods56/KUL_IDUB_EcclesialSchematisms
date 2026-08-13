@@ -55,6 +55,7 @@ from notarius_api.v1.routes.catalog.dependencies import (
     plugin_registry,
 )
 from notarius_api.v1.routes.executions.dependencies import (
+    execution_admission_limiter,
     execution_history_service,
     materialization_service,
     run_execution_manager,
@@ -363,6 +364,7 @@ def install_workbench_dependency_overrides(
             plugin_registry: lambda: components.plugin_registry,
             image_upload_service: lambda: components.uploads,
             run_graph_service: lambda: components.run_graph,
+            execution_admission_limiter: lambda: components.execution_admission,
             run_execution_manager: lambda: components.execution_manager,
             execution_history_service: lambda: components.execution_history,
             materialization_service: lambda: components.materializations,

@@ -45,6 +45,9 @@ from notarius_api.v1.routes.executions.runtime.manager import RunExecutionManage
 from notarius_api.v1.routes.executions.runtime.node_execution import (
     NodeExecutionService,
 )
+from notarius_api.v1.routes.executions.runtime.admission import (
+    ExecutionAdmissionLimiter,
+)
 from notarius_api.v1.routes.executions.runtime.prefect import PrefectExecutionEngine
 from notarius_api.v1.routes.executions.runtime.preflight import GraphRunPreflight
 from notarius_api.v1.routes.executions.runtime.run_graph import RunGraph
@@ -53,6 +56,7 @@ from notarius_api.v1.routes.executions.services import (
     MaterializationService,
     RunResultPresenter,
 )
+from notarius_api.settings import STAGED_UPLOAD_HARD_MAX_BYTES
 from notarius_api.v1.routes.uploads.services import ImageUploadService
 
 
@@ -65,6 +69,7 @@ class WorkbenchComponents:
     uploads: ImageUploadService
     modules: GraphModuleCatalog
     run_graph: RunGraph
+    execution_admission: ExecutionAdmissionLimiter
     execution_manager: RunExecutionManager
     execution_history: ExecutionHistoryService
     materializations: MaterializationService
@@ -77,6 +82,7 @@ def build_workbench_components(
     plugin_registry: PluginRegistry,
     execution_backend: Literal["prefect", "inline"],
     map_max_concurrency: int = 4,
+    max_active_executions: int = 2,
     prefect_task_retries: int = 0,
     prefect_task_retry_delay_seconds: float = 0,
     workspace: Path | None = None,
@@ -84,6 +90,7 @@ def build_workbench_components(
     storage: FileStoragePort | None = None,
     storage_backend: str = "local",
     bucket: str = _WORKBENCH_BUCKET,
+    staged_upload_max_bytes: int = STAGED_UPLOAD_HARD_MAX_BYTES,
     saved_graphs: SavedGraphService | None = None,
     module_library: ModuleLibraryService | None = None,
     node_secrets: NodeSecretResolverPort | None = None,
@@ -106,6 +113,7 @@ def build_workbench_components(
     uploads = ImageUploadService(
         uploads_dir,
         unit_of_work_factory=lambda: resolved_unit_of_work,
+        max_upload_bytes=staged_upload_max_bytes,
     )
     resolved_storage = storage or LocalFileObjectStore(resolved_workspace / "objects")
     resolved_node_secrets = node_secrets or UnavailableNodeSecretResolver()
@@ -133,7 +141,14 @@ def build_workbench_components(
     writers.extend(plugin_registry.build_writers(plugin_context))
     writer_registry = ArtifactWriterRegistry(writers)
 
-    artifacts = ArtifactService(resolved_unit_of_work, resolved_storage)
+    artifacts = ArtifactService(
+        resolved_unit_of_work,
+        resolved_storage,
+        artifact_types={
+            (spec.key.id, spec.key.schema_version): spec
+            for spec in plugin_registry.artifact_types
+        },
+    )
     modules = GraphModuleCatalog(
         saved_graphs,
         plugin_registry,
@@ -192,15 +207,18 @@ def build_workbench_components(
         materializations=materializations,
     )
     execution_history = ExecutionHistoryService(resolved_unit_of_work, saved_graphs)
+    execution_admission = ExecutionAdmissionLimiter(max_active_executions)
     execution_manager = RunExecutionManager(
         run_graph,
         execution_history=execution_history,
+        admission_limiter=execution_admission,
     )
     return WorkbenchComponents(
         plugin_registry=plugin_registry,
         uploads=uploads,
         modules=modules,
         run_graph=run_graph,
+        execution_admission=execution_admission,
         execution_manager=execution_manager,
         execution_history=execution_history,
         materializations=materializations,

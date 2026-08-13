@@ -16,12 +16,13 @@ async def _run(args: argparse.Namespace) -> None:
     try:
         service = IdentityService(lambda: SqlAlchemyUnitOfWork(database.sessions))
         if args.command == "bootstrap-oidc-owner":
-            if not settings.oidc_is_configured:
+            configured_issuer = settings.oidc_issuer
+            if configured_issuer is None:
                 raise SystemExit("OIDC is not configured")
-            if args.issuer != settings.oidc_issuer:
+            if args.issuer is not None and args.issuer != configured_issuer:
                 raise SystemExit("Bootstrap issuer must equal configured OIDC issuer")
             await service.bootstrap_oidc_owner(
-                issuer=args.issuer,
+                issuer=configured_issuer,
                 subject=args.subject,
             )
             return
@@ -38,7 +39,10 @@ def main() -> None:
     commands = parser.add_subparsers(dest="command", required=True)
 
     bootstrap = commands.add_parser("bootstrap-oidc-owner")
-    bootstrap.add_argument("--issuer", required=True)
+    bootstrap.add_argument(
+        "--issuer",
+        help="optional assertion; defaults to configured NOTARIUS_OIDC_ISSUER",
+    )
     bootstrap.add_argument("--subject", required=True)
 
     disable = commands.add_parser("disable-user")

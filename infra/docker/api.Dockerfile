@@ -34,7 +34,10 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 RUN ogrinfo --format PMTiles
 RUN gdal2tiles.py --version
-RUN uv sync --locked --no-dev --extra gis --extra llm --extra ocr --extra sql
+# User-authored SQL is executable code. Until it runs in a separate,
+# least-privileged worker, the production API image must not install that
+# plugin into the process that holds application data and credentials.
+RUN uv sync --locked --no-dev --extra gis --extra llm --extra ocr
 
 FROM source AS api
 

@@ -36,6 +36,10 @@ from notarius_api.v1.routes.executions.models import (
 )
 from notarius_api.services.composition import build_workbench_components
 from notarius_api.v1.routes.executions.runtime.control import RunExecutionControl
+from notarius_api.v1.routes.executions.runtime.admission import (
+    ExecutionAdmissionLimiter,
+    RunExecutionCapacityError,
+)
 from notarius_api.v1.routes.executions.runtime.manager import (
     RunExecutionManager,
     RunExecutionSnapshot,
@@ -328,6 +332,7 @@ def _manager(
     *,
     terminal_retention: int = 100,
     event_capacity: int = 256,
+    max_active_executions: int = 2,
 ) -> RunExecutionManager:
     registry = build_plugin_registry(
         (*builtin_plugins(), EXECUTION_TEST_PLUGIN),
@@ -342,6 +347,7 @@ def _manager(
         components.run_graph,
         terminal_retention=terminal_retention,
         event_capacity=event_capacity,
+        admission_limiter=ExecutionAdmissionLimiter(max_active_executions),
     )
 
 
@@ -751,6 +757,130 @@ async def test_cancellation_intent_wins_when_executor_wraps_cancelled_error() ->
 
     assert terminal.status == "cancelled"
     assert terminal.error is None
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_manager_atomically_rejects_execution_above_process_capacity() -> None:
+    run_graph = ControlledRunGraph()
+    manager = RunExecutionManager(
+        run_graph,
+        admission_limiter=ExecutionAdmissionLimiter(1),
+    )
+
+    starts = await asyncio.gather(
+        manager.start(WORKSPACE_ID, RunRequest(nodes=[])),
+        manager.start(WORKSPACE_ID, RunRequest(nodes=[])),
+        return_exceptions=True,
+    )
+
+    accepted = [result for result in starts if isinstance(result, RunExecutionSnapshot)]
+    rejected = [result for result in starts if isinstance(result, Exception)]
+    assert len(accepted) == 1
+    assert len(rejected) == 1
+    capacity_error = rejected[0]
+    assert isinstance(capacity_error, RunExecutionCapacityError)
+    assert capacity_error.error_code == "execution_capacity_exceeded"
+    assert capacity_error.max_active_executions == 1
+
+    run_graph.release.set()
+    assert (await _terminal(manager, accepted[0].execution_id)).status == "succeeded"
+    replacement = await manager.start(WORKSPACE_ID, RunRequest(nodes=[]))
+    assert (await _terminal(manager, replacement.execution_id)).status == "succeeded"
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_manager_uses_shared_process_admission_budget() -> None:
+    run_graph = ControlledRunGraph()
+    admission_limiter = ExecutionAdmissionLimiter(1)
+    manager = RunExecutionManager(
+        run_graph,
+        admission_limiter=admission_limiter,
+    )
+    diagnostic_run_lease = admission_limiter.acquire()
+
+    with pytest.raises(RunExecutionCapacityError):
+        await manager.start(WORKSPACE_ID, RunRequest(nodes=[]))
+
+    diagnostic_run_lease.release()
+    execution = await manager.start(WORKSPACE_ID, RunRequest(nodes=[]))
+    run_graph.release.set()
+    assert (await _terminal(manager, execution.execution_id)).status == "succeeded"
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_manager_releases_admission_after_start_setup_failure() -> None:
+    run_graph = ControlledRunGraph()
+    admission_limiter = ExecutionAdmissionLimiter(1)
+    manager = RunExecutionManager(
+        run_graph,
+        admission_limiter=admission_limiter,
+    )
+
+    with pytest.raises(RuntimeError, match="history is not configured"):
+        await manager.start(
+            WORKSPACE_ID,
+            RunRequest(nodes=[], graph_id=uuid4(), graph_revision=1),
+        )
+
+    execution = await manager.start(WORKSPACE_ID, RunRequest(nodes=[]))
+    run_graph.release.set()
+    assert (await _terminal(manager, execution.execution_id)).status == "succeeded"
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_execution_releases_process_capacity() -> None:
+    run_graph = ControlledRunGraph()
+    history = ControlledExecutionHistory()
+    history.allow_complete.clear()
+    manager = RunExecutionManager(
+        run_graph,
+        execution_history=history,
+        admission_limiter=ExecutionAdmissionLimiter(1),
+    )
+    execution = await manager.start(
+        WORKSPACE_ID,
+        RunRequest(nodes=[], graph_id=uuid4(), graph_revision=1),
+    )
+    await run_graph.started.wait()
+
+    cancelling = await manager.cancel(WORKSPACE_ID, execution.execution_id)
+    assert cancelling.status == "cancelling"
+    await history.complete_entered.wait()
+    with pytest.raises(RunExecutionCapacityError):
+        await manager.start(WORKSPACE_ID, RunRequest(nodes=[]))
+    history.allow_complete.set()
+    assert (await _terminal(manager, execution.execution_id)).status == "cancelled"
+
+    replacement = await manager.start(WORKSPACE_ID, RunRequest(nodes=[]))
+    run_graph.release.set()
+    assert (await _terminal(manager, replacement.execution_id)).status == "succeeded"
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_failed_execution_releases_process_capacity(tmp_path: Path) -> None:
+    manager = _manager(
+        tmp_path / "workbench",
+        max_active_executions=1,
+    )
+    failing_request = RunRequest(
+        nodes=[
+            RunNodeRequest(
+                id="failure",
+                operator_id="test.execution.failure",
+                operator_version=1,
+            )
+        ]
+    )
+    first = await manager.start(WORKSPACE_ID, failing_request)
+    assert (await _terminal(manager, first.execution_id)).status == "failed"
+
+    second = await manager.start(WORKSPACE_ID, failing_request)
+    assert (await _terminal(manager, second.execution_id)).status == "failed"
     await manager.shutdown()
 
 

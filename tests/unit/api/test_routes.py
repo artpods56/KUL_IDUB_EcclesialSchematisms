@@ -3,9 +3,11 @@ from io import BytesIO
 import json
 from pathlib import Path
 from typing import cast
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
@@ -16,8 +18,15 @@ from notarius_api.main import create_app
 from tests.unit.api.conftest import WORKSPACE_ID, install_browser_actor_override
 from notarius_api.v1.routes.catalog.models import NodeRegistryResponse
 from notarius_api.v1.routes.executions.models import (
+    RunExecutionCapacityErrorResponse,
     RunExecutionResponse,
     RunResponse,
+)
+from notarius_api.v1.routes.executions.dependencies import run_execution_manager
+from notarius_api.v1.routes.executions.dependencies import execution_admission_limiter
+from notarius_api.v1.routes.executions.runtime.admission import (
+    ExecutionAdmissionLimiter,
+    RunExecutionCapacityError,
 )
 from notarius_api.v1.routes.uploads.services import ImageUploadService
 from notarius_api.settings import Settings
@@ -247,6 +256,36 @@ def test_run_accepts_empty_graph(builtin_client: TestClient) -> None:
     assert result.node_runs == []
 
 
+def test_synchronous_run_shares_typed_execution_capacity_contract(
+    builtin_client: TestClient,
+) -> None:
+    application = cast(FastAPI, builtin_client.app)
+    admission_limiter = ExecutionAdmissionLimiter(1)
+    occupied_lease = admission_limiter.acquire()
+    original_override = application.dependency_overrides[
+        execution_admission_limiter
+    ]
+    application.dependency_overrides[execution_admission_limiter] = (
+        lambda: admission_limiter
+    )
+    try:
+        response = builtin_client.post(
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
+            json={"nodes": [], "edges": []},
+        )
+    finally:
+        occupied_lease.release()
+        application.dependency_overrides[
+            execution_admission_limiter
+        ] = original_override
+
+    error = RunExecutionCapacityErrorResponse.model_validate(response.json())
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "1"
+    assert error.detail.error_code == "execution_capacity_exceeded"
+    assert error.detail.max_active_executions == 1
+
+
 def test_async_execution_routes_return_pollable_typed_state(
     builtin_client: TestClient,
 ) -> None:
@@ -282,6 +321,34 @@ def test_async_execution_routes_return_pollable_typed_state(
     missing_id = uuid4()
     assert builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{missing_id}").status_code == 404
     assert builtin_client.delete(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{missing_id}").status_code == 404
+
+
+def test_async_execution_route_returns_typed_capacity_error(
+    builtin_client: TestClient,
+) -> None:
+    rejecting_manager = AsyncMock()
+    rejecting_manager.start.side_effect = RunExecutionCapacityError(2)
+    application = cast(FastAPI, builtin_client.app)
+    original_override = application.dependency_overrides[
+        run_execution_manager
+    ]
+    application.dependency_overrides[run_execution_manager] = (
+        lambda: rejecting_manager
+    )
+    try:
+        response = builtin_client.post(
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
+            json={"nodes": [], "edges": []},
+        )
+    finally:
+        application.dependency_overrides[run_execution_manager] = original_override
+
+    error = RunExecutionCapacityErrorResponse.model_validate(response.json())
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "1"
+    assert error.detail.error_code == "execution_capacity_exceeded"
+    assert error.detail.max_active_executions == 2
+    assert "2 active executions" in error.detail.message
 
 
 def test_execution_event_stream_replays_ids_and_closes_after_terminal(

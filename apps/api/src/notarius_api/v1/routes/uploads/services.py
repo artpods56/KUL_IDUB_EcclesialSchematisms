@@ -15,6 +15,7 @@ from notarius_core.ports.staged_uploads import StagedUploadUnitOfWorkPort
 from notarius_core.staged_upload_paths import resolve_staged_upload_path
 
 from notarius_api.services.errors import WorkbenchOperationError
+from notarius_api.settings import STAGED_UPLOAD_HARD_MAX_BYTES
 
 
 _SAMPLE_PAGE_TEXTS = (
@@ -31,6 +32,10 @@ class ImageUploadItem:
     byte_size: int
 
 
+class StagedUploadTooLargeError(WorkbenchOperationError):
+    """A staged file exceeds the configured per-upload byte limit."""
+
+
 class ImageUploadService:
     """Stages opaque file uploads consumed by file-source nodes."""
 
@@ -38,10 +43,19 @@ class ImageUploadService:
         self,
         uploads_dir: Path,
         unit_of_work_factory: Callable[[], StagedUploadUnitOfWorkPort],
+        *,
+        max_upload_bytes: int = STAGED_UPLOAD_HARD_MAX_BYTES,
     ) -> None:
+        if max_upload_bytes < 1:
+            raise ValueError("Staged upload byte limit must be positive")
+        if max_upload_bytes > STAGED_UPLOAD_HARD_MAX_BYTES:
+            raise ValueError(
+                "Staged upload byte limit must not exceed the 64 MiB hard limit"
+            )
         self._uploads_dir = uploads_dir.expanduser().resolve()
         self._uploads_dir.mkdir(parents=True, exist_ok=True)
         self._unit_of_work_factory = unit_of_work_factory
+        self._max_upload_bytes = max_upload_bytes
 
     async def save_upload(
         self,
@@ -56,7 +70,10 @@ class ImageUploadService:
         path = self._path_for(workspace_id, upload_key)
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            await run_in_threadpool(self._write_stream, path, stream)
+            await run_in_threadpool(self._write_stream, path, stream, filename)
+        except StagedUploadTooLargeError:
+            path.unlink(missing_ok=True)
+            raise
         except OSError as exc:
             path.unlink(missing_ok=True)
             raise WorkbenchOperationError(
@@ -149,11 +166,21 @@ class ImageUploadService:
                 )
             await unit_of_work.commit()
 
-    @staticmethod
-    def _write_stream(path: Path, stream: BinaryIO) -> None:
+    def _write_stream(self, path: Path, stream: BinaryIO, filename: str) -> None:
+        byte_size = 0
         with path.open("xb") as destination:
             while chunk := stream.read(1024 * 1024):
+                byte_size += len(chunk)
+                if byte_size > self._max_upload_bytes:
+                    raise StagedUploadTooLargeError(
+                        f"Upload {filename!r} exceeds the staged-upload limit of "
+                        f"{self._max_upload_bytes} bytes"
+                    )
                 destination.write(chunk)
 
 
-__all__ = ["ImageUploadItem", "ImageUploadService"]
+__all__ = [
+    "ImageUploadItem",
+    "ImageUploadService",
+    "StagedUploadTooLargeError",
+]

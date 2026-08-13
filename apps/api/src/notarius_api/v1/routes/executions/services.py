@@ -28,7 +28,10 @@ from notarius_core.ports.collaboration import CollaborationRepositoryPort
 from notarius_core.ports.execution_history import ExecutionHistoryUnitOfWorkPort
 from notarius_core.ports.materialized_outputs import WorkbenchUnitOfWorkPort
 
-from notarius_api.v1.routes.artifacts.models import ArtifactSummaryResponse
+from notarius_api.v1.routes.artifacts.models import (
+    ArtifactExportFormatResponse,
+    ArtifactSummaryResponse,
+)
 from notarius_api.v1.routes.artifacts.services import ArtifactService
 
 from .models import (
@@ -545,6 +548,10 @@ class RunResultPresenter:
             sha256=artifact.sha256,
             text=text,
             content_url=f"./artifacts/{artifact.id}/content",
+            download_formats=[
+                ArtifactExportFormatResponse.from_export_format(export_format)
+                for export_format in self._artifacts.export_formats(artifact)
+            ],
             metadata=artifact.metadata,
         )
 

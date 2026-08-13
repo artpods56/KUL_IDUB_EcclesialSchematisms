@@ -21,6 +21,8 @@ _OIDC_ALLOWED_ALGORITHMS = frozenset(
     }
 )
 
+STAGED_UPLOAD_HARD_MAX_BYTES = 64 * 1024 * 1024
+
 
 class Settings(BaseSettings):
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
@@ -59,10 +61,16 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     execution_backend: Literal["prefect", "inline"] = "prefect"
     map_max_concurrency: int = Field(default=4, ge=1)
+    max_active_executions: int = Field(default=2, ge=1, le=32)
     prefect_task_retries: int = Field(default=0, ge=0)
     prefect_task_retry_delay_seconds: float = Field(default=0, ge=0)
     storage_backend: Literal["local", "s3"] = "local"
     storage_bucket: str = Field(default="workbench-artifacts", min_length=1)
+    staged_upload_max_bytes: int = Field(
+        default=STAGED_UPLOAD_HARD_MAX_BYTES,
+        ge=1024 * 1024,
+        le=STAGED_UPLOAD_HARD_MAX_BYTES,
+    )
     s3_endpoint_url: str | None = None
     s3_region: str = Field(default="us-east-1", min_length=1)
     s3_access_key_id: SecretStr | None = None
@@ -114,6 +122,18 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_oidc_configuration(self) -> "Settings":
+        if self.oidc_client_id is not None and self.oidc_client_id.strip() == "":
+            raise ValueError("oidc_client_id must not be empty")
+        if (
+            self.oidc_auth_wrapping_key is not None
+            and self.oidc_auth_wrapping_key.get_secret_value() == ""
+        ):
+            raise ValueError("oidc_auth_wrapping_key must not be empty")
+        if (
+            self.oidc_client_secret is not None
+            and self.oidc_client_secret.get_secret_value() == ""
+        ):
+            raise ValueError("oidc_client_secret must be omitted rather than empty")
         configured = (
             self.oidc_issuer,
             self.oidc_client_id,

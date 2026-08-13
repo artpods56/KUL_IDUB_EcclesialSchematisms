@@ -5,6 +5,7 @@ from fastapi import Depends, Request
 from notarius_api.app_state import get_resources
 
 from .runtime.manager import RunExecutionManager
+from .runtime.admission import ExecutionAdmissionLimiter
 from .runtime.run_graph import RunGraph
 from .services import (
     ExecutionHistoryService,
@@ -18,6 +19,16 @@ def run_graph_service(request: Request) -> RunGraph:
 
 
 RunGraphDependency = Annotated[RunGraph, Depends(run_graph_service)]
+
+
+def execution_admission_limiter(request: Request) -> ExecutionAdmissionLimiter:
+    return get_resources(request.app).execution_admission
+
+
+ExecutionAdmissionLimiterDependency = Annotated[
+    ExecutionAdmissionLimiter,
+    Depends(execution_admission_limiter),
+]
 
 
 def run_execution_manager(request: Request) -> RunExecutionManager:
@@ -62,11 +73,13 @@ RunResultPresenterDependency = Annotated[
 
 __all__ = [
     "ExecutionHistoryDependency",
+    "ExecutionAdmissionLimiterDependency",
     "MaterializationDependency",
     "RunExecutionManagerDependency",
     "RunGraphDependency",
     "RunResultPresenterDependency",
     "execution_history_service",
+    "execution_admission_limiter",
     "materialization_service",
     "run_execution_manager",
     "run_graph_service",

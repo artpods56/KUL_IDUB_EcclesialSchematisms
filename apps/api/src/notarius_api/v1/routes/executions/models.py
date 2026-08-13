@@ -192,6 +192,16 @@ class RunExecutionResponse(ApiResponse):
     error: str | None
 
 
+class RunExecutionCapacityErrorDetail(ApiResponse):
+    error_code: Literal["execution_capacity_exceeded"]
+    message: str
+    max_active_executions: int = Field(ge=1)
+
+
+class RunExecutionCapacityErrorResponse(ApiResponse):
+    detail: RunExecutionCapacityErrorDetail
+
+
 class RunExecutionEventBase(ApiResponse):
     sequence: int = Field(ge=1)
     execution_id: UUID
@@ -444,6 +454,8 @@ __all__ = [
     "RunEdgeRequest",
     "RunExecutionEvent",
     "RunExecutionEventBase",
+    "RunExecutionCapacityErrorDetail",
+    "RunExecutionCapacityErrorResponse",
     "RunExecutionResponse",
     "RunExecutionStatus",
     "RunInputPlugRequest",

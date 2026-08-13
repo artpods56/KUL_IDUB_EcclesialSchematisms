@@ -18,6 +18,9 @@ from notarius_api.v1.routes.auth.services import AuthService
 from notarius_api.v1.routes.catalog.services import GraphModuleCatalog
 from notarius_api.v1.routes.collaboration.hub import GraphRoomHub
 from notarius_api.v1.routes.executions.runtime.manager import RunExecutionManager
+from notarius_api.v1.routes.executions.runtime.admission import (
+    ExecutionAdmissionLimiter,
+)
 from notarius_api.v1.routes.executions.runtime.run_graph import RunGraph
 from notarius_api.v1.routes.executions.services import (
     ExecutionHistoryService,
@@ -47,6 +50,7 @@ class AppResources:
     module_library: ModuleLibraryService
     templates: TemplateService
     run_graph: RunGraph
+    execution_admission: ExecutionAdmissionLimiter
     execution_manager: RunExecutionManager
     execution_history: ExecutionHistoryService
     materializations: MaterializationService
