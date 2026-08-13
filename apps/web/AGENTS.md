@@ -17,6 +17,16 @@ This version has breaking changes — APIs, conventions, and file structure may 
 <!-- BEGIN:web-app-conventions -->
 # Web app conventions
 
+## Sandbox
+
+- `/sandbox` is a **development-only** UI spike host (`src/sandbox/`). It
+  `notFound()`s in production and is not linked from product navigation.
+- Put visual explorations there when they must use real Grafy chrome (tokens,
+  overlay, `CatalogNodePreview`, port marks). Do not patch workbench feature
+  files to make a spike render. Sandbox may import `features/`; never the reverse.
+- Register spikes in `src/sandbox/catalog.ts` and `src/sandbox/SpikeHost.tsx`.
+  See `src/sandbox/README.md`.
+
 ## Routing
 
 - Graph is the primary user object. `src/app/page.tsx` (`/`) and `/graphs` both

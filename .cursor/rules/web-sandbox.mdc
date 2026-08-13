@@ -1,0 +1,17 @@
+---
+description: Grafy web UI sandbox for design spikes. Use when exploring workbench chrome, port inspectors, overlays, or any visual spike that must look like the real canvas.
+globs: apps/web/src/sandbox/**/*
+alwaysApply: false
+---
+
+# Web sandbox
+
+Design spikes that need Grafy chrome live in `apps/web/src/sandbox/`, routed at `/sandbox` (dev only).
+
+- Import real tokens, `overlay`, `CatalogNodePreview`, `portMarkStyle`. Do not draw a fake node.
+- Sandbox may import `features/` / `components/` / `lib/`. Those trees must never import sandbox.
+- Do not patch product files (`WorkflowNode`, `type-inspector`, etc.) to make a spike render.
+- Register new spikes in `apps/web/src/sandbox/catalog.ts` and `SpikeHost.tsx`.
+- Cursor `.canvas.tsx` files cannot import Grafy — use this sandbox when shape and type color matter.
+
+See `apps/web/src/sandbox/README.md`.
