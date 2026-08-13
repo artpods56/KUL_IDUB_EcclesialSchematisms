@@ -214,7 +214,7 @@ user sees. [R20: Verify After Signature Changes] [R43: Tests Are Behavioral Cont
 
 **Completed verification (2026-07-13).**
 
-- `make check` passed 100 Python tests, Ruff, ESLint, basedpyright, TypeScript,
+- `just check` passed 100 Python tests, Ruff, ESLint, basedpyright, TypeScript,
   generated OpenAPI client verification, and the production Next.js build.
 - A browser smoke test changed an edge projection, connected a mapped node's
   effective `many` output to a collection input, removed an edge, and removed a
@@ -297,7 +297,7 @@ execution deterministic.
 
 **Completed verification (2026-07-15).**
 
-- `make check` passed 205 Python tests, 7 web conversion-route tests, Ruff,
+- `just check` passed 205 Python tests, 7 web conversion-route tests, Ruff,
   ESLint, basedpyright, TypeScript, generated OpenAPI client verification, and
   the production Next.js build.
 - Focused graph tests covered direct and transitive conversion, projection before
@@ -350,7 +350,7 @@ weakening nominal artifact compatibility or adding implicit runtime coercion.
 
 **Completed verification (2026-07-15).**
 
-- `make check` passed 284 Python tests, 31 web tests, Ruff, ESLint,
+- `just check` passed 284 Python tests, 31 web tests, Ruff, ESLint,
   basedpyright, TypeScript, generated OpenAPI client verification, and the
   production Next.js build. [R20: Verify After Signature Changes]
 - Focused API tests executed a nested JSON string directly as text and a nested

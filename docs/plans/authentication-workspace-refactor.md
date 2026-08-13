@@ -947,7 +947,7 @@ HTTP remains the generated contract boundary:
 5. update the mounted MCP tool input/output models and injected application
    operation mappings without duplicating REST transport DTOs;
 6. run the FastMCP SDK compatibility/integration gate;
-7. run `npm --prefix apps/web run check:api` and `make contract`.
+7. run `npm --prefix apps/web run check:api` and `just contract`.
 
 In `apps/web/src/lib/api/client.ts`, use the relative same-origin `/api` base, set
 `credentials: "same-origin"`, and attach `X-CSRF-Token` only to unsafe
@@ -1075,13 +1075,13 @@ uv run pytest tests/unit/api
 uv run pytest tests/unit/mcp
 npm --prefix apps/web test
 npm --prefix apps/web run check:api
-make lint
-make typecheck
-make build
-make check
+just lint
+just typecheck
+just build
+just check
 ```
 
-Run the smallest focused suite first during development. `make check` and the
+Run the smallest focused suite first during development. `just check` and the
 two-browser acceptance suite are mandatory before the deployment gate.
 
 ## Definition of done
@@ -1126,4 +1126,4 @@ The refactor is complete only when all of the following are true:
   post-migration validation, collaboration drain, and full restore have been
   rehearsed with documented disk headroom.
 - The parameterized authorization matrix, sensitive-state sentinel, existing
-  regression suites, `make check`, and two-browser acceptance journey all pass.
+  regression suites, `just check`, and two-browser acceptance journey all pass.

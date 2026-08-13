@@ -6,7 +6,7 @@ Dev-only OpenID Connect provider, following the same
 ## Start
 
 ```bash
-make keycloak-up
+just keycloak-up
 ```
 
 Admin console: [http://keycloak.localhost:8081](http://keycloak.localhost:8081)
@@ -30,13 +30,13 @@ required.
 With API env configured (see root `.env.example`):
 
 ```bash
-make db-upgrade
+just db-upgrade
 uv run notarius-admin bootstrap-oidc-owner \
   --issuer http://keycloak.localhost:8081/realms/notarius \
   --subject 11111111-1111-4111-8111-111111111111
 ```
 
-Then `make api` and `make web`, open `http://localhost:3000`, and sign in as
+Then `just api` and `just web`, open `http://localhost:3000`, and sign in as
 `owner` / `owner`.
 
 ## Reset realm import
@@ -44,7 +44,7 @@ Then `make api` and `make web`, open `http://localhost:3000`, and sign in as
 Realm import only runs on an empty Keycloak data volume:
 
 ```bash
-make keycloak-down
+just keycloak-down
 docker volume rm notarius-keycloak_keycloak-data
-make keycloak-up
+just keycloak-up
 ```

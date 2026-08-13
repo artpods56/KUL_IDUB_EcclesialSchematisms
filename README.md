@@ -196,6 +196,7 @@ Requirements:
 
 - Python 3.12.9
 - [uv](https://docs.astral.sh/uv/)
+- [just](https://github.com/casey/just)
 - Node.js 20+ and npm
 - For the optional GIS plugin: GDAL 3.8+ with writable PMTiles, COG, and PNG
   drivers, plus `gdal2tiles.py`. The API plugins container includes these tools.
@@ -203,7 +204,7 @@ Requirements:
 Install both workspaces:
 
 ```bash
-make install
+just install
 ```
 
 The default installation contains the API, MCP adapter, core, persistence,
@@ -211,38 +212,50 @@ storage, and web application; it does not install OCR or Mistral. Enable the
 optional OCR plugin with:
 
 ```bash
-make install-ocr
+just install-ocr
 ```
 
 Enable the optional LLM plugin with:
 
 ```bash
-make install-llm
+just install-llm
 ```
 
 Enable the optional GIS plugin with:
 
 ```bash
-make install-gis
+just install-gis
 ```
 
 Install every optional plugin together with the default workspaces using:
 
 ```bash
-make install-all
+just install-all
 ```
 
 Start the API and web app in separate terminals:
 
 ```bash
-make api
-make web
+just api
+just web
 ```
 
 For a VPS deployment behind an existing Nginx instance, use the production
 [Docker Compose guide](infra/docker/README.md). The Compose services publish
 only loopback-bound ports, run migrations before the API, and keep the database
 and local artifact objects in one durable volume.
+
+On a configured production host, deploy the checked-out branch and wait for
+healthy services with:
+
+```bash
+just deploy
+```
+
+Use `just status`, `just logs`, and `just minio-status` for routine operations.
+The production recipes read `/etc/graphy/graphy.env` and merge
+`/etc/graphy/storage.override.yaml`; override those paths with
+`GRAPHY_ENV_FILE` and `GRAPHY_COMPOSE_OVERRIDE` when required.
 
 ### Assemble graphs through MCP
 
@@ -288,20 +301,20 @@ approval_mode = "prompt"
 Supply the PAT through the client's Authorization configuration for that
 server. Read tools run directly; mutating tools keep explicit prompt policies.
 
-`make api` applies pending Alembic migrations before starting FastAPI. Saved
+`just api` applies pending Alembic migrations before starting FastAPI. Saved
 graphs, artifact metadata, and materialization bindings are stored in SQLite at
 `.notarius-artifacts/workbench/notarius.sqlite3` by default, together with exact
 invocation-cache entries. Override
 `NOTARIUS_DATABASE_URL` with another SQLite URL or a
 `postgresql+asyncpg://...` URL for PostgreSQL. Useful
-migration commands are `make db-current`, `make db-history`, and
-`make db-revision message="describe change"`.
+migration commands are `just db-current`, `just db-history`, and
+`just db-revision "describe change"`.
 
-After a default installation, `make api-ocr` installs the OCR extra and starts
-the API in one command. Use `make api-ocr` whenever that plugin should be
-available; `make api` keeps the API environment on its minimal package graph.
-Use `make api-llm` for the OpenAI-compatible and Mistral LLM nodes.
-Use `make api-gis` to discover the spatial import, layer, and map-composition
+After a default installation, `just api-ocr` installs the OCR extra and starts
+the API in one command. Use `just api-ocr` whenever that plugin should be
+available; `just api` keeps the API environment on its minimal package graph.
+Use `just api-llm` for the OpenAI-compatible and Mistral LLM nodes.
+Use `just api-gis` to discover the spatial import, layer, and map-composition
 nodes.
 
 ### Compose vector and raster maps
@@ -436,7 +449,7 @@ HTTPS and an access-controlled boundary before exposing it to untrusted users.
 Run the full retained contract:
 
 ```bash
-make check
+just check
 ```
 
 The check runs backend tests, Python and TypeScript lint/type checks, verifies
@@ -448,7 +461,7 @@ dependencies.
 To exercise the runtime without the browser:
 
 ```bash
-make smoke
+just smoke
 ```
 
 ## Containers
@@ -460,6 +473,6 @@ one-shot migration service must complete before the API starts. SQLite, uploads,
 and artifact objects share the durable `notarius-data` volume.
 
 ```bash
-make docker-up
-make docker-down
+just docker-up
+just docker-down
 ```
