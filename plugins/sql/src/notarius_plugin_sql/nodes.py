@@ -260,6 +260,7 @@ class ExecuteSqlConfig(NodeConfig):
     username: StrictStr = Field(min_length=1, max_length=255)
     ssl_mode: PostgresSslMode = PostgresSslMode.PREFER
     timeout_seconds: float = Field(default=30.0, gt=0.0, le=900.0)
+    max_result_rows: StrictInt = Field(default=10_000, ge=1, le=100_000)
 
     @field_validator("host", "database", "username")
     @classmethod

@@ -26,6 +26,7 @@ class FakeResult:
         self._columns = columns
         self._rows = rows
         self.rowcount = rowcount
+        self.fetch_sizes: list[int] = []
 
     @property
     def returns_rows(self) -> bool:
@@ -34,8 +35,9 @@ class FakeResult:
     def keys(self) -> Sequence[str]:
         return self._columns
 
-    def all(self) -> Sequence[Sequence[object]]:
-        return self._rows
+    def fetchmany(self, size: int) -> Sequence[Sequence[object]]:
+        self.fetch_sizes.append(size)
+        return self._rows[:size]
 
 
 class FakeConnection:
@@ -206,6 +208,35 @@ async def test_sqlalchemy_executor_rolls_back_and_reports_statement_index() -> N
             )
 
     assert captured.value.__cause__ is failure
+    assert not engine.transaction.committed
+    assert engine.transaction.rolled_back
+    assert engine.disposed
+
+
+async def test_sqlalchemy_executor_rolls_back_when_result_exceeds_row_limit() -> None:
+    oversized = FakeResult(
+        columns=("value",),
+        rows=((1,), (2,), (3,)),
+    )
+    connection = FakeConnection([oversized])
+    engine = FakeEngine(connection)
+    config = postgres_config().model_copy(update={"max_result_rows": 2})
+
+    with patch(
+        "notarius_plugin_sql.sqlalchemy.create_async_engine",
+        FakeEngineFactory(engine),
+    ):
+        with pytest.raises(
+            SqlExecutionError,
+            match="statement at index 0 exceeded the configured 2-row result limit",
+        ):
+            await SqlAlchemyPostgresBatchExecutor().execute(
+                config,
+                SecretStr("password"),
+                [SqlStatement(sql="select value from too_many_rows")],
+            )
+
+    assert oversized.fetch_sizes == [3]
     assert not engine.transaction.committed
     assert engine.transaction.rolled_back
     assert engine.disposed

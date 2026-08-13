@@ -34,7 +34,7 @@ class _SqlAlchemyResult(Protocol):
 
     def keys(self) -> Sequence[str]: ...
 
-    def all(self) -> Sequence[Sequence[object]]: ...
+    def fetchmany(self, size: int) -> Sequence[Sequence[object]]: ...
 
 
 class _SqlAlchemyConnection(Protocol):
@@ -93,7 +93,17 @@ class SqlAlchemyPostgresBatchExecutor(PostgresBatchExecutor):
                             statement.parameters,
                         )
                         returns_rows = result.returns_rows
-                        rows = result.all() if returns_rows else ()
+                        rows = (
+                            result.fetchmany(config.max_result_rows + 1)
+                            if returns_rows
+                            else ()
+                        )
+                        if len(rows) > config.max_result_rows:
+                            raise SqlExecutionError(
+                                "PostgreSQL statement at index "
+                                f"{index} exceeded the configured "
+                                f"{config.max_result_rows}-row result limit"
+                            )
                         affected_rows = None
                         if not returns_rows and result.rowcount >= 0:
                             affected_rows = result.rowcount
@@ -142,6 +152,8 @@ class SqlAlchemyPostgresBatchExecutor(PostgresBatchExecutor):
                                 affected_rows=affected_rows,
                             )
                         )
+                    except SqlExecutionError:
+                        raise
                     except Exception as exc:
                         raise SqlExecutionError(
                             f"PostgreSQL statement at index {index} failed"
