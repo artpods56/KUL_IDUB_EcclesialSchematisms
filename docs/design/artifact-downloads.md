@@ -80,7 +80,7 @@ ArtifactTypeSpec(
 |---|---|---|
 | `json` | The **whole artifact** as one JSON document (its canonical payload) | every type with a payload |
 | `txt` | A **text scalar** as bare text (no envelope) | `scalar.text@1`, `text.markdown@1`, `llm.completion` content |
-| `csv` | A **table** as delimited rows | `table.data@1`, `sql.result@1` (projected table) |
+| `csv` | A **table** streamed as delimited rows (full artifact, not a page) | `table.data@1`, `sql.result@1` (projected table) |
 | `xlsx` | A table as a workbook | `table.data@1` |
 | `png` / `webp` | Raster / image bytes | `image/*`, `geo.raster_scan` tiles |
 | `geojson` | Feature collection as GeoJSON | `geo.feature_collection@1` |
@@ -301,7 +301,7 @@ decisions).
 | Missing artifact | `404` (existing pattern) |
 | Content unavailable (deleted storage) | `500` `ArtifactContentUnavailableError` |
 | Text artifact via `json` | Whole envelope `{"value": "..."}` (allowed; `json` is universal) |
-| Table too large for CSV/XLSX | `400` with row-limit message (first-release bound) |
+| Table too large for CSV | Streams chunk-by-chunk (no memory bound); JSON still buffered at 64 MB |
 | Filename collision / unsafe chars | id-suffixed slug, never raw `download_name` |
 | Sequence download | Only focused artifact (first release) |
 | No formats declared | Download control hidden; type is not exportable |
@@ -326,9 +326,15 @@ decisions).
 - Regenerated the OpenAPI schema + TS contract; added backend and frontend
   tests.
 
-**Phase 2 — CSV for tables**
-- Declare `csv` on `table.data@1` (+ `sql.result@1` projected table).
-- Table renderer: full `Table` load → CSV, with row-limit guard.
+**Phase 2 — CSV for tables — implemented**
+- Declare `csv` on `table.data@1` (content `text/csv`, filename `table.csv`).
+- `iter_table_csv` (core) streams the **full** table as CSV: chunked artifacts
+  are read one stored chunk at a time into a bounded CSV buffer, so peak memory
+  is one chunk + the buffer, not the whole table. No row-limit guard needed
+  because it streams rather than reconstructing.
+- `ArtifactContentRead` accepts a lazy async-iterable body; the `/download`
+  route streams CSV without a content-length (chunked transfer).
+- `sql.result@1` projected-table CSV deferred to a later pass.
 
 **Phase 3 — Geo**
 - Declare `geojson` on `geo.feature_collection@1`; `pmtiles` where a vector
