@@ -485,12 +485,17 @@ async def iter_table_csv(
     bytes (header row first, then one row per table row).
     """
 
+    # A UTF-8 BOM (U+FEFF) makes spreadsheet apps (notably Excel) decode the
+    # file as UTF-8 rather than the system ANSI codepage. RFC 4180 uses CRLF
+    # line terminators; the csv dialect default already produces CRLF, so we
+    # keep it rather than overriding to bare LF.
     if artifact.inline_payload is not None:
         table = Table.model_validate(artifact.inline_payload)
         columns = table.columns
         rows = iter(table.rows)
         buffer = StringIO()
-        writer = csv.writer(buffer, lineterminator="\n")
+        buffer.write("\ufeff")
+        writer = csv.writer(buffer)
         writer.writerow([column.id for column in columns])
         for row in rows:
             writer.writerow([_csv_cell(row[column.id]) for column in columns])
@@ -508,7 +513,8 @@ async def iter_table_csv(
             f"Table artifact {artifact.id} does not have a storage bucket"
         )
     buffer = StringIO()
-    writer = csv.writer(buffer, lineterminator="\n")
+    buffer.write("\ufeff")
+    writer = csv.writer(buffer)
     writer.writerow([column.id for column in manifest.columns])
     for descriptor in manifest.chunks:
         chunk = await _load_stored_model(

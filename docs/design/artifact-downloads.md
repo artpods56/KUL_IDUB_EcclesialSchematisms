@@ -332,6 +332,10 @@ decisions).
   are read one stored chunk at a time into a bounded CSV buffer, so peak memory
   is one chunk + the buffer, not the whole table. No row-limit guard needed
   because it streams rather than reconstructing.
+- Encoding: the output is UTF-8 with a leading BOM (`\ufeff`), CRLF line
+  terminators (RFC 4180), and standard quoting (delimiters/quotes/embedded
+  newlines are quoted, `"` doubled) so Excel and spreadsheet apps decode the
+  file correctly rather than mojibake.
 - `ArtifactContentRead` accepts a lazy async-iterable body; the `/download`
   route streams CSV without a content-length (chunked transfer).
 - `sql.result@1` projected-table CSV deferred to a later pass.

@@ -265,8 +265,13 @@ def test_table_page_bounds_cell_previews_and_full_download(
     assert csv_response.status_code == 200
     assert "text/csv" in csv_response.headers["content-type"]
     assert ".csv" in csv_response.headers["content-disposition"]
-    csv_text = csv_response.content.decode("utf-8")
-    csv_lines = csv_text.strip().split("\n")
+    csv_bytes = csv_response.content
+    # UTF-8 BOM so spreadsheet apps decode the file as UTF-8.
+    assert csv_bytes.startswith(b"\xef\xbb\xbf")
+    csv_text = csv_bytes.decode("utf-8-sig")
+    # RFC 4180 CRLF line terminators.
+    assert "\r\n" in csv_text
+    csv_lines = csv_text.splitlines()
     assert csv_lines[0] == "id,geometry/wkt,large_id,metadata"
     assert len(csv_lines) == 121  # header + 120 rows
 
@@ -594,3 +599,52 @@ async def test_artifact_summaries_never_embed_unbounded_or_table_json(
     assert (
         await presenter.artifact_summary(WORKSPACE_ID, small.ref())
     ).text == "bounded"
+
+
+@pytest.mark.asyncio
+async def test_iter_table_csv_encodes_utf8_bom_crlf_and_quoting(
+    tmp_path: Path,
+) -> None:
+    """CSV export uses a UTF-8 BOM, CRLF terminators, and RFC 4180 quoting."""
+    from notarius_core.operators.tables import iter_table_csv
+
+    storage = LocalFileObjectStore(tmp_path / "objects")
+    table = Table(
+        columns=[
+            TableColumn(id="name", title="Name", value_type=TableValueType.TEXT),
+            TableColumn(id="note", title="Note", value_type=TableValueType.TEXT),
+        ],
+        rows=[
+            {"name": "Café", "note": "plain"},
+            {"name": "a,b", "note": "quoted"},
+            {"name": "line\nbreak", "note": "embedded"},
+            {"name": "quoted\"cell", "note": "quote"},
+        ],
+    )
+    artifact = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
+        artifact_type="table.data",
+        schema_version=1,
+        content_type="application/json",
+        storage_backend="inline",
+        inline_payload=table.model_dump(mode="json"),
+    )
+
+    chunks = []
+    async for chunk in iter_table_csv(artifact, storage):
+        chunks.append(chunk)
+    body = b"".join(chunks)
+
+    # UTF-8 BOM so Excel decodes the file as UTF-8.
+    assert body.startswith(b"\xef\xbb\xbf")
+    # CRLF line terminators per RFC 4180.
+    assert b"\r\n" in body
+    text = body.decode("utf-8-sig")
+
+    # The first cell after the BOM is the header; quoting handles delimiters,
+    # quotes, and embedded newlines inside fields.
+    assert text.splitlines()[0] == "name,note"
+    assert '"a,b"' in text
+    assert '"quoted""cell"' in text
+    assert '"line\nbreak"' in text
+    assert "Café" in text
