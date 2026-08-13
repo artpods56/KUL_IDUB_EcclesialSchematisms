@@ -3,6 +3,7 @@ import csv
 import json
 import re
 import unicodedata
+from collections.abc import AsyncIterator
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
@@ -30,6 +31,7 @@ from unidecode import unidecode
 
 from notarius_core.artifacts import (
     Artifact,
+    ArtifactExportFormat,
     ArtifactObject,
     ArtifactRef,
     ArtifactTypeKey,
@@ -448,6 +450,90 @@ async def table_artifact_is_accessible(
     )
 
 
+# CSV export buffer target; rows are accumulated and flushed as it fills.
+CSV_EXPORT_BUFFER_BYTES = 1_048_576
+
+
+def _csv_cell(value: TableValue) -> str:
+    """Render one table cell as its CSV text.
+
+    None renders as empty; nested JSON values render as compact JSON text.
+    Numbers and booleans render as their plain literals.
+    """
+
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float):
+        return str(value)
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+async def iter_table_csv(
+    artifact: ArtifactObject,
+    storage: FileStoragePort,
+    *,
+    buffer_bytes: int = CSV_EXPORT_BUFFER_BYTES,
+) -> AsyncIterator[bytes]:
+    """Stream the full table artifact as CSV, one buffered chunk at a time.
+
+    Chunked tables are read one stored chunk at a time, so peak memory is one
+    chunk plus the CSV buffer rather than the whole table. Yields UTF-8 CSV
+    bytes (header row first, then one row per table row).
+    """
+
+    if artifact.inline_payload is not None:
+        table = Table.model_validate(artifact.inline_payload)
+        columns = table.columns
+        rows = iter(table.rows)
+        buffer = StringIO()
+        writer = csv.writer(buffer, lineterminator="\n")
+        writer.writerow([column.id for column in columns])
+        for row in rows:
+            writer.writerow([_csv_cell(row[column.id]) for column in columns])
+            if buffer.tell() >= buffer_bytes:
+                yield buffer.getvalue().encode("utf-8")
+                buffer.seek(0)
+                buffer.truncate(0)
+        if buffer.tell():
+            yield buffer.getvalue().encode("utf-8")
+        return
+
+    manifest = await load_table_manifest(artifact, storage)
+    if artifact.bucket is None:
+        raise ArtifactContractError(
+            f"Table artifact {artifact.id} does not have a storage bucket"
+        )
+    buffer = StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow([column.id for column in manifest.columns])
+    for descriptor in manifest.chunks:
+        chunk = await _load_stored_model(
+            storage,
+            bucket=artifact.bucket,
+            object_key=descriptor.object_key,
+            model=TableChunk,
+            expected_byte_size=descriptor.byte_size,
+            expected_sha256=descriptor.sha256,
+        )
+        if chunk.offset != descriptor.offset or len(chunk.rows) != descriptor.row_count:
+            raise ResolutionError(
+                f"Table chunk {descriptor.object_key!r} does not match its manifest "
+                f"descriptor for artifact {artifact.id}"
+            )
+        for row in chunk.rows:
+            writer.writerow([_csv_cell(row[column.id]) for column in manifest.columns])
+            if buffer.tell() >= buffer_bytes:
+                yield buffer.getvalue().encode("utf-8")
+                buffer.seek(0)
+                buffer.truncate(0)
+    if buffer.tell():
+        yield buffer.getvalue().encode("utf-8")
+
+
 @final
 class TableArtifactWriter(ArtifactOutputWriter):
     def __init__(
@@ -667,6 +753,13 @@ TABLE_DATA = ArtifactTypeSpec(
     key=ArtifactTypeKey("table.data", 1),
     title="Table",
     payload_schema=cast(JsonObject, Table.model_json_schema()),
+    export_formats=(
+        ArtifactExportFormat(
+            format="csv",
+            content_type="text/csv; charset=utf-8",
+            filename="table.csv",
+        ),
+    ),
 )
 
 

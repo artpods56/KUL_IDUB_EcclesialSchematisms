@@ -190,6 +190,37 @@ def test_as_markdown_graph_persists_exact_source(
         f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{markdown_ref.artifact_id}/content"
     ).json() == {"markdown": source}
 
+    # The artifact summary advertises its download formats.
+    assert [entry.format for entry in markdown_ref.download_formats] == [
+        "json",
+        "txt",
+    ]
+
+    # Downloading as txt yields the bare markdown, not the JSON envelope.
+    download = builtin_client.get(
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{markdown_ref.artifact_id}/download",
+        params={"format": "txt"},
+    )
+    assert download.status_code == 200
+    assert download.content.decode("utf-8") == source
+    assert download.headers["content-disposition"].startswith("attachment")
+    assert "text/plain" in download.headers["content-type"]
+
+    # Downloading as json returns the canonical payload envelope.
+    json_download = builtin_client.get(
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{markdown_ref.artifact_id}/download",
+        params={"format": "json"},
+    )
+    assert json_download.status_code == 200
+    assert json_download.json() == {"markdown": source}
+
+    # An unsupported format is rejected with 400.
+    bad = builtin_client.get(
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{markdown_ref.artifact_id}/download",
+        params={"format": "csv"},
+    )
+    assert bad.status_code == 400
+
 
 def test_text_graph_splits_maps_replacement_and_joins(
     builtin_client: TestClient,

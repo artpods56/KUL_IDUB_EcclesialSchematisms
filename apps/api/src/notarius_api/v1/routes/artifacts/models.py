@@ -15,7 +15,7 @@ from pydantic import (
     model_validator,
 )
 
-from notarius_core.artifacts import JsonObject
+from notarius_core.artifacts import ArtifactExportFormat, JsonObject
 from notarius_core.operators.tables import TableColumn, TablePage, TableValueType
 
 from notarius_api.v1.models import ApiResponse
@@ -30,6 +30,20 @@ type GeoArtifactKind = Literal[
 ]
 
 
+class ArtifactExportFormatResponse(ApiResponse):
+    format: str
+    content_type: str
+    filename: str
+
+    @classmethod
+    def from_export_format(cls, export_format: "ArtifactExportFormat") -> "Self":
+        return cls(
+            format=export_format.format,
+            content_type=export_format.content_type,
+            filename=export_format.filename,
+        )
+
+
 class ArtifactSummaryResponse(ApiResponse):
     artifact_id: UUID
     artifact_type: str
@@ -39,6 +53,9 @@ class ArtifactSummaryResponse(ApiResponse):
     sha256: str | None = None
     text: str | None = None
     content_url: str | None = None
+    download_formats: list[ArtifactExportFormatResponse] = Field(
+        default_factory=list,
+    )
     metadata: dict[str, object] = Field(default_factory=dict)
 
 
@@ -690,6 +707,7 @@ class GeoRasterTileJsonResponse(ApiResponse):
 
 
 __all__ = [
+    "ArtifactExportFormatResponse",
     "ArtifactSummaryResponse",
     "ArtifactExactMatchRow",
     "GeoArtifactRefPayload",

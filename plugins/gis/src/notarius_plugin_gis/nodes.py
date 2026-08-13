@@ -65,7 +65,11 @@ from notarius_plugin_gis.models import (
     WmsVersion,
     validated_public_service_url,
 )
-from notarius_plugin_gis.wfs import WfsClient
+from notarius_plugin_gis.wfs import (
+    WFS_IMPORT_MAX_FEATURES,
+    WFS_IMPORT_TOTAL_RESPONSE_MAX_BYTES,
+    WfsClient,
+)
 
 
 _parse_wkt = cast(Callable[[str], BaseGeometry], from_wkt)
@@ -604,11 +608,23 @@ class WfsImportConfig(NodeConfig):
         description="Optional WFS SortBy expression for deterministic paging.",
     )
     page_size: StrictInt = Field(default=1_000, ge=1, le=10_000)
-    max_features: StrictInt | None = Field(default=10_000, ge=1, le=100_000_100)
+    max_features: StrictInt = Field(
+        default=10_000,
+        ge=1,
+        le=WFS_IMPORT_MAX_FEATURES,
+        description=(
+            "Required total feature limit for one import; first-release WFS imports "
+            f"accept at most {WFS_IMPORT_MAX_FEATURES:,} features."
+        ),
+    )
     max_page_bytes: StrictInt = Field(
-        default=16 * 1024 * 1024 * 1024,
+        default=16 * 1024 * 1024,
         ge=1_024,
-        le=64 * 1024 * 1024,
+        le=WFS_IMPORT_TOTAL_RESPONSE_MAX_BYTES,
+        description=(
+            "Maximum response bytes for one WFS page; the complete import also "
+            f"has a fixed {WFS_IMPORT_TOTAL_RESPONSE_MAX_BYTES}-byte wire limit."
+        ),
     )
     timeout_seconds: float = Field(default=30.0, gt=0.0, le=300.0)
 
@@ -616,6 +632,24 @@ class WfsImportConfig(NodeConfig):
     @classmethod
     def validate_service_url(cls, value: AnyHttpUrl) -> AnyHttpUrl:
         return validated_public_service_url(value, service_name="WFS")
+
+    @field_validator("max_features", mode="before")
+    @classmethod
+    def validate_bounded_max_features(cls, value: object) -> object:
+        if value is None:
+            raise ValueError(
+                "max_features must be set; unbounded WFS imports are not supported"
+            )
+        if (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and value > WFS_IMPORT_MAX_FEATURES
+        ):
+            raise ValueError(
+                "max_features must not exceed the first-release limit of "
+                f"{WFS_IMPORT_MAX_FEATURES}"
+            )
+        return value
 
     @field_validator("type_name", "source_name", "sort_by")
     @classmethod

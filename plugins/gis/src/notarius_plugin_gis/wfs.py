@@ -27,6 +27,10 @@ from notarius_plugin_gis.models import (
 
 
 _HTTP_URL_ADAPTER = TypeAdapter(AnyHttpUrl)
+# Bound both compact wire data and the much larger Python object graph produced
+# while validating GeoJSON. Neither a small page size nor paging alone is a cap.
+WFS_IMPORT_MAX_FEATURES = 10_000
+WFS_IMPORT_TOTAL_RESPONSE_MAX_BYTES = 16 * 1024 * 1024
 
 
 async def _resolve_public_addresses(host: str, port: int) -> tuple[str, ...]:
@@ -85,7 +89,7 @@ class WfsClient:
         page_size: int,
         max_page_bytes: int,
         timeout_seconds: float,
-        max_features: int | None,
+        max_features: int,
         bbox: Bounds | None,
         sort_by: str | None = None,
     ) -> GeoFeatureCollection:
@@ -98,6 +102,7 @@ class WfsClient:
                 f"{type_name!r}: {exc}"
             ) from exc
         service_url = str(parsed_url)
+        service_request_url = httpx.URL(service_url)
         service_host = parsed_url.host
         service_port = parsed_url.port
         if service_host is None or service_port is None:
@@ -108,16 +113,30 @@ class WfsClient:
 
         if page_size < 1:
             raise ValueError("WFS page_size must be positive")
-        if max_features is not None and max_features < 1:
-            raise ValueError("WFS max_features must be positive when provided")
+        if max_features < 1:
+            raise ValueError("WFS max_features must be positive")
+        if max_features > WFS_IMPORT_MAX_FEATURES:
+            raise WfsImportError(
+                f"Rejected WFS 2.0 import from {service_url!r} for type "
+                f"{type_name!r}: max_features={max_features} exceeds the "
+                f"first-release limit of {WFS_IMPORT_MAX_FEATURES}"
+            )
         if max_page_bytes < 1:
             raise ValueError("WFS max_page_bytes must be positive")
-        if max_features is not None and page_size > max_features:
+        if max_page_bytes > WFS_IMPORT_TOTAL_RESPONSE_MAX_BYTES:
+            raise WfsImportError(
+                f"Rejected WFS 2.0 import from {service_url!r} for type "
+                f"{type_name!r}: max_page_bytes={max_page_bytes} exceeds the "
+                "first-release cumulative response limit of "
+                f"{WFS_IMPORT_TOTAL_RESPONSE_MAX_BYTES} bytes"
+            )
+        if page_size > max_features:
             page_size = max_features
 
         features: list[JsonObject] = []
         start_index = 0
         previous_page_hash: str | None = None
+        total_response_bytes = 0
         async with httpx.AsyncClient(
             transport=self._transport,
             timeout=timeout_seconds,
@@ -125,13 +144,11 @@ class WfsClient:
             trust_env=False,
             verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
         ) as client:
-            while max_features is None or len(features) < max_features:
-                request_count = page_size
-                if max_features is not None:
-                    request_count = min(
-                        page_size,
-                        max_features - len(features),
-                    )
+            while len(features) < max_features:
+                request_count = min(
+                    page_size,
+                    max_features - len(features),
+                )
                 params: dict[str, str | int] = {
                     "service": "WFS",
                     "version": "2.0.0",
@@ -149,7 +166,10 @@ class WfsClient:
                     params["bbox"] += ",EPSG:4326"
 
                 try:
-                    await _resolve_public_addresses(service_host, service_port)
+                    resolved_addresses = await _resolve_public_addresses(
+                        service_host,
+                        service_port,
+                    )
                 except (OSError, ValueError) as exc:
                     raise WfsImportError(
                         f"Rejected WFS 2.0 GetFeature from {service_url!r} for "
@@ -158,22 +178,46 @@ class WfsClient:
                     ) from exc
 
                 try:
-                    async with client.stream(
-                        "GET",
-                        service_url,
-                        params=params,
-                        headers={"Accept": "application/geo+json, application/json"},
-                    ) as response:
-                        response.raise_for_status()
-                        response_bytes = bytearray()
-                        async for chunk in response.aiter_bytes():
-                            response_bytes.extend(chunk)
-                            if len(response_bytes) > max_page_bytes:
-                                raise WfsImportError(
-                                    f"WFS 2.0 GetFeature from {service_url!r} for "
-                                    f"type {type_name!r} at startIndex={start_index} "
-                                    f"exceeded the {max_page_bytes}-byte page limit"
-                                )
+                    response_bytes = bytearray()
+                    for address_index, resolved_address in enumerate(
+                        resolved_addresses
+                    ):
+                        pinned_url = service_request_url.copy_with(
+                            host=resolved_address
+                        )
+                        try:
+                            async with client.stream(
+                                "GET",
+                                pinned_url,
+                                params=params,
+                                headers={
+                                    "Accept": (
+                                        "application/geo+json, application/json"
+                                    ),
+                                    "Host": service_request_url.netloc.decode("ascii"),
+                                },
+                                extensions={
+                                    "sni_hostname": service_request_url.raw_host.decode(
+                                        "ascii"
+                                    )
+                                },
+                            ) as response:
+                                response.raise_for_status()
+                                response_bytes.clear()
+                                async for chunk in response.aiter_bytes():
+                                    response_bytes.extend(chunk)
+                                    if len(response_bytes) > max_page_bytes:
+                                        raise WfsImportError(
+                                            "WFS 2.0 GetFeature from "
+                                            f"{service_url!r} for type "
+                                            f"{type_name!r} at "
+                                            f"startIndex={start_index} exceeded "
+                                            f"the {max_page_bytes}-byte page limit"
+                                        )
+                            break
+                        except (httpx.ConnectError, httpx.ConnectTimeout):
+                            if address_index == len(resolved_addresses) - 1:
+                                raise
                 except WfsImportError:
                     raise
                 except httpx.HTTPStatusError as exc:
@@ -188,6 +232,21 @@ class WfsClient:
                         f"type {type_name!r} at startIndex={start_index}, "
                         f"count={request_count}: {exc}"
                     ) from exc
+
+                prospective_total_response_bytes = (
+                    total_response_bytes + len(response_bytes)
+                )
+                if (
+                    prospective_total_response_bytes
+                    > WFS_IMPORT_TOTAL_RESPONSE_MAX_BYTES
+                ):
+                    raise WfsImportError(
+                        f"WFS 2.0 GetFeature from {service_url!r} for type "
+                        f"{type_name!r} at startIndex={start_index} would exceed "
+                        "the first-release cumulative response limit of "
+                        f"{WFS_IMPORT_TOTAL_RESPONSE_MAX_BYTES} bytes "
+                        f"(received {prospective_total_response_bytes})"
+                    )
 
                 try:
                     page = _WfsFeaturePage.model_validate_json(response_bytes)
@@ -229,6 +288,7 @@ class WfsClient:
                     )
                 previous_page_hash = page_hash
                 features.extend(page.features)
+                total_response_bytes = prospective_total_response_bytes
                 start_index += len(page.features)
 
                 if (
@@ -248,4 +308,9 @@ class WfsClient:
             ) from exc
 
 
-__all__ = ["WfsClient", "WfsImportError"]
+__all__ = [
+    "WFS_IMPORT_MAX_FEATURES",
+    "WFS_IMPORT_TOTAL_RESPONSE_MAX_BYTES",
+    "WfsClient",
+    "WfsImportError",
+]

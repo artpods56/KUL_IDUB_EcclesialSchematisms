@@ -4,7 +4,11 @@ from uuid import UUID
 from pydantic import BaseModel, Field, model_validator
 from pydantic.errors import PydanticInvalidForJsonSchema
 
-from notarius_core.artifacts import ArtifactFieldProjection, ArtifactTypeSpec
+from notarius_core.artifacts import (
+    ArtifactExportFormat,
+    ArtifactFieldProjection,
+    ArtifactTypeSpec,
+)
 from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
 from notarius_core.domain.module_library import ModulePublicationState
 from notarius_core.nodes import (
@@ -72,11 +76,28 @@ class FieldProjectionResponse(ApiResponse):
         )
 
 
+class ArtifactExportFormatResponse(ApiResponse):
+    format: str
+    content_type: str
+    filename: str
+
+    @classmethod
+    def from_export_format(cls, export_format: ArtifactExportFormat) -> Self:
+        return cls(
+            format=export_format.format,
+            content_type=export_format.content_type,
+            filename=export_format.filename,
+        )
+
+
 class ArtifactTypeSpecResponse(ApiResponse):
     key: ArtifactTypeKeyResponse
     title: str
     payload_schema: dict[str, object]
     field_projections: list[FieldProjectionResponse]
+    export_formats: list[ArtifactExportFormatResponse] = Field(
+        default_factory=list,
+    )
 
     @classmethod
     def from_spec(cls, spec: ArtifactTypeSpec) -> Self:
@@ -87,6 +108,10 @@ class ArtifactTypeSpecResponse(ApiResponse):
             field_projections=[
                 FieldProjectionResponse.from_projection(projection)
                 for projection in spec.field_projections
+            ],
+            export_formats=[
+                ArtifactExportFormatResponse.from_export_format(export_format)
+                for export_format in spec.export_formats
             ],
         )
 
@@ -376,6 +401,7 @@ class NodeRegistryResponse(ApiResponse):
 __all__ = [
     "ArtifactConversionKeyResponse",
     "ArtifactConversionSpecResponse",
+    "ArtifactExportFormatResponse",
     "ArtifactTypeSpecResponse",
     "FieldProjectionResponse",
     "NodeRegistryResponse",

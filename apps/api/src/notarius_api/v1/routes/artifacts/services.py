@@ -1,8 +1,10 @@
 import asyncio
 import ipaddress
 import json
+import re
 import socket
 import ssl
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import cast
@@ -17,8 +19,10 @@ from notarius_core.artifact_collections import (
     load_json_collections_page,
 )
 from notarius_core.artifacts import (
+    ArtifactExportFormat,
     ArtifactObject,
     ArtifactRefSequence,
+    ArtifactTypeSpec,
     UnitOfWorkPort,
 )
 from notarius_core.domain.artifact_outputs import ArtifactOutputValue
@@ -26,11 +30,16 @@ from notarius_core.operators.tables import (
     TABLE_DATA,
     TablePage,
     TableValue,
+    iter_table_csv,
     load_table_artifact,
     load_table_page,
     table_artifact_is_accessible,
 )
-from notarius_core.ports.storage import FileStoragePort, StoredObjectInfo
+from notarius_core.ports.storage import (
+    FileStoragePort,
+    FileStreamProtocol,
+    StoredObjectInfo,
+)
 
 from notarius_api.services.errors import (
     ArtifactContentUnavailableError,
@@ -68,6 +77,9 @@ GEO_RASTER_SCAN_ARTIFACT_TYPE = "geo.raster_scan"
 GEO_MAP_LAYER_ARTIFACT_TYPE = "geo.map_layer"
 GEO_MAP_DOCUMENT_ARTIFACT_TYPE = "geo.map_document"
 WMS_RESPONSE_BYTE_BUDGET = 5 * 1_024 * 1_024
+ARTIFACT_RESPONSE_CHUNK_SIZE = 1 * 1_024 * 1_024
+BUFFERED_ARTIFACT_RESPONSE_MAX_BYTES = 64 * 1_024 * 1_024
+PMTILES_RESPONSE_MAX_BYTES = 16 * 1_024 * 1_024
 IMMUTABLE_CACHE_CONTROL = "private, max-age=31536000, immutable"
 TABLE_INTERACTION_ROW_LIMIT = 250_000
 GEO_INTERACTION_FEATURE_LIMIT = 250_000
@@ -92,14 +104,57 @@ class GeoTileRead:
 
 
 @dataclass(frozen=True, slots=True)
+class ArtifactContentRead:
+    body: bytes | FileStreamProtocol | Callable[[], AsyncIterator[bytes]]
+    content_length: int | None
+
+    async def chunks(self) -> AsyncIterator[bytes]:
+        body = self.body
+        if isinstance(body, bytes):
+            if body:
+                yield body
+            return
+        if isinstance(body, Callable):
+            async for chunk in body():
+                if chunk:
+                    yield chunk
+            return
+        try:
+            while chunk := await asyncio.to_thread(
+                body.read,
+                ARTIFACT_RESPONSE_CHUNK_SIZE,
+            ):
+                yield chunk
+        finally:
+            await asyncio.to_thread(body.close)
+
+
+@dataclass(frozen=True, slots=True)
 class TableQueryPage:
     page: TablePage
     row_indices: list[int]
     highlighted_row_indices: list[int]
 
 
+_CANONICAL_INTEGER = re.compile(r"^-?(0|[1-9]\d*)$")
+
+
+def _interaction_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and _CANONICAL_INTEGER.fullmatch(value):
+        return int(value)
+    return None
+
+
 def _interaction_values_equal(left: object, right: object) -> bool:
-    return type(left) is type(right) and left == right
+    if type(left) is type(right):
+        return left == right
+    left_int = _interaction_int(left)
+    right_int = _interaction_int(right)
+    return left_int is not None and left_int == right_int
 
 
 def _table_row_matches_group(
@@ -124,8 +179,8 @@ def _geo_feature_matches(
         return False
     typed_properties = cast(dict[str, object], properties)
     return all(
-        field_name in typed_properties and
-        _interaction_values_equal(typed_properties[field_name], expected)
+        field_name in typed_properties
+        and _interaction_values_equal(typed_properties[field_name], expected)
         for field_name, expected in candidate.values.items()
     )
 
@@ -145,9 +200,7 @@ def _coordinate_bounds(coordinates: object) -> GeoBounds | None:
         latitude = float(values[1])
         return (longitude, latitude, longitude, latitude)
     nested = [
-        bounds
-        for value in values
-        if (bounds := _coordinate_bounds(value)) is not None
+        bounds for value in values if (bounds := _coordinate_bounds(value)) is not None
     ]
     return _bounds_union(nested)
 
@@ -172,12 +225,34 @@ def _geometry_bounds(geometry: object) -> GeoBounds | None:
 
 
 class GeoRangeNotSatisfiableError(ValueError):
-    def __init__(self, *, total_size: int, etag: str) -> None:
+    def __init__(
+        self,
+        *,
+        total_size: int,
+        etag: str,
+        reason: str | None = None,
+    ) -> None:
         super().__init__(
-            f"Requested byte range is not satisfiable for {total_size} bytes"
+            reason or f"Requested byte range is not satisfiable for {total_size} bytes"
         )
         self.total_size = total_size
         self.etag = etag
+
+
+class ArtifactResponseTooLargeError(WorkbenchOperationError):
+    def __init__(
+        self,
+        *,
+        artifact_id: UUID,
+        byte_size: int,
+        max_byte_size: int,
+    ) -> None:
+        super().__init__(
+            f"Artifact {artifact_id} requires a {byte_size}-byte buffered "
+            f"response, exceeding the {max_byte_size}-byte response limit"
+        )
+        self.byte_size = byte_size
+        self.max_byte_size = max_byte_size
 
 
 def _verify_artifact_content(artifact: ArtifactObject, content: bytes) -> None:
@@ -292,15 +367,47 @@ class ArtifactService:
         self,
         unit_of_work: UnitOfWorkPort,
         storage: FileStoragePort,
+        artifact_types: Mapping[tuple[str, int], ArtifactTypeSpec] | None = None,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._storage = storage
+        self._artifact_types = artifact_types or {}
         self._wms_client = httpx.AsyncClient(
             timeout=httpx.Timeout(15.0),
             follow_redirects=False,
+            http2=False,
             trust_env=False,
             verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
         )
+
+    def export_formats(self, artifact: ArtifactObject) -> list[ArtifactExportFormat]:
+        """Formats this artifact can be downloaded as.
+
+        `json` is available for any JSON-representable artifact (inline payload
+        or `application/json` content); additional formats come from the type's
+        `export_formats` declaration.
+        """
+
+        formats: list[ArtifactExportFormat] = []
+        if self._artifact_is_json(artifact):
+            formats.append(
+                ArtifactExportFormat(
+                    format="json",
+                    content_type="application/json",
+                    filename="artifact.json",
+                )
+            )
+        spec = self._artifact_types.get(
+            (artifact.artifact_type, artifact.schema_version)
+        )
+        if spec is not None:
+            formats.extend(spec.export_formats)
+        return formats
+
+    def _artifact_is_json(self, artifact: ArtifactObject) -> bool:
+        if artifact.inline_payload is not None:
+            return True
+        return artifact.content_type == "application/json"
 
     async def close(self) -> None:
         await self._wms_client.aclose()
@@ -369,6 +476,145 @@ class ArtifactService:
                 ) from exc
         return await self._load_stored_content(artifact)
 
+    async def open_content(self, artifact: ArtifactObject) -> ArtifactContentRead:
+        streams_stored_payload_directly = (
+            artifact.inline_payload is None
+            and not (
+                artifact.artifact_type == TABLE_DATA.key.id
+                and artifact.schema_version == TABLE_DATA.key.schema_version
+            )
+            and not (
+                artifact.artifact_type == GEO_FEATURE_COLLECTION_ARTIFACT_TYPE
+                and artifact.schema_version == 1
+                and artifact.metadata.get("storage_format")
+                == JSON_COLLECTIONS_STORAGE_FORMAT
+            )
+        )
+        if streams_stored_payload_directly:
+            if artifact.bucket is None or artifact.object_key is None:
+                raise ArtifactContentUnavailableError(
+                    f"Artifact {artifact.id} has no stored payload"
+                )
+            try:
+                stored = await self._storage.stat(
+                    bucket=artifact.bucket,
+                    path=artifact.object_key,
+                )
+            except Exception as exc:
+                raise ArtifactContentUnavailableError(
+                    f"Could not inspect artifact {artifact.id} at "
+                    f"{artifact.bucket}/{artifact.object_key}"
+                ) from exc
+            if stored is None:
+                raise ArtifactContentUnavailableError(
+                    f"Artifact {artifact.id} is missing from "
+                    f"{artifact.bucket}/{artifact.object_key}"
+                )
+            if (
+                artifact.byte_size is not None
+                and stored.byte_size != artifact.byte_size
+            ):
+                raise ArtifactContentUnavailableError(
+                    f"Artifact {artifact.id} contains {stored.byte_size} bytes, "
+                    f"expected {artifact.byte_size}"
+                )
+            return ArtifactContentRead(
+                body=await self._open_stored_content(artifact),
+                content_length=stored.byte_size,
+            )
+        if (
+            artifact.byte_size is not None
+            and artifact.byte_size > BUFFERED_ARTIFACT_RESPONSE_MAX_BYTES
+        ):
+            raise ArtifactResponseTooLargeError(
+                artifact_id=artifact.id,
+                byte_size=artifact.byte_size,
+                max_byte_size=BUFFERED_ARTIFACT_RESPONSE_MAX_BYTES,
+            )
+        content = await self.load_content(artifact)
+        if len(content) > BUFFERED_ARTIFACT_RESPONSE_MAX_BYTES:
+            raise ArtifactResponseTooLargeError(
+                artifact_id=artifact.id,
+                byte_size=len(content),
+                max_byte_size=BUFFERED_ARTIFACT_RESPONSE_MAX_BYTES,
+            )
+        return ArtifactContentRead(body=content, content_length=len(content))
+
+    async def load_download(
+        self,
+        artifact: ArtifactObject,
+        format: str,
+    ) -> tuple[ArtifactContentRead, str]:
+        """Render the artifact into a download format.
+
+        Returns a chunked content read and its content type. Raises
+        `WorkbenchOperationError` for an unsupported format and
+        `ArtifactContentUnavailableError` when content cannot be opened.
+        """
+
+        supported = [entry.format for entry in self.export_formats(artifact)]
+        if format not in supported:
+            raise WorkbenchOperationError(
+                f"Artifact {artifact.id} does not support download format "
+                f"{format!r}; supported: {supported or 'none'}"
+            )
+        if format == "json":
+            return await self.open_content(artifact), "application/json"
+        if format == "txt":
+            if (
+                artifact.byte_size is not None
+                and artifact.byte_size > BUFFERED_ARTIFACT_RESPONSE_MAX_BYTES
+            ):
+                raise ArtifactResponseTooLargeError(
+                    artifact_id=artifact.id,
+                    byte_size=artifact.byte_size,
+                    max_byte_size=BUFFERED_ARTIFACT_RESPONSE_MAX_BYTES,
+                )
+            text = self._text_value(artifact)
+            if text is None:
+                raise WorkbenchOperationError(
+                    f"Artifact {artifact.id} cannot be downloaded as bare text"
+                )
+            content = text.encode("utf-8")
+            if len(content) > BUFFERED_ARTIFACT_RESPONSE_MAX_BYTES:
+                raise ArtifactResponseTooLargeError(
+                    artifact_id=artifact.id,
+                    byte_size=len(content),
+                    max_byte_size=BUFFERED_ARTIFACT_RESPONSE_MAX_BYTES,
+                )
+            return (
+                ArtifactContentRead(body=content, content_length=len(content)),
+                "text/plain; charset=utf-8",
+            )
+        if format == "csv":
+            if (
+                artifact.artifact_type != TABLE_DATA.key.id
+                or artifact.schema_version != TABLE_DATA.key.schema_version
+            ):
+                raise WorkbenchOperationError(
+                    f"Artifact {artifact.id} is not a table.data@1 artifact"
+                )
+            return (
+                ArtifactContentRead(
+                    body=lambda: iter_table_csv(artifact, self._storage),
+                    content_length=None,
+                ),
+                "text/csv; charset=utf-8",
+            )
+        raise WorkbenchOperationError(
+            f"Artifact {artifact.id} does not support download format {format!r}"
+        )
+
+    def _text_value(self, artifact: ArtifactObject) -> str | None:
+        if artifact.inline_payload is None:
+            return None
+        payload = artifact.inline_payload
+        if isinstance(payload.get("value"), str):
+            return cast(str, payload["value"])
+        if isinstance(payload.get("markdown"), str):
+            return cast(str, payload["markdown"])
+        return None
+
     async def _load_stored_content(self, artifact: ArtifactObject) -> bytes:
         if artifact.inline_payload is not None:
             return (
@@ -380,12 +626,22 @@ class ArtifactService:
                 )
                 + "\n"
             ).encode("utf-8")
+        stream = await self._open_stored_content(artifact)
+        try:
+            return stream.read()
+        finally:
+            stream.close()
+
+    async def _open_stored_content(
+        self,
+        artifact: ArtifactObject,
+    ) -> FileStreamProtocol:
         if artifact.bucket is None or artifact.object_key is None:
             raise ArtifactContentUnavailableError(
                 f"Artifact {artifact.id} has no stored payload"
             )
         try:
-            stream = await self._storage.load(
+            return await self._storage.load(
                 bucket=artifact.bucket,
                 path=artifact.object_key,
             )
@@ -394,10 +650,6 @@ class ArtifactService:
                 f"Could not load artifact {artifact.id} from "
                 f"{artifact.bucket}/{artifact.object_key}"
             ) from exc
-        try:
-            return stream.read()
-        finally:
-            stream.close()
 
     def _feature_count(self, artifact: ArtifactObject) -> int:
         feature_count = artifact.metadata.get("feature_count")
@@ -493,8 +745,7 @@ class ArtifactService:
             source_artifact = source_artifacts.get(source_id)
             if (
                 source_artifact is None
-                or source_artifact.artifact_type
-                != GEO_FEATURE_COLLECTION_ARTIFACT_TYPE
+                or source_artifact.artifact_type != GEO_FEATURE_COLLECTION_ARTIFACT_TYPE
                 or source_artifact.schema_version != 1
             ):
                 raise ArtifactContentUnavailableError(
@@ -521,19 +772,13 @@ class ArtifactService:
                     offset=0,
                     limit=max(1, feature_count),
                 )
-                if (
-                    len(page.collections) != 1
-                    or page.collections[0].id != "features"
-                ):
+                if len(page.collections) != 1 or page.collections[0].id != "features":
                     raise ValueError(
                         "Geo feature collection manifest must contain one "
                         "'features' collection"
                     )
                 for feature in page.collections[0].items:
-                    if not any(
-                        _geo_feature_matches(feature, row)
-                        for row in rows
-                    ):
+                    if not any(_geo_feature_matches(feature, row) for row in rows):
                         continue
                     matched_feature_count += 1
                     bounds = _geometry_bounds(feature.get("geometry"))
@@ -602,6 +847,23 @@ class ArtifactService:
                         etag=etag,
                     ) from exc
                 status_code = 206
+            response_byte_size = end_exclusive - start
+            if response_byte_size > PMTILES_RESPONSE_MAX_BYTES:
+                if range_header is not None:
+                    raise GeoRangeNotSatisfiableError(
+                        total_size=info.byte_size,
+                        etag=etag,
+                        reason=(
+                            f"Requested PMTiles byte range contains "
+                            f"{response_byte_size} bytes, exceeding the "
+                            f"{PMTILES_RESPONSE_MAX_BYTES}-byte range limit"
+                        ),
+                    )
+                raise ArtifactResponseTooLargeError(
+                    artifact_id=artifact.id,
+                    byte_size=response_byte_size,
+                    max_byte_size=PMTILES_RESPONSE_MAX_BYTES,
+                )
             content = await self._storage.load_range(
                 projection.bucket,
                 projection.object_key,
@@ -792,7 +1054,9 @@ class ArtifactService:
             max_zoom=max_zoom,
             source=GeoVectorRenderSourceResponse(
                 artifact_id=artifact.id,
-                archive_url=(f"/v1/workspaces/{artifact.workspace_id}/artifacts/{artifact.id}/geo/vector.pmtiles"),
+                archive_url=(
+                    f"/v1/workspaces/{artifact.workspace_id}/artifacts/{artifact.id}/geo/vector.pmtiles"
+                ),
                 source_layer=projection.source_layer,
                 bounds=projection.bounds,
                 min_zoom=projection.min_zoom,
@@ -826,7 +1090,9 @@ class ArtifactService:
             max_zoom=max_zoom,
             source=GeoRasterRenderSourceResponse(
                 artifact_id=artifact.id,
-                tilejson_url=(f"/v1/workspaces/{artifact.workspace_id}/artifacts/{artifact.id}/geo/raster/tilejson.json"),
+                tilejson_url=(
+                    f"/v1/workspaces/{artifact.workspace_id}/artifacts/{artifact.id}/geo/raster/tilejson.json"
+                ),
                 bounds=projection.bounds,
             ),
             style=style,
@@ -962,7 +1228,9 @@ class ArtifactService:
             )
             return GeoRasterTileJsonResponse(
                 name=self._source_name(artifact),
-                tiles=[f"/v1/workspaces/{artifact.workspace_id}/artifacts/{artifact.id}/geo/raster/{{z}}/{{x}}/{{y}}.png"],
+                tiles=[
+                    f"/v1/workspaces/{artifact.workspace_id}/artifacts/{artifact.id}/geo/raster/{{z}}/{{x}}/{{y}}.png"
+                ],
                 bounds=projection.bounds,
                 minzoom=projection.min_zoom,
                 maxzoom=projection.max_zoom,
@@ -990,7 +1258,9 @@ class ArtifactService:
             )
             return GeoRasterTileJsonResponse(
                 name=layer.title,
-                tiles=[f"/v1/workspaces/{artifact.workspace_id}/artifacts/{artifact.id}/geo/raster/{{z}}/{{x}}/{{y}}.png"],
+                tiles=[
+                    f"/v1/workspaces/{artifact.workspace_id}/artifacts/{artifact.id}/geo/raster/{{z}}/{{x}}/{{y}}.png"
+                ],
                 bounds=projection.bounds,
                 minzoom=max(layer.min_zoom, projection.min_zoom),
                 maxzoom=min(layer.max_zoom, projection.max_zoom),
@@ -998,7 +1268,9 @@ class ArtifactService:
         _validate_public_wms_url(layer.source)
         return GeoRasterTileJsonResponse(
             name=layer.title,
-            tiles=[f"/v1/workspaces/{artifact.workspace_id}/artifacts/{artifact.id}/geo/raster/{{z}}/{{x}}/{{y}}.png"],
+            tiles=[
+                f"/v1/workspaces/{artifact.workspace_id}/artifacts/{artifact.id}/geo/raster/{{z}}/{{x}}/{{y}}.png"
+            ],
             bounds=layer.source.bounds,
             minzoom=layer.min_zoom,
             maxzoom=layer.max_zoom,
@@ -1127,13 +1399,19 @@ class ArtifactService:
             raise ArtifactContentUnavailableError(
                 f"WMS host {host!r} resolved to no addresses"
             )
+        resolved_addresses: list[str] = []
         for address_info in addresses:
-            resolved_address = ipaddress.ip_address(address_info[4][0])
+            resolved_address = ipaddress.ip_address(
+                address_info[4][0].split("%", maxsplit=1)[0]
+            )
             if not resolved_address.is_global:
                 raise ArtifactContentUnavailableError(
                     f"WMS host {host!r} resolved to non-public address "
                     f"{resolved_address}"
                 )
+            normalized_address = str(resolved_address)
+            if normalized_address not in resolved_addresses:
+                resolved_addresses.append(normalized_address)
         west, south, east, north = _web_mercator_tile_bounds(z, x, y)
         parameters = {
             "service": "WMS",
@@ -1151,40 +1429,57 @@ class ArtifactService:
             parameters["crs"] = "EPSG:3857"
         else:
             parameters["srs"] = "EPSG:3857"
+        service_request_url = httpx.URL(str(source.url))
         try:
-            chunks: list[bytes] = []
-            byte_size = 0
-            async with self._wms_client.stream(
-                "GET",
-                str(source.url),
-                params=parameters,
-                headers={"Accept": source.format},
-            ) as response:
-                if response.status_code < 200 or response.status_code >= 300:
-                    raise ValueError(f"WMS returned HTTP {response.status_code}")
-                response_type = (
-                    response.headers.get("content-type", "")
-                    .split(";", 1)[0]
-                    .strip()
-                    .lower()
-                )
-                if response_type != source.format:
-                    raise ValueError(
-                        f"WMS returned {response_type or 'no content type'}, "
-                        f"expected {source.format}"
-                    )
-                async for chunk in response.aiter_bytes():
-                    byte_size += len(chunk)
-                    if byte_size > WMS_RESPONSE_BYTE_BUDGET:
-                        raise ValueError(
-                            f"WMS tile exceeds {WMS_RESPONSE_BYTE_BUDGET} bytes"
+            for address_index, resolved_address in enumerate(resolved_addresses):
+                pinned_url = service_request_url.copy_with(host=resolved_address)
+                try:
+                    chunks: list[bytes] = []
+                    byte_size = 0
+                    async with self._wms_client.stream(
+                        "GET",
+                        pinned_url,
+                        params=parameters,
+                        headers={
+                            "Accept": source.format,
+                            "Connection": "close",
+                            "Host": service_request_url.netloc.decode("ascii"),
+                        },
+                        extensions={
+                            "sni_hostname": service_request_url.raw_host.decode("ascii")
+                        },
+                    ) as response:
+                        if response.status_code < 200 or response.status_code >= 300:
+                            raise ValueError(
+                                f"WMS returned HTTP {response.status_code}"
+                            )
+                        response_type = (
+                            response.headers.get("content-type", "")
+                            .split(";", 1)[0]
+                            .strip()
+                            .lower()
                         )
-                    chunks.append(chunk)
-            return GeoTileRead(
-                content=b"".join(chunks),
-                content_type=source.format,
-                etag=None,
-            )
+                        if response_type != source.format:
+                            raise ValueError(
+                                f"WMS returned {response_type or 'no content type'}, "
+                                f"expected {source.format}"
+                            )
+                        async for chunk in response.aiter_bytes():
+                            byte_size += len(chunk)
+                            if byte_size > WMS_RESPONSE_BYTE_BUDGET:
+                                raise ValueError(
+                                    f"WMS tile exceeds {WMS_RESPONSE_BYTE_BUDGET} bytes"
+                                )
+                            chunks.append(chunk)
+                    return GeoTileRead(
+                        content=b"".join(chunks),
+                        content_type=source.format,
+                        etag=None,
+                    )
+                except (httpx.ConnectError, httpx.ConnectTimeout):
+                    if address_index == len(resolved_addresses) - 1:
+                        raise
+            raise RuntimeError(f"WMS host {host!r} had no usable public address")
         except Exception as exc:
             raise ArtifactContentUnavailableError(
                 f"Could not fetch WMS layer {source.layer!r} from "
@@ -1293,14 +1588,12 @@ class ArtifactService:
         highlighted_indices: set[int] = set()
         for row_index, row in enumerate(table.rows):
             if filter_groups and not all(
-                _table_row_matches_group(row, group)
-                for group in filter_groups
+                _table_row_matches_group(row, group) for group in filter_groups
             ):
                 continue
             matched.append((row_index, row))
             if highlight_groups and any(
-                _table_row_matches_group(row, group)
-                for group in highlight_groups
+                _table_row_matches_group(row, group) for group in highlight_groups
             ):
                 highlighted_indices.add(row_index)
 
@@ -1385,9 +1678,12 @@ class ArtifactService:
 
 
 __all__ = [
+    "ArtifactResponseTooLargeError",
+    "BUFFERED_ARTIFACT_RESPONSE_MAX_BYTES",
     "ArtifactService",
     "GeoArchiveRead",
     "GeoRangeNotSatisfiableError",
+    "PMTILES_RESPONSE_MAX_BYTES",
     "GeoTileRead",
     "IMMUTABLE_CACHE_CONTROL",
 ]

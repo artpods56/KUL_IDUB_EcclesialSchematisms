@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
 
 from notarius_core.artifacts import (
     Artifact,
+    ArtifactExportFormat,
     ArtifactObject,
     ArtifactRef,
     ArtifactTypeKey,
@@ -50,6 +51,13 @@ TEXT_VALUE = ArtifactTypeSpec(
     title="Text value",
     payload_schema=cast(JsonObject, TextValuePayload.model_json_schema()),
     materialized_json_type="string",
+    export_formats=(
+        ArtifactExportFormat(
+            format="txt",
+            content_type="text/plain; charset=utf-8",
+            filename="text.txt",
+        ),
+    ),
 )
 
 
@@ -63,6 +71,13 @@ MARKDOWN = ArtifactTypeSpec(
     key=ArtifactTypeKey("text.markdown", 1),
     title="Markdown",
     payload_schema=cast(JsonObject, MarkdownValue.model_json_schema()),
+    export_formats=(
+        ArtifactExportFormat(
+            format="txt",
+            content_type="text/plain; charset=utf-8",
+            filename="markdown.txt",
+        ),
+    ),
 )
 
 

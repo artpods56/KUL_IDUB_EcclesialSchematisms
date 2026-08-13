@@ -91,12 +91,27 @@ class ArtifactFieldProjection:
 
 
 @dataclass(frozen=True, slots=True)
+class ArtifactExportFormat:
+    """One downloadable rendering of an artifact type, beyond the universal JSON.
+
+    `json` is always available for any artifact with a payload (it is the
+    canonical whole-artifact document). `export_formats` declares the additional
+    formats a type can be rendered into, e.g. bare text for text scalars.
+    """
+
+    format: str
+    content_type: str
+    filename: str
+
+
+@dataclass(frozen=True, slots=True)
 class ArtifactTypeSpec:
     key: ArtifactTypeKey
     title: str
     payload_schema: JsonObject = field(default_factory=dict)
     field_projections: tuple[ArtifactFieldProjection, ...] = ()
     materialized_json_type: MaterializedJsonType | None = None
+    export_formats: tuple[ArtifactExportFormat, ...] = ()
 
 @dataclass(frozen=True, slots=True)
 class Artifact:

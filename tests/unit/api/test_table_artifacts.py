@@ -7,13 +7,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from notarius_api.services.composition import WorkbenchComponents
+from notarius_api.v1.routes.artifacts import services as artifact_services
 from notarius_api.v1.routes.artifacts.services import ArtifactService
 from notarius_api.v1.routes.executions.services import RunResultPresenter
 from notarius_core.artifacts import ArtifactObject, InMemoryUnitOfWork
 from notarius_core.nodes import NodeExecutionContext
-
-
-WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
 from notarius_core.operators.tables import (
     Table,
     TableArtifactWriter,
@@ -23,6 +21,56 @@ from notarius_core.operators.tables import (
 from notarius_core.runtime.materialization import MaterializationProvenance
 from notarius_core.runtime.persistence import ArtifactWriteContext
 from notarius_storage import LocalFileObjectStore
+
+
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
+
+
+def test_full_table_content_and_download_return_413_before_reconstruction(
+    table_artifact_client: tuple[
+        TestClient,
+        TableArtifactWriter,
+        WorkbenchComponents,
+    ],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, writer, _ = table_artifact_client
+    table = Table(
+        columns=[
+            TableColumn(id="value", title="Value", value_type=TableValueType.TEXT)
+        ],
+        rows=[{"value": "bounded"}],
+    )
+    ref = asyncio.run(
+        writer.write(
+            table,
+            ArtifactWriteContext(
+                node_context=NodeExecutionContext(
+                    workspace_id=WORKSPACE_ID,
+                    node_id="table-response-cap",
+                ),
+                provenance=MaterializationProvenance(refs_by_input={}),
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        artifact_services,
+        "BUFFERED_ARTIFACT_RESPONSE_MAX_BYTES",
+        1,
+    )
+    base_url = (
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/"
+        f"{ref.artifact_id}"
+    )
+
+    content = client.get(f"{base_url}/content")
+    download = client.get(f"{base_url}/download", params={"format": "json"})
+
+    assert content.status_code == 413
+    assert str(ref.artifact_id) in content.json()["detail"]
+    assert "1-byte response limit" in content.json()["detail"]
+    assert download.status_code == 413
+    assert str(ref.artifact_id) in download.json()["detail"]
 
 
 def test_table_page_bounds_cell_previews_and_full_download(
@@ -167,9 +215,10 @@ def test_table_page_bounds_cell_previews_and_full_download(
     )
     assert selected_columns_response.status_code == 200
     selected_columns_page = selected_columns_response.json()
-    assert [
-        column["id"] for column in selected_columns_page["columns"]
-    ] == ["metadata", "id"]
+    assert [column["id"] for column in selected_columns_page["columns"]] == [
+        "metadata",
+        "id",
+    ]
     assert list(selected_columns_page["rows"][0]) == ["metadata", "id"]
     assert selected_columns_page["column_offset"] == 0
     assert selected_columns_page["column_limit"] == 2
@@ -187,19 +236,39 @@ def test_table_page_bounds_cell_previews_and_full_download(
     )
     assert schema_response.status_code == 200
     assert schema_response.json()["total_rows"] == 120
-    assert [
-        column["id"]
-        for column in schema_response.json()["columns"]
-    ] == ["id", "geometry/wkt", "large_id", "metadata"]
+    assert [column["id"] for column in schema_response.json()["columns"]] == [
+        "id",
+        "geometry/wkt",
+        "large_id",
+        "metadata",
+    ]
 
     summary = asyncio.run(components.presenter.artifact_summary(WORKSPACE_ID, ref))
     assert summary.byte_size is not None
 
-    content_response = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/content")
+    content_response = client.get(
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/content"
+    )
     assert content_response.status_code == 200
     assert Table.model_validate(content_response.json()) == table
     assert len(content_response.content) == summary.byte_size
     assert sha256(content_response.content).hexdigest() == ref.content_hash
+
+    # The summary advertises csv as a download format.
+    assert [entry.format for entry in summary.download_formats] == ["json", "csv"]
+
+    # Downloading as csv streams the full table (header + every row).
+    csv_response = client.get(
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/download",
+        params={"format": "csv"},
+    )
+    assert csv_response.status_code == 200
+    assert "text/csv" in csv_response.headers["content-type"]
+    assert ".csv" in csv_response.headers["content-disposition"]
+    csv_text = csv_response.content.decode("utf-8")
+    csv_lines = csv_text.strip().split("\n")
+    assert csv_lines[0] == "id,geometry/wkt,large_id,metadata"
+    assert len(csv_lines) == 121  # header + 120 rows
 
     assert summary.text is None
     assert summary.metadata["row_count"] == 120
@@ -232,7 +301,12 @@ def test_table_page_rejects_non_table_and_invalid_limits(
     text_artifact_id = run_response.json()["node_runs"][0]["outputs"][0]["value"][
         "artifact_id"
     ]
-    assert client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{text_artifact_id}/table/page").status_code == 400
+    assert (
+        client.get(
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{text_artifact_id}/table/page"
+        ).status_code
+        == 400
+    )
 
     assert (
         client.get(
@@ -330,9 +404,7 @@ def test_table_query_filters_composite_keys_and_preserves_source_rows(
                 },
                 {"rows": [{"values": {"district": "Mohilev"}}]},
             ],
-            "highlight_groups": [
-                {"rows": [{"values": {"status": "review"}}]}
-            ],
+            "highlight_groups": [{"rows": [{"values": {"status": "review"}}]}],
             "offset": 0,
             "limit": 50,
             "column_offset": 0,
@@ -346,21 +418,113 @@ def test_table_query_filters_composite_keys_and_preserves_source_rows(
     assert page["total_rows"] == 2
     assert page["row_indices"] == [0, 2]
     assert page["highlighted_row_indices"] == [2]
-    assert [
-        row["place"]["display"]
-        for row in page["rows"]
-    ] == ["Belynichi", "Kniazhitsy"]
+    assert [row["place"]["display"] for row in page["rows"]] == [
+        "Belynichi",
+        "Kniazhitsy",
+    ]
 
     missing_field = client.post(
         f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/query",
-        json={
-            "filter_groups": [
-                {"rows": [{"values": {"missing": "Belynichi"}}]}
-            ]
-        },
+        json={"filter_groups": [{"rows": [{"values": {"missing": "Belynichi"}}]}]},
     )
     assert missing_field.status_code == 400
     assert "missing" in missing_field.json()["detail"]
+
+
+def test_table_query_matches_integer_keys_from_string_or_number(
+    table_artifact_client: tuple[
+        TestClient,
+        TableArtifactWriter,
+        WorkbenchComponents,
+    ],
+) -> None:
+    client, writer, _ = table_artifact_client
+    large_id = 2**60 + 95
+    table = Table(
+        columns=[
+            TableColumn(id="id", title="ID", value_type=TableValueType.INTEGER),
+            TableColumn(
+                id="large_id",
+                title="Large ID",
+                value_type=TableValueType.INTEGER,
+            ),
+            TableColumn(
+                id="place",
+                title="Place",
+                value_type=TableValueType.TEXT,
+            ),
+        ],
+        rows=[
+            {"id": 12, "large_id": large_id, "place": "Belynichi"},
+            {"id": 13, "large_id": large_id + 1, "place": "Kniazhitsy"},
+        ],
+    )
+    ref = asyncio.run(
+        writer.write(
+            table,
+            ArtifactWriteContext(
+                node_context=NodeExecutionContext(
+                    workspace_id=WORKSPACE_ID,
+                    node_id="table-integer-query",
+                ),
+                provenance=MaterializationProvenance(refs_by_input={}),
+            ),
+        )
+    )
+    path = (
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007"
+        f"/artifacts/{ref.artifact_id}/table/query"
+    )
+
+    string_key = client.post(
+        path,
+        json={
+            "highlight_groups": [{"rows": [{"values": {"id": "12"}}]}],
+        },
+    )
+    assert string_key.status_code == 200
+    assert string_key.json()["highlighted_row_indices"] == [0]
+
+    number_key = client.post(
+        path,
+        json={
+            "highlight_groups": [{"rows": [{"values": {"id": 12}}]}],
+        },
+    )
+    assert number_key.status_code == 200
+    assert number_key.json()["highlighted_row_indices"] == [0]
+
+    large_string_key = client.post(
+        path,
+        json={
+            "filter_groups": [{"rows": [{"values": {"large_id": str(large_id)}}]}],
+        },
+    )
+    assert large_string_key.status_code == 200
+    assert large_string_key.json()["row_indices"] == [0]
+    assert large_string_key.json()["total_rows"] == 1
+
+    padded = client.post(
+        path,
+        json={
+            "highlight_groups": [{"rows": [{"values": {"id": "012"}}]}],
+        },
+    )
+    assert padded.status_code == 200
+    assert padded.json()["highlighted_row_indices"] == []
+
+
+def test_interaction_values_equal_integers_across_json_string_encoding() -> None:
+    from notarius_api.v1.routes.artifacts.services import (
+        _interaction_values_equal,
+    )
+
+    assert _interaction_values_equal(12, "12")
+    assert _interaction_values_equal("12", 12)
+    assert not _interaction_values_equal(12, "012")
+    assert not _interaction_values_equal(1, True)
+    assert not _interaction_values_equal(True, "1")
+    assert _interaction_values_equal("Belynichi", "Belynichi")
 
 
 @pytest.mark.asyncio

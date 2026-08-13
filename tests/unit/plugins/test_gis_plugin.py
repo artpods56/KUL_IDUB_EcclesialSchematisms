@@ -8,6 +8,7 @@ from typing import cast
 from uuid import UUID, uuid4
 
 import httpx
+import notarius_plugin_gis.wfs as wfs_module
 import pytest
 from pydantic import ValidationError
 
@@ -72,6 +73,7 @@ from notarius_plugin_gis.nodes import (
     VectorLayerInput,
     WfsImportConfig,
     WfsImportInput,
+    WFS_IMPORT_MAX_FEATURES,
     WmsLayerConfig,
     WmsLayerInput,
     build_raster_layer,
@@ -682,6 +684,80 @@ async def test_compose_map_preserves_ordered_layer_refs() -> None:
 
 
 @pytest.mark.asyncio
+async def test_wfs_import_default_page_limit_rejects_oversized_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default_page_limit = 16 * 1024 * 1024
+    config = WfsImportConfig.model_validate(
+        {
+            "service_url": "https://example.com/geoserver/ows",
+            "type_name": "geonode:large",
+            "source_name": "Large",
+            "page_size": 1,
+            "max_features": 1,
+        }
+    )
+    validated_config = WfsImportConfig.model_validate(config.model_dump())
+
+    assert config.max_page_bytes == default_page_limit
+    assert validated_config.max_page_bytes == default_page_limit
+
+    def resolve_public_host(
+        _host: str,
+        port: int,
+        *_args: object,
+        **_kwargs: object,
+    ) -> list[tuple[object, object, object, str, tuple[str, int]]]:
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", port),
+            )
+        ]
+
+    def respond(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"x" * (default_page_limit + 1))
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve_public_host)
+
+    node = ImportWfsNode(WfsClient(transport=httpx.MockTransport(respond)))
+    with pytest.raises(
+        WfsImportError,
+        match=rf"geonode:large.*{default_page_limit}-byte page limit",
+    ):
+        await node.run(
+            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="wfs"),
+            config,
+            WfsImportInput(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("max_features", "message"),
+    [
+        (None, "unbounded WFS imports are not supported"),
+        (WFS_IMPORT_MAX_FEATURES + 1, "first-release limit of 10000"),
+    ],
+)
+def test_wfs_import_requires_a_bounded_total_feature_limit(
+    max_features: int | None,
+    message: str,
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        WfsImportConfig.model_validate(
+            {
+                "service_url": "https://example.com/geoserver/ows",
+                "type_name": "geonode:large",
+                "source_name": "Large",
+                "max_features": max_features,
+            }
+        )
+
+
+@pytest.mark.asyncio
 async def test_wfs_import_fetches_bounded_epsg4326_pages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -764,11 +840,83 @@ async def test_wfs_import_fetches_bounded_epsg4326_pages(
 
 
 @pytest.mark.asyncio
-async def test_wfs_import_fetches_all_pages_when_max_features_is_none(
+async def test_wfs_import_pins_validated_address_against_dns_rebinding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    requested_counts: list[int] = []
+    dns_lookups: list[str] = []
+    requests: list[httpx.Request] = []
+    destinations: list[str] = []
+
+    def rebind_host(
+        host: str,
+        port: int,
+        *_args: object,
+        **_kwargs: object,
+    ) -> list[tuple[object, object, object, str, tuple[str, int]]]:
+        dns_lookups.append(host)
+        address = "93.184.216.34" if len(dns_lookups) == 1 else "127.0.0.1"
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                (address, port),
+            )
+        ]
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        destination = request.url.host
+        if destination == "example.com":
+            destination = str(
+                socket.getaddrinfo(
+                    destination,
+                    request.url.port or 443,
+                    type=socket.SOCK_STREAM,
+                )[0][4][0]
+            )
+        destinations.append(destination)
+        return httpx.Response(200, content=feature_collection((13.4, 52.5)))
+
+    monkeypatch.setattr(socket, "getaddrinfo", rebind_host)
+
+    result = await WfsClient(
+        transport=httpx.MockTransport(respond)
+    ).fetch_feature_collection(
+        service_url="https://example.com/geoserver/ows",
+        type_name="geonode:public",
+        source_name="Public",
+        page_size=1,
+        max_features=1,
+        max_page_bytes=1_024,
+        timeout_seconds=1,
+        bbox=None,
+    )
+
+    assert len(result.features) == 1
+    assert dns_lookups == ["example.com"]
+    assert destinations == ["93.184.216.34"]
+    assert requests[0].url.host == "93.184.216.34"
+    assert requests[0].headers["host"] == "example.com"
+    assert requests[0].extensions["sni_hostname"] == "example.com"
+
+
+@pytest.mark.asyncio
+async def test_wfs_import_rejects_cumulative_page_bytes_before_appending_next_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     starts: list[int] = []
+    pages: dict[int, bytes] = {}
+    for start_index, coordinates in {
+        0: [(13.4, 52.5)],
+        1: [(13.6, 52.7)],
+    }.items():
+        payload = json.loads(feature_collection(*coordinates))
+        payload["numberMatched"] = 3
+        payload["numberReturned"] = 1
+        pages[start_index] = json.dumps(payload).encode("utf-8")
+    cumulative_limit = len(pages[0]) + len(pages[1]) - 1
 
     def resolve_public_host(
         _host: str,
@@ -790,38 +938,36 @@ async def test_wfs_import_fetches_all_pages_when_max_features_is_none(
         params = request.url.params
         start_index = int(params["startIndex"])
         starts.append(start_index)
-        requested_counts.append(int(params["count"]))
-        coordinates = {
-            0: [(13.4, 52.5), (13.5, 52.6)],
-            2: [(13.6, 52.7), (13.7, 52.8)],
-            4: [(13.8, 52.9)],
-        }[start_index]
-        payload = json.loads(feature_collection(*coordinates))
-        payload["numberMatched"] = 5
-        payload["numberReturned"] = len(coordinates)
-        return httpx.Response(200, json=payload)
+        return httpx.Response(200, content=pages[start_index])
 
     monkeypatch.setattr(socket, "getaddrinfo", resolve_public_host)
-
-    node = ImportWfsNode(WfsClient(transport=httpx.MockTransport(respond)))
-    result = await node.run(
-        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="wfs"),
-        WfsImportConfig.model_validate(
-            {
-                "service_url": "https://example.com/geoserver/ows",
-                "type_name": "geonode:miejscowosci",
-                "source_name": "Miejscowości",
-                "page_size": 2,
-                "max_features": None,
-            }
-        ),
-        WfsImportInput(),
+    monkeypatch.setattr(
+        wfs_module,
+        "WFS_IMPORT_TOTAL_RESPONSE_MAX_BYTES",
+        cumulative_limit,
     )
 
-    assert starts == [0, 2, 4]
-    assert requested_counts == [2, 2, 2]
-    assert len(result.features.features) == 5
-    assert result.features.bounds == (13.4, 52.5, 13.8, 52.9)
+    with pytest.raises(
+        WfsImportError,
+        match=(
+            rf"geonode:miejscowosci.*startIndex=1.*cumulative response limit of "
+            rf"{cumulative_limit} bytes.*received {cumulative_limit + 1}"
+        ),
+    ):
+        await WfsClient(
+            transport=httpx.MockTransport(respond)
+        ).fetch_feature_collection(
+            service_url="https://example.com/geoserver/ows",
+            type_name="geonode:miejscowosci",
+            source_name="Miejscowości",
+            page_size=1,
+            max_features=3,
+            max_page_bytes=max(len(page) for page in pages.values()),
+            timeout_seconds=1,
+            bbox=None,
+        )
+
+    assert starts == [0, 1]
 
 
 @pytest.mark.asyncio

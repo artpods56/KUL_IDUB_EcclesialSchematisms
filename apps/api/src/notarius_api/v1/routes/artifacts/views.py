@@ -1,8 +1,8 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Path, Query, Request
-from fastapi.responses import Response
+from fastapi import APIRouter, Header, HTTPException, Path, Query
+from fastapi.responses import Response, StreamingResponse
 
 from .models import (
     GeoExactFeatureResponse,
@@ -23,6 +23,8 @@ from notarius_api.services.errors import (
 
 from .dependencies import ArtifactDependency
 from .services import (
+    ArtifactContentRead,
+    ArtifactResponseTooLargeError,
     GeoRangeNotSatisfiableError,
     IMMUTABLE_CACHE_CONTROL,
 )
@@ -32,6 +34,21 @@ from notarius_api.v1.routes.auth.dependencies import require_workspace_capabilit
 
 
 router = APIRouter(prefix="/workspaces/{workspace_id}", tags=["workbench"])
+
+
+def _artifact_streaming_response(
+    content: ArtifactContentRead,
+    *,
+    media_type: str,
+    headers: dict[str, str],
+) -> StreamingResponse:
+    if content.content_length is not None:
+        headers["Content-Length"] = str(content.content_length)
+    return StreamingResponse(
+        content=content.chunks(),
+        media_type=media_type,
+        headers=headers,
+    )
 
 
 @router.get(
@@ -100,6 +117,7 @@ async def query_geo_features(
     responses={
         400: {"model": WorkbenchErrorResponse, "description": "Invalid vector source"},
         404: {"model": WorkbenchErrorResponse, "description": "Artifact not found"},
+        413: {"model": WorkbenchErrorResponse, "description": "Response too large"},
         416: {"description": "Requested byte range is not satisfiable"},
         500: {
             "model": WorkbenchErrorResponse,
@@ -119,16 +137,18 @@ async def get_geo_vector_pmtiles(
     try:
         archive = await service.load_vector_archive(artifact, range_header)
     except GeoRangeNotSatisfiableError as exc:
-        return Response(
+        raise HTTPException(
             status_code=416,
+            detail=str(exc),
             headers={
                 "Accept-Ranges": "bytes",
                 "Content-Range": f"bytes */{exc.total_size}",
-                "Content-Length": "0",
                 "ETag": exc.etag,
                 "Cache-Control": IMMUTABLE_CACHE_CONTROL,
             },
-        )
+        ) from exc
+    except ArtifactResponseTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     except ArtifactContentUnavailableError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except WorkbenchOperationError as exc:
@@ -199,7 +219,6 @@ async def get_geo_raster_tilejson(
     source_id: UUID,
     service: ArtifactDependency,
     access: require_workspace_capability(WorkspaceCapability.VIEW_ARTIFACTS),
-    request: Request,
 ) -> GeoRasterTileJsonResponse:
     artifact = await service.get(access.workspace_id, source_id)
     if artifact is None:
@@ -212,15 +231,9 @@ async def get_geo_raster_tilejson(
         return tilejson.model_copy(
             update={
                 "tiles": [
-                    str(
-                        request.url_for(
-                            "get_geo_raster_tile",
-                            workspace_id=access.workspace_id,
-                            source_id=source_id,
-                            z="{z}",
-                            x="{x}",
-                            y="{y}",
-                        )
+                    (
+                        f"/api/v1/workspaces/{access.workspace_id}/artifacts/"
+                        f"{source_id}/geo/raster/{{z}}/{{x}}/{{y}}.png"
                     )
                 ]
             }
@@ -312,9 +325,7 @@ async def get_table_artifact_page(
     ] = None,
     max_cell_characters: Annotated[int, Query(ge=32, le=2_000)] = 256,
 ) -> TablePageResponse:
-    requested_column_count = (
-        len(column_ids) if column_ids is not None else column_limit
-    )
+    requested_column_count = len(column_ids) if column_ids is not None else column_limit
     if limit * requested_column_count * max_cell_characters > 2_000_000:
         raise HTTPException(
             status_code=400,
@@ -397,9 +408,7 @@ async def query_table_artifact_page(
     access: require_workspace_capability(WorkspaceCapability.VIEW_ARTIFACTS),
 ) -> TablePageResponse:
     requested_column_count = (
-        len(query.column_ids)
-        if query.column_ids is not None
-        else query.column_limit
+        len(query.column_ids) if query.column_ids is not None else query.column_limit
     )
     if query.limit * requested_column_count * query.max_cell_characters > 2_000_000:
         raise HTTPException(
@@ -482,6 +491,7 @@ async def get_table_artifact_cell(
     "/artifacts/{artifact_id}/content",
     responses={
         404: {"model": WorkbenchErrorResponse, "description": "Artifact not found"},
+        413: {"model": WorkbenchErrorResponse, "description": "Response too large"},
         500: {
             "model": WorkbenchErrorResponse,
             "description": "Artifact content is unavailable",
@@ -492,27 +502,85 @@ async def get_artifact_content(
     artifact_id: UUID,
     service: ArtifactDependency,
     access: require_workspace_capability(WorkspaceCapability.VIEW_ARTIFACTS),
-) -> Response:
+) -> StreamingResponse:
     artifact = await service.get(access.workspace_id, artifact_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
     try:
-        content = await service.load_content(artifact)
+        content = await service.open_content(artifact)
     except ArtifactContentUnavailableError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except ArtifactResponseTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     headers: dict[str, str] = {}
     download_name = artifact.metadata.get("download_name")
     if isinstance(download_name, str) and download_name != "":
         headers["Content-Disposition"] = f'attachment; filename="{download_name}"'
-    return Response(
-        content=content,
+    return _artifact_streaming_response(
+        content,
         media_type=artifact.content_type,
+        headers=headers,
+    )
+
+
+@router.get(
+    "/artifacts/{artifact_id}/download",
+    responses={
+        400: {"model": WorkbenchErrorResponse, "description": "Unsupported format"},
+        404: {"model": WorkbenchErrorResponse, "description": "Artifact not found"},
+        413: {"model": WorkbenchErrorResponse, "description": "Response too large"},
+        500: {
+            "model": WorkbenchErrorResponse,
+            "description": "Artifact content is unavailable",
+        },
+    },
+)
+async def get_artifact_download(
+    artifact_id: UUID,
+    service: ArtifactDependency,
+    access: require_workspace_capability(WorkspaceCapability.VIEW_ARTIFACTS),
+    format: Annotated[
+        str,
+        Query(min_length=1, max_length=32, pattern=r"^[a-z0-9_.-]+$"),
+    ] = "json",
+) -> StreamingResponse:
+    artifact = await service.get(access.workspace_id, artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    try:
+        content, content_type = await service.load_download(artifact, format)
+    except ArtifactContentUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except ArtifactResponseTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except WorkbenchOperationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Deterministic, unique, safe filename: never user-supplied metadata (which
+    # may contain path separators). Prefer the format's declared filename
+    # suffixed with the short artifact id, falling back to an id-suffixed slug.
+    declared = next(
+        (
+            entry.filename
+            for entry in service.export_formats(artifact)
+            if entry.format == format
+        ),
+        None,
+    )
+    stem = declared.rsplit(".", 1)[0] if declared else format
+    filename = f"{stem}-{artifact.id.hex[:8]}"
+    if declared and "." in declared:
+        filename = f"{filename}.{declared.rsplit('.', 1)[1]}"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return _artifact_streaming_response(
+        content,
+        media_type=content_type,
         headers=headers,
     )
 
 
 __all__ = [
     "get_artifact_content",
+    "get_artifact_download",
     "get_geo_exact_feature",
     "get_geo_raster_tile",
     "get_geo_raster_tilejson",
