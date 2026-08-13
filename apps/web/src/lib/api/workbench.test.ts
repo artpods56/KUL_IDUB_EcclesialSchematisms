@@ -11,6 +11,7 @@ import {
   getGraphExecution,
   listGraphExecutions,
   artifactContentUrl,
+  artifactDownloadUrl,
   submitGraphCommand,
   uploadFile,
 } from "./workbench";
@@ -319,5 +320,14 @@ describe("artifact content URLs", () => {
       .toBe("https://private.example/artifact");
     expect(artifactContentUrl(WORKSPACE_ID, "pmtiles://private.example/archive.pmtiles"))
       .toBe("pmtiles://private.example/archive.pmtiles");
+  });
+});
+
+describe("artifact download URLs", () => {
+  it("resolves the download path with a format query under the API base", () => {
+    expect(artifactDownloadUrl(WORKSPACE_ID, "artifact-1", "json"))
+      .toBe("/api/v1/workspaces/workspace%2F1/artifacts/artifact-1/download?format=json");
+    expect(artifactDownloadUrl(WORKSPACE_ID, "artifact-1", "txt"))
+      .toBe("/api/v1/workspaces/workspace%2F1/artifacts/artifact-1/download?format=txt");
   });
 });

@@ -43,6 +43,8 @@ export type RunEdgeProjectionInput = NonNullable<
 export type PinnedOutputInput = Schemas["PinnedOutputRequest"];
 export type ArtifactSummary =
   Schemas["ArtifactSummaryResponse"];
+export type ArtifactExportFormat =
+  Schemas["ArtifactExportFormatResponse"];
 export type TablePage = Schemas["TablePageResponse"];
 export type TableCell = Schemas["TableCellResponse"];
 export type TableSchema = Schemas["TableSchemaResponse"];

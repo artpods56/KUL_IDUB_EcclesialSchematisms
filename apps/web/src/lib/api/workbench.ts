@@ -553,6 +553,22 @@ export function artifactContentUrl(
   return `${resolved.pathname}${resolved.search}${resolved.hash}`;
 }
 
+/**
+ * Resolve the download URL for an artifact in the given format. The artifact
+ * summary carries `download_formats`; the caller picks one format and builds
+ * the relative `/download` URL.
+ */
+export function artifactDownloadUrl(
+  workspaceId: string,
+  artifactId: string,
+  format: string,
+): string {
+  return artifactContentUrl(
+    workspaceId,
+    `./artifacts/${encodeURIComponent(artifactId)}/download?format=${encodeURIComponent(format)}`,
+  ) as string;
+}
+
 export function getArtifactTablePage(
   workspaceId: string,
   artifactId: string,
