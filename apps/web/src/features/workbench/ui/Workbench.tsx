@@ -12,6 +12,7 @@ import {
   type IsValidConnection,
   type NodeChange,
   type OnConnect,
+  type OnConnectEnd,
   type OnEdgesChange,
   type OnNodesChange,
   type ReactFlowInstance,
@@ -51,6 +52,14 @@ import { CanvasGridSettingsPanel } from "./CanvasGridSettingsPanel";
 import { workbenchStyles as s } from "./Workbench.styles";
 import { NodeSelector } from "./NodeSelector";
 import {
+  ContextualNodeDiscovery,
+  type ContextualDiscoverySession,
+} from "./ContextualNodeDiscovery";
+import type {
+  ContextualCandidate,
+  ContextualRouteChoice,
+} from "../model/node-catalog";
+import {
   PublishModuleDialog,
   type ModuleBoundarySummary,
 } from "./PublishModuleDialog";
@@ -68,6 +77,7 @@ import {
 } from "../canvas/grid-layout";
 import {
   DEFAULT_APPENDIX_HEIGHT,
+  DEFAULT_NODE_PLACEMENT_HEIGHT,
   DEFAULT_NODE_WIDTH,
 } from "../canvas/node-layout";
 import { useNodeSecrets } from "./useNodeSecrets";
@@ -136,6 +146,7 @@ import {
 } from "../canvas/artifact-viewer";
 import {
   hydrateAuthoredGraphDocument,
+  savedGraphExecutionFingerprint,
 } from "../canvas/saved-graph";
 import {
   EMPTY_ARTIFACT_KEY_SELECTION,
@@ -203,6 +214,7 @@ import {
   workflowEdgeRouteOption,
 } from "../model/graph-authoring";
 import {
+  createSavedGraphRequest,
   type AuthoredGraphDocument,
   type GraphCommand,
 } from "../model/graph-document";
@@ -211,7 +223,12 @@ import {
   selectedNodeAndAncestorIds,
   type WorkflowNode,
 } from "../model/execution-plan";
-import { moduleCallUpgradeTarget } from "../model/node-catalog";
+import {
+  catalogNodeSpecs,
+  downstreamCandidatesFromOutput,
+  moduleCallUpgradeTarget,
+  upstreamCandidatesFromInput,
+} from "../model/node-catalog";
 import { workbenchGraphPath } from "../routes";
 import { useNodeRegistry } from "@/hooks/use-api";
 import {
@@ -275,9 +292,7 @@ function WorkbenchBody({
     setPanelOpen: setGridPanelOpen,
   } = useCanvasGridSettings();
   const canvasGridSettingsRef = React.useRef(canvasGridSettings);
-  canvasGridSettingsRef.current = canvasGridSettings;
   const bypassSnapRef = React.useRef(bypassSnap);
-  bypassSnapRef.current = bypassSnap;
   const [authoringState, dispatchAuthoringState] = React.useReducer(
     reduceWorkbenchAuthoringState,
     {
@@ -294,7 +309,11 @@ function WorkbenchBody({
   const nodeOverlays = authoringState.nodeOverlays;
   const authoredDocumentRef = React.useRef(authoredDocument);
   const nodeOverlaysRef = React.useRef(nodeOverlays);
-  nodeOverlaysRef.current = nodeOverlays;
+  React.useLayoutEffect(() => {
+    canvasGridSettingsRef.current = canvasGridSettings;
+    bypassSnapRef.current = bypassSnap;
+    nodeOverlaysRef.current = nodeOverlays;
+  }, [bypassSnap, canvasGridSettings, nodeOverlays]);
   const [selectedNodeIdSet, setSelectedNodeIdSet] =
     React.useState<ReadonlySet<string>>(new Set());
   const [selectedEdgeIdSet, setSelectedEdgeIdSet] =
@@ -423,12 +442,25 @@ function WorkbenchBody({
   >();
   const { workspace } = useWorkspaceContext();
   const [libraryOpen, setLibraryOpen] = React.useState(false);
+  const [contextualDiscovery, setContextualDiscovery] =
+    React.useState<ContextualDiscoverySession | null>(null);
   const [workspaceLibraryOpen, setWorkspaceLibraryOpen] = React.useState(false);
   const [workspaceLibraryFocusId, setWorkspaceLibraryFocusId] =
     React.useState<string | null>(null);
   const [publishModuleOpen, setPublishModuleOpen] = React.useState(false);
   const canPublishModule = workspace.capabilities.includes("publish_module");
+  const canCreateGraph = workspace.capabilities.includes("create_graph");
+  const canEditGraph = workspace.capabilities.includes("edit_graph");
+  const canExecuteGraph = workspace.capabilities.includes("execute_graph");
+  const canCancelExecution = workspace.capabilities.includes("cancel_execution");
+  const canDeleteGraph = workspace.capabilities.includes("delete_graph");
   const canEditModuleSource = workspace.capabilities.includes("edit_graph");
+  const localAuthoringEnabledRef = React.useRef(
+    initialGraphId === null && canCreateGraph,
+  );
+  const localAuthoringBlockedMessageRef = React.useRef(
+    "Editing is unavailable until this graph is synchronized.",
+  );
   const moduleBoundarySummaries = React.useMemo<
     readonly ModuleBoundarySummary[]
   >(
@@ -503,6 +535,13 @@ function WorkbenchBody({
       options?: { syncRoom?: boolean },
     ) => {
       if (!commands.length) return;
+      if (
+        options?.syncRoom !== false &&
+        !localAuthoringEnabledRef.current
+      ) {
+        setRunError(localAuthoringBlockedMessageRef.current);
+        return;
+      }
       const before = authoredDocumentRef.current;
       dispatchAuthoringState({ kind: "apply_commands", commands });
       setPositionOverrides({});
@@ -602,6 +641,10 @@ function WorkbenchBody({
   const commitArtifactViewers = React.useCallback((
     updater: (current: ArtifactViewerCanvasState) => ArtifactViewerCanvasState,
   ) => {
+    if (!localAuthoringEnabledRef.current) {
+      setRunError(localAuthoringBlockedMessageRef.current);
+      return;
+    }
     setArtifactViewers((current) => {
       const next = {
         ...updater(current),
@@ -1164,6 +1207,12 @@ function WorkbenchBody({
     () => presentationFromArtifactViewers(artifactViewers),
     [artifactViewers],
   );
+  const currentExecutionFingerprint = React.useMemo(
+    () => savedGraphExecutionFingerprint(
+      createSavedGraphRequest(authoredDocument, sharedPresentation),
+    ),
+    [authoredDocument, sharedPresentation],
+  );
   const updateDocumentName = React.useCallback((name: string) => {
     applyAuthoringCommands([{ kind: "rename_graph", name }]);
   }, [applyAuthoringCommands]);
@@ -1199,7 +1248,6 @@ function WorkbenchBody({
     activeGraph,
     graphName,
     setGraphName,
-    currentFingerprint,
     isDirty,
     canMaterializeSavedGraph,
     saving,
@@ -1223,7 +1271,6 @@ function WorkbenchBody({
     removeSavedGraph,
     syncFromCollaborativeHead,
     purgeLocalGraphState,
-    isGraphSnapshotCurrent,
   } = useSavedGraphLifecycle({
     workspaceId,
     workspaceSlug,
@@ -1248,59 +1295,75 @@ function WorkbenchBody({
     roomPersistence,
   });
   const router = useRouter();
-  const isDirtyRef = React.useRef(isDirty);
   const activeGraphIdRef = React.useRef(activeGraph?.id ?? null);
-  React.useEffect(() => {
-    isDirtyRef.current = isDirty;
-  }, [isDirty]);
   React.useEffect(() => {
     activeGraphIdRef.current = activeGraph?.id ?? null;
   }, [activeGraph?.id]);
   const syncFromCollaborativeHeadRef = React.useRef(syncFromCollaborativeHead);
-  syncFromCollaborativeHeadRef.current = syncFromCollaborativeHead;
   const applyAuthoringCommandsRef = React.useRef(applyAuthoringCommands);
-  applyAuthoringCommandsRef.current = applyAuthoringCommands;
-  const replaceHeadRef = React.useRef<(head: CollaborativeHead) => void>(
-    () => undefined,
+  React.useLayoutEffect(() => {
+    syncFromCollaborativeHeadRef.current = syncFromCollaborativeHead;
+    applyAuthoringCommandsRef.current = applyAuthoringCommands;
+  }, [applyAuthoringCommands, syncFromCollaborativeHead]);
+  const replaceHeadRef = React.useRef<
+    (head: CollaborativeHead) => CollaborativeHead
+  >(
+    (head) => head,
   );
   const graphRoomHeadRef = React.useRef<CollaborativeHead | null>(null);
   const refreshCollaborativeHeadRef = React.useRef<
     (options?: { errorMessage?: string | null }) => void
   >(() => undefined);
-  refreshCollaborativeHeadRef.current = (options) => {
-    const graphId = activeGraphIdRef.current;
-    if (!graphId) return;
-    void getCollaborativeHead(workspaceId, graphId)
-      .then((head) => {
-        const current = graphRoomHeadRef.current;
-        if (!shouldReplaceCollaborativeHead(current, head)) {
-          // Late HTTP snapshot lost the race to a newer WebSocket head.
-          // Clear the rehydration pause without wiping presentation/UI.
-          if (current) replaceHeadRef.current(current);
-          return;
-        }
-        replaceHeadRef.current(head);
-        syncFromCollaborativeHeadRef.current(head);
-      })
-      .catch((error: unknown) => {
-        if (options?.errorMessage === null) return;
-        setRunError(
-          options?.errorMessage ??
+  const headRefreshRetryRef = React.useRef<number | null>(null);
+  React.useLayoutEffect(() => {
+    refreshCollaborativeHeadRef.current = (options) => {
+      const graphId = activeGraphIdRef.current;
+      if (!graphId) return;
+      void getCollaborativeHead(workspaceId, graphId)
+        .then((head) => {
+          if (headRefreshRetryRef.current !== null) {
+            window.clearTimeout(headRefreshRetryRef.current);
+            headRefreshRetryRef.current = null;
+          }
+          const current = graphRoomHeadRef.current;
+          if (!shouldReplaceCollaborativeHead(current, head)) {
+            // Late HTTP snapshot lost the race to a newer WebSocket head.
+            // Clear the rehydration pause without wiping presentation/UI.
+            if (current) replaceHeadRef.current(current);
+            return;
+          }
+          replaceHeadRef.current(head);
+          syncFromCollaborativeHeadRef.current(head);
+        })
+        .catch((error: unknown) => {
+          const message = options?.errorMessage ??
             (error instanceof Error
               ? error.message
-              : "Collaborative head could not be refreshed."),
-        );
-      });
-  };
+              : "Collaborative head could not be refreshed.");
+          setRunError(message);
+          if (headRefreshRetryRef.current === null) {
+            headRefreshRetryRef.current = window.setTimeout(() => {
+              headRefreshRetryRef.current = null;
+              refreshCollaborativeHeadRef.current({ errorMessage: message });
+            }, 1000);
+          }
+        });
+    };
+  }, [workspaceId]);
+
+  React.useEffect(() => () => {
+    if (headRefreshRetryRef.current !== null) {
+      window.clearTimeout(headRefreshRetryRef.current);
+    }
+  }, []);
 
   const graphRoom = useGraphRoomSession({
     workspaceId,
     graphId: activeGraph?.id ?? null,
     onReady: (ready) => {
-      // Avoid clobbering in-progress local edits before the first room save.
-      if (!isDirtyRef.current) {
-        syncFromCollaborativeHeadRef.current(ready.head);
-      }
+      // Durable editing is disabled while disconnected, so reconnect always
+      // restores the authoritative room snapshot before authoring resumes.
+      syncFromCollaborativeHeadRef.current(ready.head);
     },
     onRehydrate: (head) => {
       syncFromCollaborativeHeadRef.current(head);
@@ -1416,9 +1479,11 @@ function WorkbenchBody({
       }
     },
   });
-  replaceHeadRef.current = graphRoom.replaceHead;
-  graphRoomHeadRef.current = graphRoom.head;
-  artifactViewerGraphIdRef.current = activeGraph?.id ?? null;
+  React.useLayoutEffect(() => {
+    replaceHeadRef.current = graphRoom.replaceHead;
+    graphRoomHeadRef.current = graphRoom.head;
+    artifactViewerGraphIdRef.current = activeGraph?.id ?? null;
+  }, [activeGraph?.id, graphRoom.head, graphRoom.replaceHead]);
   React.useEffect(() => {
     roomCommandSyncRef.current = {
       submitLocal: (commands, before) => {
@@ -1542,22 +1607,16 @@ function WorkbenchBody({
           expected_room_epoch: replacedHead.room_epoch,
           expected_sequence: replacedHead.collaboration_sequence,
         });
-        graphRoom.replaceHead(checkpointed.head);
-        return {
-          id: graphId,
-          revision: checkpointed.saved_revision,
-          name: checkpointed.head.name,
-          nodes: checkpointed.head.nodes ?? [],
-          edges: checkpointed.head.edges ?? [],
-          presentation:
-            checkpointed.head.presentation ?? emptyGraphPresentation(),
-        };
+        return graphRoom.reconcileCheckpointHead(
+          checkpointed.head,
+          replacedHead.room_epoch,
+        );
       },
     };
   }, [
     activeGraph?.id,
     graphRoom.canSubmitCommands,
-    graphRoom.replaceHead,
+    graphRoom.reconcileCheckpointHead,
     graphRoom.submitCommand,
     workspaceId,
   ]);
@@ -1574,13 +1633,12 @@ function WorkbenchBody({
     nodes,
     edges,
     activeGraph,
-    currentFingerprint,
+    currentExecutionFingerprint,
     canMaterializeSavedGraph,
     nodeSecretStatuses,
     roomActiveExecution: graphRoom.activeExecution,
     setNodes,
     setRunError,
-    isGraphSnapshotCurrent,
     onMaterializationsLoaded: clearPersistenceError,
   });
   React.useEffect(() => {
@@ -1588,6 +1646,21 @@ function WorkbenchBody({
   }, [running]);
 
   const graphOperationBusy = persistenceOperationBusy || running;
+  const localAuthoringEnabled =
+    !graphOperationBusy &&
+    (activeGraph ? canEditGraph && graphRoom.canSubmitCommands :
+      initialGraphId === null && canCreateGraph);
+  const localAuthoringBlockedMessage = !(
+    activeGraph ? canEditGraph : canCreateGraph
+  )
+    ? "You do not have permission to edit this graph."
+    : graphOperationBusy
+      ? "Editing is paused while another graph operation is in progress."
+      : "Editing is paused until graph synchronization is ready.";
+  React.useLayoutEffect(() => {
+    localAuthoringEnabledRef.current = localAuthoringEnabled;
+    localAuthoringBlockedMessageRef.current = localAuthoringBlockedMessage;
+  }, [localAuthoringBlockedMessage, localAuthoringEnabled]);
 
   React.useEffect(() => {
     if (executionHistoryTarget) closeGraphBrowser();
@@ -1611,11 +1684,21 @@ function WorkbenchBody({
       !imageUploads(node.data).length,
   );
   const selectedNodeIds = React.useMemo(
-    () => nodes.flatMap((node) => (node.selected ? [node.id] : [])),
-    [nodes],
+    () => [
+      ...nodes.flatMap((node) => (node.selected ? [node.id] : [])),
+      ...artifactViewers.nodes.flatMap((node) =>
+        node.selected ? [node.id] : [],
+      ),
+      ...artifactViewers.annotations.flatMap((node) =>
+        node.selected ? [node.id] : [],
+      ),
+    ],
+    [artifactViewers.annotations, artifactViewers.nodes, nodes],
   );
   const selectedNodeIdsRef = React.useRef(selectedNodeIds);
-  selectedNodeIdsRef.current = selectedNodeIds;
+  React.useLayoutEffect(() => {
+    selectedNodeIdsRef.current = selectedNodeIds;
+  }, [selectedNodeIds]);
   // Last on-canvas pointer in flow coords. Presence replaces the whole snapshot,
   // so selection/keepalive publishes must resend this or peers see cursor: null.
   const presenceCursorRef = React.useRef<{ x: number; y: number } | null>(null);
@@ -1715,10 +1798,15 @@ function WorkbenchBody({
   const connectionInstruction = missingRequiredInputs.length
     ? `${missingRequiredInputs.length} required input${missingRequiredInputs.length === 1 ? "" : "s"} unconnected · drag between ports to connect them`
     : null;
-  const runSelectionBusy = !registry || running || selectedNodeCount === 0;
-  const runSelectedDisabled = runSelectionBusy || !selectedNodesAreRunnable;
+  const selectedWorkflowCount = nodes.filter((node) => node.selected).length;
+  const selectedViewerCount = artifactViewers.nodes.filter(
+    (node) => node.selected,
+  ).length;
+  const runSelectionBusy = !registry || running || selectedWorkflowCount === 0;
+  const runSelectedDisabled =
+    !canExecuteGraph || runSelectionBusy || !selectedNodesAreRunnable;
   const runSelectedWithDependenciesDisabled =
-    runSelectionBusy || !selectedWithDependenciesAreRunnable;
+    !canExecuteGraph || runSelectionBusy || !selectedWithDependenciesAreRunnable;
   const nodeErrorCount = nodes.filter(
     (node) => Boolean(node.data.execution.error),
   ).length;
@@ -2586,7 +2674,251 @@ function WorkbenchBody({
     setSelectedNodeIdSet(new Set([id]));
     setSelectedEdgeIdSet(new Set());
     setLibraryOpen(false);
+    setContextualDiscovery(null);
   }, [applyAuthoringCommands, attachNodeCallbacks, flow]);
+
+  const onConnectEnd = React.useCallback<OnConnectEnd>(
+    (event, connectionState) => {
+      setContextualDiscovery(null);
+      if (!registry || !canEditGraph || running) return;
+      if (!("fromHandle" in connectionState) || !connectionState.fromHandle) {
+        return;
+      }
+      // Successful connections and drops onto handles/nodes keep existing behavior.
+      if (
+        connectionState.toHandle ||
+        connectionState.toNode ||
+        connectionState.isValid
+      ) {
+        return;
+      }
+
+      // Dragging from an output port offers downstream nodes; dragging from an
+      // input port offers upstream nodes whose outputs can feed it.
+      const upstream = connectionState.fromHandle.type === "target";
+      const handleId = connectionState.fromHandle.id;
+      if (!handleId) return;
+      const decoded = decodeHandleId(handleId);
+      if (
+        !decoded ||
+        (upstream
+          ? decoded.direction !== "input"
+          : decoded.direction !== "output")
+      ) {
+        return;
+      }
+
+      const fromNode = nodes.find(
+        (node) => node.id === connectionState.fromNode?.id,
+      );
+      if (!fromNode || !workflowNodeIsSupported(fromNode.data)) return;
+      const port = upstream
+        ? fromNode.data.spec.inputs.find(
+            (candidate) => candidate.name === decoded.portName,
+          )
+        : fromNode.data.spec.outputs.find(
+            (candidate) => candidate.name === decoded.portName,
+          );
+      if (!port) return;
+
+      const clientPoint =
+        "changedTouches" in event
+          ? {
+              x: event.changedTouches[0]?.clientX ?? 0,
+              y: event.changedTouches[0]?.clientY ?? 0,
+            }
+          : { x: event.clientX, y: event.clientY };
+      const flowPosition = flow?.screenToFlowPosition(clientPoint) ?? {
+        x: upstream
+          ? fromNode.position.x
+          : fromNode.position.x + DEFAULT_NODE_WIDTH,
+        y: connectionState.to?.y ?? fromNode.position.y,
+      };
+
+      const catalogNodes = catalogNodeSpecs(
+        registry,
+        activeGraph?.id ?? null,
+      );
+      const candidates = upstream
+        ? upstreamCandidatesFromInput({
+            targetPort: port as typeof port & {
+              readonly direction: "input";
+            },
+            targetHandle: handleId,
+            registry,
+            nodes: catalogNodes,
+          })
+        : downstreamCandidatesFromOutput({
+            sourcePort: port as typeof port & {
+              readonly direction: "output";
+            },
+            sourceHandle: handleId,
+            sourceFeed: decoded.feed ?? null,
+            registry,
+            nodes: catalogNodes,
+          });
+      if (!candidates.length) return;
+
+      setLibraryOpen(false);
+      setContextualDiscovery({
+        graphId: activeGraph?.id ?? null,
+        sourceNodeId: fromNode.id,
+        sourceHandle: handleId,
+        sourcePortTitle: port.title ?? port.name,
+        direction: upstream ? "upstream" : "downstream",
+        clientAnchor: clientPoint,
+        flowPosition,
+        candidates,
+      });
+    },
+    [
+      activeGraph?.id,
+      canEditGraph,
+      flow,
+      nodes,
+      registry,
+      running,
+    ],
+  );
+
+  const confirmContextualDiscovery = React.useCallback(
+    (candidate: ContextualCandidate, choice: ContextualRouteChoice) => {
+      if (!contextualDiscovery || !registry || !canEditGraph || running) return;
+
+      const upstream = contextualDiscovery.direction === "upstream";
+      const id = `node-${crypto.randomUUID()}`;
+      const data = attachNodeCallbacks(createWorkflowNodeData(candidate.spec));
+      const binding = choice.route.artifactTypeBinding;
+      // Bind the artifact type variable on whichever endpoint lives on the new node.
+      if (
+        (upstream && binding?.endpoint === "source") ||
+        (!upstream && binding?.endpoint === "target")
+      ) {
+        data.artifactTypeBindings = {
+          ...data.artifactTypeBindings,
+          [binding.variable]: binding.artifactType,
+        };
+      }
+
+      const plugId = !upstream && choice.usesInstancePlug
+        ? data.inputPlugs.find(
+            (plug) => plug.portName === choice.candidatePort.name,
+          )?.id
+        : undefined;
+      if (!upstream && choice.usesInstancePlug && !plugId) return;
+
+      const candidateHandle = encodeHandleId(
+        portMetaForPort(
+          choice.candidatePort,
+          choice.candidatePort.shape,
+          upstream ? undefined : plugId,
+          data.artifactTypeBindings,
+        ),
+      );
+      const existingHandle = canonicalHandleId(contextualDiscovery.sourceHandle);
+      const edgeConnection = upstream
+        ? {
+            source: id,
+            sourceHandle: candidateHandle,
+            target: contextualDiscovery.sourceNodeId,
+            targetHandle: existingHandle,
+          }
+        : {
+            source: contextualDiscovery.sourceNodeId,
+            sourceHandle: existingHandle,
+            target: id,
+            targetHandle: candidateHandle,
+          };
+      const edgeId = `edge-${crypto.randomUUID()}`;
+      const selection = connectionRouteSelection(choice.route);
+      const authoredNode = {
+        id,
+        operator_id: data.spec.operator_id,
+        operator_version: data.spec.operator_version,
+        config: structuredClone(data.config),
+        input_plugs: data.inputPlugs.map((plug) => ({
+          id: plug.id,
+          port: plug.portName,
+        })),
+        artifact_type_bindings: Object.entries(data.artifactTypeBindings).map(
+          ([variable, artifactType]) => ({
+            variable,
+            artifact_type: artifactType,
+          }),
+        ),
+        position: {
+          x: contextualDiscovery.flowPosition.x,
+          y:
+            contextualDiscovery.flowPosition.y -
+            DEFAULT_NODE_PLACEMENT_HEIGHT / 2,
+        },
+        layout: serializeNodeLayout(data.layout),
+      };
+
+      const edgeCommand = addEdgeCommand(
+        edgeConnection,
+        {
+          enabled: true,
+          collectionMode: choice.collectionMode,
+          projection: selection.projection
+            ? { path: [...selection.projection.path] }
+            : undefined,
+          conversionPath: selection.conversionPath.map((conversion) => ({
+            id: conversion.id,
+            version: conversion.version,
+          })),
+        },
+        edgeId,
+      );
+
+      applyAuthoringCommands([
+        { kind: "add_node", node: authoredNode },
+        edgeCommand,
+      ]);
+      setSelectedNodeIdSet(new Set([id]));
+      setSelectedEdgeIdSet(new Set());
+      setContextualDiscovery(null);
+      invalidateWorkflowResults(
+        [id],
+        [
+          ...edges,
+          {
+            id: edgeId,
+            ...edgeConnection,
+            type: WORKFLOW_EDGE_TYPE,
+            data: {
+              enabled: true,
+              collectionMode: choice.collectionMode,
+              projection: selection.projection
+                ? { path: [...selection.projection.path] }
+                : undefined,
+              conversionPath: selection.conversionPath.map((conversion) => ({
+                id: conversion.id,
+                version: conversion.version,
+              })),
+            },
+          },
+        ],
+      );
+    },
+    [
+      applyAuthoringCommands,
+      attachNodeCallbacks,
+      canEditGraph,
+      contextualDiscovery,
+      edges,
+      invalidateWorkflowResults,
+      registry,
+      running,
+    ],
+  );
+
+  const activeContextualDiscovery =
+    canEditGraph &&
+    !running &&
+    contextualDiscovery?.graphId === (activeGraph?.id ?? null)
+      ? contextualDiscovery
+      : null;
 
   const addArtifactViewer = React.useCallback(() => {
     const id = `artifact-viewer-${crypto.randomUUID()}`;
@@ -2614,7 +2946,7 @@ function WorkbenchBody({
           position,
           selected: true,
           data: {
-            layout: { width: 520, appendixHeight: 300 },
+            layout: { width: DEFAULT_NODE_WIDTH },
             mode: null,
           },
         },
@@ -2666,7 +2998,8 @@ function WorkbenchBody({
 
   const duplicateSelectedNodes = React.useCallback(() => {
     const selectedNodes = nodes.filter((node) => node.selected);
-    if (!selectedNodes.length || running) return;
+    const selectedViewers = artifactViewers.nodes.filter((node) => node.selected);
+    if ((!selectedNodes.length && !selectedViewers.length) || running) return;
 
     const duplicates = selectedNodes.map((node) => ({
       node,
@@ -2708,15 +3041,53 @@ function WorkbenchBody({
         edge,
       })),
     ];
-    applyAuthoringCommands(commands);
+    if (commands.length) applyAuthoringCommands(commands);
     const duplicatedNodeIdSet = new Set(duplicatedNodes.map((node) => node.id));
     setSelectedNodeIdSet(duplicatedNodeIdSet);
     setSelectedEdgeIdSet(new Set());
+    if (selectedViewers.length) {
+      const viewerIds = new Map(
+        selectedViewers.map((node) => [
+          node.id,
+          `artifact-viewer-${crypto.randomUUID()}`,
+        ]),
+      );
+      commitArtifactViewers((current) => ({
+        ...current,
+        nodes: [
+          ...current.nodes.map((node) => ({ ...node, selected: false })),
+          ...selectedViewers.map((node) => ({
+            ...node,
+            id: viewerIds.get(node.id) ?? node.id,
+            position: {
+              x: node.position.x + 36,
+              y: node.position.y + 36,
+            },
+            selected: true,
+            data: {
+              layout: node.data.layout,
+              mode: node.data.mode,
+            },
+          })),
+        ],
+      }));
+    } else {
+      commitArtifactViewers((current) => ({
+        ...current,
+        nodes: current.nodes.map((node) => ({ ...node, selected: false })),
+        annotations: current.annotations.map((node) => ({
+          ...node,
+          selected: false,
+        })),
+      }));
+    }
     setPendingConnectionRoute(null);
     setRunError(null);
   }, [
     applyAuthoringCommands,
+    artifactViewers.nodes,
     authoredDocument,
+    commitArtifactViewers,
     nodes,
     running,
   ]);
@@ -2853,10 +3224,19 @@ function WorkbenchBody({
                 : [validMode],
             onUpdate: edge.data?.compatibilityIssues?.length
               ? undefined
-              : (edgeId: string, update: WorkflowEdgeUpdate) =>
-                  updateEdge(edgeId, update),
-            onRouteOffsetChange: (edgeId: string, routeOffset: WorkflowEdgeRouteOffset) =>
-              updateEdgeRoute(edgeId, routeOffset),
+              : (edgeId: string, update: WorkflowEdgeUpdate) => {
+                  // React Flow stores this callback and invokes it from edge UI events.
+                  // eslint-disable-next-line react-hooks/refs
+                  updateEdge(edgeId, update);
+                },
+            onRouteOffsetChange: (
+              edgeId: string,
+              routeOffset: WorkflowEdgeRouteOffset,
+            ) => {
+              // React Flow stores this callback and invokes it from edge UI events.
+              // eslint-disable-next-line react-hooks/refs
+              updateEdgeRoute(edgeId, routeOffset);
+            },
           },
         };
       }),
@@ -2985,7 +3365,7 @@ function WorkbenchBody({
         edge.data?.projection?.path.length &&
         !routeOptions.some((route) =>
           route.projection?.path.length === edge.data?.projection?.path.length &&
-          route.projection.path.every(
+          route.projection?.path.every(
             (segment, index) =>
               segment === edge.data?.projection?.path[index],
           ),
@@ -3029,7 +3409,10 @@ function WorkbenchBody({
           sourcePortName: edge.data?.sourcePortName ?? "",
           projectionTitle: activeProjectionTitle,
           routeOptions,
+          // React Flow stores these callbacks and invokes them from edge UI events.
+          // eslint-disable-next-line react-hooks/refs
           onUpdate: updateArtifactViewerEdge,
+          // eslint-disable-next-line react-hooks/refs
           onRouteOffsetChange: updateArtifactViewerEdgeRoute,
         },
         style: {
@@ -3355,7 +3738,10 @@ function WorkbenchBody({
           ariaLabel: executionCancelling
             ? "Cancelling execution"
             : "Cancel execution",
-          disabled: !visibleExecution.executionId || executionCancelling,
+          disabled:
+            !canCancelExecution ||
+            !visibleExecution.executionId ||
+            executionCancelling,
           onInvoke: () => void cancelCurrentExecution(),
         },
       }
@@ -3376,6 +3762,7 @@ function WorkbenchBody({
       isDirty,
       saving,
       canSave:
+        localAuthoringEnabled &&
         !saving &&
         !running &&
         !openingGraphId &&
@@ -3392,6 +3779,9 @@ function WorkbenchBody({
         await saveCurrentGraph(name);
       },
       renameGraph: async (graph: SavedGraphSummary, name: string) => {
+        if (!canEditGraph) {
+          throw new Error("You do not have permission to rename graphs.");
+        }
         if (activeGraph?.id === graph.id) {
           setGraphName(name);
           await saveCurrentGraph(name);
@@ -3401,14 +3791,20 @@ function WorkbenchBody({
         void refreshSavedGraphs();
       },
       deleteGraph: async (graph: SavedGraphSummary) => {
+        if (!canDeleteGraph) {
+          throw new Error("You do not have permission to delete graphs.");
+        }
         await removeSavedGraph(graph);
       },
     }),
     [
       activeGraph,
+      canDeleteGraph,
+      canEditGraph,
       deletingGraphId,
       graphName,
       isDirty,
+      localAuthoringEnabled,
       openingGraphId,
       refreshSavedGraphs,
       removeSavedGraph,
@@ -3459,10 +3855,13 @@ function WorkbenchBody({
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onConnectEnd={onConnectEnd}
           isValidConnection={isValidConnection}
+          editable={localAuthoringEnabled}
           onPaneReady={setFlow}
           onPaneClick={() => {
             setLibraryOpen(false);
+            setContextualDiscovery(null);
             closeGraphBrowser();
             setGridPanelOpen(false);
           }}
@@ -3528,6 +3927,17 @@ function WorkbenchBody({
               </button>
             </NodeToolbar>
           ) : null}
+          {registry && activeContextualDiscovery ? (
+            <ContextualNodeDiscovery
+              key={`${activeContextualDiscovery.sourceNodeId}:${activeContextualDiscovery.sourceHandle}:${activeContextualDiscovery.flowPosition.x}:${activeContextualDiscovery.flowPosition.y}`}
+              session={activeContextualDiscovery}
+              registry={registry}
+              canInsert={localAuthoringEnabled}
+              insertDisabledReason={localAuthoringBlockedMessage}
+              onClose={() => setContextualDiscovery(null)}
+              onConfirm={confirmContextualDiscovery}
+            />
+          ) : null}
         </WorkflowCanvas>
       </section>
 
@@ -3545,7 +3955,7 @@ function WorkbenchBody({
           type="button"
           {...firefoxDynamicButtonProps}
           aria-label="Add node"
-          disabled={!registry || running}
+          disabled={!registry || !localAuthoringEnabled}
           title="Add node"
           {...stylex.props(s.railButton, s.railPrimary)}
           onClick={() => {
@@ -3599,6 +4009,7 @@ function WorkbenchBody({
           type="button"
           aria-label="Add Artifact Viewer"
           title="Add a presentation-only Artifact Viewer"
+          disabled={!localAuthoringEnabled}
           {...stylex.props(s.railButton)}
           onClick={addArtifactViewer}
         >
@@ -3612,6 +4023,7 @@ function WorkbenchBody({
             aria-expanded={shapesMenuOpen}
             aria-haspopup="menu"
             title="Add documentation shapes"
+            disabled={!localAuthoringEnabled}
             {...stylex.props(
               s.railButton,
               shapesMenuOpen ? s.railPrimary : null,
@@ -3712,10 +4124,13 @@ function WorkbenchBody({
         <span {...stylex.props(s.railDivider)} />
         <button
           type="button"
-          disabled={!selectedNodeCount || running}
+          disabled={
+            (!selectedWorkflowCount && !selectedViewerCount) ||
+            !localAuthoringEnabled
+          }
           title={
-            selectedNodeCount
-              ? `Duplicate ${selectedNodeCount} selected node${selectedNodeCount === 1 ? "" : "s"}`
+            selectedWorkflowCount || selectedViewerCount
+              ? `Duplicate ${selectedWorkflowCount + selectedViewerCount} selected node${selectedWorkflowCount + selectedViewerCount === 1 ? "" : "s"}`
               : "Select one or more nodes to duplicate"
           }
           {...stylex.props(s.railButton)}
@@ -3726,7 +4141,7 @@ function WorkbenchBody({
         </button>
         <button
           type="button"
-          disabled={!flow || !selectedNodeCount || running}
+          disabled={!flow || !selectedNodeCount || !localAuthoringEnabled}
           title={
             selectedNodeCount
               ? `Delete ${selectedNodeCount} selected node${selectedNodeCount === 1 ? "" : "s"}`
@@ -3767,6 +4182,8 @@ function WorkbenchBody({
           open={libraryOpen}
           registry={registry}
           activeGraphId={activeGraph?.id ?? null}
+          canInsert={localAuthoringEnabled}
+          insertDisabledReason={localAuthoringBlockedMessage}
           onOpenChange={setLibraryOpen}
           onAddNode={addCatalogNode}
           onOpenGraph={openGraphInNewTab}

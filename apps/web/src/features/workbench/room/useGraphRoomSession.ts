@@ -45,7 +45,13 @@ export interface UseGraphRoomSessionResult {
   readonly submitCommand: (
     command: RoomGraphCommand,
   ) => Promise<GraphRoomSubmitResult>;
-  readonly replaceHead: (head: CollaborativeHead) => void;
+  /** Reconcile a full snapshot and return the effective room head. */
+  readonly replaceHead: (head: CollaborativeHead) => CollaborativeHead;
+  /** Reconcile a checkpoint only within the epoch of its submitted command. */
+  readonly reconcileCheckpointHead: (
+    head: CollaborativeHead,
+    expectedRoomEpoch: string,
+  ) => CollaborativeHead;
   readonly publishPresence: (
     update: Omit<PresenceUpdateSubmit, "presence_sequence">,
   ) => boolean;
@@ -79,6 +85,7 @@ export function useGraphRoomSession({
   onExecutionCleared,
   onTerminalClose,
 }: UseGraphRoomSessionOptions): UseGraphRoomSessionResult {
+  const [stateGraphId, setStateGraphId] = React.useState<string | null>(null);
   const [status, setStatus] = React.useState<GraphRoomStatus>("idle");
   const [terminalReason, setTerminalReason] =
     React.useState<GraphRoomTerminalReason | null>(null);
@@ -105,34 +112,49 @@ export function useGraphRoomSession({
   const onActiveExecutionRef = React.useRef(onActiveExecution);
   const onExecutionClearedRef = React.useRef(onExecutionCleared);
   const onTerminalCloseRef = React.useRef(onTerminalClose);
-  onReadyRef.current = onReady;
-  onRehydrateRef.current = onRehydrate;
-  onHeadRefreshRequiredRef.current = onHeadRefreshRequired;
-  onCommandAcceptedRef.current = onCommandAccepted;
-  onCommandRejectedRef.current = onCommandRejected;
-  onActiveExecutionRef.current = onActiveExecution;
-  onExecutionClearedRef.current = onExecutionCleared;
-  onTerminalCloseRef.current = onTerminalClose;
+
+  React.useEffect(() => {
+    onReadyRef.current = onReady;
+    onRehydrateRef.current = onRehydrate;
+    onHeadRefreshRequiredRef.current = onHeadRefreshRequired;
+    onCommandAcceptedRef.current = onCommandAccepted;
+    onCommandRejectedRef.current = onCommandRejected;
+    onActiveExecutionRef.current = onActiveExecution;
+    onExecutionClearedRef.current = onExecutionCleared;
+    onTerminalCloseRef.current = onTerminalClose;
+  }, [
+    onActiveExecution,
+    onCommandAccepted,
+    onCommandRejected,
+    onExecutionCleared,
+    onHeadRefreshRequired,
+    onReady,
+    onRehydrate,
+    onTerminalClose,
+  ]);
 
   React.useEffect(() => {
     if (!graphId) {
       sessionRef.current?.disconnect();
       sessionRef.current = null;
-      setStatus("idle");
-      setTerminalReason(null);
-      setHead(null);
-      setCapabilities([]);
-      setAuthorizationVersion(null);
-      setParticipants([]);
-      setActiveExecution(null);
-      setLocalSessionId(null);
       return;
     }
 
     const session = new GraphRoomSession({
       workspaceId,
       graphId,
-      onStatusChange: setStatus,
+      onStatusChange: (nextStatus) => {
+        setStateGraphId(graphId);
+        setStatus(nextStatus);
+        if (nextStatus !== "connecting") return;
+        setTerminalReason(null);
+        setHead(null);
+        setCapabilities([]);
+        setAuthorizationVersion(null);
+        setParticipants([]);
+        setActiveExecution(null);
+        setLocalSessionId(null);
+      },
       onReady: (ready) => {
         setHead(ready.head);
         setCapabilities(ready.capabilities.capabilities);
@@ -189,8 +211,23 @@ export function useGraphRoomSession({
     };
   }, [workspaceId, graphId]);
 
+  const stateIsCurrent = graphId !== null && stateGraphId === graphId;
+  const currentStatus = stateIsCurrent ? status : "idle";
+  const currentTerminalReason = stateIsCurrent ? terminalReason : null;
+  const currentHead = stateIsCurrent ? head : null;
+  const currentCapabilities = stateIsCurrent ? capabilities : [];
+  const currentAuthorizationVersion = stateIsCurrent
+    ? authorizationVersion
+    : null;
+  const currentLocalSessionId = stateIsCurrent ? localSessionId : null;
+  const currentParticipants = stateIsCurrent ? participants : [];
+  const currentActiveExecution = stateIsCurrent ? activeExecution : null;
+
   const submitCommand = React.useCallback(
     async (command: RoomGraphCommand): Promise<GraphRoomSubmitResult> => {
+      if (!graphId) {
+        throw new Error("Graph room is not connected.");
+      }
       const session = sessionRef.current;
       if (!session) {
         throw new Error("Graph room is not connected.");
@@ -203,41 +240,74 @@ export function useGraphRoomSession({
       setHead(nextHead);
       return { ...result, head: nextHead };
     },
-    [],
+    [graphId],
   );
 
   const replaceHead = React.useCallback((nextHead: CollaborativeHead) => {
-    sessionRef.current?.replaceHead(nextHead);
-    setHead(nextHead);
-  }, []);
+    if (!graphId) {
+      throw new Error("Graph room is not connected.");
+    }
+    const session = sessionRef.current;
+    if (!session) {
+      throw new Error("Graph room is not connected.");
+    }
+    session.replaceHead(nextHead);
+    const effectiveHead = session.getHead();
+    if (!effectiveHead) {
+      throw new Error("Graph room head is unavailable after reconciliation.");
+    }
+    setHead(effectiveHead);
+    return effectiveHead;
+  }, [graphId]);
+
+  const reconcileCheckpointHead = React.useCallback((
+    checkpointHead: CollaborativeHead,
+    expectedRoomEpoch: string,
+  ) => {
+    if (!graphId) {
+      throw new Error("Graph room is not connected.");
+    }
+    const session = sessionRef.current;
+    if (!session) {
+      throw new Error("Graph room is not connected.");
+    }
+    const effectiveHead = session.reconcileCheckpointHead(
+      checkpointHead,
+      expectedRoomEpoch,
+    );
+    setHead(effectiveHead);
+    return effectiveHead;
+  }, [graphId]);
 
   const publishPresence = React.useCallback(
     (update: Omit<PresenceUpdateSubmit, "presence_sequence">): boolean => {
+      if (!graphId) return false;
       return sessionRef.current?.publishPresence(update) ?? false;
     },
-    [],
+    [graphId],
   );
 
   return {
-    status,
-    terminalReason,
-    head,
-    capabilities,
-    authorizationVersion,
+    status: currentStatus,
+    terminalReason: currentTerminalReason,
+    head: currentHead,
+    capabilities: currentCapabilities,
+    authorizationVersion: currentAuthorizationVersion,
     canSubmitCommands:
-      status === "ready" &&
-      head !== null &&
-      capabilities.includes("edit_graph") &&
-      terminalReason === null,
+      currentStatus === "ready" &&
+      currentHead !== null &&
+      currentCapabilities.includes("edit_graph") &&
+      currentTerminalReason === null,
     canPublishPresence:
-      status === "ready" &&
-      capabilities.includes("publish_presence") &&
-      terminalReason === null,
-    localSessionId,
-    participants,
-    activeExecution,
+      currentStatus === "ready" &&
+      currentCapabilities.includes("publish_presence") &&
+      currentTerminalReason === null,
+    localSessionId: currentLocalSessionId,
+    participants: currentParticipants,
+    activeExecution: currentActiveExecution,
     submitCommand,
     replaceHead,
+    reconcileCheckpointHead,
     publishPresence,
   };
 }

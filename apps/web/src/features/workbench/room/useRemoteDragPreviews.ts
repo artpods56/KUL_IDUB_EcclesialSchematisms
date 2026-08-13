@@ -25,11 +25,12 @@ export function useRemoteDragPreviews(
   const releaseTimersRef = React.useRef(new Map<string, number>());
 
   React.useEffect(() => {
+    const releaseTimers = releaseTimersRef.current;
     return () => {
-      for (const timer of releaseTimersRef.current.values()) {
+      for (const timer of releaseTimers.values()) {
         window.clearTimeout(timer);
       }
-      releaseTimersRef.current.clear();
+      releaseTimers.clear();
     };
   }, []);
 

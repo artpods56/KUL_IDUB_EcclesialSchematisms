@@ -4,6 +4,7 @@ import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
+  CollaborativeHead,
   NodeRegistry,
   SavedGraph,
   SavedGraphSummary,
@@ -228,6 +229,174 @@ describe("useSavedGraphLifecycle document ownership", () => {
     expect(callbacks.replaceDocument).not.toHaveBeenCalled();
   });
 
+  it("keeps an active canvas intact while room persistence is synchronizing", async () => {
+    const graph = savedGraph(GRAPH_A_ID, "Graph awaiting sync", 3);
+    const persistDocument = vi.fn();
+    api.getSavedGraph.mockResolvedValue(graph);
+    const { options, callbacks } = lifecycleOptions(GRAPH_A_ID);
+    options.roomPersistence = {
+      canPersist: false,
+      persistDocument,
+    };
+    const hook = await renderHook(useSavedGraphLifecycle, options);
+    await waitFor(() => hook.result.current.activeGraph?.id === GRAPH_A_ID);
+    const canvasReplacementCount = callbacks.replaceDocument.mock.calls.length;
+
+    await React.act(async () => {
+      await hook.result.current.saveCurrentGraph();
+    });
+
+    expect(persistDocument).not.toHaveBeenCalled();
+    expect(api.updateSavedGraph).not.toHaveBeenCalled();
+    expect(callbacks.replaceDocument).toHaveBeenCalledTimes(
+      canvasReplacementCount,
+    );
+    expect(hook.result.current.activeGraph).toMatchObject({
+      id: GRAPH_A_ID,
+      revision: 3,
+    });
+    expect(hook.result.current.persistenceError).toBe(
+      "Graph synchronization is unavailable while the collaboration room connects or reconnects. Your canvas is unchanged; wait for synchronization to finish, then try saving again.",
+    );
+  });
+
+  it("keeps an uncheckpointed collaborative head dirty and non-materializable", async () => {
+    const graph = savedGraph(GRAPH_A_ID, "Checkpoint", 3);
+    api.getSavedGraph.mockResolvedValue(graph);
+    const { options, callbacks } = lifecycleOptions(GRAPH_A_ID);
+    const hook = await renderHook(useSavedGraphLifecycle, options);
+    await waitFor(() => hook.result.current.activeGraph?.id === GRAPH_A_ID);
+    const liveHead: CollaborativeHead = {
+      graph_id: GRAPH_A_ID,
+      room_epoch: "00000000-0000-4000-8000-0000000000ee",
+      collaboration_sequence: 4,
+      checkpoint_sequence: 3,
+      checkpoint_revision: 3,
+      name: "Live room edit",
+      updated_at: "2026-08-13T12:00:00Z",
+      nodes: [],
+      edges: [],
+    };
+
+    React.act(() => {
+      hook.result.current.syncFromCollaborativeHead(liveHead);
+    });
+
+    expect(hook.result.current.activeGraph).toMatchObject({
+      id: GRAPH_A_ID,
+      revision: 3,
+    });
+    expect(hook.result.current.isDirty).toBe(true);
+    expect(hook.result.current.canMaterializeSavedGraph).toBe(false);
+    expect(callbacks.replaceDocument).toHaveBeenLastCalledWith({
+      name: "Live room edit",
+      nodes: [],
+      edges: [],
+    });
+  });
+
+  it("marks the reconciled room head saved when checkpoint catches up", async () => {
+    const graph = savedGraph(GRAPH_A_ID, "Checkpoint", 1);
+    api.getSavedGraph.mockResolvedValue(graph);
+    const { options } = lifecycleOptions(GRAPH_A_ID);
+    options.roomPersistence = {
+      canPersist: true,
+      persistDocument: vi.fn().mockResolvedValue({
+        graph_id: GRAPH_A_ID,
+        room_epoch: "00000000-0000-4000-8000-0000000000ee",
+        collaboration_sequence: 4,
+        checkpoint_sequence: 4,
+        checkpoint_revision: 2,
+        name: "Checkpoint",
+        updated_at: "2026-08-13T12:00:00Z",
+        nodes: [],
+        edges: [],
+      }),
+    };
+    const hook = await renderHook(useSavedGraphLifecycle, options);
+    await waitFor(() => hook.result.current.activeGraph?.id === GRAPH_A_ID);
+
+    await React.act(async () => {
+      await hook.result.current.saveCurrentGraph();
+    });
+
+    expect(hook.result.current.activeGraph).toMatchObject({
+      id: GRAPH_A_ID,
+      revision: 2,
+    });
+    expect(hook.result.current.isDirty).toBe(false);
+    expect(hook.result.current.canMaterializeSavedGraph).toBe(true);
+  });
+
+  it("keeps a peer head dirty when it advances during checkpoint continuation", async () => {
+    const graph = savedGraph(GRAPH_A_ID, "Checkpoint", 1);
+    const checkpointContinuation = deferred<CollaborativeHead>();
+    const persistDocument = vi.fn(() => checkpointContinuation.promise);
+    api.getSavedGraph.mockResolvedValue(graph);
+    const { options, callbacks } = lifecycleOptions(GRAPH_A_ID);
+    options.roomPersistence = {
+      canPersist: true,
+      persistDocument,
+    };
+    const hook = await renderHook(useSavedGraphLifecycle, options);
+    await waitFor(() => hook.result.current.activeGraph?.id === GRAPH_A_ID);
+
+    let savePromise!: Promise<void>;
+    await React.act(async () => {
+      savePromise = hook.result.current.saveCurrentGraph();
+      await Promise.resolve();
+    });
+    expect(persistDocument).toHaveBeenCalledOnce();
+
+    const peerPresentation = {
+      viewers: [{
+        id: "peer-viewer",
+        position: { x: 80, y: 120 },
+        layout: null,
+        mode: null,
+      }],
+      links: [],
+      bindings: [],
+      annotations: [],
+    };
+    const peerHeadBeforeCheckpoint: CollaborativeHead = {
+      graph_id: GRAPH_A_ID,
+      room_epoch: "00000000-0000-4000-8000-0000000000ee",
+      collaboration_sequence: 5,
+      checkpoint_sequence: 1,
+      checkpoint_revision: 1,
+      name: "Peer presentation",
+      updated_at: "2026-08-13T12:00:00Z",
+      nodes: [],
+      edges: [],
+      presentation: peerPresentation,
+    };
+    React.act(() => {
+      hook.result.current.syncFromCollaborativeHead(peerHeadBeforeCheckpoint);
+    });
+
+    await React.act(async () => {
+      checkpointContinuation.resolve({
+        ...peerHeadBeforeCheckpoint,
+        checkpoint_sequence: 4,
+        checkpoint_revision: 2,
+      });
+      await savePromise;
+    });
+
+    expect(hook.result.current.activeGraph).toMatchObject({
+      id: GRAPH_A_ID,
+      revision: 2,
+    });
+    expect(hook.result.current.graphName).toBe("Peer presentation");
+    expect(hook.result.current.isDirty).toBe(true);
+    expect(hook.result.current.canMaterializeSavedGraph).toBe(false);
+    expect(callbacks.replacePresentation).toHaveBeenLastCalledWith(
+      GRAPH_A_ID,
+      peerPresentation,
+    );
+  });
+
   it("restores the canonical final drag position when opening", async () => {
     const finalPosition = { x: 240, y: 180 };
     const graph: SavedGraph = {
@@ -319,6 +488,46 @@ describe("useSavedGraphLifecycle document ownership", () => {
     expect(callbacks.clearRunError).toHaveBeenCalledTimes(1);
     expect(callbacks.closeNodeLibrary).toHaveBeenCalledTimes(1);
     expect(callbacks.requestCanvasRefit).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks a graph switch busy before the route reaches the loading effect", async () => {
+    const graphA = savedGraph(GRAPH_A_ID, "Graph A");
+    api.getSavedGraph.mockResolvedValue(graphA);
+    const { options } = lifecycleOptions(GRAPH_A_ID);
+    const hook = await renderHook(useSavedGraphLifecycle, options);
+    await waitFor(() => hook.result.current.activeGraph?.id === GRAPH_A_ID);
+
+    await React.act(async () => {
+      await hook.result.current.openSavedGraph(GRAPH_B_ID);
+    });
+
+    expect(router.push).toHaveBeenCalledWith(
+      `/workspaces/local/graphs/${GRAPH_B_ID}`,
+      { scroll: false },
+    );
+    expect(hook.result.current.openingGraphId).toBe(GRAPH_B_ID);
+    expect(hook.result.current.persistenceOperationBusy).toBe(true);
+  });
+
+  it("clears the graph-switch lock when navigation throws", async () => {
+    const graphA = savedGraph(GRAPH_A_ID, "Graph A");
+    api.getSavedGraph.mockResolvedValue(graphA);
+    router.push.mockImplementationOnce(() => {
+      throw new Error("Route unavailable");
+    });
+    const { options } = lifecycleOptions(GRAPH_A_ID);
+    const hook = await renderHook(useSavedGraphLifecycle, options);
+    await waitFor(() => hook.result.current.activeGraph?.id === GRAPH_A_ID);
+
+    await React.act(async () => {
+      await hook.result.current.openSavedGraph(GRAPH_B_ID);
+    });
+
+    expect(hook.result.current.openingGraphId).toBeNull();
+    expect(hook.result.current.persistenceOperationBusy).toBe(false);
+    expect(hook.result.current.persistenceError).toBe(
+      "Could not navigate to the graph: Route unavailable",
+    );
   });
 
   it("does not let a late create response replace a graph opened by navigation", async () => {

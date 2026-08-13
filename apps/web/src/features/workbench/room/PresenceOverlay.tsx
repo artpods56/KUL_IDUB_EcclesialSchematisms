@@ -103,6 +103,15 @@ interface CursorTrack {
   element: HTMLDivElement | null;
 }
 
+interface CursorTrackView {
+  sessionId: string;
+  displayName: string;
+  color: string;
+  x: number;
+  y: number;
+  opacity: number;
+}
+
 export interface PresenceOverlayProps {
   participants: readonly PresenceParticipant[];
   localSessionId: string | null;
@@ -124,22 +133,38 @@ export function PresenceOverlay({
   );
 
   const tracksRef = React.useRef(new Map<string, CursorTrack>());
-  const [cursorSessionIds, setCursorSessionIds] = React.useState<readonly string[]>(
-    [],
-  );
+  const [cursorTracks, setCursorTracks] = React.useState<
+    readonly CursorTrackView[]
+  >([]);
   const rafRef = React.useRef<number | null>(null);
   const lastFrameRef = React.useRef<number | null>(null);
   const nowRef = React.useRef(now);
-  nowRef.current = now;
 
-  const publishCursorIds = React.useCallback(() => {
-    const ids = [...tracksRef.current.keys()];
-    setCursorSessionIds((current) =>
-      current.length === ids.length &&
-        current.every((id, index) => id === ids[index])
-        ? current
-        : ids,
-    );
+  React.useEffect(() => {
+    nowRef.current = now;
+  }, [now]);
+
+  const publishCursorTracks = React.useCallback(() => {
+    const next = [...tracksRef.current.values()].map((track) => ({
+      sessionId: track.sessionId,
+      displayName: track.displayName,
+      color: track.color,
+      x: track.motion.x,
+      y: track.motion.y,
+      opacity: track.motion.opacity,
+    }));
+    setCursorTracks((current) => {
+      const unchanged = current.length === next.length && current.every(
+        (track, index) => {
+          const candidate = next[index];
+          return candidate !== undefined &&
+            track.sessionId === candidate.sessionId &&
+            track.displayName === candidate.displayName &&
+            track.color === candidate.color;
+        },
+      );
+      return unchanged ? current : next;
+    });
   }, []);
 
   const ensureAnimationLoop = React.useCallback(() => {
@@ -168,7 +193,7 @@ export function PresenceOverlay({
         }
       }
 
-      if (removed) publishCursorIds();
+      if (removed) publishCursorTracks();
       if (tracksRef.current.size > 0) {
         rafRef.current = window.requestAnimationFrame(frame);
       } else {
@@ -178,7 +203,7 @@ export function PresenceOverlay({
     };
 
     rafRef.current = window.requestAnimationFrame(frame);
-  }, [publishCursorIds]);
+  }, [publishCursorTracks]);
 
   React.useEffect(() => {
     return () => {
@@ -195,7 +220,6 @@ export function PresenceOverlay({
     const tracks = tracksRef.current;
     const seen = new Set<string>();
     const sampleAt = now();
-    let membershipChanged = false;
 
     for (const participant of remote) {
       const sessionId = participant.graph_room_session_id;
@@ -204,9 +228,12 @@ export function PresenceOverlay({
       const existing = tracks.get(sessionId);
       if (!participant.cursor) {
         if (existing && !existing.motion.fadingOut) {
-          existing.motion = beginRemoteCursorFade(existing.motion);
-          existing.displayName = participant.actor.display_name;
-          existing.color = color;
+          tracks.set(sessionId, {
+            ...existing,
+            motion: beginRemoteCursorFade(existing.motion),
+            displayName: participant.actor.display_name,
+            color,
+          });
         }
         continue;
       }
@@ -222,31 +249,31 @@ export function PresenceOverlay({
           }),
           element: null,
         });
-        membershipChanged = true;
         continue;
       }
-      existing.displayName = participant.actor.display_name;
-      existing.color = color;
-      existing.motion = applyRemoteCursorSample(existing.motion, {
-        x: participant.cursor.x,
-        y: participant.cursor.y,
-        at: sampleAt,
+      tracks.set(sessionId, {
+        ...existing,
+        displayName: participant.actor.display_name,
+        color,
+        motion: applyRemoteCursorSample(existing.motion, {
+          x: participant.cursor.x,
+          y: participant.cursor.y,
+          at: sampleAt,
+        }),
       });
     }
 
     for (const [sessionId, track] of tracks) {
       if (seen.has(sessionId) || track.motion.fadingOut) continue;
-      track.motion = beginRemoteCursorFade(track.motion);
+      tracks.set(sessionId, {
+        ...track,
+        motion: beginRemoteCursorFade(track.motion),
+      });
     }
 
-    if (membershipChanged) publishCursorIds();
+    publishCursorTracks();
     ensureAnimationLoop();
-  }, [ensureAnimationLoop, now, publishCursorIds, remote]);
-
-  const cursorTracks = cursorSessionIds.flatMap((sessionId) => {
-    const track = tracksRef.current.get(sessionId);
-    return track ? [track] : [];
-  });
+  }, [ensureAnimationLoop, now, publishCursorTracks, remote]);
 
   if (remote.length === 0 && cursorTracks.length === 0) return null;
 
@@ -282,9 +309,10 @@ export function PresenceOverlay({
                 const current = tracksRef.current.get(track.sessionId);
                 if (current) current.element = element;
                 if (element) {
+                  const motion = current?.motion ?? track;
                   element.style.transform =
-                    `translate3d(${track.motion.x}px, ${track.motion.y}px, 0)`;
-                  element.style.opacity = String(track.motion.opacity);
+                    `translate3d(${motion.x}px, ${motion.y}px, 0)`;
+                  element.style.opacity = String(motion.opacity);
                 }
               }}
               {...stylex.props(s.cursor)}

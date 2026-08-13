@@ -161,7 +161,7 @@ interface UseRunExecutionOptions {
   nodes: readonly WorkflowNode[];
   edges: readonly WorkflowEdge[];
   activeGraph: ActiveSavedGraph | null;
-  currentFingerprint: string;
+  currentExecutionFingerprint: string;
   /** Workflow topology matches the saved revision (presentation may differ). */
   canMaterializeSavedGraph: boolean;
   nodeSecretStatuses: NodeSecretStatusesByNode;
@@ -169,10 +169,6 @@ interface UseRunExecutionOptions {
   roomActiveExecution?: ActiveExecutionSummary | null;
   setNodes: React.Dispatch<React.SetStateAction<WorkflowNode[]>>;
   setRunError: (message: string | null) => void;
-  isGraphSnapshotCurrent: (
-    graph: ActiveSavedGraph | null,
-    fingerprint: string,
-  ) => boolean;
   onMaterializationsLoaded: () => void;
 }
 
@@ -182,13 +178,12 @@ export function useRunExecution({
   nodes,
   edges,
   activeGraph,
-  currentFingerprint,
+  currentExecutionFingerprint,
   canMaterializeSavedGraph,
   nodeSecretStatuses,
   roomActiveExecution = null,
   setNodes,
   setRunError,
-  isGraphSnapshotCurrent,
   onMaterializationsLoaded,
 }: UseRunExecutionOptions) {
   const [runningScope, setRunningScope] = React.useState<RunScope | null>(null);
@@ -208,6 +203,28 @@ export function useRunExecution({
   const runRequestReservedRef = React.useRef(false);
   const mountedRef = React.useRef(true);
   const sharedObservationCancelRef = React.useRef<(() => void) | null>(null);
+  const currentExecutionSnapshotRef = React.useRef({
+    activeGraph,
+    fingerprint: currentExecutionFingerprint,
+  });
+  React.useLayoutEffect(() => {
+    currentExecutionSnapshotRef.current = {
+      activeGraph,
+      fingerprint: currentExecutionFingerprint,
+    };
+  }, [activeGraph, currentExecutionFingerprint]);
+
+  const isGraphSnapshotCurrent = React.useCallback((
+    graph: ActiveSavedGraph | null,
+    fingerprint: string,
+  ): boolean => {
+    const current = currentExecutionSnapshotRef.current;
+    return (
+      current.fingerprint === fingerprint &&
+      current.activeGraph?.id === graph?.id &&
+      current.activeGraph?.revision === graph?.revision
+    );
+  }, []);
 
   const clearPendingProgress = React.useCallback(() => {
     if (progressFrameRef.current !== null) {
@@ -314,7 +331,7 @@ export function useRunExecution({
 
   const performRunWorkflow = React.useCallback(async (scope: RunScope) => {
     if (!registryAvailable || running) return;
-    const planningFingerprint = currentFingerprint;
+    const planningFingerprint = currentExecutionFingerprint;
     const planningActiveGraph = activeGraph;
     let planningNodes = nodes;
     let execution = executionSubgraphFor(scope, planningNodes, edges);
@@ -1207,7 +1224,7 @@ export function useRunExecution({
     activeGraph,
     canMaterializeSavedGraph,
     clearPendingProgress,
-    currentFingerprint,
+    currentExecutionFingerprint,
     edges,
     flushPendingProgress,
     isGraphSnapshotCurrent,
@@ -1478,7 +1495,7 @@ export function useRunExecution({
     const executionGeneration = executionGenerationRef.current + 1;
     executionGenerationRef.current = executionGeneration;
     const planningActiveGraph = activeGraph;
-    const planningFingerprint = currentFingerprint;
+    const planningFingerprint = currentExecutionFingerprint;
     const overlaysCompatible = roomActiveExecution.overlays_compatible;
     const executionNodeIds = new Set(roomActiveExecution.requested_node_ids);
     executionGuardRef.current = {
@@ -1531,6 +1548,27 @@ export function useRunExecution({
       workspaceId,
       discoveredId,
       {
+        onError: () => {
+          const guard = executionGuardRef.current;
+          if (
+            !guard ||
+            guard.generation !== executionGeneration ||
+            guard.executionId !== discoveredId ||
+            guard.finished
+          ) {
+            return;
+          }
+          setVisibleExecution((current) =>
+            current?.generation === executionGeneration &&
+                current.executionId === discoveredId
+              ? {
+                  ...current,
+                  statusError:
+                    "Live progress disconnected. Status polling continues.",
+                }
+              : current
+          );
+        },
         onEvent: (event) => {
           const guard = executionGuardRef.current;
           if (
@@ -1884,7 +1922,7 @@ export function useRunExecution({
     })();
   }, [
     activeGraph,
-    currentFingerprint,
+    currentExecutionFingerprint,
     flushPendingProgress,
     isGraphSnapshotCurrent,
     roomActiveExecution,

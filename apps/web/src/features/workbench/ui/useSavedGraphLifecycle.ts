@@ -50,16 +50,10 @@ export interface ActiveSavedGraph {
 /** Prefer room/command persistence when the graph room can accept edits. */
 export interface GraphRoomPersistenceAdapter {
   readonly canPersist: boolean;
+  /** Checkpoint the draft and return the effective current room head. */
   persistDocument: (
     draft: CreateSavedGraphRequest,
-  ) => Promise<{
-    id: string;
-    revision: number;
-    name: string;
-    nodes: readonly SavedGraphNode[];
-    edges: NonNullable<CreateSavedGraphRequest["edges"]>;
-    presentation?: CreateSavedGraphRequest["presentation"];
-  }>;
+  ) => Promise<CollaborativeHead>;
 }
 
 interface UseSavedGraphLifecycleOptions {
@@ -127,10 +121,6 @@ export interface UseSavedGraphLifecycleResult {
   removeSavedGraph: (graph: SavedGraphSummary) => Promise<void>;
   syncFromCollaborativeHead: (head: CollaborativeHead) => void;
   purgeLocalGraphState: () => void;
-  isGraphSnapshotCurrent: (
-    graph: ActiveSavedGraph | null,
-    fingerprint: string,
-  ) => boolean;
 }
 
 const NEW_GRAPH_NAME = "Untitled workflow";
@@ -182,7 +172,6 @@ export function useSavedGraphLifecycle({
   const documentGenerationRef = React.useRef(0);
   const mountedRef = React.useRef(true);
   const currentFingerprintRef = React.useRef("");
-  const activeGraphRef = React.useRef<ActiveSavedGraph | null>(null);
 
   const currentDraft = React.useMemo(
     () => createSavedGraphRequest(document, presentation),
@@ -204,10 +193,6 @@ export function useSavedGraphLifecycle({
   React.useEffect(() => {
     currentFingerprintRef.current = currentFingerprint;
   }, [currentFingerprint]);
-
-  React.useEffect(() => {
-    activeGraphRef.current = activeGraph;
-  }, [activeGraph]);
 
   const hasUnsavedDraft =
     document.nodes.length > 0 ||
@@ -260,7 +245,6 @@ export function useSavedGraphLifecycle({
     openRequestRef.current?.abort();
     replaceDocument({ name: NEW_GRAPH_NAME, nodes: [], edges: [] }, []);
     clearGraphSecretStatuses();
-    activeGraphRef.current = null;
     setActiveGraph(null);
     setSavedFingerprint(null);
     setSavedExecutionFingerprint(null);
@@ -292,6 +276,39 @@ export function useSavedGraphLifecycle({
     router.push(path, { scroll: false });
   }, [confirmDiscard, router, showBlankGraph, workspaceSlug]);
 
+  const syncFromCollaborativeHead = React.useCallback((
+    head: CollaborativeHead,
+  ) => {
+    const responseDocument = authoredGraphDocument({
+      name: head.name,
+      nodes: head.nodes ?? [],
+      edges: head.edges ?? [],
+    });
+    const responsePresentation =
+      head.presentation ?? emptyGraphPresentation();
+    const nextActiveGraph = {
+      id: head.graph_id,
+      revision: head.checkpoint_revision,
+      nodes: head.nodes ?? [],
+    };
+    approvedRouteGraphIdRef.current = head.graph_id;
+    setActiveGraph(nextActiveGraph);
+    if (head.collaboration_sequence === head.checkpoint_sequence) {
+      rememberSavedDraft(
+        createSavedGraphRequest(responseDocument, responsePresentation),
+      );
+    } else {
+      // The room journal is authoritative for the canvas but is not durable
+      // until its current sequence has been checkpointed.
+      setSavedFingerprint(null);
+      setSavedExecutionFingerprint(null);
+    }
+    setPersistenceError(null);
+    // Preserve execution overlays: room sync must not clear materialized pins.
+    replaceDocument(responseDocument);
+    replacePresentation(head.graph_id, responsePresentation);
+  }, [rememberSavedDraft, replaceDocument, replacePresentation]);
+
   const saveCurrentGraph = React.useCallback(async (nameOverride?: string) => {
     if (
       isExecutionRunning() ||
@@ -306,21 +323,36 @@ export function useSavedGraphLifecycle({
       setPersistenceError("Enter a graph name before saving.");
       return;
     }
+    const activeRoomPersistence = activeGraph === null
+      ? null
+      : roomPersistence;
+    if (
+      activeRoomPersistence !== null &&
+      !activeRoomPersistence.canPersist
+    ) {
+      setPersistenceError(
+        "Graph synchronization is unavailable while the collaboration room connects or reconnects. Your canvas is unchanged; wait for synchronization to finish, then try saving again.",
+      );
+      return;
+    }
     const documentGeneration = documentGenerationRef.current;
     setSaving(true);
     setPersistenceError(null);
     try {
-      const useRoom =
-        activeGraph !== null &&
-        roomPersistence?.canPersist === true;
-      const savedGraph = useRoom
-        ? await roomPersistence.persistDocument(submittedDraft)
-        : activeGraph
-          ? await updateSavedGraph(workspaceId, activeGraph.id, {
-              ...submittedDraft,
-              expected_revision: activeGraph.revision,
-            })
-          : await createSavedGraph(workspaceId, submittedDraft);
+      const persistenceResult = activeRoomPersistence
+        ? {
+            kind: "collaborative" as const,
+            head: await activeRoomPersistence.persistDocument(submittedDraft),
+          }
+        : {
+            kind: "saved" as const,
+            graph: activeGraph
+              ? await updateSavedGraph(workspaceId, activeGraph.id, {
+                  ...submittedDraft,
+                  expected_revision: activeGraph.revision,
+                })
+              : await createSavedGraph(workspaceId, submittedDraft),
+          };
       if (!mountedRef.current) return;
       void mutateSavedGraphs();
       void refreshNodeRegistry();
@@ -329,6 +361,24 @@ export function useSavedGraphLifecycle({
       ) {
         return;
       }
+      if (persistenceResult.kind === "collaborative") {
+        const head = persistenceResult.head;
+        const nextActiveGraph = {
+          id: head.graph_id,
+          revision: head.checkpoint_revision,
+          nodes: head.nodes ?? [],
+        };
+        syncFromCollaborativeHead(head);
+        await refreshNodeSecretStatuses(nextActiveGraph, nodes);
+        if (
+          !mountedRef.current ||
+          documentGenerationRef.current !== documentGeneration
+        ) {
+          return;
+        }
+        return;
+      }
+      const savedGraph = persistenceResult.graph;
       const responseDocument = authoredGraphDocument({
         name: savedGraph.name,
         nodes: savedGraph.nodes ?? [],
@@ -345,7 +395,6 @@ export function useSavedGraphLifecycle({
       if (createdGraph) {
         approvedRouteGraphIdRef.current = savedGraph.id;
       }
-      activeGraphRef.current = nextActiveGraph;
       setActiveGraph(nextActiveGraph);
       rememberSavedDraft(
         createSavedGraphRequest(responseDocument, responsePresentation),
@@ -373,7 +422,7 @@ export function useSavedGraphLifecycle({
       }
       if (error instanceof ApiError && error.status === 409) {
         setPersistenceError(
-          "This graph changed in another session. Your canvas is unchanged; refresh the list before deciding whether to reopen it.",
+          `Save conflict: ${error.detail}. Your canvas is unchanged; refresh the saved graph list before deciding whether to reopen it.`,
         );
       } else {
         setPersistenceError(
@@ -398,41 +447,14 @@ export function useSavedGraphLifecycle({
     roomPersistence,
     router,
     saving,
+    syncFromCollaborativeHead,
     workspaceId,
     workspaceSlug,
   ]);
 
-  const syncFromCollaborativeHead = React.useCallback((
-    head: CollaborativeHead,
-  ) => {
-    const responseDocument = authoredGraphDocument({
-      name: head.name,
-      nodes: head.nodes ?? [],
-      edges: head.edges ?? [],
-    });
-    const responsePresentation =
-      head.presentation ?? emptyGraphPresentation();
-    const nextActiveGraph = {
-      id: head.graph_id,
-      revision: head.checkpoint_revision,
-      nodes: head.nodes ?? [],
-    };
-    approvedRouteGraphIdRef.current = head.graph_id;
-    activeGraphRef.current = nextActiveGraph;
-    setActiveGraph(nextActiveGraph);
-    rememberSavedDraft(
-      createSavedGraphRequest(responseDocument, responsePresentation),
-    );
-    setPersistenceError(null);
-    // Preserve execution overlays: room sync must not clear materialized pins.
-    replaceDocument(responseDocument);
-    replacePresentation(head.graph_id, responsePresentation);
-  }, [rememberSavedDraft, replaceDocument, replacePresentation]);
-
   const purgeLocalGraphState = React.useCallback(() => {
     documentGenerationRef.current += 1;
     openRequestRef.current?.abort();
-    activeGraphRef.current = null;
     setActiveGraph(null);
     setSavedFingerprint(null);
     setSavedExecutionFingerprint(null);
@@ -473,10 +495,23 @@ export function useSavedGraphLifecycle({
         documentGenerationRef.current += 1;
         openRequestRef.current?.abort();
         approvedRouteGraphIdRef.current = graphId;
-        router.push(
-          workbenchGraphPath(workspaceSlug, graphId),
-          { scroll: false },
-        );
+        // Lock durable editing before routing. The App Router can retain the
+        // old canvas until the new graph route reaches this hook's load path.
+        setOpeningGraphId(graphId);
+        try {
+          router.push(
+            workbenchGraphPath(workspaceSlug, graphId),
+            { scroll: false },
+          );
+        } catch (error) {
+          approvedRouteGraphIdRef.current = null;
+          setOpeningGraphId((current) => current === graphId ? null : current);
+          setPersistenceError(
+            error instanceof Error
+              ? `Could not navigate to the graph: ${error.message}`
+              : "Could not navigate to the graph.",
+          );
+        }
       }
       return;
     }
@@ -553,7 +588,6 @@ export function useSavedGraphLifecycle({
         revision: savedGraph.revision,
         nodes: savedGraph.nodes ?? [],
       };
-      activeGraphRef.current = nextActiveGraph;
       setActiveGraph(nextActiveGraph);
       rememberSavedDraft(
         createSavedGraphRequest(responseDocument, responsePresentation),
@@ -697,7 +731,6 @@ export function useSavedGraphLifecycle({
             { scroll: false },
           );
         } else {
-          activeGraphRef.current = null;
           setActiveGraph(null);
           setSavedFingerprint(null);
           setSavedExecutionFingerprint(null);
@@ -764,18 +797,6 @@ export function useSavedGraphLifecycle({
   const refreshSavedGraphs = React.useCallback(() => {
     void mutateSavedGraphs();
   }, [mutateSavedGraphs]);
-  const isGraphSnapshotCurrent = React.useCallback((
-    graph: ActiveSavedGraph | null,
-    fingerprint: string,
-  ): boolean => {
-    const currentGraph = activeGraphRef.current;
-    return (
-      currentFingerprintRef.current === fingerprint &&
-      currentGraph?.id === graph?.id &&
-      currentGraph?.revision === graph?.revision
-    );
-  }, []);
-
   const savedGraphsError = savedGraphListError instanceof Error
     ? savedGraphListError.message
     : savedGraphListError
@@ -810,6 +831,5 @@ export function useSavedGraphLifecycle({
     removeSavedGraph,
     syncFromCollaborativeHead,
     purgeLocalGraphState,
-    isGraphSnapshotCurrent,
   };
 }

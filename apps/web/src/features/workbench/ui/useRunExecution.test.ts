@@ -4,6 +4,7 @@ import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
+  CreateSavedGraphRequest,
   NodeSpec,
   RunExecution,
   RunExecutionEventHandlers,
@@ -16,6 +17,7 @@ import {
   WORKFLOW_NODE_TYPE,
   createWorkflowNodeData,
 } from "../canvas/types";
+import { savedGraphExecutionFingerprint } from "../canvas/saved-graph";
 import type { WorkflowNode } from "../model/execution-plan";
 import type { ActiveExecutionSummary } from "../room";
 import { deferred } from "./test/deferred";
@@ -46,6 +48,39 @@ const apiMocks = vi.hoisted(() => ({
 vi.mock("@/lib/api", () => apiMocks);
 
 const executionId = "00000000-0000-4000-8000-000000000001";
+const executionDraft: CreateSavedGraphRequest = {
+  name: "Execution snapshot",
+  nodes: [{
+    id: "node-1",
+    operator_id: "test.operator",
+    operator_version: 1,
+    config: {},
+    input_plugs: [],
+    position: { x: 0, y: 0 },
+  }],
+  edges: [],
+  presentation: {
+    viewers: [],
+    links: [],
+    bindings: [],
+    annotations: [],
+  },
+};
+const executionFingerprint = savedGraphExecutionFingerprint(executionDraft);
+const presentationOnlyExecutionFingerprint = savedGraphExecutionFingerprint({
+  ...executionDraft,
+  presentation: {
+    ...executionDraft.presentation,
+    viewers: [{ id: "viewer-1", position: { x: 40, y: 80 } }],
+  },
+});
+const changedExecutionFingerprint = savedGraphExecutionFingerprint({
+  ...executionDraft,
+  nodes: executionDraft.nodes?.map((node) => ({
+    ...node,
+    config: { changed: true },
+  })),
+});
 const liveSubscriptions: Array<{
   executionId: string;
   handlers: RunExecutionEventHandlers;
@@ -167,12 +202,11 @@ function hookHarness(
     nodes,
     edges: [],
     activeGraph: null,
-    currentFingerprint: "fingerprint-1",
+    currentExecutionFingerprint: executionFingerprint,
     canMaterializeSavedGraph: false,
     nodeSecretStatuses: {},
     setNodes,
     setRunError,
-    isGraphSnapshotCurrent: () => true,
     onMaterializationsLoaded: vi.fn(),
     ...options,
   };
@@ -338,14 +372,12 @@ describe("useRunExecution", () => {
   });
 
   it("routes replayed module progress while guarding identity, sequence, and graph snapshot", async () => {
-    let snapshotCurrent = true;
     apiMocks.startRunExecution.mockResolvedValue(execution("running", {
       active_node_id: "module-1",
     }));
     apiMocks.getRunExecution.mockResolvedValue(succeededExecution("module-1"));
     const harness = hookHarness({
       nodes: [workflowNode("module-1")],
-      isGraphSnapshotCurrent: () => snapshotCurrent,
     });
     const hook = await renderHook(useRunExecution, harness.hookOptions);
     const { runPromise } = await launchRun(hook.result);
@@ -397,7 +429,12 @@ describe("useRunExecution", () => {
         node_path: ["module-1"],
         message: "Stale graph",
       }));
-      snapshotCurrent = false;
+    });
+    await hook.rerender({
+      ...harness.hookOptions,
+      currentExecutionFingerprint: changedExecutionFingerprint,
+    });
+    await React.act(async () => {
       await vi.advanceTimersByTimeAsync(20);
     });
     expect(harness.nodes()[0]?.data.progress).toEqual({
@@ -413,7 +450,7 @@ describe("useRunExecution", () => {
       }],
     });
 
-    snapshotCurrent = true;
+    await hook.rerender(harness.hookOptions);
     await React.act(async () => {
       live.handlers.onEvent(executionStatusEvent(4, "succeeded"));
       await runPromise;
@@ -870,21 +907,35 @@ describe("useRunExecution", () => {
     expect(request).not.toHaveProperty("graph_revision");
   });
 
+  it("keeps run results when presentation changes during execution", async () => {
+    expect(presentationOnlyExecutionFingerprint).toBe(executionFingerprint);
+    apiMocks.startRunExecution.mockResolvedValue(execution("running"));
+    apiMocks.getRunExecution.mockResolvedValue(succeededExecution());
+    const harness = hookHarness();
+    const hook = await renderHook(useRunExecution, harness.hookOptions);
+    const { runPromise } = await launchRun(hook.result);
+
+    await hook.rerender({
+      ...harness.hookOptions,
+      currentExecutionFingerprint: presentationOnlyExecutionFingerprint,
+    });
+    await React.act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+      await runPromise;
+    });
+
+    expect(harness.nodes()[0].data.execution.status).toBe("succeeded");
+    expect(harness.nodes()[0].data.run?.node_id).toBe("node-1");
+    expect(harness.runError()).toBeNull();
+  });
+
   it("suppresses event, poll, and terminal updates after the graph snapshot changes", async () => {
-    let snapshotState: "current" | "flip" | "stale" = "current";
+    expect(changedExecutionFingerprint).not.toBe(executionFingerprint);
     apiMocks.startRunExecution.mockResolvedValue(execution("running"));
     apiMocks.getRunExecution
       .mockResolvedValueOnce(execution("running"))
       .mockResolvedValueOnce(succeededExecution());
-    const harness = hookHarness({
-      isGraphSnapshotCurrent: () => {
-        if (snapshotState === "flip") {
-          snapshotState = "stale";
-          return true;
-        }
-        return snapshotState === "current";
-      },
-    });
+    const harness = hookHarness();
     const hook = await renderHook(useRunExecution, harness.hookOptions);
     const { runPromise } = await launchRun(hook.result);
     const live = latestLiveSubscription();
@@ -897,13 +948,15 @@ describe("useRunExecution", () => {
         execution: { status: "idle" },
       },
     })));
-    snapshotState = "flip";
+    await hook.rerender({
+      ...harness.hookOptions,
+      currentExecutionFingerprint: changedExecutionFingerprint,
+    });
 
     await React.act(async () => {
       live.handlers.onEvent(executionStatusEvent(1, "running"));
     });
     expect(harness.nodes()[0].data.execution.status).toBe("idle");
-    expect(snapshotState).toBe("stale");
 
     await React.act(async () => {
       await vi.advanceTimersByTimeAsync(500);

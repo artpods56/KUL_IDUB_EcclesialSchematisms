@@ -89,7 +89,10 @@ interface QueuedCommand {
   readonly resolve: (result: GraphRoomCommandResult) => void;
   readonly reject: (error: Error) => void;
   sent: boolean;
+  roomEpoch: string | null;
+  observedSequence: number | null;
   accepted: GraphCommandAcceptedMessage | null;
+  receipt: GraphCommandReceiptMessage | null;
 }
 
 export class GraphRoomSession {
@@ -270,13 +273,65 @@ export class GraphRoomSession {
    */
   replaceHead(head: CollaborativeHead): void {
     if (!shouldReplaceCollaborativeHead(this.head, head)) {
-      this.awaitingHeadRehydration = false;
-      this.drainQueue();
+      const pendingReceipt = this.inFlight?.receipt;
+      if (
+        pendingReceipt === null ||
+        pendingReceipt === undefined ||
+        !this.headCoversReceipt(pendingReceipt)
+      ) {
+        return;
+      }
+      this.finishHeadRehydration();
       return;
     }
     this.head = head;
-    this.awaitingHeadRehydration = false;
-    this.drainQueue();
+    this.finishHeadRehydration();
+  }
+
+  /**
+   * Reconcile a checkpoint response against the epoch of its submitted command.
+   * A later epoch reset is authoritative and must not be reversed by the old
+   * epoch's HTTP continuation.
+   */
+  reconcileCheckpointHead(
+    checkpointHead: CollaborativeHead,
+    expectedRoomEpoch: string,
+  ): CollaborativeHead {
+    const currentHead = this.head;
+    if (!currentHead) {
+      throw new Error(
+        `Graph room head is unavailable while reconciling checkpoint epoch ${expectedRoomEpoch}.`,
+      );
+    }
+    if (currentHead.room_epoch !== expectedRoomEpoch) {
+      return currentHead;
+    }
+    if (checkpointHead.room_epoch !== expectedRoomEpoch) {
+      throw new Error(
+        `Checkpoint response epoch ${checkpointHead.room_epoch} does not match submitted command epoch ${expectedRoomEpoch}.`,
+      );
+    }
+
+    this.replaceHead(checkpointHead);
+    let effectiveHead = this.head;
+    if (!effectiveHead) {
+      throw new Error(
+        `Graph room head is unavailable after reconciling checkpoint epoch ${expectedRoomEpoch}.`,
+      );
+    }
+    if (
+      effectiveHead.collaboration_sequence >
+        checkpointHead.collaboration_sequence &&
+      checkpointHead.checkpoint_sequence > effectiveHead.checkpoint_sequence
+    ) {
+      effectiveHead = {
+        ...effectiveHead,
+        checkpoint_sequence: checkpointHead.checkpoint_sequence,
+        checkpoint_revision: checkpointHead.checkpoint_revision,
+      };
+      this.replaceHead(effectiveHead);
+    }
+    return effectiveHead;
   }
 
   submitCommand(command: RoomGraphCommand): Promise<GraphRoomCommandResult> {
@@ -309,7 +364,10 @@ export class GraphRoomSession {
         resolve,
         reject,
         sent: false,
+        roomEpoch: null,
+        observedSequence: null,
         accepted: null,
+        receipt: null,
       });
       this.drainQueue();
     });
@@ -385,10 +443,14 @@ export class GraphRoomSession {
       return;
     }
     if (message.type === "room.rehydrate") {
-      this.head = message.head;
-      this.awaitingHeadRehydration = false;
-      this.listeners.onRehydrate?.(message.head);
-      this.drainQueue();
+      const keptCurrentHead = Boolean(
+        this.head && !shouldReplaceCollaborativeHead(this.head, message.head),
+      );
+      const rehydratedHead = keptCurrentHead ? this.head! : message.head;
+      this.head = rehydratedHead;
+      this.listeners.onRehydrate?.(rehydratedHead);
+      if (keptCurrentHead) return;
+      this.finishHeadRehydration();
       return;
     }
     if (message.type === "presence.join" || message.type === "presence.update") {
@@ -436,8 +498,15 @@ export class GraphRoomSession {
       this.stopTraffic("protocol_error");
       return;
     }
-    this.ready = message;
-    this.head = message.head;
+    let ready = message;
+    if (
+      this.head &&
+      !shouldReplaceCollaborativeHead(this.head, message.head)
+    ) {
+      ready = { ...message, head: this.head };
+    }
+    this.ready = ready;
+    this.head = ready.head;
     this.capabilities = message.capabilities.capabilities;
     this.authorizationVersion = message.capabilities.authorization_version;
     this.participants = new Map(
@@ -450,10 +519,10 @@ export class GraphRoomSession {
     this.lastPresenceSentAt = 0;
     this.activeExecution = message.active_execution;
     this.setStatus("ready");
-    this.listeners.onReady?.(message);
+    this.listeners.onReady?.(ready);
     this.listeners.onActiveExecution?.(message.active_execution);
     this.emitPresenceChange();
-    this.drainQueue();
+    this.finishHeadRehydration();
   }
 
   private upsertParticipant(participant: PresenceParticipant): void {
@@ -478,55 +547,42 @@ export class GraphRoomSession {
 
   private applyAccepted(message: GraphCommandAcceptedMessage): void {
     const local = this.localCommandIds.delete(message.command_id);
-    let refreshRequired = false;
-    if (
-      this.head &&
-      message.room_epoch === this.head.room_epoch &&
-      message.sequence > this.head.collaboration_sequence
-    ) {
-      try {
-        this.head = applyRoomCommandToHead(
-          this.head,
-          message.command,
-          message.sequence,
-        );
-      } catch {
-        // Incremental apply failed; keep sequence markers and require a full snapshot.
-        this.head = {
-          ...this.head,
-          collaboration_sequence: message.sequence,
-        };
-        refreshRequired = true;
-      }
-    } else if (
-      this.head &&
-      message.room_epoch === this.head.room_epoch &&
-      message.sequence === this.head.collaboration_sequence
-    ) {
-      // Sequence matched without a prior document apply (e.g. stale markers).
-      // Still fold the accepted command into the confirmed head.
-      try {
-        this.head = applyRoomCommandToHead(
-          this.head,
-          message.command,
-          message.sequence,
-        );
-      } catch {
-        refreshRequired = true;
-      }
-    } else if (
-      this.head &&
-      (message.room_epoch !== this.head.room_epoch ||
-        message.sequence > this.head.collaboration_sequence + 1)
-    ) {
-      refreshRequired = true;
-    }
     if (this.inFlight?.commandId === message.command_id) {
       this.inFlight.accepted = message;
     }
-    this.listeners.onCommandAccepted?.(message, { local });
-    if (refreshRequired) {
+
+    const head = this.head;
+    if (!head || message.room_epoch !== head.room_epoch) {
       this.requestHeadRefresh();
+      return;
+    }
+    if (message.sequence <= head.collaboration_sequence) {
+      return;
+    }
+    if (message.sequence !== head.collaboration_sequence + 1) {
+      this.requestHeadRefresh();
+      return;
+    }
+
+    try {
+      this.head = applyRoomCommandToHead(
+        head,
+        message.command,
+        message.sequence,
+      );
+    } catch {
+      this.requestHeadRefresh();
+      return;
+    }
+    this.listeners.onCommandAccepted?.(message, { local });
+    const pendingReceipt = this.inFlight?.receipt;
+    if (
+      this.awaitingHeadRehydration &&
+      pendingReceipt !== null &&
+      pendingReceipt !== undefined &&
+      this.headCoversReceipt(pendingReceipt)
+    ) {
+      this.finishHeadRehydration();
     }
   }
 
@@ -535,22 +591,48 @@ export class GraphRoomSession {
     if (!pending || pending.commandId !== message.command_id) {
       return;
     }
-    if (this.head) {
-      this.head = {
-        ...this.head,
-        room_epoch: message.current_room_epoch,
-        collaboration_sequence: message.current_sequence,
-      };
-    }
-    this.inFlight = null;
-    pending.resolve({
-      receipt: message,
-      accepted: pending.accepted,
-    });
-    if (message.requires_head_rehydration) {
+    this.localCommandIds.delete(message.command_id);
+    pending.receipt = message;
+    if (
+      message.requires_head_rehydration ||
+      !this.headCoversReceipt(message)
+    ) {
       this.requestHeadRefresh();
       return;
     }
+    this.resolveInFlightReceipt(pending);
+    this.drainQueue();
+  }
+
+  private headCoversReceipt(message: GraphCommandReceiptMessage): boolean {
+    return (
+      this.head !== null &&
+      this.head.room_epoch === message.current_room_epoch &&
+      this.head.collaboration_sequence >= message.current_sequence
+    );
+  }
+
+  private resolveInFlightReceipt(pending: QueuedCommand): void {
+    const receipt = pending.receipt;
+    if (this.inFlight !== pending || receipt === null) return;
+    this.inFlight = null;
+    pending.resolve({
+      receipt,
+      accepted: pending.accepted,
+    });
+  }
+
+  private finishHeadRehydration(): void {
+    const pending = this.inFlight;
+    if (pending?.receipt !== null && pending?.receipt !== undefined) {
+      if (!this.headCoversReceipt(pending.receipt)) {
+        this.awaitingHeadRehydration = true;
+        this.listeners.onHeadRefreshRequired?.();
+        return;
+      }
+      this.resolveInFlightReceipt(pending);
+    }
+    this.awaitingHeadRehydration = false;
     this.drainQueue();
   }
 
@@ -620,12 +702,15 @@ export class GraphRoomSession {
     const next = this.queue.shift();
     if (!next) return;
 
+    const roomEpoch = next.roomEpoch ?? this.head.room_epoch;
+    const observedSequence =
+      next.observedSequence ?? this.head.collaboration_sequence;
     const payload = {
       protocol_version: ROOM_PROTOCOL_VERSION,
       type: "graph.command.submit" as const,
       command_id: next.commandId,
-      room_epoch: this.head.room_epoch,
-      observed_sequence: this.head.collaboration_sequence,
+      room_epoch: roomEpoch,
+      observed_sequence: observedSequence,
       command: next.command,
     };
     const socket = this.socket;
@@ -635,6 +720,8 @@ export class GraphRoomSession {
     }
     this.inFlight = next;
     next.sent = true;
+    next.roomEpoch = roomEpoch;
+    next.observedSequence = observedSequence;
     try {
       socket.send(JSON.stringify(payload));
     } catch (error) {
@@ -659,13 +746,11 @@ export class GraphRoomSession {
     }
     this.ready = null;
     this.clearPresence();
-    this.rejectInFlight(
-      new GraphRoomCommandError(
-        this.inFlight?.commandId ?? "",
-        "disconnected",
-        "Graph room disconnected before the command completed.",
-      ),
-    );
+    if (this.inFlight) {
+      const interrupted = this.inFlight;
+      this.inFlight = null;
+      this.queue.unshift(interrupted);
+    }
     if (this.intentionallyClosed) {
       this.setStatus("idle");
       return;

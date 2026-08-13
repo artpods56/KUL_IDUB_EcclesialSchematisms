@@ -339,6 +339,390 @@ describe("GraphRoomSession", () => {
     expect(session.getHead()?.collaboration_sequence).toBe(5);
   });
 
+  it("retries an interrupted command idempotently before draining queued commands", async () => {
+    const commandIds = [
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    ];
+    const { session, socket } = connectReadySession({
+      workspaceId: WORKSPACE_ID,
+      graphId: GRAPH_ID,
+      createCommandId: () => commandIds.shift() ?? crypto.randomUUID(),
+    });
+
+    const interrupted = session.submitCommand({
+      kind: "rename_graph",
+      name: "Renamed before disconnect",
+      expected_name: "Room graph",
+    });
+    const queued = session.submitCommand({
+      kind: "rename_graph",
+      name: "Queued after reconnect",
+      expected_name: "Renamed before disconnect",
+    });
+    const originalSubmission = JSON.parse(socket.sent[0]!);
+    let interruptedSettled = false;
+    void interrupted.then(
+      () => {
+        interruptedSettled = true;
+      },
+      () => {
+        interruptedSettled = true;
+      },
+    );
+
+    // The server may have committed the first submission even though neither
+    // its accepted event nor receipt reached this socket.
+    socket.emitClose(1006, "connection_lost");
+    await Promise.resolve();
+    expect(interruptedSettled).toBe(false);
+    expect(session.getStatus()).toBe("unsynchronized");
+
+    session.connect();
+    const reconnectedSocket = FakeWebSocket.instances.at(-1);
+    if (!reconnectedSocket || reconnectedSocket === socket) {
+      throw new Error("expected a replacement websocket");
+    }
+    reconnectedSocket.open();
+    const readyAfterCommit = roomReady();
+    readyAfterCommit.head = {
+      ...readyAfterCommit.head,
+      collaboration_sequence: 5,
+      name: "Renamed before disconnect",
+    };
+    reconnectedSocket.emitMessage(readyAfterCommit);
+
+    expect(reconnectedSocket.sent).toHaveLength(1);
+    // The HMAC-backed idempotency contract includes epoch and observed
+    // sequence, so the retry must preserve the whole original submission.
+    expect(JSON.parse(reconnectedSocket.sent[0]!)).toEqual(originalSubmission);
+
+    reconnectedSocket.emitMessage({
+      protocol_version: 1,
+      type: "graph.command.receipt",
+      command_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      outcome: "idempotent_replay",
+      accepted_room_epoch: ROOM_EPOCH,
+      accepted_sequence: 5,
+      current_room_epoch: ROOM_EPOCH,
+      current_sequence: 5,
+      deduplicated: true,
+      requires_head_rehydration: false,
+    });
+
+    await expect(interrupted).resolves.toMatchObject({
+      receipt: {
+        command_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        deduplicated: true,
+      },
+      accepted: null,
+    });
+    expect(reconnectedSocket.sent).toHaveLength(2);
+    expect(JSON.parse(reconnectedSocket.sent[1]!)).toMatchObject({
+      command_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      room_epoch: ROOM_EPOCH,
+      observed_sequence: 5,
+      command: {
+        name: "Queued after reconnect",
+      },
+    });
+
+    reconnectedSocket.emitMessage({
+      protocol_version: 1,
+      type: "graph.command.accepted",
+      command_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      room_epoch: ROOM_EPOCH,
+      sequence: 6,
+      actor: {
+        actor_id: ACTOR_ID,
+        display_name: "Owner",
+        color: "emerald",
+      },
+      graph_room_session_id: SESSION_ID,
+      command: {
+        kind: "rename_graph",
+        name: "Queued after reconnect",
+        expected_name: "Renamed before disconnect",
+      },
+    });
+    reconnectedSocket.emitMessage({
+      protocol_version: 1,
+      type: "graph.command.receipt",
+      command_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      outcome: "accepted",
+      accepted_room_epoch: ROOM_EPOCH,
+      accepted_sequence: 6,
+      current_room_epoch: ROOM_EPOCH,
+      current_sequence: 6,
+      deduplicated: false,
+      requires_head_rehydration: false,
+    });
+    await expect(queued).resolves.toMatchObject({
+      receipt: { accepted_sequence: 6 },
+    });
+  });
+
+  it("applies a delayed peer command before draining a replay receipt", async () => {
+    const commandIds = [
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    ];
+    const onHeadRefreshRequired = vi.fn();
+    const onCommandAccepted = vi.fn();
+    const { session, socket } = connectReadySession({
+      workspaceId: WORKSPACE_ID,
+      graphId: GRAPH_ID,
+      createCommandId: () => commandIds.shift() ?? crypto.randomUUID(),
+      onHeadRefreshRequired,
+      onCommandAccepted,
+    });
+
+    const interrupted = session.submitCommand({
+      kind: "rename_graph",
+      name: "Committed before disconnect",
+      expected_name: "Room graph",
+    });
+    const queued = session.submitCommand({
+      kind: "rename_graph",
+      name: "After authoritative refresh",
+      expected_name: "Peer rename",
+    });
+    socket.emitClose(1006, "connection_lost");
+
+    session.connect();
+    const reconnectedSocket = FakeWebSocket.instances.at(-1);
+    if (!reconnectedSocket || reconnectedSocket === socket) {
+      throw new Error("expected a replacement websocket");
+    }
+    reconnectedSocket.open();
+    const readyAfterCommit = roomReady();
+    readyAfterCommit.head = {
+      ...readyAfterCommit.head,
+      collaboration_sequence: 5,
+      name: "Committed before disconnect",
+    };
+    reconnectedSocket.emitMessage(readyAfterCommit);
+    expect(reconnectedSocket.sent).toHaveLength(1);
+
+    // A peer commits sequence 6 after room.ready. Its accepted fanout is
+    // delayed behind the private idempotent-replay receipt for sequence 5.
+    reconnectedSocket.emitMessage({
+      protocol_version: 1,
+      type: "graph.command.receipt",
+      command_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      outcome: "idempotent_replay",
+      accepted_room_epoch: ROOM_EPOCH,
+      accepted_sequence: 5,
+      current_room_epoch: ROOM_EPOCH,
+      current_sequence: 6,
+      deduplicated: true,
+      requires_head_rehydration: false,
+    });
+
+    let interruptedSettled = false;
+    void interrupted.finally(() => {
+      interruptedSettled = true;
+    });
+    await Promise.resolve();
+    expect(interruptedSettled).toBe(false);
+    expect(session.getHead()?.collaboration_sequence).toBe(5);
+    expect(session.getHead()?.name).toBe("Committed before disconnect");
+    expect(onHeadRefreshRequired).toHaveBeenCalledOnce();
+    expect(reconnectedSocket.sent).toHaveLength(1);
+
+    reconnectedSocket.emitMessage({
+      protocol_version: 1,
+      type: "graph.command.accepted",
+      command_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      room_epoch: ROOM_EPOCH,
+      sequence: 6,
+      actor: {
+        actor_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        display_name: "Peer",
+        color: "indigo",
+      },
+      graph_room_session_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      command: {
+        kind: "rename_graph",
+        name: "Peer rename",
+        expected_name: "Committed before disconnect",
+      },
+    });
+
+    expect(session.getHead()?.collaboration_sequence).toBe(6);
+    expect(session.getHead()?.name).toBe("Peer rename");
+    expect(onCommandAccepted).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sequence: 6 }),
+      { local: false },
+    );
+    await expect(interrupted).resolves.toMatchObject({
+      receipt: {
+        accepted_sequence: 5,
+        current_sequence: 6,
+      },
+    });
+    expect(interruptedSettled).toBe(true);
+    expect(reconnectedSocket.sent).toHaveLength(2);
+    expect(JSON.parse(reconnectedSocket.sent[1]!)).toMatchObject({
+      command_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      observed_sequence: 6,
+      command: {
+        name: "After authoritative refresh",
+        expected_name: "Peer rename",
+      },
+    });
+    queued.catch(() => undefined);
+    session.disconnect();
+  });
+
+  it("pauses command drain and requests a refresh when an accepted sequence has a gap", async () => {
+    const onCommandAccepted = vi.fn();
+    const onHeadRefreshRequired = vi.fn();
+    const { session, socket } = connectReadySession({
+      workspaceId: WORKSPACE_ID,
+      graphId: GRAPH_ID,
+      createCommandId: () => "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      onCommandAccepted,
+      onHeadRefreshRequired,
+    });
+    const headBeforeGap = session.getHead();
+
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "graph.command.accepted",
+      command_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      room_epoch: ROOM_EPOCH,
+      sequence: 6,
+      actor: {
+        actor_id: ACTOR_ID,
+        display_name: "Owner",
+        color: "emerald",
+      },
+      graph_room_session_id: SESSION_ID,
+      command: {
+        kind: "rename_graph",
+        name: "Skipped rename",
+        expected_name: "Room graph",
+      },
+    });
+
+    expect(session.getHead()).toBe(headBeforeGap);
+    expect(session.getHead()?.name).toBe("Room graph");
+    expect(session.getHead()?.collaboration_sequence).toBe(4);
+    expect(onCommandAccepted).not.toHaveBeenCalled();
+    expect(onHeadRefreshRequired).toHaveBeenCalledOnce();
+
+    const pending = session.submitCommand({
+      kind: "rename_graph",
+      name: "Wait for refresh",
+      expected_name: "Room graph",
+    });
+    expect(socket.sent).toHaveLength(0);
+    session.disconnect();
+    await expect(pending).rejects.toMatchObject({ errorCode: "disconnected" });
+  });
+
+  it("ignores a stale accepted command while retaining in-flight correlation", async () => {
+    const commandId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const onCommandAccepted = vi.fn();
+    const { session, socket } = connectReadySession({
+      workspaceId: WORKSPACE_ID,
+      graphId: GRAPH_ID,
+      createCommandId: () => commandId,
+      onCommandAccepted,
+    });
+    const pending = session.submitCommand({
+      kind: "rename_graph",
+      name: "Local rename",
+      expected_name: "Room graph",
+    });
+    const headBeforeStaleAccept = session.getHead();
+
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "graph.command.accepted",
+      command_id: commandId,
+      room_epoch: ROOM_EPOCH,
+      sequence: 3,
+      actor: {
+        actor_id: ACTOR_ID,
+        display_name: "Owner",
+        color: "emerald",
+      },
+      graph_room_session_id: SESSION_ID,
+      command: {
+        kind: "rename_graph",
+        name: "Stale rename",
+        expected_name: "Older graph name",
+      },
+    });
+
+    expect(session.getHead()).toBe(headBeforeStaleAccept);
+    expect(session.getHead()?.name).toBe("Room graph");
+    expect(onCommandAccepted).not.toHaveBeenCalled();
+
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "graph.command.receipt",
+      command_id: commandId,
+      outcome: "idempotent_replay",
+      accepted_room_epoch: ROOM_EPOCH,
+      accepted_sequence: 3,
+      current_room_epoch: ROOM_EPOCH,
+      current_sequence: 4,
+      deduplicated: true,
+      requires_head_rehydration: false,
+    });
+
+    const result = await pending;
+    expect(result.accepted?.sequence).toBe(3);
+    expect(session.getHead()?.name).toBe("Room graph");
+    expect(session.getHead()?.collaboration_sequence).toBe(4);
+  });
+
+  it("keeps an accepted head when a stale room.ready arrives during reconnect", () => {
+    const onReady = vi.fn();
+    const { session, socket } = connectReadySession({
+      workspaceId: WORKSPACE_ID,
+      graphId: GRAPH_ID,
+      onReady,
+    });
+
+    socket.emitClose(1006, "connection_lost");
+    session.connect();
+    const reconnectedSocket = FakeWebSocket.instances.at(-1);
+    if (!reconnectedSocket || reconnectedSocket === socket) {
+      throw new Error("expected a replacement websocket");
+    }
+    reconnectedSocket.open();
+    reconnectedSocket.emitMessage({
+      protocol_version: 1,
+      type: "graph.command.accepted",
+      command_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      room_epoch: ROOM_EPOCH,
+      sequence: 5,
+      actor: {
+        actor_id: ACTOR_ID,
+        display_name: "Owner",
+        color: "emerald",
+      },
+      graph_room_session_id: SESSION_ID,
+      command: {
+        kind: "rename_graph",
+        name: "Accepted during reconnect",
+        expected_name: "Room graph",
+      },
+    });
+    reconnectedSocket.emitMessage(roomReady());
+
+    expect(session.getHead()?.name).toBe("Accepted during reconnect");
+    expect(session.getHead()?.collaboration_sequence).toBe(5);
+    const reconnectReady = onReady.mock.calls.at(-1)?.[0];
+    expect(reconnectReady?.head).toBe(session.getHead());
+    expect(reconnectReady?.head.name).toBe("Accepted during reconnect");
+    expect(reconnectReady?.head.collaboration_sequence).toBe(5);
+  });
+
   it("rejects a command when the server rejects it", async () => {
     const { session, socket } = connectReadySession({
       workspaceId: WORKSPACE_ID,
@@ -420,6 +804,109 @@ describe("GraphRoomSession", () => {
 
     expect(session.getHead()?.collaboration_sequence).toBe(5);
     expect(session.getHead()?.presentation?.viewers).toHaveLength(1);
+  });
+
+  it("keeps a rehydrated epoch when an old-epoch checkpoint response arrives late", async () => {
+    const commandId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const { session, socket } = connectReadySession({
+      workspaceId: WORKSPACE_ID,
+      graphId: GRAPH_ID,
+      createCommandId: () => commandId,
+    });
+    const command = {
+      kind: "replace_document" as const,
+      name: "Checkpointed in E1",
+      document: {
+        schema_version: 4 as const,
+        nodes: [],
+        edges: [],
+        presentation: {
+          viewers: [],
+          links: [],
+          bindings: [],
+          annotations: [],
+        },
+      },
+    };
+    const submitted = session.submitCommand(command);
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "graph.command.accepted",
+      command_id: commandId,
+      room_epoch: ROOM_EPOCH,
+      sequence: 5,
+      actor: {
+        actor_id: ACTOR_ID,
+        display_name: "Owner",
+        color: "emerald",
+      },
+      graph_room_session_id: SESSION_ID,
+      command,
+    });
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "graph.command.receipt",
+      command_id: commandId,
+      outcome: "accepted",
+      accepted_room_epoch: ROOM_EPOCH,
+      accepted_sequence: 5,
+      current_room_epoch: ROOM_EPOCH,
+      current_sequence: 5,
+      deduplicated: false,
+      requires_head_rehydration: false,
+    });
+    await submitted;
+
+    const resetEpoch = "44444444-4444-4444-8444-444444444444";
+    const resetHead = {
+      graph_id: GRAPH_ID,
+      room_epoch: resetEpoch,
+      collaboration_sequence: 0,
+      checkpoint_sequence: 0,
+      checkpoint_revision: 3,
+      name: "Authoritative E2",
+      updated_at: "2026-08-07T11:00:00Z",
+      nodes: [],
+      edges: [],
+      presentation: {
+        viewers: [{
+          id: "e2-viewer",
+          position: { x: 30, y: 40 },
+          layout: null,
+          mode: null,
+        }],
+        links: [],
+        bindings: [],
+        annotations: [],
+      },
+    };
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "room.rehydrate",
+      reason: "epoch_reset",
+      head: resetHead,
+    });
+
+    const effectiveHead = session.reconcileCheckpointHead({
+      graph_id: GRAPH_ID,
+      room_epoch: ROOM_EPOCH,
+      collaboration_sequence: 5,
+      checkpoint_sequence: 5,
+      checkpoint_revision: 2,
+      name: "Checkpointed in E1",
+      updated_at: "2026-08-07T10:30:00Z",
+      nodes: [],
+      edges: [],
+      presentation: {
+        viewers: [],
+        links: [],
+        bindings: [],
+        annotations: [],
+      },
+    }, ROOM_EPOCH);
+
+    expect(effectiveHead).toEqual(resetHead);
+    expect(session.getHead()).toEqual(resetHead);
   });
 
   it("pauses drain on head_conflict until replaceHead, and still applies peer accept", async () => {
@@ -595,6 +1082,47 @@ describe("GraphRoomSession", () => {
       },
     });
     third.catch(() => undefined);
+  });
+
+  it("does not let a stale same-epoch rehydrate rewind an accepted head", () => {
+    const onRehydrate = vi.fn();
+    const { session, socket } = connectReadySession({
+      workspaceId: WORKSPACE_ID,
+      graphId: GRAPH_ID,
+      onRehydrate,
+    });
+
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "graph.command.accepted",
+      command_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      room_epoch: ROOM_EPOCH,
+      sequence: 5,
+      actor: {
+        actor_id: ACTOR_ID,
+        display_name: "Owner",
+        color: "emerald",
+      },
+      graph_room_session_id: SESSION_ID,
+      command: {
+        kind: "rename_graph",
+        name: "Accepted after snapshot",
+        expected_name: "Room graph",
+      },
+    });
+    const acceptedHead = session.getHead();
+
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "room.rehydrate",
+      reason: "epoch_reset",
+      head: roomReady().head,
+    });
+
+    expect(session.getHead()).toBe(acceptedHead);
+    expect(session.getHead()?.collaboration_sequence).toBe(5);
+    expect(session.getHead()?.name).toBe("Accepted after snapshot");
+    expect(onRehydrate).toHaveBeenCalledWith(acceptedHead);
   });
 
   it("replaces collaborative head state on room.rehydrate", () => {
