@@ -223,6 +223,15 @@ Use these unless lower layers change:
 - Port/compatibility inspector is the right emphasis for insert confidence
 - Search across titles/ports/types is the right primary affordance in Add node
 
+### Amended conclusion (2026-08-12)
+
+Full contract inspection remains appropriate for **Modules**. It is not the
+default depth for every operation in Add node. Ordinary operators use a concise
+purpose summary (required inputs, produced outputs, configuration) with
+artifact IDs, schema versions, operator identity, cardinality, conversions, and
+complete schemas behind **Technical details**. See
+[node discovery interaction](node-discovery-interaction.md).
+
 ---
 
 ## Next step
