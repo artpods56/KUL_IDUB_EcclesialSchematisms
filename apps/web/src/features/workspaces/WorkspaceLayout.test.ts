@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import type { Workspace } from "@/lib/api";
 import {
+  resolveSelectedWorkspace,
   sessionDisplayName,
   sessionInitials,
   workspaceCanManageMembers,
   workspaceDisplayName,
   workspaceRouteAccessState,
   workspaceRouteGraphId,
+  workspaceSelectorLabel,
 } from "./WorkspaceLayout";
 
 const workspace = (
@@ -59,6 +61,41 @@ describe("workspace route and capability state", () => {
     expect(workspaceDisplayName(workspace([], { name: "Operations" }))).toBe(
       "Operations",
     );
+  });
+
+  it("labels the workspace switcher as Personal by default", () => {
+    expect(workspaceSelectorLabel(undefined)).toBe("Personal");
+    expect(
+      workspaceSelectorLabel(
+        workspace([], { kind: "personal", name: "Personal workspace" }),
+      ),
+    ).toBe("Personal");
+    expect(
+      workspaceSelectorLabel(workspace([], { name: "Operations" })),
+    ).toBe("Operations");
+  });
+
+  it("resolves the selected workspace to the active slug, else personal", () => {
+    const personal = workspace([], {
+      kind: "personal",
+      id: "workspace-personal",
+      slug: "personal",
+    });
+    const team = workspace([], {
+      id: "workspace-team",
+      slug: "operations",
+      name: "Operations",
+    });
+    expect(
+      resolveSelectedWorkspace([personal, team], "operations"),
+    ).toBe(team);
+    expect(resolveSelectedWorkspace([personal, team], "missing")).toBe(
+      personal,
+    );
+    expect(resolveSelectedWorkspace([personal, team], undefined)).toBe(
+      personal,
+    );
+    expect(resolveSelectedWorkspace(undefined, undefined)).toBeUndefined();
   });
 
   it("derives account label and initials from the session profile", () => {

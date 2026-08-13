@@ -242,7 +242,9 @@ export function GraphBrowser() {
               <RotateCcw size={14} aria-hidden="true" /> Retry
             </button>
           </section>
-        ) : !workspaces || graphState.isLoading || graphState.graphs === null ? (
+        ) : !workspaces ||
+          (graphState.error === null &&
+            (graphState.isLoading || graphState.graphs === null)) ? (
           <div className="ns-graphs__loading" role="status">
             <BrandLoader size={36} label="Loading graphs" />
             <span>Loading graphs…</span>

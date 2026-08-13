@@ -3,7 +3,7 @@
 import * as React from "react";
 import { SWRConfig, type Cache, type State } from "swr";
 
-import { BrandLoader, BrandWordmark } from "@/components/brand";
+import { ThresholdStatus } from "@/components/threshold-status";
 import { deleteSession, getSession, oidcLoginUrl, safeReturnPath } from "@/lib/api/auth";
 import { ApiError, onUnauthorized } from "@/lib/api/client";
 import type { Session } from "@/lib/api/contract";
@@ -61,7 +61,7 @@ function AuthFrame({
 }) {
   if (state.kind === "loading") {
     return (
-      <AuthStatus
+      <ThresholdStatus
         title="Checking session"
         detail="Opening your graphs…"
         loading
@@ -70,7 +70,7 @@ function AuthFrame({
   }
   if (state.kind === "signed-out") {
     return (
-      <AuthStatus
+      <ThresholdStatus
         title="Sign in"
         detail="Your graphs and Team locations are available after authentication."
         action={<button type="button" onClick={openLogin}>Continue with SSO</button>}
@@ -79,7 +79,7 @@ function AuthFrame({
   }
   if (state.kind === "expired") {
     return (
-      <AuthStatus
+      <ThresholdStatus
         title="Your session has expired"
         detail="Sign in again to return to the same surface."
         action={<button type="button" onClick={openLogin}>Sign in again</button>}
@@ -88,7 +88,7 @@ function AuthFrame({
   }
   if (state.kind === "unavailable") {
     return (
-      <AuthStatus
+      <ThresholdStatus
         title="Session service unavailable"
         detail="Could not confirm your session. Check the connection and try again."
         action={<button type="button" onClick={onRetry}>Try again</button>}
@@ -97,7 +97,7 @@ function AuthFrame({
   }
   if (state.kind === "signing-out") {
     return (
-      <AuthStatus
+      <ThresholdStatus
         title="Signing out"
         detail="Revoking this session…"
         loading
@@ -106,7 +106,7 @@ function AuthFrame({
   }
   if (state.kind === "logout-failed") {
     return (
-      <AuthStatus
+      <ThresholdStatus
         title="Sign out could not be completed"
         detail="The server could not revoke this session. Try again before leaving."
         action={<button type="button" onClick={onLogout}>Try sign out again</button>}
@@ -123,38 +123,6 @@ function AuthFrame({
         {children}
       </AuthSessionContext.Provider>
     </SWRConfig>
-  );
-}
-
-function AuthStatus({
-  title,
-  detail,
-  action,
-  loading = false,
-}: {
-  title: string;
-  detail: string;
-  action?: React.ReactNode;
-  loading?: boolean;
-}) {
-  return (
-    <main className="ns-auth-threshold">
-      <div className="ns-auth-threshold__panel">
-        <div className="ns-auth-threshold__brand">
-          {loading ? (
-            <BrandLoader size={88} label={title} />
-          ) : (
-            <BrandWordmark height={72} />
-          )}
-        </div>
-        <div className="ns-auth-threshold__rule" aria-hidden="true" />
-        <div className="ns-auth-threshold__copy">
-          <h1>{title}</h1>
-          <p className="ns-auth-threshold__detail">{detail}</p>
-          {action ? <div className="ns-auth-threshold__action">{action}</div> : null}
-        </div>
-      </div>
-    </main>
   );
 }
 

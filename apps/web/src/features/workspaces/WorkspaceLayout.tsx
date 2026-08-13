@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Popover } from "@base-ui/react/popover";
 import {
+  ChevronsUpDown,
   LayoutGrid,
   LoaderCircle,
   LogOut,
@@ -17,6 +18,7 @@ import { useParams, usePathname, useRouter } from "next/navigation";
 
 import { BrandIcon, BrandWordmark } from "@/components/brand";
 import { useTheme } from "@/components/theme";
+import { ThresholdStatus } from "@/components/threshold-status";
 import { useAuthSession } from "@/features/auth/AuthSessionBoundary";
 import { useWorkbenchChrome } from "@/features/workbench/ui/WorkbenchChromeContext";
 import {
@@ -138,6 +140,28 @@ export function workspaceDisplayName(
   return workspace.name;
 }
 
+/** Label shown in the rail's workspace switcher; defaults to "Personal". */
+export function workspaceSelectorLabel(
+  workspace: Pick<Workspace, "kind" | "name"> | undefined,
+): string {
+  if (!workspace || workspace.kind === "personal") return "Personal";
+  return workspace.name;
+}
+
+/** The workspace the switcher should present, defaulting to the personal one. */
+export function resolveSelectedWorkspace(
+  workspaces: readonly Workspace[] | undefined,
+  activeSlug: string | undefined,
+): Workspace | undefined {
+  if (activeSlug) {
+    const active = workspaces?.find(
+      (candidate) => candidate.slug === activeSlug,
+    );
+    if (active) return active;
+  }
+  return workspaces?.find((candidate) => candidate.kind === "personal");
+}
+
 export function sessionDisplayName(session: Pick<Session, "display_name" | "email" | "user_id">): string {
   const named = session.display_name?.trim();
   if (named) return named;
@@ -205,6 +229,14 @@ export function WorkspaceRail({
 
   const goGraphs = () => {
     router.push("/graphs");
+  };
+
+  const selectedWorkspace = resolveSelectedWorkspace(workspaces, activeSlug);
+
+  const onChangeWorkspace = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const slug = event.currentTarget.value;
+    if (!slug) return;
+    router.push(`/workspaces/${encodeURIComponent(slug)}`);
   };
 
   const finishResize = React.useCallback(
@@ -374,6 +406,34 @@ export function WorkspaceRail({
         <BrandWordmark className="ns-workspace-rail__brand-wordmark" height={24} />
         <BrandIcon className="ns-workspace-rail__brand-icon" size={28} alt="" />
       </button>
+
+      <nav className="ns-workspace-rail__nav" aria-label="Workspaces">
+        <p className="ns-workspace-rail__section-label">Workspaces</p>
+        <label className="ns-workspace-rail__workspace-select">
+          <span className="ns-workspace-rail__workspace-select-icon" aria-hidden="true">
+            {selectedWorkspace?.kind === "personal" ? (
+              <Workflow size={15} />
+            ) : (
+              <Users size={15} />
+            )}
+          </span>
+          <select
+            value={selectedWorkspace?.slug ?? ""}
+            aria-label="Switch workspace"
+            title={workspaceSelectorLabel(selectedWorkspace)}
+            onChange={onChangeWorkspace}
+          >
+            {workspaces.map((workspace) => (
+              <option key={workspace.id} value={workspace.slug}>
+                {workspaceSelectorLabel(workspace)}
+              </option>
+            ))}
+          </select>
+          <span className="ns-workspace-rail__workspace-select-chevron" aria-hidden="true">
+            <ChevronsUpDown size={12} />
+          </span>
+        </label>
+      </nav>
 
       <nav className="ns-workspace-rail__nav" aria-label="Graphs">
         <p className="ns-workspace-rail__section-label">Graphs</p>
@@ -605,14 +665,22 @@ export function WorkspaceRail({
   );
 }
 
-function WorkspaceRouteStatus({ title, detail }: { title: string; detail: string }) {
+function WorkspaceRouteStatus({
+  title,
+  detail,
+  loading = false,
+}: {
+  title: string;
+  detail: string;
+  loading?: boolean;
+}) {
   return (
-    <main className="ns-workspace-route-status">
-      <p className="ns-workspace-route-status__eyebrow">Graph location</p>
-      <h1>{title}</h1>
-      <p>{detail}</p>
-      <Link href="/graphs">Return to graphs</Link>
-    </main>
+    <ThresholdStatus
+      title={title}
+      detail={detail}
+      loading={loading}
+      action={loading ? undefined : <Link href="/graphs">Return to graphs</Link>}
+    />
   );
 }
 
@@ -641,7 +709,13 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
     return <WorkspaceRouteStatus title="Graph location unavailable" detail="Grafy could not confirm access to this graph location." />;
   }
   if (!data) {
-    return <WorkspaceRouteStatus title="Loading graph location" detail="Checking your current access…" />;
+    return (
+      <WorkspaceRouteStatus
+        title="Loading graph location"
+        detail="Checking your current access…"
+        loading
+      />
+    );
   }
 
   if (!workspace) {

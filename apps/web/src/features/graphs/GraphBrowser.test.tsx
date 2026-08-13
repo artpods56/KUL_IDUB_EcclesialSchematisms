@@ -251,11 +251,12 @@ describe("graph-first browser", () => {
     const loading = await renderBrowser();
     expect(loading.textContent).toContain("Loading graphs…");
 
-    browserState.graphs = [];
+    browserState.graphs = null;
     browserState.isLoading = false;
     browserState.graphsError = new Error("offline");
     const failed = await renderBrowser();
     expect(failed.textContent).toContain("Graphs couldn't be loaded");
+    expect(failed.textContent).not.toContain("Loading graphs…");
     await click(button(failed, "Retry"));
     expect(browserState.retryGraphs).toHaveBeenCalledOnce();
   });
