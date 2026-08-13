@@ -114,11 +114,6 @@ async def graph_room(
             capability=WorkspaceCapability.JOIN_GRAPH_ROOM,
         )
         access.require(WorkspaceCapability.VIEW_GRAPH)
-        head = await collaboration.get_head(
-            actor=actor,
-            workspace_id=workspace_id,
-            graph_id=graph_id,
-        )
         presentation = await actor_presentation_for(websocket.app, actor)
     except HTTPException:
         raise
@@ -143,7 +138,6 @@ async def graph_room(
             detail="Authentication required",
         ) from exc
 
-    await websocket.accept()
     session = GraphRoomSession(
         workspace_id=workspace_id,
         graph_id=graph_id,
@@ -155,43 +149,79 @@ async def graph_room(
         websocket=websocket,
     )
     await hub.join(session)
-    await hub.register_presence(session)
-    participants = await hub.participants_for(
-        workspace_id=workspace_id,
-        graph_id=graph_id,
-    )
-    active_execution = await get_resources(
-        websocket.app
-    ).execution_manager.active_execution_summary(
-        workspace_id,
-        graph_id,
-    )
-    if active_execution is not None:
-        active_execution = active_execution.model_copy(
-            update={
-                "overlays_compatible": (
-                    head.checkpoint_revision == active_execution.graph_revision
-                )
-            }
-        )
-    ready = RoomReadyMessage(
-        workspace_id=workspace_id,
-        graph_id=graph_id,
-        graph_room_session_id=session.graph_room_session_id,
-        actor=presentation,
-        capabilities=CapabilitySnapshot(
-            capabilities=tuple(
-                sorted(access.capabilities, key=lambda item: item.value)
-            ),
-            authorization_version=access.membership.authorization_version,
-        ),
-        head=CollaborativeHeadResponse.from_head(head),
-        participants=participants,
-        active_execution=active_execution,
-    )
-    heartbeat_seconds = websocket.app.state.settings.graph_room_heartbeat_seconds
     try:
+        head = await collaboration.get_head(
+            actor=actor,
+            workspace_id=workspace_id,
+            graph_id=graph_id,
+        )
+    except NotFoundError as exc:
+        await hub.leave(session)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except MissingCollaborativeHeadError as exc:
+        await hub.leave(session)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except CapabilityDeniedError as exc:
+        await hub.leave(session)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except UserDisabledError as exc:
+        await hub.leave(session)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        ) from exc
+    except Exception:
+        await hub.leave(session)
+        raise
+
+    try:
+        await websocket.accept()
+        await hub.register_presence(session)
+        participants = await hub.participants_for(
+            workspace_id=workspace_id,
+            graph_id=graph_id,
+        )
+        active_execution = await get_resources(
+            websocket.app
+        ).execution_manager.active_execution_summary(
+            workspace_id,
+            graph_id,
+        )
+        if active_execution is not None:
+            active_execution = active_execution.model_copy(
+                update={
+                    "overlays_compatible": (
+                        head.checkpoint_revision == active_execution.graph_revision
+                    )
+                }
+            )
+        ready = RoomReadyMessage(
+            workspace_id=workspace_id,
+            graph_id=graph_id,
+            graph_room_session_id=session.graph_room_session_id,
+            actor=presentation,
+            capabilities=CapabilitySnapshot(
+                capabilities=tuple(
+                    sorted(access.capabilities, key=lambda item: item.value)
+                ),
+                authorization_version=access.membership.authorization_version,
+            ),
+            head=CollaborativeHeadResponse.from_head(head),
+            participants=participants,
+            active_execution=active_execution,
+        )
+        heartbeat_seconds = websocket.app.state.settings.graph_room_heartbeat_seconds
         await websocket.send_json(ready.model_dump(mode="json"))
+        await hub.activate(session)
         while True:
             if heartbeat_seconds > 0:
                 try:
@@ -228,7 +258,7 @@ async def graph_room(
                     hub=hub,
                     message=message,
                 )
-            elif isinstance(message, PresenceUpdateSubmitMessage):
+            else:
                 await _handle_presence_update(
                     session=session,
                     actor=actor,

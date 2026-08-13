@@ -84,11 +84,32 @@ class GraphRoomHub:
         )
 
     async def join(self, session: GraphRoomSession) -> None:
+        """Register a session while keeping outbound delivery gated.
+
+        Messages published after registration are buffered until ``activate``.
+        This lets the room route take its authoritative head snapshot and send
+        ``room.ready`` before any live event can reach the joining client.
+        """
+
         key = (session.workspace_id, session.graph_id)
         async with self._lock:
             room = self._rooms.setdefault(key, {})
             room[session.graph_room_session_id] = session
-        session.sender_task = asyncio.create_task(self._sender_loop(session))
+
+    async def activate(self, session: GraphRoomSession) -> None:
+        """Release buffered outbound messages for a registered session."""
+
+        key = (session.workspace_id, session.graph_id)
+        async with self._lock:
+            room = self._rooms.get(key)
+            if (
+                session.closed
+                or room is None
+                or room.get(session.graph_room_session_id) is not session
+                or session.sender_task is not None
+            ):
+                return
+            session.sender_task = asyncio.create_task(self._sender_loop(session))
 
     async def leave(self, session: GraphRoomSession) -> None:
         await self._close_session(session, code=1000, reason="left")
@@ -528,4 +549,3 @@ class GraphRoomHub:
                     session.graph_room_session_id,
                     exc_info=True,
                 )
-

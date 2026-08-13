@@ -2,8 +2,10 @@
 
 import asyncio
 import json
+import threading
 from collections.abc import Iterator
 from pathlib import Path
+from queue import Queue
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
@@ -242,6 +244,117 @@ def test_room_ready_admits_authenticated_member(
     )
     assert ready["participants"][0]["actor"]["actor_id"] == str(TEST_USER_ID)
     assert ready["active_execution"] is None
+
+
+def test_join_ready_precedes_command_committed_after_head_snapshot(
+    room_app_client: tuple[TestClient, ActorSwitcher, FastAPI],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A command committed across the join snapshot window cannot be missed."""
+
+    client, _switcher, application = room_app_client
+    graph_id = _create_graph(client)
+    initial_head_response = client.get(
+        workspace_api_path(f"/graphs/{graph_id}/head")
+    )
+    assert initial_head_response.status_code == 200, initial_head_response.text
+    initial_head = initial_head_response.json()
+
+    collaboration = application.state.resources.collaboration
+    original_get_head = collaboration.get_head
+    snapshot_captured = threading.Event()
+    release_snapshot = threading.Event()
+
+    async def get_head_after_snapshot(
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ):
+        head = await original_get_head(
+            actor=actor,
+            workspace_id=workspace_id,
+            graph_id=graph_id,
+        )
+        snapshot_captured.set()
+        await asyncio.to_thread(release_snapshot.wait)
+        return head
+
+    monkeypatch.setattr(collaboration, "get_head", get_head_after_snapshot)
+
+    received: Queue[dict] = Queue()
+    failures: Queue[Exception] = Queue()
+    first_message_received = threading.Event()
+
+    def receive_join_messages() -> None:
+        try:
+            with _connect(client, graph_id) as websocket:
+                received.put(websocket.receive_json())
+                first_message_received.set()
+                received.put(websocket.receive_json())
+        except Exception as exc:
+            failures.put(exc)
+            first_message_received.set()
+
+    receiver = threading.Thread(target=receive_join_messages, daemon=True)
+    receiver.start()
+    try:
+        assert snapshot_captured.wait(timeout=5)
+        raced_command_id = str(uuid4())
+        raced_response = client.post(
+            workspace_api_path(f"/graphs/{graph_id}/commands"),
+            json={
+                "command_id": raced_command_id,
+                "room_epoch": initial_head["room_epoch"],
+                "observed_sequence": initial_head["collaboration_sequence"],
+                "command": {
+                    "kind": "rename_graph",
+                    "name": "Committed during join",
+                    "expected_name": initial_head["name"],
+                },
+            },
+        )
+        assert raced_response.status_code == 200, raced_response.text
+        raced_head = raced_response.json()["head"]
+    finally:
+        release_snapshot.set()
+
+    assert first_message_received.wait(timeout=5)
+    if not failures.empty():
+        raise failures.get_nowait()
+    first = received.get(timeout=1)
+
+    # This later fanout guarantees the receiver terminates even if the raced
+    # accepted event was lost; the assertion below then identifies the loss.
+    marker_response = client.post(
+        workspace_api_path(f"/graphs/{graph_id}/commands"),
+        json={
+            "command_id": str(uuid4()),
+            "room_epoch": raced_head["room_epoch"],
+            "observed_sequence": raced_head["collaboration_sequence"],
+            "command": {
+                "kind": "rename_graph",
+                "name": "Post-ready marker",
+                "expected_name": raced_head["name"],
+            },
+        },
+    )
+    assert marker_response.status_code == 200, marker_response.text
+
+    receiver.join(timeout=5)
+    assert not receiver.is_alive()
+    if not failures.empty():
+        raise failures.get_nowait()
+    second = received.get(timeout=1)
+
+    assert first["type"] == "room.ready"
+    assert first["head"]["collaboration_sequence"] == (
+        initial_head["collaboration_sequence"]
+    )
+    assert second["type"] == "graph.command.accepted"
+    assert second["command_id"] == raced_command_id
+    assert second["sequence"] == raced_head["collaboration_sequence"]
+    assert second["command"]["name"] == "Committed during join"
 
 
 def test_room_rejects_invalid_origin(
