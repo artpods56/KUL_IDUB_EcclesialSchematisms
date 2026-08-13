@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { RunEdgeCollectionMode } from "@/lib/api";
+import { overlay } from "@/lib/stylex/overlay.stylex";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import type { ConnectionRoute } from "../canvas/handles";
 import {
@@ -106,19 +107,11 @@ const s = stylex.create({
     justifyContent: "space-between",
     gap: "12px",
     padding: "8px 10px",
-    borderWidth: 1,
-    borderStyle: "solid",
-    borderColor: {
-      default: tokens.colorBorder,
-      ":hover": tokens.colorAccentBorder,
-      ":focus-visible": tokens.colorAccent,
-    },
     borderRadius: "6px",
-    outline: "none",
-    backgroundColor: {
-      default: tokens.colorSurfaceMuted,
-      ":hover": tokens.colorAccentSoft,
-    },
+    outlineColor: tokens.colorAccent,
+    outlineStyle: "solid",
+    outlineOffset: "-3px",
+    outlineWidth: { default: 0, ":focus-visible": "2px" },
     color: tokens.colorText,
     cursor: "pointer",
     textAlign: "left",
@@ -138,9 +131,7 @@ const s = stylex.create({
   projectionCancel: {
     minHeight: "29px",
     paddingInline: "10px",
-    borderWidth: 1,
-    borderStyle: "solid",
-    borderColor: tokens.colorBorderStrong,
+    borderWidth: 0,
     borderRadius: "5px",
     backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
     color: tokens.colorMuted,
@@ -225,7 +216,7 @@ export function ConnectionRouteDialog({
                       type="button"
                       autoFocus={index === 0}
                       aria-label={`Feed ${title} from ${pendingRoute.source.nodeTitle}`}
-                      {...stylex.props(s.projectionChoice)}
+                      {...stylex.props(overlay.item, s.projectionChoice)}
                       onClick={() => {
                         onSelect(candidate);
                         onClose();

@@ -32,6 +32,12 @@ vi.mock("@xyflow/react", () => ({
   Position: { Left: "left", Right: "right" },
   useEdges: () => [],
   useNodeConnections: () => [],
+  useStore: (
+    selector: (state: {
+      edges: unknown[];
+      nodeLookup: Map<string, unknown>;
+    }) => unknown,
+  ) => selector({ edges: [], nodeLookup: new Map() }),
   useUpdateNodeInternals: () => xyflowMocks.updateNodeInternals,
   useViewport: () => ({ zoom: 1, x: 0, y: 0 }),
 }));
@@ -198,6 +204,64 @@ function fuzzyMatchSpec(): NodeSpec {
           maxItems: 8,
         },
       },
+    },
+    input_schema: {},
+    output_schema: {},
+    inputs: [],
+    outputs: [],
+  };
+}
+
+
+function tableFileImportSpec(): NodeSpec {
+  return {
+    operator_id: "table.file.import",
+    operator_version: 1,
+    plugin_slug: "builtin.table",
+    title: "Import table file",
+    description: "Import a staged CSV or XLSX file as a table artifact.",
+    catalog_visible: true,
+    config_schema: {
+      type: "object",
+      properties: {
+        uploads: {
+          type: "array",
+          title: "Uploads",
+          minItems: 1,
+          maxItems: 1,
+        },
+        sheet_name: {
+          title: "Sheet Name",
+          description: "XLSX worksheet name. Leave empty to use the active sheet.",
+          default: null,
+          anyOf: [
+            { type: "string", minLength: 1, maxLength: 255 },
+            { type: "null" },
+          ],
+        },
+        header_row: {
+          type: "integer",
+          title: "Header Row",
+          description: "One-based row containing column titles.",
+          default: 1,
+          minimum: 1,
+        },
+        delimiter: {
+          title: "Delimiter",
+          description: "CSV delimiter. Leave empty to detect it from the file.",
+          default: null,
+          anyOf: [
+            { type: "string", minLength: 1, maxLength: 1 },
+            { type: "null" },
+          ],
+        },
+        skip_empty_rows: {
+          type: "boolean",
+          title: "Skip Empty Rows",
+          default: true,
+        },
+      },
+      required: ["uploads"],
     },
     input_schema: {},
     output_schema: {},
@@ -821,6 +885,29 @@ describe("WorkflowNode config lattice", () => {
       "Stric",
       "API k",
     ]);
+
+    React.act(() => root.unmount());
+  });
+
+  it("renders advertised config fields next to the table file picker", () => {
+    const data = createWorkflowNodeData(tableFileImportSpec());
+    const { container, root } = renderNode("table-file", data);
+
+    expect(container.textContent).toContain("Choose CSV or XLSX");
+    const text = container.textContent ?? "";
+    expect(text.indexOf("Choose CSV or XLSX")).toBeGreaterThan(
+      text.indexOf("Skip Empty Rows"),
+    );
+    const bricks = [
+      ...container.querySelectorAll<HTMLElement>(
+        '[data-testid="config-brick"]',
+      ),
+    ].map((brick) => brick.textContent);
+    expect(bricks.some((text) => text?.includes("Sheet Name"))).toBe(true);
+    expect(bricks.some((text) => text?.includes("Header Row"))).toBe(true);
+    expect(bricks.some((text) => text?.includes("Delimiter"))).toBe(true);
+    expect(bricks.some((text) => text?.includes("Skip Empty Rows"))).toBe(true);
+    expect(bricks.some((text) => text?.includes("Uploads"))).toBe(false);
 
     React.act(() => root.unmount());
   });

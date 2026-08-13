@@ -43,10 +43,7 @@ export function useShellGridFill(naturalWidth: number): {
   );
 
   React.useLayoutEffect(() => {
-    if (!fill) {
-      setFillHeight(undefined);
-      return;
-    }
+    if (!fill) return;
     const el = contentRef.current;
     if (!el) return;
 
@@ -69,18 +66,20 @@ export function useShellGridFill(naturalWidth: number): {
     return () => observer.disconnect();
   }, [cellSize, fill]);
 
+  const activeFillHeight = fill ? fillHeight : undefined;
+
   const frameStyle = React.useMemo<React.CSSProperties>(() => {
     const style: React.CSSProperties = {
       width: gridWidth,
       boxSizing: "border-box",
     };
-    if (fill && fillHeight !== undefined) {
-      style.height = fillHeight;
-      style.minHeight = fillHeight;
+    if (activeFillHeight !== undefined) {
+      style.height = activeFillHeight;
+      style.minHeight = activeFillHeight;
       style.padding = GRID_SHELL_GUTTER;
     }
     return style;
-  }, [fill, fillHeight, gridWidth]);
+  }, [activeFillHeight, gridWidth]);
 
   const shellStyle = React.useMemo<React.CSSProperties>(() => {
     const style: React.CSSProperties = {
@@ -89,13 +88,13 @@ export function useShellGridFill(naturalWidth: number): {
       display: "flex",
       flexDirection: "column",
     };
-    if (fill && fillHeight !== undefined) {
+    if (activeFillHeight !== undefined) {
       style.height = "100%";
       style.minHeight = 0;
       // Keep overflow visible so port handles can extend past the card.
     }
     return style;
-  }, [fill, fillHeight, gridWidth]);
+  }, [activeFillHeight, fill, gridWidth]);
 
   return {
     contentRef,
@@ -104,6 +103,6 @@ export function useShellGridFill(naturalWidth: number): {
     gridWidth,
     paintWidth,
     gutter,
-    fillMinHeight: fillHeight,
+    fillMinHeight: activeFillHeight,
   };
 }

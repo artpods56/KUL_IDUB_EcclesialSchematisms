@@ -11,12 +11,15 @@ import {
 import { Check } from "lucide-react";
 
 import { tokens } from "@/lib/stylex/tokens.stylex";
+import { overlay } from "@/lib/stylex/overlay.stylex";
 import {
   conversionPathsEqual,
   edgeTransportChipLabel,
   feedChoicesFromRouteOptions,
   projectionsEqual,
 } from "../../model/connection-feeds";
+import { useOptionalCanvasGridSettings } from "../canvas-grid-settings";
+import { GRID_CELL_SIZE_DEFAULT } from "../grid-layout";
 import type {
   WorkflowEdge,
   WorkflowEdgeData,
@@ -24,8 +27,10 @@ import type {
   WorkflowEdgeRouteOffset,
   WorkflowEdgeRouteOption,
 } from "../types";
+import { dockedBridgeLayout } from "./docked-connection";
 import { EdgeSelectorBlock } from "./EdgeSelectorBlock";
 import { applyHandleFanOffset, routedBezierPath } from "./edge-path";
+import { useEdgeIsDocked } from "./useDockedConnection";
 import { useEdgeFanOffsets } from "./useEdgeFanOffsets";
 import {
   useEdgeRouteBendHandlers,
@@ -71,26 +76,10 @@ const s = stylex.create({
     alignItems: "center",
     gap: "7px",
     padding: "6px 7px",
-    borderWidth: 1,
-    borderStyle: "solid",
-    borderColor: {
-      default: tokens.colorBorder,
-      ":hover": tokens.colorAccentBorder,
-      ":disabled": tokens.colorBorder,
-    },
-    borderRadius: "4px",
-    backgroundColor: {
-      default: tokens.colorSurfaceMuted,
-      ":hover": tokens.colorAccentSoft,
-      ":disabled": tokens.colorSurfaceSunken,
-    },
+    borderRadius: "6px",
     color: { default: tokens.colorText, ":disabled": tokens.colorTextDisabled },
     cursor: { default: "pointer", ":disabled": "not-allowed" },
     textAlign: "left",
-  },
-  optionActive: {
-    borderColor: tokens.colorAccentBorder,
-    backgroundColor: tokens.colorAccentSoft,
   },
   optionCopy: { minWidth: 0, display: "grid", gap: "2px" },
   optionTitle: {
@@ -134,7 +123,7 @@ function EdgeOption({
   return (
     <button
       type="button"
-      {...stylex.props(s.option, active ? s.optionActive : null)}
+      {...stylex.props(overlay.item, s.option, active ? overlay.itemActive : null)}
       onClick={onSelect}
     >
       <span {...stylex.props(s.optionCopy)}>
@@ -162,6 +151,9 @@ export default function WorkflowEdgeControl({
   selected,
 }: EdgeProps<WorkflowEdge>) {
   const { deleteElements } = useReactFlow();
+  const docked = useEdgeIsDocked(id);
+  const cellSize =
+    useOptionalCanvasGridSettings()?.settings.cellSize ?? GRID_CELL_SIZE_DEFAULT;
   const edgeData: WorkflowEdgeData = data ?? {
     enabled: true,
     collectionMode: "direct",
@@ -249,36 +241,48 @@ export default function WorkflowEdgeControl({
     enabled,
     compatible,
   });
+  const bridge = docked
+    ? dockedBridgeLayout(source, target, cellSize)
+    : null;
 
   return (
     <>
       <BaseEdge
         id={id}
-        path={edgePath}
-        markerEnd={markerEnd}
+        path={
+          docked
+            ? `M${source.x},${source.y} L${target.x},${target.y}`
+            : edgePath
+        }
+        markerEnd={docked ? undefined : markerEnd}
         style={{
           ...style,
-          opacity: !compatible
-            ? selected
-              ? 0.82
-              : 0.58
-            : enabled
-              ? style?.opacity
-              : selected
-                ? 0.58
-                : 0.42,
+          opacity: docked
+            ? 0
+            : !compatible
+              ? selected
+                ? 0.82
+                : 0.58
+              : enabled
+                ? style?.opacity
+                : selected
+                  ? 0.58
+                  : 0.42,
           strokeDasharray:
-            compatible && enabled ? style?.strokeDasharray : "7 5",
+            docked || (compatible && enabled) ? style?.strokeDasharray : "7 5",
           strokeWidth: selected ? 2.7 : (style?.strokeWidth ?? 2),
         }}
         interactionWidth={24}
       />
       <EdgeLabelRenderer>
         <EdgeSelectorBlock
-          anchor={anchor}
+          anchor={bridge?.anchor ?? anchor}
           selected={selected}
           disabled={!(enabled && compatible)}
           label={label}
+          docked={docked}
+          width={bridge?.width}
+          height={bridge?.height}
           bendAriaLabel={`Bend connection ${label}`}
           bendDragging={draftRouteOffset != null}
           bendHandlers={bendHandlers}
@@ -345,8 +349,9 @@ export default function WorkflowEdgeControl({
                 type="button"
                 disabled={!allowedModes.includes("direct")}
                 {...stylex.props(
+                  overlay.item,
                   s.option,
-                  edgeData.collectionMode === "direct" ? s.optionActive : null,
+                  edgeData.collectionMode === "direct" ? overlay.itemActive : null,
                 )}
                 onClick={() =>
                   edgeData.onUpdate?.(id, {
@@ -368,8 +373,9 @@ export default function WorkflowEdgeControl({
                 type="button"
                 disabled={!allowedModes.includes("map")}
                 {...stylex.props(
+                  overlay.item,
                   s.option,
-                  edgeData.collectionMode === "map" ? s.optionActive : null,
+                  edgeData.collectionMode === "map" ? overlay.itemActive : null,
                 )}
                 onClick={() =>
                   edgeData.onUpdate?.(id, { collectionMode: "map" })

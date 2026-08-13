@@ -80,4 +80,30 @@ describe("WorkflowCanvas", () => {
 
     expect(flowMocks.props?.onlyRenderVisibleElements).toBe(true);
   });
+
+  it("disables durable pointer and keyboard gestures when editing is unavailable", () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    roots.push(root);
+
+    React.act(() => {
+      root.render(
+        <WorkflowCanvas
+          nodes={[]}
+          edges={[]}
+          onNodesChange={() => undefined}
+          onEdgesChange={() => undefined}
+          onConnect={() => undefined}
+          editable={false}
+        />,
+      );
+    });
+
+    expect(flowMocks.props).toMatchObject({
+      nodesDraggable: false,
+      nodesConnectable: false,
+      edgesReconnectable: false,
+      deleteKeyCode: null,
+    });
+  });
 });

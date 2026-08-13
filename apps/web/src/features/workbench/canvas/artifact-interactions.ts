@@ -60,6 +60,28 @@ export const EMPTY_ARTIFACT_KEY_SELECTION: ArtifactKeySelection = {
   items: [],
 };
 
+const CANONICAL_INTEGER = /^-?(0|[1-9]\d*)$/;
+
+export function interactionScalarFromIntegerEncoding(
+  value: ArtifactInteractionScalar,
+): ArtifactInteractionScalar {
+  if (typeof value === "number" && Number.isSafeInteger(value)) return value;
+  if (typeof value !== "string" || !CANONICAL_INTEGER.test(value)) return value;
+  const asNumber = Number(value);
+  return Number.isSafeInteger(asNumber) ? asNumber : value;
+}
+
+export function interactionScalarFromTableCell(cell: {
+  encoding: "native" | "integer" | "json";
+  value: ArtifactInteractionScalar;
+}): ArtifactInteractionScalar | undefined {
+  if (cell.encoding === "json") return undefined;
+  if (cell.encoding === "integer") {
+    return interactionScalarFromIntegerEncoding(cell.value);
+  }
+  return cell.value;
+}
+
 export function targetRowsForBinding(
   binding: ArtifactViewerBinding,
   selection: ArtifactKeySelection,

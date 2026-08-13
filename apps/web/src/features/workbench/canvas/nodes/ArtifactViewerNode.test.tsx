@@ -38,10 +38,37 @@ vi.mock("@xyflow/react", () => ({
       aria-label={props["aria-label"]}
     />
   ),
-  Position: { Left: "left" },
+  Position: { Left: "left", Right: "right" },
   useEdges: () => flowMocks.edges,
   useNodesData: (nodeId: string) => flowMocks.nodes.get(nodeId) ?? null,
+  useStore: (
+    selector: (state: {
+      edges: unknown[];
+      nodeLookup: Map<string, unknown>;
+    }) => unknown,
+  ) => selector({ edges: flowMocks.edges, nodeLookup: new Map() }),
   useUpdateNodeInternals: () => flowMocks.updateNodeInternals,
+}));
+
+vi.mock("@base-ui/react/popover", () => ({
+  Popover: {
+    Root: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    Trigger: ({
+      children,
+      ...props
+    }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+      children: React.ReactNode;
+    }) => (
+      <button type="button" {...props}>
+        {children}
+      </button>
+    ),
+    Portal: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    Positioner: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    Popup: ({ children }: { children: React.ReactNode }) => (
+      <div role="dialog">{children}</div>
+    ),
+  },
 }));
 
 vi.mock("@/hooks/use-api", () => ({
@@ -65,11 +92,21 @@ vi.mock("@/features/workspaces/WorkspaceLayout", () => ({
 
 vi.mock("./ArtifactsAppendix", () => ({
   ArtifactPortPreview: (props: {
-    output: { port: string; kind: "single" | "sequence" };
+    output: {
+      port: string;
+      kind: "single" | "sequence";
+      artifacts?: ArtifactSummary[];
+    };
     modeChoice: string | null;
     onModeChoiceChange: (mode: string) => void;
+    onFocusedArtifactChange?: (artifact: ArtifactSummary | null) => void;
   }) => {
     previewMocks.render(props);
+    const focusedArtifact = props.output.artifacts?.[0] ?? null;
+    const { onFocusedArtifactChange } = props;
+    React.useEffect(() => {
+      onFocusedArtifactChange?.(focusedArtifact);
+    }, [focusedArtifact, onFocusedArtifactChange]);
     return (
       <button
         type="button"
@@ -99,6 +136,9 @@ import type {
 import {
   ARTIFACT_VIEWER_EDGE_TYPE,
   ARTIFACT_VIEWER_INPUT_HANDLE,
+  ARTIFACT_VIEWER_INTERACTION_EDGE_TYPE,
+  ARTIFACT_VIEWER_INTERACTION_INPUT_HANDLE,
+  ARTIFACT_VIEWER_INTERACTION_OUTPUT_HANDLE,
   ARTIFACT_VIEWER_NODE_TYPE,
   type ArtifactViewerEdge,
   type ArtifactViewerNode,
@@ -267,6 +307,7 @@ afterEach(() => {
   React.act(() => {
     for (const root of roots.splice(0)) root.unmount();
   });
+  vi.restoreAllMocks();
 });
 
 describe("ArtifactViewerNode", () => {
@@ -292,14 +333,101 @@ describe("ArtifactViewerNode", () => {
   it("invites a generic artifact connection while disconnected", () => {
     const container = renderViewer();
 
-    expect(container.textContent).toContain("Any artifact");
-    expect(container.textContent).toContain("No output connected");
-    expect(container.textContent).toContain("Waiting");
-    expect(container.textContent).toContain("Connect an output");
+    expect(container.textContent).toContain("Artifact Viewer");
+    expect(container.textContent).toContain("Artifact");
+    expect(container.textContent).toContain("any");
+    expect(container.textContent).not.toContain("linked input");
+    expect(container.textContent).not.toContain("Follow selection");
+    expect(container.querySelector('[data-testid="port-rail"]')).not.toBeNull();
     expect(
       container.querySelector('[aria-label="Input port Artifact, accepts Any artifact"]'),
     ).not.toBeNull();
+    expect(
+      container.querySelector('[aria-label="Remove Artifact viewer"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-testid="corner-resize"]'),
+    ).toBeNull();
     expect(previewMocks.render).not.toHaveBeenCalled();
+  });
+
+  it("uses the shared header actions when selected", () => {
+    const container = renderViewer({}, true);
+    const remove = vi.fn();
+    const selected = renderViewer({ onRemoveNode: remove }, true);
+
+    expect(
+      container.querySelector('[aria-label="About Artifact Viewer"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[aria-label="Actions for Artifact Viewer"]'),
+    ).not.toBeNull();
+    const deleteNode = [
+      ...selected.querySelectorAll("button"),
+    ].find((button) => button.textContent === "Delete node");
+    expect(deleteNode).toBeDefined();
+    React.act(() => {
+      deleteNode?.click();
+    });
+    expect(remove).toHaveBeenCalledWith("artifact-viewer-1");
+  });
+
+  it("offers download formats for the focused artifact in the overflow menu", () => {
+    let clickedHref: string | null = null;
+    let clickedHadDownload = false;
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      clickedHref = this.getAttribute("href");
+      clickedHadDownload = this.hasAttribute("download");
+    });
+    const artifactWithFormats: ArtifactSummary = {
+      ...artifact("download-artifact", "text.markdown"),
+      download_formats: [
+        { format: "json", content_type: "application/json", filename: "artifact.json" },
+        { format: "txt", content_type: "text/plain; charset=utf-8", filename: "text.txt" },
+      ],
+    };
+    const preview = runOutput(
+      "preview",
+      "single",
+      artifactWithFormats,
+    );
+    flowMocks.edges = [viewerEdge()];
+    flowMocks.nodes.set(
+      "source-node",
+      sourceNode("one", {
+        node_id: "source-node",
+        status: "succeeded",
+        error: null,
+        outputs: [preview],
+      }),
+    );
+
+    const container = renderViewer({}, true);
+
+    expect(
+      container.querySelector('[aria-label="Actions for Artifact Viewer"]'),
+    ).not.toBeNull();
+
+    const menuButtons = [...container.querySelectorAll("button")];
+    const jsonDownload = menuButtons.find(
+      (button) => button.textContent === "Download as JSON",
+    );
+    const txtDownload = menuButtons.find(
+      (button) => button.textContent === "Download as TXT",
+    );
+    expect(jsonDownload).toBeDefined();
+    expect(txtDownload).toBeDefined();
+
+    React.act(() => {
+      jsonDownload?.click();
+    });
+    expect(clickedHref).toBe(
+      "/api/v1/workspaces/workspace-1/artifacts/download-artifact/download?format=json",
+    );
+    expect(clickedHadDownload).toBe(true);
+    expect(document.querySelector('a[download]')).toBeNull();
   });
 
   it("shows provenance but no preview until the named output succeeds", () => {
@@ -319,12 +447,13 @@ describe("ArtifactViewerNode", () => {
       }),
     );
 
-    const container = renderViewer();
+    const container = renderViewer({}, true);
 
     expect(container.textContent).toContain("Prepare map → Raster preview");
     expect(container.textContent).toContain("image.raster@1 · single");
-    expect(container.textContent).toContain("No artifact");
-    expect(container.textContent).toContain("No materialization yet");
+    expect(container.textContent).toContain("Waiting for artifact");
+    expect(container.textContent).not.toContain("Follow selection");
+    expect(container.textContent).not.toContain("Selected rows");
     expect(previewMocks.render).not.toHaveBeenCalled();
   });
 
@@ -359,11 +488,11 @@ describe("ArtifactViewerNode", () => {
       const container = renderViewer({
         mode: "map",
         onModeChange,
-      });
+      }, true);
 
       expect(container.textContent).toContain("Prepare map → Raster preview");
       expect(container.textContent).toContain(`image.raster@1 · ${kind}`);
-      expect(container.textContent).toContain("Materialized");
+      expect(container.textContent).not.toContain("Materialized");
       expect(
         container.querySelector('[data-testid="artifact-port-preview"]'),
       ).not.toBeNull();
@@ -387,10 +516,92 @@ describe("ArtifactViewerNode", () => {
     },
   );
 
-  it("keeps a corner resize handle for the viewer viewport", () => {
+  it("keeps a corner resize handle once a preview is showing", () => {
+    const preview = runOutput(
+      "preview",
+      "single",
+      artifact("preview-artifact", "image.raster"),
+    );
+    flowMocks.edges = [viewerEdge()];
+    flowMocks.nodes.set(
+      "source-node",
+      sourceNode("one", {
+        node_id: "source-node",
+        status: "succeeded",
+        outputs: [preview],
+        error: null,
+      }),
+    );
+
     const container = renderViewer();
     expect(
       container.querySelector('[data-testid="corner-resize"]'),
     ).not.toBeNull();
+    expect(container.textContent).not.toContain("Follow selection");
+    expect(container.textContent).not.toContain("Selected rows");
+  });
+
+  it("shows follow ports when the live renderer can brush", () => {
+    const preview = runOutput(
+      "preview",
+      "single",
+      artifact("parcels", "table.data"),
+    );
+    flowMocks.edges = [viewerEdge()];
+    flowMocks.nodes.set(
+      "source-node",
+      sourceNode("one", {
+        node_id: "source-node",
+        status: "succeeded",
+        outputs: [preview],
+        error: null,
+      }),
+    );
+
+    const container = renderViewer();
+    expect(container.textContent).toContain("Follow selection");
+    expect(container.textContent).toContain("Selected rows");
+    expect(
+      container.querySelector(
+        '[aria-label="Follow selection from another Artifact Viewer"]',
+      ),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(
+        '[aria-label="Selected rows from this Artifact Viewer"]',
+      ),
+    ).not.toBeNull();
+  });
+
+  it("keeps follow ports when a binding already exists", () => {
+    const preview = runOutput(
+      "preview",
+      "single",
+      artifact("notes", "text.markdown"),
+    );
+    flowMocks.edges = [
+      viewerEdge(),
+      {
+        id: "artifact-viewer-binding-1",
+        type: ARTIFACT_VIEWER_INTERACTION_EDGE_TYPE,
+        source: "artifact-viewer-1",
+        target: "artifact-viewer-2",
+        sourceHandle: ARTIFACT_VIEWER_INTERACTION_OUTPUT_HANDLE,
+        targetHandle: ARTIFACT_VIEWER_INTERACTION_INPUT_HANDLE,
+      },
+    ];
+    flowMocks.nodes.set(
+      "source-node",
+      sourceNode("one", {
+        node_id: "source-node",
+        status: "succeeded",
+        outputs: [preview],
+        error: null,
+      }),
+    );
+
+    const container = renderViewer();
+    expect(container.textContent).toContain("Follow selection");
+    expect(container.textContent).toContain("Selected rows");
   });
 });

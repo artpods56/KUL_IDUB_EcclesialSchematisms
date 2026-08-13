@@ -16,11 +16,9 @@ import {
   ArrowDown,
   ArrowUp,
   Check,
-  CircleHelp,
   ExternalLink,
   GripVertical,
   LoaderCircle,
-  MoreHorizontal,
   Plus,
   Power,
   RotateCcw,
@@ -33,13 +31,18 @@ import {
 import type { Port } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import {
+  CanvasNodeHeader,
+  nodeChrome,
+} from "./CanvasNodeChrome";
+import {
   schemaFields,
   type NumberTupleItem,
   type NumberTupleSchemaField,
   type SchemaField,
   type StringListSchemaField,
 } from "../config-schema";
-import { handleStyle } from "../handle-style";
+import { useHandleIsDocked } from "../edges/useDockedConnection";
+import { dockedHandleStyle, handleStyle } from "../handle-style";
 import { decodeHandleId, encodeHandleId } from "../handles";
 import {
   inputPlugsForPort,
@@ -107,7 +110,10 @@ import {
   lengthFromSpan,
   spanFromLength,
 } from "../grid-layout";
-import { RemoteSelectionRing } from "../../room/RemoteSelectionRing";
+import {
+  CanvasNodeShell,
+  useCanvasNodeShell,
+} from "./CanvasNodeShell";
 import {
   configBoardColumns,
   fieldFootprint,
@@ -119,8 +125,6 @@ import { LayoutResizeHandle } from "./LayoutResizeHandle";
 import { NodeExecutionAppendix } from "./NodeExecutionAppendix";
 import { TextareaBodyResizeHandle } from "./TextareaBodyResizeHandle";
 import { PortTypePopover } from "./type-inspector";
-import { usePickupLift } from "./usePickupLift";
-import { useShellGridFill } from "./useShellGridFill";
 import { VectorLayerStyleBody } from "./VectorLayerStyleBody";
 
 type WorkflowNode = Node<WorkflowNodeData, typeof WORKFLOW_NODE_TYPE>;
@@ -129,41 +133,6 @@ const ACCEPTED_IMAGE_TYPES =
   ".png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp,image/png,image/jpeg,image/webp,image/tiff,image/bmp";
 
 const s = stylex.create({
-  shell: {
-    position: "relative",
-    width: "300px",
-    overflow: "visible",
-    borderWidth: 1,
-    borderStyle: "solid",
-    borderColor: tokens.colorBorder,
-    borderRadius: tokens.radiusLg,
-    backgroundColor: tokens.colorChrome,
-    boxShadow: tokens.shadowNode,
-    color: tokens.colorText,
-    fontSize: tokens.fontSizeSm,
-    boxSizing: "border-box",
-    cursor: "grab",
-    transitionProperty: {
-      default: "box-shadow",
-      "@media (prefers-reduced-motion: reduce)": "none",
-    },
-    // Hide (release) is quicker than pickup so the card never appears to snap
-    // away from a lingering ground plate.
-    transitionDuration: "90ms",
-    transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
-  },
-  shellContent: {
-    boxSizing: "border-box",
-    flexShrink: 0,
-    width: "100%",
-  },
-  compatibilityShell: {
-    borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: tokens.colorBorderStrong,
-    backgroundColor: tokens.colorSurfaceMuted,
-    boxShadow: tokens.shadowNode,
-  },
   compatibilityIcon: {
     color: tokens.colorWarning,
     flexShrink: 0,
@@ -253,89 +222,16 @@ const s = stylex.create({
   textareaDefault: {
     height: "96px",
   },
-  pickedUp: {
-    // A near-card shadow travels with the lifted shell; the separate plate
-    // below stays closer to the canvas to make the separation legible.
-    boxShadow: tokens.shadowNodeRaised,
-    transitionDuration: "120ms",
-  },
-  dragging: {
-    cursor: "grabbing",
-  },
-  pickupShadow: {
-    // Geometry-neutral ground plate. Sits BEFORE the card in DOM order so the
-    // opaque shell paints over the overlap; the inline gutter-aware inset keeps
-    // the plate box tucked behind the lifted shell, so only the offset shadow
-    // reads as ground.
-    position: "absolute",
-    display: "block",
-    borderRadius: tokens.radiusLg,
-    boxShadow: tokens.shadowNodeActive,
-    opacity: 0,
-    pointerEvents: "none",
-    transform: "translate3d(0, 2px, 0) scale(0.97)",
-    transformOrigin: "50% 45%",
-    transitionProperty: {
-      default: "opacity, transform, box-shadow",
-      "@media (prefers-reduced-motion: reduce)": "none",
-    },
-    // Release settles quicker than pickup (opacity, transform, box-shadow).
-    transitionDuration: "70ms, 120ms, 120ms",
-    transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
-  },
-  pickupShadowActive: {
-    opacity: 0.5,
-    transform: "translate3d(0, 3px, 0)",
-    // Opacity and box-shadow ease while the transform rides the lift spring.
-    transitionDuration: "120ms, 200ms, 200ms",
-    transitionTimingFunction:
-      "cubic-bezier(0.22, 1, 0.36, 1), cubic-bezier(0.34, 1.56, 0.64, 1), cubic-bezier(0.22, 1, 0.36, 1)",
-  },
-  pickupShadowDragged: {
-    opacity: 0.9,
-    transform: "translate3d(0, 9px, 0) scale(1.02)",
-    boxShadow: tokens.shadowNodeDragged,
-    transitionDuration: "120ms, 200ms, 200ms",
-    transitionTimingFunction:
-      "cubic-bezier(0.22, 1, 0.36, 1), cubic-bezier(0.34, 1.56, 0.64, 1), cubic-bezier(0.22, 1, 0.36, 1)",
-  },
   header: {
     display: "grid",
     gap: "2px",
     padding: "12px 16px 12px 12px",
-  },
-  /**
-   * Slim chrome: one lattice cell of tax at most. Only the title is always
-   * painted; actions and provenance are gated behind selection.
-   */
-  headerSlim: {
-    minWidth: 0,
-    display: "flex",
-    alignItems: "center",
-    gap: "4px",
-    minHeight: "34px",
-    padding: "5px 10px 3px 12px",
   },
   titleRow: {
     minWidth: 0,
     display: "flex",
     alignItems: "center",
     gap: "4px",
-  },
-  headerButton: {
-    width: "22px",
-    height: "22px",
-    display: "grid",
-    placeItems: "center",
-    flexShrink: 0,
-    borderWidth: 0,
-    borderRadius: "9999px",
-    backgroundColor: {
-      default: tokens.colorSurface,
-      ":hover": tokens.colorHover,
-    },
-    color: { default: tokens.colorSubtle, ":hover": tokens.colorText },
-    cursor: "pointer",
   },
   /** Unsupported cards keep a direct remove: removal is the only repair. */
   removeButton: {
@@ -344,49 +240,6 @@ const s = stylex.create({
       ":hover": tokens.colorDangerHover,
     },
     color: { default: tokens.colorSubtle, ":hover": tokens.colorDanger },
-  },
-  /** Destructive actions live behind the overflow menu, never on the chrome. */
-  nodeMenu: {
-    minWidth: "150px",
-    display: "grid",
-    padding: "4px",
-    borderRadius: tokens.radiusMd,
-    backgroundColor: tokens.colorSurface,
-    boxShadow: tokens.shadowNodeSelected,
-    color: tokens.colorText,
-    zIndex: 50,
-  },
-  nodeMenuItem: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    padding: "6px 8px",
-    borderWidth: 0,
-    borderRadius: tokens.radiusSm,
-    backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
-    color: tokens.colorText,
-    cursor: "pointer",
-    fontSize: tokens.fontSizeSm,
-    textAlign: "left",
-  },
-  nodeMenuItemDanger: {
-    backgroundColor: {
-      default: "transparent",
-      ":hover": tokens.colorDangerHover,
-    },
-    color: { default: tokens.colorDanger, ":hover": tokens.colorDanger },
-  },
-  title: {
-    minWidth: 0,
-    flex: 1,
-    overflow: "hidden",
-    marginLeft: "4px",
-    color: tokens.colorText,
-    fontSize: tokens.fontSizeMd,
-    fontWeight: 500,
-    letterSpacing: "-0.01em",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
   },
   /** Compact execution status stays visible without adding shell chrome. */
   executionDot: {
@@ -456,35 +309,6 @@ const s = stylex.create({
     fontSize: "10px",
     fontWeight: 600,
   },
-  helpPopup: {
-    width: "280px",
-    display: "grid",
-    gap: "6px",
-    padding: "11px 13px",
-    borderRadius: tokens.radiusLg,
-    backgroundColor: tokens.colorSurface,
-    boxShadow: tokens.shadowNodeSelected,
-    color: tokens.colorText,
-    zIndex: 50,
-  },
-  helpTitle: { fontSize: tokens.fontSizeSm, fontWeight: 600 },
-  helpDescription: {
-    color: tokens.colorMuted,
-    fontSize: tokens.fontSizeXs,
-    lineHeight: 1.5,
-  },
-  /** Provenance moved off the card chrome and into the about popover. */
-  helpFooter: {
-    minWidth: 0,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: "8px",
-    paddingTop: "6px",
-    borderTopWidth: 1,
-    borderTopStyle: "solid",
-    borderTopColor: tokens.colorDivider,
-  },
   tabs: {
     display: "grid",
     gap: "5px",
@@ -495,26 +319,6 @@ const s = stylex.create({
     gap: "5px",
     paddingTop: "2px",
     paddingBottom: "14px",
-  },
-  /** Paired I/O rows — inputs left, outputs right, same lattice height. */
-  portRail: {
-    display: "grid",
-    paddingBlock: "2px",
-  },
-  portRailRow: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
-    alignItems: "stretch",
-    boxSizing: "border-box",
-  },
-  portRailSlot: {
-    position: "relative",
-    minWidth: 0,
-    display: "flex",
-    alignItems: "center",
-  },
-  portRailSlotOut: {
-    justifyContent: "flex-end",
   },
   plugPorts: {
     display: "grid",
@@ -714,32 +518,6 @@ const s = stylex.create({
     fontSize: tokens.fontSizeXs,
     fontWeight: 500,
   },
-  tabRow: {
-    position: "relative",
-    display: "flex",
-    width: "100%",
-    height: "100%",
-    minHeight: "28px",
-    alignItems: "center",
-    cursor: "crosshair",
-  },
-  tabRowOut: { justifyContent: "flex-end" },
-  tab: {
-    display: "flex",
-    alignItems: "center",
-    gap: "4px",
-    maxWidth: "calc(100% - 12px)",
-    height: "24px",
-    paddingInline: "14px 12px",
-    borderWidth: 0,
-    backgroundColor: {
-      default: tokens.colorSurfaceMuted,
-      ":hover": tokens.colorHoverStrong,
-    },
-    color: tokens.colorTextEmphasis,
-    fontSize: tokens.fontSizeXs,
-    fontWeight: 600,
-  },
   tabWithToggle: {
     paddingInlineEnd: "5px",
   },
@@ -755,19 +533,6 @@ const s = stylex.create({
     color: "inherit",
     cursor: "pointer",
     font: "inherit",
-  },
-  tabLabel: {
-    minWidth: 0,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  tabShape: { flexShrink: 0 },
-  tabIn: { borderRadius: "0 9999px 9999px 0" },
-  tabOut: {
-    flexDirection: "row-reverse",
-    paddingInline: "12px 14px",
-    borderRadius: "9999px 0 0 9999px",
   },
   tabDisabled: {
     color: tokens.colorTextDisabled,
@@ -1048,27 +813,41 @@ const s = stylex.create({
     fontSize: tokens.fontSizeXs,
     tabSize: 2,
   },
-  /** Same height as text inputs so boolean bricks align on a shared shelf. */
+  /**
+   * Same silhouette as text inputs: full-width 31px bar, check on the
+   * trailing edge. Checked state lives on the well, not the bar.
+   */
   checkBox: {
     position: "relative",
-    width: "31px",
+    width: "100%",
     height: "31px",
     flexShrink: 0,
-    display: "grid",
-    placeItems: "center",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    paddingInline: "10px",
     borderWidth: 0,
     borderRadius: tokens.radiusMd,
     backgroundColor: tokens.colorSurfaceMuted,
-    color: tokens.colorAccent,
     cursor: "pointer",
     outline: {
       default: "none",
       ":focus-within": `2px solid ${tokens.colorAccentBorder}`,
     },
   },
-  checkBoxChecked: {
-    backgroundColor: { default: tokens.colorAccentSoft },
-    boxShadow: `inset 0 0 0 1px ${tokens.colorAccent}`,
+  checkWell: {
+    width: "18px",
+    height: "18px",
+    flexShrink: 0,
+    display: "grid",
+    placeItems: "center",
+    borderRadius: tokens.radiusSm,
+    color: tokens.colorOnAccent,
+    boxShadow: `inset 0 0 0 1px ${tokens.colorBorder}`,
+  },
+  checkWellChecked: {
+    backgroundColor: tokens.colorAccent,
+    boxShadow: "none",
   },
   checkInput: {
     position: "absolute",
@@ -1433,43 +1212,6 @@ const s = stylex.create({
     fontSize: tokens.fontSizeXs,
     fontWeight: 600,
   },
-  shellStack: {
-    position: "relative",
-    display: "grid",
-    width: "fit-content",
-    // Option C pickup: release settles quicker than the spring lift.
-    transitionProperty: {
-      default: "transform",
-      "@media (prefers-reduced-motion: reduce)": "none",
-    },
-    transitionDuration: "120ms",
-    transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
-  },
-  shellStackActive: {
-    // Slight active-tier lift; the spring overshoot reads as the node waking
-    // up under the pointer.
-    transform: "translate3d(0, -2px, 0)",
-    transitionProperty: {
-      default: "transform",
-      "@media (prefers-reduced-motion: reduce)": "none",
-    },
-    transitionDuration: "200ms",
-    transitionTimingFunction: "cubic-bezier(0.34, 1.56, 0.64, 1)",
-  },
-  shellStackDragged: {
-    // Full pickup: the node is carried above the canvas.
-    transform: "translate3d(0, -8px, 0)",
-    transitionProperty: {
-      default: "transform",
-      "@media (prefers-reduced-motion: reduce)": "none",
-    },
-    transitionDuration: "200ms",
-    transitionTimingFunction: "cubic-bezier(0.34, 1.56, 0.64, 1)",
-  },
-  shellFrame: {
-    position: "relative",
-    boxSizing: "border-box",
-  },
   emptyBody: {
     padding: "0 16px 14px",
     color: tokens.colorSubtle,
@@ -1579,7 +1321,7 @@ function PortRail({
   if (rowCount === 0) return null;
 
   return (
-    <div data-testid="port-rail" {...stylex.props(s.portRail)}>
+    <div data-testid="port-rail" {...stylex.props(nodeChrome.portRail)}>
       {Array.from({ length: rowCount }, (_, index) => {
         const input = inputPorts[index];
         const output = outputPorts[index];
@@ -1588,9 +1330,9 @@ function PortRail({
             key={`port-rail-row-${index}`}
             data-testid="port-rail-row"
             style={{ height: rowHeight }}
-            {...stylex.props(s.portRailRow)}
+            {...stylex.props(nodeChrome.portRailRow)}
           >
-            <div {...stylex.props(s.portRailSlot)}>
+            <div {...stylex.props(nodeChrome.portRailSlot)}>
               {input ? (
                 <PortTab
                   id={id}
@@ -1600,7 +1342,7 @@ function PortRail({
                 />
               ) : null}
             </div>
-            <div {...stylex.props(s.portRailSlot, s.portRailSlotOut)}>
+            <div {...stylex.props(nodeChrome.portRailSlot, nodeChrome.portRailSlotOut)}>
               {output ? (
                 <PortTab
                   id={id}
@@ -1647,15 +1389,28 @@ function PortTab({
     ? `Input port ${visibleName}, accepts ${effectiveContract}${port.required ? ", required" : ""}`
     : `Output port ${visibleName}, provides ${effectiveContract}`;
   const connectionDisabled = Boolean(connection && !connection.enabled);
+  const handleId = encodeHandleId(
+    portMetaForPort(
+      port,
+      input ? port.shape : shape,
+      undefined,
+      data.artifactTypeBindings,
+    ),
+  );
+  const docked = useHandleIsDocked(id, handleId);
 
   return (
-    <div {...stylex.props(s.tabRow, input ? null : s.tabRowOut)}>
+    <div
+      data-docked-port={docked ? "true" : undefined}
+      {...stylex.props(nodeChrome.tabRow, input ? null : nodeChrome.tabRowOut)}
+    >
       <div
         {...stylex.props(
-          s.tab,
-          input ? s.tabIn : s.tabOut,
+          nodeChrome.tab,
+          input ? nodeChrome.tabIn : nodeChrome.tabOut,
           connection ? s.tabWithToggle : null,
           connectionDisabled ? s.tabDisabled : null,
+          docked ? nodeChrome.tabDocked : null,
         )}
       >
         <PortTypePopover
@@ -1669,12 +1424,12 @@ function PortTab({
             title={port.description ?? `Inspect ${visibleName} type`}
             {...nodeInteractionProps(stylex.props(s.tabTrigger))}
           >
-            <span {...stylex.props(s.tabLabel)}>{visibleName}</span>
+            <span {...stylex.props(nodeChrome.tabLabel)}>{visibleName}</span>
             {input && port.required ? (
-              <span {...stylex.props(s.required, s.tabShape)}>*</span>
+              <span {...stylex.props(s.required, nodeChrome.tabShape)}>*</span>
             ) : null}
             {shape === "many" ? (
-              <span {...stylex.props(s.tabShape)}>· many</span>
+              <span {...stylex.props(nodeChrome.tabShape)}>· many</span>
             ) : null}
           </Popover.Trigger>
         </PortTypePopover>
@@ -1688,21 +1443,19 @@ function PortTab({
       <Handle
         type={input ? "target" : "source"}
         position={input ? Position.Left : Position.Right}
-        id={encodeHandleId(
-          portMetaForPort(
-            port,
-            input ? port.shape : shape,
-            undefined,
-            data.artifactTypeBindings,
-          ),
-        )}
+        id={handleId}
+        aria-hidden={docked}
         aria-label={accessibleLabel}
         title={
           input
             ? `${accessibleLabel}. Connect a compatible output here.${port.description ? ` ${port.description}` : ""}`
             : `${accessibleLabel}. Drag to a compatible input. If fields are available, you can choose what arrives after connecting.${port.description ? ` ${port.description}` : ""}`
         }
-        style={handleStyle("50%", color, port.variadic)}
+        style={
+          docked
+            ? dockedHandleStyle("50%")
+            : handleStyle("50%", color, shape === "many")
+        }
       />
     </div>
   );
@@ -1945,7 +1698,7 @@ function InstancePlugPort({
             {...nodeInteractionProps(stylex.props(s.plugPortTitle))}
           >
             <span {...stylex.props(s.dot)} style={{ backgroundColor: color }} />
-            <span {...stylex.props(s.tabLabel)}>{visibleName}</span>
+            <span {...stylex.props(nodeChrome.tabLabel)}>{visibleName}</span>
             {port.required ? <span {...stylex.props(s.required)}>*</span> : null}
           </button>
         </PortTypePopover>
@@ -2346,9 +2099,7 @@ function ConfigField({
           <FieldLabelText title={field.title} description={field.description} />
           {field.required ? <span {...stylex.props(s.required)}>*</span> : null}
         </span>
-        <span
-          {...stylex.props(s.checkBox, checked ? s.checkBoxChecked : null)}
-        >
+        <span {...stylex.props(s.checkBox)}>
           <input
             type="checkbox"
             checked={checked}
@@ -2356,12 +2107,19 @@ function ConfigField({
             {...nodeInteractionProps(stylex.props(s.checkInput))}
             onChange={(event) => onChange(event.currentTarget.checked)}
           />
-          <Check
-            size={16}
-            strokeWidth={2.5}
-            aria-hidden
-            {...stylex.props(s.checkMark, checked ? s.checkMarkChecked : null)}
-          />
+          <span
+            {...stylex.props(s.checkWell, checked ? s.checkWellChecked : null)}
+          >
+            <Check
+              size={13}
+              strokeWidth={2.5}
+              aria-hidden
+              {...stylex.props(
+                s.checkMark,
+                checked ? s.checkMarkChecked : null,
+              )}
+            />
+          </span>
         </span>
       </label>
     );
@@ -2619,28 +2377,6 @@ function FileUploadBody({ id, data }: { id: string; data: WorkflowNodeData }) {
           if (files.length) data.onImagesSelected?.(id, files);
         }}
       />
-      <button
-        type="button"
-        {...nodeInteractionProps(stylex.props(s.upload))}
-        onClick={() => inputRef.current?.click()}
-      >
-        {data.execution.status === "uploading" ? (
-          <LoaderCircle size={12} {...stylex.props(s.spinner)} />
-        ) : (
-          <Upload size={12} />
-        )}
-        {data.execution.status === "uploading"
-          ? "Uploading…"
-          : uploads.length
-            ? isSingleFile ? "Replace file" : "Replace images"
-            : isGeoJson
-              ? "Choose GeoJSON"
-              : isGeoTiff
-                ? "Choose GeoTIFF"
-                : isTableFile
-                  ? "Choose CSV or XLSX"
-                  : "Choose images"}
-      </button>
       {uploads.length ? (
         <div {...nodeInteractionProps(stylex.props(s.fileList))}>
           {uploads.map((upload, index) => (
@@ -2678,6 +2414,28 @@ function FileUploadBody({ id, data }: { id: string; data: WorkflowNodeData }) {
                 : "PNG, JPEG, WebP, TIFF or BMP · ordered as selected"}
         </p>
       )}
+      <button
+        type="button"
+        {...nodeInteractionProps(stylex.props(s.upload))}
+        onClick={() => inputRef.current?.click()}
+      >
+        {data.execution.status === "uploading" ? (
+          <LoaderCircle size={12} {...stylex.props(s.spinner)} />
+        ) : (
+          <Upload size={12} />
+        )}
+        {data.execution.status === "uploading"
+          ? "Uploading…"
+          : uploads.length
+            ? isSingleFile ? "Replace file" : "Replace images"
+            : isGeoJson
+              ? "Choose GeoJSON"
+              : isGeoTiff
+                ? "Choose GeoTIFF"
+                : isTableFile
+                  ? "Choose CSV or XLSX"
+                  : "Choose images"}
+      </button>
     </div>
   );
 }
@@ -3591,130 +3349,86 @@ function NodeHeader({
     data.execution.status === "cancelling";
 
   return (
-    <header {...stylex.props(s.headerSlim)}>
-      <span {...stylex.props(s.title)} title={data.spec.title}>
-        {data.spec.title}
-      </span>
-      {executionLabel ? (
-        executionIsBusy ? (
-          <LoaderCircle
-            size={11}
-            role="status"
-            aria-label={`Execution ${executionLabel}`}
-            {...stylex.props(
-              s.spinner,
-              s.executionSpinner,
-              data.execution.status === "cancelling"
-                ? s.executionSpinnerWarning
-                : null,
-            )}
-          />
-        ) : (
-          <span
-            role="status"
-            aria-label={`Execution ${executionLabel}`}
-            title={`Execution ${executionLabel}`}
-            {...stylex.props(
-              s.executionDot,
-              data.execution.status === "succeeded"
-                ? s.executionDotSuccess
-                : null,
-              data.execution.status === "failed" ? s.executionDotDanger : null,
-            )}
-          />
-        )
-      ) : null}
-      {selected ? (
+    <CanvasNodeHeader
+      title={data.spec.title}
+      selected={selected}
+      aboutLabel={`About ${data.spec.title}`}
+      aboutTitle={data.spec.title}
+      aboutDescription={
+        data.spec.description ||
+        "No description is available for this node."
+      }
+      aboutFooter={
         <>
-          {typeof data.moduleUpgradeRelease === "number" &&
-          data.onUpgradeModuleCall ? (
+          <span {...stylex.props(s.operatorCopy)}>
+            {typeof data.spec.module_graph_revision === "number"
+              ? `Module · r${data.spec.module_graph_revision}`
+              : `${data.spec.operator_id}@${data.spec.operator_version}`}
+          </span>
+          {data.spec.module_graph_id && data.onOpenModuleSource ? (
             <button
               type="button"
-              aria-label={`Upgrade module call to release ${data.moduleUpgradeRelease}`}
-              title={`Upgrade to release ${data.moduleUpgradeRelease}`}
-              {...nodeInteractionProps(stylex.props(s.upgradeModuleCall))}
-              onClick={() => data.onUpgradeModuleCall?.(id)}
+              aria-label={`Open source graph for ${data.spec.title}`}
+              title="Open source graph"
+              {...nodeInteractionProps(stylex.props(s.openModuleSource))}
+              onClick={() => {
+                if (!data.spec.module_graph_id) return;
+                data.onOpenModuleSource?.(data.spec.module_graph_id);
+              }}
             >
-              <ArrowUp size={11} />
-              Upgrade to release {data.moduleUpgradeRelease}
+              <ExternalLink size={9} />
+              Source
             </button>
           ) : null}
-          <Popover.Root>
-            <Popover.Trigger
-              type="button"
-              aria-label={`About ${data.spec.title}`}
-              title={`About ${data.spec.title}`}
-              {...nodeInteractionProps(stylex.props(s.headerButton))}
-            >
-              <CircleHelp size={13} />
-            </Popover.Trigger>
-            <Popover.Portal>
-              <Popover.Positioner side="top" align="start" sideOffset={7}>
-                <Popover.Popup
-                  {...nodeInteractionProps(stylex.props(s.helpPopup))}
-                >
-                  <span {...stylex.props(s.helpTitle)}>{data.spec.title}</span>
-                  <span {...stylex.props(s.helpDescription)}>
-                    {data.spec.description ||
-                      "No description is available for this node."}
-                  </span>
-                  <span {...stylex.props(s.helpFooter)}>
-                    <span {...stylex.props(s.operatorCopy)}>
-                      {typeof data.spec.module_graph_revision === "number"
-                        ? `Module · r${data.spec.module_graph_revision}`
-                        : `${data.spec.operator_id}@${data.spec.operator_version}`}
-                    </span>
-                    {data.spec.module_graph_id && data.onOpenModuleSource ? (
-                      <button
-                        type="button"
-                        aria-label={`Open source graph for ${data.spec.title}`}
-                        title="Open source graph"
-                        {...nodeInteractionProps(
-                          stylex.props(s.openModuleSource),
-                        )}
-                        onClick={() => {
-                          if (!data.spec.module_graph_id) return;
-                          data.onOpenModuleSource?.(data.spec.module_graph_id);
-                        }}
-                      >
-                        <ExternalLink size={9} />
-                        Source
-                      </button>
-                    ) : null}
-                  </span>
-                </Popover.Popup>
-              </Popover.Positioner>
-            </Popover.Portal>
-          </Popover.Root>
-          <Popover.Root>
-            <Popover.Trigger
-              type="button"
-              aria-label={`Actions for ${data.spec.title}`}
-              title={`Actions for ${data.spec.title}`}
-              {...nodeInteractionProps(stylex.props(s.headerButton))}
-            >
-              <MoreHorizontal size={13} />
-            </Popover.Trigger>
-            <Popover.Portal>
-              <Popover.Positioner side="bottom" align="end" sideOffset={6}>
-                <Popover.Popup
-                  {...nodeInteractionProps(stylex.props(s.nodeMenu))}
-                >
-                  <button
-                    type="button"
-                    {...stylex.props(s.nodeMenuItem, s.nodeMenuItemDanger)}
-                    onClick={() => data.onRemoveNode?.(id)}
-                  >
-                    <Trash2 size={13} />
-                    Delete node
-                  </button>
-                </Popover.Popup>
-              </Popover.Positioner>
-            </Popover.Portal>
-          </Popover.Root>
         </>
+      }
+      onRemove={() => data.onRemoveNode?.(id)}
+      status={
+        executionLabel ? (
+          executionIsBusy ? (
+            <LoaderCircle
+              size={11}
+              role="status"
+              aria-label={`Execution ${executionLabel}`}
+              {...stylex.props(
+                s.spinner,
+                s.executionSpinner,
+                data.execution.status === "cancelling"
+                  ? s.executionSpinnerWarning
+                  : null,
+              )}
+            />
+          ) : (
+            <span
+              role="status"
+              aria-label={`Execution ${executionLabel}`}
+              title={`Execution ${executionLabel}`}
+              {...stylex.props(
+                s.executionDot,
+                data.execution.status === "succeeded"
+                  ? s.executionDotSuccess
+                  : null,
+                data.execution.status === "failed" ? s.executionDotDanger : null,
+              )}
+            />
+          )
+        ) : null
+      }
+    >
+      {typeof data.moduleUpgradeRelease === "number" &&
+      data.onUpgradeModuleCall ? (
+        <button
+          type="button"
+          aria-label={`Upgrade module call to release ${data.moduleUpgradeRelease}`}
+          title={`Upgrade to release ${data.moduleUpgradeRelease}`}
+          {...nodeInteractionProps(stylex.props(s.upgradeModuleCall))}
+          onClick={() => data.onUpgradeModuleCall?.(id)}
+        >
+          <ArrowUp size={11} />
+          Upgrade to release {data.moduleUpgradeRelease}
+        </button>
       ) : null}
-    </header>
+    </CanvasNodeHeader>
   );
 }
 
@@ -3735,16 +3449,16 @@ function CompatibilityPort({
     ? `${endpoint.portName} · ${endpoint.plugId}`
     : endpoint.portName;
   return (
-    <div {...stylex.props(s.tabRow, input ? null : s.tabRowOut)}>
+    <div {...stylex.props(nodeChrome.tabRow, input ? null : nodeChrome.tabRowOut)}>
       <div
         {...stylex.props(
-          s.tab,
-          input ? s.tabIn : s.tabOut,
+          nodeChrome.tab,
+          input ? nodeChrome.tabIn : nodeChrome.tabOut,
           s.compatibilityPort,
         )}
         title={`Historical ${direction} ${label}`}
       >
-        <span {...stylex.props(s.tabLabel)}>{label}</span>
+        <span {...stylex.props(nodeChrome.tabLabel)}>{label}</span>
       </div>
       <Handle
         type={input ? "target" : "source"}
@@ -3777,7 +3491,7 @@ function CompatibilityPortRail({
   if (rowCount === 0) return null;
 
   return (
-    <div data-testid="port-rail" {...stylex.props(s.portRail)}>
+    <div data-testid="port-rail" {...stylex.props(nodeChrome.portRail)}>
       {Array.from({ length: rowCount }, (_, index) => {
         const input = inputs[index];
         const output = outputs[index];
@@ -3786,14 +3500,14 @@ function CompatibilityPortRail({
             key={`compat-rail-row-${index}`}
             data-testid="port-rail-row"
             style={{ height: rowHeight }}
-            {...stylex.props(s.portRailRow)}
+            {...stylex.props(nodeChrome.portRailRow)}
           >
-            <div {...stylex.props(s.portRailSlot)}>
+            <div {...stylex.props(nodeChrome.portRailSlot)}>
               {input ? (
                 <CompatibilityPort direction="input" endpoint={input} />
               ) : null}
             </div>
-            <div {...stylex.props(s.portRailSlot, s.portRailSlotOut)}>
+            <div {...stylex.props(nodeChrome.portRailSlot, nodeChrome.portRailSlotOut)}>
               {output ? (
                 <CompatibilityPort direction="output" endpoint={output} />
               ) : null}
@@ -3819,12 +3533,6 @@ function IncompatibleWorkflowNodeCard({
   compatibility: IncompatibleWorkflowNodeCompatibility;
 }) {
   const updateNodeInternals = useUpdateNodeInternals();
-  const { tier, pickedUp, draggedTier, liftRef, holdHandlers } = usePickupLift({
-    id,
-    selected,
-    dragging,
-    updateNodeInternals,
-  });
   const grid = useOptionalCanvasGridSettings();
   const allowCornerResize =
     grid?.settings.allowWorkflowCornerResize ?? false;
@@ -3833,15 +3541,14 @@ function IncompatibleWorkflowNodeCard({
   );
   const layout = draftLayout ?? data.layout;
   const nodeWidth = resolvedNodeWidth(layout);
-  const {
-    contentRef,
-    frameStyle,
-    shellStyle,
-    gridWidth,
-    paintWidth,
-    gutter,
-    fillMinHeight,
-  } = useShellGridFill(nodeWidth);
+  const shell = useCanvasNodeShell({
+    id,
+    selected,
+    dragging,
+    naturalWidth: nodeWidth,
+    updateNodeInternals,
+  });
+  const { gridWidth, paintWidth, fillMinHeight } = shell;
   const endpointRevision = JSON.stringify({
     inputs: compatibility.inputs,
     outputs: compatibility.outputs,
@@ -3877,99 +3584,14 @@ function IncompatibleWorkflowNodeCard({
   );
 
   return (
-    <div
-      ref={liftRef}
-      {...holdHandlers}
-      {...stylex.props(
-        s.shellStack,
-        tier === "active" ? s.shellStackActive : null,
-        tier === "dragged" ? s.shellStackDragged : null,
-      )}
-      style={{ width: gridWidth }}
-    >
-      <div {...stylex.props(s.shellFrame)} style={frameStyle}>
-        <span
-          aria-hidden="true"
-          data-node-pickup-shadow="true"
-          data-picked-up={pickedUp}
-          data-dragging={draggedTier}
-          {...stylex.props(
-            s.pickupShadow,
-            tier === "active" ? s.pickupShadowActive : null,
-            tier === "dragged" ? s.pickupShadowDragged : null,
-          )}
-          style={{
-            inset: `${gutter}px ${gutter + 10}px ${gutter + 12}px ${gutter + 10}px`,
-          }}
-        />
-        <article
-          aria-label={`${data.spec.title} ${compatibility.status} node`}
-          {...stylex.props(
-            s.shell,
-            s.compatibilityShell,
-            pickedUp ? s.pickedUp : null,
-            draggedTier ? s.dragging : null,
-          )}
-          style={shellStyle}
-        >
-        {!selected && data.remoteSelectionColor ? (
-          <RemoteSelectionRing color={data.remoteSelectionColor} />
-        ) : null}
-        <div ref={contentRef} {...stylex.props(s.shellContent)}>
-          <header {...stylex.props(s.header)}>
-            <span {...stylex.props(s.titleRow)}>
-              <TriangleAlert
-                size={14}
-                aria-hidden="true"
-                {...stylex.props(s.compatibilityIcon)}
-              />
-              <button
-                type="button"
-                aria-label={`Remove ${data.spec.title}`}
-                title={`Remove ${data.spec.title}`}
-                {...nodeInteractionProps(
-                  stylex.props(s.headerButton, s.removeButton),
-                )}
-                onClick={() => data.onRemoveNode?.(id)}
-              >
-                <X size={13} />
-              </button>
-              <span {...stylex.props(s.title)} title={data.spec.title}>
-                {data.spec.title}
-              </span>
-              <span {...stylex.props(s.compatibilityBadge)}>
-                {compatibility.status}
-              </span>
-            </span>
-            <span {...stylex.props(s.operatorRow)}>
-              <span {...stylex.props(s.operatorCopy)}>
-                {data.spec.operator_id}@{data.spec.operator_version}
-              </span>
-            </span>
-          </header>
-          <CompatibilityPortRail
-            inputs={compatibility.inputs}
-            outputs={compatibility.outputs}
-          />
-          <div {...stylex.props(s.compatibilityBody)}>
-            {compatibility.issues.map((issue) => (
-              <p key={issue} role="status" {...stylex.props(s.compatibilityIssue)}>
-                {issue}
-              </p>
-            ))}
-            <details
-              {...nodeInteractionProps(stylex.props(s.compatibilityConfig))}
-            >
-              <summary {...stylex.props(s.compatibilityConfigSummary)}>
-                Saved configuration
-              </summary>
-              <pre {...stylex.props(s.compatibilityConfigValue)}>
-                {JSON.stringify(data.config, null, 2)}
-              </pre>
-            </details>
-          </div>
-        </div>
-        {allowCornerResize ? (
+    <CanvasNodeShell
+      state={shell}
+      selected={selected}
+      remoteSelectionColor={data.remoteSelectionColor}
+      variant="incompatible"
+      ariaLabel={`${data.spec.title} ${compatibility.status} node`}
+      resizeHandle={
+        allowCornerResize ? (
           <LayoutResizeHandle
             layout={layout}
             axes={["width"]}
@@ -3977,10 +3599,9 @@ function IncompatibleWorkflowNodeCard({
             onDraft={setDraftLayout}
             onCommit={commitLayout}
           />
-        ) : null}
-        </article>
-      </div>
-      <div style={gutter ? { marginInline: gutter } : undefined}>
+        ) : undefined
+      }
+      appendix={
         <NodeExecutionAppendix
           nodeId={id}
           nodeTitle={data.spec.title}
@@ -3992,8 +3613,61 @@ function IncompatibleWorkflowNodeCard({
           historyContext={data.historyContext}
           onOpenHistory={data.onOpenExecutionHistory}
         />
+      }
+    >
+      <header {...stylex.props(s.header)}>
+        <span {...stylex.props(s.titleRow)}>
+          <TriangleAlert
+            size={14}
+            aria-hidden="true"
+            {...stylex.props(s.compatibilityIcon)}
+          />
+          <button
+            type="button"
+            aria-label={`Remove ${data.spec.title}`}
+            title={`Remove ${data.spec.title}`}
+            {...nodeInteractionProps(
+              stylex.props(nodeChrome.headerButton, s.removeButton),
+            )}
+            onClick={() => data.onRemoveNode?.(id)}
+          >
+            <X size={13} />
+          </button>
+          <span {...stylex.props(nodeChrome.title)} title={data.spec.title}>
+            {data.spec.title}
+          </span>
+          <span {...stylex.props(s.compatibilityBadge)}>
+            {compatibility.status}
+          </span>
+        </span>
+        <span {...stylex.props(s.operatorRow)}>
+          <span {...stylex.props(s.operatorCopy)}>
+            {data.spec.operator_id}@{data.spec.operator_version}
+          </span>
+        </span>
+      </header>
+      <CompatibilityPortRail
+        inputs={compatibility.inputs}
+        outputs={compatibility.outputs}
+      />
+      <div {...stylex.props(s.compatibilityBody)}>
+        {compatibility.issues.map((issue) => (
+          <p key={issue} role="status" {...stylex.props(s.compatibilityIssue)}>
+            {issue}
+          </p>
+        ))}
+        <details
+          {...nodeInteractionProps(stylex.props(s.compatibilityConfig))}
+        >
+          <summary {...stylex.props(s.compatibilityConfigSummary)}>
+            Saved configuration
+          </summary>
+          <pre {...stylex.props(s.compatibilityConfigValue)}>
+            {JSON.stringify(data.config, null, 2)}
+          </pre>
+        </details>
       </div>
-    </div>
+    </CanvasNodeShell>
   );
 }
 
@@ -4043,12 +3717,6 @@ function SupportedWorkflowNodeCard({
     .join("|");
   const incidentConnections = useNodeConnections({ id });
   const updateNodeInternals = useUpdateNodeInternals();
-  const { tier, pickedUp, draggedTier, liftRef, holdHandlers } = usePickupLift({
-    id,
-    selected,
-    dragging,
-    updateNodeInternals,
-  });
   const grid = useOptionalCanvasGridSettings();
   const allowCornerResize =
     grid?.settings.allowWorkflowCornerResize ?? false;
@@ -4059,15 +3727,14 @@ function SupportedWorkflowNodeCard({
   );
   const layout = draftLayout ?? data.layout;
   const nodeWidth = resolvedNodeWidth(layout);
-  const {
-    contentRef,
-    frameStyle,
-    shellStyle,
-    gridWidth,
-    paintWidth,
-    gutter,
-    fillMinHeight,
-  } = useShellGridFill(nodeWidth);
+  const shell = useCanvasNodeShell({
+    id,
+    selected,
+    dragging,
+    naturalWidth: nodeWidth,
+    updateNodeInternals,
+  });
+  const { gridWidth, paintWidth, fillMinHeight } = shell;
   const bodyHeight = resolvedBodyHeight(layout);
   const layoutRevision = [
     layout?.width ?? "",
@@ -4111,114 +3778,12 @@ function SupportedWorkflowNodeCard({
   ]);
 
   return (
-    <div
-      ref={liftRef}
-      {...holdHandlers}
-      {...stylex.props(
-        s.shellStack,
-        tier === "active" ? s.shellStackActive : null,
-        tier === "dragged" ? s.shellStackDragged : null,
-      )}
-      style={{ width: gridWidth }}
-    >
-      <div {...stylex.props(s.shellFrame)} style={frameStyle}>
-        <span
-          aria-hidden="true"
-          data-node-pickup-shadow="true"
-          data-picked-up={pickedUp}
-          data-dragging={draggedTier}
-          {...stylex.props(
-            s.pickupShadow,
-            tier === "active" ? s.pickupShadowActive : null,
-            tier === "dragged" ? s.pickupShadowDragged : null,
-          )}
-          style={{
-            inset: `${gutter}px ${gutter + 10}px ${gutter + 12}px ${gutter + 10}px`,
-          }}
-        />
-        <article
-          {...stylex.props(
-            s.shell,
-            pickedUp ? s.pickedUp : null,
-            draggedTier ? s.dragging : null,
-          )}
-          style={shellStyle}
-        >
-        {!selected && data.remoteSelectionColor ? (
-          <RemoteSelectionRing color={data.remoteSelectionColor} />
-        ) : null}
-        <div ref={contentRef} {...stylex.props(s.shellContent)}>
-          <NodeHeader id={id} data={data} selected={selected ?? false} />
-          <GenericArtifactTypeState
-            id={id}
-            data={data}
-            resettable={incidentConnections.length === 0}
-          />
-          <PortRail
-            id={id}
-            data={data}
-            inputPorts={visibleInputPorts.filter(
-              (port) => !portHasInstancePlugs(port),
-            )}
-            outputPorts={data.spec.outputs}
-          />
-          {visibleInputPorts.some((port) => portHasInstancePlugs(port)) ? (
-            <div {...stylex.props(s.plugPorts)}>
-              {visibleInputPorts
-                .filter((port) => portHasInstancePlugs(port))
-                .map((port) => (
-                  <InstancePlugPort
-                    key={`in-${port.name}`}
-                    id={id}
-                    data={data}
-                    port={port}
-                  />
-                ))}
-            </div>
-          ) : null}
-          {isSchemaBuilder ? (
-            <SchemaBuilderBody id={id} data={data} />
-          ) : isArtifactQuery ? (
-            <ArtifactQueryTablesBody id={id} data={data} />
-          ) : isFileUpload ? (
-            <FileUploadBody id={id} data={data} />
-          ) : isVectorLayer ? (
-            <>
-              <GenericBody
-                id={id}
-                data={data}
-                bodyHeight={bodyHeight}
-                layout={layout}
-                onLayoutDraft={setDraftLayout}
-                onLayoutCommit={commitLayout}
-              />
-              <VectorLayerStyleBody id={id} data={data} />
-            </>
-          ) : hasConfig ? (
-            <GenericBody
-              id={id}
-              data={data}
-              bodyHeight={bodyHeight}
-              layout={layout}
-              onLayoutDraft={setDraftLayout}
-              onLayoutCommit={commitLayout}
-            />
-          ) : (
-            <div {...stylex.props(s.spacer)} aria-hidden />
-          )}
-          {!isFileUpload &&
-          !isSchemaBuilder &&
-          !isArtifactQuery &&
-          !hasConfig &&
-          !hasExecutionError &&
-          !data.spec.inputs.length &&
-          !data.spec.outputs.length ? (
-            <p {...stylex.props(s.emptyBody)}>
-              {data.spec.description || "No configuration for this operator."}
-            </p>
-          ) : null}
-        </div>
-        {allowCornerResize ? (
+    <CanvasNodeShell
+      state={shell}
+      selected={selected}
+      remoteSelectionColor={data.remoteSelectionColor}
+      resizeHandle={
+        allowCornerResize ? (
           <LayoutResizeHandle
             layout={layout}
             axes={["width", "bodyHeight"]}
@@ -4226,10 +3791,9 @@ function SupportedWorkflowNodeCard({
             onDraft={setDraftLayout}
             onCommit={commitLayout}
           />
-        ) : null}
-        </article>
-      </div>
-      <div style={gutter ? { marginInline: gutter } : undefined}>
+        ) : undefined
+      }
+      appendix={
         <NodeExecutionAppendix
           nodeId={id}
           nodeTitle={data.spec.title}
@@ -4241,8 +3805,90 @@ function SupportedWorkflowNodeCard({
           historyContext={data.historyContext}
           onOpenHistory={data.onOpenExecutionHistory}
         />
-      </div>
-    </div>
+      }
+    >
+      <NodeHeader id={id} data={data} selected={selected ?? false} />
+      <GenericArtifactTypeState
+        id={id}
+        data={data}
+        resettable={incidentConnections.length === 0}
+      />
+      <PortRail
+        id={id}
+        data={data}
+        inputPorts={visibleInputPorts.filter(
+          (port) => !portHasInstancePlugs(port),
+        )}
+        outputPorts={data.spec.outputs}
+      />
+      {visibleInputPorts.some((port) => portHasInstancePlugs(port)) ? (
+        <div {...stylex.props(s.plugPorts)}>
+          {visibleInputPorts
+            .filter((port) => portHasInstancePlugs(port))
+            .map((port) => (
+              <InstancePlugPort
+                key={`in-${port.name}`}
+                id={id}
+                data={data}
+                port={port}
+              />
+            ))}
+        </div>
+      ) : null}
+      {isSchemaBuilder ? (
+        <SchemaBuilderBody id={id} data={data} />
+      ) : isArtifactQuery ? (
+        <ArtifactQueryTablesBody id={id} data={data} />
+      ) : isFileUpload ? (
+        <>
+          {hasConfig ? (
+            <GenericBody
+              id={id}
+              data={data}
+              bodyHeight={bodyHeight}
+              layout={layout}
+              onLayoutDraft={setDraftLayout}
+              onLayoutCommit={commitLayout}
+            />
+          ) : null}
+          <FileUploadBody id={id} data={data} />
+        </>
+      ) : isVectorLayer ? (
+        <>
+          <GenericBody
+            id={id}
+            data={data}
+            bodyHeight={bodyHeight}
+            layout={layout}
+            onLayoutDraft={setDraftLayout}
+            onLayoutCommit={commitLayout}
+          />
+          <VectorLayerStyleBody id={id} data={data} />
+        </>
+      ) : hasConfig ? (
+        <GenericBody
+          id={id}
+          data={data}
+          bodyHeight={bodyHeight}
+          layout={layout}
+          onLayoutDraft={setDraftLayout}
+          onLayoutCommit={commitLayout}
+        />
+      ) : (
+        <div {...stylex.props(s.spacer)} aria-hidden />
+      )}
+      {!isFileUpload &&
+      !isSchemaBuilder &&
+      !isArtifactQuery &&
+      !hasConfig &&
+      !hasExecutionError &&
+      !data.spec.inputs.length &&
+      !data.spec.outputs.length ? (
+        <p {...stylex.props(s.emptyBody)}>
+          {data.spec.description || "No configuration for this operator."}
+        </p>
+      ) : null}
+    </CanvasNodeShell>
   );
 }
 

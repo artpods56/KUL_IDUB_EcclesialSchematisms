@@ -193,9 +193,12 @@ const s = stylex.create({
     gap: "6px",
     overflowY: "auto",
     padding: "8px",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: tokens.colorBorder,
     borderRadius: "10px",
     backgroundColor: "light-dark(rgba(255,255,255,.97), rgba(20,24,32,.97))",
-    boxShadow: tokens.shadowNodeSelected,
+    boxShadow: tokens.shadowNodeRaised,
     backdropFilter: "blur(14px)",
   },
   inspectorHeader: {
@@ -417,10 +420,10 @@ const s = stylex.create({
     overflow: "hidden",
     borderWidth: 1,
     borderStyle: "solid",
-    borderColor: tokens.colorDivider,
+    borderColor: tokens.colorBorder,
     borderRadius: "10px",
     backgroundColor: "light-dark(rgba(255,255,255,.97), rgba(20,24,32,.97))",
-    boxShadow: tokens.shadowNodeSelected,
+    boxShadow: tokens.shadowNodeRaised,
     backdropFilter: "blur(14px)",
   },
   featureHeader: {
@@ -2168,7 +2171,7 @@ function GeoMapPreview({
       map.getCanvasContainer().classList.remove("maplibregl-track-pointer");
       map.remove();
     };
-  }, [descriptor]);
+  }, [descriptor, workspaceId]);
 
   React.useEffect(() => {
     const map = mapRef.current;

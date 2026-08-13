@@ -241,4 +241,59 @@ describe("useShellGridFill", () => {
     expect(latest?.shellStyle.width).toBe(300);
     expect(latest?.gutter).toBe(0);
   });
+
+  it("stops exposing a measured fill height when size snap is disabled", () => {
+    const styles: Array<{
+      frameStyle: React.CSSProperties;
+      shellStyle: React.CSSProperties;
+      gutter: number;
+    }> = [];
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    roots.push(root);
+
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.dataset?.testid === "content" ? 310 : 0;
+      },
+    });
+
+    React.act(() => {
+      root.render(
+        <Probe
+          width={300}
+          onStyles={(next) =>
+            styles.push({
+              frameStyle: { ...next.frameStyle },
+              shellStyle: { ...next.shellStyle },
+              gutter: next.gutter,
+            })
+          }
+        />,
+      );
+    });
+    expect(styles.at(-1)?.frameStyle.height).toBe(350);
+
+    gridMocks.snapSize = false;
+    React.act(() => {
+      root.render(
+        <Probe
+          width={300}
+          onStyles={(next) =>
+            styles.push({
+              frameStyle: { ...next.frameStyle },
+              shellStyle: { ...next.shellStyle },
+              gutter: next.gutter,
+            })
+          }
+        />,
+      );
+    });
+
+    expect(styles.at(-1)?.frameStyle.height).toBeUndefined();
+    expect(styles.at(-1)?.frameStyle.minHeight).toBeUndefined();
+    expect(styles.at(-1)?.shellStyle.height).toBeUndefined();
+    expect(styles.at(-1)?.gutter).toBe(0);
+  });
 });

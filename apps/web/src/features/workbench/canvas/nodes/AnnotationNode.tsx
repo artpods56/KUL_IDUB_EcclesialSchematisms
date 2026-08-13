@@ -355,21 +355,15 @@ function FloatingTextAnnotation({
   id,
   text,
   color,
-  selected,
   onTextChange,
 }: {
   id: string;
   text: string;
   color: string;
-  selected: boolean;
   onTextChange?: (nodeId: string, text: string) => void;
 }) {
   const [editing, setEditing] = React.useState(false);
   const editorRef = React.useRef<HTMLTextAreaElement | null>(null);
-
-  React.useEffect(() => {
-    if (!selected) setEditing(false);
-  }, [selected]);
 
   React.useEffect(() => {
     if (!editing) return;
@@ -502,10 +496,10 @@ export default function AnnotationNodeCard({
 
       {isText ? (
         <FloatingTextAnnotation
+          key={selected ? "selected" : "unselected"}
           id={id}
           text={data.text}
           color={color}
-          selected={selected}
           onTextChange={data.onTextChange}
         />
       ) : (

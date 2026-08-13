@@ -52,10 +52,10 @@ const s = stylex.create({
     padding: "8px 9px 8px 11px",
     borderWidth: 1,
     borderStyle: "solid",
-    borderColor: tokens.colorBorderStrong,
+    borderColor: tokens.colorBorder,
     borderRadius: "13px",
     backgroundColor: tokens.colorChrome,
-    boxShadow: tokens.shadowNodeSelected,
+    boxShadow: tokens.shadowNodeRaised,
     transform: "translateX(-50%)",
   },
   barWithAction: {

@@ -6,6 +6,7 @@ import useSWR from "swr";
 
 import {
   artifactContentUrl,
+  type ArtifactSummary,
   type ArtifactTypeSpec,
   type RunPortOutput,
 } from "@/lib/api";
@@ -433,6 +434,7 @@ export function ArtifactPortPreview({
   onModeChoiceChange,
   feedProjection = null,
   interaction,
+  onFocusedArtifactChange,
 }: {
   output: RunPortOutput;
   artifactTypes: readonly ArtifactTypeSpec[];
@@ -442,6 +444,7 @@ export function ArtifactPortPreview({
   /** Edge-owned feed: whole output when null/empty, else project along path. */
   feedProjection?: { path: readonly string[] } | null;
   interaction?: ArtifactViewerInteractionContext;
+  onFocusedArtifactChange?: (artifact: ArtifactSummary | null) => void;
 }) {
   const { workspace } = useWorkspaceContext();
   const artifacts = output.artifacts;
@@ -461,6 +464,10 @@ export function ArtifactPortPreview({
   const focusedIndex = Math.min(index, artifacts.length - 1);
   const active = artifacts[focusedIndex];
   const activeContentUrl = artifactContentUrl(workspace.id, active.content_url);
+
+  React.useEffect(() => {
+    onFocusedArtifactChange?.(active ?? null);
+  }, [active, onFocusedArtifactChange]);
   const tableArtifact =
     active.artifact_type === "table.data" && active.schema_version === 1;
   const geoArtifact =

@@ -114,7 +114,18 @@ function registry(): NodeRegistry {
     })),
     artifact_conversions: [],
     nodes: [
-      node("text.input", "Enter text", "builtin", [], [textOutput]),
+      node("text.input", "Enter text", "builtin", [], [textOutput], {
+        config_schema: {
+          type: "object",
+          properties: {
+            text: {
+              type: "string",
+              title: "Text",
+              description: "Text emitted by the node",
+            },
+          },
+        },
+      }),
       node("text.replace", "Replace text", "builtin", [textInput], [textOutput], {
         config_schema: {
           type: "object",
@@ -217,6 +228,28 @@ afterEach(async () => {
 });
 
 describe("NodeSelector", () => {
+  it("uses the mockup artifact-family rail", async () => {
+    await renderSelector();
+
+    const filters = [
+      ...dialog().querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'),
+    ];
+    expect(filters.map((filter) => filter.textContent)).toEqual([
+      "All",
+      "Text",
+      "Images",
+      "Tables",
+      "Spatial",
+      "Prompts",
+      "Sequences",
+      "Workspace library",
+    ]);
+
+    await React.act(async () => buttonNamed("Text, 4 nodes").click());
+    expect(dialog().textContent).toContain("Text nodes");
+    expect(options()).toHaveLength(4);
+  });
+
   it("searches the full registry and inspects a result without inserting it", async () => {
     const onAddNode = vi.fn();
     await renderSelector({ onAddNode });
@@ -233,27 +266,96 @@ describe("NodeSelector", () => {
     expect(onAddNode).not.toHaveBeenCalled();
   });
 
+  it("renders the selected node in the inspector with its ports and settings", async () => {
+    await renderSelector();
+
+    await enterSearch("Enter text");
+    const enterPreview = dialog().querySelector(
+      '[aria-label="Enter text: 0 inputs, 1 output"]',
+    );
+    expect(enterPreview).not.toBeNull();
+    expect(enterPreview?.textContent).toContain("Start");
+    expect(enterPreview?.textContent).toContain("Text");
+    expect(enterPreview?.textContent).toContain("string");
+    expect(dialog().querySelector("aside")?.textContent).toContain(
+      "Starts a workflow",
+    );
+
+    await enterSearch("Fuzzy match tables");
+    const fuzzyPreview = dialog().querySelector(
+      '[aria-label="Fuzzy match tables: 1 input, 1 output"]',
+    );
+    expect(fuzzyPreview).not.toBeNull();
+    expect(fuzzyPreview?.textContent).toContain("Table");
+    expect(fuzzyPreview?.textContent).not.toContain("string");
+
+    await enterSearch("Replace text");
+    const replacePreview = dialog().querySelector(
+      '[aria-label="Replace text: 1 input, 1 output"]',
+    );
+    expect(replacePreview).not.toBeNull();
+    expect(replacePreview?.textContent).toContain("Replacement");
+    expect(replacePreview?.textContent).toContain("string");
+  });
+
   it("inserts only through the explicit action", async () => {
     const onAddNode = vi.fn();
     await renderSelector({ onAddNode });
 
-    await React.act(async () => options()[1]?.click());
+    await enterSearch("Replace text");
+    await React.act(async () => options()[0]?.click());
     expect(onAddNode).not.toHaveBeenCalled();
+    expect(
+      [...dialog().querySelectorAll("button")].filter((button) =>
+        button.getAttribute("aria-label")?.startsWith("Add "),
+      ),
+    ).toHaveLength(0);
     await React.act(async () => buttonNamed("Add Replace text").click());
 
     expect(onAddNode).toHaveBeenCalledOnce();
     expect(onAddNode.mock.calls[0]?.[0].operator_id).toBe("text.replace");
   });
 
+  it("scopes Works with to one port and inspects a suggested node", async () => {
+    await renderSelector();
+
+    await enterSearch("Replace text");
+    await React.act(async () => options()[0]?.click());
+
+    expect(dialog().querySelector("aside")?.textContent).toContain("Works with:");
+    const portSelect = dialog().querySelector<HTMLSelectElement>(
+      '[aria-label="Works with port"]',
+    );
+    expect(portSelect?.value).toBe("input:text");
+    expect(portSelect?.selectedOptions[0]?.textContent).toBe("Text input");
+    expect(dialog().querySelector("aside")?.textContent).toContain("Enter text");
+
+    await React.act(async () => {
+      if (!portSelect) return;
+      portSelect.value = "output:text";
+      portSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(portSelect?.value).toBe("output:text");
+    expect(portSelect?.selectedOptions[0]?.textContent).toBe("Text output");
+
+    await React.act(async () => buttonNamed("Inspect Normalize invoices").click());
+    expect(dialog().querySelector("aside")?.textContent).toContain(
+      "Module contract · release 2",
+    );
+    expect(
+      options().find((option) => option.getAttribute("aria-selected") === "true")
+        ?.textContent,
+    ).toContain("Normalize invoices");
+  });
+
   it("moves from search through results with arrows and inserts with Enter", async () => {
     const onAddNode = vi.fn();
     await renderSelector({ onAddNode });
 
+    await enterSearch("Replace text");
     await press(searchInput(), "ArrowDown");
     expect(document.activeElement).toBe(options()[0]);
-    await press(options()[0]!, "ArrowDown");
-    expect(document.activeElement).toBe(options()[1]);
-    await press(options()[1]!, "Enter");
+    await press(options()[0]!, "Enter");
 
     expect(onAddNode).toHaveBeenCalledOnce();
     expect(onAddNode.mock.calls[0]?.[0].operator_id).toBe("text.replace");
@@ -265,11 +367,9 @@ describe("NodeSelector", () => {
       compatibility: { direction: "downstream", port: contextPort },
     });
 
-    await React.act(async () => buttonNamed("All, 2 nodes").click());
-
     expect(options().map((option) => option.textContent)).toEqual([
-      expect.stringContaining("Replace text"),
       expect.stringContaining("Normalize invoices"),
+      expect.stringContaining("Replace text"),
     ]);
     expect(dialog().textContent).toContain(
       "Showing nodes that can connect from Source text.",
@@ -283,12 +383,11 @@ describe("NodeSelector", () => {
     await renderSelector({ onAddNode, onOpenGraph });
 
     await React.act(async () => buttonNamed("Workspace library, 1 node").click());
-    expect(options()[0]?.textContent).toContain(
-      "Module · release 2 · published",
-    );
+    expect(options()[0]?.textContent).toContain("Normalize invoices");
     expect(dialog().querySelector("aside")?.textContent).toContain(
       "Module contract · release 2",
     );
+    expect(dialog().querySelector("aside")?.textContent).toContain("published");
     await React.act(async () => buttonNamed("Open source graph").click());
     expect(onOpenGraph).toHaveBeenCalledWith("graph-1");
 
@@ -330,7 +429,7 @@ describe("NodeSelector", () => {
     expect(onOpenWorkspaceLibrary).toHaveBeenCalledOnce();
   });
 
-  it("renders a no-result state and resets to Suggested", async () => {
+  it("renders a no-result state and resets to All nodes", async () => {
     await renderSelector();
 
     await enterSearch("not a real node");
@@ -338,12 +437,12 @@ describe("NodeSelector", () => {
     expect(dialog().querySelector('[role="status"]')?.textContent).toBe(
       "No nodes found.",
     );
-    expect(dialog().textContent).toContain("No nodes match the current search or category.");
-    await React.act(async () => buttonNamed("Reset search and category").click());
+    expect(dialog().textContent).toContain("No nodes match the current search or filter.");
+    await React.act(async () => buttonNamed("Reset search and filter").click());
 
     expect(searchInput().value).toBe("");
     expect(options().length).toBeGreaterThan(0);
-    expect(buttonNamed("Suggested, 6 nodes").getAttribute("aria-pressed")).toBe("true");
+    expect(buttonNamed("All, 6 nodes").getAttribute("aria-pressed")).toBe("true");
   });
 
   it("announces counts, loading, errors, and recovery atomically", async () => {
@@ -388,21 +487,23 @@ describe("NodeSelector", () => {
     expect(onRetry).toHaveBeenCalledOnce();
   });
 
-  it("uses one roving category stop and exposes permission-disabled insertion", async () => {
+  it("uses one roving filter stop and exposes permission-disabled insertion", async () => {
     await renderSelector({
       canInsert: false,
       insertDisabledReason: "Viewers can inspect nodes but cannot edit this graph.",
     });
 
-    const categories = [
+    const filters = [
       ...dialog().querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'),
     ];
-    expect(categories.filter((button) => button.tabIndex === 0)).toHaveLength(1);
-    categories[0]?.focus();
-    await press(categories[0]!, "ArrowRight");
-    expect(document.activeElement).toBe(categories[1]);
-    expect(categories[1]?.getAttribute("aria-pressed")).toBe("true");
+    expect(filters.filter((button) => button.tabIndex === 0)).toHaveLength(1);
+    filters[0]?.focus();
+    await press(filters[0]!, "ArrowDown");
+    expect(document.activeElement).toBe(filters[1]);
+    expect(filters[1]?.getAttribute("aria-pressed")).toBe("true");
+    await React.act(async () => filters[0]?.click());
 
+    await enterSearch("Enter text");
     const insert = buttonNamed("Add Enter text");
     expect(insert.disabled).toBe(true);
     expect(insert.getAttribute("title")).toBe(

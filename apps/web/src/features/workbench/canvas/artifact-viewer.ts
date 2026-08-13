@@ -168,10 +168,12 @@ export function presentationFromArtifactViewers(
       id: binding.id,
       source_viewer_id: binding.sourceViewerId,
       target_viewer_id: binding.targetViewerId,
-      mappings: binding.mappings.map((mapping) => ({
-        source_field: mapping.sourceField,
-        target_field: mapping.targetField,
-      })),
+      mappings: binding.mappings.flatMap((mapping) => {
+        const sourceField = mapping.sourceField.trim();
+        const targetField = mapping.targetField.trim();
+        if (!sourceField || !targetField) return [];
+        return [{ source_field: sourceField, target_field: targetField }];
+      }),
       effects: [...binding.effects],
       empty_selection: binding.emptySelection,
     })),

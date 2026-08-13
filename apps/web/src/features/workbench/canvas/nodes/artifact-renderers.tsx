@@ -30,9 +30,12 @@ import {
 } from "@/lib/api";
 import { useWorkspaceContext } from "@/features/workspaces/WorkspaceLayout";
 import { tokens } from "@/lib/stylex/tokens.stylex";
-import type {
-  ArtifactViewerEffect,
-  ArtifactViewerInteractionContext,
+import { overlay } from "@/lib/stylex/overlay.stylex";
+import {
+  interactionScalarFromIntegerEncoding,
+  interactionScalarFromTableCell,
+  type ArtifactViewerEffect,
+  type ArtifactViewerInteractionContext,
 } from "../artifact-interactions";
 import { GeoMapArtifactRenderer } from "./geo-map-artifact-renderer";
 
@@ -456,14 +459,7 @@ const s = stylex.create({
   columnPickerPopup: {
     width: "248px",
     padding: "9px",
-    borderWidth: 1,
-    borderStyle: "solid",
-    borderColor: tokens.colorDivider,
-    borderRadius: "9px",
     outline: "none",
-    backgroundColor: tokens.colorSurface,
-    boxShadow: tokens.shadowNodeSelected,
-    color: tokens.colorText,
   },
   columnPickerHeader: {
     display: "flex",
@@ -810,7 +806,7 @@ function TableColumnPicker({
         >
           <Popover.Popup
             className="nodrag nopan nowheel"
-            {...stylex.props(s.columnPickerPopup)}
+            {...stylex.props(overlay.popup, s.columnPickerPopup)}
           >
             <div {...stylex.props(s.columnPickerHeader)}>
               <span {...stylex.props(s.columnPickerTitle)}>
@@ -831,7 +827,7 @@ function TableColumnPicker({
                   <label
                     key={column.id}
                     title={column.title || column.id}
-                    {...stylex.props(s.columnPickerOption)}
+                    {...stylex.props(overlay.item, s.columnPickerOption)}
                   >
                     <input
                       type="checkbox"
@@ -1007,7 +1003,10 @@ function TableArtifactRendererState({
   interaction?: ArtifactViewerInteractionContext;
 }) {
   const { workspace } = useWorkspaceContext();
-  const [offset, setOffset] = React.useState(0);
+  const [requestedPage, setRequestedPage] = React.useState({
+    filterSignature: "",
+    offset: 0,
+  });
   const [pageSize, setPageSize] = React.useState(DEFAULT_TABLE_PAGE_SIZE);
   const [visibleColumnIds, setVisibleColumnIds] =
     React.useState<readonly string[] | null>(null);
@@ -1053,6 +1052,10 @@ function TableArtifactRendererState({
       ? [{ rows: binding.rows.map((values) => ({ values })) }]
       : []
   ) ?? [];
+  const filterSignature = JSON.stringify(filterGroups);
+  const offset = requestedPage.filterSignature === filterSignature
+    ? requestedPage.offset
+    : 0;
   const interactionQuery: TableQueryInput | null =
     filterGroups.length || highlightGroups.length
       ? {
@@ -1251,11 +1254,10 @@ function TableArtifactRendererState({
       );
       if (selectionRequestRef.current !== request) return;
       const values = Object.fromEntries(
-        cells.flatMap((cell) =>
-          cell.encoding === "json"
-            ? []
-            : [[cell.column_id, cell.value]]
-        ),
+        cells.flatMap((cell) => {
+          const value = interactionScalarFromTableCell(cell);
+          return value === undefined ? [] : [[cell.column_id, value]];
+        }),
       );
       for (const column of page.columns) {
         const cell = visibleRow[column.id];
@@ -1268,7 +1270,9 @@ function TableArtifactRendererState({
             typeof cell.display === "number" ||
             typeof cell.display === "boolean")
         ) {
-          values[column.id] = cell.display;
+          values[column.id] = column.value_type === "integer"
+            ? interactionScalarFromIntegerEncoding(cell.display)
+            : cell.display;
         }
       }
       interaction.onSelectionChange({
@@ -1315,10 +1319,6 @@ function TableArtifactRendererState({
           available. <button type="button" onClick={() => void retryPage()}>
             Retry
           </button>
-        </span>
-      ) : pageLoading ? (
-        <span role="status" aria-live="polite" {...stylex.props(s.tableLimit)}>
-          Loading table page…
         </span>
       ) : null}
       <div {...stylex.props(s.tableSummary)}>
@@ -1501,11 +1501,11 @@ function TableArtifactRendererState({
         pageSize={pageSize}
         onOffsetChange={(nextOffset) => {
           setSelectedCell(null);
-          setOffset(nextOffset);
+          setRequestedPage({ filterSignature, offset: nextOffset });
         }}
         onPageSizeChange={(nextPageSize) => {
           setSelectedCell(null);
-          setOffset(0);
+          setRequestedPage({ filterSignature, offset: 0 });
           setPageSize(nextPageSize);
         }}
       />
@@ -1564,10 +1564,7 @@ function TableArtifactRenderer(props: {
 }) {
   return (
     <TableArtifactRendererState
-      key={[
-        props.artifact.artifact_id,
-        JSON.stringify(props.interaction?.incoming ?? []),
-      ].join(":")}
+      key={props.artifact.artifact_id}
       {...props}
     />
   );
@@ -1770,5 +1767,17 @@ export function rendererFor(
   return (
     ARTIFACT_RENDERERS.find((renderer) => renderer.matches(artifact, payload)) ??
     META_ARTIFACT_RENDERER
+  );
+}
+
+/** Table and map opt in; markdown, image, JSON, and empty previews do not. */
+export function rendererCanBrush(
+  artifact: ArtifactSummary | undefined,
+): boolean {
+  if (!artifact) return false;
+  const interaction = rendererFor(artifact).interaction;
+  return Boolean(
+    interaction &&
+      (interaction.emits.length > 0 || interaction.accepts.length > 0),
   );
 }

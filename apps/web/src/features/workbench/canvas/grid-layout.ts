@@ -28,6 +28,8 @@ export const PORT_RAIL_ROW_HEIGHT_CELLS = 1;
  */
 export const EDGE_SELECTOR_WIDTH_CELLS = 3;
 export const EDGE_SELECTOR_HEIGHT_CELLS = 1;
+/** Painted feed pill — matches workflow port tabs. The 1-cell footprint is the bend grab. */
+export const EDGE_SELECTOR_PILL_HEIGHT = 24;
 
 export function edgeSelectorBlockSize(cellSize: number): {
   width: number;

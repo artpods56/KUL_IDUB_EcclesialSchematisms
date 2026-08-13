@@ -109,6 +109,7 @@ import type {
 import {
   formatJsonSchemaPayload,
   markdownPayload,
+  rendererCanBrush,
   rendererFor,
 } from "./artifact-renderers";
 import type { ArtifactViewerInteractionContext } from "../artifact-interactions";
@@ -301,6 +302,15 @@ const TABLE_ARTIFACT: ArtifactSummary = {
 afterEach(() => {
   vi.unstubAllGlobals();
   maplibreMock.instances.length = 0;
+});
+
+describe("rendererCanBrush", () => {
+  it("is true only for renderers that emit or accept a key-selection", () => {
+    expect(rendererCanBrush(TABLE_ARTIFACT)).toBe(true);
+    expect(rendererCanBrush(MAP_ARTIFACT)).toBe(true);
+    expect(rendererCanBrush(MARKDOWN_ARTIFACT)).toBe(false);
+    expect(rendererCanBrush(undefined)).toBe(false);
+  });
 });
 
 describe("Table artifact rendering", () => {
@@ -837,6 +847,206 @@ describe("Table artifact rendering", () => {
         values: { place: "Second place" },
       }],
     });
+    await act(async () => root.unmount());
+  });
+
+  it("emits integer-encoded cells as numbers so linked tables can match", async () => {
+    const page: TablePage = {
+      columns: [{ id: "parcel_id", title: "Parcel ID", value_type: "integer" }],
+      rows: [{
+        parcel_id: {
+          display: "12",
+          truncated: false,
+          original_length: null,
+        },
+      }],
+      row_indices: [0],
+      highlighted_row_indices: [],
+      offset: 0,
+      limit: 50,
+      total_rows: 1,
+      column_offset: 0,
+      column_limit: 25,
+      total_columns: 1,
+    };
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/table/schema")) {
+        return Promise.resolve(new Response(JSON.stringify({
+          columns: page.columns,
+          total_rows: 1,
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }));
+      }
+      if (url.includes("/table/cell?")) {
+        return Promise.resolve(new Response(JSON.stringify({
+          row_index: 0,
+          column_id: "parcel_id",
+          value: "12",
+          encoding: "integer",
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }));
+      }
+      return Promise.resolve(new Response(JSON.stringify(page), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onSelectionChange = vi.fn();
+    const interaction: ArtifactViewerInteractionContext = {
+      outgoingFields: ["parcel_id"],
+      selection: { kind: "key-selection", items: [] },
+      incoming: [],
+      onFieldsChange: vi.fn(),
+      onSelectionChange,
+      onActivityChange: vi.fn(),
+    };
+    const renderer = rendererFor(TABLE_ARTIFACT);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(
+        SWRConfig,
+        { value: { provider: () => new Map(), shouldRetryOnError: false } },
+        createElement(renderer.Component, {
+          artifact: TABLE_ARTIFACT,
+          mode: "table",
+          interaction,
+        }),
+      ));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    await act(async () => {
+      container.querySelector("tbody tr")?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(onSelectionChange).toHaveBeenCalledWith({
+      kind: "key-selection",
+      items: [{
+        sourceIndex: 0,
+        values: { parcel_id: 12 },
+      }],
+    });
+    await act(async () => root.unmount());
+  });
+
+  it("keeps the visible table mounted while a linked highlight query loads", async () => {
+    const page: TablePage = {
+      columns: [{ id: "place", title: "Place", value_type: "text" }],
+      rows: [{
+        place: {
+          display: "Belynichi",
+          truncated: false,
+          original_length: null,
+        },
+      }],
+      row_indices: [0],
+      highlighted_row_indices: [],
+      offset: 0,
+      limit: 50,
+      total_rows: 1,
+      column_offset: 0,
+      column_limit: 25,
+      total_columns: 1,
+    };
+    let releaseQuery: (() => void) | undefined;
+    const queryReady = new Promise<void>((resolve) => {
+      releaseQuery = resolve;
+    });
+    const fetchMock = vi.fn().mockImplementation((
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const url = String(input);
+      if (url.includes("/table/schema")) {
+        return Promise.resolve(new Response(JSON.stringify({
+          columns: page.columns,
+          total_rows: 1,
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }));
+      }
+      if (init?.method === "POST") {
+        return queryReady.then(() =>
+          new Response(JSON.stringify({
+            ...page,
+            highlighted_row_indices: [0],
+          }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(new Response(JSON.stringify(page), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const cache = new Map();
+    const renderer = rendererFor(TABLE_ARTIFACT);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const swrValue = {
+      provider: () => cache,
+      shouldRetryOnError: false,
+    };
+    const renderWithIncoming = async (
+      incoming: ArtifactViewerInteractionContext["incoming"],
+    ) => {
+      await act(async () => {
+        root.render(createElement(
+          SWRConfig,
+          { value: swrValue },
+          createElement(renderer.Component, {
+            artifact: TABLE_ARTIFACT,
+            mode: "table",
+            interaction: {
+              outgoingFields: [],
+              selection: { kind: "key-selection", items: [] },
+              incoming,
+              onFieldsChange: vi.fn(),
+              onSelectionChange: vi.fn(),
+              onActivityChange: vi.fn(),
+            },
+          }),
+        ));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    };
+
+    await renderWithIncoming([]);
+    expect(container.textContent).toContain("Belynichi");
+    expect(container.textContent).not.toContain("Loading table page");
+
+    await renderWithIncoming([{
+      bindingId: "binding-1",
+      effects: ["highlight"],
+      sourceSelectionCount: 1,
+      rows: [{ place: "Belynichi" }],
+    }]);
+    expect(container.textContent).toContain("Belynichi");
+    expect(container.textContent).not.toContain("Loading table page");
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init?.method === "POST"),
+    ).toBe(true);
+
+    await act(async () => {
+      releaseQuery?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(container.textContent).toContain("Belynichi");
+    expect(container.textContent).not.toContain("Loading table page");
     await act(async () => root.unmount());
   });
 });

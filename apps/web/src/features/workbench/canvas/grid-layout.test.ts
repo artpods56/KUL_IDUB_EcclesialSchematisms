@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CANVAS_GRID_SETTINGS,
   EDGE_SELECTOR_HEIGHT_CELLS,
+  EDGE_SELECTOR_PILL_HEIGHT,
   EDGE_SELECTOR_WIDTH_CELLS,
   GRID_CELL_SIZE_DEFAULT,
   GRID_SHELL_GUTTER,
@@ -40,6 +41,7 @@ describe("grid layout", () => {
   it("sizes edge selectors as 3×1 cells", () => {
     expect(EDGE_SELECTOR_WIDTH_CELLS).toBe(3);
     expect(EDGE_SELECTOR_HEIGHT_CELLS).toBe(1);
+    expect(EDGE_SELECTOR_PILL_HEIGHT).toBe(24);
     expect(edgeSelectorBlockSize(50)).toEqual({ width: 150, height: 50 });
     expect(edgeSelectorBlockSize(60)).toEqual({ width: 180, height: 60 });
   });

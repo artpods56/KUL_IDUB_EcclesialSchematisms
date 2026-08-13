@@ -11,6 +11,7 @@ import {
 import { Check } from "lucide-react";
 
 import { tokens } from "@/lib/stylex/tokens.stylex";
+import { overlay } from "@/lib/stylex/overlay.stylex";
 import {
   feedChoicesFromRouteOptions,
   projectionsEqual,
@@ -21,12 +22,16 @@ import type {
   CanvasEdge,
   CanvasNode,
 } from "../artifact-viewer";
+import { useOptionalCanvasGridSettings } from "../canvas-grid-settings";
+import { GRID_CELL_SIZE_DEFAULT } from "../grid-layout";
 import type {
   WorkflowEdgeRouteOffset,
   WorkflowEdgeRouteOption,
 } from "../types";
+import { dockedBridgeLayout } from "./docked-connection";
 import { EdgeSelectorBlock } from "./EdgeSelectorBlock";
 import { applyHandleFanOffset, routedBezierPath } from "./edge-path";
+import { useEdgeIsDocked } from "./useDockedConnection";
 import { useEdgeFanOffsets } from "./useEdgeFanOffsets";
 import {
   useEdgeRouteBendHandlers,
@@ -73,24 +78,10 @@ const s = stylex.create({
     alignItems: "center",
     gap: "7px",
     padding: "6px 7px",
-    borderWidth: 1,
-    borderStyle: "solid",
-    borderColor: {
-      default: tokens.colorBorder,
-      ":hover": tokens.colorAccentBorder,
-    },
-    borderRadius: "4px",
-    backgroundColor: {
-      default: tokens.colorSurfaceMuted,
-      ":hover": tokens.colorAccentSoft,
-    },
+    borderRadius: "6px",
     color: tokens.colorText,
     cursor: "pointer",
     textAlign: "left",
-  },
-  optionActive: {
-    borderColor: tokens.colorAccentBorder,
-    backgroundColor: tokens.colorAccentSoft,
   },
   optionCopy: { minWidth: 0, display: "grid", gap: "2px" },
   optionTitle: {
@@ -122,7 +113,7 @@ function EdgeOption({
   return (
     <button
       type="button"
-      {...stylex.props(s.option, active ? s.optionActive : null)}
+      {...stylex.props(overlay.item, s.option, active ? overlay.itemActive : null)}
       onClick={onSelect}
     >
       <span {...stylex.props(s.optionCopy)}>
@@ -161,6 +152,9 @@ export default function ArtifactViewerEdgeControl({
   selected,
 }: EdgeProps<ArtifactViewerEdge>) {
   const { deleteElements } = useReactFlow<CanvasNode, CanvasEdge>();
+  const docked = useEdgeIsDocked(id);
+  const cellSize =
+    useOptionalCanvasGridSettings()?.settings.cellSize ?? GRID_CELL_SIZE_DEFAULT;
   const edgeData: ArtifactViewerEdgeData = data ?? { sourcePortName: "output" };
   const sourcePortName = edgeData.sourcePortName || "output";
   const fan = useEdgeFanOffsets(id, sourcePosition, targetPosition);
@@ -230,26 +224,36 @@ export default function ArtifactViewerEdgeControl({
     activeProjectionTitle ?? edgeData.projectionTitle,
   );
   const onUpdate = edgeData.onUpdate;
+  const bridge = docked
+    ? dockedBridgeLayout(source, target, cellSize)
+    : null;
 
   return (
     <>
       <BaseEdge
         id={id}
-        path={edgePath}
-        markerEnd={markerEnd}
+        path={
+          docked
+            ? `M${source.x},${source.y} L${target.x},${target.y}`
+            : edgePath
+        }
+        markerEnd={docked ? undefined : markerEnd}
         interactionWidth={24}
         style={{
           ...style,
-          opacity: selected ? 0.9 : 0.62,
-          strokeDasharray: "6 5",
+          opacity: docked ? 0 : selected ? 0.9 : 0.62,
+          strokeDasharray: docked ? undefined : "6 5",
           strokeWidth: selected ? 2.5 : (style?.strokeWidth ?? 2),
         }}
       />
       <EdgeLabelRenderer>
         <EdgeSelectorBlock
-          anchor={anchor}
+          anchor={bridge?.anchor ?? anchor}
           selected={selected}
           label={label}
+          docked={docked}
+          width={bridge?.width}
+          height={bridge?.height}
           bendAriaLabel={`Bend preview connection ${label}`}
           bendDragging={draftRouteOffset != null}
           bendHandlers={bendHandlers}

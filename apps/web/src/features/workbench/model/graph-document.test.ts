@@ -47,7 +47,15 @@ describe("authored graph document", () => {
     const value = document();
     const request = createSavedGraphRequest(value);
 
-    expect(request).toEqual(value);
+    expect(request).toEqual({
+      ...value,
+      presentation: {
+        viewers: [],
+        links: [],
+        bindings: [],
+        annotations: [],
+      },
+    });
     expect(JSON.stringify(value)).not.toContain("callback");
     expect(JSON.stringify(value)).not.toContain("selection");
     expect(JSON.stringify(value)).not.toContain("viewport");
@@ -151,6 +159,12 @@ describe("authored graph document", () => {
         ],
         route_offset: { x: 18, y: -6 },
       }],
+      presentation: {
+        viewers: [],
+        links: [],
+        bindings: [],
+        annotations: [],
+      },
     });
   });
 

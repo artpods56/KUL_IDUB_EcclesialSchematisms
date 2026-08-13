@@ -6,16 +6,15 @@ import { Popover } from "@base-ui/react/popover";
 import { ChevronDown, X } from "lucide-react";
 
 import { tokens } from "@/lib/stylex/tokens.stylex";
+import { overlay } from "@/lib/stylex/overlay.stylex";
 import { useOptionalCanvasGridSettings } from "../canvas-grid-settings";
 import {
   EDGE_SELECTOR_HEIGHT_CELLS,
+  EDGE_SELECTOR_PILL_HEIGHT,
   EDGE_SELECTOR_WIDTH_CELLS,
   GRID_CELL_SIZE_DEFAULT,
   edgeSelectorBlockSize,
 } from "../grid-layout";
-
-/** Visual height of the pill — matches workflow port tabs. */
-const EDGE_SELECTOR_PILL_HEIGHT = 24;
 
 const s = stylex.create({
   positioner: {
@@ -24,6 +23,10 @@ const s = stylex.create({
     placeItems: "center",
     pointerEvents: "all",
     zIndex: 10,
+  },
+  dockedPositioner: {
+    pointerEvents: "none",
+    zIndex: 20,
   },
   /**
    * Full 2×1 footprint is the bend grab — much larger than the painted pill.
@@ -52,7 +55,9 @@ const s = stylex.create({
     alignItems: "stretch",
     overflow: "visible",
     width: "100%",
-    height: `${EDGE_SELECTOR_PILL_HEIGHT}px`,
+    // Literal: StyleX cannot import constants from grid-layout.ts.
+    // Keep in sync with EDGE_SELECTOR_PILL_HEIGHT.
+    height: "24px",
     borderWidth: 0,
     borderRadius: "9999px",
     backgroundColor: tokens.colorSurfaceMuted,
@@ -140,13 +145,6 @@ const s = stylex.create({
   popup: {
     width: "300px",
     overflow: "hidden",
-    borderWidth: 1,
-    borderStyle: "solid",
-    borderColor: tokens.colorBorderStrong,
-    borderRadius: "7px",
-    backgroundColor: tokens.colorSurface,
-    boxShadow: tokens.shadowNodeSelected,
-    color: tokens.colorText,
     zIndex: 50,
   },
 });
@@ -168,6 +166,10 @@ export interface EdgeSelectorBlockProps {
   selected?: boolean;
   disabled?: boolean;
   label: string;
+  /** Spanning join between adjacent facing ports; hides the bend grab. */
+  docked?: boolean;
+  width?: number;
+  height?: number;
   bendAriaLabel: string;
   bendDragging?: boolean;
   bendHandlers: EdgeSelectorBendHandlers;
@@ -179,12 +181,15 @@ export interface EdgeSelectorBlockProps {
   children: React.ReactNode;
 }
 
-/** Midpoint feed selector — 2 cells wide × 1 cell tall in flow coordinates. */
+/** Midpoint feed selector — 3 cells wide × 1 cell tall in flow coordinates. */
 export function EdgeSelectorBlock({
   anchor,
   selected = false,
   disabled = false,
   label,
+  docked = false,
+  width: widthOverride,
+  height: heightOverride,
   bendAriaLabel,
   bendDragging = false,
   bendHandlers,
@@ -197,34 +202,39 @@ export function EdgeSelectorBlock({
 }: EdgeSelectorBlockProps) {
   const grid = useOptionalCanvasGridSettings();
   const cellSize = grid?.settings.cellSize ?? GRID_CELL_SIZE_DEFAULT;
-  const { width, height } = edgeSelectorBlockSize(cellSize);
+  const routed = edgeSelectorBlockSize(cellSize);
+  const width = widthOverride ?? routed.width;
+  const height = heightOverride ?? (docked ? EDGE_SELECTOR_PILL_HEIGHT : routed.height);
 
   return (
     <div
       className="nodrag nopan nowheel"
       data-testid="edge-selector-block"
-      data-width-cells={EDGE_SELECTOR_WIDTH_CELLS}
-      data-height-cells={EDGE_SELECTOR_HEIGHT_CELLS}
+      data-docked={docked ? "true" : undefined}
+      data-width-cells={docked ? undefined : EDGE_SELECTOR_WIDTH_CELLS}
+      data-height-cells={docked ? undefined : EDGE_SELECTOR_HEIGHT_CELLS}
       data-cell-size={cellSize}
       style={{
         width,
         height,
         transform: `translate(-50%, -50%) translate(${anchor.x}px, ${anchor.y}px)`,
       }}
-      {...stylex.props(s.positioner)}
+      {...stylex.props(s.positioner, docked ? s.dockedPositioner : null)}
     >
-      <button
-        type="button"
-        aria-label={bendAriaLabel}
-        aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Home"
-        title="Drag to bend · arrow keys nudge · double-click or Home to reset"
-        disabled={disabled}
-        {...stylex.props(
-          s.bendHandle,
-          bendDragging ? s.bendHandleDragging : null,
-        )}
-        {...bendHandlers}
-      />
+      {docked ? null : (
+        <button
+          type="button"
+          aria-label={bendAriaLabel}
+          aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Home"
+          title="Drag to bend · arrow keys nudge · double-click or Home to reset"
+          disabled={disabled}
+          {...stylex.props(
+            s.bendHandle,
+            bendDragging ? s.bendHandleDragging : null,
+          )}
+          {...bendHandlers}
+        />
+      )}
       <div
         {...stylex.props(
           s.block,
@@ -253,7 +263,7 @@ export function EdgeSelectorBlock({
             <Popover.Positioner side="bottom" align="center" sideOffset={7}>
               <Popover.Popup
                 className="nodrag nopan nowheel"
-                {...stylex.props(s.popup)}
+                {...stylex.props(overlay.popup, s.popup)}
               >
                 {children}
               </Popover.Popup>

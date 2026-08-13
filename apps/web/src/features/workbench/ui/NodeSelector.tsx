@@ -5,11 +5,20 @@ import * as stylex from "@stylexjs/stylex";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
+  Box,
   Cable,
   ExternalLink,
+  Database,
+  Image as ImageIcon,
+  LayoutGrid,
+  LibraryBig,
+  MapPin,
   Plus,
   Search,
   Settings2,
+  Sparkles,
+  Table2,
+  Type,
   Workflow,
 } from "lucide-react";
 
@@ -20,6 +29,12 @@ import {
 } from "../canvas/handles";
 import { schemaFields, type SchemaField } from "../canvas/config-schema";
 import { artifactTypeColor } from "../canvas/nodes.css";
+import {
+  artifactTitleFor,
+  CatalogNodePreview,
+  fieldTypeLabel,
+  portKey,
+} from "./CatalogNodePreview";
 import {
   acceptedPortShapes,
   portArtifactType,
@@ -40,14 +55,33 @@ import type {
 } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import {
-  catalogNodesForGoal,
+  buildCatalogFilters,
+  catalogNodeKey,
   catalogNodeSpecs,
+  filterAndSearchCatalogNodes,
   moduleReleaseSpecs,
-  NODE_GOAL_CATEGORIES,
-  type NodeGoalCategoryId,
+  nodesCompatibleWithPort,
+  sortCatalogNodes,
+  type CatalogFilter,
 } from "../model/node-catalog";
 
 const MODULE_PLUGIN_SLUG = "graph.module";
+
+type BrowserFilterId =
+  | "all"
+  | "text"
+  | "images"
+  | "tables"
+  | "spatial"
+  | "prompts"
+  | "sequences"
+  | "workspace-library";
+
+interface BrowserFilter {
+  id: BrowserFilterId;
+  title: string;
+  sourceFilters: readonly CatalogFilter[];
+}
 
 /** A port-scoped Add node invocation using the same routes as canvas wiring. */
 export type NodeSelectorCompatibilityContext =
@@ -95,7 +129,7 @@ interface CompatiblePortPair {
 }
 
 function nodeKey(spec: NodeSpec): string {
-  return `${spec.operator_id}@${spec.operator_version}`;
+  return catalogNodeKey(spec);
 }
 
 function pluginFor(
@@ -107,47 +141,6 @@ function pluginFor(
     throw new Error(`Node registry is missing owner plugin "${slug}".`);
   }
   return plugin;
-}
-
-function nodeSearchText(
-  spec: NodeSpec,
-  plugin: NodeRegistry["plugins"][number],
-): string {
-  const fields = schemaFields(spec.config_schema);
-  return [
-    spec.title,
-    spec.operator_id,
-    spec.description,
-    spec.plugin_slug,
-    plugin.title,
-    plugin.origin,
-    ...spec.inputs.flatMap((port) => [
-      port.name,
-      port.title ?? "",
-      port.description ?? "",
-      portArtifactType(port)?.id ?? "any artifact generic",
-      portArtifactTypeVariable(port) ?? "",
-      port.instance_plugs ? "collect ordered input plugs" : "",
-      ...(port.accepted_shapes ?? []).map((shape) =>
-        shape === "many" ? "sequence" : "single",
-      ),
-    ]),
-    ...spec.outputs.flatMap((port) => [
-      port.name,
-      port.title ?? "",
-      port.description ?? "",
-      portArtifactType(port)?.id ?? "any artifact generic",
-      portArtifactTypeVariable(port) ?? "",
-    ]),
-    ...fields.flatMap((field) => [
-      field.name,
-      field.title,
-      field.description ?? "",
-      ...(field.enumValues?.map(String) ?? []),
-    ]),
-  ]
-    .join(" ")
-    .toLowerCase();
 }
 
 function shapesAreCompatible(source: Port, target: Port): boolean {
@@ -197,46 +190,21 @@ function compatiblePortPairs(
   return pairs;
 }
 
-function portsCanConnect(
-  source: Port,
-  target: Port,
-  registry: NodeRegistry,
-): boolean {
-  if (!shapesAreCompatible(source, target)) return false;
-  return connectionRoutesFor(
-    {
-      sourceHandle: encodeHandleId(portMetaForPort(source)),
-      targetHandle: encodeHandleId(portMetaForPort(target)),
-    },
-    registry.artifact_types,
-    registry.artifact_conversions,
-  ).length > 0;
-}
-
-function nodeMatchesCompatibility(
-  spec: NodeSpec,
-  compatibility: NodeSelectorCompatibilityContext,
-  registry: NodeRegistry,
-): boolean {
-  if (compatibility.direction === "upstream") {
-    return spec.outputs.some((output) =>
-      portsCanConnect(output, compatibility.port, registry),
-    );
-  }
-  return spec.inputs.some((input) =>
-    portsCanConnect(compatibility.port, input, registry),
-  );
-}
-
-function compatibleNodes(
+function compatibleNodesForPort(
   selected: NodeSpec,
-  direction: "upstream" | "downstream",
+  port: Port,
   registry: NodeRegistry,
 ): CompatibleNode[] {
-  return registry.nodes.flatMap((candidate) => {
-    const pairs = direction === "upstream"
-      ? compatiblePortPairs(candidate, selected, registry)
-      : compatiblePortPairs(selected, candidate, registry);
+  const selectedKey = nodeKey(selected);
+  const matches = registry.nodes.flatMap((candidate) => {
+    if (nodeKey(candidate) === selectedKey) return [];
+    const pairs = port.direction === "input"
+      ? compatiblePortPairs(candidate, selected, registry).filter(
+          (pair) => pair.target.name === port.name,
+        )
+      : compatiblePortPairs(selected, candidate, registry).filter(
+          (pair) => pair.source.name === port.name,
+        );
     const first = pairs[0];
     if (!first) return [];
 
@@ -263,26 +231,16 @@ function compatibleNodes(
       additionalRouteCount: totalRouteCount - 1,
     }];
   });
-}
-
-function artifactTitleFor(registry: NodeRegistry, port: Port): string {
-  const artifactType = portArtifactType(port);
-  if (!artifactType) return "Any artifact";
-  return registry.artifact_types.find(
-    (artifact) =>
-      artifact.key.id === artifactType.id &&
-      artifact.key.schema_version === artifactType.schema_version,
-  )?.title ?? artifactType.id;
-}
-
-function fieldTypeLabel(field: SchemaField): string {
-  if (field.enumValues?.length) return "choice";
-  if (field.format === "textarea") return "multiline text";
-  if (field.type === "number-tuple") {
-    return `${field.items.length}-number tuple`;
-  }
-  if (field.type === "string-list") return "text list";
-  return field.type;
+  const order = new Map(
+    sortCatalogNodes(matches.map((match) => match.spec)).map((spec, index) => [
+      nodeKey(spec),
+      index,
+    ]),
+  );
+  return matches.sort(
+    (left, right) =>
+      (order.get(nodeKey(left.spec)) ?? 0) - (order.get(nodeKey(right.spec)) ?? 0),
+  );
 }
 
 function fieldConstraintLabel(field: SchemaField): string {
@@ -326,17 +284,112 @@ function fieldConstraintLabel(field: SchemaField): string {
   return constraints.join(" · ");
 }
 
+function buildBrowserFilters(filters: readonly CatalogFilter[]): BrowserFilter[] {
+  const artifactFilters = filters.filter((filter) => filter.kind === "artifact");
+
+  return [
+    {
+      id: "all",
+      title: "All",
+      sourceFilters: filters.filter((filter) => filter.kind === "all"),
+    },
+    {
+      id: "text",
+      title: "Text",
+      sourceFilters: artifactFilters.filter(
+        (filter) => filter.artifactKey && (
+          filter.artifactKey.id === "scalar.text" ||
+          filter.artifactKey.id.startsWith("text.")
+        ),
+      ),
+    },
+    {
+      id: "images",
+      title: "Images",
+      sourceFilters: artifactFilters.filter(
+        (filter) => filter.artifactKey?.id.startsWith("image."),
+      ),
+    },
+    {
+      id: "tables",
+      title: "Tables",
+      sourceFilters: artifactFilters.filter(
+        (filter) => filter.artifactKey?.id.startsWith("table."),
+      ),
+    },
+    {
+      id: "spatial",
+      title: "Spatial",
+      sourceFilters: artifactFilters.filter(
+        (filter) => filter.artifactKey?.id.startsWith("geo."),
+      ),
+    },
+    {
+      id: "prompts",
+      title: "Prompts",
+      sourceFilters: artifactFilters.filter(
+        (filter) => filter.artifactKey?.id.startsWith("prompt."),
+      ),
+    },
+    {
+      id: "sequences",
+      title: "Sequences",
+      sourceFilters: filters.filter((filter) => filter.kind === "sequence"),
+    },
+    {
+      id: "workspace-library",
+      title: "Workspace library",
+      sourceFilters: filters.filter(
+        (filter) => filter.kind === "workspace-library",
+      ),
+    },
+  ];
+}
+
+function nodesForBrowserFilter(
+  nodes: readonly NodeSpec[],
+  filter: BrowserFilter,
+  query: string,
+  registry: NodeRegistry,
+): NodeSpec[] {
+  const unique = new Map<string, NodeSpec>();
+  for (const sourceFilter of filter.sourceFilters) {
+    for (const spec of filterAndSearchCatalogNodes(
+      nodes,
+      sourceFilter,
+      query,
+      registry,
+    )) {
+      unique.set(nodeKey(spec), spec);
+    }
+  }
+  return sortCatalogNodes([...unique.values()]);
+}
+
+function BrowserFilterIcon({ filter }: { filter: BrowserFilter }) {
+  if (filter.id === "all") return <LayoutGrid size={14} />;
+  if (filter.id === "text") return <Type size={14} />;
+  if (filter.id === "images") return <ImageIcon size={14} />;
+  if (filter.id === "tables") return <Table2 size={14} />;
+  if (filter.id === "spatial") return <MapPin size={14} />;
+  if (filter.id === "prompts") return <Sparkles size={14} />;
+  if (filter.id === "sequences") return <Database size={14} />;
+  if (filter.id === "workspace-library") return <LibraryBig size={14} />;
+  return <Box size={14} />;
+}
+
 const s = stylex.create({
   header: {
     display: "grid",
     gridTemplateColumns: {
-      default: "minmax(220px, 0.55fr) minmax(360px, 1.45fr)",
+      default: "168px minmax(360px, 1fr) minmax(380px, 440px)",
+      "@media (max-width: 1080px)": "160px minmax(320px, 1fr)",
       "@media (max-width: 720px)": "1fr",
     },
     alignItems: "center",
-    gap: "18px",
+    gap: "12px",
     padding: {
-      default: "18px 52px 16px 20px",
+      default: "16px 52px 16px 20px",
       "@media (max-width: 720px)": "16px 48px 14px 16px",
     },
     borderBottomWidth: 1,
@@ -345,15 +398,6 @@ const s = stylex.create({
   },
   heading: { minWidth: 0 },
   titleRow: { display: "flex", alignItems: "center", gap: "9px" },
-  titleIcon: {
-    width: "28px",
-    height: "28px",
-    display: "grid",
-    placeItems: "center",
-    borderRadius: tokens.radiusSm,
-    backgroundColor: tokens.colorAccentSoft,
-    color: tokens.colorAccent,
-  },
   title: {
     color: tokens.colorTextEmphasis,
     fontSize: tokens.fontSizeLg,
@@ -396,13 +440,19 @@ const s = stylex.create({
     flex: 1,
     display: "grid",
     gridTemplateColumns: {
-      default: "minmax(300px, 0.72fr) minmax(0, 1.28fr)",
-      "@media (max-width: 900px)": "minmax(280px, 0.82fr) minmax(0, 1.18fr)",
+      default: "168px minmax(340px, 1fr) minmax(380px, 440px)",
+      "@media (max-width: 1080px)": "160px minmax(0, 1fr)",
       "@media (max-width: 720px)": "1fr",
     },
     gridTemplateRows: {
       default: "minmax(0, 1fr)",
-      "@media (max-width: 720px)": "minmax(230px, 0.8fr) minmax(300px, 1.2fr)",
+      "@media (max-width: 1080px)": "minmax(280px, 1fr) minmax(280px, 0.9fr)",
+      "@media (max-width: 720px)": "auto minmax(260px, 1fr) minmax(280px, 0.9fr)",
+    },
+    gridTemplateAreas: {
+      default: '"filters nodes inspector"',
+      "@media (max-width: 1080px)": '"filters nodes" "inspector inspector"',
+      "@media (max-width: 720px)": '"filters" "nodes" "inspector"',
     },
   },
   originBadge: {
@@ -425,16 +475,13 @@ const s = stylex.create({
     textTransform: "uppercase",
     whiteSpace: "nowrap",
   },
-  originBadgeExternal: {
-    borderColor: tokens.colorInfo,
-    backgroundColor: "light-dark(rgba(74, 143, 212, 0.1), rgba(96, 165, 250, 0.1))",
-    color: tokens.colorInfo,
-  },
-  nodePane: {
+  filterPane: {
+    gridArea: "filters",
     minWidth: 0,
     minHeight: 0,
     display: "flex",
     flexDirection: "column",
+    padding: "18px 10px 14px",
     borderRightWidth: {
       default: 1,
       "@media (max-width: 720px)": 0,
@@ -447,11 +494,41 @@ const s = stylex.create({
     },
     borderBottomStyle: "solid",
     borderBottomColor: tokens.colorBorder,
+    overflowY: "auto",
+  },
+  filterHeading: {
+    paddingInline: "10px",
+    marginBottom: "10px",
+    color: tokens.colorTextEmphasis,
+    fontSize: tokens.fontSizeXs,
+    fontWeight: 730,
+  },
+  filterLibrary: {
+    marginTop: "12px",
+    paddingTop: "12px",
+    borderTopWidth: 1,
+    borderTopStyle: "solid",
+    borderTopColor: tokens.colorBorder,
+  },
+  nodePane: {
+    gridArea: "nodes",
+    minWidth: 0,
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+    borderRightWidth: 1,
+    borderRightStyle: "solid",
+    borderRightColor: tokens.colorBorder,
+    borderBottomWidth: {
+      default: 0,
+      "@media (max-width: 1080px)": 1,
+    },
+    borderBottomStyle: "solid",
+    borderBottomColor: tokens.colorBorder,
   },
   nodePaneHeader: {
     display: "grid",
-    gap: "9px",
-    padding: "11px 12px 10px",
+    padding: "18px 20px 12px",
     borderBottomWidth: 1,
     borderBottomStyle: "solid",
     borderBottomColor: tokens.colorBorder,
@@ -473,22 +550,21 @@ const s = stylex.create({
     minWidth: 0,
     display: "flex",
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "flex-start",
     gap: "12px",
   },
   categoryToolbar: {
-    display: "flex",
-    gap: "4px",
-    paddingBottom: "1px",
-    overflowX: "auto",
+    display: "grid",
+    gap: "2px",
   },
   categoryButton: {
-    minHeight: "28px",
-    flexShrink: 0,
-    paddingInline: "8px",
-    borderWidth: 1,
-    borderStyle: "solid",
-    borderColor: "transparent",
+    width: "100%",
+    minHeight: "36px",
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    paddingInline: "10px",
+    borderWidth: 0,
     borderRadius: tokens.radiusSm,
     outlineColor: tokens.colorAccent,
     outlineStyle: "solid",
@@ -497,12 +573,12 @@ const s = stylex.create({
     backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
     color: tokens.colorSubtle,
     cursor: "pointer",
-    fontSize: tokens.fontSizeXs,
-    fontWeight: 680,
+    fontSize: tokens.fontSizeSm,
+    fontWeight: 560,
+    textAlign: "left",
     whiteSpace: "nowrap",
   },
   categoryButtonActive: {
-    borderColor: tokens.colorBorder,
     backgroundColor: tokens.colorSurfaceRaised,
     color: tokens.colorTextEmphasis,
   },
@@ -518,25 +594,31 @@ const s = stylex.create({
     color: tokens.colorMuted,
     fontSize: tokens.fontSizeXs,
   },
-  nodeList: { minHeight: 0, overflowY: "auto" },
-  nodeButton: {
+  nodeList: {
+    minHeight: 0,
+    overflowY: "auto",
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+    padding: "12px 12px 16px",
+  },
+  nodeRow: {
     width: "100%",
-    minHeight: "73px",
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) auto",
-    alignItems: "start",
-    gap: "10px",
-    padding: "11px 12px",
-    borderWidth: 0,
-    borderLeftWidth: 2,
-    borderLeftStyle: "solid",
-    borderLeftColor: "transparent",
-    borderBottomWidth: 1,
-    borderBottomStyle: "solid",
-    borderBottomColor: tokens.colorDivider,
+    minHeight: "64px",
+    display: "flex",
+    alignItems: "center",
+    padding: "14px 16px",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: {
+      default: "transparent",
+      ":hover": tokens.colorBorderStrong,
+    },
+    borderRadius: "8px",
     backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
     color: tokens.colorText,
     cursor: "pointer",
+    fontFamily: "inherit",
     outlineColor: tokens.colorAccent,
     outlineStyle: "solid",
     outlineOffset: "-3px",
@@ -545,11 +627,11 @@ const s = stylex.create({
     transitionProperty: "background-color, border-color",
     transitionDuration: "120ms",
   },
-  nodeButtonActive: {
-    borderLeftColor: tokens.colorAccent,
+  nodeRowActive: {
+    borderColor: tokens.colorAccent,
     backgroundColor: tokens.colorAccentSoft,
   },
-  nodeCopy: { minWidth: 0, display: "grid", gap: "4px" },
+  nodeCopy: { minWidth: 0, display: "grid", gap: "5px" },
   nodeTitleRow: {
     minWidth: 0,
     display: "flex",
@@ -569,16 +651,26 @@ const s = stylex.create({
     overflow: "hidden",
     color: tokens.colorSubtle,
     fontSize: tokens.fontSizeXs,
-    lineHeight: 1.35,
+    lineHeight: 1.4,
     WebkitBoxOrient: "vertical",
     WebkitLineClamp: 2,
   },
-  nodePorts: {
-    paddingTop: "2px",
-    color: tokens.colorSubtle,
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    fontSize: "10px",
-    whiteSpace: "nowrap",
+  technicalToggle: {
+    minHeight: "28px",
+    alignSelf: "flex-start",
+    paddingInline: "0",
+    borderWidth: 0,
+    backgroundColor: "transparent",
+    color: tokens.colorMuted,
+    cursor: "pointer",
+    outlineColor: tokens.colorAccent,
+    outlineStyle: "solid",
+    outlineOffset: "2px",
+    outlineWidth: { default: 0, ":focus-visible": "2px" },
+    fontSize: tokens.fontSizeXs,
+    fontWeight: 680,
+    textDecorationLine: "underline",
+    textUnderlineOffset: "2px",
   },
   empty: {
     minHeight: "160px",
@@ -652,15 +744,34 @@ const s = stylex.create({
     fontWeight: 700,
   },
   inspector: {
+    gridArea: "inspector",
     minWidth: 0,
     minHeight: 0,
     display: "flex",
     flexDirection: "column",
     backgroundColor: tokens.colorSurface,
   },
+  inspectorBody: {
+    minHeight: 0,
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+  },
+  previewStage: {
+    flexShrink: 0,
+    maxHeight: "48%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "28px 24px 24px",
+    overflow: "auto",
+    borderBottomWidth: 1,
+    borderBottomStyle: "solid",
+    borderBottomColor: tokens.colorBorder,
+  },
   inspectorScroll: { minHeight: 0, flex: 1, overflowY: "auto" },
   inspectorHeader: {
-    padding: "20px 22px 18px",
+    padding: "18px 18px 16px",
     borderBottomWidth: 1,
     borderBottomStyle: "solid",
     borderBottomColor: tokens.colorBorder,
@@ -678,9 +789,9 @@ const s = stylex.create({
     textTransform: "uppercase",
   },
   inspectorTitle: {
-    marginTop: "5px",
+    marginTop: 0,
     color: tokens.colorTextEmphasis,
-    fontSize: "20px",
+    fontSize: tokens.fontSizeLg,
     fontWeight: 760,
     letterSpacing: "-0.015em",
     lineHeight: 1.2,
@@ -693,20 +804,36 @@ const s = stylex.create({
   },
   inspectorDescription: {
     maxWidth: "68ch",
-    marginTop: "12px",
+    marginTop: "10px",
     color: tokens.colorMuted,
     fontSize: tokens.fontSizeSm,
     lineHeight: 1.55,
   },
-  facts: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "5px 16px",
-    marginTop: "15px",
-    color: tokens.colorSubtle,
-    fontSize: tokens.fontSizeXs,
+  inspectorSummary: {
+    display: "grid",
+    gap: "15px",
+    marginTop: "18px",
   },
-  factStrong: { color: tokens.colorTextEmphasis, fontWeight: 750 },
+  inspectorStatement: {
+    color: tokens.colorMuted,
+    fontSize: tokens.fontSizeSm,
+    lineHeight: 1.5,
+  },
+  inspectorStatementStrong: {
+    color: tokens.colorTextEmphasis,
+    fontWeight: 680,
+  },
+  inspectorConfiguration: {
+    display: "grid",
+    gap: "3px",
+    color: tokens.colorMuted,
+    fontSize: tokens.fontSizeSm,
+    lineHeight: 1.5,
+  },
+  inspectorConfigurationLabel: {
+    color: tokens.colorTextEmphasis,
+    fontWeight: 680,
+  },
   section: {
     padding: "18px 22px",
     borderBottomWidth: 1,
@@ -725,13 +852,43 @@ const s = stylex.create({
     fontSize: tokens.fontSizeSm,
     fontWeight: 750,
   },
-  compatibilityGrid: {
-    display: "grid",
-    gridTemplateColumns: {
-      default: "repeat(2, minmax(0, 1fr))",
-      "@media (max-width: 900px)": "1fr",
-    },
-    gap: "18px",
+  worksWithHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    minWidth: 0,
+    marginBottom: "12px",
+  },
+  worksWithTitle: {
+    flexShrink: 0,
+    color: tokens.colorTextEmphasis,
+    fontSize: tokens.fontSizeSm,
+    fontWeight: 750,
+  },
+  worksWithPort: {
+    minWidth: 0,
+    flex: 1,
+    overflow: "hidden",
+    color: tokens.colorTextEmphasis,
+    fontFamily: "inherit",
+    fontSize: tokens.fontSizeSm,
+    fontWeight: 650,
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  worksWithPortSelect: {
+    padding: "1px 0",
+    borderWidth: 0,
+    borderBottomWidth: 1,
+    borderStyle: "solid",
+    borderBottomColor: tokens.colorBorderStrong,
+    borderRadius: 0,
+    backgroundColor: "transparent",
+    cursor: "pointer",
+    outlineColor: tokens.colorAccent,
+    outlineStyle: "solid",
+    outlineOffset: "2px",
+    outlineWidth: { default: 0, ":focus-visible": "2px" },
   },
   compatibilityHeading: {
     marginBottom: "5px",
@@ -743,12 +900,23 @@ const s = stylex.create({
   },
   compatibilityList: { display: "grid" },
   compatibilityItem: {
+    width: "100%",
     display: "grid",
     gap: "2px",
     padding: "8px 0",
+    borderWidth: 0,
     borderBottomWidth: 1,
-    borderBottomStyle: "solid",
+    borderStyle: "solid",
     borderBottomColor: tokens.colorDivider,
+    backgroundColor: { default: "transparent", ":hover": tokens.colorHover },
+    color: tokens.colorText,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    outlineColor: tokens.colorAccent,
+    outlineStyle: "solid",
+    outlineOffset: "2px",
+    outlineWidth: { default: 0, ":focus-visible": "2px" },
+    textAlign: "left",
   },
   compatibilityName: {
     overflow: "hidden",
@@ -872,30 +1040,33 @@ const s = stylex.create({
     fontSize: "10px",
   },
   inspectorFooter: {
-    minHeight: "64px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: "16px",
-    padding: "10px 14px 10px 18px",
+    minHeight: "62px",
+    display: "grid",
+    padding: "10px 18px",
     borderTopWidth: 1,
     borderTopStyle: "solid",
     borderTopColor: tokens.colorBorder,
     backgroundColor: tokens.colorSurfaceRaised,
   },
-  footerHint: {
-    color: tokens.colorSubtle,
-    fontSize: tokens.fontSizeXs,
-    lineHeight: 1.35,
+  visuallyHidden: {
+    position: "absolute",
+    width: "1px",
+    height: "1px",
+    padding: 0,
+    margin: "-1px",
+    overflow: "hidden",
+    clip: "rect(0, 0, 0, 0)",
+    whiteSpace: "nowrap",
+    borderWidth: 0,
   },
   addButton: {
-    minHeight: "36px",
-    maxWidth: "260px",
+    width: "100%",
+    minHeight: "40px",
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
     gap: "7px",
-    paddingInline: "13px",
+    paddingInline: "12px",
     overflow: "hidden",
     borderWidth: 0,
     borderRadius: tokens.radiusSm,
@@ -919,10 +1090,11 @@ const s = stylex.create({
 });
 
 interface CompatibilityListProps {
-  title: string;
+  title?: string;
   matches: readonly CompatibleNode[];
   registry: NodeRegistry;
   emptyMessage: string;
+  onInspect: (spec: NodeSpec) => void;
 }
 
 function CompatibilityList({
@@ -930,14 +1102,23 @@ function CompatibilityList({
   matches,
   registry,
   emptyMessage,
+  onInspect,
 }: CompatibilityListProps) {
   return (
     <div>
-      <h4 {...stylex.props(s.compatibilityHeading)}>{title}</h4>
+      {title ? (
+        <h4 {...stylex.props(s.compatibilityHeading)}>{title}</h4>
+      ) : null}
       {matches.length ? (
         <div {...stylex.props(s.compatibilityList)}>
           {matches.map((match) => (
-            <div key={nodeKey(match.spec)} {...stylex.props(s.compatibilityItem)}>
+            <button
+              key={nodeKey(match.spec)}
+              type="button"
+              aria-label={`Inspect ${match.spec.title}`}
+              {...stylex.props(s.compatibilityItem)}
+              onClick={() => onInspect(match.spec)}
+            >
               <span {...stylex.props(s.compatibilityName)}>
                 {match.spec.title}
               </span>
@@ -947,13 +1128,77 @@ function CompatibilityList({
                   ? ` · +${match.additionalRouteCount} route${match.additionalRouteCount === 1 ? "" : "s"}`
                   : ""}
               </span>
-            </div>
+            </button>
           ))}
         </div>
       ) : (
         <p {...stylex.props(s.compatibilityEmpty)}>{emptyMessage}</p>
       )}
     </div>
+  );
+}
+
+interface WorksWithSectionProps {
+  ports: readonly Port[];
+  activePort: Port;
+  matches: readonly CompatibleNode[];
+  registry: NodeRegistry;
+  onSelectPort: (port: Port) => void;
+  onInspect: (spec: NodeSpec) => void;
+}
+
+function portScopeLabel(port: Port): string {
+  const title = port.title ?? port.name;
+  return `${title} ${port.direction === "input" ? "input" : "output"}`;
+}
+
+function WorksWithSection({
+  ports,
+  activePort,
+  matches,
+  registry,
+  onSelectPort,
+  onInspect,
+}: WorksWithSectionProps) {
+  const receiving = activePort.direction === "input";
+  return (
+    <section {...stylex.props(s.section)}>
+      <div {...stylex.props(s.worksWithHeader)}>
+        <Cable size={13} {...stylex.props(s.sectionIcon)} />
+        <h3 {...stylex.props(s.worksWithTitle)}>Works with:</h3>
+        {ports.length > 1 ? (
+          <select
+            aria-label="Works with port"
+            value={portKey(activePort)}
+            {...stylex.props(s.worksWithPort, s.worksWithPortSelect)}
+            onChange={(event) => {
+              const next = ports.find(
+                (port) => portKey(port) === event.currentTarget.value,
+              );
+              if (next) onSelectPort(next);
+            }}
+          >
+            {ports.map((port) => (
+              <option key={portKey(port)} value={portKey(port)}>
+                {portScopeLabel(port)}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span {...stylex.props(s.worksWithPort)}>
+            {portScopeLabel(activePort)}
+          </span>
+        )}
+      </div>
+      <CompatibilityList
+        matches={matches}
+        registry={registry}
+        emptyMessage={receiving
+          ? "No registered node currently provides a compatible output."
+          : "No registered node currently accepts this output."}
+        onInspect={onInspect}
+      />
+    </section>
   );
 }
 
@@ -1046,17 +1291,31 @@ export function NodeSelector({
   onOpenWorkspaceLibrary,
 }: NodeSelectorProps) {
   const [query, setQuery] = React.useState("");
-  const [category, setCategory] = React.useState<NodeGoalCategoryId>(
-    compatibility ? "all" : "suggested",
-  );
+  const [filterId, setFilterId] = React.useState<BrowserFilterId>("all");
   const [selectedNodeKey, setSelectedNodeKey] = React.useState<string | null>(null);
   const [selectedRelease, setSelectedRelease] = React.useState<{
     moduleKey: string;
     releaseKey: string;
   } | null>(null);
+  const [technicalDetailsOpen, setTechnicalDetailsOpen] = React.useState(false);
+  const [compatibilityPortSelection, setCompatibilityPortSelection] =
+    React.useState<{ specKey: string; portKey: string } | null>(null);
   const resultRefs = React.useRef(new Map<string, HTMLButtonElement>());
-  const categoryRefs = React.useRef(new Map<NodeGoalCategoryId, HTMLButtonElement>());
+  const filterRefs = React.useRef(new Map<BrowserFilterId, HTMLButtonElement>());
+  const pendingResultFocusKey = React.useRef<string | null>(null);
   const wasOpen = React.useRef(false);
+
+  const catalogFilters = React.useMemo(
+    () => buildCatalogFilters(registry),
+    [registry],
+  );
+  const browserFilters = React.useMemo(
+    () => buildBrowserFilters(catalogFilters),
+    [catalogFilters],
+  );
+  const activeFilter =
+    browserFilters.find((filter) => filter.id === filterId) ??
+    browserFilters[0]!;
 
   const catalogNodes = React.useMemo(
     () => catalogNodeSpecs(registry, activeGraphId),
@@ -1064,9 +1323,7 @@ export function NodeSelector({
   );
   const compatibleCatalogNodes = React.useMemo(
     () => compatibility
-      ? catalogNodes.filter((spec) =>
-          nodeMatchesCompatibility(spec, compatibility, registry),
-        )
+      ? nodesCompatibleWithPort(catalogNodes, compatibility, registry)
       : catalogNodes,
     [catalogNodes, compatibility, registry],
   );
@@ -1074,7 +1331,7 @@ export function NodeSelector({
     () => ({ ...registry, nodes: catalogNodes }),
     [catalogNodes, registry],
   );
-  const showingModules = category === "reuse";
+  const showingModules = activeFilter.id === "workspace-library";
   const activeEditingModule = React.useMemo(
     () =>
       activeGraphId
@@ -1090,26 +1347,34 @@ export function NodeSelector({
   React.useEffect(() => {
     if (open && !wasOpen.current) {
       setQuery("");
-      setCategory(compatibility ? "all" : "suggested");
+      setFilterId("all");
       setSelectedNodeKey(null);
       setSelectedRelease(null);
+      setTechnicalDetailsOpen(false);
+      setCompatibilityPortSelection(null);
     }
     wasOpen.current = open;
-  }, [compatibility, open]);
+  }, [open]);
 
   const normalizedQuery = query.trim().toLowerCase();
   const filteredNodes = React.useMemo(
     () => {
       if (loading || errorMessage) return [];
-      return catalogNodesForGoal(compatibleCatalogNodes, category).filter(
-        (spec) =>
-          !normalizedQuery ||
-          nodeSearchText(spec, pluginFor(registry, spec.plugin_slug)).includes(
-            normalizedQuery,
-          ),
+      return nodesForBrowserFilter(
+        compatibleCatalogNodes,
+        activeFilter,
+        query,
+        registry,
       );
     },
-    [category, compatibleCatalogNodes, errorMessage, loading, normalizedQuery, registry],
+    [
+      activeFilter,
+      compatibleCatalogNodes,
+      errorMessage,
+      loading,
+      query,
+      registry,
+    ],
   );
   const listedSpec = filteredNodes.find(
     (spec) => nodeKey(spec) === selectedNodeKey,
@@ -1140,27 +1405,43 @@ export function NodeSelector({
       listedSpec
     );
   }, [listedSpec, moduleReleases, selectedRelease]);
+  const selectedSpecKey = selectedSpec ? nodeKey(selectedSpec) : null;
   const selectedFields = selectedSpec
     ? schemaFields(selectedSpec.config_schema)
     : [];
-  const upstreamMatches = React.useMemo(
-    () => selectedSpec
-      ? compatibleNodes(selectedSpec, "upstream", catalogRegistry)
+  const compatibilityPorts = selectedSpec
+    ? [...selectedSpec.inputs, ...selectedSpec.outputs]
+    : [];
+  const compatibilityPortKey =
+    compatibilityPortSelection?.specKey === selectedSpecKey
+      ? compatibilityPortSelection.portKey
+      : null;
+  const activeCompatibilityPort =
+    compatibilityPorts.find((port) => portKey(port) === compatibilityPortKey)
+    ?? compatibilityPorts[0]
+    ?? null;
+  const portMatches = React.useMemo(
+    () => selectedSpec && activeCompatibilityPort
+      ? compatibleNodesForPort(
+          selectedSpec,
+          activeCompatibilityPort,
+          catalogRegistry,
+        )
       : [],
-    [catalogRegistry, selectedSpec],
-  );
-  const downstreamMatches = React.useMemo(
-    () => selectedSpec
-      ? compatibleNodes(selectedSpec, "downstream", catalogRegistry)
-      : [],
-    [catalogRegistry, selectedSpec],
+    [activeCompatibilityPort, catalogRegistry, selectedSpec],
   );
   const selectedPlugin = selectedSpec
     ? pluginFor(registry, selectedSpec.plugin_slug)
     : null;
-  const activeCategoryTitle = NODE_GOAL_CATEGORIES.find(
-    (candidate) => candidate.id === category,
-  )?.title ?? "Nodes";
+  const selectedPrimaryInput = selectedSpec?.inputs[0] ?? null;
+  const selectedPrimaryOutput = selectedSpec?.outputs[0] ?? null;
+  const selectedPrimaryInputArtifact = selectedPrimaryInput
+    ? portArtifactType(selectedPrimaryInput)
+    : null;
+  const selectedPrimaryOutputArtifact = selectedPrimaryOutput
+    ? portArtifactType(selectedPrimaryOutput)
+    : null;
+  const activeFilterTitle = activeFilter.title;
   const isModuleSelection = selectedPlugin?.origin === "module";
   const isDeprecatedModule = selectedSpec?.publication_state === "deprecated";
   const activeResultId = listedSpec
@@ -1177,20 +1458,22 @@ export function NodeSelector({
         ? "No nodes found."
         : `${filteredNodes.length} ${filteredNodes.length === 1 ? "node" : "nodes"}.`;
 
-  const selectCategory = (nextCategory: NodeGoalCategoryId) => {
-    setCategory(nextCategory);
+  const selectFilter = (nextFilter: BrowserFilter) => {
+    setFilterId(nextFilter.id);
     setSelectedNodeKey(null);
+    setTechnicalDetailsOpen(false);
+    setCompatibilityPortSelection(null);
   };
 
-  const focusCategoryAt = (index: number) => {
+  const focusFilterAt = (index: number) => {
     const boundedIndex = Math.max(
       0,
-      Math.min(index, NODE_GOAL_CATEGORIES.length - 1),
+      Math.min(index, browserFilters.length - 1),
     );
-    const nextCategory = NODE_GOAL_CATEGORIES[boundedIndex];
-    if (!nextCategory) return;
-    selectCategory(nextCategory.id);
-    categoryRefs.current.get(nextCategory.id)?.focus();
+    const nextFilter = browserFilters[boundedIndex];
+    if (!nextFilter) return;
+    selectFilter(nextFilter);
+    filterRefs.current.get(nextFilter.id)?.focus();
   };
 
   const focusResultAt = (index: number) => {
@@ -1203,18 +1486,40 @@ export function NodeSelector({
     resultRefs.current.get(key)?.focus();
   };
 
-  const insertSelected = () => {
-    if (!selectedSpec || !canInsert) return;
+  const insertNode = (spec: NodeSpec) => {
+    if (!canInsert) return;
     if (
-      isDeprecatedModule &&
+      spec.publication_state === "deprecated" &&
       !window.confirm(
-        `Insert deprecated Module “${selectedSpec.title}”? New inserts are discouraged. Existing pinned calls keep working.`,
+        `Insert deprecated Module “${spec.title}”? New inserts are discouraged. Existing pinned calls keep working.`,
       )
     ) {
       return;
     }
-    onAddNode(selectedSpec);
+    onAddNode(spec);
   };
+
+  const inspectCatalogNode = (spec: NodeSpec) => {
+    const key = nodeKey(spec);
+    pendingResultFocusKey.current = key;
+    setQuery("");
+    setFilterId(
+      spec.plugin_slug === MODULE_PLUGIN_SLUG ? "workspace-library" : "all",
+    );
+    setSelectedNodeKey(key);
+    setSelectedRelease(null);
+    setTechnicalDetailsOpen(false);
+    setCompatibilityPortSelection(null);
+  };
+
+  React.useEffect(() => {
+    const key = pendingResultFocusKey.current;
+    if (!key) return;
+    pendingResultFocusKey.current = null;
+    const option = resultRefs.current.get(key);
+    option?.scrollIntoView?.({ block: "nearest" });
+    option?.focus();
+  }, [filterId, query, selectedNodeKey]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1223,18 +1528,15 @@ export function NodeSelector({
         aria-describedby="node-selector-description"
         finalFocus={providedReturnFocusRef}
         style={{
-          width: "min(1040px, calc(100vw - 40px))",
+          width: "min(1340px, calc(100vw - 28px))",
           maxWidth: "none",
-          height: "min(720px, calc(100vh - 40px))",
+          height: "min(900px, calc(100vh - 28px))",
           maxHeight: "none",
         }}
       >
         <div {...stylex.props(s.header)}>
           <div {...stylex.props(s.heading)}>
             <div {...stylex.props(s.titleRow)}>
-              <span {...stylex.props(s.titleIcon)}>
-                <Workflow size={15} />
-              </span>
               <DialogTitle id="node-selector-title" {...stylex.props(s.title)}>
                 Add node
               </DialogTitle>
@@ -1243,7 +1545,7 @@ export function NodeSelector({
               id="node-selector-description"
               {...stylex.props(s.description)}
             >
-              Search, inspect the contract, then insert into the current graph.
+              Choose what to add to your workflow.
             </DialogDescription>
           </div>
           <div {...stylex.props(s.searchWrap)}>
@@ -1255,14 +1557,10 @@ export function NodeSelector({
               aria-controls="node-selector-results"
               aria-activedescendant={activeResultId}
               value={query}
-              placeholder="Search nodes, ports, types, or settings…"
+              placeholder="Search nodes…"
               {...stylex.props(s.search)}
               onChange={(event) => {
-                const nextQuery = event.currentTarget.value;
-                setQuery(nextQuery);
-                setCategory(
-                  nextQuery.trim() || compatibility ? "all" : "suggested",
-                );
+                setQuery(event.currentTarget.value);
                 setSelectedNodeKey(null);
               }}
               onKeyDown={(event) => {
@@ -1271,7 +1569,7 @@ export function NodeSelector({
                   focusResultAt(0);
                 } else if (event.key === "Enter") {
                   event.preventDefault();
-                  insertSelected();
+                  if (selectedSpec) insertNode(selectedSpec);
                 }
               }}
             />
@@ -1279,11 +1577,79 @@ export function NodeSelector({
         </div>
 
         <div {...stylex.props(s.layout)}>
+          <nav aria-label="Works with" {...stylex.props(s.filterPane)}>
+            <h3 {...stylex.props(s.filterHeading)}>Works with</h3>
+            <div
+              role="toolbar"
+              aria-label="Node filters"
+              aria-orientation="vertical"
+              {...stylex.props(s.categoryToolbar)}
+            >
+              {browserFilters.map((filter, index) => {
+                const active = filter.id === activeFilter.id;
+                const count = nodesForBrowserFilter(
+                  compatibleCatalogNodes,
+                  filter,
+                  "",
+                  registry,
+                ).length;
+                const filterButton = (
+                  <button
+                    ref={(element) => {
+                      if (element) filterRefs.current.set(filter.id, element);
+                      else filterRefs.current.delete(filter.id);
+                    }}
+                    type="button"
+                    tabIndex={active ? 0 : -1}
+                    aria-label={`${filter.title}, ${count} ${count === 1 ? "node" : "nodes"}`}
+                    aria-pressed={active}
+                    {...stylex.props(
+                      s.categoryButton,
+                      active ? s.categoryButtonActive : null,
+                    )}
+                    onClick={() => selectFilter(filter)}
+                    onKeyDown={(event) => {
+                      if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+                        event.preventDefault();
+                        focusFilterAt(index + 1);
+                      } else if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+                        event.preventDefault();
+                        focusFilterAt(index - 1);
+                      } else if (event.key === "Home") {
+                        event.preventDefault();
+                        focusFilterAt(0);
+                      } else if (event.key === "End") {
+                        event.preventDefault();
+                        focusFilterAt(browserFilters.length - 1);
+                      }
+                    }}
+                  >
+                    <BrowserFilterIcon filter={filter} />
+                    {filter.title}
+                  </button>
+                );
+                return filter.id === "workspace-library" ? (
+                  <div key={filter.id} {...stylex.props(s.filterLibrary)}>
+                    {filterButton}
+                  </div>
+                ) : (
+                  <React.Fragment key={filter.id}>{filterButton}</React.Fragment>
+                );
+              })}
+            </div>
+          </nav>
+
           <section aria-labelledby="node-selector-results-heading" {...stylex.props(s.nodePane)}>
             <header {...stylex.props(s.nodePaneHeader)}>
               <div {...stylex.props(s.resultHeading)}>
                 <h3 id="node-selector-results-heading" {...stylex.props(s.nodePaneTitle)}>
-                  {activeCategoryTitle}
+                  {activeFilter.id === "all"
+                    ? "All nodes"
+                    : ["text", "images", "tables", "spatial", "prompts"].includes(
+                        activeFilter.id,
+                      )
+                      ? `${activeFilterTitle} nodes`
+                      : activeFilterTitle}
                 </h3>
                 <span
                   role={errorMessage ? "alert" : "status"}
@@ -1293,55 +1659,6 @@ export function NodeSelector({
                 >
                   {resultStatus}
                 </span>
-              </div>
-              <div
-                role="toolbar"
-                aria-label="Node categories"
-                aria-orientation="horizontal"
-                {...stylex.props(s.categoryToolbar)}
-              >
-                {NODE_GOAL_CATEGORIES.map((goal, index) => {
-                  const active = category === goal.id;
-                  const count = catalogNodesForGoal(
-                    compatibleCatalogNodes,
-                    goal.id,
-                  ).length;
-                  return (
-                    <button
-                      key={goal.id}
-                      ref={(element) => {
-                        if (element) categoryRefs.current.set(goal.id, element);
-                        else categoryRefs.current.delete(goal.id);
-                      }}
-                      type="button"
-                      tabIndex={active ? 0 : -1}
-                      aria-label={`${goal.title}, ${count} ${count === 1 ? "node" : "nodes"}`}
-                      aria-pressed={active}
-                      {...stylex.props(
-                        s.categoryButton,
-                        active ? s.categoryButtonActive : null,
-                      )}
-                      onClick={() => selectCategory(goal.id)}
-                      onKeyDown={(event) => {
-                        if (event.key === "ArrowRight") {
-                          event.preventDefault();
-                          focusCategoryAt(index + 1);
-                        } else if (event.key === "ArrowLeft") {
-                          event.preventDefault();
-                          focusCategoryAt(index - 1);
-                        } else if (event.key === "Home") {
-                          event.preventDefault();
-                          focusCategoryAt(0);
-                        } else if (event.key === "End") {
-                          event.preventDefault();
-                          focusCategoryAt(NODE_GOAL_CATEGORIES.length - 1);
-                        }
-                      }}
-                    >
-                      {goal.title}
-                    </button>
-                  );
-                })}
               </div>
             </header>
             {compatibility && compatibilityPortTitle ? (
@@ -1371,12 +1688,14 @@ export function NodeSelector({
               ) : loading ? (
                 <div {...stylex.props(s.empty)}>Loading nodes…</div>
               ) : filteredNodes.length ? filteredNodes.map((spec, index) => {
-                const owner = pluginFor(registry, spec.plugin_slug);
                 const key = nodeKey(spec);
                 const active = listedSpec
                   ? key === nodeKey(listedSpec)
                   : false;
-                const moduleState = spec.publication_state ?? "published";
+                const representativePort = spec.outputs[0] ?? spec.inputs[0];
+                const representativeArtifact = representativePort
+                  ? portArtifactType(representativePort)
+                  : null;
                 return (
                   <button
                     key={key}
@@ -1390,10 +1709,19 @@ export function NodeSelector({
                     tabIndex={active ? 0 : -1}
                     aria-selected={active}
                     {...stylex.props(
-                      s.nodeButton,
-                      active ? s.nodeButtonActive : null,
+                      s.nodeRow,
+                      active ? s.nodeRowActive : null,
                     )}
-                    onClick={() => setSelectedNodeKey(key)}
+                    style={active && representativeArtifact ? {
+                      borderColor: artifactTypeColor(
+                        representativeArtifact.id,
+                        tokens.colorAccent,
+                      ),
+                    } : undefined}
+                    onClick={() => {
+                      setSelectedNodeKey(key);
+                      setTechnicalDetailsOpen(false);
+                    }}
                     onFocus={() => setSelectedNodeKey(key)}
                     onKeyDown={(event) => {
                       if (event.key === "ArrowDown") {
@@ -1410,34 +1738,17 @@ export function NodeSelector({
                         focusResultAt(filteredNodes.length - 1);
                       } else if (event.key === "Enter") {
                         event.preventDefault();
-                        insertSelected();
+                        if (selectedSpec) insertNode(selectedSpec);
                       }
                     }}
                   >
                     <span {...stylex.props(s.nodeCopy)}>
                       <span {...stylex.props(s.nodeTitleRow)}>
                         <span {...stylex.props(s.nodeTitle)}>{spec.title}</span>
-                        {owner.origin === "external" ? (
-                          <span
-                            {...stylex.props(
-                              s.originBadge,
-                              s.originBadgeExternal,
-                            )}
-                          >
-                            External
-                          </span>
-                        ) : owner.origin === "module" ? (
-                          <span {...stylex.props(s.originBadge)}>
-                            Module · release {spec.module_graph_revision} · {moduleState}
-                          </span>
-                        ) : null}
                       </span>
                       <span {...stylex.props(s.nodeDescription)}>
                         {spec.description || "No description is available."}
                       </span>
-                    </span>
-                    <span {...stylex.props(s.nodePorts)}>
-                      {spec.inputs.length} in · {spec.outputs.length} out
                     </span>
                   </button>
                 );
@@ -1445,21 +1756,24 @@ export function NodeSelector({
                 <div {...stylex.props(s.empty)}>
                   <span>
                     {compatibility
-                      ? "No nodes match this port and the current search or category."
+                      ? "No nodes match this port and the current search or filter."
                       : showingModules
                         ? "No published Modules match the current search."
-                        : "No nodes match the current search or category."}
+                        : "No nodes match the current search or filter."}
                   </span>
-                  {normalizedQuery || category !== "suggested" ? (
+                  {normalizedQuery || activeFilter.id !== "all" ? (
                     <button
                       type="button"
                       {...stylex.props(s.resetButton)}
                       onClick={() => {
                         setQuery("");
-                        selectCategory(compatibility ? "all" : "suggested");
+                        selectFilter(
+                          browserFilters.find((filter) => filter.id === "all") ??
+                            browserFilters[0]!,
+                        );
                       }}
                     >
-                      Reset search and category
+                      Reset search and filter
                     </button>
                   ) : null}
                 </div>
@@ -1508,195 +1822,282 @@ export function NodeSelector({
               <>
                 <div
                   key={nodeKey(selectedSpec)}
-                  className={`${stylex.props(s.inspectorScroll).className} ns-node-detail`}
+                  {...stylex.props(s.inspectorBody)}
+                  className={[
+                    stylex.props(s.inspectorBody).className,
+                    "ns-node-detail",
+                  ].filter(Boolean).join(" ")}
                 >
-                  <header {...stylex.props(s.inspectorHeader)}>
-                    <div {...stylex.props(s.inspectorProvenance)}>
-                      <div {...stylex.props(s.eyebrow)}>
-                        {isModuleSelection
-                          ? `Module · release ${selectedSpec.module_graph_revision}`
-                          : selectedPlugin.title}
+                  <div
+                    {...stylex.props(s.previewStage)}
+                    className={[
+                      stylex.props(s.previewStage).className,
+                      "ns-node-preview-stage",
+                    ].filter(Boolean).join(" ")}
+                  >
+                    <CatalogNodePreview
+                      spec={selectedSpec}
+                      registry={registry}
+                      fields={selectedFields}
+                      selectedPortKey={
+                        activeCompatibilityPort
+                          ? portKey(activeCompatibilityPort)
+                          : null
+                      }
+                      onSelectPort={(port) => {
+                        if (!selectedSpecKey) return;
+                        setCompatibilityPortSelection({
+                          specKey: selectedSpecKey,
+                          portKey: portKey(port),
+                        });
+                      }}
+                    />
+                  </div>
+                  <div {...stylex.props(s.inspectorScroll)}>
+                  {isModuleSelection ? (
+                    <header {...stylex.props(s.inspectorHeader)}>
+                      <div {...stylex.props(s.inspectorProvenance)}>
+                        <div {...stylex.props(s.eyebrow)}>
+                          Module · release {selectedSpec.module_graph_revision}
+                        </div>
+                        <span {...stylex.props(s.originBadge)}>
+                          {selectedSpec.publication_state ?? "published"}
+                        </span>
                       </div>
-                      <span
-                        {...stylex.props(
-                          s.originBadge,
-                          selectedPlugin.origin === "external"
-                            ? s.originBadgeExternal
-                            : null,
-                        )}
-                      >
-                        {selectedPlugin.origin === "external"
-                          ? "External"
-                          : selectedPlugin.origin === "module"
-                            ? selectedSpec.publication_state ?? "published"
-                            : "Built-in"}
-                      </span>
-                    </div>
-                    <h3 id="node-selector-inspector-title" {...stylex.props(s.inspectorTitle)}>
-                      {selectedSpec.title}
-                    </h3>
-                    <div {...stylex.props(s.operatorId)}>
-                      {typeof selectedSpec.module_graph_revision === "number"
-                        ? `Module contract · release ${selectedSpec.module_graph_revision}`
-                        : `${selectedSpec.operator_id}@${selectedSpec.operator_version}`}
-                    </div>
-                    {isModuleSelection && moduleReleases.length > 1 ? (
-                      <label {...stylex.props(s.operatorId)}>
-                        Release{" "}
-                        <select
-                          aria-label="Module release"
-                          value={nodeKey(selectedSpec)}
-                          onChange={(event) => {
-                            const moduleKey =
-                              listedSpec.module_id ?? listedSpec.module_graph_id;
-                            if (!moduleKey) return;
-                            setSelectedRelease({
-                              moduleKey,
-                              releaseKey: event.currentTarget.value,
-                            });
-                          }}
-                        >
-                          {moduleReleases.map((release) => (
-                            <option key={nodeKey(release)} value={nodeKey(release)}>
-                              Release {release.module_graph_revision}
-                              {release.is_current_library_release
-                                ? " (current)"
-                                : ""}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    ) : null}
-                    {isDeprecatedModule ? (
-                      <p {...stylex.props(s.moduleDiagnosticsNote)}>
-                        This Module is deprecated. New inserts are discouraged;
-                        existing pins keep working.
-                      </p>
-                    ) : null}
-                    {selectedSpec.module_graph_id && onOpenGraph ? (
-                      <button
-                        type="button"
-                        title="Open the saved graph that defines this module"
-                        {...stylex.props(
-                          s.openGraphButton,
-                          s.inspectorOpenGraph,
-                        )}
-                        onClick={() =>
-                          onOpenGraph(selectedSpec.module_graph_id!)
-                        }
-                      >
-                        <ExternalLink size={10} />
-                        Open source graph
-                      </button>
-                    ) : null}
-                    <p {...stylex.props(s.inspectorDescription)}>
-                      {selectedSpec.description || "No description is available for this node."}
-                    </p>
-                    <div {...stylex.props(s.facts)}>
-                      <span><strong {...stylex.props(s.factStrong)}>{selectedSpec.inputs.length}</strong> inputs</span>
-                      <span><strong {...stylex.props(s.factStrong)}>{selectedSpec.outputs.length}</strong> outputs</span>
-                      <span><strong {...stylex.props(s.factStrong)}>{selectedFields.length}</strong> editable settings</span>
-                    </div>
-                  </header>
-
-                  <section {...stylex.props(s.section)}>
-                    <div {...stylex.props(s.sectionTitleRow)}>
-                      <Cable size={13} {...stylex.props(s.sectionIcon)} />
-                      <h3 {...stylex.props(s.sectionTitle)}>Works with</h3>
-                    </div>
-                    <div {...stylex.props(s.compatibilityGrid)}>
-                      <CompatibilityList
-                        title="Can receive from"
-                        matches={upstreamMatches}
-                        registry={registry}
-                        emptyMessage={selectedSpec.inputs.length === 0
-                          ? "No upstream node is needed; this node starts a workflow."
-                          : "No registered node currently provides a compatible output."}
-                      />
-                      <CompatibilityList
-                        title="Can connect to"
-                        matches={downstreamMatches}
-                        registry={registry}
-                        emptyMessage={selectedSpec.outputs.length === 0
-                          ? "No outputs are declared; this node finishes a branch."
-                          : "No registered node currently accepts these outputs."}
-                      />
-                    </div>
-                  </section>
-
-                  <section {...stylex.props(s.section)}>
-                    <div {...stylex.props(s.sectionTitleRow)}>
-                      <Workflow size={13} {...stylex.props(s.sectionIcon)} />
-                      <h3 {...stylex.props(s.sectionTitle)}>
-                        {isModuleSelection ? "Module contract" : "Ports"}
+                      <h3 id="node-selector-inspector-title" {...stylex.props(s.inspectorTitle)}>
+                        {selectedSpec.title}
                       </h3>
-                    </div>
-                    <div {...stylex.props(s.portGrid)}>
-                      <PortList
-                        direction="input"
-                        ports={selectedSpec.inputs}
-                        registry={registry}
-                      />
-                      <PortList
-                        direction="output"
-                        ports={selectedSpec.outputs}
-                        registry={registry}
-                      />
-                    </div>
-                  </section>
-
-                  <section {...stylex.props(s.section)}>
-                    <div {...stylex.props(s.sectionTitleRow)}>
-                      <Settings2 size={13} {...stylex.props(s.sectionIcon)} />
-                      <h3 {...stylex.props(s.sectionTitle)}>Configuration</h3>
-                    </div>
-                    {selectedFields.length ? (
-                      <div {...stylex.props(s.fieldList)}>
-                        {selectedFields.map((field) => (
-                          <div key={field.name} {...stylex.props(s.fieldRow)}>
-                            <div {...stylex.props(s.fieldIdentity)}>
-                              <div {...stylex.props(s.fieldTitle)}>{field.title}</div>
-                              <div {...stylex.props(s.fieldName)}>{field.name}</div>
-                            </div>
-                            <div {...stylex.props(s.fieldDetails)}>
-                              <div {...stylex.props(s.fieldMeta)}>
-                                {fieldTypeLabel(field)} · {fieldConstraintLabel(field)}
-                              </div>
-                              {field.description ? (
-                                <p {...stylex.props(s.fieldDescription)}>{field.description}</p>
-                              ) : null}
-                              {field.enumValues?.length ? (
-                                <p {...stylex.props(s.fieldChoices)}>
-                                  Choices: {field.enumValues.map(String).join(", ")}
-                                </p>
-                              ) : null}
-                              {field.pattern ? (
-                                <p {...stylex.props(s.fieldChoices)}>Pattern: {field.pattern}</p>
-                              ) : null}
-                            </div>
-                          </div>
-                        ))}
+                      <div {...stylex.props(s.operatorId)}>
+                        Module contract · release {selectedSpec.module_graph_revision}
                       </div>
-                    ) : (
-                      <p {...stylex.props(s.compatibilityEmpty)}>
-                        No editable scalar settings are declared. Upload or custom controls, when available, appear on the node after it is added.
+                      {moduleReleases.length > 1 ? (
+                        <label {...stylex.props(s.operatorId)}>
+                          Release{" "}
+                          <select
+                            aria-label="Module release"
+                            value={nodeKey(selectedSpec)}
+                            onChange={(event) => {
+                              const moduleKey =
+                                listedSpec.module_id ?? listedSpec.module_graph_id;
+                              if (!moduleKey) return;
+                              setSelectedRelease({
+                                moduleKey,
+                                releaseKey: event.currentTarget.value,
+                              });
+                            }}
+                          >
+                            {moduleReleases.map((release) => (
+                              <option key={nodeKey(release)} value={nodeKey(release)}>
+                                Release {release.module_graph_revision}
+                                {release.is_current_library_release ? " (current)" : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : null}
+                      {isDeprecatedModule ? (
+                        <p {...stylex.props(s.moduleDiagnosticsNote)}>
+                          This Module is deprecated. New inserts are discouraged;
+                          existing pins keep working.
+                        </p>
+                      ) : null}
+                      {selectedSpec.module_graph_id && onOpenGraph ? (
+                        <button
+                          type="button"
+                          title="Open the saved graph that defines this module"
+                          {...stylex.props(s.openGraphButton, s.inspectorOpenGraph)}
+                          onClick={() => onOpenGraph(selectedSpec.module_graph_id!)}
+                        >
+                          <ExternalLink size={10} />
+                          Open source graph
+                        </button>
+                      ) : null}
+                      <p {...stylex.props(s.inspectorDescription)}>
+                        {selectedSpec.description || "No description is available for this node."}
                       </p>
-                    )}
-                  </section>
+                    </header>
+                  ) : (
+                    <header {...stylex.props(s.inspectorHeader)}>
+                      <h3 id="node-selector-inspector-title" {...stylex.props(s.inspectorTitle)}>
+                        {selectedSpec.title}
+                      </h3>
+                      <p {...stylex.props(s.inspectorDescription)}>
+                        {selectedSpec.description || "No description is available for this node."}
+                      </p>
+                      <div {...stylex.props(s.inspectorSummary)}>
+                        <p {...stylex.props(s.inspectorStatement)}>
+                          {selectedPrimaryInput ? (
+                            <>
+                              Accepts{" "}
+                              <span
+                                {...stylex.props(s.inspectorStatementStrong)}
+                                style={{
+                                  color: selectedPrimaryInputArtifact
+                                    ? artifactTypeColor(
+                                        selectedPrimaryInputArtifact.id,
+                                        tokens.colorTextEmphasis,
+                                      )
+                                    : tokens.colorTextEmphasis,
+                                }}
+                              >
+                                {artifactTitleFor(registry, selectedPrimaryInput)}
+                              </span>
+                              {selectedSpec.inputs.length > 1
+                                ? ` + ${selectedSpec.inputs.length - 1} more`
+                                : ` · ${selectedPrimaryInput.shape === "many" ? "sequence" : "single value"}`}
+                            </>
+                          ) : "Starts a workflow"}
+                        </p>
+                        <p {...stylex.props(s.inspectorStatement)}>
+                          {selectedPrimaryOutput ? (
+                            <>
+                              Produces{" "}
+                              <span
+                                {...stylex.props(s.inspectorStatementStrong)}
+                                style={{
+                                  color: selectedPrimaryOutputArtifact
+                                    ? artifactTypeColor(
+                                        selectedPrimaryOutputArtifact.id,
+                                        tokens.colorTextEmphasis,
+                                      )
+                                    : tokens.colorTextEmphasis,
+                                }}
+                              >
+                                {artifactTitleFor(registry, selectedPrimaryOutput)}
+                              </span>
+                              {selectedSpec.outputs.length > 1
+                                ? ` + ${selectedSpec.outputs.length - 1} more`
+                                : ` · ${selectedPrimaryOutput.shape === "many" ? "sequence" : "single value"}`}
+                            </>
+                          ) : "Ends a workflow branch"}
+                        </p>
+                        <div {...stylex.props(s.inspectorConfiguration)}>
+                          <span {...stylex.props(s.inspectorConfigurationLabel)}>
+                            Configuration:
+                          </span>
+                          <span>
+                            {selectedFields.length
+                              ? `${selectedFields.map((field) => field.title).join(", ")} ${selectedFields.length === 1 ? "is" : "are"} editable after adding.`
+                              : "No editable settings."}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          aria-expanded={technicalDetailsOpen}
+                          {...stylex.props(s.technicalToggle)}
+                          onClick={() => setTechnicalDetailsOpen((open) => !open)}
+                        >
+                          {technicalDetailsOpen
+                            ? "Hide technical details"
+                            : "View technical details"}
+                        </button>
+                      </div>
+                    </header>
+                  )}
+
+                  {isModuleSelection || technicalDetailsOpen ? (
+                    <>
+                      <section {...stylex.props(s.section)}>
+                        <div {...stylex.props(s.sectionTitleRow)}>
+                          <Workflow size={13} {...stylex.props(s.sectionIcon)} />
+                          <h3 {...stylex.props(s.sectionTitle)}>
+                            {isModuleSelection ? "Module contract" : "Ports"}
+                          </h3>
+                        </div>
+                        {!isModuleSelection ? (
+                          <p {...stylex.props(s.moduleDiagnosticsNote)}>
+                            {selectedSpec.operator_id}@{selectedSpec.operator_version}
+                          </p>
+                        ) : null}
+                        <div {...stylex.props(s.portGrid)}>
+                          <PortList
+                            direction="input"
+                            ports={selectedSpec.inputs}
+                            registry={registry}
+                          />
+                          <PortList
+                            direction="output"
+                            ports={selectedSpec.outputs}
+                            registry={registry}
+                          />
+                        </div>
+                      </section>
+
+                      <section {...stylex.props(s.section)}>
+                        <div {...stylex.props(s.sectionTitleRow)}>
+                          <Settings2 size={13} {...stylex.props(s.sectionIcon)} />
+                          <h3 {...stylex.props(s.sectionTitle)}>Configuration</h3>
+                        </div>
+                        {selectedFields.length ? (
+                          <div {...stylex.props(s.fieldList)}>
+                            {selectedFields.map((field) => (
+                              <div key={field.name} {...stylex.props(s.fieldRow)}>
+                                <div {...stylex.props(s.fieldIdentity)}>
+                                  <div {...stylex.props(s.fieldTitle)}>{field.title}</div>
+                                  <div {...stylex.props(s.fieldName)}>{field.name}</div>
+                                </div>
+                                <div {...stylex.props(s.fieldDetails)}>
+                                  <div {...stylex.props(s.fieldMeta)}>
+                                    {fieldTypeLabel(field)} · {fieldConstraintLabel(field)}
+                                  </div>
+                                  {field.description ? (
+                                    <p {...stylex.props(s.fieldDescription)}>{field.description}</p>
+                                  ) : null}
+                                  {field.enumValues?.length ? (
+                                    <p {...stylex.props(s.fieldChoices)}>
+                                      Choices: {field.enumValues.map(String).join(", ")}
+                                    </p>
+                                  ) : null}
+                                  {field.pattern ? (
+                                    <p {...stylex.props(s.fieldChoices)}>Pattern: {field.pattern}</p>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p {...stylex.props(s.compatibilityEmpty)}>
+                            No editable scalar settings are declared. Upload or custom controls, when available, appear on the node after it is added.
+                          </p>
+                        )}
+                      </section>
+                    </>
+                  ) : null}
+
+                  {activeCompatibilityPort ? (
+                    <WorksWithSection
+                      ports={compatibilityPorts}
+                      activePort={activeCompatibilityPort}
+                      matches={portMatches}
+                      registry={registry}
+                      onSelectPort={(port) => {
+                        if (!selectedSpecKey) return;
+                        setCompatibilityPortSelection({
+                          specKey: selectedSpecKey,
+                          portKey: portKey(port),
+                        });
+                      }}
+                      onInspect={inspectCatalogNode}
+                    />
+                  ) : null}
+                  </div>
                 </div>
 
                 <footer {...stylex.props(s.inspectorFooter)}>
-                  <span id="node-selector-insert-hint" {...stylex.props(s.footerHint)}>
-                    {!canInsert
-                      ? insertDisabledReason
-                      : isModuleSelection
-                        ? "Inserts a Module call pinned to the selected immutable release."
-                        : "Added at the center of the current canvas view."}
-                  </span>
+                  {!canInsert ? (
+                    <span
+                      id="node-selector-insert-disabled-reason"
+                      {...stylex.props(s.visuallyHidden)}
+                    >
+                      {insertDisabledReason}
+                    </span>
+                  ) : null}
                   <button
                     type="button"
                     disabled={!canInsert}
-                    aria-describedby="node-selector-insert-hint"
+                    aria-describedby={!canInsert
+                      ? "node-selector-insert-disabled-reason"
+                      : undefined}
                     title={
                       !canInsert
                         ? insertDisabledReason
@@ -1708,7 +2109,7 @@ export function NodeSelector({
                       s.addButton,
                       !canInsert ? s.addButtonDisabled : null,
                     )}
-                    onClick={insertSelected}
+                    onClick={() => insertNode(selectedSpec)}
                   >
                     <Plus size={14} />{" "}
                     {isModuleSelection

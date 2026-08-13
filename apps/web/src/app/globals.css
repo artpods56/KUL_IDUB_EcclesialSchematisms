@@ -134,6 +134,38 @@
   animation: ns-node-detail-in 150ms ease-out;
 }
 
+.ns-node-preview-stage {
+  background-color: light-dark(#f4f4f4, #141414);
+  background-image:
+    linear-gradient(
+      light-dark(rgba(17, 17, 17, 0.06), rgba(255, 255, 255, 0.05)) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      light-dark(rgba(17, 17, 17, 0.06), rgba(255, 255, 255, 0.05)) 1px,
+      transparent 1px
+    );
+  background-size: 20px 20px;
+}
+
+@keyframes ns-discovery-preview-in {
+  from {
+    opacity: 0.35;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 0.92;
+    transform: translateY(0);
+  }
+}
+
+.ns-discovery-preview {
+  opacity: 0.92;
+  animation: ns-discovery-preview-in 160ms ease-out;
+}
+
 .ns-dialog-backdrop {
   transition: opacity 150ms ease;
 }
@@ -184,6 +216,7 @@
   .ns-dialog-backdrop,
   .ns-dialog-popup,
   .ns-node-detail,
+  .ns-discovery-preview,
   .ns-workbench-toast {
     transition: none;
     animation: none;
@@ -286,8 +319,7 @@
   }
 }
 
-.ns-auth-threshold,
-.ns-workspace-route-status {
+.ns-auth-threshold {
   min-height: 100svh;
   display: grid;
   place-content: center;
@@ -325,8 +357,7 @@
 }
 
 .ns-auth-threshold__eyebrow,
-.ns-workspace-overview__eyebrow,
-.ns-workspace-route-status__eyebrow {
+.ns-workspace-overview__eyebrow {
   color: light-dark(#6B6B6B, #A3A3A3);
   font-size: 11px;
   font-weight: 500;
@@ -335,7 +366,6 @@
 }
 
 .ns-auth-threshold h1,
-.ns-workspace-route-status h1,
 .ns-workspace-directory__header h1,
 .ns-workspace-overview__header h1 {
   font-size: clamp(1.7rem, 3vw, 2.45rem);
@@ -349,7 +379,6 @@
 }
 
 .ns-auth-threshold__detail,
-.ns-workspace-route-status p,
 .ns-workspace-directory__header p,
 .ns-workspace-overview__copy {
   max-width: 520px;
@@ -376,7 +405,7 @@
   }
 }
 
-.ns-auth-threshold__action button,
+.ns-auth-threshold__action :is(button, a),
 .ns-workspace-button {
   min-height: 36px;
   display: inline-flex;
@@ -391,27 +420,28 @@
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
+  text-decoration: none;
   transition:
     background-color 140ms ease,
     border-color 140ms ease,
     color 140ms ease;
 }
 
-.ns-auth-threshold__action button:hover,
+.ns-auth-threshold__action :is(button, a):hover,
 .ns-workspace-button:hover {
   border-color: light-dark(#6B6B6B, #555555);
   background: light-dark(#F4F4F4, #1A1A1A);
 }
 
 .ns-workspace-button--primary,
-.ns-auth-threshold__action button {
+.ns-auth-threshold__action :is(button, a) {
   border-color: transparent;
   background: light-dark(#111111, #FFFFFF);
   color: light-dark(#FFFFFF, #111111);
 }
 
 .ns-workspace-button--primary:hover,
-.ns-auth-threshold__action button:hover {
+.ns-auth-threshold__action :is(button, a):hover {
   border-color: transparent;
   background: light-dark(#2A2A2A, #E8E8E8);
   color: light-dark(#FFFFFF, #111111);
@@ -476,7 +506,8 @@
 .ns-workspace-rail__item span,
 .ns-workspace-rail__settings span,
 .ns-workspace-rail__account-copy,
-.ns-workspace-rail__brand-wordmark {
+.ns-workspace-rail__brand-wordmark,
+.ns-workspace-rail__workspace-select-chevron {
   opacity: var(--ns-rail-copy);
   transition: opacity 140ms ease var(--ns-rail-copy-delay);
 }
@@ -651,6 +682,109 @@ body.ns-rail-resizing .ns-workspace-overview {
 .ns-workspace-rail__location:hover {
   background: transparent;
   color: light-dark(#6B6B6B, #A3A3A3);
+}
+
+.ns-workspace-rail__workspace-select {
+  position: relative;
+  display: block;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.ns-workspace-rail__workspace-select-icon,
+.ns-workspace-rail__workspace-select-chevron {
+  position: absolute;
+  top: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: light-dark(#6B6B6B, #A3A3A3);
+  pointer-events: none;
+}
+
+.ns-workspace-rail__workspace-select-icon {
+  left: var(--ns-rail-icon-center);
+  transform: translate(-50%, -50%);
+  transition: color 140ms ease;
+}
+
+.ns-workspace-rail__workspace-select-chevron {
+  right: 8px;
+  transform: translateY(-50%);
+}
+
+.ns-workspace-rail__workspace-select-icon svg,
+.ns-workspace-rail__workspace-select-chevron svg {
+  width: var(--ns-rail-icon);
+  height: var(--ns-rail-icon);
+  max-width: none;
+}
+
+.ns-workspace-rail__workspace-select-chevron svg {
+  width: 12px;
+  height: 12px;
+}
+
+.ns-workspace-rail__workspace-select select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 36px;
+  padding: 0 28px 0 calc(var(--ns-rail-icon-center) + var(--ns-rail-icon) / 2 + 10px);
+  overflow: hidden;
+  border: 1px solid light-dark(#E8E8E8, #2A2A2A);
+  border-radius: 8px;
+  outline: 0;
+  background: light-dark(#FAFAFA, #171717);
+  color: light-dark(#111111, #F5F5F5);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  color-scheme: inherit;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.ns-workspace-rail__workspace-select select::-ms-expand {
+  display: none;
+}
+
+.ns-workspace-rail__workspace-select:hover .ns-workspace-rail__workspace-select-icon,
+.ns-workspace-rail__workspace-select:hover .ns-workspace-rail__workspace-select-chevron,
+.ns-workspace-rail__workspace-select:focus-within .ns-workspace-rail__workspace-select-icon,
+.ns-workspace-rail__workspace-select:focus-within .ns-workspace-rail__workspace-select-chevron {
+  color: light-dark(#111111, #F5F5F5);
+}
+
+.ns-workspace-rail__workspace-select:hover select {
+  border-color: light-dark(#D0D0D0, #3A3A3A);
+  background: light-dark(#F4F4F4, #1A1A1A);
+}
+
+.ns-workspace-rail__workspace-select select:focus,
+.ns-workspace-rail__workspace-select select:focus-visible {
+  border-color: light-dark(#111111, #F5F5F5);
+  background: light-dark(#FFFFFF, #111111);
+}
+
+.ns-workspace-rail.is-collapsed .ns-workspace-rail__workspace-select select {
+  color: transparent;
+  border-color: transparent;
+  background: transparent;
+  padding-right: var(--ns-rail-item-pad);
+}
+
+.ns-workspace-rail.is-collapsed .ns-workspace-rail__workspace-select:hover select,
+.ns-workspace-rail.is-collapsed .ns-workspace-rail__workspace-select:focus-within select {
+  background: light-dark(#F4F4F4, #1A1A1A);
 }
 
 .ns-workspace-rail__settings {
@@ -987,6 +1121,8 @@ body.ns-rail-resizing .ns-workspace-overview {
   .ns-workspace-rail__item span,
   .ns-workspace-rail__settings span,
   .ns-workspace-rail__account-copy,
+  .ns-workspace-rail__workspace-select-chevron,
+  .ns-workspace-rail__workspace-select select,
   .ns-workspace-directory__main,
   .ns-graphs__main,
   .ns-workspace-overview {
@@ -1139,8 +1275,7 @@ body.ns-rail-resizing .ns-workspace-overview {
 }
 
 .ns-workspace-list__copy small,
-.ns-workspace-directory__loading,
-.ns-workspace-route-status__inline {
+.ns-workspace-directory__loading {
   color: light-dark(#6B6B6B, #8A8A8A);
   font-size: 12px;
 }
@@ -1865,6 +2000,18 @@ body.ns-rail-resizing .ns-workspace-overview {
   .ns-workspace-rail__settings span,
   .ns-workspace-rail__account-copy {
     pointer-events: none;
+  }
+
+  .ns-workspace-rail__workspace-select select {
+    color: transparent;
+    border-color: transparent;
+    background: transparent;
+    padding-right: var(--ns-rail-item-pad);
+  }
+
+  .ns-workspace-rail__workspace-select:hover select,
+  .ns-workspace-rail__workspace-select:focus-within select {
+    background: light-dark(#F4F4F4, #1A1A1A);
   }
 
   .ns-workspace-directory__main,

@@ -177,7 +177,7 @@ function PortBand({
                   artifactTypeBindings,
                 ),
               )}
-              style={handleStyle("50%", color, port.variadic)}
+              style={handleStyle("50%", color, port.shape === "many")}
             />
             <span {...stylex.props(s.bandName)}>
               {port.title ?? port.name}

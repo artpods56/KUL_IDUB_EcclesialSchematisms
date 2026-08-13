@@ -1,4 +1,6 @@
 export const DEFAULT_NODE_WIDTH = 300;
+/** Approximate chrome height used when placing nodes from canvas drop points. */
+export const DEFAULT_NODE_PLACEMENT_HEIGHT = 220;
 export const DEFAULT_BODY_HEIGHT = 96;
 export const DEFAULT_APPENDIX_HEIGHT = 230;
 

@@ -214,6 +214,53 @@ describe("shared presentation", () => {
     });
   });
 
+  it("omits incomplete draft mappings and trims complete mappings", () => {
+    const presentation = presentationFromArtifactViewers({
+      nodes: [],
+      edges: [],
+      bindings: [
+        {
+          id: "artifact-viewer-binding-empty",
+          sourceViewerId: "artifact-viewer-source",
+          targetViewerId: "artifact-viewer-target",
+          mappings: [
+            { sourceField: "", targetField: "" },
+            { sourceField: "source_only", targetField: "" },
+            { sourceField: "   ", targetField: "target_only" },
+          ],
+          effects: ["highlight"],
+          emptySelection: "show_all",
+        },
+        {
+          id: "artifact-viewer-binding-complete",
+          sourceViewerId: "artifact-viewer-source",
+          targetViewerId: "artifact-viewer-target",
+          mappings: [
+            {
+              sourceField: "  historical_name  ",
+              targetField: "  transliteration  ",
+            },
+            { sourceField: "district", targetField: "district" },
+          ],
+          effects: ["focus"],
+          emptySelection: "show_all",
+        },
+      ],
+      annotations: [],
+    });
+
+    expect(presentation.bindings?.map((binding) => binding.mappings)).toEqual([
+      [],
+      [
+        {
+          source_field: "historical_name",
+          target_field: "transliteration",
+        },
+        { source_field: "district", target_field: "district" },
+      ],
+    ]);
+  });
+
   it("serializes viewer layout with API snake_case fields", () => {
     const presentation = presentationFromArtifactViewers({
       nodes: [

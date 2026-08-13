@@ -12,6 +12,7 @@ import {
   type IsValidConnection,
   type NodeTypes,
   type OnConnect,
+  type OnConnectEnd,
   type OnEdgesChange,
   type OnNodesChange,
   type ReactFlowInstance,
@@ -73,12 +74,15 @@ export interface WorkflowCanvasProps {
   onNodesChange: OnNodesChange<CanvasNode>;
   onEdgesChange: OnEdgesChange<CanvasEdge>;
   onConnect: OnConnect;
+  onConnectEnd?: OnConnectEnd;
   isValidConnection?: IsValidConnection<CanvasEdge>;
   onPaneReady?: (
     instance: ReactFlowInstance<CanvasNode, CanvasEdge>,
   ) => void;
   onPaneClick?: () => void;
   animateEdges?: boolean;
+  /** Disable durable canvas gestures while authority or synchronization is unavailable. */
+  editable?: boolean;
   /** Unmount nodes and edges outside the viewport. */
   onlyRenderVisibleElements?: boolean;
   /** Background lattice gap in flow units; omit to hide the painted grid. */
@@ -93,10 +97,12 @@ export function WorkflowCanvas({
   onNodesChange,
   onEdgesChange,
   onConnect,
+  onConnectEnd,
   isValidConnection = connectionIsValid,
   onPaneReady,
   onPaneClick,
   animateEdges = false,
+  editable = true,
   onlyRenderVisibleElements = false,
   gridGap = 54,
 }: WorkflowCanvasProps) {
@@ -122,6 +128,7 @@ export function WorkflowCanvas({
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onConnectEnd={onConnectEnd}
         onInit={onPaneReady}
         onPaneClick={onPaneClick}
         isValidConnection={isValidConnection}
@@ -137,6 +144,10 @@ export function WorkflowCanvas({
         selectionOnDrag
         multiSelectionKeyCode="Shift"
         zoomOnDoubleClick={false}
+        nodesDraggable={editable}
+        nodesConnectable={editable}
+        edgesReconnectable={editable}
+        deleteKeyCode={editable ? ["Backspace", "Delete"] : null}
         onlyRenderVisibleElements={onlyRenderVisibleElements}
         proOptions={{ hideAttribution: true }}
         defaultEdgeOptions={{

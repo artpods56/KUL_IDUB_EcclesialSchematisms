@@ -27,10 +27,10 @@ const s = stylex.create({
     padding: "12px",
     borderWidth: 1,
     borderStyle: "solid",
-    borderColor: tokens.colorBorderStrong,
+    borderColor: tokens.colorBorder,
     borderRadius: "14px",
     backgroundColor: tokens.colorChrome,
-    boxShadow: tokens.shadowNode,
+    boxShadow: tokens.shadowNodeRaised,
     color: tokens.colorText,
   },
   header: {

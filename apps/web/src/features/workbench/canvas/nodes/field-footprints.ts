@@ -13,7 +13,7 @@ import {
  * Calibration is against the default 50px cell, including the 8px gutter each
  * brick reserves below itself:
  * - single-line control (31px) + label ≈ 60px → 1 cell
- * - checkbox (label + square) → compact 3×1 brick
+ * - checkbox (label + full-width bar) → compact 3×1 brick
  * - textarea (96px) + label ≈ 125px → 2 cells
  * - secret (status row + input + hint footer) ≈ 84px → 2 cells
  *

@@ -1,7 +1,6 @@
 "use client";
 
 import * as stylex from "@stylexjs/stylex";
-import { Popover } from "@base-ui/react/popover";
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -9,7 +8,7 @@ import {
   useReactFlow,
   type EdgeProps,
 } from "@xyflow/react";
-import { ChevronDown, Link2, Plus, Trash2, X } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import type {
@@ -17,85 +16,28 @@ import type {
   CanvasEdge,
   CanvasNode,
 } from "../artifact-viewer";
-import type { ArtifactViewerEffect } from "../artifact-interactions";
+import type {
+  ArtifactInteractionField,
+  ArtifactViewerEffect,
+} from "../artifact-interactions";
+import { useOptionalCanvasGridSettings } from "../canvas-grid-settings";
+import { GRID_CELL_SIZE_DEFAULT } from "../grid-layout";
+import { dockedBridgeLayout } from "./docked-connection";
+import { EdgeSelectorBlock } from "./EdgeSelectorBlock";
+import { applyHandleFanOffset } from "./edge-path";
+import { useEdgeIsDocked } from "./useDockedConnection";
+import { useEdgeFanOffsets } from "./useEdgeFanOffsets";
 
 const s = stylex.create({
-  positioner: {
-    position: "absolute",
-    zIndex: 11,
-    pointerEvents: "all",
-  },
-  label: {
-    minHeight: "24px",
-    display: "inline-flex",
-    alignItems: "center",
-    borderWidth: 1,
-    borderStyle: "solid",
-    borderColor: tokens.colorBorderStrong,
-    borderRadius: "8px",
-    backgroundColor: tokens.colorSurfaceRaised,
-    boxShadow: tokens.shadowNode,
-    color: tokens.colorMuted,
-    fontSize: "9px",
-    fontWeight: 700,
-  },
-  labelSelected: {
-    borderColor: tokens.colorAccentBorder,
-    boxShadow: tokens.shadowNodeSelected,
-  },
-  summary: {
-    minHeight: "24px",
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "5px",
-    paddingInline: "8px",
-    borderWidth: 0,
-    borderRadius: "8px 0 0 8px",
-    backgroundColor: {
-      default: "transparent",
-      ":hover": tokens.colorHover,
-    },
-    color: tokens.colorMuted,
-    cursor: "pointer",
-    fontSize: "9px",
-    fontWeight: 700,
-    whiteSpace: "nowrap",
-  },
-  removeButton: {
-    width: "24px",
-    height: "24px",
-    display: "grid",
-    placeItems: "center",
-    padding: 0,
-    borderWidth: 0,
-    borderLeftWidth: 1,
-    borderLeftStyle: "solid",
-    borderLeftColor: tokens.colorBorder,
-    backgroundColor: {
-      default: "transparent",
-      ":hover": tokens.colorDangerHover,
-    },
-    color: { default: tokens.colorSubtle, ":hover": tokens.colorDanger },
-    cursor: "pointer",
-  },
-  popup: {
-    width: "min(520px, calc(100vw - 24px))",
-    display: "grid",
-    gap: "10px",
-    padding: "11px",
-    borderWidth: 1,
-    borderStyle: "solid",
-    borderColor: tokens.colorBorderStrong,
-    borderRadius: "7px",
-    backgroundColor: tokens.colorSurface,
-    boxShadow: tokens.shadowNodeSelected,
-    color: tokens.colorText,
-    zIndex: 50,
-  },
   heading: {
     color: tokens.colorTextEmphasis,
     fontSize: "10px",
     fontWeight: 750,
+  },
+  popup: {
+    display: "grid",
+    gap: "10px",
+    padding: "11px",
   },
   mapping: {
     display: "grid",
@@ -103,10 +45,11 @@ const s = stylex.create({
     alignItems: "center",
     gap: "7px",
   },
-  input: {
+  select: {
     minWidth: 0,
+    width: "100%",
     height: "30px",
-    paddingInline: "9px",
+    paddingInline: "7px",
     borderWidth: 1,
     borderStyle: "solid",
     borderColor: tokens.colorBorder,
@@ -163,6 +106,53 @@ const EFFECTS: readonly ArtifactViewerEffect[] = [
   "focus",
 ];
 
+function interactionChipLabel(
+  effects: readonly ArtifactViewerEffect[],
+): string {
+  return effects.length ? `follow · ${effects.join(" + ")}` : "follow";
+}
+
+function fieldOptionLabel(field: ArtifactInteractionField): string {
+  return `${field.title} · ${field.valueType}`;
+}
+
+function FieldSelect({
+  ariaLabel,
+  value,
+  fields,
+  onChange,
+}: {
+  ariaLabel: string;
+  value: string;
+  fields: readonly ArtifactInteractionField[];
+  onChange: (value: string) => void;
+}) {
+  const known = fields.some((field) => field.id === value);
+  const empty = fields.length === 0;
+  return (
+    <select
+      aria-label={ariaLabel}
+      title={value || ariaLabel}
+      value={value}
+      disabled={empty && !value}
+      {...stylex.props(s.select)}
+      onChange={(event) => onChange(event.currentTarget.value)}
+    >
+      <option value="">
+        {empty ? "No fields yet" : "Choose field"}
+      </option>
+      {!known && value ? (
+        <option value={value}>{value}</option>
+      ) : null}
+      {fields.map((field) => (
+        <option key={field.id} value={field.id}>
+          {fieldOptionLabel(field)}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 export default function ArtifactViewerInteractionEdgeControl({
   id,
   data,
@@ -177,12 +167,26 @@ export default function ArtifactViewerInteractionEdgeControl({
   selected,
 }: EdgeProps<ArtifactViewerInteractionEdge>) {
   const { deleteElements } = useReactFlow<CanvasNode, CanvasEdge>();
-  const [path, labelX, labelY] = getBezierPath({
-    sourceX,
-    sourceY,
+  const docked = useEdgeIsDocked(id);
+  const cellSize =
+    useOptionalCanvasGridSettings()?.settings.cellSize ?? GRID_CELL_SIZE_DEFAULT;
+  const fan = useEdgeFanOffsets(id, sourcePosition, targetPosition);
+  const source = applyHandleFanOffset(
+    { x: sourceX, y: sourceY },
     sourcePosition,
-    targetX,
-    targetY,
+    fan.source,
+  );
+  const target = applyHandleFanOffset(
+    { x: targetX, y: targetY },
+    targetPosition,
+    fan.target,
+  );
+  const [path, labelX, labelY] = getBezierPath({
+    sourceX: source.x,
+    sourceY: source.y,
+    sourcePosition,
+    targetX: target.x,
+    targetY: target.y,
     targetPosition,
   });
   const binding = data?.binding;
@@ -197,8 +201,12 @@ export default function ArtifactViewerInteractionEdgeControl({
       />
     );
   }
-  const sourceFieldListId = `${binding.id}-source-fields`;
-  const targetFieldListId = `${binding.id}-target-fields`;
+  const sourceFields = data?.sourceFields ?? [];
+  const targetFields = data?.targetFields ?? [];
+  const label = interactionChipLabel(binding.effects);
+  const bridge = docked
+    ? dockedBridgeLayout(source, target, cellSize)
+    : null;
 
   const updateBinding = (
     update: Partial<
@@ -212,189 +220,125 @@ export default function ArtifactViewerInteractionEdgeControl({
     <>
       <BaseEdge
         id={id}
-        path={path}
-        markerEnd={markerEnd}
+        path={
+          docked
+            ? `M${source.x},${source.y} L${target.x},${target.y}`
+            : path
+        }
+        markerEnd={docked ? undefined : markerEnd}
         interactionWidth={24}
         style={{
           ...style,
-          opacity: selected ? 0.95 : 0.72,
+          opacity: docked ? 0 : selected ? 0.95 : 0.72,
           strokeWidth: selected ? 2.5 : (style?.strokeWidth ?? 2),
         }}
       />
       <EdgeLabelRenderer>
-        <div
-          className="nodrag nopan nowheel"
-          style={{
-            transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+        <EdgeSelectorBlock
+          anchor={bridge?.anchor ?? { x: labelX, y: labelY }}
+          selected={selected}
+          label={label}
+          docked={docked}
+          width={bridge?.width}
+          height={bridge?.height}
+          bendAriaLabel={`Bend viewer follow ${label}`}
+          bendHandlers={{}}
+          editAriaLabel="Configure viewer interaction"
+          editTitle="Configure field mapping and effects"
+          removeAriaLabel="Remove viewer interaction"
+          onRemove={() => {
+            void deleteElements({ edges: [{ id }] });
           }}
-          {...stylex.props(s.positioner)}
         >
-          <div
-            aria-label="Artifact viewer interaction"
-            {...stylex.props(
-              s.label,
-              selected ? s.labelSelected : null,
-            )}
-          >
-            <Popover.Root>
-              <Popover.Trigger
-                type="button"
-                aria-label="Configure viewer interaction"
-                title="Configure field mapping and effects"
-                {...stylex.props(s.summary)}
-              >
-                <Link2 size={10} aria-hidden="true" />
-                selection · {binding.effects.join(" + ")}
-                <ChevronDown size={10} aria-hidden="true" />
-              </Popover.Trigger>
-              <Popover.Portal>
-                <Popover.Positioner
-                  side="bottom"
-                  align="center"
-                  sideOffset={7}
+          <div {...stylex.props(s.popup)}>
+            <span {...stylex.props(s.heading)}>Field mapping</span>
+            {binding.mappings.map((mapping, index) => (
+              <div key={index} {...stylex.props(s.mapping)}>
+                <FieldSelect
+                  ariaLabel={`Source field ${index + 1}`}
+                  value={mapping.sourceField}
+                  fields={sourceFields}
+                  onChange={(sourceField) => {
+                    const mappings = binding.mappings.map(
+                      (candidate, candidateIndex) =>
+                        candidateIndex === index
+                          ? { ...candidate, sourceField }
+                          : candidate,
+                    );
+                    updateBinding({ mappings });
+                  }}
+                />
+                <span aria-hidden="true" {...stylex.props(s.arrow)}>→</span>
+                <FieldSelect
+                  ariaLabel={`Target field ${index + 1}`}
+                  value={mapping.targetField}
+                  fields={targetFields}
+                  onChange={(targetField) => {
+                    const mappings = binding.mappings.map(
+                      (candidate, candidateIndex) =>
+                        candidateIndex === index
+                          ? { ...candidate, targetField }
+                          : candidate,
+                    );
+                    updateBinding({ mappings });
+                  }}
+                />
+                <button
+                  type="button"
+                  aria-label={`Remove field mapping ${index + 1}`}
+                  title="Remove mapping"
+                  disabled={binding.mappings.length === 1}
+                  {...stylex.props(s.iconButton)}
+                  onClick={() =>
+                    updateBinding({
+                      mappings: binding.mappings.filter(
+                        (_, candidateIndex) => candidateIndex !== index,
+                      ),
+                    })}
                 >
-                  <Popover.Popup
-                    className="nodrag nopan nowheel"
-                    {...stylex.props(s.popup)}
-                  >
-                    <span {...stylex.props(s.heading)}>Field mapping</span>
-                    {binding.mappings.map((mapping, index) => (
-                      <div key={index} {...stylex.props(s.mapping)}>
-                        <input
-                          aria-label={`Source field ${index + 1}`}
-                          placeholder="source field"
-                          list={data?.sourceFields?.length
-                            ? sourceFieldListId
-                            : undefined}
-                          title={mapping.sourceField || "Source field"}
-                          value={mapping.sourceField}
-                          {...stylex.props(s.input)}
-                          onChange={(event) => {
-                            const mappings = binding.mappings.map(
-                              (candidate, candidateIndex) =>
-                                candidateIndex === index
-                                  ? {
-                                      ...candidate,
-                                      sourceField: event.currentTarget.value,
-                                    }
-                                  : candidate,
+                  <Trash2 size={11} aria-hidden="true" />
+                </button>
+              </div>
+            ))}
+            <div {...stylex.props(s.footer)}>
+              <span {...stylex.props(s.effects)}>
+                {EFFECTS.map((effect) => (
+                  <label key={effect} {...stylex.props(s.effect)}>
+                    <input
+                      type="checkbox"
+                      checked={binding.effects.includes(effect)}
+                      onChange={(event) => {
+                        const effects = event.currentTarget.checked
+                          ? [...binding.effects, effect]
+                          : binding.effects.filter(
+                              (candidate) => candidate !== effect,
                             );
-                            updateBinding({ mappings });
-                          }}
-                        />
-                        <span aria-hidden="true" {...stylex.props(s.arrow)}>→</span>
-                        <input
-                          aria-label={`Target field ${index + 1}`}
-                          placeholder="target field"
-                          list={data?.targetFields?.length
-                            ? targetFieldListId
-                            : undefined}
-                          title={mapping.targetField || "Target field"}
-                          value={mapping.targetField}
-                          {...stylex.props(s.input)}
-                          onChange={(event) => {
-                            const mappings = binding.mappings.map(
-                              (candidate, candidateIndex) =>
-                                candidateIndex === index
-                                  ? {
-                                      ...candidate,
-                                      targetField: event.currentTarget.value,
-                                    }
-                                  : candidate,
-                            );
-                            updateBinding({ mappings });
-                          }}
-                        />
-                        <button
-                          type="button"
-                          aria-label={`Remove field mapping ${index + 1}`}
-                          title="Remove mapping"
-                          disabled={binding.mappings.length === 1}
-                          {...stylex.props(s.iconButton)}
-                          onClick={() =>
-                            updateBinding({
-                              mappings: binding.mappings.filter(
-                                (_, candidateIndex) => candidateIndex !== index,
-                              ),
-                            })}
-                        >
-                          <Trash2 size={11} aria-hidden="true" />
-                        </button>
-                      </div>
-                    ))}
-                    <div {...stylex.props(s.footer)}>
-                      <span {...stylex.props(s.effects)}>
-                        {EFFECTS.map((effect) => (
-                          <label key={effect} {...stylex.props(s.effect)}>
-                            <input
-                              type="checkbox"
-                              checked={binding.effects.includes(effect)}
-                              onChange={(event) => {
-                                const effects = event.currentTarget.checked
-                                  ? [...binding.effects, effect]
-                                  : binding.effects.filter(
-                                      (candidate) => candidate !== effect,
-                                    );
-                                if (effects.length) updateBinding({ effects });
-                              }}
-                            />
-                            {effect}
-                          </label>
-                        ))}
-                      </span>
-                      <button
-                        type="button"
-                        aria-label="Add field mapping"
-                        title="Add mapping"
-                        disabled={binding.mappings.length >= 8}
-                        {...stylex.props(s.iconButton)}
-                        onClick={() =>
-                          updateBinding({
-                            mappings: [
-                              ...binding.mappings,
-                              { sourceField: "", targetField: "" },
-                            ],
-                          })}
-                      >
-                        <Plus size={12} aria-hidden="true" />
-                      </button>
-                    </div>
-                    <datalist id={sourceFieldListId}>
-                      {data?.sourceFields?.map((field) => (
-                        <option
-                          key={field.id}
-                          value={field.id}
-                          label={`${field.title} · ${field.valueType}`}
-                        />
-                      ))}
-                    </datalist>
-                    <datalist id={targetFieldListId}>
-                      {data?.targetFields?.map((field) => (
-                        <option
-                          key={field.id}
-                          value={field.id}
-                          label={`${field.title} · ${field.valueType}`}
-                        />
-                      ))}
-                    </datalist>
-                  </Popover.Popup>
-                </Popover.Positioner>
-              </Popover.Portal>
-            </Popover.Root>
-            <button
-              type="button"
-              aria-label="Remove viewer interaction"
-              title="Remove viewer interaction"
-              {...stylex.props(s.removeButton)}
-              onClick={(event) => {
-                event.stopPropagation();
-                void deleteElements({ edges: [{ id }] });
-              }}
-            >
-              <X size={11} aria-hidden="true" />
-            </button>
+                        if (effects.length) updateBinding({ effects });
+                      }}
+                    />
+                    {effect}
+                  </label>
+                ))}
+              </span>
+              <button
+                type="button"
+                aria-label="Add field mapping"
+                title="Add mapping"
+                disabled={binding.mappings.length >= 8}
+                {...stylex.props(s.iconButton)}
+                onClick={() =>
+                  updateBinding({
+                    mappings: [
+                      ...binding.mappings,
+                      { sourceField: "", targetField: "" },
+                    ],
+                  })}
+              >
+                <Plus size={12} aria-hidden="true" />
+              </button>
+            </div>
           </div>
-        </div>
+        </EdgeSelectorBlock>
       </EdgeLabelRenderer>
     </>
   );

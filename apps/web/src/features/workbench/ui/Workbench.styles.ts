@@ -162,10 +162,10 @@ export const workbenchStyles = stylex.create({
     padding: "5px",
     borderWidth: 1,
     borderStyle: "solid",
-    borderColor: tokens.colorBorderStrong,
+    borderColor: tokens.colorBorder,
     borderRadius: "12px",
     backgroundColor: tokens.colorChrome,
-    boxShadow: tokens.shadowNodeSelected,
+    boxShadow: tokens.shadowNodeRaised,
     pointerEvents: "auto",
   },
   selectionLabel: {

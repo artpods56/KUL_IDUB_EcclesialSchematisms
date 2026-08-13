@@ -12,7 +12,7 @@ const s = stylex.create({
     position: "fixed",
     zIndex: 100,
     inset: 0,
-    backgroundColor: "light-dark(rgba(15, 18, 25, 0.35), rgba(2, 6, 20, 0.62))",
+    backgroundColor: "light-dark(rgba(17, 17, 17, 0.32), rgba(0, 0, 0, 0.55))",
   },
   content: {
     position: "fixed",

@@ -3,57 +3,60 @@
 import * as React from "react";
 import * as stylex from "@stylexjs/stylex";
 import { Popover } from "@base-ui/react/popover";
+import { ChevronRight } from "lucide-react";
 
 import { useNodeRegistry } from "@/hooks/use-api";
 import { useWorkspaceContext } from "@/features/workspaces/WorkspaceLayout";
 import type { Port } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
-import { artifactTypeColor } from "../nodes.css";
+import { overlay } from "@/lib/stylex/overlay.stylex";
 import {
   portArtifactTypeVariable,
   resolvedPortArtifactType,
   type WorkflowArtifactTypeBindings,
 } from "../types";
+import {
+  findOutlineNode,
+  outlineCrumbLabel,
+  schemaOutline,
+  schemaTitle,
+  schemaTypeLabel,
+  type OutlineNode,
+} from "./schema-outline";
+
+export { schemaTypeLabel };
 
 /**
- * Port type inspector — a popover that renders the artifact payload schema
- * as a nested field tree, plus declared field projections (discovery only).
+ * Port type inspector — a popover that drills one object at a time through
+ * the artifact payload schema. Informative only: it does not start
+ * connections or pick a projection.
  */
 
-/**
- * The trigger is a small inspect control on the port pill. Offset keeps the
- * popover clear of the node shell and of an edge drag starting on the same port.
- */
 const PORT_POPOVER_OFFSET = 24;
+
+function canvasOverlayProps(props: ReturnType<typeof stylex.props>) {
+  return {
+    ...props,
+    className: `nodrag nowheel${props.className ? ` ${props.className}` : ""}`,
+  };
+}
 
 const s = stylex.create({
   popup: {
-    width: "320px",
+    width: "440px",
     overflow: "hidden",
-    borderRadius: "12px",
-    backgroundColor: tokens.colorSurface,
-    boxShadow: tokens.shadowNodeSelected,
-    color: tokens.colorText,
     zIndex: 50,
   },
   header: {
     display: "grid",
-    gap: "3px",
-    padding: "12px 14px 10px",
+    gap: "6px",
+    padding: "16px 18px 14px",
   },
   contract: {
-    display: "flex",
-    alignItems: "center",
-    gap: "7px",
+    color: tokens.colorSubtle,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    fontSize: tokens.fontSizeSm,
+    fontSize: tokens.fontSizeXs,
     fontWeight: 700,
-  },
-  dot: {
-    width: "7px",
-    height: "7px",
-    flexShrink: 0,
-    borderRadius: "9999px",
   },
   description: {
     color: tokens.colorMuted,
@@ -61,35 +64,48 @@ const s = stylex.create({
     lineHeight: 1.45,
   },
   section: {
-    padding: "9px 14px 12px",
+    padding: "14px 18px 18px",
     borderTopWidth: 1,
     borderTopStyle: "solid",
     borderTopColor: tokens.colorDivider,
   },
-  sectionTitle: {
-    marginBottom: "6px",
-    color: tokens.colorMuted,
-    fontSize: "10px",
-    fontWeight: 800,
-    letterSpacing: "0.08em",
-    textTransform: "uppercase",
-  },
   tree: {
     display: "grid",
-    gap: "2px",
-    maxHeight: "260px",
+    gap: "1px",
+    maxHeight: "420px",
     overflowY: "auto",
   },
   row: {
     display: "flex",
-    alignItems: "baseline",
+    alignItems: "center",
     gap: "8px",
-    minHeight: "20px",
+    minHeight: "24px",
+    width: "100%",
+    padding: "3px 8px",
+    borderWidth: 0,
+    borderRadius: tokens.radiusSm,
+    backgroundColor: "transparent",
+    color: "inherit",
+    font: "inherit",
+    textAlign: "left",
+  },
+  rowButton: {
+    cursor: "pointer",
+    backgroundColor: {
+      default: "transparent",
+      ":hover": tokens.colorHover,
+    },
   },
   fieldName: {
     color: tokens.colorTextEmphasis,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    fontSize: tokens.fontSizeXs,
+    fontSize: tokens.fontSizeSm,
+  },
+  branchName: {
+    color: tokens.colorMuted,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontSize: tokens.fontSizeSm,
+    fontStyle: "italic",
   },
   required: { color: tokens.colorSubtle },
   fieldType: {
@@ -99,159 +115,80 @@ const s = stylex.create({
     fontSize: tokens.fontSizeXs,
     whiteSpace: "nowrap",
   },
+  chevron: {
+    flexShrink: 0,
+    color: tokens.colorSubtle,
+  },
+  crumbs: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "6px",
+    marginBottom: "14px",
+    paddingBottom: "12px",
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderBottomStyle: "solid",
+    borderBottomColor: tokens.colorDivider,
+  },
+  crumb: {
+    padding: 0,
+    borderWidth: 0,
+    backgroundColor: "transparent",
+    color: tokens.colorMuted,
+    cursor: "pointer",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontSize: tokens.fontSizeXs,
+  },
+  crumbCurrent: {
+    color: tokens.colorTextEmphasis,
+    cursor: "default",
+  },
+  crumbSep: {
+    color: tokens.colorSubtle,
+    fontSize: tokens.fontSizeXs,
+  },
   empty: {
     color: tokens.colorSubtle,
     fontSize: tokens.fontSizeXs,
     lineHeight: 1.45,
   },
   emptyError: { color: tokens.colorDanger },
-  projectionHint: {
-    marginBottom: "6px",
-    color: tokens.colorSubtle,
-    fontSize: tokens.fontSizeXs,
-    lineHeight: 1.4,
-  },
-  projection: {
-    display: "flex",
-    alignItems: "baseline",
-    gap: "6px",
-    minHeight: "20px",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    fontSize: tokens.fontSizeXs,
-  },
-  projectionPath: { color: tokens.colorTextEmphasis },
-  projectionArrow: { color: tokens.colorSubtle },
-  projectionTarget: { color: tokens.colorAccent },
 });
 
-type Schema = Record<string, unknown>;
-
-function record(value: unknown): Schema | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return null;
-  }
-  return value as Schema;
-}
-
-function dereferenceSchema(schema: Schema, root: Schema): Schema {
-  let current = schema;
-  const visited = new Set<string>();
-
-  while (typeof current.$ref === "string" && !visited.has(current.$ref)) {
-    const reference = current.$ref;
-    visited.add(reference);
-    if (!reference.startsWith("#/$defs/")) break;
-    const definitions = record(root.$defs);
-    const resolved = record(definitions?.[reference.slice("#/$defs/".length)]);
-    if (!resolved) break;
-    current = resolved;
-  }
-  return current;
-}
-
-function schemaVariants(schema: Schema, root: Schema): Schema[] {
-  const resolved = dereferenceSchema(schema, root);
-  if (!Array.isArray(resolved.anyOf)) return [resolved];
-
-  const variants = resolved.anyOf.flatMap((candidate) => {
-    const candidateSchema = record(candidate);
-    return candidateSchema ? [dereferenceSchema(candidateSchema, root)] : [];
-  });
-  return variants.length ? variants : [resolved];
-}
-
-function directTypeLabel(schema: Schema, root: Schema): string {
-  switch (schema.type) {
-    case "string":
-      return "str";
-    case "integer":
-      return "int";
-    case "number":
-      return "float";
-    case "boolean":
-      return "bool";
-    case "null":
-      return "None";
-    case "array":
-      return `list[${schemaTypeLabel(record(schema.items), root)}]`;
-    case "object":
-      return "object";
-    default:
-      return record(schema.properties) ? "object" : "any";
-  }
-}
-
-/** Python-flavored type label for a JSON-schema fragment. */
-export function schemaTypeLabel(
-  schema: Schema | null,
-  root: Schema | null = schema,
-): string {
-  if (!schema || !root) return "any";
-
-  const labels = schemaVariants(schema, root).map((variant) =>
-    directTypeLabel(variant, root),
+function TypeMark({ node }: { node: OutlineNode }) {
+  return (
+    <>
+      <span
+        {...stylex.props(node.kind === "branch" ? s.branchName : s.fieldName)}
+      >
+        {node.name}
+        {node.required ? <span {...stylex.props(s.required)}>*</span> : null}
+      </span>
+      <span {...stylex.props(s.fieldType)}>{node.typeLabel}</span>
+    </>
   );
-  return [...new Set(labels)].join(" | ");
 }
 
-interface FieldRow {
-  depth: number;
-  name: string;
-  type: string;
-  required: boolean;
-}
+export function SchemaDrill({
+  schema,
+  rootLabel,
+}: {
+  schema: Record<string, unknown>;
+  rootLabel?: string;
+}) {
+  const outline = schemaOutline(schema);
+  const [path, setPath] = React.useState<string[]>([]);
+  const current =
+    path.length === 0
+      ? undefined
+      : findOutlineNode(outline, path[path.length - 1]!);
+  const rows = current?.children ?? outline;
+  const crumbs = path
+    .map((id) => findOutlineNode(outline, id))
+    .filter((node): node is OutlineNode => Boolean(node));
+  const root = rootLabel ?? schemaTitle(schema);
 
-function collectRows(schema: Schema, root: Schema, depth: number): FieldRow[] {
-  if (depth > 8) return [];
-
-  const resolved = schemaVariants(schema, root).find((variant) =>
-    record(variant.properties),
-  );
-  const properties = record(resolved?.properties);
-  if (!properties) return [];
-
-  const required = new Set(
-    Array.isArray(resolved?.required)
-      ? resolved.required.filter((value): value is string =>
-          typeof value === "string",
-        )
-      : [],
-  );
-
-  return Object.entries(properties).flatMap(([name, rawProperty]) => {
-    const propertySchema = record(rawProperty);
-    if (!propertySchema) return [];
-    const variants = schemaVariants(propertySchema, root);
-
-    const row: FieldRow = {
-      depth,
-      name,
-      type: schemaTypeLabel(propertySchema, root),
-      required: required.has(name),
-    };
-    const children: FieldRow[] = [];
-    const objectVariant = variants.find((variant) =>
-      record(variant.properties),
-    );
-    if (objectVariant) {
-      children.push(...collectRows(objectVariant, root, depth + 1));
-    }
-
-    for (const variant of variants) {
-      if (variant.type !== "array") continue;
-      const items = record(variant.items);
-      if (items) {
-        children.push(...collectRows(items, root, depth + 1));
-      }
-    }
-
-    return [row, ...children];
-  });
-}
-
-export function SchemaTree({ schema }: { schema: Schema }) {
-  const rows = collectRows(schema, schema, 0);
-  if (!rows.length) {
+  if (!outline.length) {
     return (
       <p {...stylex.props(s.empty)}>
         No declared payload schema — this artifact carries opaque content.
@@ -260,25 +197,53 @@ export function SchemaTree({ schema }: { schema: Schema }) {
   }
 
   return (
-    <div
-      className={`nodrag nowheel ${stylex.props(s.tree).className}`}
-    >
-      {rows.map((row, index) => (
-        <div
-          key={`${row.depth}-${row.name}-${index}`}
-          {...stylex.props(s.row)}
-          style={{ paddingLeft: row.depth * 14 }}
+    <>
+      <div {...stylex.props(s.crumbs)}>
+        <button
+          type="button"
+          {...stylex.props(s.crumb, path.length === 0 ? s.crumbCurrent : null)}
+          onClick={() => setPath([])}
         >
-          <span {...stylex.props(s.fieldName)}>
-            {row.name}
-            {row.required ? (
-              <span {...stylex.props(s.required)}>*</span>
-            ) : null}
-          </span>
-          <span {...stylex.props(s.fieldType)}>{row.type}</span>
-        </div>
-      ))}
-    </div>
+          {root}
+        </button>
+        {crumbs.map((node, index) => (
+          <React.Fragment key={node.id}>
+            <span {...stylex.props(s.crumbSep)}>/</span>
+            <button
+              type="button"
+              {...stylex.props(
+                s.crumb,
+                index === crumbs.length - 1 ? s.crumbCurrent : null,
+              )}
+              onClick={() => setPath(path.slice(0, index + 1))}
+            >
+              {outlineCrumbLabel(node)}
+            </button>
+          </React.Fragment>
+        ))}
+      </div>
+      <div {...canvasOverlayProps(stylex.props(s.tree))}>
+        {rows.map((node) =>
+          node.expandable ? (
+            <button
+              key={node.id}
+              type="button"
+              {...stylex.props(s.row, s.rowButton)}
+              onClick={() => setPath([...path, node.id])}
+            >
+              <TypeMark node={node} />
+              <span {...stylex.props(s.chevron)}>
+                <ChevronRight size={13} />
+              </span>
+            </button>
+          ) : (
+            <div key={node.id} {...stylex.props(s.row)}>
+              <TypeMark node={node} />
+            </div>
+          ),
+        )}
+      </div>
+    </>
   );
 }
 
@@ -312,14 +277,11 @@ export function PortTypePopover({
           artifact.key.schema_version === artifactType.schema_version,
       )
     : undefined;
-  const color = artifactType
-    ? artifactTypeColor(artifactType.id, tokens.colorAccent)
-    : tokens.colorAccent;
   const contract = artifactType
     ? `${artifactType.id}@${artifactType.schema_version}`
     : "Any artifact";
-  const payloadSchema = record(spec?.payload_schema) ?? {};
-  const projections = spec?.field_projections ?? [];
+  const payloadSchema = (spec?.payload_schema ?? {}) as Record<string, unknown>;
+  const rootLabel = schemaTitle(payloadSchema, spec?.title ?? "Payload");
 
   return (
     <Popover.Root open={open} onOpenChange={onOpenChange}>
@@ -331,14 +293,10 @@ export function PortTypePopover({
           sideOffset={PORT_POPOVER_OFFSET}
         >
           <Popover.Popup
-            className={`nodrag nowheel ${stylex.props(s.popup).className}`}
+            {...canvasOverlayProps(stylex.props(overlay.popup, s.popup))}
           >
             <header {...stylex.props(s.header)}>
               <span {...stylex.props(s.contract)}>
-                <span
-                  {...stylex.props(s.dot)}
-                  style={{ backgroundColor: color }}
-                />
                 {shape === "many" ? `list[${contract}]` : contract}
               </span>
               {port.description ? (
@@ -348,9 +306,6 @@ export function PortTypePopover({
               ) : null}
             </header>
             <section {...stylex.props(s.section)}>
-              <div {...stylex.props(s.sectionTitle)}>
-                {spec?.title ?? "Payload"}
-              </div>
               {!artifactType ? (
                 <p {...stylex.props(s.empty)}>
                   This generic port binds to a concrete artifact type when it is
@@ -370,39 +325,17 @@ export function PortTypePopover({
                   Payload schema unavailable.
                 </p>
               ) : spec ? (
-                <SchemaTree schema={payloadSchema} />
+                <SchemaDrill
+                  key={contract}
+                  schema={payloadSchema}
+                  rootLabel={rootLabel}
+                />
               ) : (
                 <p {...stylex.props(s.empty)}>
                   This artifact type is not declared in the current registry.
                 </p>
               )}
             </section>
-            {projections.length ? (
-              <section {...stylex.props(s.section)}>
-                <div {...stylex.props(s.sectionTitle)}>Projectable fields</div>
-                {port.direction === "output" ? (
-                  <p {...stylex.props(s.projectionHint)}>
-                    Drag this port to connect with the whole output. When fields
-                    are available, you can choose one on the connection after
-                    wiring.
-                  </p>
-                ) : null}
-                {projections.map((projection) => (
-                  <div
-                    key={projection.path.join(".")}
-                    {...stylex.props(s.projection)}
-                  >
-                    <span {...stylex.props(s.projectionPath)}>
-                      .{projection.path.join(".")}
-                    </span>
-                    <span {...stylex.props(s.projectionArrow)}>→</span>
-                    <span {...stylex.props(s.projectionTarget)}>
-                      {projection.target_artifact_type.id}
-                    </span>
-                  </div>
-                ))}
-              </section>
-            ) : null}
           </Popover.Popup>
         </Popover.Positioner>
       </Popover.Portal>
