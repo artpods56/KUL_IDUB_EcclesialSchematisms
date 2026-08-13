@@ -1,4 +1,4 @@
-set dotenv-load := true
+set dotenv-load
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 graphy_env := env_var_or_default("GRAPHY_ENV_FILE", "/etc/graphy/graphy.env")
