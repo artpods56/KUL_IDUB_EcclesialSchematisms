@@ -41,9 +41,12 @@ const s = stylex.create({
   bar: {
     position: "absolute",
     zIndex: 30,
-    bottom: "78px",
+    bottom: {
+      default: "78px",
+      "@media (max-width: 720px)": "calc(80px + env(safe-area-inset-bottom))",
+    },
     left: "50%",
-    width: "min(460px, calc(100vw - 32px))",
+    width: "min(460px, calc(100% - 24px))",
     minHeight: "52px",
     display: "grid",
     gridTemplateColumns: "28px minmax(0, 1fr)",
@@ -119,7 +122,10 @@ const s = stylex.create({
   messageWarning: { color: tokens.colorWarning },
   messageError: { color: tokens.colorDanger },
   action: {
-    height: "32px",
+    height: {
+      default: "32px",
+      "@media (max-width: 720px)": "44px",
+    },
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",

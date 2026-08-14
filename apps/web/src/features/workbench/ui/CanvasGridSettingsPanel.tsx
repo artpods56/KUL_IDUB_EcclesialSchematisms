@@ -19,12 +19,31 @@ const s = stylex.create({
   panel: {
     position: "absolute",
     zIndex: 40,
-    top: "70px",
-    right: "13px",
-    width: "min(280px, calc(100vw - 26px))",
+    top: {
+      default: "70px",
+      "@media (max-width: 620px)": "calc(68px + env(safe-area-inset-top, 0px))",
+    },
+    right: {
+      default: "13px",
+      "@media (max-width: 620px)": "12px",
+    },
+    left: {
+      default: "auto",
+      "@media (max-width: 620px)": "12px",
+    },
+    width: {
+      default: "min(280px, calc(100% - 26px))",
+      "@media (max-width: 620px)": "auto",
+    },
+    maxHeight: {
+      default: "calc(100% - 96px)",
+      "@media (max-width: 620px)": "calc(100% - 92px - env(safe-area-inset-top, 0px))",
+    },
     display: "grid",
     gap: "10px",
     padding: "12px",
+    overflowY: "auto",
+    overscrollBehaviorY: "contain",
     borderWidth: 1,
     borderStyle: "solid",
     borderColor: tokens.colorBorder,
@@ -61,8 +80,14 @@ const s = stylex.create({
     flexShrink: 0,
   },
   iconButton: {
-    width: "28px",
-    height: "28px",
+    width: {
+      default: "28px",
+      "@media (max-width: 620px)": "44px",
+    },
+    height: {
+      default: "28px",
+      "@media (max-width: 620px)": "44px",
+    },
     display: "grid",
     placeItems: "center",
     borderWidth: 0,
@@ -95,8 +120,14 @@ const s = stylex.create({
   },
   switch: {
     position: "relative",
-    width: "36px",
-    height: "20px",
+    width: {
+      default: "36px",
+      "@media (max-width: 620px)": "44px",
+    },
+    height: {
+      default: "20px",
+      "@media (max-width: 620px)": "28px",
+    },
     flexShrink: 0,
     borderWidth: 0,
     borderRadius: "999px",
@@ -111,8 +142,14 @@ const s = stylex.create({
     position: "absolute",
     top: "2px",
     left: "2px",
-    width: "16px",
-    height: "16px",
+    width: {
+      default: "16px",
+      "@media (max-width: 620px)": "24px",
+    },
+    height: {
+      default: "16px",
+      "@media (max-width: 620px)": "24px",
+    },
     borderRadius: "999px",
     backgroundColor: tokens.colorOnAccent,
     transitionProperty: "transform",
@@ -148,7 +185,10 @@ const s = stylex.create({
     gap: "4px",
   },
   preset: {
-    height: "26px",
+    height: {
+      default: "26px",
+      "@media (max-width: 620px)": "44px",
+    },
     paddingInline: "8px",
     borderWidth: 1,
     borderStyle: "solid",
@@ -173,7 +213,10 @@ const s = stylex.create({
     gap: "6px",
   },
   actionButton: {
-    height: "32px",
+    height: {
+      default: "32px",
+      "@media (max-width: 620px)": "44px",
+    },
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",

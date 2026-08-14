@@ -20,10 +20,26 @@ const s = stylex.create({
     left: "50%",
     top: "50%",
     transform: "translate(-50%, -50%)",
-    width: "640px",
-    maxWidth: "92vw",
-    maxHeight: "85vh",
-    borderRadius: tokens.radiusLg,
+    width: {
+      default: "640px",
+      "@media (max-width: 620px)": "100vw",
+    },
+    maxWidth: {
+      default: "92vw",
+      "@media (max-width: 620px)": "100vw",
+    },
+    height: {
+      default: "auto",
+      "@media (max-width: 620px)": "100dvh",
+    },
+    maxHeight: {
+      default: "85vh",
+      "@media (max-width: 620px)": "100dvh",
+    },
+    borderRadius: {
+      default: tokens.radiusLg,
+      "@media (max-width: 620px)": 0,
+    },
     backgroundColor: tokens.colorSurface,
     border: `1px solid ${tokens.colorBorder}`,
     display: "flex",
@@ -31,8 +47,22 @@ const s = stylex.create({
     overflow: "hidden",
   },
   header: {
-    padding: `${tokens.space4} ${tokens.space4} ${tokens.space2}`,
-    paddingRight: tokens.space6,
+    paddingTop: {
+      default: tokens.space4,
+      "@media (max-width: 620px)":
+        `calc(${tokens.space4} + env(safe-area-inset-top, 0px))`,
+    },
+    paddingRight: {
+      default: tokens.space6,
+      "@media (max-width: 620px)":
+        `calc(60px + env(safe-area-inset-right, 0px))`,
+    },
+    paddingBottom: tokens.space2,
+    paddingLeft: {
+      default: tokens.space4,
+      "@media (max-width: 620px)":
+        `calc(${tokens.space4} + env(safe-area-inset-left, 0px))`,
+    },
   },
   title: {
     fontSize: tokens.fontSizeLg,
@@ -46,19 +76,48 @@ const s = stylex.create({
     marginTop: tokens.space1,
   },
   body: {
-    padding: `${tokens.space2} ${tokens.space4} ${tokens.space4}`,
+    paddingTop: tokens.space2,
+    paddingRight: {
+      default: tokens.space4,
+      "@media (max-width: 620px)":
+        `calc(${tokens.space4} + env(safe-area-inset-right, 0px))`,
+    },
+    paddingBottom: {
+      default: tokens.space4,
+      "@media (max-width: 620px)":
+        `calc(${tokens.space4} + env(safe-area-inset-bottom, 0px))`,
+    },
+    paddingLeft: {
+      default: tokens.space4,
+      "@media (max-width: 620px)":
+        `calc(${tokens.space4} + env(safe-area-inset-left, 0px))`,
+    },
     overflow: "auto",
     flex: 1,
   },
   close: {
     position: "absolute",
-    top: tokens.space3,
-    right: tokens.space3,
+    top: {
+      default: tokens.space3,
+      "@media (max-width: 620px)":
+        `calc(${tokens.space1} + env(safe-area-inset-top, 0px))`,
+    },
+    right: {
+      default: tokens.space3,
+      "@media (max-width: 620px)":
+        `calc(${tokens.space1} + env(safe-area-inset-right, 0px))`,
+    },
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    height: "28px",
-    width: "28px",
+    height: {
+      default: "28px",
+      "@media (max-width: 620px)": "44px",
+    },
+    width: {
+      default: "28px",
+      "@media (max-width: 620px)": "44px",
+    },
     borderRadius: tokens.radiusSm,
     color: tokens.colorMuted,
     backgroundColor: "transparent",

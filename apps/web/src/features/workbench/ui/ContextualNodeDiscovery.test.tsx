@@ -176,6 +176,7 @@ afterEach(async () => {
   roots.clear();
   document.body.innerHTML = "";
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("popupPositionBesidePreview", () => {
@@ -202,9 +203,40 @@ describe("popupPositionBesidePreview", () => {
       ),
     ).toEqual({ left: 544, top: 80 });
   });
+
+  it("keeps a compact menu inside a phone viewport", () => {
+    expect(
+      popupPositionBesidePreview(
+        null,
+        { x: 300, y: 460 },
+        296,
+        456,
+        { width: 320, height: 480 },
+      ),
+    ).toEqual({ left: 12, top: 12 });
+  });
 });
 
 describe("ContextualNodeDiscovery", () => {
+  it("reserves the measured mobile safe area in its height clamp", async () => {
+    vi.stubGlobal("innerWidth", 320);
+    vi.stubGlobal("innerHeight", 480);
+    const { container } = await renderDiscovery();
+    const safeAreaProbe = container.firstElementChild as HTMLSpanElement;
+    vi.spyOn(safeAreaProbe, "getBoundingClientRect").mockReturnValue(
+      DOMRect.fromRect({ height: 20 }),
+    );
+
+    await React.act(async () => {
+      window.dispatchEvent(new Event("resize"));
+      await Promise.resolve();
+    });
+
+    const dialog = container.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog?.style.maxHeight).toBe("380px");
+    expect(dialog?.style.top).toContain("safe-area-inset-top");
+  });
+
   it("creates immediately when a candidate has one route", async () => {
     const onConfirm = vi.fn();
     await renderDiscovery({ onConfirm });

@@ -36,8 +36,29 @@ export function SaveAsTemplate({ source }: { source: SaveAsTemplateSource | null
   const [description, setDescription] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [message, setMessage] = React.useState<string | null>(null);
+  const nameInputRef = React.useRef<HTMLInputElement>(null);
+  const autoFocusAttemptedRef = React.useRef(false);
 
   const name = nameOverride ?? graph?.name ?? "";
+
+  React.useEffect(() => {
+    if (
+      autoFocusAttemptedRef.current ||
+      !source ||
+      !graph ||
+      !location?.capabilities.includes("create_template")
+    ) {
+      return;
+    }
+    autoFocusAttemptedRef.current = true;
+    if (
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(pointer: fine)").matches
+    ) {
+      nameInputRef.current?.focus();
+    }
+  }, [graph, location, source]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -136,10 +157,10 @@ export function SaveAsTemplate({ source }: { source: SaveAsTemplateSource | null
             <label>
               Template name
               <input
+                ref={nameInputRef}
                 value={name}
                 onChange={(event) => setNameOverride(event.target.value)}
                 maxLength={160}
-                autoFocus
                 required
               />
             </label>

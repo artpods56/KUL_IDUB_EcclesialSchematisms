@@ -32,10 +32,24 @@ const s = stylex.create({
   drawer: {
     position: "absolute",
     zIndex: 35,
-    top: "66px",
-    right: "13px",
-    bottom: "13px",
-    width: "min(880px, calc(100vw - 26px))",
+    top: {
+      default: "66px",
+      "@media (max-width: 720px)": "12px",
+      "@media (max-width: 620px)": "calc(68px + env(safe-area-inset-top, 0px))",
+    },
+    right: {
+      default: "13px",
+      "@media (max-width: 720px)": "12px",
+    },
+    bottom: "12px",
+    left: {
+      default: "auto",
+      "@media (max-width: 720px)": "12px",
+    },
+    width: {
+      default: "min(880px, calc(100% - 26px))",
+      "@media (max-width: 720px)": "auto",
+    },
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
@@ -84,8 +98,14 @@ const s = stylex.create({
     whiteSpace: "nowrap",
   },
   headerButton: {
-    width: "30px",
-    height: "30px",
+    width: {
+      default: "30px",
+      "@media (max-width: 720px)": "44px",
+    },
+    height: {
+      default: "30px",
+      "@media (max-width: 720px)": "44px",
+    },
     display: "grid",
     placeItems: "center",
     flexShrink: 0,
@@ -122,6 +142,10 @@ const s = stylex.create({
     gridTemplateColumns: {
       default: "300px minmax(0, 1fr)",
       "@media (max-width: 720px)": "1fr",
+    },
+    gridTemplateRows: {
+      default: "minmax(0, 1fr)",
+      "@media (max-width: 720px)": "minmax(180px, 0.8fr) minmax(0, 1.2fr)",
     },
   },
   listPane: {
@@ -211,7 +235,10 @@ const s = stylex.create({
   },
   loadMore: {
     width: "100%",
-    height: "31px",
+    height: {
+      default: "31px",
+      "@media (max-width: 720px)": "44px",
+    },
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
@@ -229,7 +256,16 @@ const s = stylex.create({
   detailPane: {
     minHeight: 0,
     overflowY: "auto",
-    padding: "14px",
+    padding: {
+      default: "14px",
+      "@media (max-width: 720px)": "12px",
+    },
+    borderTopWidth: {
+      default: 0,
+      "@media (max-width: 720px)": 1,
+    },
+    borderTopStyle: "solid",
+    borderTopColor: tokens.colorBorder,
   },
   detailHeader: {
     display: "grid",

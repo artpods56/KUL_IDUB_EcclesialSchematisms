@@ -245,12 +245,24 @@ interface WorkbenchProps {
   initialGraphId: string | null;
 }
 
-const WORKBENCH_FIT_VIEW_OPTIONS = {
+const MOBILE_WORKBENCH_QUERY = "(max-width: 720px)";
+
+const WORKBENCH_DESKTOP_FIT_VIEW_OPTIONS = {
   padding: {
     top: "90px",
     right: "48px",
     bottom: "64px",
     left: "165px",
+  },
+  maxZoom: 0.88,
+} as const;
+
+const WORKBENCH_MOBILE_FIT_VIEW_OPTIONS = {
+  padding: {
+    top: "76px",
+    right: "20px",
+    bottom: "96px",
+    left: "20px",
   },
   maxZoom: 0.88,
 } as const;
@@ -280,6 +292,17 @@ function WorkbenchBody({
   workspaceSlug,
   initialGraphId,
 }: WorkbenchProps) {
+  const [mobileWorkbench, setMobileWorkbench] = React.useState(false);
+  React.useLayoutEffect(() => {
+    const media = window.matchMedia(MOBILE_WORKBENCH_QUERY);
+    const updateMobileWorkbench = () => setMobileWorkbench(media.matches);
+    updateMobileWorkbench();
+    media.addEventListener("change", updateMobileWorkbench);
+    return () => media.removeEventListener("change", updateMobileWorkbench);
+  }, []);
+  const workbenchFitViewOptions = mobileWorkbench
+    ? WORKBENCH_MOBILE_FIT_VIEW_OPTIONS
+    : WORKBENCH_DESKTOP_FIT_VIEW_OPTIONS;
   const {
     data: registry,
     error: registryError,
@@ -1672,10 +1695,10 @@ function WorkbenchBody({
     // the camera after duplicate/remove/add.
     if (!flow || !nodesRef.current.length) return;
     const frame = window.requestAnimationFrame(
-      () => void flow.fitView(WORKBENCH_FIT_VIEW_OPTIONS),
+      () => void flow.fitView(workbenchFitViewOptions),
     );
     return () => window.cancelAnimationFrame(frame);
-  }, [fitRevision, flow]);
+  }, [fitRevision, flow, workbenchFitViewOptions]);
 
   const imageUploadWithoutImages = nodes.some(
     (node) =>
@@ -3849,7 +3872,7 @@ function WorkbenchBody({
         }}
       >
         <WorkflowCanvas
-          fitViewOptions={WORKBENCH_FIT_VIEW_OPTIONS}
+          fitViewOptions={workbenchFitViewOptions}
           nodes={allCanvasNodes}
           edges={allCanvasEdges}
           onNodesChange={onNodesChange}
@@ -4080,7 +4103,7 @@ function WorkbenchBody({
           disabled={!flow}
           title="Fit workflow"
           {...stylex.props(s.railButton)}
-          onClick={() => void flow?.fitView(WORKBENCH_FIT_VIEW_OPTIONS)}
+          onClick={() => void flow?.fitView(workbenchFitViewOptions)}
         >
           <Maximize2 size={14} />
           <span {...stylex.props(s.railLabel)}>Fit</span>

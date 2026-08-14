@@ -7,11 +7,13 @@ import {
   LayoutGrid,
   LoaderCircle,
   LogOut,
+  Menu,
   Plus,
   Save,
   Settings,
   Users,
   Workflow,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
@@ -52,8 +54,21 @@ const RAIL_EXPANDED_WIDTH = 200;
 const RAIL_COLLAPSED_WIDTH = 64;
 const RAIL_COLLAPSE_THRESHOLD = 132;
 const RAIL_DESKTOP_QUERY = "(min-width: 861px)";
+const RAIL_MOBILE_QUERY = "(max-width: 620px)";
 
 const railCollapsedListeners = new Set<() => void>();
+
+function subscribeRailMobile(listener: () => void): () => void {
+  if (typeof window.matchMedia !== "function") return () => undefined;
+  const media = window.matchMedia(RAIL_MOBILE_QUERY);
+  media.addEventListener("change", listener);
+  return () => media.removeEventListener("change", listener);
+}
+
+function readRailMobile(): boolean {
+  return typeof window.matchMedia === "function" &&
+    window.matchMedia(RAIL_MOBILE_QUERY).matches;
+}
 
 function subscribeRailCollapsed(listener: () => void): () => void {
   railCollapsedListeners.add(listener);
@@ -213,12 +228,21 @@ export function WorkspaceRail({
   const pathname = usePathname() ?? "";
   const { cycleTheme, preference } = useTheme();
   const [collapsed, setCollapsed] = useRailCollapsed();
+  const mobileViewport = React.useSyncExternalStore(
+    subscribeRailMobile,
+    readRailMobile,
+    () => false,
+  );
   const [accountMenuOpen, setAccountMenuOpen] = React.useState(false);
   const [graphPanelOpen, setGraphPanelOpen] = React.useState(false);
+  const [mobileOpen, setMobileOpen] = React.useState(false);
   const [graphActionBusyId, setGraphActionBusyId] = React.useState<string | null>(
     null,
   );
   const [previewCollapsed, setPreviewCollapsed] = React.useState<boolean | null>(null);
+  const mobileMenuButtonRef = React.useRef<HTMLButtonElement>(null);
+  const mobileRailRef = React.useRef<HTMLElement>(null);
+  const graphPanelTriggerRef = React.useRef<HTMLButtonElement>(null);
   const chrome = useWorkbenchChrome();
   const dragRef = React.useRef<{
     pointerId: number;
@@ -227,8 +251,35 @@ export function WorkspaceRail({
     moved: boolean;
   } | null>(null);
 
+  const closeMobileNavigation = React.useCallback((restoreFocus = false) => {
+    setMobileOpen(false);
+    if (!restoreFocus) return;
+    window.requestAnimationFrame(() => mobileMenuButtonRef.current?.focus());
+  }, []);
+
+  const closeGraphPanel = React.useCallback((restoreFocus = true) => {
+    setGraphPanelOpen(false);
+    if (!restoreFocus) return;
+    window.requestAnimationFrame(() => {
+      const trigger = window.matchMedia(RAIL_MOBILE_QUERY).matches
+        ? mobileMenuButtonRef.current
+        : graphPanelTriggerRef.current;
+      trigger?.focus();
+    });
+  }, []);
+
   const goGraphs = () => {
+    closeMobileNavigation(true);
     router.push("/graphs");
+  };
+
+  const activateBrand = () => {
+    closeMobileNavigation(true);
+    if (onBrandClick) {
+      onBrandClick();
+    } else {
+      goGraphs();
+    }
   };
 
   const selectedWorkspace = resolveSelectedWorkspace(workspaces, activeSlug);
@@ -236,6 +287,7 @@ export function WorkspaceRail({
   const onChangeWorkspace = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const slug = event.currentTarget.value;
     if (!slug) return;
+    closeMobileNavigation(true);
     router.push(`/workspaces/${encodeURIComponent(slug)}`);
   };
 
@@ -303,12 +355,95 @@ export function WorkspaceRail({
 
   React.useEffect(() => () => clearRailWidthOverride(), []);
 
+  React.useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia(RAIL_MOBILE_QUERY);
+    const closeWhenLeavingMobile = (event: MediaQueryListEvent) => {
+      if (event.matches) return;
+      const focusWasInsideRail = mobileRailRef.current?.contains(
+        document.activeElement,
+      );
+      setMobileOpen(false);
+      if (focusWasInsideRail) {
+        window.requestAnimationFrame(() => {
+          mobileRailRef.current
+            ?.querySelector<HTMLElement>("[aria-label='Switch workspace']")
+            ?.focus();
+        });
+      }
+    };
+    media.addEventListener("change", closeWhenLeavingMobile);
+    return () => media.removeEventListener("change", closeWhenLeavingMobile);
+  }, []);
+
+  React.useEffect(() => {
+    if (!mobileViewport || !mobileOpen) return;
+    const rail = mobileRailRef.current;
+    if (!rail) return;
+    const focusableSelectors = [
+      "a[href]",
+      "button:not([disabled])",
+      "input:not([disabled])",
+      "select:not([disabled])",
+      "textarea:not([disabled])",
+      "[tabindex]:not([tabindex='-1'])",
+    ];
+    const focusableSelector = focusableSelectors.join(",");
+    const accountMenuFocusableSelector = focusableSelectors
+      .map((selector) => `.ns-workspace-rail__account-menu ${selector}`)
+      .join(",");
+    const visibleFocusableElements = () => [
+      ...rail.querySelectorAll<HTMLElement>(focusableSelector),
+      ...document.querySelectorAll<HTMLElement>(
+        accountMenuFocusableSelector,
+      ),
+    ].filter(
+      (element) =>
+        element.getAttribute("aria-hidden") !== "true" &&
+        element.getClientRects().length > 0,
+    );
+    const focusFrame = window.requestAnimationFrame(() => {
+      visibleFocusableElements()[0]?.focus();
+    });
+    const containFocus = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeMobileNavigation(true);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusableElements = visibleFocusableElements();
+      if (!focusableElements.length) return;
+      const first = focusableElements[0]!;
+      const last = focusableElements[focusableElements.length - 1]!;
+      const active = document.activeElement;
+      if (event.shiftKey) {
+        if (active !== first && focusableElements.includes(active as HTMLElement)) {
+          return;
+        }
+        event.preventDefault();
+        last.focus();
+        return;
+      }
+      if (active !== last && focusableElements.includes(active as HTMLElement)) {
+        return;
+      }
+      event.preventDefault();
+      first.focus();
+    };
+    document.addEventListener("keydown", containFocus);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", containFocus);
+    };
+  }, [closeMobileNavigation, mobileOpen, mobileViewport]);
+
   const themeLabel =
     preference === "light" ? "Light theme" : preference === "dark" ? "Dark theme" : "System theme";
   const displayName = sessionDisplayName(session);
   const initials = sessionInitials(session);
   const email = session.email?.trim() || null;
   const visuallyCollapsed = previewCollapsed ?? collapsed;
+  const mobileNavigationHidden = mobileViewport && !mobileOpen;
   const graphBrowserActive = pathname === "/" || pathname === "/graphs";
   const teamSettingsActive =
     pathname === "/workspaces" ||
@@ -387,21 +522,75 @@ export function WorkspaceRail({
   );
 
   return (
-    <aside
-      className={`ns-workspace-rail${visuallyCollapsed ? " is-collapsed" : ""}`}
-      aria-label="Primary navigation"
-    >
+    <>
+      <header className="ns-mobile-nav">
+        <button
+          ref={mobileMenuButtonRef}
+          type="button"
+          className="ns-mobile-nav__menu"
+          aria-label={mobileOpen ? "Close navigation" : "Open navigation"}
+          aria-controls="ns-primary-navigation"
+          aria-expanded={mobileOpen}
+          onClick={() => {
+            if (mobileOpen) {
+              closeMobileNavigation(true);
+            } else {
+              setMobileOpen(true);
+            }
+          }}
+        >
+          {mobileOpen ? (
+            <X size={20} aria-hidden="true" />
+          ) : (
+            <Menu size={20} aria-hidden="true" />
+          )}
+        </button>
+        <button
+          type="button"
+          className="ns-mobile-nav__brand"
+          aria-label="Graphs"
+          onClick={activateBrand}
+        >
+          <BrandWordmark height={22} />
+        </button>
+        <span className="ns-mobile-nav__location">
+          {workspaceSelectorLabel(selectedWorkspace)}
+        </span>
+      </header>
+
+      <button
+        type="button"
+        className={`ns-mobile-nav__backdrop${mobileOpen ? " is-open" : ""}`}
+        aria-label="Close navigation"
+        aria-hidden={mobileOpen ? undefined : true}
+        disabled={!mobileOpen}
+        tabIndex={mobileOpen ? 0 : -1}
+        onClick={() => closeMobileNavigation(true)}
+      />
+
+      <aside
+        ref={mobileRailRef}
+        id="ns-primary-navigation"
+        className={`ns-workspace-rail${visuallyCollapsed ? " is-collapsed" : ""}${mobileOpen ? " is-mobile-open" : ""}`}
+        role={mobileViewport && mobileOpen ? "dialog" : undefined}
+        aria-modal={mobileViewport && mobileOpen ? true : undefined}
+        aria-hidden={mobileNavigationHidden ? true : undefined}
+        inert={mobileNavigationHidden ? true : undefined}
+        aria-label="Primary navigation"
+      >
+      <button
+        type="button"
+        className="ns-workspace-rail__item ns-workspace-rail__mobile-close"
+        onClick={() => closeMobileNavigation(true)}
+      >
+        <span>Close navigation</span>
+        <X size={18} aria-hidden="true" />
+      </button>
       <button
         type="button"
         className="ns-workspace-rail__brand"
         aria-label="Graphs"
-        onClick={() => {
-          if (onBrandClick) {
-            onBrandClick();
-          } else {
-            goGraphs();
-          }
-        }}
+        onClick={activateBrand}
       >
         <BrandWordmark className="ns-workspace-rail__brand-wordmark" height={24} />
         <BrandIcon className="ns-workspace-rail__brand-icon" size={28} alt="" />
@@ -452,6 +641,7 @@ export function WorkspaceRail({
             className="ns-workspace-rail__item"
             title="New graph"
             onClick={() => {
+              closeMobileNavigation(true);
               if (onNewGraph) {
                 onNewGraph();
                 return;
@@ -470,12 +660,16 @@ export function WorkspaceRail({
         {activeWorkspace ? (
           <>
             <button
+              ref={graphPanelTriggerRef}
               type="button"
               data-graph-panel-trigger=""
               aria-expanded={graphPanelOpen}
               className={`ns-workspace-rail__item${graphPanelOpen ? " is-active" : ""}`}
               title={`Quickly switch graphs in ${workspaceDisplayName(activeWorkspace)}`}
-              onClick={() => setGraphPanelOpen((open) => !open)}
+              onClick={() => {
+                closeMobileNavigation(false);
+                setGraphPanelOpen((open) => !open);
+              }}
             >
               <LayoutGrid size={15} aria-hidden="true" />
               <span>Quick switch</span>
@@ -575,7 +769,10 @@ export function WorkspaceRail({
       <button
         type="button"
         className={`ns-workspace-rail__settings${teamSettingsActive ? " is-active" : ""}`}
-        onClick={() => router.push("/workspaces")}
+        onClick={() => {
+          closeMobileNavigation(true);
+          router.push("/workspaces");
+        }}
         title="Teams & access"
       >
         <Settings size={15} aria-hidden="true" />
@@ -650,6 +847,8 @@ export function WorkspaceRail({
         onPointerCancel={onResizePointerUp}
       />
 
+      </aside>
+
       {graphPanelOpen && activeWorkspace ? (
         <WorkspaceGraphPanel
           workspaceId={activeWorkspace.id}
@@ -658,10 +857,10 @@ export function WorkspaceRail({
           busyGraphId={graphActionBusyId}
           onRename={(graph) => void renameGraph(graph)}
           onDelete={(graph) => void deleteGraph(graph)}
-          onClose={() => setGraphPanelOpen(false)}
+          onClose={closeGraphPanel}
         />
       ) : null}
-    </aside>
+    </>
   );
 }
 

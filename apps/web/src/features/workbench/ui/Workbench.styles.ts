@@ -8,6 +8,7 @@ export const workbenchStyles = stylex.create({
     position: "relative",
     marginInlineStart: "var(--ns-rail-width, 0px)",
     width: "calc(100% - var(--ns-rail-width, 0px))",
+    minWidth: 0,
     height: "100svh",
     overflow: "hidden",
     backgroundColor: tokens.colorBg,
@@ -15,7 +16,10 @@ export const workbenchStyles = stylex.create({
   },
   canvas: { position: "absolute", inset: 0 },
   toolButton: {
-    height: "31px",
+    height: {
+      default: "31px",
+      "@media (max-width: 720px)": "44px",
+    },
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
@@ -41,25 +45,50 @@ export const workbenchStyles = stylex.create({
   toolDock: {
     position: "absolute",
     zIndex: 20,
-    bottom: "18px",
-    left: "50%",
+    bottom: {
+      default: "18px",
+      "@media (max-width: 720px)": "max(12px, env(safe-area-inset-bottom))",
+    },
+    left: {
+      default: "50%",
+      "@media (max-width: 720px)": "12px",
+    },
+    right: {
+      default: "auto",
+      "@media (max-width: 720px)": "12px",
+    },
     display: "flex",
     alignItems: "center",
     gap: "2px",
     padding: "6px",
+    overflowX: {
+      default: "visible",
+      "@media (max-width: 720px)": "auto",
+    },
+    overscrollBehaviorX: "contain",
+    scrollbarWidth: "none",
     borderWidth: 1,
     borderStyle: "solid",
     borderColor: tokens.colorBorder,
     borderRadius: "12px",
     backgroundColor: tokens.colorChrome,
     boxShadow: tokens.shadowNode,
-    transform: "translateX(-50%)",
+    transform: {
+      default: "translateX(-50%)",
+      "@media (max-width: 720px)": "none",
+    },
   },
   railButton: {
     position: "relative",
     flexShrink: 0,
-    width: "34px",
-    height: "34px",
+    width: {
+      default: "34px",
+      "@media (max-width: 720px)": "44px",
+    },
+    height: {
+      default: "34px",
+      "@media (max-width: 720px)": "44px",
+    },
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -129,9 +158,15 @@ export const workbenchStyles = stylex.create({
   },
   railDivider: {
     width: "1px",
-    height: "20px",
+    height: {
+      default: "20px",
+      "@media (max-width: 720px)": "28px",
+    },
     flexShrink: 0,
-    marginInline: "4px",
+    marginInline: {
+      default: "4px",
+      "@media (max-width: 720px)": "2px",
+    },
     backgroundColor: tokens.colorDivider,
   },
   shapesMenuWrap: {
@@ -139,9 +174,19 @@ export const workbenchStyles = stylex.create({
     display: "flex",
   },
   shapesMenu: {
-    position: "absolute",
-    left: 0,
-    bottom: "calc(100% + 8px)",
+    position: {
+      default: "absolute",
+      "@media (max-width: 720px)": "fixed",
+    },
+    left: {
+      default: 0,
+      "@media (max-width: 720px)": "calc(var(--ns-rail-width, 0px) + 12px)",
+    },
+    bottom: {
+      default: "calc(100% + 8px)",
+      "@media (max-width: 720px)": "calc(80px + env(safe-area-inset-bottom))",
+    },
+    zIndex: 45,
     display: "grid",
     gap: "3px",
     minWidth: "132px",
@@ -156,10 +201,19 @@ export const workbenchStyles = stylex.create({
   selectionToolbar: {
     zIndex: 25,
     minHeight: "42px",
+    maxWidth: {
+      default: "none",
+      "@media (max-width: 720px)": "calc(100vw - 24px)",
+    },
     display: "flex",
     alignItems: "center",
     gap: "3px",
     padding: "5px",
+    overflowX: {
+      default: "visible",
+      "@media (max-width: 720px)": "auto",
+    },
+    overscrollBehaviorX: "contain",
     borderWidth: 1,
     borderStyle: "solid",
     borderColor: tokens.colorBorder,

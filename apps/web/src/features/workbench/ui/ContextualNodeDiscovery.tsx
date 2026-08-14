@@ -64,9 +64,15 @@ const POPUP_MARGIN = 12;
 const s = stylex.create({
   popup: {
     position: "fixed",
-    zIndex: 40,
-    width: `${POPUP_WIDTH}px`,
-    maxHeight: `${POPUP_MAX_HEIGHT}px`,
+    zIndex: {
+      default: 40,
+      "@media (max-width: 620px)": 85,
+    },
+    width: `min(${POPUP_WIDTH}px, calc(100vw - ${POPUP_MARGIN * 2}px))`,
+    maxHeight: {
+      default: `min(${POPUP_MAX_HEIGHT}px, calc(100svh - ${POPUP_MARGIN * 2}px))`,
+      "@media (max-width: 620px)": `min(${POPUP_MAX_HEIGHT}px, calc(100svh - 80px - env(safe-area-inset-top, 0px)))`,
+    },
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
@@ -195,6 +201,15 @@ const s = stylex.create({
     overflow: "visible",
     pointerEvents: "none",
   },
+  safeAreaProbe: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    width: 0,
+    height: "env(safe-area-inset-top, 0px)",
+    visibility: "hidden",
+    pointerEvents: "none",
+  },
 });
 
 export function popupPositionBesidePreview(
@@ -274,9 +289,11 @@ export function ContextualNodeDiscovery({
   const [previewedKey, setPreviewedKey] = React.useState<string | null>(null);
   const [hoveredChoiceIndex, setHoveredChoiceIndex] = React.useState(0);
   const [previewBox, setPreviewBox] = React.useState<DOMRect | null>(null);
+  const [safeAreaTop, setSafeAreaTop] = React.useState(0);
   const rootRef = React.useRef<HTMLDivElement>(null);
   const searchRef = React.useRef<HTMLInputElement>(null);
   const previewRef = React.useRef<HTMLDivElement>(null);
+  const safeAreaProbeRef = React.useRef<HTMLSpanElement>(null);
   const resultRefs = React.useRef(new Map<string, HTMLButtonElement>());
 
   const sourcePoint = useStore((state) => {
@@ -347,6 +364,24 @@ export function ContextualNodeDiscovery({
     });
   }, [hoveredChoiceIndex, pendingCandidate, previewedKey, query, session]);
 
+  React.useLayoutEffect(() => {
+    if (!session) return;
+    const updateSafeAreaTop = () => {
+      const nextSafeAreaTop =
+        safeAreaProbeRef.current?.getBoundingClientRect().height ?? 0;
+      setSafeAreaTop((current) =>
+        current === nextSafeAreaTop ? current : nextSafeAreaTop,
+      );
+    };
+    updateSafeAreaTop();
+    window.addEventListener("resize", updateSafeAreaTop);
+    window.visualViewport?.addEventListener("resize", updateSafeAreaTop);
+    return () => {
+      window.removeEventListener("resize", updateSafeAreaTop);
+      window.visualViewport?.removeEventListener("resize", updateSafeAreaTop);
+    };
+  }, [session]);
+
   if (!session) return null;
 
   const normalized = query.trim().toLowerCase();
@@ -407,13 +442,46 @@ export function ContextualNodeDiscovery({
     ? artifactTypeColor(representativeArtifact.id, tokens.colorAccent)
     : tokens.colorAccent;
 
-  const position = popupPositionBesidePreview(
+  const layoutViewportWidth =
+    typeof window === "undefined"
+      ? POPUP_WIDTH + POPUP_MARGIN * 2
+      : window.innerWidth;
+  const layoutViewportHeight =
+    typeof window === "undefined"
+      ? POPUP_MAX_HEIGHT + POPUP_MARGIN * 2
+      : window.innerHeight;
+  const visualViewport =
+    typeof window === "undefined" ? null : window.visualViewport;
+  const viewportTop = visualViewport?.offsetTop ?? 0;
+  const viewportHeight = visualViewport?.height ?? layoutViewportHeight;
+  const viewportBottom = viewportTop + viewportHeight;
+  const compactViewport = layoutViewportWidth <= 620;
+  const popupWidth = Math.min(
+    POPUP_WIDTH,
+    layoutViewportWidth - POPUP_MARGIN * 2,
+  );
+  const popupTopOffset = compactViewport
+    ? 68 + safeAreaTop
+    : POPUP_MARGIN;
+  const popupTopMargin = viewportTop + popupTopOffset;
+  const popupHeight = Math.max(
+    0,
+    Math.min(
+      POPUP_MAX_HEIGHT,
+      viewportBottom - popupTopMargin - POPUP_MARGIN,
+    ),
+  );
+  const unclampedPosition = popupPositionBesidePreview(
     previewBox,
     session.clientAnchor,
-    POPUP_WIDTH,
-    POPUP_MAX_HEIGHT,
-    { width: window.innerWidth, height: window.innerHeight },
+    popupWidth,
+    popupHeight,
+    { width: layoutViewportWidth, height: viewportBottom },
   );
+  const position = {
+    left: unclampedPosition.left,
+    top: Math.max(popupTopMargin, unclampedPosition.top),
+  };
 
   const selectCandidate = (candidate: ContextualCandidate) => {
     if (!canInsert) return;
@@ -463,6 +531,11 @@ export function ContextualNodeDiscovery({
 
   return (
     <>
+      <span
+        ref={safeAreaProbeRef}
+        aria-hidden="true"
+        {...stylex.props(s.safeAreaProbe)}
+      />
       <ViewportPortal>
         {previewedCandidate ? (
           <>
@@ -516,7 +589,13 @@ export function ContextualNodeDiscovery({
         role="dialog"
         aria-label={`Continue from ${session.sourcePortTitle}`}
         {...stylex.props(overlay.popup, s.popup)}
-        style={{ left: position.left, top: position.top }}
+        style={{
+          left: position.left,
+          top: compactViewport
+            ? `max(${position.top}px, calc(68px + env(safe-area-inset-top, 0px)))`
+            : position.top,
+          maxHeight: popupHeight,
+        }}
       >
         <div {...stylex.props(s.header)}>
           <div>

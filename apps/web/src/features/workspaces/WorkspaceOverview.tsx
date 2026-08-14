@@ -34,7 +34,7 @@ export function WorkspaceOverview() {
           {workspace.kind === "shared" && canManageMembers ? (
             <WorkspaceMembersDialog />
           ) : null}
-          <WorkspaceLibraryDialog workspace={workspace} />
+          <WorkspaceLibraryDialog workspace={workspace} triggerLabel="Modules" />
           <Link className="ns-workspace-button" href="/graphs">
             Browse graphs <ArrowUpRight size={14} aria-hidden="true" />
           </Link>

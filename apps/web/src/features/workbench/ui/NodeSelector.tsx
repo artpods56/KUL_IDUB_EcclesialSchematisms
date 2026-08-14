@@ -379,6 +379,18 @@ function BrowserFilterIcon({ filter }: { filter: BrowserFilter }) {
 }
 
 const s = stylex.create({
+  dialogContent: {
+    width: {
+      default: "min(1340px, calc(100vw - 28px))",
+      "@media (max-width: 720px)": "calc(100vw - 16px)",
+    },
+    maxWidth: "none",
+    height: {
+      default: "min(900px, calc(100svh - 28px))",
+      "@media (max-width: 720px)": "calc(100svh - 16px)",
+    },
+    maxHeight: "none",
+  },
   header: {
     display: "grid",
     gridTemplateColumns: {
@@ -418,7 +430,10 @@ const s = stylex.create({
   },
   search: {
     width: "100%",
-    height: "40px",
+    height: {
+      default: "40px",
+      "@media (max-width: 720px)": "44px",
+    },
     padding: "0 12px 0 34px",
     borderWidth: 1,
     borderStyle: "solid",
@@ -439,6 +454,11 @@ const s = stylex.create({
     minHeight: 0,
     flex: 1,
     display: "grid",
+    overflowY: {
+      default: "hidden",
+      "@media (max-width: 720px)": "auto",
+    },
+    overscrollBehaviorY: "contain",
     gridTemplateColumns: {
       default: "168px minmax(340px, 1fr) minmax(380px, 440px)",
       "@media (max-width: 1080px)": "160px minmax(0, 1fr)",
@@ -447,7 +467,7 @@ const s = stylex.create({
     gridTemplateRows: {
       default: "minmax(0, 1fr)",
       "@media (max-width: 1080px)": "minmax(280px, 1fr) minmax(280px, 0.9fr)",
-      "@media (max-width: 720px)": "auto minmax(260px, 1fr) minmax(280px, 0.9fr)",
+      "@media (max-width: 720px)": "auto minmax(280px, 46svh) minmax(420px, 72svh)",
     },
     gridTemplateAreas: {
       default: '"filters nodes inspector"',
@@ -480,8 +500,22 @@ const s = stylex.create({
     minWidth: 0,
     minHeight: 0,
     display: "flex",
-    flexDirection: "column",
-    padding: "18px 10px 14px",
+    flexDirection: {
+      default: "column",
+      "@media (max-width: 720px)": "row",
+    },
+    alignItems: {
+      default: "stretch",
+      "@media (max-width: 720px)": "center",
+    },
+    gap: {
+      default: 0,
+      "@media (max-width: 720px)": "8px",
+    },
+    padding: {
+      default: "18px 10px 14px",
+      "@media (max-width: 720px)": "8px 10px",
+    },
     borderRightWidth: {
       default: 1,
       "@media (max-width: 720px)": 0,
@@ -494,19 +528,40 @@ const s = stylex.create({
     },
     borderBottomStyle: "solid",
     borderBottomColor: tokens.colorBorder,
-    overflowY: "auto",
+    overflowX: {
+      default: "hidden",
+      "@media (max-width: 720px)": "auto",
+    },
+    overflowY: {
+      default: "auto",
+      "@media (max-width: 720px)": "hidden",
+    },
+    overscrollBehaviorX: "contain",
   },
   filterHeading: {
     paddingInline: "10px",
-    marginBottom: "10px",
+    marginBottom: {
+      default: "10px",
+      "@media (max-width: 720px)": 0,
+    },
+    flexShrink: 0,
     color: tokens.colorTextEmphasis,
     fontSize: tokens.fontSizeXs,
     fontWeight: 730,
   },
   filterLibrary: {
-    marginTop: "12px",
-    paddingTop: "12px",
-    borderTopWidth: 1,
+    marginTop: {
+      default: "12px",
+      "@media (max-width: 720px)": 0,
+    },
+    paddingTop: {
+      default: "12px",
+      "@media (max-width: 720px)": 0,
+    },
+    borderTopWidth: {
+      default: 1,
+      "@media (max-width: 720px)": 0,
+    },
     borderTopStyle: "solid",
     borderTopColor: tokens.colorBorder,
   },
@@ -516,7 +571,10 @@ const s = stylex.create({
     minHeight: 0,
     display: "flex",
     flexDirection: "column",
-    borderRightWidth: 1,
+    borderRightWidth: {
+      default: 1,
+      "@media (max-width: 720px)": 0,
+    },
     borderRightStyle: "solid",
     borderRightColor: tokens.colorBorder,
     borderBottomWidth: {
@@ -554,12 +612,26 @@ const s = stylex.create({
     gap: "12px",
   },
   categoryToolbar: {
-    display: "grid",
+    display: {
+      default: "grid",
+      "@media (max-width: 720px)": "flex",
+    },
+    flexDirection: "row",
+    width: {
+      default: "auto",
+      "@media (max-width: 720px)": "max-content",
+    },
     gap: "2px",
   },
   categoryButton: {
-    width: "100%",
-    minHeight: "36px",
+    width: {
+      default: "100%",
+      "@media (max-width: 720px)": "auto",
+    },
+    minHeight: {
+      default: "36px",
+      "@media (max-width: 720px)": "44px",
+    },
     display: "flex",
     alignItems: "center",
     gap: "10px",
@@ -596,6 +668,7 @@ const s = stylex.create({
   },
   nodeList: {
     minHeight: 0,
+    flex: 1,
     overflowY: "auto",
     display: "flex",
     flexDirection: "column",
@@ -1061,7 +1134,7 @@ const s = stylex.create({
   },
   addButton: {
     width: "100%",
-    minHeight: "40px",
+    minHeight: "44px",
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
@@ -1527,12 +1600,7 @@ export function NodeSelector({
         aria-labelledby="node-selector-title"
         aria-describedby="node-selector-description"
         finalFocus={providedReturnFocusRef}
-        style={{
-          width: "min(1340px, calc(100vw - 28px))",
-          maxWidth: "none",
-          height: "min(900px, calc(100vh - 28px))",
-          maxHeight: "none",
-        }}
+        {...stylex.props(s.dialogContent)}
       >
         <div {...stylex.props(s.header)}>
           <div {...stylex.props(s.heading)}>

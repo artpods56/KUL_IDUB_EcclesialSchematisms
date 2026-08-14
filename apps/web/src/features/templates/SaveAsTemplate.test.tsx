@@ -105,11 +105,30 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   document.body.replaceChildren();
 });
 
 
 describe("save as template flow", () => {
+  it.each([
+    ["fine", true, true],
+    ["coarse", false, false],
+  ])(
+    "focuses the template name on a %s pointer only when appropriate",
+    async (_pointer, matches, shouldFocus) => {
+      const matchMedia = vi.fn().mockReturnValue({ matches });
+      vi.stubGlobal("matchMedia", matchMedia);
+
+      const { container, root } = await renderSaveFlow();
+      const nameInput = container.querySelector("input");
+
+      expect(matchMedia).toHaveBeenCalledWith("(pointer: fine)");
+      expect(document.activeElement === nameInput).toBe(shouldFocus);
+      await act(async () => root.unmount());
+    },
+  );
+
   it("retries the exact-revision snapshot and returns to the template library", async () => {
     testState.create
       .mockRejectedValueOnce(new Error("offline"))

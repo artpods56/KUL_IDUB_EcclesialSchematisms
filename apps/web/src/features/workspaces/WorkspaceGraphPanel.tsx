@@ -56,7 +56,7 @@ export function WorkspaceGraphPanel({
   busyGraphId?: string | null;
   onRename: (graph: SavedGraphSummary) => void;
   onDelete: (graph: SavedGraphSummary) => void;
-  onClose: () => void;
+  onClose: (restoreFocus?: boolean) => void;
 }) {
   const router = useRouter();
   const { data, isLoading } = useSavedGraphs(workspaceId);
@@ -70,7 +70,7 @@ export function WorkspaceGraphPanel({
 
   React.useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") onClose(true);
     };
     const onPointerDown = (event: PointerEvent) => {
       const panel = panelRef.current;
@@ -85,7 +85,7 @@ export function WorkspaceGraphPanel({
       ) {
         return;
       }
-      onClose();
+      onClose(false);
     };
     document.addEventListener("keydown", onKeyDown);
     document.addEventListener("pointerdown", onPointerDown);
@@ -103,7 +103,7 @@ export function WorkspaceGraphPanel({
 
   const openGraph = (graphId: string) => {
     router.push(workbenchGraphPath(workspaceSlug, graphId));
-    onClose();
+    onClose(false);
   };
 
   return (
@@ -124,7 +124,7 @@ export function WorkspaceGraphPanel({
           type="button"
           className="ns-graph-panel__icon-button"
           aria-label="Close quick graph switcher"
-          onClick={onClose}
+          onClick={() => onClose(true)}
         >
           <X size={14} aria-hidden="true" />
         </button>
