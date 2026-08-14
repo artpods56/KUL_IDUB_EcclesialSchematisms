@@ -11,6 +11,7 @@ from notarius_core.application.modules import ModuleLibraryService
 from notarius_core.application.saved_graphs import SavedGraphService
 from notarius_core.application.templates import TemplateService
 from notarius_core.plugins import PluginRegistry
+from notarius_persistence.database import Database
 from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from notarius_api.v1.routes.artifacts.services import ArtifactService
@@ -44,6 +45,7 @@ class AppIdentity:
 class AppResources:
     """Workbench services constructed during API lifespan and torn down once."""
 
+    database: Database
     plugin_registry: PluginRegistry
     uploads: ImageUploadService
     graph_modules: GraphModuleCatalog
@@ -65,6 +67,7 @@ class AppResources:
         await self.graph_room_hub.shutdown()
         await self.execution_manager.shutdown()
         await self.artifacts.close()
+        await self.database.dispose()
 
 
 def get_identity(app: FastAPI) -> AppIdentity:

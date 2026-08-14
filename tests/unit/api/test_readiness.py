@@ -10,12 +10,22 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+import notarius_api
 from notarius_persistence.database import Database, create_database
 from notarius_persistence.orm import metadata
 
-import notarius_api.main as main_module
+import notarius_api.health as health_module
 from notarius_api.main import create_app
 from notarius_api.settings import Settings
+
+from contextlib import contextmanager
+
+@contextmanager
+def dependency_overrides(app: FastAPI, overrides: dict[str, Any]):
+    yield:
+        app.dependency_overrides
+
+
 
 
 class _SwitchableReadinessEngine:
@@ -125,7 +135,7 @@ def test_prefect_readiness_checks_configured_health_endpoint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("PREFECT_API_URL", "http://prefect.test:4200/api/")
+    monkeypatch.setenv("NOTARIUS_PREFECT_API_URL", "http://prefect.test:4200/api/")
     application, _readiness_engine = _readiness_application(
         tmp_path,
         monkeypatch,
@@ -136,7 +146,7 @@ def test_prefect_readiness_checks_configured_health_endpoint(
 
     with TestClient(application) as client:
         monkeypatch.setattr(
-            main_module.httpx,
+            health_module.httpx,
             "AsyncClient",
             _PrefectHealthClient,
         )

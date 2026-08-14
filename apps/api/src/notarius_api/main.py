@@ -1,11 +1,9 @@
 import asyncio
 import logging
-import os
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Literal
 
-import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import (
     http_exception_handler as default_http_exception_handler,
@@ -15,8 +13,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
-from sqlalchemy import text
 
+from notarius_api.health import readiness, HealthResponse, health
 from notarius_core.application.collaboration import CollaborationService
 from notarius_core.application.modules import ModuleLibraryService
 from notarius_core.application.saved_graphs import SavedGraphService
@@ -71,14 +69,6 @@ from notarius_api.v1.routes.workspaces.views import (
 
 
 logger = logging.getLogger(__name__)
-
-
-class HealthResponse(BaseModel):
-    status: Literal["ok"]
-
-
-async def health() -> HealthResponse:
-    return HealthResponse(status="ok")
 
 
 async def _request_validation_error_handler(
@@ -328,7 +318,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await components.execution_history.interrupt_all_active()
                 # Migration 0009 backfills heads; refuse to serve if any graph still lacks one.
                 await collaboration.verify_every_graph_has_head()
-                resources = AppResources(
+
+                app.state.resources = AppResources(
+                    database=database,
                     plugin_registry=components.plugin_registry,
                     uploads=components.uploads,
                     graph_modules=components.modules,
@@ -346,10 +338,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     node_secrets=node_secrets,
                     graph_room_hub=graph_room_hub,
                 )
-                resources.execution_manager.bind_room_publisher(
-                    ActiveExecutionRoomPublisher(resources.graph_room_hub)
+
+
+                components.execution_manager.bind_room_publisher(
+                    ActiveExecutionRoomPublisher(graph_room_hub)
                 )
-                app.state.resources = resources
 
                 async def cleanup_expired_auth_data() -> None:
                     while True:
@@ -368,15 +361,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             )
                             continue
 
-                cleanup_task = asyncio.create_task(cleanup_expired_auth_data())
+                cleanup_task = asyncio.create_task(
+                    cleanup_expired_auth_data()
+                )
+
                 try:
                     yield
                 finally:
                     cleanup_task.cancel()
                     await asyncio.gather(cleanup_task, return_exceptions=True)
-                    await resources.cleanup()
+                    await app.state.resources.cleanup()
                     del app.state.resources
-                    await database.dispose()
         finally:
             if owner_lease is not None:
                 owner_lease.release()
@@ -464,33 +459,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response_model=HealthResponse,
         include_in_schema=False,
     )
-
-    async def readiness(request: Request) -> HealthResponse:
-        try:
-            async with asyncio.timeout(3.0):
-                if not hasattr(request.app.state, "resources"):
-                    raise RuntimeError("Application resources are not initialized")
-                async with database.engine.connect() as connection:
-                    await connection.execute(text("SELECT 1"))
-                if resolved_settings.execution_backend == "prefect":
-                    prefect_api_url = os.getenv("PREFECT_API_URL", "").strip()
-                    if prefect_api_url == "":
-                        raise RuntimeError("Prefect API URL is not configured")
-                    async with httpx.AsyncClient(
-                        timeout=2.0,
-                        follow_redirects=False,
-                        trust_env=False,
-                    ) as client:
-                        response = await client.get(
-                            f"{prefect_api_url.rstrip('/')}/health"
-                        )
-                    response.raise_for_status()
-        except Exception as exc:
-            raise HTTPException(
-                status_code=503,
-                detail="Service unavailable",
-            ) from exc
-        return HealthResponse(status="ok")
 
     application.add_api_route(
         "/ready",

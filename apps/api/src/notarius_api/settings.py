@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     max_active_executions: int = Field(default=2, ge=1, le=32)
     prefect_task_retries: int = Field(default=0, ge=0)
     prefect_task_retry_delay_seconds: float = Field(default=0, ge=0)
+    prefect_api_url: str | None = None
     storage_backend: Literal["local", "s3"] = "local"
     storage_bucket: str = Field(default="workbench-artifacts", min_length=1)
     staged_upload_max_bytes: int = Field(
