@@ -14,14 +14,15 @@ from notarius_core.plugins import PluginRegistry
 from notarius_persistence.database import Database
 from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
+from notarius_api.settings import Settings
 from notarius_api.v1.routes.artifacts.services import ArtifactService
 from notarius_api.v1.routes.auth.services import AuthService
 from notarius_api.v1.routes.catalog.services import GraphModuleCatalog
 from notarius_api.v1.routes.collaboration.hub import GraphRoomHub
-from notarius_api.v1.routes.executions.runtime.manager import RunExecutionManager
 from notarius_api.v1.routes.executions.runtime.admission import (
     ExecutionAdmissionLimiter,
 )
+from notarius_api.v1.routes.executions.runtime.manager import RunExecutionManager
 from notarius_api.v1.routes.executions.runtime.run_graph import RunGraph
 from notarius_api.v1.routes.executions.services import (
     ExecutionHistoryService,
@@ -43,7 +44,7 @@ class AppIdentity:
 
 @dataclass(slots=True)
 class AppResources:
-    """Workbench services constructed during API lifespan and torn down once."""
+    """Application resources constructed during API lifespan and torn down once."""
 
     database: Database
     plugin_registry: PluginRegistry
@@ -67,7 +68,6 @@ class AppResources:
         await self.graph_room_hub.shutdown()
         await self.execution_manager.shutdown()
         await self.artifacts.close()
-        await self.database.dispose()
 
 
 def get_identity(app: FastAPI) -> AppIdentity:
@@ -82,3 +82,10 @@ def get_resources(app: FastAPI) -> AppResources:
     if not isinstance(resources, AppResources):
         raise RuntimeError("Application resources are not initialized")
     return resources
+
+
+def get_app_settings(app: FastAPI) -> Settings:
+    settings = getattr(app.state, "settings", None)
+    if not isinstance(settings, Settings):
+        raise RuntimeError("Application settings are not initialized")
+    return settings

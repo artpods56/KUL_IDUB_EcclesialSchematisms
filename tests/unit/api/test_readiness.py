@@ -10,28 +10,21 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-import notarius_api
+import notarius_api.health as health_module
+import notarius_api.main as main_module
+from notarius_core.application.collaboration import CollaborationService
 from notarius_persistence.database import Database, create_database
 from notarius_persistence.orm import metadata
 
-import notarius_api.health as health_module
 from notarius_api.main import create_app
-from notarius_api.settings import Settings
-
-from contextlib import contextmanager
-
-@contextmanager
-def dependency_overrides(app: FastAPI, overrides: dict[str, Any]):
-    yield:
-        app.dependency_overrides
-
-
+from notarius_api.settings import Settings, get_settings
 
 
 class _SwitchableReadinessEngine:
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
         self.available = True
+        self.disposed = False
 
     def connect(self) -> AsyncConnection:
         if not self.available:
@@ -39,6 +32,7 @@ class _SwitchableReadinessEngine:
         return self._engine.connect()
 
     async def dispose(self) -> None:
+        self.disposed = True
         await self._engine.dispose()
 
 
@@ -87,14 +81,18 @@ def _readiness_application(
         engine=cast(AsyncEngine, readiness_engine),
         sessions=database.sessions,
     )
+
+    def use_readiness_database(_database_url: str) -> Database:
+        return readiness_database
+
     monkeypatch.setattr(
         main_module,
         "create_database",
-        lambda _database_url: readiness_database,
+        use_readiness_database,
     )
     application = create_app(
         Settings(
-            _env_file=None,
+            _env_file=None,  # pyright: ignore[reportCallIssue]
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
             execution_backend=execution_backend,
@@ -131,11 +129,93 @@ def test_readiness_reports_database_failure_without_breaking_liveness(
         assert liveness.json() == {"status": "ok"}
 
 
+def test_readiness_uses_the_settings_attached_to_its_application(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NOTARIUS_EXECUTION_BACKEND", "prefect")
+    monkeypatch.delenv("PREFECT_API_URL", raising=False)
+    monkeypatch.delenv("NOTARIUS_PREFECT_API_URL", raising=False)
+    get_settings.cache_clear()
+    application, _readiness_engine = _readiness_application(
+        tmp_path,
+        monkeypatch,
+        execution_backend="inline",
+    )
+
+    try:
+        assert get_settings().execution_backend == "prefect"
+        with TestClient(application) as client:
+            response = client.get("/ready")
+
+            assert response.status_code == 200
+            assert response.json() == {"status": "ok"}
+    finally:
+        get_settings.cache_clear()
+
+
+def test_readiness_translates_uninitialized_resources_to_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    application, _readiness_engine = _readiness_application(
+        tmp_path,
+        monkeypatch,
+        execution_backend="inline",
+    )
+
+    with TestClient(application) as client:
+        resources = application.state.resources
+        del application.state.resources
+        try:
+            response = client.get("/ready")
+        finally:
+            application.state.resources = resources
+
+        assert response.status_code == 503
+        assert response.json() == {"detail": "Service unavailable"}
+
+
+def test_failed_startup_releases_application_resources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    application, readiness_engine = _readiness_application(
+        tmp_path,
+        monkeypatch,
+        execution_backend="inline",
+    )
+
+    async def fail_graph_head_verification(
+        _service: CollaborationService,
+    ) -> None:
+        raise RuntimeError("graph head verification failed")
+
+    monkeypatch.setattr(
+        CollaborationService,
+        "verify_every_graph_has_head",
+        fail_graph_head_verification,
+    )
+
+    with pytest.raises(ExceptionGroup) as exception_info:
+        with TestClient(application):
+            pass
+
+    assert any(
+        isinstance(error, RuntimeError)
+        and str(error) == "graph head verification failed"
+        for error in exception_info.value.exceptions
+    )
+    assert readiness_engine.disposed
+    assert not hasattr(application.state, "resources")
+
+
 def test_prefect_readiness_checks_configured_health_endpoint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("NOTARIUS_PREFECT_API_URL", "http://prefect.test:4200/api/")
+    monkeypatch.setenv("PREFECT_API_URL", "http://prefect.test:4200/api/")
+    monkeypatch.delenv("NOTARIUS_PREFECT_API_URL", raising=False)
     application, _readiness_engine = _readiness_application(
         tmp_path,
         monkeypatch,

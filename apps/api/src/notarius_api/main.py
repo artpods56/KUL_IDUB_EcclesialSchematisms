@@ -2,7 +2,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Literal
+from typing import AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import (
@@ -12,9 +12,8 @@ from fastapi.exception_handlers import (
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel
 
-from notarius_api.health import readiness, HealthResponse, health
+from notarius_api.health import HealthResponse, health, readiness
 from notarius_core.application.collaboration import CollaborationService
 from notarius_core.application.modules import ModuleLibraryService
 from notarius_core.application.saved_graphs import SavedGraphService
@@ -239,12 +238,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         mcp_http_app = mcp_http_app_holder["app"]
         owner_lease: ApiOwnerLease | None = None
-        if resolved_settings.require_single_api_owner:
-            owner_lease = ApiOwnerLease(
-                resolved_settings.workspace / ".notarius-api-owner.lock"
-            )
-            owner_lease.acquire()
         try:
+            if resolved_settings.require_single_api_owner:
+                owner_lease = ApiOwnerLease(
+                    resolved_settings.workspace / ".notarius-api-owner.lock"
+                )
+                owner_lease.acquire()
             async with mcp_http_app.lifespan(app):  # type: ignore[attr-defined]
                 registry = build_plugin_registry(builtin_plugins())
                 s3_access_key_id: str | None = None
@@ -292,7 +291,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     saved_graphs=saved_graphs,
                 )
                 node_secrets = NodeSecretService(
-                    unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
+                    unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(
+                        database.sessions
+                    ),
                     plugin_registry=registry,
                     encryption_key=resolved_settings.credential_encryption_key,
                 )
@@ -315,11 +316,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     module_library=module_library,
                     node_secrets=node_secrets,
                 )
-                await components.execution_history.interrupt_all_active()
-                # Migration 0009 backfills heads; refuse to serve if any graph still lacks one.
-                await collaboration.verify_every_graph_has_head()
-
-                app.state.resources = AppResources(
+                resources = AppResources(
                     database=database,
                     plugin_registry=components.plugin_registry,
                     uploads=components.uploads,
@@ -338,43 +335,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     node_secrets=node_secrets,
                     graph_room_hub=graph_room_hub,
                 )
-
-
-                components.execution_manager.bind_room_publisher(
-                    ActiveExecutionRoomPublisher(graph_room_hub)
-                )
-
-                async def cleanup_expired_auth_data() -> None:
-                    while True:
-                        await asyncio.sleep(
-                            resolved_settings.auth_cleanup_interval_seconds
-                        )
-                        try:
-                            await auth_service.cleanup_expired()
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception as error:
-                            logger.warning(
-                                "auth_cleanup_failed operation=cleanup_expired "
-                                "error_class=%s",
-                                type(error).__name__,
-                            )
-                            continue
-
-                cleanup_task = asyncio.create_task(
-                    cleanup_expired_auth_data()
-                )
-
                 try:
-                    yield
+                    components.execution_manager.bind_room_publisher(
+                        ActiveExecutionRoomPublisher(graph_room_hub)
+                    )
+                    await components.execution_history.interrupt_all_active()
+                    # Migration 0009 backfills heads; refuse to serve if any graph still lacks one.
+                    await collaboration.verify_every_graph_has_head()
+                    app.state.resources = resources
+
+                    async def cleanup_expired_auth_data() -> None:
+                        while True:
+                            await asyncio.sleep(
+                                resolved_settings.auth_cleanup_interval_seconds
+                            )
+                            try:
+                                await auth_service.cleanup_expired()
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as error:
+                                logger.warning(
+                                    "auth_cleanup_failed operation=cleanup_expired "
+                                    "error_class=%s",
+                                    type(error).__name__,
+                                )
+                                continue
+
+                    cleanup_task = asyncio.create_task(cleanup_expired_auth_data())
+                    try:
+                        yield
+                    finally:
+                        cleanup_task.cancel()
+                        await asyncio.gather(cleanup_task, return_exceptions=True)
                 finally:
-                    cleanup_task.cancel()
-                    await asyncio.gather(cleanup_task, return_exceptions=True)
-                    await app.state.resources.cleanup()
-                    del app.state.resources
+                    try:
+                        await resources.cleanup()
+                    finally:
+                        if getattr(app.state, "resources", None) is resources:
+                            del app.state.resources
         finally:
-            if owner_lease is not None:
-                owner_lease.release()
+            try:
+                await database.dispose()
+            finally:
+                if owner_lease is not None:
+                    owner_lease.release()
 
     application = FastAPI(
         title="Notarius API",

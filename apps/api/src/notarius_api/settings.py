@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import ClassVar, Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -64,7 +64,14 @@ class Settings(BaseSettings):
     max_active_executions: int = Field(default=2, ge=1, le=32)
     prefect_task_retries: int = Field(default=0, ge=0)
     prefect_task_retry_delay_seconds: float = Field(default=0, ge=0)
-    prefect_api_url: str | None = None
+    prefect_api_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "prefect_api_url",
+            "PREFECT_API_URL",
+            "NOTARIUS_PREFECT_API_URL",
+        ),
+    )
     storage_backend: Literal["local", "s3"] = "local"
     storage_bucket: str = Field(default="workbench-artifacts", min_length=1)
     staged_upload_max_bytes: int = Field(

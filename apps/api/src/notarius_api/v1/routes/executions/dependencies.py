@@ -3,7 +3,6 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from notarius_api.app_state import get_resources
-from notarius_api.dependencies import ResourcesDependency
 
 from .runtime.manager import RunExecutionManager
 from .runtime.admission import ExecutionAdmissionLimiter
@@ -15,15 +14,15 @@ from .services import (
 )
 
 
-def run_graph_service(resources: ResourcesDependency) -> RunGraph:
-    return resources.run_graph
+def run_graph_service(request: Request) -> RunGraph:
+    return get_resources(request.app).run_graph
 
 
 RunGraphDependency = Annotated[RunGraph, Depends(run_graph_service)]
 
 
-def execution_admission_limiter(resources: ResourcesDependency) -> ExecutionAdmissionLimiter:
-    return resources.execution_admission
+def execution_admission_limiter(request: Request) -> ExecutionAdmissionLimiter:
+    return get_resources(request.app).execution_admission
 
 
 ExecutionAdmissionLimiterDependency = Annotated[
@@ -62,8 +61,8 @@ MaterializationDependency = Annotated[
 ]
 
 
-def run_result_presenter(resources: ResourcesDependency) -> RunResultPresenter:
-    return resources.presenter
+def run_result_presenter(request: Request) -> RunResultPresenter:
+    return get_resources(request.app).presenter
 
 
 RunResultPresenterDependency = Annotated[

@@ -16,7 +16,7 @@ def test_execution_defaults_to_prefect_with_bounded_map_concurrency(
         raising=False,
     )
     # Defaults must be tested independently from a developer's local .env.
-    settings = Settings(_env_file=None)
+    settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
 
     assert settings.execution_backend == "prefect"
     assert settings.map_max_concurrency == 4
@@ -31,6 +31,32 @@ def test_execution_backend_can_be_selected_from_the_environment(
     monkeypatch.setenv("NOTARIUS_EXECUTION_BACKEND", "inline")
 
     assert Settings().execution_backend == "inline"
+
+
+@pytest.mark.parametrize(
+    "environment_variable",
+    ["PREFECT_API_URL", "NOTARIUS_PREFECT_API_URL"],
+)
+def test_prefect_api_url_accepts_supported_environment_names(
+    monkeypatch: pytest.MonkeyPatch,
+    environment_variable: str,
+) -> None:
+    monkeypatch.delenv("PREFECT_API_URL", raising=False)
+    monkeypatch.delenv("NOTARIUS_PREFECT_API_URL", raising=False)
+    monkeypatch.setenv(environment_variable, "http://prefect.test:4200/api")
+
+    settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+    assert settings.prefect_api_url == "http://prefect.test:4200/api"
+
+
+def test_prefect_api_url_accepts_the_explicit_field_name() -> None:
+    settings = Settings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
+        prefect_api_url="http://prefect.test:4200/api",
+    )
+
+    assert settings.prefect_api_url == "http://prefect.test:4200/api"
 
 
 def test_execution_backend_rejects_unknown_values() -> None:
