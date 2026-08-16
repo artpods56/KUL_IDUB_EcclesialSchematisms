@@ -8,21 +8,21 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel, ValidationError
 
 
-from notarius_api.v1.routes.catalog.models import NodeRegistryResponse
-from notarius_api.v1.routes.executions.models import (
+from grafy_api.v1.routes.catalog.models import NodeRegistryResponse
+from grafy_api.v1.routes.executions.models import (
     RunEdgeRequest,
     RunPortOutputResponse,
     RunResponse,
 )
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactObject,
     ArtifactRef,
     ArtifactRefSequence,
     ArtifactTypeKey,
     InMemoryUnitOfWork,
 )
-from notarius_core.conversions import MAX_ARTIFACT_CONVERSION_HOPS
-from notarius_core.operators.arithmetic import (
+from grafy_core.conversions import MAX_ARTIFACT_CONVERSION_HOPS
+from grafy_core.operators.arithmetic import (
     BinaryIntegerInput,
     IntegerSequenceConfig,
     IntegerSequenceOutput,
@@ -33,7 +33,7 @@ from notarius_core.operators.arithmetic import (
     SumIntegersInput,
     SumIntegersOutput,
 )
-from notarius_core.operators.text import TEXT_VALUE
+from grafy_core.operators.text import TEXT_VALUE
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")

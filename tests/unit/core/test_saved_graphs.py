@@ -5,9 +5,9 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from notarius_core.artifacts import ArtifactTypeKey
-from notarius_core.domain.errors import SavedGraphRevisionConflictError
-from notarius_core.domain.saved_graphs import (
+from grafy_core.artifacts import ArtifactTypeKey
+from grafy_core.domain.errors import SavedGraphRevisionConflictError
+from grafy_core.domain.saved_graphs import (
     GraphPoint,
     GraphPresentationAnnotation,
     GraphPresentationDocument,

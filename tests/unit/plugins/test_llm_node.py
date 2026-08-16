@@ -2,17 +2,17 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from notarius_core.artifacts import ArtifactRef
-from notarius_core.nodes import NodeExecutionContext, PortShape
-from notarius_core.operators.images import RASTER_IMAGE
-from notarius_core.operators.prompts import (
+from grafy_core.artifacts import ArtifactRef
+from grafy_core.nodes import NodeExecutionContext, PortShape
+from grafy_core.operators.images import RASTER_IMAGE
+from grafy_core.operators.prompts import (
     PROMPT_MESSAGE,
     PromptMessage,
     PromptMessageRole,
 )
-from notarius_core.operators.schemas import JSON_SCHEMA
-from notarius_plugin_llm.artifacts import STRUCTURED_RESPONSE
-from notarius_plugin_llm.mistral import (
+from grafy_core.operators.schemas import JSON_SCHEMA
+from grafy_plugin_llm.artifacts import STRUCTURED_RESPONSE
+from grafy_plugin_llm.mistral import (
     MistralStructuredConfig,
     MistralStructuredExecutionError,
     MistralStructuredInput,

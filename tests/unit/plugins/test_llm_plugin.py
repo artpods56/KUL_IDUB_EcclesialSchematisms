@@ -2,24 +2,24 @@ import tomllib
 from io import BytesIO
 from pathlib import Path
 
-from notarius_core.artifacts import InMemoryUnitOfWork
-from notarius_core.operators.arithmetic import ARITHMETIC
-from notarius_core.operators.prompts import PROMPTS
-from notarius_core.operators.schemas import SCHEMAS
-from notarius_core.operators.sequences import SEQUENCES
-from notarius_core.operators.images import IMAGES
-from notarius_core.operators.text import TEXT, TEXT_VALUE
-from notarius_core.plugins import PluginOrigin, PluginRegistry, PluginRuntimeContext
-from notarius_core.ports.storage import SaveFileCommand, StoredFile, StoredObjectInfo
-from notarius_core.runtime.persistence import InlineModelOutputWriter
-from notarius_core.runtime.resolvers import InlineModelResolver
-from notarius_plugin_llm import LLM
-from notarius_plugin_llm.artifacts import (
+from grafy_core.artifacts import InMemoryUnitOfWork
+from grafy_core.operators.arithmetic import ARITHMETIC
+from grafy_core.operators.prompts import PROMPTS
+from grafy_core.operators.schemas import SCHEMAS
+from grafy_core.operators.sequences import SEQUENCES
+from grafy_core.operators.images import IMAGES
+from grafy_core.operators.text import TEXT, TEXT_VALUE
+from grafy_core.plugins import PluginOrigin, PluginRegistry, PluginRuntimeContext
+from grafy_core.ports.storage import SaveFileCommand, StoredFile, StoredObjectInfo
+from grafy_core.runtime.persistence import InlineModelOutputWriter
+from grafy_core.runtime.resolvers import InlineModelResolver
+from grafy_plugin_llm import LLM
+from grafy_plugin_llm.artifacts import (
     COMPLETION,
     STRUCTURED_RESPONSE,
     StructuredResponsePayload,
 )
-from notarius_plugin_llm.mistral import MistralStructuredNode
+from grafy_plugin_llm.mistral import MistralStructuredNode
 
 
 class EmptyStorage:
@@ -128,7 +128,7 @@ def test_llm_package_metadata_declares_plugin_entry_point() -> None:
         (project_root / "plugins" / "llm" / "pyproject.toml").read_text()
     )
 
-    assert metadata["project"]["name"] == "notarius-plugin-llm"
-    assert metadata["project"]["entry-points"]["notarius.plugins"] == {
-        "llm": "notarius_plugin_llm.plugin:LLM"
+    assert metadata["project"]["name"] == "grafy-plugin-llm"
+    assert metadata["project"]["entry-points"]["grafy.plugins"] == {
+        "llm": "grafy_plugin_llm.plugin:LLM"
     }

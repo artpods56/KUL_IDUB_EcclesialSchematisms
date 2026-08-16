@@ -7,7 +7,7 @@ import pytest
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
-from notarius_mcp.models import (
+from grafy_mcp.models import (
     CollaborativeHeadResponse,
     CreateSavedGraphRequest,
     NodeRegistryResponse,
@@ -16,9 +16,9 @@ from notarius_mcp.models import (
     SubmitGraphCommandResponse,
     UpdateSavedGraphRequest,
 )
-from notarius_mcp.operations import McpCallerContext, McpOperationError
-from notarius_mcp.request_context import bind_mcp_request, reset_mcp_request
-from notarius_mcp.server import mcp
+from grafy_mcp.operations import McpCallerContext, McpOperationError
+from grafy_mcp.request_context import bind_mcp_request, reset_mcp_request
+from grafy_mcp.server import mcp
 
 
 _GRAPH_ID = UUID("12345678-1234-5678-1234-567812345678")

@@ -3,9 +3,9 @@ from uuid import UUID
 
 import pytest
 
-from notarius_core.artifacts import InMemoryUnitOfWork
-from notarius_core.domain.staged_uploads import StagedUpload
-from notarius_core.staged_upload_paths import (
+from grafy_core.artifacts import InMemoryUnitOfWork
+from grafy_core.domain.staged_uploads import StagedUpload
+from grafy_core.staged_upload_paths import (
     resolve_persisted_staged_upload_path,
     resolve_staged_upload_path,
 )

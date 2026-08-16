@@ -5,13 +5,13 @@ from uuid import UUID
 
 import pytest
 
-from notarius_core.domain.node_secrets import EncryptedNodeSecret
-from notarius_core.domain.saved_graphs import SavedGraph, SavedGraphDocument
-from notarius_core.domain.identity import Workspace
+from grafy_core.domain.node_secrets import EncryptedNodeSecret
+from grafy_core.domain.saved_graphs import SavedGraph, SavedGraphDocument
+from grafy_core.domain.identity import Workspace
 
-from notarius_persistence.database import Database, create_database
-from notarius_persistence.orm import metadata
-from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
+from grafy_persistence.database import Database, create_database
+from grafy_persistence.orm import metadata
+from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")

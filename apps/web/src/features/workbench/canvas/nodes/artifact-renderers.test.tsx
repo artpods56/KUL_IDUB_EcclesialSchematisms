@@ -1154,22 +1154,22 @@ describe("GIS map artifact rendering", () => {
       fitBounds: ReturnType<typeof vi.fn>;
     };
     const { sources, layers } = map.options.style;
-    expect(sources["notarius-geo-source-parcels"]).toMatchObject({
+    expect(sources["grafy-geo-source-parcels"]).toMatchObject({
       type: "vector",
       url: "pmtiles:///api/v1/artifacts/features-artifact/geo/vector.pmtiles",
     });
-    expect(sources["notarius-geo-source-elevation"]).toMatchObject({
+    expect(sources["grafy-geo-source-elevation"]).toMatchObject({
       type: "raster",
       url: "/api/v1/artifacts/raster-artifact/geo/raster/tilejson.json",
     });
     expect(layers.map((layer) => layer.id)).toEqual([
-      "notarius-openstreetmap-raster",
-      "notarius-geo-parcels-fill",
-      "notarius-geo-parcels-outline",
-      "notarius-geo-parcels-line",
-      "notarius-geo-parcels-point",
-      "notarius-geo-parcels-label",
-      "notarius-geo-elevation-raster",
+      "grafy-openstreetmap-raster",
+      "grafy-geo-parcels-fill",
+      "grafy-geo-parcels-outline",
+      "grafy-geo-parcels-line",
+      "grafy-geo-parcels-point",
+      "grafy-geo-parcels-label",
+      "grafy-geo-elevation-raster",
     ]);
     for (const layer of layers.slice(1, 6)) {
       expect(layer["source-layer"]).toBe("features");
@@ -1375,10 +1375,10 @@ describe("GIS map artifact rendering", () => {
     };
     const categorizedLayers = map.options.style.layers.slice(1);
     expect(categorizedLayers.map((layer) => layer.id)).toEqual([
-      "notarius-geo-chrzanowski-symbols-category-cities-point",
-      "notarius-geo-chrzanowski-symbols-category-cities-label",
-      "notarius-geo-chrzanowski-symbols-category-villages-point",
-      "notarius-geo-chrzanowski-symbols-category-villages-label",
+      "grafy-geo-chrzanowski-symbols-category-cities-point",
+      "grafy-geo-chrzanowski-symbols-category-cities-label",
+      "grafy-geo-chrzanowski-symbols-category-villages-point",
+      "grafy-geo-chrzanowski-symbols-category-villages-label",
     ]);
     expect(categorizedLayers[0]).toMatchObject({
       minzoom: 6,
@@ -1437,12 +1437,12 @@ describe("GIS map artifact rendering", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(map.setPaintProperty).toHaveBeenCalledWith(
-      "notarius-geo-chrzanowski-symbols-category-cities-point",
+      "grafy-geo-chrzanowski-symbols-category-cities-point",
       "circle-radius",
       9,
     );
     expect(map.setLayoutProperty).toHaveBeenCalledWith(
-      "notarius-geo-chrzanowski-symbols-category-cities-label",
+      "grafy-geo-chrzanowski-symbols-category-cities-label",
       "text-radial-offset",
       9 / 12 + 0.35,
     );
@@ -1452,7 +1452,7 @@ describe("GIS map artifact rendering", () => {
     expect(
       map.setPaintProperty.mock.calls.slice(paintCallCountBeforeReset),
     ).toContainEqual([
-      "notarius-geo-chrzanowski-symbols-category-cities-point",
+      "grafy-geo-chrzanowski-symbols-category-cities-point",
       "circle-radius",
       7,
     ]);
@@ -1466,12 +1466,12 @@ describe("GIS map artifact rendering", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(map.setLayoutProperty).toHaveBeenCalledWith(
-      "notarius-geo-chrzanowski-symbols-category-villages-point",
+      "grafy-geo-chrzanowski-symbols-category-villages-point",
       "visibility",
       "none",
     );
     expect(map.setLayoutProperty).toHaveBeenCalledWith(
-      "notarius-geo-chrzanowski-symbols-category-villages-label",
+      "grafy-geo-chrzanowski-symbols-category-villages-label",
       "visibility",
       "none",
     );
@@ -1531,8 +1531,8 @@ describe("GIS map artifact rendering", () => {
         type: "Point",
         coordinates: [19.93821, 50.06143],
       },
-      layer: { id: "notarius-geo-parcels-point" },
-      source: "notarius-geo-source-parcels",
+      layer: { id: "grafy-geo-parcels-point" },
+      source: "grafy-geo-source-parcels",
       sourceLayer: "features",
       state: {},
     }]);
@@ -1549,9 +1549,9 @@ describe("GIS map artifact rendering", () => {
       ],
       {
         layers: [
-          "notarius-geo-parcels-fill",
-          "notarius-geo-parcels-line",
-          "notarius-geo-parcels-point",
+          "grafy-geo-parcels-fill",
+          "grafy-geo-parcels-line",
+          "grafy-geo-parcels-point",
         ],
       },
     );
@@ -1628,25 +1628,25 @@ describe("GIS map artifact rendering", () => {
       setPaintProperty: ReturnType<typeof vi.fn>;
     };
     expect(map.setPaintProperty).toHaveBeenCalledWith(
-      "notarius-geo-parcels-fill",
+      "grafy-geo-parcels-fill",
       "fill-opacity",
       0.2,
     );
     await clickButton(container, "Disable labels");
     expect(map.setLayoutProperty).toHaveBeenCalledWith(
-      "notarius-geo-parcels-label",
+      "grafy-geo-parcels-label",
       "visibility",
       "none",
     );
     await clickButton(container, "Enable labels");
     expect(map.setLayoutProperty).toHaveBeenCalledWith(
-      "notarius-geo-parcels-label",
+      "grafy-geo-parcels-label",
       "visibility",
       "visible",
     );
     await clickButton(container, "Hide Parcels");
     expect(map.setLayoutProperty).toHaveBeenCalledWith(
-      "notarius-geo-parcels-fill",
+      "grafy-geo-parcels-fill",
       "visibility",
       "none",
     );
@@ -1664,7 +1664,7 @@ describe("GIS map artifact rendering", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(map.setPaintProperty).toHaveBeenCalledWith(
-      "notarius-geo-elevation-raster",
+      "grafy-geo-elevation-raster",
       "raster-resampling",
       "nearest",
     );

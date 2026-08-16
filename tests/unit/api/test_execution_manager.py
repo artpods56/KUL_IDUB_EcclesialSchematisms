@@ -7,26 +7,26 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import StrictInt, ValidationError
 
-from notarius_core.artifacts import InMemoryUnitOfWork, NoConfig, NodeInput, NodeOutput
-from notarius_core.domain.execution_history import (
+from grafy_core.artifacts import InMemoryUnitOfWork, NoConfig, NodeInput, NodeOutput
+from grafy_core.domain.execution_history import (
     GraphExecution,
     GraphExecutionScope,
     GraphExecutionStatus,
 )
-from notarius_core.domain.errors import NotFoundError
-from notarius_core.nodes import (
+from grafy_core.domain.errors import NotFoundError
+from grafy_core.nodes import (
     MAX_NODE_PROGRESS_COUNTER,
     InPort,
     Node,
     NodeExecutionContext,
     OutPort,
 )
-from notarius_core.operators.arithmetic import INTEGER_VALUE
-from notarius_core.plugins import Plugin
+from grafy_core.operators.arithmetic import INTEGER_VALUE
+from grafy_core.plugins import Plugin
 
-from notarius_api.builtins import builtin_plugins
-from notarius_api.plugin_discovery import build_plugin_registry
-from notarius_api.v1.routes.executions.models import (
+from grafy_api.builtins import builtin_plugins
+from grafy_api.plugin_discovery import build_plugin_registry
+from grafy_api.v1.routes.executions.models import (
     ExecutionStatusEvent,
     NodeProgressEvent,
     NodeStatusEvent,
@@ -34,19 +34,19 @@ from notarius_api.v1.routes.executions.models import (
     RunNodeRequest,
     RunRequest,
 )
-from notarius_api.services.composition import build_workbench_components
-from notarius_api.v1.routes.executions.runtime.control import RunExecutionControl
-from notarius_api.v1.routes.executions.runtime.admission import (
+from grafy_api.services.composition import build_workbench_components
+from grafy_api.v1.routes.executions.runtime.control import RunExecutionControl
+from grafy_api.v1.routes.executions.runtime.admission import (
     ExecutionAdmissionLimiter,
     RunExecutionCapacityError,
 )
-from notarius_api.v1.routes.executions.runtime.manager import (
+from grafy_api.v1.routes.executions.runtime.manager import (
     RunExecutionManager,
     RunExecutionSnapshot,
 )
-from notarius_api.v1.routes.executions.runtime.models import GraphExecutionResult
-from notarius_api.v1.routes.executions.runtime.run_graph import RunGraph
-from notarius_api.v1.routes.executions.services import ExecutionHistoryService
+from grafy_api.v1.routes.executions.runtime.models import GraphExecutionResult
+from grafy_api.v1.routes.executions.runtime.run_graph import RunGraph
+from grafy_api.v1.routes.executions.services import ExecutionHistoryService
 
 
 EXECUTION_TEST_PLUGIN = Plugin(

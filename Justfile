@@ -1,8 +1,8 @@
 set dotenv-load
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-graphy_env := env_var_or_default("GRAPHY_ENV_FILE", "/etc/graphy/graphy.env")
-graphy_override := env_var_or_default("GRAPHY_COMPOSE_OVERRIDE", "/etc/graphy/storage.override.yaml")
+grafy_env := env_var_or_default("GRAFY_ENV_FILE", "/etc/grafy/grafy.env")
+grafy_override := env_var_or_default("GRAFY_COMPOSE_OVERRIDE", "/etc/grafy/storage.override.yaml")
 
 # List available recipes.
 default:
@@ -40,27 +40,27 @@ install-sql:
 
 # Start the API with the default plugin set.
 api: db-upgrade
-    uv run --exact --no-dev --package notarius-api uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
+    uv run --exact --no-dev --package grafy-api uvicorn grafy_api.main:app --reload --host 0.0.0.0 --port 8000
 
 # Start the API with the OCR plugin.
 api-ocr: db-upgrade
-    uv run --exact --no-dev --extra ocr uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
+    uv run --exact --no-dev --extra ocr uvicorn grafy_api.main:app --reload --host 0.0.0.0 --port 8000
 
 # Start the API with the GIS plugin.
 api-gis: db-upgrade
-    uv run --exact --no-dev --extra gis uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
+    uv run --exact --no-dev --extra gis uvicorn grafy_api.main:app --reload --host 0.0.0.0 --port 8000
 
 # Start the API with the LLM plugin.
 api-llm: db-upgrade
-    uv run --exact --no-dev --extra llm uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
+    uv run --exact --no-dev --extra llm uvicorn grafy_api.main:app --reload --host 0.0.0.0 --port 8000
 
 # Start the API with the SQL plugin.
 api-sql: db-upgrade
-    uv run --exact --no-dev --extra sql uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
+    uv run --exact --no-dev --extra sql uvicorn grafy_api.main:app --reload --host 0.0.0.0 --port 8000
 
 # Start the API with every optional plugin.
 api-all: db-upgrade
-    uv run --exact --no-dev --extra llm --extra gis --extra ocr --extra sql uvicorn notarius_api.main:app --reload --host 0.0.0.0 --port 8000
+    uv run --exact --no-dev --extra llm --extra gis --extra ocr --extra sql uvicorn grafy_api.main:app --reload --host 0.0.0.0 --port 8000
 
 # Explain how to connect an MCP client to the API.
 mcp:
@@ -145,17 +145,17 @@ keycloak-down:
 
 # Bootstrap the configured OIDC owner.
 bootstrap-oidc-owner:
-    uv run --no-dev notarius-admin bootstrap-oidc-owner \
-        --issuer "${NOTARIUS_OIDC_ISSUER:?set NOTARIUS_OIDC_ISSUER}" \
-        --subject "${NOTARIUS_OIDC_BOOTSTRAP_SUBJECT:?set NOTARIUS_OIDC_BOOTSTRAP_SUBJECT}"
+    uv run --no-dev grafy-admin bootstrap-oidc-owner \
+        --issuer "${GRAFY_OIDC_ISSUER:?set GRAFY_OIDC_ISSUER}" \
+        --subject "${GRAFY_OIDC_BOOTSTRAP_SUBJECT:?set GRAFY_OIDC_BOOTSTRAP_SUBJECT}"
 
-# Run Docker Compose against the production Graphy configuration.
+# Run Docker Compose against the production Grafy configuration.
 prod *args:
     docker compose \
-        --project-name graphy \
-        --env-file "{{ graphy_env }}" \
+        --project-name grafy \
+        --env-file "{{ grafy_env }}" \
         -f infra/docker/compose.yaml \
-        -f "{{ graphy_override }}" \
+        -f "{{ grafy_override }}" \
         {{ args }}
 
 # Pull the current branch, build, start, and wait for healthy production services.
@@ -163,11 +163,11 @@ deploy:
     git pull --ff-only
     just prod up --build --detach --wait
 
-# Show production Graphy service status.
+# Show production Grafy service status.
 status:
     just prod ps
 
-# Follow production Graphy logs, optionally narrowed to services.
+# Follow production Grafy logs, optionally narrowed to services.
 logs *services:
     just prod logs --tail=200 --follow {{ services }}
 

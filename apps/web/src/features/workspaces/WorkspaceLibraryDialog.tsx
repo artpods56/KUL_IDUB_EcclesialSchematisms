@@ -532,7 +532,7 @@ export function WorkspaceModuleLibrary({
           </p>
           <button
             type="button"
-            className="ns-workspace-button"
+            className="grafy-workspace-button"
             onClick={() => void mutate()}
           >
             Retry loading Modules
@@ -570,7 +570,7 @@ export function WorkspaceModuleLibrary({
           </p>
           <button
             type="button"
-            className="ns-workspace-button"
+            className="grafy-workspace-button"
             onClick={() => setQuery("")}
           >
             Clear search
@@ -628,7 +628,7 @@ export function WorkspaceModuleLibrary({
                 <div {...stylex.props(s.actions, s.mobileActions)}>
                   <button
                     type="button"
-                    className="ns-workspace-button"
+                    className="grafy-workspace-button"
                     onClick={() =>
                       onOpenSourceGraph
                         ? onOpenSourceGraph(module.source_graph_id)
@@ -643,7 +643,7 @@ export function WorkspaceModuleLibrary({
                   module.publication_state === "published" ? (
                     <button
                       type="button"
-                      className="ns-workspace-button"
+                      className="grafy-workspace-button"
                       disabled={busyId === module.id}
                       onClick={() => void runDeprecate(module)}
                     >
@@ -653,7 +653,7 @@ export function WorkspaceModuleLibrary({
                   {canManageLibrary ? (
                     <button
                       type="button"
-                      className="ns-workspace-button"
+                      className="grafy-workspace-button"
                       disabled={busyId === module.id}
                       onClick={() => {
                         setError(null);
@@ -666,7 +666,7 @@ export function WorkspaceModuleLibrary({
                   ) : null}
                   <button
                     type="button"
-                    className="ns-workspace-button"
+                    className="grafy-workspace-button"
                     disabled={busyId === module.id || !canImport}
                     title={
                       importDestinations.length
@@ -705,7 +705,7 @@ export function WorkspaceModuleLibrary({
           <div {...stylex.props(s.panelActions)}>
             <button
               type="button"
-              className="ns-workspace-button"
+              className="grafy-workspace-button"
               disabled={busyId === withdrawTarget.id}
               onClick={() => setWithdrawTarget(null)}
             >
@@ -713,7 +713,7 @@ export function WorkspaceModuleLibrary({
             </button>
             <button
               type="button"
-              className="ns-workspace-button ns-workspace-button--primary"
+              className="grafy-workspace-button grafy-workspace-button--primary"
               disabled={busyId === withdrawTarget.id}
               onClick={() => void runWithdraw()}
             >
@@ -754,7 +754,7 @@ export function WorkspaceModuleLibrary({
           <div {...stylex.props(s.panelActions)}>
             <button
               type="button"
-              className="ns-workspace-button"
+              className="grafy-workspace-button"
               disabled={busyId === importTarget.id}
               onClick={() => setImportTarget(null)}
             >
@@ -762,7 +762,7 @@ export function WorkspaceModuleLibrary({
             </button>
             <button
               type="button"
-              className="ns-workspace-button ns-workspace-button--primary"
+              className="grafy-workspace-button grafy-workspace-button--primary"
               disabled={!destinationId || busyId === importTarget.id}
               onClick={() => void runImport()}
             >
@@ -804,7 +804,7 @@ export function WorkspaceLibraryDialog({
       {showTrigger ? (
         <button
           type="button"
-          className="ns-workspace-button"
+          className="grafy-workspace-button"
           onClick={() => setOpen(true)}
         >
           <Library size={14} /> {label}

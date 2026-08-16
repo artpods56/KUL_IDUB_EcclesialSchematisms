@@ -3,7 +3,7 @@ from typing import Annotated
 import pytest
 from pydantic import Field, ValidationError
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactRef,
     ArtifactRefSequence,
     ArtifactTypeKey,
@@ -12,7 +12,7 @@ from notarius_core.artifacts import (
     NodeInput,
     NodeOutput,
 )
-from notarius_core.nodes import (
+from grafy_core.nodes import (
     ArtifactTypeVariable,
     InPort,
     Node,
@@ -24,7 +24,7 @@ from notarius_core.nodes import (
     derive_input_contract,
     resolve_node_contracts,
 )
-from notarius_core.operators.images import RASTER_IMAGE
+from grafy_core.operators.images import RASTER_IMAGE
 
 
 class ExampleImage:

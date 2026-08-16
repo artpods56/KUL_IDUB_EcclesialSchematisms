@@ -1,4 +1,4 @@
-# Run Notarius with the Compose same-origin gateway
+# Run Grafy with the Compose same-origin gateway
 
 This Compose project runs five processes:
 
@@ -8,7 +8,7 @@ This Compose project runs five processes:
    The SQL plugin is deliberately excluded: user-authored SQL must move to a
    separate networkless, least-privileged worker before production use.
 4. `web` runs the minimal Next.js standalone server.
-5. `gateway` is the only Notarius application listener (`127.0.0.1:8080` by
+5. `gateway` is the only Grafy application listener (`127.0.0.1:8080` by
    default). It serves plain HTTP and does not terminate TLS.
 
 Web and API stay on the Compose network. Prefect publishes a separate loopback
@@ -33,17 +33,17 @@ openssl rand -base64 32
 ```
 
 Put the three independently generated values in
-`NOTARIUS_CREDENTIAL_ENCRYPTION_KEY`, `NOTARIUS_COMMAND_HMAC_KEY`, and
-`NOTARIUS_OIDC_AUTH_WRAPPING_KEY`. Set `NOTARIUS_OIDC_ISSUER`,
-`NOTARIUS_OIDC_CLIENT_ID`, and the client secret only when the provider uses a
+`GRAFY_CREDENTIAL_ENCRYPTION_KEY`, `GRAFY_COMMAND_HMAC_KEY`, and
+`GRAFY_OIDC_AUTH_WRAPPING_KEY`. Set `GRAFY_OIDC_ISSUER`,
+`GRAFY_OIDC_CLIENT_ID`, and the client secret only when the provider uses a
 confidential client. Then set the exact public HTTPS origin in
-`NOTARIUS_PUBLIC_ORIGIN` and `NOTARIUS_CORS_ORIGINS`. Compose refuses to render
+`GRAFY_PUBLIC_ORIGIN` and `GRAFY_CORS_ORIGINS`. Compose refuses to render
 the deployment while a required value is unset or empty. Register the callback
-`${NOTARIUS_PUBLIC_ORIGIN}/api/v1/auth/oidc/callback`
+`${GRAFY_PUBLIC_ORIGIN}/api/v1/auth/oidc/callback`
 with the identity provider before opening login.
 
-`NOTARIUS_DOCKER_DATABASE_URL` is deliberately separate from the local
-`NOTARIUS_DATABASE_URL`. This prevents a development `.env` file with a relative
+`GRAFY_DOCKER_DATABASE_URL` is deliberately separate from the local
+`GRAFY_DATABASE_URL`. This prevents a development `.env` file with a relative
 SQLite path from sending migrations to a container-local, non-persistent file.
 
 Keep `.env.production` outside version control and restrict it to the deployment
@@ -97,8 +97,8 @@ registered public origin.
 
 ## Prefect
 
-The Prefect image is pinned to the same `3.6.21` version used by the Notarius
-API. Notarius submits local flows to `http://prefect:4200/api`; execution still
+The Prefect image is pinned to the same `3.6.21` version used by the Grafy
+API. Grafy submits local flows to `http://prefect:4200/api`; execution still
 happens inside the API container, so this topology does not require a Prefect
 worker.
 
@@ -140,10 +140,10 @@ file as TLS termination or as a complete two-proxy configuration.
   `172.30.0.1`. Because the gateway container receives a dynamic address in
   that subnet, Uvicorn trusts the configured subnet CIDR rather than the bridge
   gateway address. If the subnet overlaps another Docker network, set
-  `NOTARIUS_DOCKER_SUBNET` and `NOTARIUS_DOCKER_GATEWAY` together; never use
+  `GRAFY_DOCKER_SUBNET` and `GRAFY_DOCKER_GATEWAY` together; never use
   `*` as the trusted range.
 
-Browser traffic uses the opaque Notarius session cookie after OIDC login. MCP
+Browser traffic uses the opaque Grafy session cookie after OIDC login. MCP
 clients use a workspace-bound PAT in `Authorization: Bearer` against
 `https://<origin>/mcp`. The operator-supplied public endpoint must terminate TLS
 for that origin before production login.
@@ -151,7 +151,7 @@ for that origin before production login.
 ## One API owner
 
 Collaboration rooms, journals, presence, and shared execution assume exactly one
-FastAPI owner process. Compose sets `NOTARIUS_REQUIRE_SINGLE_API_OWNER=true` and
+FastAPI owner process. Compose sets `GRAFY_REQUIRE_SINGLE_API_OWNER=true` and
 `WEB_CONCURRENCY=1`. On startup the API acquires an exclusive lock file under
 the data workspace; a second owner fails closed. Do not add replicas, Uvicorn
 `--workers`, or shared room pubsub across processes until a separate design is
@@ -166,11 +166,11 @@ docker compose \
   --env-file .env.production \
   -f infra/docker/compose.yaml \
   exec api \
-  .venv/bin/notarius-admin bootstrap-oidc-owner \
+  .venv/bin/grafy-admin bootstrap-oidc-owner \
   --subject "<first-owner-subject>"
 ```
 
-The command reads `NOTARIUS_OIDC_ISSUER` from the API container's configured
+The command reads `GRAFY_OIDC_ISSUER` from the API container's configured
 environment. Its optional `--issuer` argument is only an equality assertion;
 it is not needed for this Compose invocation. In particular, `--env-file` does
 not export variables into the host shell.
@@ -181,7 +181,7 @@ owners.
 
 ## Persistence, backup, and rollback
 
-The `notarius-data` volume contains the Notarius SQLite database, staged
+The `grafy-data` volume contains the Grafy SQLite database, staged
 uploads, and local artifact objects. The `prefect-data` volume contains Prefect
 orchestration state. Treat migrations as a maintenance window for SQLite:
 
@@ -196,7 +196,7 @@ tracking can make deletion and transactional quota reservation safe.
 2. confirm one API owner and no active execution;
 3. checkpoint/truncate the SQLite WAL and create a consistent backup with the
    SQLite backup API or a stopped-volume snapshot;
-4. back up the complete Notarius data volume and separately protect encryption,
+4. back up the complete Grafy data volume and separately protect encryption,
    auth-wrapping, command-HMAC, and OIDC client secrets;
 5. run `PRAGMA integrity_check` and restore the backup into a scratch location
    before upgrading.
@@ -205,13 +205,13 @@ Backup while the stack is stopped:
 
 ```bash
 docker run --rm \
-  --volume notarius_notarius-data:/source:ro \
+  --volume grafy_grafy-data:/source:ro \
   --volume "$PWD/backups:/backup" \
   alpine \
-  tar -czf /backup/notarius-data.tgz -C /source .
+  tar -czf /backup/grafy-data.tgz -C /source .
 
 docker run --rm \
-  --volume notarius_prefect-data:/source:ro \
+  --volume grafy_prefect-data:/source:ro \
   --volume "$PWD/backups:/backup" \
   alpine \
   tar -czf /backup/prefect-data.tgz -C /source .
@@ -231,7 +231,7 @@ public origin as `/api/v1` once the operator-supplied TLS endpoint is in place.
 Create a workspace-bound personal access token in the browser UI, then point an
 MCP client at:
 
-`${NOTARIUS_PUBLIC_ORIGIN}/mcp`
+`${GRAFY_PUBLIC_ORIGIN}/mcp`
 
 with `Authorization: Bearer <token>`. First delivery is stateless: every request
 re-resolves the PAT. There is no separate stdio MCP process or ambient API
@@ -245,7 +245,7 @@ gateway/proxy contract, and two-session API/WS collaboration acceptance
 (`tests/unit/api/test_collaboration_acceptance.py`). The items below still need
 a human on a real host/IdP/data copy.
 
-- [ ] Exact `NOTARIUS_PUBLIC_ORIGIN` and OIDC callback registered
+- [ ] Exact `GRAFY_PUBLIC_ORIGIN` and OIDC callback registered
 - [ ] Secrets generated and backed up outside the data volume
 - [ ] `bootstrap-oidc-owner` mapping written for the intended first subject
 - [ ] Plain HTTP gateway serves `/`, `/api/v1`, `/mcp` on loopback `:8080` only
@@ -272,5 +272,5 @@ docker compose \
   up --build --detach
 ```
 
-Do not add `--volumes` to `down` unless deleting all persisted Notarius data is
+Do not add `--volumes` to `down` unless deleting all persisted Grafy data is
 intentional.

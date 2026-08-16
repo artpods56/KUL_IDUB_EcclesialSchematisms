@@ -7,17 +7,17 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
-from notarius_core.artifacts import ArtifactObject
-from notarius_core.domain.execution_history import GraphExecution
-from notarius_core.domain.errors import NotFoundError
-from notarius_core.domain.invocation_cache import InvocationCacheEntry
-from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
-from notarius_core.domain.node_secrets import EncryptedNodeSecret
-from notarius_core.domain.saved_graphs import SavedGraph, SavedGraphDocument
-from notarius_core.domain.staged_uploads import StagedUpload
-from notarius_persistence.database import Database, create_database
-from notarius_persistence.orm import metadata
-from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
+from grafy_core.artifacts import ArtifactObject
+from grafy_core.domain.execution_history import GraphExecution
+from grafy_core.domain.errors import NotFoundError
+from grafy_core.domain.invocation_cache import InvocationCacheEntry
+from grafy_core.domain.materialized_outputs import MaterializedNodeOutputs
+from grafy_core.domain.node_secrets import EncryptedNodeSecret
+from grafy_core.domain.saved_graphs import SavedGraph, SavedGraphDocument
+from grafy_core.domain.staged_uploads import StagedUpload
+from grafy_persistence.database import Database, create_database
+from grafy_persistence.orm import metadata
+from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 
 WORKSPACE_ONE = UUID("00000000-0000-0000-0000-000000000201")

@@ -4,11 +4,11 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import ValidationError
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactRef,
     ArtifactTypeKey,
 )
-from notarius_core.domain.modules import (
+from grafy_core.domain.modules import (
     GraphModuleDefinition,
     GraphModuleDefinitionError,
     GraphModuleReference,
@@ -16,7 +16,7 @@ from notarius_core.domain.modules import (
     ModuleBoundaryConfig,
     ModuleInputConfig,
 )
-from notarius_core.domain.saved_graphs import (
+from grafy_core.domain.saved_graphs import (
     GraphPoint,
     SavedGraph,
     SavedGraphArtifactTypeBinding,
@@ -24,8 +24,8 @@ from notarius_core.domain.saved_graphs import (
     SavedGraphEdge,
     SavedGraphNode,
 )
-from notarius_core.nodes import ArtifactTypeVariable, NodeExecutionContext, PortShape
-from notarius_core.operators.modules import (
+from grafy_core.nodes import ArtifactTypeVariable, NodeExecutionContext, PortShape
+from grafy_core.operators.modules import (
     MODULES,
     GraphModuleExecutionError,
     GraphModuleNode,
@@ -33,19 +33,19 @@ from notarius_core.operators.modules import (
     ModuleInputNode,
     ModuleOutputNode,
 )
-from notarius_core.plugins import PluginRegistry
-from notarius_core.ports.modules import (
+from grafy_core.plugins import PluginRegistry
+from grafy_core.ports.modules import (
     GraphModuleExecutionResult,
     GraphModuleExecutorPort,
 )
-from notarius_core.runtime.execution import NodeRuntime
-from notarius_core.runtime.materialization import InputMaterializer
-from notarius_core.runtime.persistence import (
+from grafy_core.runtime.execution import NodeRuntime
+from grafy_core.runtime.materialization import InputMaterializer
+from grafy_core.runtime.persistence import (
     ArtifactWriterRegistry,
     OutputPersister,
     PersistedNodeOutput,
 )
-from notarius_core.runtime.resolvers import ResolverRegistry
+from grafy_core.runtime.resolvers import ResolverRegistry
 
 
 VALUE_TYPE = ArtifactTypeKey("example.value", 1)

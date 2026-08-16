@@ -3,12 +3,12 @@ from uuid import UUID
 
 import pytest
 
-from notarius_core.domain.errors import (
+from grafy_core.domain.errors import (
     CapabilityDeniedError,
     IdentityInvariantError,
     LastWorkspaceOwnerError,
 )
-from notarius_core.domain.identity import (
+from grafy_core.domain.identity import (
     ActorContext,
     AuthSession,
     OidcLoginTransaction,
@@ -22,7 +22,7 @@ from notarius_core.domain.identity import (
     WorkspaceRole,
     ensure_last_owner_can_change,
 )
-from notarius_core.domain.security_audit import (
+from grafy_core.domain.security_audit import (
     SecurityAuditActorKind,
     SecurityAuditEvent,
     SecurityAuditOutcome,

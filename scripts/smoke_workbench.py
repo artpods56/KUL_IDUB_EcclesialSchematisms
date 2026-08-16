@@ -5,38 +5,38 @@ from uuid import UUID
 
 from PIL import Image, ImageDraw
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactRef,
     ArtifactRefSequence,
     InMemoryUnitOfWork,
 )
-from notarius_core.nodes import NodeExecutionContext
-from notarius_core.operators.arithmetic import (
+from grafy_core.nodes import NodeExecutionContext
+from grafy_core.operators.arithmetic import (
     INTEGER_VALUE,
     IntegerValueOutputWriter,
     IntegerValuePayload,
 )
-from notarius_core.operators.images import IMAGES, RASTER_IMAGE
-from notarius_core.operators.sequences import (
+from grafy_core.operators.images import IMAGES, RASTER_IMAGE
+from grafy_core.operators.sequences import (
     CollectNode,
     CountNode,
     ItemAtNode,
     SliceNode,
 )
-from notarius_core.plugins import PluginOrigin, PluginRegistry, PluginRuntimeContext
-from notarius_core.runtime.execution import NodeRuntime, PersistedNodeOutput
-from notarius_core.runtime.materialization import InputMaterializer
-from notarius_core.runtime.persistence import (
+from grafy_core.plugins import PluginOrigin, PluginRegistry, PluginRuntimeContext
+from grafy_core.runtime.execution import NodeRuntime, PersistedNodeOutput
+from grafy_core.runtime.materialization import InputMaterializer
+from grafy_core.runtime.persistence import (
     ArtifactWriterRegistry,
     OutputPersister,
 )
-from notarius_core.runtime.resolvers import ResolverRegistry
-from notarius_plugin_ocr import OCR
-from notarius_plugin_ocr.artifacts import OCR_PAGE_RESULT
-from notarius_storage import LocalFileObjectStore
+from grafy_core.runtime.resolvers import ResolverRegistry
+from grafy_plugin_ocr import OCR
+from grafy_plugin_ocr.artifacts import OCR_PAGE_RESULT
+from grafy_storage import LocalFileObjectStore
 
 
-WORKSPACE = Path(".notarius-artifacts/workbench-smoke").resolve()
+WORKSPACE = Path(".grafy-artifacts/workbench-smoke").resolve()
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
 UPLOADS = WORKSPACE / "uploads"
 OBJECT_STORE = WORKSPACE / "objects"

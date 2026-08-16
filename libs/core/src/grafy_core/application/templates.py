@@ -1,0 +1,197 @@
+from collections.abc import Callable
+from dataclasses import dataclass
+from uuid import UUID
+
+from grafy_core.domain.collaboration import (
+    CollaborativeGraphHead,
+    sanitize_document_for_cross_workspace_copy,
+)
+from grafy_core.domain.errors import CollaborationCommandRejectedError, NotFoundError
+from grafy_core.domain.saved_graphs import (
+    GraphOrganization,
+    SavedGraph,
+    SavedGraphDocument,
+)
+from grafy_core.domain.templates import Template, TemplateLibraryError
+from grafy_core.ports.templates import TemplateUnitOfWorkPort
+
+
+@dataclass(frozen=True, slots=True)
+class TemplateInstantiation:
+    template_id: UUID
+    source_workspace_id: UUID
+    destination_workspace_id: UUID
+    graph: SavedGraph
+    folder_id: UUID | None
+
+
+class TemplateService:
+    """Create and instantiate immutable graph-copy sources."""
+
+    def __init__(
+        self,
+        unit_of_work_factory: Callable[[], TemplateUnitOfWorkPort],
+    ) -> None:
+        self._unit_of_work_factory = unit_of_work_factory
+
+    async def create_from_graph_revision(
+        self,
+        *,
+        workspace_id: UUID,
+        source_graph_id: UUID,
+        source_revision: int,
+        created_by_user_id: UUID | None,
+        name: str,
+        description: str | None,
+    ) -> Template:
+        async with self._unit_of_work_factory() as unit_of_work:
+            revision = await unit_of_work.graphs.get_revision(
+                workspace_id,
+                source_graph_id,
+                source_revision,
+            )
+            if revision is None:
+                raise NotFoundError(
+                    "Saved graph revision",
+                    f"{source_graph_id}@{source_revision}",
+                )
+            try:
+                snapshot_document = sanitize_document_for_cross_workspace_copy(
+                    revision.document
+                )
+            except CollaborationCommandRejectedError as exc:
+                raise TemplateLibraryError(str(exc)) from exc
+            template = Template(
+                workspace_id=workspace_id,
+                source_graph_id=source_graph_id,
+                source_revision=source_revision,
+                source_graph_name=revision.name,
+                snapshot_document=snapshot_document,
+                name=name,
+                description=description,
+                created_by_user_id=created_by_user_id,
+            )
+            await unit_of_work.templates.add(template)
+            await unit_of_work.commit()
+            return template
+
+    async def list(
+        self,
+        workspace_id: UUID,
+        *,
+        query: str | None = None,
+        include_archived: bool = False,
+    ) -> list[Template]:
+        normalized_query = query.strip() if query is not None else None
+        if normalized_query == "":
+            normalized_query = None
+        async with self._unit_of_work_factory() as unit_of_work:
+            return await unit_of_work.templates.list(
+                workspace_id,
+                query=normalized_query,
+                include_archived=include_archived,
+            )
+
+    async def get(self, workspace_id: UUID, template_id: UUID) -> Template:
+        async with self._unit_of_work_factory() as unit_of_work:
+            template = await unit_of_work.templates.get(workspace_id, template_id)
+        if template is None:
+            raise NotFoundError("Template", str(template_id))
+        return template
+
+    async def update_metadata(
+        self,
+        *,
+        workspace_id: UUID,
+        template_id: UUID,
+        name: str,
+        description: str | None,
+    ) -> Template:
+        async with self._unit_of_work_factory() as unit_of_work:
+            template = await unit_of_work.templates.get(workspace_id, template_id)
+            if template is None:
+                raise NotFoundError("Template", str(template_id))
+            template.update_metadata(name=name, description=description)
+            await unit_of_work.commit()
+            return template
+
+    async def archive(
+        self,
+        *,
+        workspace_id: UUID,
+        template_id: UUID,
+    ) -> Template:
+        async with self._unit_of_work_factory() as unit_of_work:
+            template = await unit_of_work.templates.get(workspace_id, template_id)
+            if template is None:
+                raise NotFoundError("Template", str(template_id))
+            template.archive()
+            await unit_of_work.commit()
+            return template
+
+    async def instantiate(
+        self,
+        *,
+        source_workspace_id: UUID,
+        template_id: UUID,
+        destination_workspace_id: UUID,
+        created_by_user_id: UUID | None,
+        name: str,
+        folder_id: UUID | None,
+    ) -> TemplateInstantiation:
+        async with self._unit_of_work_factory() as unit_of_work:
+            template = await unit_of_work.templates.get(
+                source_workspace_id,
+                template_id,
+            )
+            if template is None:
+                raise NotFoundError("Template", str(template_id))
+            if not template.is_available:
+                raise TemplateLibraryError("Archived templates cannot be used")
+            if folder_id is not None:
+                folder = await unit_of_work.graphs.get_folder(
+                    destination_workspace_id,
+                    folder_id,
+                )
+                if folder is None:
+                    raise NotFoundError("Graph folder", str(folder_id))
+
+            independent_document = SavedGraphDocument.model_validate(
+                template.snapshot_document.model_dump(mode="json")
+            )
+            graph = SavedGraph(
+                workspace_id=destination_workspace_id,
+                created_by_user_id=created_by_user_id,
+                name=name,
+                document=independent_document,
+            )
+            await unit_of_work.graphs.add(graph)
+            await unit_of_work.graphs.add_revision(graph.snapshot())
+            await unit_of_work.collaboration.add_head(
+                CollaborativeGraphHead.for_existing_saved_graph(
+                    workspace_id=destination_workspace_id,
+                    graph_id=graph.id,
+                    name=graph.name,
+                    document=graph.document,
+                    checkpoint_revision=graph.revision,
+                )
+            )
+            if folder_id is not None:
+                await unit_of_work.graphs.save_organization(
+                    GraphOrganization(
+                        workspace_id=destination_workspace_id,
+                        graph_id=graph.id,
+                        folder_id=folder_id,
+                    )
+                )
+            await unit_of_work.commit()
+            return TemplateInstantiation(
+                template_id=template.id,
+                source_workspace_id=source_workspace_id,
+                destination_workspace_id=destination_workspace_id,
+                graph=graph,
+                folder_id=folder_id,
+            )
+
+
+__all__ = ["TemplateInstantiation", "TemplateService"]

@@ -376,6 +376,6 @@ text-scalar gap and gives every JSON artifact a real download.
 
 New schema `ArtifactExportFormatResponse { format, content_type, filename }`;
 `ArtifactSummaryResponse` gains `download_formats`. New path
-`/artifacts/{artifact_id}/download`. The generated `apps/web/.../notarius.ts`
+`/artifacts/{artifact_id}/download`. The generated `apps/web/.../grafy.ts`
 contract and the artifact-viewer types update in Phase 1 (per the project's
 "update OpenAPI contract and generate module API types" commit convention).

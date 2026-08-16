@@ -9,16 +9,16 @@ from pydantic import BaseModel, SecretStr, TypeAdapter
 import pytest
 from sqlalchemy import text
 
-from notarius_api.main import create_app
-from notarius_api.settings import Settings
-from notarius_api.v1.routes.auth.models import PersonalAccessTokenCreatedResponse
-from notarius_api.v1.routes.auth.abuse import (
+from grafy_api.main import create_app
+from grafy_api.settings import Settings
+from grafy_api.v1.routes.auth.models import PersonalAccessTokenCreatedResponse
+from grafy_api.v1.routes.auth.abuse import (
     BROWSER_ABUSE_COOKIE,
     make_browser_abuse_cookie,
 )
-from notarius_api.v1.routes.auth.services import AuthService, IssuedSession
-from notarius_core.application.identity import IdentityService
-from notarius_core.domain.identity import (
+from grafy_api.v1.routes.auth.services import AuthService, IssuedSession
+from grafy_core.application.identity import IdentityService
+from grafy_core.domain.identity import (
     OidcLoginTransaction,
     User,
     Workspace,
@@ -26,9 +26,9 @@ from notarius_core.domain.identity import (
     WorkspaceMembership,
     WorkspaceRole,
 )
-from notarius_persistence.database import create_database
-from notarius_persistence.orm import metadata
-from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
+from grafy_persistence.database import create_database
+from grafy_persistence.orm import metadata
+from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 
 def _settings(database_url: str, *, idle_seconds: int = 1800) -> Settings:
@@ -164,8 +164,8 @@ def test_cookie_requests_require_exact_origin_and_csrf(tmp_path: Path) -> None:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'csrf.sqlite3'}"
     _, _, issued = _seed_sync(database_url)
     with TestClient(create_app(_settings(database_url))) as client:
-        client.cookies.set("notarius_session", issued.cookie_value)
-        client.cookies.set("notarius_csrf", issued.csrf_value)
+        client.cookies.set("grafy_session", issued.cookie_value)
+        client.cookies.set("grafy_csrf", issued.csrf_value)
         assert (
             client.post(
                 "/v1/workspaces", json={"slug": "team", "name": "Team"}
@@ -211,8 +211,8 @@ def test_authenticated_csrf_failure_is_audited_once_at_auth_boundary(
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'csrf-single-audit.sqlite3'}"
     _, _, issued = _seed_sync(database_url)
     with TestClient(create_app(_settings(database_url))) as client:
-        client.cookies.set("notarius_session", issued.cookie_value)
-        client.cookies.set("notarius_csrf", issued.csrf_value)
+        client.cookies.set("grafy_session", issued.cookie_value)
+        client.cookies.set("grafy_csrf", issued.csrf_value)
         response = client.post(
             "/v1/workspaces",
             json={"slug": "team", "name": "Team"},
@@ -260,8 +260,8 @@ def test_session_idle_expiry_is_enforced_at_boundary(tmp_path: Path) -> None:
     asyncio.run(age_session())
     del user
     with TestClient(create_app(_settings(database_url, idle_seconds=1800))) as client:
-        client.cookies.set("notarius_session", issued.cookie_value)
-        client.cookies.set("notarius_csrf", issued.csrf_value)
+        client.cookies.set("grafy_session", issued.cookie_value)
+        client.cookies.set("grafy_csrf", issued.csrf_value)
         assert client.get("/v1/auth/session").status_code == 401
 
 
@@ -276,8 +276,8 @@ def test_session_absolute_expiry_is_enforced(tmp_path: Path) -> None:
         )
     )
     with TestClient(create_app(_settings(database_url))) as client:
-        client.cookies.set("notarius_session", issued.cookie_value)
-        client.cookies.set("notarius_csrf", issued.csrf_value)
+        client.cookies.set("grafy_session", issued.cookie_value)
+        client.cookies.set("grafy_csrf", issued.csrf_value)
         assert client.get("/v1/auth/session").status_code == 401
 
 
@@ -285,8 +285,8 @@ def test_logout_revokes_the_current_session(tmp_path: Path) -> None:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'logout.sqlite3'}"
     _, _, issued = _seed_sync(database_url)
     with TestClient(create_app(_settings(database_url))) as client:
-        client.cookies.set("notarius_session", issued.cookie_value)
-        client.cookies.set("notarius_csrf", issued.csrf_value)
+        client.cookies.set("grafy_session", issued.cookie_value)
+        client.cookies.set("grafy_csrf", issued.csrf_value)
         headers = {
             "Origin": "http://testserver",
             "X-CSRF-Token": issued.csrf_value,
@@ -313,7 +313,7 @@ def test_expired_callback_consumes_transaction_and_releases_reservation(
     settings = _settings(database_url).model_copy(
         update={
             "oidc_issuer": "https://issuer.example.test",
-            "oidc_client_id": "notarius-client",
+            "oidc_client_id": "grafy-client",
             "oidc_auth_wrapping_key": SecretStr("expired-callback-key"),
             "auth_outstanding_login_limit": 1,
         }
@@ -342,13 +342,13 @@ def test_expired_callback_consumes_transaction_and_releases_reservation(
                 ),
             ),
         )
-        client.cookies.set("notarius_oidc_transaction", str(transaction_id))
+        client.cookies.set("grafy_oidc_transaction", str(transaction_id))
         response = client.get(
             "/v1/auth/oidc/callback",
             params={"state": "expired-state", "code": "expired-code"},
         )
         assert response.status_code == 400
-        assert "notarius_oidc_transaction" in response.headers.get("set-cookie", "")
+        assert "grafy_oidc_transaction" in response.headers.get("set-cookie", "")
 
     async def read_transaction() -> bool:
         database = create_database(database_url)
@@ -373,7 +373,7 @@ def test_callback_failure_before_consumption_preserves_transaction_and_slot(
     settings = _settings(database_url).model_copy(
         update={
             "oidc_issuer": "https://issuer.example.test",
-            "oidc_client_id": "notarius-client",
+            "oidc_client_id": "grafy-client",
             "oidc_auth_wrapping_key": SecretStr("before-consume-key"),
             "auth_outstanding_login_limit": 1,
         }
@@ -407,13 +407,13 @@ def test_callback_failure_before_consumption_preserves_transaction_and_slot(
                 ),
             ),
         )
-        client.cookies.set("notarius_oidc_transaction", str(transaction_id))
+        client.cookies.set("grafy_oidc_transaction", str(transaction_id))
         response = client.get(
             "/v1/auth/oidc/callback",
             params={"state": "before-state", "code": "before-code"},
         )
         assert response.status_code == 500
-        assert "notarius_oidc_transaction" not in response.headers.get("set-cookie", "")
+        assert "grafy_oidc_transaction" not in response.headers.get("set-cookie", "")
 
     assert not asyncio.run(auth.reserve_login("before-browser", UUID(int=704)))
 
@@ -439,7 +439,7 @@ def test_callback_failure_after_consumption_clears_transaction_and_releases_slot
     settings = _settings(database_url).model_copy(
         update={
             "oidc_issuer": "https://issuer.example.test",
-            "oidc_client_id": "notarius-client",
+            "oidc_client_id": "grafy-client",
             "oidc_auth_wrapping_key": SecretStr("after-consume-key"),
             "auth_outstanding_login_limit": 1,
         }
@@ -473,13 +473,13 @@ def test_callback_failure_after_consumption_clears_transaction_and_releases_slot
                 ),
             ),
         )
-        client.cookies.set("notarius_oidc_transaction", str(transaction_id))
+        client.cookies.set("grafy_oidc_transaction", str(transaction_id))
         response = client.get(
             "/v1/auth/oidc/callback",
             params={"state": "after-state", "code": "after-code"},
         )
         assert response.status_code == 500
-        assert "notarius_oidc_transaction" in response.headers.get("set-cookie", "")
+        assert "grafy_oidc_transaction" in response.headers.get("set-cookie", "")
         assert "Max-Age=0" in response.headers.get("set-cookie", "")
 
     assert asyncio.run(auth.reserve_login("after-browser", UUID(int=706)))
@@ -501,8 +501,8 @@ def test_pat_create_shows_secret_once_and_revoke_is_audited(tmp_path: Path) -> N
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'pat.sqlite3'}"
     _, workspace, issued = _seed_sync(database_url)
     with TestClient(create_app(_settings(database_url))) as client:
-        client.cookies.set("notarius_session", issued.cookie_value)
-        client.cookies.set("notarius_csrf", issued.csrf_value)
+        client.cookies.set("grafy_session", issued.cookie_value)
+        client.cookies.set("grafy_csrf", issued.csrf_value)
         headers = {"Origin": "http://testserver", "X-CSRF-Token": issued.csrf_value}
         response = client.post(
             f"/v1/workspaces/{workspace.id}/personal-access-tokens",
@@ -578,7 +578,7 @@ def test_callback_validation_is_bounded_and_consumes_transaction(
     settings = settings.model_copy(
         update={
             "oidc_issuer": "https://issuer.example.test",
-            "oidc_client_id": "notarius-client",
+            "oidc_client_id": "grafy-client",
             "oidc_auth_wrapping_key": SecretStr("callback-test-key"),
             "auth_callback_rate_limit": 1,
         }
@@ -616,14 +616,14 @@ def test_callback_validation_is_bounded_and_consumes_transaction(
                 ),
             ),
         )
-        client.cookies.set("notarius_oidc_transaction", str(transaction_id))
+        client.cookies.set("grafy_oidc_transaction", str(transaction_id))
         first = client.get(
             "/v1/auth/oidc/callback",
             params={"state": state_sentinel},
         )
         assert first.status_code == 422
         assert state_sentinel not in first.text
-        assert "notarius_oidc_transaction" in first.headers.get("set-cookie", "")
+        assert "grafy_oidc_transaction" in first.headers.get("set-cookie", "")
         assert "Path=/api/v1/auth/oidc" in first.headers.get("set-cookie", "")
         second = client.get(
             "/v1/auth/oidc/callback",
@@ -733,8 +733,8 @@ def test_auth_http_exception_is_audited_as_authenticated_failure(
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'auth-http-error.sqlite3'}"
     _, _, issued = _seed_sync(database_url)
     with TestClient(create_app(_settings(database_url))) as client:
-        client.cookies.set("notarius_session", issued.cookie_value)
-        client.cookies.set("notarius_csrf", issued.csrf_value)
+        client.cookies.set("grafy_session", issued.cookie_value)
+        client.cookies.set("grafy_csrf", issued.csrf_value)
         response = client.delete(
             "/v1/auth/sessions/not-a-uuid",
             headers={
@@ -769,8 +769,8 @@ def test_workspace_and_pat_request_validation_is_bounded(tmp_path: Path) -> None
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'dto-validation.sqlite3'}"
     _, workspace, issued = _seed_sync(database_url)
     with TestClient(create_app(_settings(database_url))) as client:
-        client.cookies.set("notarius_session", issued.cookie_value)
-        client.cookies.set("notarius_csrf", issued.csrf_value)
+        client.cookies.set("grafy_session", issued.cookie_value)
+        client.cookies.set("grafy_csrf", issued.csrf_value)
         headers = {"Origin": "http://testserver", "X-CSRF-Token": issued.csrf_value}
         whitespace = client.post(
             "/v1/workspaces",
@@ -856,8 +856,8 @@ def test_workspace_failure_audits_preserve_route_metadata(tmp_path: Path) -> Non
     with TestClient(
         create_app(_settings(f"sqlite+aiosqlite:///{database_url}"))
     ) as client:
-        client.cookies.set("notarius_session", viewer_session.cookie_value)
-        client.cookies.set("notarius_csrf", viewer_session.csrf_value)
+        client.cookies.set("grafy_session", viewer_session.cookie_value)
+        client.cookies.set("grafy_csrf", viewer_session.csrf_value)
         headers = {
             "Origin": "http://testserver",
             "X-CSRF-Token": viewer_session.csrf_value,

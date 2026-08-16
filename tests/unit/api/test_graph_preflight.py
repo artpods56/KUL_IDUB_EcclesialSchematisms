@@ -3,14 +3,14 @@ from uuid import UUID
 
 import pytest
 
-from notarius_core.application.saved_graphs import SavedGraphService
-from notarius_core.artifacts import (
+from grafy_core.application.saved_graphs import SavedGraphService
+from grafy_core.artifacts import (
     ArtifactTypeKey,
     NodeConfig,
     NodeInput,
     NodeOutput,
 )
-from notarius_core.domain.saved_graphs import (
+from grafy_core.domain.saved_graphs import (
     GraphPoint,
     SavedGraph,
     SavedGraphArtifactTypeBinding,
@@ -22,11 +22,11 @@ from notarius_core.domain.saved_graphs import (
     SavedGraphProjection,
     SavedGraphRevision,
 )
-from notarius_core.nodes import Node, NodeExecutionContext
-from notarius_core.plugins import NodeSecretInput, Plugin, PluginRegistry
+from grafy_core.nodes import Node, NodeExecutionContext
+from grafy_core.plugins import NodeSecretInput, Plugin, PluginRegistry
 
-from notarius_api.v1.models import ArtifactTypeBindingModel, ArtifactTypeKeyResponse
-from notarius_api.v1.routes.executions.models import (
+from grafy_api.v1.models import ArtifactTypeBindingModel, ArtifactTypeKeyResponse
+from grafy_api.v1.routes.executions.models import (
     ArtifactConversionRequest,
     FieldProjectionRequest,
     RunEdgeRequest,
@@ -34,8 +34,8 @@ from notarius_api.v1.routes.executions.models import (
     RunNodeRequest,
     RunRequest,
 )
-from notarius_api.v1.routes.executions.runtime.errors import GraphExecutionError
-from notarius_api.v1.routes.executions.runtime.preflight import GraphRunPreflight
+from grafy_api.v1.routes.executions.runtime.errors import GraphExecutionError
+from grafy_api.v1.routes.executions.runtime.preflight import GraphRunPreflight
 
 
 class SecretConfig(NodeConfig):

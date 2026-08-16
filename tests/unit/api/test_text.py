@@ -2,10 +2,10 @@ from typing import cast
 
 from fastapi.testclient import TestClient
 
-from notarius_api.v1.routes.catalog.models import NodeRegistryResponse
-from notarius_api.v1.routes.executions.models import RunResponse
-from notarius_core.artifacts import ArtifactRefSequence
-from notarius_core.operators.text import (
+from grafy_api.v1.routes.catalog.models import NodeRegistryResponse
+from grafy_api.v1.routes.executions.models import RunResponse
+from grafy_core.artifacts import ArtifactRefSequence
+from grafy_core.operators.text import (
     MarkdownValue,
     TextInputConfig,
     TextValuePayload,

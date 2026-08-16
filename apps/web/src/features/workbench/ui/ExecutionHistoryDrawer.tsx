@@ -36,7 +36,7 @@ const s = stylex.create({
       default: "66px",
       "@media (max-width: 720px)": "12px",
       "@media (max-width: 620px)":
-        "calc(var(--ns-mobile-overlay-top, 68px) + env(safe-area-inset-top, 0px))",
+        "calc(var(--grafy-mobile-overlay-top, 68px) + env(safe-area-inset-top, 0px))",
     },
     right: {
       default: "13px",
@@ -389,7 +389,7 @@ const s = stylex.create({
     fontWeight: 700,
   },
   spinner: {
-    animationName: "ns-spin",
+    animationName: "grafy-spin",
     animationDuration: "900ms",
     animationIterationCount: "infinite",
     animationTimingFunction: "linear",

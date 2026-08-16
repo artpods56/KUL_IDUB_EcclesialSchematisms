@@ -8,7 +8,7 @@
 
 ## Context
 
-Notarius currently treats the `local` workspace slug as a route label. The API
+Grafy currently treats the `local` workspace slug as a route label. The API
 does not authenticate a caller, saved graphs are globally addressable, and the
 MCP adapter reaches the same unauthenticated HTTP operations. Binding the web,
 API, Prefect, and MCP ports to loopback reduces network exposure but does not
@@ -40,7 +40,7 @@ and call the same application-owned authorization and mutation workflows.
 
 ### Use users, workspaces, and memberships
 
-Notarius has an internal `User` identity with a stable application id. An
+Grafy has an internal `User` identity with a stable application id. An
 external OpenID Connect identity is uniquely identified by `(issuer, subject)`
 and maps to one user. Email address and display name are profile data; neither
 is an authorization key or sufficient evidence for automatically linking two
@@ -85,7 +85,7 @@ the requested workspace produce the same not-found response.
 ### Share by workspace, without per-graph access lists
 
 All members of a workspace receive the graph capabilities granted by their
-workspace role. Notarius does not add per-graph grants, guest links, or nested
+workspace role. Grafy does not add per-graph grants, guest links, or nested
 teams in this decision.
 
 Cross-workspace sharing creates a copy rather than changing the source graph's
@@ -127,7 +127,7 @@ service through an SSH tunnel.
 
 The same-origin gateway exposes public `/api/v1/...` paths by stripping `/api`
 and forwarding to FastAPI `/v1/...`. The registered browser callback is exactly
-`<NOTARIUS_PUBLIC_ORIGIN>/api/v1/auth/oidc/callback`; it is not derived from
+`<GRAFY_PUBLIC_ORIGIN>/api/v1/auth/oidc/callback`; it is not derived from
 untrusted forwarded headers.
 
 The application does not implement local passwords, password recovery, or MFA.
@@ -193,7 +193,7 @@ surfaces. First delivery uses **stateless** Streamable HTTP: every request is
 authenticated and authorized independently, and no process-global or
 transport-session caller token is retained. It is not published on a separate
 unauthenticated port and does not use an ambient service credential that
-bypasses user authorization. Notarius does not retain a stdio MCP server or
+bypasses user authorization. Grafy does not retain a stdio MCP server or
 entry point; HTTP is the MCP transport.
 
 An MCP user creates a random opaque access token scoped to one workspace and a
@@ -268,7 +268,7 @@ rather than falling back to an anonymous or global workspace.
 
 ### Store local email and password credentials
 
-Rejected because Notarius would own password hashing, verification, recovery,
+Rejected because Grafy would own password hashing, verification, recovery,
 rate limiting, MFA, and credential-breach response instead of delegating those
 responsibilities to the configured identity provider.
 

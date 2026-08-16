@@ -1220,7 +1220,7 @@ const s = stylex.create({
   },
   spacer: { minHeight: "4px" },
   spinner: {
-    animationName: "ns-spin",
+    animationName: "grafy-spin",
     animationDuration: "900ms",
     animationIterationCount: "infinite",
     animationTimingFunction: "linear",

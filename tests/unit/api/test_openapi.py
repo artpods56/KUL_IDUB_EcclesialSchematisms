@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 from fastapi.routing import APIRoute
 
-from notarius_api.main import app
+from grafy_api.main import app
 
 
 def test_public_routes_are_registered_once() -> None:
@@ -111,7 +111,7 @@ def test_openapi_contains_exact_public_routes() -> None:
         == {
             "type": "apiKey",
             "in": "cookie",
-            "name": "notarius_session",
+            "name": "grafy_session",
             "description": "Opaque host-only browser session cookie.",
         }
     )

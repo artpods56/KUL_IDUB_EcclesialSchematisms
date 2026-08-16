@@ -13,7 +13,7 @@
 
 ## Summary
 
-This note decides how Notarius models two deliberately different forms of
+This note decides how Grafy models two deliberately different forms of
 **graph reuse**: Templates create independent graph copies, while Modules are
 callable pinned releases. It resolves the domain harvest into objects,
 relationships, states, and ubiquitous language. It is not a database schema,

@@ -3,20 +3,20 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import ValidationError
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactRef,
     ArtifactRefSequence,
     ArtifactTypeKey,
     NoConfig,
 )
-from notarius_core.nodes import (
+from grafy_core.nodes import (
     ArtifactTypeVariable,
     NodeContractResolutionError,
     NodeExecutionContext,
     PortShape,
 )
-from notarius_core.operators.arithmetic import ARITHMETIC, INTEGER_VALUE
-from notarius_core.operators.sequences import (
+from grafy_core.operators.arithmetic import ARITHMETIC, INTEGER_VALUE
+from grafy_core.operators.sequences import (
     SEQUENCES,
     CollectNode,
     CountInput,
@@ -26,18 +26,18 @@ from notarius_core.operators.sequences import (
     SliceConfig,
     SliceNode,
 )
-from notarius_core.plugins import PluginRegistry
-from notarius_core.runtime.execution import NodeRuntime
-from notarius_core.runtime.materialization import (
+from grafy_core.plugins import PluginRegistry
+from grafy_core.runtime.execution import NodeRuntime
+from grafy_core.runtime.materialization import (
     InputMaterializer,
     MaterializationError,
 )
-from notarius_core.runtime.persistence import (
+from grafy_core.runtime.persistence import (
     ArtifactWriterRegistry,
     OutputPersister,
     PersistedNodeOutput,
 )
-from notarius_core.runtime.resolvers import ResolverRegistry
+from grafy_core.runtime.resolvers import ResolverRegistry
 
 
 TEST_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")

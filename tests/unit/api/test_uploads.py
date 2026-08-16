@@ -9,14 +9,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from notarius_api.settings import (
+from grafy_api.settings import (
     STAGED_UPLOAD_HARD_MAX_BYTES,
     Settings,
 )
-from notarius_api.v1.routes.uploads.dependencies import image_upload_service
-from notarius_api.v1.routes.uploads.services import ImageUploadService
-from notarius_core.artifacts import InMemoryUnitOfWork
-from notarius_core.domain.staged_uploads import StagedUpload
+from grafy_api.v1.routes.uploads.dependencies import image_upload_service
+from grafy_api.v1.routes.uploads.services import ImageUploadService
+from grafy_core.artifacts import InMemoryUnitOfWork
+from grafy_core.domain.staged_uploads import StagedUpload
 from tests.unit.api.conftest import TEST_USER_ID, WORKSPACE_ID
 
 

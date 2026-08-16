@@ -5,9 +5,9 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from notarius_core.artifacts import ArtifactTypeKey, InMemoryUnitOfWork
-from notarius_core.nodes import NodeExecutionContext, PortShape
-from notarius_core.operators.schemas import (
+from grafy_core.artifacts import ArtifactTypeKey, InMemoryUnitOfWork
+from grafy_core.nodes import NodeExecutionContext, PortShape
+from grafy_core.operators.schemas import (
     JSON_SCHEMA,
     SCHEMAS,
     JsonSchemaBuilderConfig,
@@ -18,14 +18,14 @@ from notarius_core.operators.schemas import (
     parse_json_schema,
     validate_json_schema_value,
 )
-from notarius_core.plugins import PluginRegistry, PluginRuntimeContext
-from notarius_core.runtime.materialization import (
+from grafy_core.plugins import PluginRegistry, PluginRuntimeContext
+from grafy_core.runtime.materialization import (
     InputMaterializer,
     MaterializationProvenance,
 )
-from notarius_core.runtime.persistence import ArtifactWriteContext
-from notarius_core.runtime.resolvers import ResolverRegistry
-from notarius_storage import LocalFileObjectStore
+from grafy_core.runtime.persistence import ArtifactWriteContext
+from grafy_core.runtime.resolvers import ResolverRegistry
+from grafy_storage import LocalFileObjectStore
 
 
 TEST_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")

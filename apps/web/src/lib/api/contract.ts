@@ -1,4 +1,4 @@
-import type { components, paths } from "./generated/notarius";
+import type { components, paths } from "./generated/grafy";
 
 type Schemas = components["schemas"];
 

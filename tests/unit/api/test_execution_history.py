@@ -5,33 +5,33 @@ from uuid import UUID, uuid4
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from notarius_core.application.saved_graphs import SavedGraphService
-from notarius_core.domain.execution_history import GraphExecution
-from notarius_core.domain.identity import (
+from grafy_core.application.saved_graphs import SavedGraphService
+from grafy_core.domain.execution_history import GraphExecution
+from grafy_core.domain.identity import (
     User,
     Workspace,
     WorkspaceMembership,
     WorkspaceRole,
 )
-from notarius_core.domain.saved_graphs import SavedGraphDocument
-from notarius_persistence.database import create_database
-from notarius_persistence.orm import metadata
-from notarius_persistence.unit_of_work import (
+from grafy_core.domain.saved_graphs import SavedGraphDocument
+from grafy_persistence.database import create_database
+from grafy_persistence.orm import metadata
+from grafy_persistence.unit_of_work import (
     SqlAlchemySavedGraphUnitOfWork,
     SqlAlchemyUnitOfWork,
 )
 
-from notarius_api.builtins import builtin_plugins
-from notarius_api.main import create_app
+from grafy_api.builtins import builtin_plugins
+from grafy_api.main import create_app
 from tests.unit.api.conftest import install_browser_actor_override
-from notarius_api.plugin_discovery import build_plugin_registry
-from notarius_api.v1.routes.executions.models import (
+from grafy_api.plugin_discovery import build_plugin_registry
+from grafy_api.v1.routes.executions.models import (
     GraphExecutionDetailResponse,
     GraphExecutionListResponse,
     RunExecutionResponse,
 )
-from notarius_api.v1.routes.saved_graphs.models import SavedGraphResponse
-from notarius_api.settings import Settings
+from grafy_api.v1.routes.saved_graphs.models import SavedGraphResponse
+from grafy_api.settings import Settings
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
@@ -277,7 +277,7 @@ def test_duplicate_saved_node_ids_become_a_browsable_failed_execution(
 
 
 async def _seed_active_execution(database_url: str) -> tuple[UUID, UUID]:
-    from notarius_core.domain.collaboration import (
+    from grafy_core.domain.collaboration import (
         CollaborativeGraphHead,
         GraphActiveExecutionSlot,
     )

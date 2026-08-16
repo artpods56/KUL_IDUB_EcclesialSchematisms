@@ -1,12 +1,12 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from notarius_core.artifacts import ArtifactRef
-from notarius_core.domain.materialized_outputs import (
+from grafy_core.artifacts import ArtifactRef
+from grafy_core.domain.materialized_outputs import (
     MaterializedNodeOutputs,
     materializations_for_compatible_nodes,
 )
-from notarius_core.domain.saved_graphs import (
+from grafy_core.domain.saved_graphs import (
     GraphPoint,
     SavedGraphDocument,
     SavedGraphEdge,

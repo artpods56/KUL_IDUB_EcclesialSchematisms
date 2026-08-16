@@ -92,7 +92,7 @@ export function WorkspaceGraphPanel({
       if (
         target instanceof Element &&
         (target.closest("[data-graph-panel-trigger]") ||
-          target.closest(".ns-workspace-rail__account-menu"))
+          target.closest(".grafy-workspace-rail__account-menu"))
       ) {
         return;
       }
@@ -122,18 +122,18 @@ export function WorkspaceGraphPanel({
       ref={panelRef}
       role="dialog"
       aria-label="Quick graph switcher"
-      className="ns-graph-panel"
+      className="grafy-graph-panel"
     >
-      <div className="ns-graph-panel__header">
-        <p className="ns-graph-panel__title">
+      <div className="grafy-graph-panel__header">
+        <p className="grafy-graph-panel__title">
           Quick switch
           {total > 0 ? (
-            <span className="ns-graph-panel__count">{total}</span>
+            <span className="grafy-graph-panel__count">{total}</span>
           ) : null}
         </p>
         <button
           type="button"
-          className="ns-graph-panel__icon-button"
+          className="grafy-graph-panel__icon-button"
           aria-label="Close quick graph switcher"
           onClick={() => onClose("close-button")}
         >
@@ -141,7 +141,7 @@ export function WorkspaceGraphPanel({
         </button>
       </div>
 
-      <div className="ns-graph-panel__search">
+      <div className="grafy-graph-panel__search">
         <Search size={14} aria-hidden="true" />
         <input
           ref={searchRef}
@@ -153,11 +153,11 @@ export function WorkspaceGraphPanel({
         />
       </div>
 
-      <div className="ns-graph-panel__list">
+      <div className="grafy-graph-panel__list">
         {isLoading ? (
-          <p className="ns-graph-panel__empty">Loading graphs…</p>
+          <p className="grafy-graph-panel__empty">Loading graphs…</p>
         ) : graphs.length === 0 ? (
-          <p className="ns-graph-panel__empty">
+          <p className="grafy-graph-panel__empty">
             {query.trim()
               ? "No graphs match that search."
               : "No graphs in this location yet. Use New graph in the sidebar to start one."}
@@ -166,15 +166,15 @@ export function WorkspaceGraphPanel({
           graphs.map((graph) => (
             <div
               key={graph.id}
-              className={`ns-graph-panel__row${activeGraphId === graph.id ? " is-active" : ""}`}
+              className={`grafy-graph-panel__row${activeGraphId === graph.id ? " is-active" : ""}`}
             >
               <button
                 type="button"
-                className="ns-graph-panel__row-open"
+                className="grafy-graph-panel__row-open"
                 onClick={() => openGraph(graph.id)}
               >
-                <span className="ns-graph-panel__row-name">{graph.name}</span>
-                <span className="ns-graph-panel__row-meta">
+                <span className="grafy-graph-panel__row-name">{graph.name}</span>
+                <span className="grafy-graph-panel__row-meta">
                   {`${graphAgeLabel(graph.updated_at)} · ${graph.node_count} ${
                     graph.node_count === 1 ? "node" : "nodes"
                   }`}

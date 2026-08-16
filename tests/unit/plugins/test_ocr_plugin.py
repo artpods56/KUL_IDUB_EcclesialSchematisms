@@ -1,17 +1,17 @@
 import tomllib
 from pathlib import Path
 
-from notarius_core.artifacts import InMemoryUnitOfWork
-from notarius_core.operators.images import IMAGES, RASTER_IMAGE
-from notarius_core.plugins import PluginOrigin, PluginRegistry, PluginRuntimeContext
-from notarius_plugin_ocr import OCR
-from notarius_plugin_ocr.artifacts import (
+from grafy_core.artifacts import InMemoryUnitOfWork
+from grafy_core.operators.images import IMAGES, RASTER_IMAGE
+from grafy_core.plugins import PluginOrigin, PluginRegistry, PluginRuntimeContext
+from grafy_plugin_ocr import OCR
+from grafy_plugin_ocr.artifacts import (
     MISTRAL_OCR_RESPONSE,
     OCR_PAGE_RESULT,
     TABLE_FRAGMENT,
 )
-from notarius_plugin_ocr.resolvers import EncodedPageImageResolver, PilImageResolver
-from notarius_storage import LocalFileObjectStore
+from grafy_plugin_ocr.resolvers import EncodedPageImageResolver, PilImageResolver
+from grafy_storage import LocalFileObjectStore
 
 
 def test_ocr_plugin_declares_complete_runtime_contributions(tmp_path: Path) -> None:
@@ -87,7 +87,7 @@ def test_ocr_package_metadata_declares_plugin_entry_point() -> None:
         (project_root / "plugins" / "ocr" / "pyproject.toml").read_text()
     )
 
-    assert metadata["project"]["name"] == "notarius-plugin-ocr"
-    assert metadata["project"]["entry-points"]["notarius.plugins"] == {
-        "ocr": "notarius_plugin_ocr.plugin:OCR"
+    assert metadata["project"]["name"] == "grafy-plugin-ocr"
+    assert metadata["project"]["entry-points"]["grafy.plugins"] == {
+        "ocr": "grafy_plugin_ocr.plugin:OCR"
     }

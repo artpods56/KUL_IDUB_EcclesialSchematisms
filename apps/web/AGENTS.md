@@ -4,7 +4,7 @@
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
 <!-- END:nextjs-agent-rules -->
 
-<!-- BEGIN:notarius-workbench-rules -->
+<!-- BEGIN:grafy-workbench-rules -->
 # React Flow canvas checks
 
 - Do not let global `svg` sizing or media resets constrain React Flow's edge
@@ -12,7 +12,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - After changing node dimensions, handles, edge SVG styles, or canvas layout,
   verify at least one real pointer-drag connection in the rendered workbench.
   Compilation and programmatic edge insertion do not prove that wiring works.
-<!-- END:notarius-workbench-rules -->
+<!-- END:grafy-workbench-rules -->
 
 <!-- BEGIN:web-app-conventions -->
 # Web app conventions
@@ -55,15 +55,15 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 ## CSS
 
-- Global classes use the `.ns-` prefix with BEM-ish structure:
-  `.ns-workspace-rail__item`, `.ns-home__section-header`, etc.
+- Global classes use the `.grafy-` prefix with BEM-ish structure:
+  `.grafy-workspace-rail__item`, `.grafy-home__section-header`, etc.
 - Shared shell and route styles live in `src/app/globals.css`; complex feature
   components may keep component-scoped styles in their `.tsx` file with StyleX.
   Do not split one layout contract between global CSS, StyleX, and inline styles.
 - Light/dark theming uses `light-dark()` — do not use raw hex literals for
   component styling.
-- `--ns-rail-width` is the single source of truth for sidebar width. Main
-  content padding must reference it via `calc(var(--ns-rail-width, 200px) + …)`.
+- `--grafy-rail-width` is the single source of truth for sidebar width. Main
+  content padding must reference it via `calc(var(--grafy-rail-width, 200px) + …)`.
 
 ## Tests
 

@@ -32,10 +32,10 @@ export type GraphPresentation = NonNullable<
   CreateSavedGraphRequest["presentation"]
 >;
 
-export const ARTIFACT_VIEWER_NODE_TYPE = "notariusArtifactViewerNode";
-export const ARTIFACT_VIEWER_EDGE_TYPE = "notariusArtifactViewerEdge";
+export const ARTIFACT_VIEWER_NODE_TYPE = "grafyArtifactViewerNode";
+export const ARTIFACT_VIEWER_EDGE_TYPE = "grafyArtifactViewerEdge";
 export const ARTIFACT_VIEWER_INTERACTION_EDGE_TYPE =
-  "notariusArtifactViewerInteractionEdge";
+  "grafyArtifactViewerInteractionEdge";
 export const ARTIFACT_VIEWER_INPUT_HANDLE = "artifact-viewer-input";
 export const ARTIFACT_VIEWER_INTERACTION_INPUT_HANDLE =
   "artifact-viewer-interaction-input";

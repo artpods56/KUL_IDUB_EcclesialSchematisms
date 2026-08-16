@@ -21,7 +21,7 @@ COPY infra/db ./infra/db
 
 EXPOSE 8000
 
-CMD [".venv/bin/uvicorn", "notarius_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+CMD [".venv/bin/uvicorn", "grafy_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
 
 FROM source AS api-ocr
 
@@ -41,4 +41,4 @@ RUN uv sync --locked --no-dev --extra gis --extra llm --extra ocr
 
 FROM source AS api
 
-RUN uv sync --locked --no-dev --package notarius-api
+RUN uv sync --locked --no-dev --package grafy-api

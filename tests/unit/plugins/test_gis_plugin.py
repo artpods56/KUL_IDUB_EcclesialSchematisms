@@ -8,37 +8,37 @@ from typing import cast
 from uuid import UUID, uuid4
 
 import httpx
-import notarius_plugin_gis.wfs as wfs_module
+import grafy_plugin_gis.wfs as wfs_module
 import pytest
 from pydantic import ValidationError
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactRef,
     ArtifactRefSequence,
     ArtifactTypeSpec,
     InMemoryUnitOfWork,
 )
-from notarius_core.domain.staged_uploads import StagedUpload
-from notarius_core.nodes import NodeExecutionContext
-from notarius_core.operators.tables import (
+from grafy_core.domain.staged_uploads import StagedUpload
+from grafy_core.nodes import NodeExecutionContext
+from grafy_core.operators.tables import (
     TABLES,
     TABLE_DATA,
     Table,
     TableColumn,
     TableValueType,
 )
-from notarius_core.plugins import PluginOrigin, PluginRegistry
-from notarius_core.runtime.materialization import MaterializationProvenance
-from notarius_core.runtime.persistence import ArtifactWriteContext
-from notarius_storage import LocalFileObjectStore
-from notarius_plugin_gis.artifacts import (
+from grafy_core.plugins import PluginOrigin, PluginRegistry
+from grafy_core.runtime.materialization import MaterializationProvenance
+from grafy_core.runtime.persistence import ArtifactWriteContext
+from grafy_storage import LocalFileObjectStore
+from grafy_plugin_gis.artifacts import (
     GEO_FEATURE_COLLECTION,
     GEO_MAP_DOCUMENT,
     GEO_MAP_LAYER,
     GEO_RASTER_SCAN,
 )
-from notarius_plugin_gis.gdal import GdalCli, GdalError
-from notarius_plugin_gis.models import (
+from grafy_plugin_gis.gdal import GdalCli, GdalError
+from grafy_plugin_gis.models import (
     GeoCategorizedPointStyle,
     GeoFeatureArtifactSource,
     GeoFeatureCollection,
@@ -48,7 +48,7 @@ from notarius_plugin_gis.models import (
     RasterProjectionMetadata,
     VectorProjectionMetadata,
 )
-from notarius_plugin_gis.nodes import (
+from grafy_plugin_gis.nodes import (
     ComposeMapConfig,
     ComposeMapInput,
     GeoFeaturesToTableConfig,
@@ -83,14 +83,14 @@ from notarius_plugin_gis.nodes import (
     geo_features_to_table,
     table_to_geo_features,
 )
-from notarius_plugin_gis.plugin import GIS
-from notarius_plugin_gis.persistence import (
+from grafy_plugin_gis.plugin import GIS
+from grafy_plugin_gis.persistence import (
     FeatureCollectionOutputWriter,
     FeatureCollectionResolver,
     RasterScanOutputWriter,
     RasterScanResolver,
 )
-from notarius_plugin_gis.wfs import WfsClient, WfsImportError
+from grafy_plugin_gis.wfs import WfsClient, WfsImportError
 
 
 TEST_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
@@ -1268,7 +1268,7 @@ async def test_missing_gdal_driver_error_preserves_source_and_node_context(
         uow=InMemoryUnitOfWork(),
         bucket="test",
         storage_backend="local",
-        gdal=GdalCli(ogr2ogr="missing-notarius-ogr2ogr"),
+        gdal=GdalCli(ogr2ogr="missing-grafy-ogr2ogr"),
     )
 
     with pytest.raises(

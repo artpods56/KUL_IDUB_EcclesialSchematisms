@@ -7,10 +7,10 @@ import pytest
 from openpyxl import Workbook
 from pydantic import ValidationError
 
-from notarius_core.artifacts import ArtifactObject, InMemoryUnitOfWork, JsonObject
-from notarius_core.domain.staged_uploads import StagedUpload
-from notarius_core.nodes import NodeExecutionContext
-from notarius_core.operators.tables import (
+from grafy_core.artifacts import ArtifactObject, InMemoryUnitOfWork, JsonObject
+from grafy_core.domain.staged_uploads import StagedUpload
+from grafy_core.nodes import NodeExecutionContext
+from grafy_core.operators.tables import (
     FuzzyMatchTablesNode,
     FuzzyMatchScorer,
     NormalizeTableTextNode,
@@ -36,15 +36,28 @@ from notarius_core.operators.tables import (
     load_table_page,
     table_artifact_is_accessible,
 )
-from notarius_core.plugins import PluginRegistry, PluginRuntimeContext
-from notarius_core.ports.storage import SaveFileCommand
-from notarius_core.runtime.materialization import MaterializationProvenance
-from notarius_core.runtime.persistence import ArtifactWriteContext
-from notarius_core.runtime.resolvers import ResolutionError
-from notarius_storage import LocalFileObjectStore
+from grafy_core.plugins import PluginRegistry, PluginRuntimeContext
+from grafy_core.ports.storage import SaveFileCommand
+from grafy_core.runtime.materialization import MaterializationProvenance
+from grafy_core.runtime.persistence import ArtifactWriteContext
+from grafy_core.runtime.resolvers import ResolutionError
+from grafy_storage import LocalFileObjectStore
 
 
 TEST_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
+
+
+def test_table_manifest_accepts_legacy_storage_format() -> None:
+    manifest = TableManifest.model_validate(
+        {
+            "format": "notarius.table.chunked-json.v1",
+            "columns": [],
+            "row_count": 0,
+            "chunks": [],
+        }
+    )
+
+    assert manifest.format == "notarius.table.chunked-json.v1"
 
 
 async def seed_staged_upload(

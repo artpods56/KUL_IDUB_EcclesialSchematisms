@@ -1,4 +1,4 @@
-# Notarius First-Release Audit
+# Grafy First-Release Audit
 
 Date: 2026-08-13  
 Release target: first server deployment
@@ -63,8 +63,8 @@ room protocol.
 
 Key implementation areas:
 
-- `apps/api/src/notarius_api/v1/routes/collaboration/views.py`
-- `apps/api/src/notarius_api/v1/routes/collaboration/hub.py`
+- `apps/api/src/grafy_api/v1/routes/collaboration/views.py`
+- `apps/api/src/grafy_api/v1/routes/collaboration/hub.py`
 - `apps/web/src/features/workbench/room/graph-room-session.ts`
 - `apps/web/src/features/workbench/room/useGraphRoomSession.ts`
 - `apps/web/src/features/workbench/ui/Workbench.tsx`

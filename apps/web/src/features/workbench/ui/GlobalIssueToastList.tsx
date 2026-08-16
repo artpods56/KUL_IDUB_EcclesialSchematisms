@@ -146,7 +146,7 @@ export function GlobalIssueToastList({
             key={toast.id}
             toast={toast}
             swipeDirection="right"
-            className={`ns-workbench-toast ${stylex.props(s.toastRoot).className}`}
+            className={`grafy-workbench-toast ${stylex.props(s.toastRoot).className}`}
           >
             <Toast.Content {...stylex.props(s.toastContent)}>
               <span aria-hidden="true" {...stylex.props(s.toastIcon)}>

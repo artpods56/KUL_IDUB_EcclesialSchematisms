@@ -5,26 +5,26 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from notarius_core.application.saved_graphs import SavedGraphService
-from notarius_core.artifacts import ArtifactRef, ArtifactTypeKey, InMemoryUnitOfWork
-from notarius_core.domain.modules import GraphModuleDefinition
-from notarius_core.nodes import NodeExecutionContext
-from notarius_core.plugins import PluginRuntimeContext
-from notarius_core.ports.modules import GraphModuleExecutionResult
-from notarius_core.runtime.invocation import InvocationMode
-from notarius_storage import LocalFileObjectStore
+from grafy_core.application.saved_graphs import SavedGraphService
+from grafy_core.artifacts import ArtifactRef, ArtifactTypeKey, InMemoryUnitOfWork
+from grafy_core.domain.modules import GraphModuleDefinition
+from grafy_core.nodes import NodeExecutionContext
+from grafy_core.plugins import PluginRuntimeContext
+from grafy_core.ports.modules import GraphModuleExecutionResult
+from grafy_core.runtime.invocation import InvocationMode
+from grafy_storage import LocalFileObjectStore
 
-from notarius_api.builtins import builtin_plugins
-from notarius_api.plugin_discovery import build_plugin_registry
-from notarius_api.v1.routes.executions.models import (
+from grafy_api.builtins import builtin_plugins
+from grafy_api.plugin_discovery import build_plugin_registry
+from grafy_api.v1.routes.executions.models import (
     ArtifactConversionRequest,
     PinnedOutputRequest,
     RunEdgeRequest,
     RunNodeRequest,
     RunRequest,
 )
-from notarius_api.v1.routes.catalog.services import GraphModuleCatalog
-from notarius_api.v1.routes.executions.runtime.compiler import GraphCompiler
+from grafy_api.v1.routes.catalog.services import GraphModuleCatalog
+from grafy_api.v1.routes.executions.runtime.compiler import GraphCompiler
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")

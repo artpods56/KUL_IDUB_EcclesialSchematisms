@@ -1,12 +1,12 @@
 # Plugin Development Guide
 
-> How to structure a Notarius plugin when adding new functionality. Read this
+> How to structure a Grafy plugin when adding new functionality. Read this
 > before creating a new `plugins/*` package or adding operators to an existing
 > one. It describes the *current* committed structure as built — the contracts
 > and conventions the codebase already enforces.
 
 - **Audience:** contributors adding nodes, artifact types, conversions,
-  resolvers, or writers to Notarius.
+  resolvers, or writers to Grafy.
 - **Scope:** `libs/core` plugin contracts, `plugins/*` packages, and how the API
   discovers and installs them. Frontend work is out of scope.
 
@@ -14,7 +14,7 @@
 
 ## 1. Overview
 
-Notarius is a **typed artifact-graph workbench**. A plugin is an independently
+Grafy is a **typed artifact-graph workbench**. A plugin is an independently
 packaged Python distribution that contributes one or more of these runtime
 capabilities into a shared catalog:
 
@@ -34,7 +34,7 @@ core contracts in `libs/core`.
 
 ```mermaid
 flowchart LR
-    Plugins["plugins/*\nPython distributions"] --> EP["notarius.plugins\nentry-point group"]
+    Plugins["plugins/*\nPython distributions"] --> EP["grafy.plugins\nentry-point group"]
     EP --> Discovery["apps/api\nplugin_discovery.py"]
     Discovery --> Registry["PluginRegistry\nlibs/core"]
     Registry --> Catalog["/v1/nodes catalog"]
@@ -51,7 +51,7 @@ working example; `plugins/gis` is the richest.
 ```
 plugins/<name>/
   pyproject.toml                     # distribution metadata + entry point
-  src/notarius_plugin_<name>/
+  src/grafy_plugin_<name>/
     __init__.py                      # re-export the Plugin singleton
     declaration.py                   # Plugin(slug=..., title=...) singleton
     plugin.py                        # registration: nodes, artifacts, conversions
@@ -65,21 +65,21 @@ plugins/<name>/
 
 ### 2.1 `pyproject.toml`
 
-The distribution must declare its dependency on `notarius-core` and expose the
-`Plugin` singleton through the `notarius.plugins` entry-point group:
+The distribution must declare its dependency on `grafy-core` and expose the
+`Plugin` singleton through the `grafy.plugins` entry-point group:
 
 ```toml
 [project]
-name = "notarius-plugin-my-plugin"
+name = "grafy-plugin-my-plugin"
 version = "0.1.0"
 requires-python = "==3.12.9"
-dependencies = ["notarius-core", "pydantic"]
+dependencies = ["grafy-core", "pydantic"]
 
-[project.entry-points."notarius.plugins"]
-my_plugin = "notarius_plugin_my_plugin.plugin:MY_PLUGIN"
+[project.entry-points."grafy.plugins"]
+my_plugin = "grafy_plugin_my_plugin.plugin:MY_PLUGIN"
 
 [tool.uv.sources]
-notarius-core = { workspace = true }
+grafy-core = { workspace = true }
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -100,7 +100,7 @@ namespaced** — external plugins use `external.<name>` (the host marks
 entry-point plugins `external`; plugins cannot self-assign origin):
 
 ```python
-from notarius_core.plugins import Plugin
+from grafy_core.plugins import Plugin
 
 MY_PLUGIN = Plugin(slug="external.my_plugin", title="My Plugin")
 ```
@@ -114,14 +114,14 @@ The registration surface. It imports the `_NODE_MODULES`, calls the
 decorators/register methods on the singleton, and re-exports it:
 
 ```python
-from notarius_core.artifacts import Artifact
-from notarius_core.runtime.persistence import InlineModelOutputWriter
-from notarius_core.runtime.resolvers import InlineModelResolver
+from grafy_core.artifacts import Artifact
+from grafy_core.runtime.persistence import InlineModelOutputWriter
+from grafy_core.runtime.resolvers import InlineModelResolver
 
-from notarius_plugin_my_plugin import nodes
-from notarius_plugin_my_plugin.artifacts import RESULT
-from notarius_plugin_my_plugin.declaration import MY_PLUGIN
-from notarius_plugin_my_plugin.models import ResultPayload
+from grafy_plugin_my_plugin import nodes
+from grafy_plugin_my_plugin.artifacts import RESULT
+from grafy_plugin_my_plugin.declaration import MY_PLUGIN
+from grafy_plugin_my_plugin.models import ResultPayload
 
 _NODE_MODULES = (nodes,)
 
@@ -147,10 +147,10 @@ decorators inside them attach themselves to the singleton at import time.
 
 ### 2.4 `__init__.py`
 
-Re-export only the singleton so consumers import `from notarius_plugin_x import X`:
+Re-export only the singleton so consumers import `from grafy_plugin_x import X`:
 
 ```python
-from notarius_plugin_my_plugin.plugin import MY_PLUGIN
+from grafy_plugin_my_plugin.plugin import MY_PLUGIN
 
 __all__ = ["MY_PLUGIN"]
 ```
@@ -169,12 +169,12 @@ contract from the annotated `NodeConfig` / `NodeInput` / `NodeOutput` models:
 
 ```python
 from typing import Annotated
-from notarius_core.artifacts import NodeConfig, NodeInput, NodeOutput
-from notarius_core.nodes import InPort, OutPort
-from notarius_core.plugins import NodeCachePolicy
+from grafy_core.artifacts import NodeConfig, NodeInput, NodeOutput
+from grafy_core.nodes import InPort, OutPort
+from grafy_core.plugins import NodeCachePolicy
 
-from notarius_plugin_my_plugin.artifacts import RESULT
-from notarius_plugin_my_plugin.declaration import MY_PLUGIN
+from grafy_plugin_my_plugin.artifacts import RESULT
+from grafy_plugin_my_plugin.declaration import MY_PLUGIN
 
 class UpperConfig(NodeConfig):
     text: StrictStr = Field(description="Text to uppercase.")
@@ -204,8 +204,8 @@ explicit constructor, or a secret resolver. The factory receives a
 
 ```python
 from typing import final, override
-from notarius_core.nodes import Node, NodeExecutionContext
-from notarius_core.plugins import PluginRuntimeContext, NodeCachePolicy
+from grafy_core.nodes import Node, NodeExecutionContext
+from grafy_core.plugins import PluginRuntimeContext, NodeCachePolicy
 
 def build_execute_node(context: PluginRuntimeContext) -> "ExecuteNode":
     return ExecuteNode(executor=MyExecutor(), node_secrets=context.node_secrets)
@@ -296,7 +296,7 @@ Declare an `ArtifactTypeSpec` constant in `artifacts.py`. The payload schema is
 derived from a pydantic model's JSON schema:
 
 ```python
-from notarius_core.artifacts import ArtifactFieldProjection, ArtifactTypeKey, ArtifactTypeSpec
+from grafy_core.artifacts import ArtifactFieldProjection, ArtifactTypeKey, ArtifactTypeSpec
 
 RESULT = ArtifactTypeSpec(
     key=ArtifactTypeKey("my_plugin.result", 1),
@@ -328,7 +328,7 @@ RESULT = ArtifactTypeSpec(
 A conversion is a deterministic transform between two installed artifact types:
 
 ```python
-from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
+from grafy_core.conversions import ArtifactConversion, ArtifactConversionKey
 
 def _to_upper(value: LowerPayload) -> UpperPayload:
     return UpperPayload(text=value.text.upper())
@@ -445,7 +445,7 @@ The dependency flow is strict and one-directional:
 plugins/*  ──►  libs/core   ──►  (host: apps/api)
 ```
 
-- Plugins depend on **`notarius-core` only**. Never import from `apps/api`,
+- Plugins depend on **`grafy-core` only**. Never import from `apps/api`,
   `apps/mcp`, `libs/persistence`, or `libs/storage` — those are host concerns.
 - The host (`apps/api`) must have **no hard dependency** on any plugin package
   (OCR/LLM/GIS/SQL are optional). It discovers plugins via entry points at
@@ -485,8 +485,8 @@ Every plugin must pass a registration test that verifies:
 ## 12. Checklist for adding a plugin
 
 - [ ] New `plugins/<name>/` package with the layout in §2.
-- [ ] `pyproject.toml` declares `notarius-core` dependency and a unique
-      `notarius.plugins` entry point.
+- [ ] `pyproject.toml` declares `grafy-core` dependency and a unique
+      `grafy.plugins` entry point.
 - [ ] One `Plugin` singleton with a stable `external.<name>` slug.
 - [ ] Node models subclass `NodeConfig`/`NodeInput`/`NodeOutput` with
       `extra="forbid"`; ports use `InPort`/`OutPort` with installed artifact types.
@@ -495,7 +495,7 @@ Every plugin must pass a registration test that verifies:
       `persistence.py` with `plugin.py` staying declarative.
 - [ ] Secrets use `NodeSecretInput` + `NodeSecretResolverPort`; cache policy
       is explicit (`NEVER` unless provably `EXACT`).
-- [ ] Plugin imports only `notarius-core`; host has no hard dependency on it.
+- [ ] Plugin imports only `grafy-core`; host has no hard dependency on it.
 - [ ] Workspace members, `[tool.uv.sources]`, and optional-dependency group
       updated in root `pyproject.toml`.
 - [ ] Registration + entry-point tests pass in `tests/unit/plugins/`.

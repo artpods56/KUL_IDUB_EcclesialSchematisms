@@ -6,21 +6,21 @@ from uuid import UUID
 
 import pytest
 
-from notarius_core.application.saved_graphs import SavedGraphService
-from notarius_core.domain.errors import (
+from grafy_core.application.saved_graphs import SavedGraphService
+from grafy_core.domain.errors import (
     ConcurrentWriteError,
     NotFoundError,
     SavedGraphRevisionConflictError,
 )
-from notarius_core.domain.saved_graphs import (
+from grafy_core.domain.saved_graphs import (
     GraphPoint,
     SavedGraph,
     SavedGraphDocument,
     SavedGraphNode,
     SavedGraphRevision,
 )
-from notarius_core.domain.node_secrets import EncryptedNodeSecret
-from notarius_core.plugins import PluginRegistry
+from grafy_core.domain.node_secrets import EncryptedNodeSecret
+from grafy_core.plugins import PluginRegistry
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000101")

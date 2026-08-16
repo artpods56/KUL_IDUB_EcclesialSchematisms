@@ -104,7 +104,7 @@ function SaveAsTemplateFlow({
       : "/";
 
   return (
-    <div className="ns-template-page">
+    <div className="grafy-template-page">
       {workspaces ? (
         <WorkspaceRail
           workspaces={workspaces}
@@ -112,15 +112,15 @@ function SaveAsTemplateFlow({
           onLogout={logout}
         />
       ) : null}
-      <main className="ns-save-template">
-        <Link className="ns-save-template__back" href={sourceHref}>
+      <main className="grafy-save-template">
+        <Link className="grafy-save-template__back" href={sourceHref}>
           <ArrowLeft size={14} aria-hidden="true" /> Back to graph
         </Link>
         <header>
-          <span className="ns-save-template__mark">
+          <span className="grafy-save-template__mark">
             <FileStack size={20} aria-hidden="true" />
           </span>
-          <p className="ns-template-library__eyebrow">Graph / Save as template</p>
+          <p className="grafy-template-library__eyebrow">Graph / Save as template</p>
           <h1>Save as template</h1>
           <p>
             Capture one exact revision as a reusable starting point. Graphs
@@ -129,43 +129,43 @@ function SaveAsTemplateFlow({
         </header>
 
         {!source ? (
-          <section className="ns-template-state" role="alert">
+          <section className="grafy-template-state" role="alert">
             <h2>Source graph is missing</h2>
             <p>Open Save as template from a graph so its exact revision is known.</p>
-            <Link className="ns-workspace-button" href="/">
+            <Link className="grafy-workspace-button" href="/">
               Go to My graphs
             </Link>
           </section>
         ) : isLoading || !workspaces ? (
-          <section className="ns-template-state" aria-live="polite">
+          <section className="grafy-template-state" aria-live="polite">
             <BrandLoader size={34} label="Loading graph" />
             <p>Loading the source revision…</p>
           </section>
         ) : error ? (
-          <section className="ns-template-state" role="alert">
+          <section className="grafy-template-state" role="alert">
             <h2>Graph could not be loaded</h2>
             <p>Check the connection and retry.</p>
             <button
               type="button"
-              className="ns-workspace-button"
+              className="grafy-workspace-button"
               onClick={() => void mutate()}
             >
               Retry
             </button>
           </section>
         ) : !location || !graph ? (
-          <section className="ns-template-state" role="alert">
+          <section className="grafy-template-state" role="alert">
             <h2>Graph is no longer available</h2>
             <p>Return to My graphs and choose another source.</p>
           </section>
         ) : !location.capabilities.includes("create_template") ? (
-          <section className="ns-template-state" role="alert">
+          <section className="grafy-template-state" role="alert">
             <h2>Template permission required</h2>
             <p>You can view this graph, but cannot save templates in this location.</p>
           </section>
         ) : (
-          <form className="ns-save-template__form" onSubmit={submit}>
-            <div className="ns-save-template__source">
+          <form className="grafy-save-template__form" onSubmit={submit}>
+            <div className="grafy-save-template__source">
               <span>Source</span>
               <strong>{graph.name}</strong>
               <small>
@@ -193,20 +193,20 @@ function SaveAsTemplateFlow({
               />
             </label>
             {message ? (
-              <p className="ns-template-use__error" role="alert">
+              <p className="grafy-template-use__error" role="alert">
                 {message}
               </p>
             ) : null}
-            <div className="ns-save-template__actions">
-              <Link className="ns-workspace-button" href={sourceHref}>
+            <div className="grafy-save-template__actions">
+              <Link className="grafy-workspace-button" href={sourceHref}>
                 Cancel
               </Link>
               <button
                 type="submit"
-                className="ns-workspace-button ns-workspace-button--primary"
+                className="grafy-workspace-button grafy-workspace-button--primary"
                 disabled={busy || !name.trim()}
               >
-                {busy ? <LoaderCircle className="ns-template-spin" size={14} /> : null}
+                {busy ? <LoaderCircle className="grafy-template-spin" size={14} /> : null}
                 {busy ? "Saving…" : message ? "Try again" : "Save template"}
               </button>
             </div>

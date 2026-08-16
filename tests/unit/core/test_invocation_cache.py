@@ -3,18 +3,18 @@ from uuid import UUID
 
 import pytest
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactObject,
     ArtifactRef,
     ArtifactRefSequence,
     InMemoryDataStore,
     InMemoryUnitOfWork,
 )
-from notarius_core.domain.artifact_outputs import (
+from grafy_core.domain.artifact_outputs import (
     artifact_outputs_from_storage,
     artifact_outputs_to_storage,
 )
-from notarius_core.domain.invocation_cache import InvocationCacheEntry
+from grafy_core.domain.invocation_cache import InvocationCacheEntry
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")

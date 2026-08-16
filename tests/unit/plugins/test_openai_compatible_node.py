@@ -4,19 +4,19 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import SecretStr
 
-from notarius_core.artifacts import ArtifactRef
-from notarius_core.nodes import NodeExecutionContext, PortShape
-from notarius_core.operators.images import RASTER_IMAGE
-from notarius_core.operators.prompts import (
+from grafy_core.artifacts import ArtifactRef
+from grafy_core.nodes import NodeExecutionContext, PortShape
+from grafy_core.operators.images import RASTER_IMAGE
+from grafy_core.operators.prompts import (
     PROMPT_MESSAGE,
     PromptMessage,
     PromptMessageRole,
 )
-from notarius_core.operators.schemas import JSON_SCHEMA
-from notarius_core.ports.node_secrets import JsonValue
-from notarius_plugin_llm.artifacts import COMPLETION
-from notarius_plugin_llm.declaration import LLM
-from notarius_plugin_llm.openai_compatible import (
+from grafy_core.operators.schemas import JSON_SCHEMA
+from grafy_core.ports.node_secrets import JsonValue
+from grafy_plugin_llm.artifacts import COMPLETION
+from grafy_plugin_llm.declaration import LLM
+from grafy_plugin_llm.openai_compatible import (
     OpenAICompatibleConfig,
     OpenAICompatibleExecutionError,
     OpenAICompatibleInput,

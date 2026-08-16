@@ -5,44 +5,44 @@ from uuid import UUID
 import pytest
 from fastapi.testclient import TestClient
 
-from notarius_core.artifact_collections import (
+from grafy_core.artifact_collections import (
     JSON_COLLECTIONS_STORAGE_FORMAT,
     JsonCollection,
     load_json_collections_manifest,
     save_json_collections,
 )
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactObject,
     ArtifactRef,
     ArtifactTypeKey,
     InMemoryUnitOfWork,
 )
-from notarius_core.domain.invocation_cache import InvocationCacheEntry
-from notarius_core.nodes import NodeExecutionContext
-from notarius_core.operators.tables import (
+from grafy_core.domain.invocation_cache import InvocationCacheEntry
+from grafy_core.nodes import NodeExecutionContext
+from grafy_core.operators.tables import (
     Table,
     TableArtifactWriter,
     TableColumn,
     TableValueType,
     load_table_manifest,
 )
-from notarius_core.runtime.materialization import MaterializationProvenance
-from notarius_core.runtime.persistence import ArtifactWriteContext
-from notarius_core.ports.storage import SaveFileCommand
-from notarius_core.domain.identity import Workspace
-from notarius_persistence.database import create_database
-from notarius_persistence.orm import metadata
-from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
-from notarius_storage import LocalFileObjectStore
+from grafy_core.runtime.materialization import MaterializationProvenance
+from grafy_core.runtime.persistence import ArtifactWriteContext
+from grafy_core.ports.storage import SaveFileCommand
+from grafy_core.domain.identity import Workspace
+from grafy_persistence.database import create_database
+from grafy_persistence.orm import metadata
+from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
+from grafy_storage import LocalFileObjectStore
 
-from notarius_api.builtins import builtin_plugins
-from notarius_api.plugin_discovery import build_plugin_registry
-from notarius_api.v1.routes.executions.models import RunNodeRequest, RunRequest
-from notarius_api.v1.routes.executions.runtime.invocation_cache import (
+from grafy_api.builtins import builtin_plugins
+from grafy_api.plugin_discovery import build_plugin_registry
+from grafy_api.v1.routes.executions.models import RunNodeRequest, RunRequest
+from grafy_api.v1.routes.executions.runtime.invocation_cache import (
     InvocationCacheAccessError,
     PersistentInvocationCache,
 )
-from notarius_api.services.composition import build_workbench_components
+from grafy_api.services.composition import build_workbench_components
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")

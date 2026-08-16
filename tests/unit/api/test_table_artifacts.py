@@ -6,21 +6,21 @@ from uuid import UUID
 import pytest
 from fastapi.testclient import TestClient
 
-from notarius_api.services.composition import WorkbenchComponents
-from notarius_api.v1.routes.artifacts import services as artifact_services
-from notarius_api.v1.routes.artifacts.services import ArtifactService
-from notarius_api.v1.routes.executions.services import RunResultPresenter
-from notarius_core.artifacts import ArtifactObject, InMemoryUnitOfWork
-from notarius_core.nodes import NodeExecutionContext
-from notarius_core.operators.tables import (
+from grafy_api.services.composition import WorkbenchComponents
+from grafy_api.v1.routes.artifacts import services as artifact_services
+from grafy_api.v1.routes.artifacts.services import ArtifactService
+from grafy_api.v1.routes.executions.services import RunResultPresenter
+from grafy_core.artifacts import ArtifactObject, InMemoryUnitOfWork
+from grafy_core.nodes import NodeExecutionContext
+from grafy_core.operators.tables import (
     Table,
     TableArtifactWriter,
     TableColumn,
     TableValueType,
 )
-from notarius_core.runtime.materialization import MaterializationProvenance
-from notarius_core.runtime.persistence import ArtifactWriteContext
-from notarius_storage import LocalFileObjectStore
+from grafy_core.runtime.materialization import MaterializationProvenance
+from grafy_core.runtime.persistence import ArtifactWriteContext
+from grafy_storage import LocalFileObjectStore
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
@@ -520,7 +520,7 @@ def test_table_query_matches_integer_keys_from_string_or_number(
 
 
 def test_interaction_values_equal_integers_across_json_string_encoding() -> None:
-    from notarius_api.v1.routes.artifacts.services import (
+    from grafy_api.v1.routes.artifacts.services import (
         _interaction_values_equal,
     )
 
@@ -606,7 +606,7 @@ async def test_iter_table_csv_encodes_utf8_bom_crlf_and_quoting(
     tmp_path: Path,
 ) -> None:
     """CSV export uses a UTF-8 BOM, CRLF terminators, and RFC 4180 quoting."""
-    from notarius_core.operators.tables import iter_table_csv
+    from grafy_core.operators.tables import iter_table_csv
 
     storage = LocalFileObjectStore(tmp_path / "objects")
     table = Table(

@@ -1,6 +1,6 @@
 # Backend Code-Smell Audit
 
-> A pragmatic, evidence-based pass over the Notarius backend looking for places
+> A pragmatic, evidence-based pass over the Grafy backend looking for places
 > where code "could definitely look better or simpler." This is not a SOLID
 > review (that already exists and found zero violations) — it targets **readability,
 > duplication, and simplicity** smells. Every finding cites exact file/line
@@ -30,7 +30,7 @@
 
 ## Finding 1 — Dialect-switch upsert boilerplate (DRY / G5)
 
-`libs/persistence/src/notarius_persistence/adapters/repositories.py` repeats the
+`libs/persistence/src/grafy_persistence/adapters/repositories.py` repeats the
 same SQLite-vs-PostgreSQL `insert` selection in **four** places. Three are
 identical `sqlite_insert`/`postgresql_insert` branches (lines 925, 982, 1414),
 and a fourth (line 1789) is a slightly different inline variant that also falls
@@ -64,7 +64,7 @@ centralized decision (G33: encapsulate boundary conditions).
 
 `IntegerValueOutputWriter.write`, `TextValueOutputWriter.write`,
 `SchemaValueOutputWriter.write` (and the table writer) in
-`libs/core/src/notarius_core/operators/` are **byte-for-byte identical** except
+`libs/core/src/grafy_core/operators/` are **byte-for-byte identical** except
 for the payload model name (`IntegerValuePayload` vs `TextValuePayload`).
 
 `arithmetic.py:227` and `text.py:285` both contain:
@@ -101,7 +101,7 @@ raise NotFoundError` prologue).
 
 ## Finding 3 — 11× identical route error-handling boilerplate (DRY / G5)
 
-`apps/api/src/notarius_api/v1/routes/artifacts/views.py` repeats the same
+`apps/api/src/grafy_api/v1/routes/artifacts/views.py` repeats the same
 handler shape in **11 routes**:
 
 ```python
@@ -185,7 +185,7 @@ single shared `Annotated[str, ...]` type or mixin.
 
 ## Finding 6 — Hand-written `from_domain` / `from_graph` converters (DRY)
 
-`apps/api/src/notarius_api/v1/routes/saved_graphs/models.py` (880 lines) contains
+`apps/api/src/grafy_api/v1/routes/saved_graphs/models.py` (880 lines) contains
 many hand-written, structurally repetitive classmethod converters —
 `from_domain` (84 lines), `from_graph` (84 lines), `from_graphs`, `from_folder`,
 `from_organization`, `from_state`, `from_item`, `from_items` — each manually
@@ -214,7 +214,7 @@ shapes.
 
 ## Finding 7 — `main.py` has a 396-line exception handler monolith
 
-`apps/api/src/notarius_api/main.py:_request_validation_error_handler` is a single
+`apps/api/src/grafy_api/main.py:_request_validation_error_handler` is a single
 function of ~396 lines (counting the `create_app` body it's inside) handling the
 OIDC login/callback rate-limiting special cases inline, with the same
 `422 if allowed else 429` / `"Too many login attempts"` logic duplicated for

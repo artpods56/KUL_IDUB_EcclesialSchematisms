@@ -6,9 +6,9 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from notarius_api.settings import get_settings
-from notarius_persistence.database import prepare_database_url
-from notarius_persistence.orm import metadata, start_mappers
+from grafy_api.settings import get_settings
+from grafy_persistence.database import prepare_database_url
+from grafy_persistence.orm import metadata, start_mappers
 
 
 config = context.config

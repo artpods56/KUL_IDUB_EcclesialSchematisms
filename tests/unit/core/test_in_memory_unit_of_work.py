@@ -3,7 +3,7 @@ from uuid import UUID
 
 import pytest
 
-from notarius_core.artifacts import ArtifactObject, InMemoryUnitOfWork
+from grafy_core.artifacts import ArtifactObject, InMemoryUnitOfWork
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")

@@ -268,7 +268,7 @@ describe("template library search and preview", () => {
     ];
     rendered = await renderLibrary();
     expect(
-      rendered.container.querySelector(".ns-template-results__heading h2")
+      rendered.container.querySelector(".grafy-template-results__heading h2")
         ?.textContent,
     ).toBe("1 template");
     const search = rendered.container.querySelector("#template-search");
@@ -316,7 +316,7 @@ describe("template use flow", () => {
         new MouseEvent("click", { bubbles: true }),
       );
     });
-    const form = container.querySelector(".ns-template-use");
+    const form = container.querySelector(".grafy-template-use");
     const folderSelect = form?.querySelectorAll("select")[1];
     await act(async () => {
       if (folderSelect instanceof HTMLSelectElement) {
@@ -358,7 +358,7 @@ describe("template use flow", () => {
         new MouseEvent("click", { bubbles: true }),
       );
     });
-    const form = container.querySelector(".ns-template-use");
+    const form = container.querySelector(".grafy-template-use");
     expect(form).not.toBeNull();
 
     await act(async () => {

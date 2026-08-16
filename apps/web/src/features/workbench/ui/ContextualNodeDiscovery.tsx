@@ -64,7 +64,7 @@ const POPUP_WIDTH = 340;
 const POPUP_MAX_HEIGHT = 480;
 const POPUP_GAP = 16;
 const POPUP_MARGIN = 12;
-const MOBILE_OVERLAY_TOP = "var(--ns-mobile-overlay-top)";
+const MOBILE_OVERLAY_TOP = "var(--grafy-mobile-overlay-top)";
 const SAFE_AREA_TOP = "env(safe-area-inset-top, 0px)";
 const SAFE_AREA_BOTTOM = "env(safe-area-inset-bottom, 0px)";
 const SAFE_AREA_LEFT = "env(safe-area-inset-left, 0px)";
@@ -91,10 +91,10 @@ function readViewportGeometry(): ViewportGeometry {
   const mobileOverlayTop = Number.parseFloat(
     window
       .getComputedStyle(document.documentElement)
-      .getPropertyValue("--ns-mobile-overlay-top"),
+      .getPropertyValue("--grafy-mobile-overlay-top"),
   );
   if (!Number.isFinite(mobileOverlayTop)) {
-    throw new Error("--ns-mobile-overlay-top must resolve to a pixel length");
+    throw new Error("--grafy-mobile-overlay-top must resolve to a pixel length");
   }
   return {
     layoutWidth,
@@ -620,7 +620,7 @@ export function ContextualNodeDiscovery({
             <div
               key={catalogNodeKey(previewedCandidate.spec)}
               ref={previewRef}
-              className="ns-discovery-preview"
+              className="grafy-discovery-preview"
               {...stylex.props(s.canvasPreview)}
               style={{
                 left: previewPosition.x,

@@ -10,36 +10,36 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import Field, SecretStr, StrictStr
 
-from notarius_core.application.modules import ModuleLibraryService
-from notarius_core.application.saved_graphs import SavedGraphService
-from notarius_core.artifacts import (
+from grafy_core.application.modules import ModuleLibraryService
+from grafy_core.application.saved_graphs import SavedGraphService
+from grafy_core.artifacts import (
     InMemoryUnitOfWork,
     NoConfig,
     NodeConfig,
     NodeInput,
     NodeOutput,
 )
-from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
-from notarius_core.domain.identity import User, Workspace, WorkspaceMembership, WorkspaceRole
-from notarius_core.operators.text import TEXT_VALUE
-from notarius_core.plugins import NodeSecretInput, Plugin
-from notarius_core.ports.node_secrets import NodeSecretResolverPort
-from notarius_persistence.database import create_database
-from notarius_persistence.orm import metadata
-from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
+from grafy_core.nodes import InPort, Node, NodeExecutionContext, OutPort
+from grafy_core.domain.identity import User, Workspace, WorkspaceMembership, WorkspaceRole
+from grafy_core.operators.text import TEXT_VALUE
+from grafy_core.plugins import NodeSecretInput, Plugin
+from grafy_core.ports.node_secrets import NodeSecretResolverPort
+from grafy_persistence.database import create_database
+from grafy_persistence.orm import metadata
+from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
-from notarius_api.builtins import builtin_plugins
-from notarius_api.main import create_app
+from grafy_api.builtins import builtin_plugins
+from grafy_api.main import create_app
 from tests.unit.api.conftest import install_browser_actor_override
-from notarius_api.plugin_discovery import build_plugin_registry
-from notarius_api.v1.routes.node_secrets.services import NodeSecretService
-from notarius_api.services.composition import (
+from grafy_api.plugin_discovery import build_plugin_registry
+from grafy_api.v1.routes.node_secrets.services import NodeSecretService
+from grafy_api.services.composition import (
     build_workbench_components,
 )
-from notarius_api.settings import Settings
-from notarius_api.v1.routes.modules.dependencies import module_library_service
-from notarius_api.v1.routes.node_secrets.dependencies import node_secret_service
-from notarius_api.v1.routes.saved_graphs.dependencies import saved_graph_service
+from grafy_api.settings import Settings
+from grafy_api.v1.routes.modules.dependencies import module_library_service
+from grafy_api.v1.routes.node_secrets.dependencies import node_secret_service
+from grafy_api.v1.routes.saved_graphs.dependencies import saved_graph_service
 
 from tests.unit.api.conftest import install_workbench_dependency_overrides
 

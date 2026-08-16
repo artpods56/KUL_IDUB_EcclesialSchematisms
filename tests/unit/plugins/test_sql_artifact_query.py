@@ -2,17 +2,17 @@ import asyncio
 
 import pytest
 
-from notarius_core.operators.tables import (
+from grafy_core.operators.tables import (
     Table,
     TableColumn,
     TableValue,
     TableValueType,
 )
-from notarius_plugin_sql.artifact_query import (
+from grafy_plugin_sql.artifact_query import (
     ArtifactQueryExecutorError,
     IsolatedDuckDbArtifactTableExecutor,
 )
-from notarius_plugin_sql.models import SqlStatement
+from grafy_plugin_sql.models import SqlStatement
 
 
 def relation(

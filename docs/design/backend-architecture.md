@@ -1,6 +1,6 @@
 # Backend Architecture Reference
 
-> Technical documentation for the Notarius backend: package structure, dependency
+> Technical documentation for the Grafy backend: package structure, dependency
 > flows, and structural diagrams. This document complements the product
 > vocabulary in `CONTEXT.md` and the interaction plan in
 > `docs/workbench-interaction-plan.md`. It describes the *current* committed
@@ -16,7 +16,7 @@
 
 ## 1. Overview
 
-Notarius is a node-first workbench for building and running typed artifact
+Grafy is a node-first workbench for building and running typed artifact
 graphs. The backend is a Python monorepo (managed by `uv`) organized as a
 **hexagonal / ports-and-adapters architecture** with one clean composition root.
 
@@ -39,9 +39,9 @@ flowchart LR
     Web --> API["FastAPI workbench API\napps/api"]
     Agent --> MCP["FastMCP Streamable HTTP\napps/mcp (mounted at /mcp)"]
     MCP --> API
-    API --> Core["notarius_core\nlibs/core"]
-    API --> Persistence["notarius_persistence\nlibs/persistence"]
-    API --> Storage["notarius_storage\nlibs/storage"]
+    API --> Core["grafy_core\nlibs/core"]
+    API --> Persistence["grafy_persistence\nlibs/persistence"]
+    API --> Storage["grafy_storage\nlibs/storage"]
     API -. "discovers entry points" .-> Plugins["Installed node plugins\nplugins/*"]
     Plugins --> Core
     Core --> Persistence
@@ -56,15 +56,15 @@ flowchart LR
 
 | Package | Path | Responsibility |
 | --- | --- | --- |
-| `notarius_api` | `apps/api/src/notarius_api` | FastAPI app, `/v1` routes, plugin discovery, runtime composition, HTTP adapters. |
-| `notarius_mcp` | `apps/mcp/src/notarius_mcp` | Stateless FastMCP Streamable HTTP tools; request-scoped PAT actor context. |
-| `notarius_core` | `libs/core/src/notarius_core` | Domain aggregates, ports, application services, runtime, plugin contract, built-in operators. |
-| `notarius_persistence` | `libs/persistence/src/notarius_persistence` | Async SQLAlchemy repositories, unit-of-work adapters, ORM mappings, Alembic schema. |
-| `notarius_storage` | `libs/storage/src/notarius_storage` | Local and S3-compatible object stores. |
-| `notarius_plugin_llm` | `plugins/llm` | OpenAI-compatible Chat Completions + legacy Mistral structured node. |
-| `notarius_plugin_ocr` | `plugins/ocr` | OCR and table-extraction nodes; Mistral + Tesseract adapters. |
-| `notarius_plugin_gis` | `plugins/gis` | WGS84 vector sources, georeferenced raster scans, OGC WFS/WMS integration, map-layer recipes. |
-| `notarius_plugin_sql` | `plugins/sql` | Parameterized statement artifacts, PostgreSQL batch executor, DuckDB join executor. |
+| `grafy_api` | `apps/api/src/grafy_api` | FastAPI app, `/v1` routes, plugin discovery, runtime composition, HTTP adapters. |
+| `grafy_mcp` | `apps/mcp/src/grafy_mcp` | Stateless FastMCP Streamable HTTP tools; request-scoped PAT actor context. |
+| `grafy_core` | `libs/core/src/grafy_core` | Domain aggregates, ports, application services, runtime, plugin contract, built-in operators. |
+| `grafy_persistence` | `libs/persistence/src/grafy_persistence` | Async SQLAlchemy repositories, unit-of-work adapters, ORM mappings, Alembic schema. |
+| `grafy_storage` | `libs/storage/src/grafy_storage` | Local and S3-compatible object stores. |
+| `grafy_plugin_llm` | `plugins/llm` | OpenAI-compatible Chat Completions + legacy Mistral structured node. |
+| `grafy_plugin_ocr` | `plugins/ocr` | OCR and table-extraction nodes; Mistral + Tesseract adapters. |
+| `grafy_plugin_gis` | `plugins/gis` | WGS84 vector sources, georeferenced raster scans, OGC WFS/WMS integration, map-layer recipes. |
+| `grafy_plugin_sql` | `plugins/sql` | Parameterized statement artifacts, PostgreSQL batch executor, DuckDB join executor. |
 
 ### Dependency direction (hexagonal)
 
@@ -79,16 +79,16 @@ flowchart TB
         Plugins["plugins/* — node extensions"]
     end
     subgraph Policy["Policy (high-level, depends on ports only)"]
-        App["notarius_core/application\nSavedGraphService · CollaborationService\nIdentityService · ModuleLibraryService · TemplateService"]
-        Runtime["notarius_core/runtime\nNodeRuntime · InputMaterializer · OutputPersister"]
+        App["grafy_core/application\nSavedGraphService · CollaborationService\nIdentityService · ModuleLibraryService · TemplateService"]
+        Runtime["grafy_core/runtime\nNodeRuntime · InputMaterializer · OutputPersister"]
     end
     subgraph Domain["Domain + ports"]
-        DomainAgg["notarius_core/domain\nsaved_graphs · collaboration · identity · modules"]
-        Ports["notarius_core/ports\nnarrow per-aggregate Protocol ports"]
+        DomainAgg["grafy_core/domain\nsaved_graphs · collaboration · identity · modules"]
+        Ports["grafy_core/ports\nnarrow per-aggregate Protocol ports"]
     end
     subgraph Adapters["Infrastructure adapters (low-level)"]
-        Persistence["notarius_persistence\nSql*Repository · SqlAlchemyUnitOfWork"]
-        Storage["notarius_storage\nLocalFileObjectStore · S3ObjectStore"]
+        Persistence["grafy_persistence\nSql*Repository · SqlAlchemyUnitOfWork"]
+        Storage["grafy_storage\nLocalFileObjectStore · S3ObjectStore"]
         SDKs["plugin SDK adapters\nMistral · OpenAI · Tesseract · GDAL · SQLAlchemy"]
     end
 
@@ -113,21 +113,21 @@ flowchart TB
 Rule: **dependency arrows point inward toward the domain.** No port, domain, or
 application module imports a concrete infrastructure type (`SqlAlchemy*`,
 `LocalFileObjectStore`, SDK clients). All concrete construction happens in
-composition roots (`apps/api/src/notarius_api/main.py` and
+composition roots (`apps/api/src/grafy_api/main.py` and
 `services/composition.py`).
 
 ---
 
 ## 3. Composition root and application assembly
 
-The FastAPI app is built in `apps/api/src/notarius_api/main.py`. During lifespan
+The FastAPI app is built in `apps/api/src/grafy_api/main.py`. During lifespan
 it constructs every service from concrete adapters, binds them to
 `app.state`, and tears them down once.
 
 ```mermaid
 flowchart TB
-    Settings["Settings\n(env + .env)"] --> Database["create_database\nnotarius_persistence.database"]
-    Settings --> StorageFactory["create_file_storage\nnotarius_storage.factory"]
+    Settings["Settings\n(env + .env)"] --> Database["create_database\ngrafy_persistence.database"]
+    Settings --> StorageFactory["create_file_storage\ngrafy_storage.factory"]
     Settings --> OwnerLease["ApiOwnerLease\nsingle-owner lock"]
 
     Database --> Db["Database\nengine + async_sessionmaker"]
@@ -152,7 +152,7 @@ flowchart TB
 **Key construction points** (all in `apps/api`):
 
 - **`build_plugin_registry`** (`plugin_discovery.py`) installs builtin plugins,
-  discovers external plugins via the `notarius.plugins` entry-point group, and
+  discovers external plugins via the `grafy.plugins` entry-point group, and
   `freeze()`s the registry (validating artifact/conversion/port contracts).
 - **`build_workbench_components`** (`services/composition.py`) is the workbench
   composition root: it builds resolvers/writers from the registry, the
@@ -213,7 +213,7 @@ flowchart TB
     PatMW --> Auth["AuthService\nworkspace-bound PAT validation"]
     Auth --> Caller["McpCallerContext\n(user_id, workspace_id, scopes)"]
     Caller --> Bind["bind_mcp_request\nContextVar binding"]
-    Bind --> MCP["notarius_mcp server\nFastMCP tools"]
+    Bind --> MCP["grafy_mcp server\nFastMCP tools"]
     MCP --> Ops["ApiGraphWorkspaceOperations\napps/api/mcp/operations.py"]
     Ops --> App["app.state resources\nSavedGraphService · CollaborationService · registry"]
 ```
@@ -221,7 +221,7 @@ flowchart TB
 - **PAT scoping:** effective permission is `token scope ∩ current membership`.
 - **Stateless:** each request binds a fresh caller context; the `Authorization`
   header is never retained in process-global state.
-- **Boundary rule:** `notarius_mcp` never imports FastAPI routes, persistence,
+- **Boundary rule:** `grafy_mcp` never imports FastAPI routes, persistence,
   storage, or plugin implementations; it talks only through
   `GraphWorkspaceOperations` provided by the API package.
 
@@ -229,13 +229,13 @@ flowchart TB
 
 ## 6. Plugin system dependency flow
 
-Plugins are discovered from the `notarius.plugins` entry-point group and
+Plugins are discovered from the `grafy.plugins` entry-point group and
 installed into a frozen `PluginRegistry`. The registry is the single source of
 truth for nodes, artifact types, conversions, resolvers, and writers.
 
 ```mermaid
 flowchart TB
-    subgraph Core["notarius_core"]
+    subgraph Core["grafy_core"]
         Registry["PluginRegistry\nnodes · artifact_types · conversions"]
         Contract["Plugin contract\nNode · ArtifactTypeSpec · ArtifactConversion\nResolverFactory · WriterFactory"]
         Runtime["Runtime\nNodeRuntime · InputMaterializer · OutputPersister"]
@@ -244,10 +244,10 @@ flowchart TB
         Ops["operators/\nimage · sequence · arithmetic · text\nschema · prompt · table · modules"]
     end
     subgraph External["External plugins"]
-        LLM["notarius_plugin_llm"]
-        OCR["notarius_plugin_ocr"]
-        GIS["notarius_plugin_gis"]
-        SQL["notarius_plugin_sql"]
+        LLM["grafy_plugin_llm"]
+        OCR["grafy_plugin_ocr"]
+        GIS["grafy_plugin_gis"]
+        SQL["grafy_plugin_sql"]
     end
 
     Ops --> Registry
@@ -257,7 +257,7 @@ flowchart TB
     SQL --> Registry
     Registry --> Contract
     Contract --> Runtime
-    Registry -. "entry point discovery" .-> EntryPoints["importlib.metadata\ngroup='notarius.plugins'"]
+    Registry -. "entry point discovery" .-> EntryPoints["importlib.metadata\ngroup='grafy.plugins'"]
 ```
 
 **Registration path** — each `Plugin` declares:
@@ -316,14 +316,14 @@ flowchart LR
 
 ## 8. Persistence architecture
 
-`notarius_persistence` implements every core port with a `Sql*Repository` and
+`grafy_persistence` implements every core port with a `Sql*Repository` and
 exposes a unit-of-work facade. Alembic (`infra/db/migrations`) is the **only**
 schema authority; SQLAlchemy ORM mappings (`orm.py`) are derived from the
 `schema.py` table definitions.
 
 ```mermaid
 flowchart TB
-    subgraph CorePorts["notarius_core/ports"]
+    subgraph CorePorts["grafy_core/ports"]
         P1["SavedGraphRepositoryPort"]
         P2["CollaborationRepositoryPort"]
         P3["IdentityRepositoryPort"]
@@ -334,7 +334,7 @@ flowchart TB
         P8["StagedUploadRepositoryPort"]
         P9["TemplateRepositoryPort"]
     end
-    subgraph Adapters["notarius_persistence"]
+    subgraph Adapters["grafy_persistence"]
         R["adapters/repositories.py\nSqlSavedGraphRepository · SqlCollaborationRepository\nSqlIdentityRepository · Sql* ... (12 classes)"]
         UOW["unit_of_work.py\nSqlAlchemyUnitOfWork\nSqlAlchemySavedGraphUnitOfWork"]
         DB["database.py\ncreate_database"]
@@ -370,12 +370,12 @@ exposes the saved-graph repositories required by `SavedGraphService`.
 
 ## 9. Object storage dependency flow
 
-`notarius_storage` exposes the `FileStoragePort` from core and provides two
+`grafy_storage` exposes the `FileStoragePort` from core and provides two
 adapters selected by `storage_backend` in settings (`local` | `s3`).
 
 ```mermaid
 flowchart LR
-    Core["FileStoragePort\nnotarius_core/ports/storage.py"] --> Factory["create_file_storage\nnotarius_storage/factory.py"]
+    Core["FileStoragePort\ngrafy_core/ports/storage.py"] --> Factory["create_file_storage\ngrafy_storage/factory.py"]
     Factory --> Local["LocalFileObjectStore\nlocal FS root"]
     Factory --> S3["S3ObjectStore\nS3-compatible (MinIO/AWS)"]
     Local --> FS["filesystem"]
@@ -409,7 +409,7 @@ flowchart TB
 
 **Collaboration assumption:** the API runs **one Uvicorn process with one worker**
 (`WEB_CONCURRENCY: "1"`), acquires an exclusive workspace lock at startup
-(`NOTARIUS_REQUIRE_SINGLE_API_OWNER=true`), and relies on the graph-room hub for
+(`GRAFY_REQUIRE_SINGLE_API_OWNER=true`), and relies on the graph-room hub for
 in-process WebSocket collaboration.
 
 ---
@@ -527,7 +527,7 @@ flowchart LR
 ```
 
 - **Core never imports FastAPI, SQLAlchemy, storage stores, or SDK clients.**
-- **`notarius_mcp` never imports FastAPI routes, persistence, storage, or plugin
+- **`grafy_mcp` never imports FastAPI routes, persistence, storage, or plugin
   implementations.**
 - **Concrete construction lives only in composition roots** (`main.py`,
   `composition.py`, `factory.py`).

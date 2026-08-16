@@ -3,16 +3,16 @@ from uuid import UUID
 
 import pytest
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactRef,
     ArtifactRefSequence,
     InMemoryUnitOfWork,
 )
-from notarius_core.domain.execution_history import (
+from grafy_core.domain.execution_history import (
     GraphExecution,
     GraphExecutionNodeResult,
 )
-from notarius_core.domain.errors import NotFoundError
+from grafy_core.domain.errors import NotFoundError
 
 
 WORKSPACE_ONE = UUID("00000000-0000-0000-0000-000000000101")

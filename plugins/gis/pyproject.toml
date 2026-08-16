@@ -3,23 +3,23 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "notarius-plugin-gis"
+name = "grafy-plugin-gis"
 version = "0.1.0"
 requires-python = "==3.12.9"
 dependencies = [
     "httpx>=0.28.1",
-    "notarius-core",
+    "grafy-core",
     "pydantic",
     "pyproj>=3.7.0",
     "shapely>=2.1.0",
     "truststore>=0.10.4",
 ]
 
-[project.entry-points."notarius.plugins"]
-gis = "notarius_plugin_gis.plugin:GIS"
+[project.entry-points."grafy.plugins"]
+gis = "grafy_plugin_gis.plugin:GIS"
 
 [tool.uv.sources]
-notarius-core = { workspace = true }
+grafy-core = { workspace = true }
 
 [tool.basedpyright]
 extends = "../../pyproject.toml"

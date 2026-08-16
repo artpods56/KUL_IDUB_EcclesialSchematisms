@@ -22,7 +22,7 @@
 
 ## Outcome
 
-Notarius will become a multi-user OpenID Connect relying party. A successful
+Grafy will become a multi-user OpenID Connect relying party. A successful
 Authorization Code flow with PKCE establishes an internal `User` and
 `OidcIdentity`, after which the browser receives an opaque server session. A
 user may create a workspace-bound personal access token for Streamable HTTP MCP.
@@ -86,7 +86,7 @@ flowchart TD
   synchronized collaborative head into a shared workspace.
 - Offline-first graph editing or a general CRDT.
 - Multiple API owners, workers, or replicas.
-- Making unrelated Streamlit applications part of the Notarius OIDC session or
+- Making unrelated Streamlit applications part of the Grafy OIDC session or
   workspace boundary.
 - Workspace deletion. Graph deletion remains an owner-only workflow; deleting a
   workspace and all dependent state needs a separate lifecycle design.
@@ -111,15 +111,15 @@ Use UUID identities and UTC timestamps throughout.
 | `SecurityAuditEvent` | timestamp, actor kind, optional user and non-secret credential reference, workspace/resource ids when applicable, operation, outcome, safe error code | Metadata only. Pre-authentication and system events use explicit actor kinds without copying submitted identity. It never contains credentials, provider payloads, command/configuration values, artifacts, secrets, or one-time URLs. |
 
 Use dedicated identity domain types in
-`libs/core/src/notarius_core/domain/identity.py` and the metadata-only audit
-contract in `libs/core/src/notarius_core/domain/security_audit.py`. Keep OIDC discovery/JWK access,
+`libs/core/src/grafy_core/domain/identity.py` and the metadata-only audit
+contract in `libs/core/src/grafy_core/domain/security_audit.py`. Keep OIDC discovery/JWK access,
 authorization redirects, code exchange, PKCE, random credential generation,
 cookies, bearer parsing, and constant-time digest verification at the API
 security boundary. The core identity model must not import FastAPI, an OIDC SDK,
 SQLAlchemy, HTTP clients, or cookie types.
 
 Repository and unit-of-work protocols in
-`libs/core/src/notarius_core/ports/identity.py` are justified by the existing
+`libs/core/src/grafy_core/ports/identity.py` are justified by the existing
 relational persistence boundary. Do not add provider, factory, or strategy
 interfaces for the single configured OIDC integration. [R40: Real Interfaces Only]
 
@@ -130,7 +130,7 @@ dependency is defense in depth, not the commit-time authority.
 
 ### First-login provisioning and legacy-owner bootstrap
 
-There is no Notarius signup or user-creation HTTP endpoint. A user is provisioned
+There is no Grafy signup or user-creation HTTP endpoint. A user is provisioned
 only after a complete, valid OIDC callback from the configured issuer. In one
 transaction the application maps exact `(issuer, subject)` to `OidcIdentity`,
 creates `User` when the identity is new, and creates that user's personal
@@ -138,7 +138,7 @@ workspace and owner membership. Provider email and display name populate a
 profile but never select or merge an existing identity.
 
 Migration needs an explicit mapping for the first OIDC user who will own legacy
-data. Add a `notarius-admin bootstrap-oidc-owner --issuer ... --subject ...`
+data. Add a `grafy-admin bootstrap-oidc-owner --issuer ... --subject ...`
 command that writes one unconsumed bootstrap mapping for the deterministic
 `local` shared workspace. It does not create a user or credential. The matching
 identity's first valid OIDC callback consumes the mapping while it provisions
@@ -306,7 +306,7 @@ records.
 The existing `Settings.workspace`, `PluginRuntimeContext.workspace`, and
 “filesystem workspace” documentation describe the host data directory, not an
 authorization workspace. Rename that concept to `data_root` in Python and docs,
-add `NOTARIUS_DATA_ROOT`, and support `NOTARIUS_WORKSPACE` only as a documented
+add `GRAFY_DATA_ROOT`, and support `GRAFY_WORKSPACE` only as a documented
 temporary environment alias during the transition. Update `CONTEXT.md` before
 code begins so future changes do not confuse the two concepts.
 [R23: Maintain The Rules]
@@ -321,27 +321,27 @@ Keep the work in the existing monolith and preserve inward dependency direction.
 
 | Area | Ownership in this refactor |
 | --- | --- |
-| `libs/core/src/notarius_core/domain/identity.py` | User, workspace, membership, role/capability policy, authenticated actor ids, and invariants. |
-| `libs/core/src/notarius_core/domain/security_audit.py` | Bounded audit actor kinds and metadata-only security events shared by authenticated and pre-authentication workflows. |
-| `libs/core/src/notarius_core/application/identity.py` | Create shared workspace, add/change/remove membership, personal-workspace creation, graph-copy orchestration, and last-owner checks. |
-| `libs/core/src/notarius_core/ports/identity.py` | Narrow repository/UoW contracts actually required by those workflows. |
-| `libs/core/src/notarius_core/domain/saved_graphs.py` and existing runtime domains | Add workspace/creator identity where it is part of durable state; do not import the full `User` aggregate. |
-| `libs/core/src/notarius_core/nodes.py` | Add required `workspace_id` to `NodeExecutionContext` so all persisted runtime output has tenant context. Never put an auth token or session object here. |
-| `libs/persistence/src/notarius_persistence/schema.py` | Identity tables, tenant columns, composite constraints, collaboration tables, and indexes. |
-| `libs/persistence/src/notarius_persistence/orm.py` | Imperative mappings for new domain records. |
-| `libs/persistence/src/notarius_persistence/adapters/repositories.py` | Workspace-qualified identity, graph, artifact, cache, materialization, secret, execution, and collaboration queries. |
-| `libs/persistence/src/notarius_persistence/unit_of_work.py` | Expose the concrete repository set through one task-local transaction; checkpoint workflows commit once. |
-| `apps/api/src/notarius_api/v1/routes/auth/` | OIDC start/callback, current-session/logout, PAT HTTP models, dependencies, and concrete relying-party/session service. |
-| `apps/api/src/notarius_api/v1/routes/workspaces/` | Workspace/member/list/copy HTTP presentation. |
+| `libs/core/src/grafy_core/domain/identity.py` | User, workspace, membership, role/capability policy, authenticated actor ids, and invariants. |
+| `libs/core/src/grafy_core/domain/security_audit.py` | Bounded audit actor kinds and metadata-only security events shared by authenticated and pre-authentication workflows. |
+| `libs/core/src/grafy_core/application/identity.py` | Create shared workspace, add/change/remove membership, personal-workspace creation, graph-copy orchestration, and last-owner checks. |
+| `libs/core/src/grafy_core/ports/identity.py` | Narrow repository/UoW contracts actually required by those workflows. |
+| `libs/core/src/grafy_core/domain/saved_graphs.py` and existing runtime domains | Add workspace/creator identity where it is part of durable state; do not import the full `User` aggregate. |
+| `libs/core/src/grafy_core/nodes.py` | Add required `workspace_id` to `NodeExecutionContext` so all persisted runtime output has tenant context. Never put an auth token or session object here. |
+| `libs/persistence/src/grafy_persistence/schema.py` | Identity tables, tenant columns, composite constraints, collaboration tables, and indexes. |
+| `libs/persistence/src/grafy_persistence/orm.py` | Imperative mappings for new domain records. |
+| `libs/persistence/src/grafy_persistence/adapters/repositories.py` | Workspace-qualified identity, graph, artifact, cache, materialization, secret, execution, and collaboration queries. |
+| `libs/persistence/src/grafy_persistence/unit_of_work.py` | Expose the concrete repository set through one task-local transaction; checkpoint workflows commit once. |
+| `apps/api/src/grafy_api/v1/routes/auth/` | OIDC start/callback, current-session/logout, PAT HTTP models, dependencies, and concrete relying-party/session service. |
+| `apps/api/src/grafy_api/v1/routes/workspaces/` | Workspace/member/list/copy HTTP presentation. |
 | Existing API slices under `v1/routes/` | Add resolved actor/workspace dependencies and capability checks at each public operation. |
-| `apps/api/src/notarius_api/v1/routes/collaboration/` | WebSocket protocol presentation and in-process room hub; no durable graph business rules. |
-| `apps/api/src/notarius_api/main.py` | Composition, app state, route registration, security middleware, and startup deployment assertions. |
-| `apps/api/src/notarius_api/settings.py` | HTTPS public origin, OIDC issuer/client/callback settings, auth-wrapping-key and command-HMAC-key versions, cookie security, session/PAT lifetimes, data-root alias, collaboration flag, and singleton assertion settings. |
+| `apps/api/src/grafy_api/v1/routes/collaboration/` | WebSocket protocol presentation and in-process room hub; no durable graph business rules. |
+| `apps/api/src/grafy_api/main.py` | Composition, app state, route registration, security middleware, and startup deployment assertions. |
+| `apps/api/src/grafy_api/settings.py` | HTTPS public origin, OIDC issuer/client/callback settings, auth-wrapping-key and command-HMAC-key versions, cookie security, session/PAT lifetimes, data-root alias, collaboration flag, and singleton assertion settings. |
 | `apps/web/src/features/auth/` | Login/session UI and session expiry handling. |
 | `apps/web/src/features/workspaces/` | Workspace selection and owner-facing membership management. |
 | `apps/web/src/features/workbench/` | Workspace-aware graph authoring, room, presence, and execution behavior under ADR 0001. |
 | `apps/web/src/lib/api/` | One concrete same-origin HTTP adapter and generated OpenAPI types. |
-| `apps/mcp/src/notarius_mcp/` | Mountable Streamable HTTP MCP transport and tools receiving a request-scoped authenticated actor and injected application operations. |
+| `apps/mcp/src/grafy_mcp/` | Mountable Streamable HTTP MCP transport and tools receiving a request-scoped authenticated actor and injected application operations. |
 | `infra/db/migrations/versions/` | Ordered identity, tenancy, and collaboration migrations. |
 | `infra/docker/` | Same-origin gateway, loopback publication, health checks, migration ordering, and one-owner deployment. |
 
@@ -460,9 +460,9 @@ This phase may proceed in parallel with Phase 1B.
 3. Add OIDC discovery and callback validation, PKCE/state/nonce transaction
    handling, opaque session/PAT generation, CSRF validation, and the `auth` and
    `workspaces` API slices.
-4. Add the one-time `notarius-admin bootstrap-oidc-owner` mapping command and
+4. Add the one-time `grafy-admin bootstrap-oidc-owner` mapping command and
    first-valid-login provisioning transaction.
-5. Wire concrete services in `notarius_api.main.create_app`; keep `/health`
+5. Wire concrete services in `grafy_api.main.create_app`; keep `/health`
    available before bootstrap, but all `/v1` resource routes fail closed.
 6. Add `features/auth` and `features/workspaces`; make session expiry return to
    login without retaining secret form values.
@@ -620,7 +620,7 @@ Phase exit criteria:
 ### Phase 4: Add the authenticated graph room
 
 Implement Phase 4 of the realtime design in
-`apps/api/src/notarius_api/v1/routes/collaboration/` and the Workbench session
+`apps/api/src/grafy_api/v1/routes/collaboration/` and the Workbench session
 module.
 
 - Authenticate the cookie before WebSocket acceptance, validate exact Origin,
@@ -704,13 +704,13 @@ client or ambient service credential.
    If the pinned SDK cannot meet this contract, stop the phase and make one
    reviewed SDK/lockfile upgrade. Do not hide an incompatible SDK behind a
    process-global shim.
-2. Refactor `apps/mcp/src/notarius_mcp/server.py` to expose a mountable
+2. Refactor `apps/mcp/src/grafy_mcp/server.py` to expose a mountable
    Streamable HTTP application. Remove the separately published MCP server from
    production topology and remove the stdio transport and entry point. Delete
-   the standalone `NotariusApiClient` and process-level MCP API URL settings
+   the standalone `GrafyApiClient` and process-level MCP API URL settings
    when no remaining caller owns them rather than leaving a second dormant
    authority path. [R17: Delete Dead Abstractions]
-3. Mount that application at `/mcp` from `notarius_api.main` in **stateless**
+3. Mount that application at `/mcp` from `grafy_api.main` in **stateless**
    Streamable HTTP mode for the first delivery. The FastAPI composition root
    resolves the bearer PAT on every MCP request and injects a request-scoped
    actor plus concrete operations backed by the existing identity, graph,
@@ -798,7 +798,7 @@ Add:
 
 Insert one deterministic shared workspace with slug `local`. Do not create a
 user, OIDC identity, session, PAT, or hidden anonymous owner in Alembic. Before
-opening login, the operator runs `notarius-admin bootstrap-oidc-owner` with the
+opening login, the operator runs `grafy-admin bootstrap-oidc-owner` with the
 exact configured issuer and intended first owner's subject. That command writes
 only the one-time mapping; the matching valid callback provisions and consumes
 it.
@@ -884,12 +884,12 @@ Treat the tenant migration as a maintenance-window operation for SQLite.
 Before migration:
 
 1. stop gateway and API traffic, including the mounted MCP application, plus
-   Prefect workers and any Streamlit code that might touch the Notarius data
+   Prefect workers and any Streamlit code that might touch the Grafy data
    root;
 2. confirm there is only one API owner and no active execution;
 3. checkpoint/truncate the SQLite WAL and create a consistent SQLite backup with
    the SQLite backup API or a stopped-volume snapshot, not a live raw file copy;
-4. back up the complete Notarius data volume: database, `-wal`/`-shm` state when
+4. back up the complete Grafy data volume: database, `-wal`/`-shm` state when
    applicable, uploads, local object storage, and migration markers;
 5. separately protect the node-secret encryption key, auth wrapping key and
    version, command HMAC key and version, OIDC client secret when required, and
@@ -939,8 +939,8 @@ HTTP remains the generated contract boundary:
 
 1. update FastAPI models and route registrations;
 2. update the exact route inventory in `tests/unit/api/test_openapi.py`;
-3. regenerate `apps/web/openapi/notarius.json` and
-   `apps/web/src/lib/api/generated/notarius.ts` with
+3. regenerate `apps/web/openapi/grafy.json` and
+   `apps/web/src/lib/api/generated/grafy.ts` with
    `npm --prefix apps/web run generate:api`;
 4. update stable aliases and the concrete adapter under
    `apps/web/src/lib/api/contract.ts` and `workbench.ts`;
@@ -987,7 +987,7 @@ flowchart LR
 ```
 
 Add a small gateway service and checked configuration under `infra/docker/`.
-The gateway owns the only host-published Notarius port, bound by default to
+The gateway owns the only host-published Grafy port, bound by default to
 `127.0.0.1`. The web and API containers remain reachable only on the Compose
 network. Route `/` and static assets to Next.js; route public `/api/v1/...` to
 FastAPI `/v1/...` by stripping only `/api`; and route `/mcp` to the Streamable
@@ -997,14 +997,14 @@ than room, SSE, and MCP request/idle windows.
 
 Build the web app with `/api` as its relative API base. Derive WebSocket
 `ws:`/`wss:` from `window.location` and the `/api` route, not a separately
-configured API origin. Add one `NOTARIUS_PUBLIC_ORIGIN` HTTPS setting as the
+configured API origin. Add one `GRAFY_PUBLIC_ORIGIN` HTTPS setting as the
 exact source of truth for OIDC redirect URI, Origin checks, and host-only Secure
 cookies. Trust forwarded host/proto data only from the known gateway address.
 
 OIDC makes TLS a release requirement even over an SSH tunnel. Register the exact
 callback
-`https://<notarius-test-host>:8080/api/v1/auth/oidc/callback` with the provider,
-configure the same public origin in Notarius, and serve a certificate trusted by
+`https://<grafy-test-host>:8080/api/v1/auth/oidc/callback` with the provider,
+configure the same public origin in Grafy, and serve a certificate trusted by
 the operator browser for that hostname. If the hostname does not normally resolve
 to loopback, use an explicit local hosts mapping while the tunnel is active; do
 not change issuer or callback identity between sessions.
@@ -1019,7 +1019,7 @@ ssh -N -L 8080:127.0.0.1:8080 ai-test-ihpan
 Then open the exact registered HTTPS hostname and port, never an HTTP or
 `127.0.0.1` alias. The tunnel protects the network hop, while TLS supplies the
 stable OIDC origin and Secure-cookie contract. Keep API and Prefect ports private.
-An MCP client uses `https://<notarius-test-host>:8080/mcp` through the same
+An MCP client uses `https://<grafy-test-host>:8080/mcp` through the same
 forward and presents its workspace-bound PAT only in the Authorization header.
 
 A separate Streamlit app may use another loopback-only forward, for example:
@@ -1031,7 +1031,7 @@ ssh -N \
   ai-test-ihpan
 ```
 
-It does not share Notarius OIDC callback, cookies, sessions, PATs, or database
+It does not share Grafy OIDC callback, cookies, sessions, PATs, or database
 access unless a separate integration is explicitly designed.
 
 ## Verification and acceptance matrix

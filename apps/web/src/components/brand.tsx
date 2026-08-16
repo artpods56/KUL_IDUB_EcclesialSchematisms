@@ -25,7 +25,7 @@ export function BrandIcon({
       width={size}
       height={size}
       alt={alt}
-      className={className ? `ns-brand-icon ${className}` : "ns-brand-icon"}
+      className={className ? `grafy-brand-icon ${className}` : "grafy-brand-icon"}
       draggable={false}
     />
   );
@@ -48,7 +48,7 @@ export function BrandWordmark({
       width={width}
       height={height}
       alt={alt}
-      className={className ? `ns-brand-wordmark ${className}` : "ns-brand-wordmark"}
+      className={className ? `grafy-brand-wordmark ${className}` : "grafy-brand-wordmark"}
       draggable={false}
     />
   );
@@ -64,7 +64,7 @@ export function BrandLockup({
   className?: string;
 }) {
   return (
-    <span className={className ? `ns-brand-lockup ${className}` : "ns-brand-lockup"}>
+    <span className={className ? `grafy-brand-lockup ${className}` : "grafy-brand-lockup"}>
       <BrandIcon size={iconSize} alt="" />
       <BrandWordmark height={wordmarkHeight} />
     </span>
@@ -101,14 +101,14 @@ export function BrandLoader({
     markHeight * (BRAND_ICON_INTRINSIC.width / BRAND_ICON_INTRINSIC.height),
   );
   const style = {
-    "--ns-brand-loader-size": `${size}px`,
-    "--ns-brand-loader-hub-x": BRAND_ICON_HUB_ORIGIN.x,
-    "--ns-brand-loader-hub-y": BRAND_ICON_HUB_ORIGIN.y,
+    "--grafy-brand-loader-size": `${size}px`,
+    "--grafy-brand-loader-hub-x": BRAND_ICON_HUB_ORIGIN.x,
+    "--grafy-brand-loader-hub-y": BRAND_ICON_HUB_ORIGIN.y,
   } as CSSProperties;
 
   return (
     <span
-      className={className ? `ns-brand-loader ${className}` : "ns-brand-loader"}
+      className={className ? `grafy-brand-loader ${className}` : "grafy-brand-loader"}
       style={style}
       role={decorative ? undefined : "status"}
       aria-live={decorative ? undefined : "polite"}
@@ -122,7 +122,7 @@ export function BrandLoader({
         height={markHeight}
         alt=""
         aria-hidden="true"
-        className="ns-brand-loader__mark"
+        className="grafy-brand-loader__mark"
         draggable={false}
       />
     </span>

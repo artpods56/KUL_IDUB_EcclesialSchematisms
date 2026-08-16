@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactFieldProjection,
     ArtifactObject,
     ArtifactRef,
@@ -12,40 +12,40 @@ from notarius_core.artifacts import (
     ArtifactTypeKey,
     InMemoryUnitOfWork,
 )
-from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
-from notarius_core.nodes import resolve_node_contracts
-from notarius_core.operators.arithmetic import (
+from grafy_core.conversions import ArtifactConversion, ArtifactConversionKey
+from grafy_core.nodes import resolve_node_contracts
+from grafy_core.operators.arithmetic import (
     INTEGER_VALUE,
     IntegerValueOutputWriter,
     IntegerValueResolver,
 )
-from notarius_core.operators.sequences import CollectNode
-from notarius_core.operators.text import (
+from grafy_core.operators.sequences import CollectNode
+from grafy_core.operators.text import (
     INTEGER_TO_TEXT,
     TEXT_VALUE,
     ReplaceTextNode,
     TextValueOutputWriter,
     TextValueResolver,
 )
-from notarius_core.runtime.invocation import InvocationMode, NodeInvocation
-from notarius_core.runtime.persistence import (
+from grafy_core.runtime.invocation import InvocationMode, NodeInvocation
+from grafy_core.runtime.persistence import (
     ArtifactOutputWriter,
     ArtifactWriterRegistry,
 )
-from notarius_core.runtime.resolvers import Resolver, ResolverRegistry
-from notarius_storage import LocalFileObjectStore
+from grafy_core.runtime.resolvers import Resolver, ResolverRegistry
+from grafy_storage import LocalFileObjectStore
 
-from notarius_api.v1.routes.executions.models import (
+from grafy_api.v1.routes.executions.models import (
     ArtifactConversionRequest,
     FieldProjectionRequest,
     RunEdgeRequest,
     RunInputPlugRequest,
     RunNodeRequest,
 )
-from notarius_api.v1.routes.artifacts.services import ArtifactService
-from notarius_api.v1.routes.executions.runtime.edge_values import EdgeValueResolver
-from notarius_api.v1.routes.executions.runtime.errors import GraphExecutionError
-from notarius_api.v1.routes.executions.runtime.models import CompiledEdge, CompiledNode
+from grafy_api.v1.routes.artifacts.services import ArtifactService
+from grafy_api.v1.routes.executions.runtime.edge_values import EdgeValueResolver
+from grafy_api.v1.routes.executions.runtime.errors import GraphExecutionError
+from grafy_api.v1.routes.executions.runtime.models import CompiledEdge, CompiledNode
 
 
 SOURCE_RESPONSE = ArtifactTypeKey("test.edge_values.response", 1)

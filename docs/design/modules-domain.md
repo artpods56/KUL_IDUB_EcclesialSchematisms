@@ -13,7 +13,7 @@
 
 This note maps the real-world domain of **reusing subgraphs and building
 libraries across projects**. It is raw material for a later conceptual model.
-It does not choose Notarius vocabulary, publish mechanics, cross-workspace
+It does not choose Grafy vocabulary, publish mechanics, cross-workspace
 sharing rules, or browse UI.
 
 **Source of truth:** team beliefs and product-adjacent understanding, not user
@@ -27,7 +27,7 @@ later research confirms it.
 Reusable workflow composition: people extract a subgraph with a clear contract,
 package it into a library, and call it from other projects.
 
-This is not a map of the Notarius Node catalog, saved-graph persistence, or
+This is not a map of the Grafy Node catalog, saved-graph persistence, or
 workspace tenancy APIs. Those are product solutions that sit above this layer.
 
 ### People (believed)

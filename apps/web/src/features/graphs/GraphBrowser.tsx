@@ -47,25 +47,25 @@ function GraphRow({ graph }: { graph: LocatedGraph }) {
     <li>
       <Link
         href={workbenchGraphPath(graph.location.slug, graph.id)}
-        className="ns-graphs__row"
+        className="grafy-graphs__row"
         aria-label={`Open ${graph.name} in ${workspaceDisplayName(graph.location)}`}
       >
-        <span className="ns-graphs__row-icon" aria-hidden="true">
+        <span className="grafy-graphs__row-icon" aria-hidden="true">
           <Workflow size={16} />
         </span>
-        <span className="ns-graphs__row-title">{graph.name}</span>
-        <span className="ns-graphs__row-location">
+        <span className="grafy-graphs__row-title">{graph.name}</span>
+        <span className="grafy-graphs__row-location">
           {workspaceDisplayName(graph.location)}
         </span>
-        <span className="ns-graphs__row-meta">
+        <span className="grafy-graphs__row-meta">
           {graphAgeLabel(graph.updated_at)}
         </span>
-        <span className="ns-graphs__row-meta">
+        <span className="grafy-graphs__row-meta">
           {graph.node_count} {graph.node_count === 1 ? "node" : "nodes"} ·{" "}
           {graph.edge_count} {graph.edge_count === 1 ? "edge" : "edges"}
         </span>
         <ArrowUpRight
-          className="ns-graphs__row-arrow"
+          className="grafy-graphs__row-arrow"
           size={15}
           aria-hidden="true"
         />
@@ -135,7 +135,7 @@ export function GraphBrowser() {
   );
 
   return (
-    <div className="ns-graphs">
+    <div className="grafy-graphs">
       {workspaces ? (
         <WorkspaceRail
           workspaces={workspaces}
@@ -145,18 +145,18 @@ export function GraphBrowser() {
         />
       ) : null}
 
-      <main className="ns-graphs__main">
-        <header className="ns-graphs__header">
+      <main className="grafy-graphs__main">
+        <header className="grafy-graphs__header">
           <div>
-            <p className="ns-graphs__eyebrow">Your work</p>
+            <p className="grafy-graphs__eyebrow">Your work</p>
             <h1>Graphs</h1>
-            <p className="ns-graphs__intro">
+            <p className="grafy-graphs__intro">
               Find and open graphs across every location you can access.
             </p>
           </div>
           <button
             type="button"
-            className="ns-workspace-button ns-workspace-button--primary"
+            className="grafy-workspace-button grafy-workspace-button--primary"
             disabled={createLocations.length === 0}
             title={
               createLocations.length === 0
@@ -170,8 +170,8 @@ export function GraphBrowser() {
           </button>
         </header>
 
-        <div className="ns-graphs__toolbar">
-          <label className="ns-graphs__search">
+        <div className="grafy-graphs__toolbar">
+          <label className="grafy-graphs__search">
             <Search size={16} aria-hidden="true" />
             <input
               type="search"
@@ -181,7 +181,7 @@ export function GraphBrowser() {
               onChange={(event) => setQuery(event.currentTarget.value)}
             />
           </label>
-          <label className="ns-graphs__location-filter">
+          <label className="grafy-graphs__location-filter">
             <span>Location</span>
             <select
               value={effectiveLocationId}
@@ -198,8 +198,8 @@ export function GraphBrowser() {
           </label>
         </div>
 
-        <div className="ns-graphs__view-bar">
-          <div className="ns-graphs__tabs" aria-label="Graph views">
+        <div className="grafy-graphs__view-bar">
+          <div className="grafy-graphs__tabs" aria-label="Graph views">
             <button
               type="button"
               className={view === "recent" ? "is-active" : ""}
@@ -220,7 +220,7 @@ export function GraphBrowser() {
             </button>
           </div>
           {graphState.graphs ? (
-            <span className="ns-graphs__count">
+            <span className="grafy-graphs__count">
               {filteredGraphs.length}{" "}
               {filteredGraphs.length === 1 ? "graph" : "graphs"}
             </span>
@@ -228,7 +228,7 @@ export function GraphBrowser() {
         </div>
 
         {workspacesError ? (
-          <section className="ns-graphs__state" role="alert">
+          <section className="grafy-graphs__state" role="alert">
             <Workflow size={22} aria-hidden="true" />
             <div>
               <h2>Locations couldn&apos;t be loaded</h2>
@@ -236,7 +236,7 @@ export function GraphBrowser() {
             </div>
             <button
               type="button"
-              className="ns-workspace-button"
+              className="grafy-workspace-button"
               onClick={() => void retryWorkspaces()}
             >
               <RotateCcw size={14} aria-hidden="true" /> Retry
@@ -245,23 +245,23 @@ export function GraphBrowser() {
         ) : !workspaces ||
           (graphState.error === null &&
             (graphState.isLoading || graphState.graphs === null)) ? (
-          <div className="ns-graphs__loading" role="status">
+          <div className="grafy-graphs__loading" role="status">
             <BrandLoader size={36} label="Loading graphs" />
             <span>Loading graphs…</span>
           </div>
         ) : workspaces.length === 0 ? (
-          <section className="ns-graphs__state">
+          <section className="grafy-graphs__state">
             <Users size={22} aria-hidden="true" />
             <div>
               <h2>No graph locations are available</h2>
               <p>Open Teams &amp; access to create or join a location.</p>
             </div>
-            <Link className="ns-workspace-button" href="/workspaces">
+            <Link className="grafy-workspace-button" href="/workspaces">
               Teams &amp; access
             </Link>
           </section>
         ) : graphState.error ? (
-          <section className="ns-graphs__state" role="alert">
+          <section className="grafy-graphs__state" role="alert">
             <Workflow size={22} aria-hidden="true" />
             <div>
               <h2>Graphs couldn&apos;t be loaded</h2>
@@ -269,7 +269,7 @@ export function GraphBrowser() {
             </div>
             <button
               type="button"
-              className="ns-workspace-button"
+              className="grafy-workspace-button"
               onClick={() => void graphState.retry()}
             >
               <RotateCcw size={14} aria-hidden="true" /> Retry
@@ -278,7 +278,7 @@ export function GraphBrowser() {
         ) : (
           <>
             {totalGraphCount === 0 ? (
-              <section className="ns-graphs__state ns-graphs__state--empty">
+              <section className="grafy-graphs__state grafy-graphs__state--empty">
                 <Workflow size={22} aria-hidden="true" />
                 <div>
                   <h2>No graphs yet</h2>
@@ -287,7 +287,7 @@ export function GraphBrowser() {
                 {createLocations.length > 0 ? (
                   <button
                     type="button"
-                    className="ns-workspace-button"
+                    className="grafy-workspace-button"
                     onClick={startGraph}
                   >
                     <Plus size={14} aria-hidden="true" /> New graph
@@ -295,7 +295,7 @@ export function GraphBrowser() {
                 ) : null}
               </section>
             ) : visibleGraphs.length === 0 ? (
-              <section className="ns-graphs__state ns-graphs__state--empty">
+              <section className="grafy-graphs__state grafy-graphs__state--empty">
                 <Search size={22} aria-hidden="true" />
                 <div>
                   <h2>
@@ -312,7 +312,7 @@ export function GraphBrowser() {
                 {normalizedQuery ? (
                   <button
                     type="button"
-                    className="ns-workspace-button"
+                    className="grafy-workspace-button"
                     onClick={() => setQuery("")}
                   >
                     Clear search
@@ -320,7 +320,7 @@ export function GraphBrowser() {
                 ) : null}
               </section>
             ) : (
-              <ul className="ns-graphs__list" aria-label={`${view === "recent" ? "Recent" : "All"} graphs`}>
+              <ul className="grafy-graphs__list" aria-label={`${view === "recent" ? "Recent" : "All"} graphs`}>
                 {visibleGraphs.map((graph) => (
                   <GraphRow
                     key={`${graph.location.id}/${graph.id}`}
@@ -343,7 +343,7 @@ export function GraphBrowser() {
             </DialogDescription>
           </DialogHeader>
           <DialogBody>
-            <div className="ns-graphs__location-options">
+            <div className="grafy-graphs__location-options">
               {createLocations.map((location) => (
                 <button
                   key={location.id}

@@ -7,24 +7,24 @@ from uuid import UUID
 import pytest
 from sqlalchemy import event
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactObject,
     ArtifactRefSequence,
     ArtifactTypeKey,
     InMemoryDataStore,
     InMemoryUnitOfWork,
 )
-from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
-from notarius_core.domain.saved_graphs import (
+from grafy_core.domain.materialized_outputs import MaterializedNodeOutputs
+from grafy_core.domain.saved_graphs import (
     SavedGraph,
     SavedGraphDocument,
     SavedGraphRevision,
 )
 
-from notarius_persistence.database import Database, create_database
-from notarius_persistence.orm import metadata
-from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
-from notarius_persistence import schema
+from grafy_persistence.database import Database, create_database
+from grafy_persistence.orm import metadata
+from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
+from grafy_persistence import schema
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000001")

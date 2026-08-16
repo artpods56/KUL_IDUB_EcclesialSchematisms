@@ -17,8 +17,8 @@ export function safeReturnPath(value: string | undefined): string {
   }
 
   try {
-    const parsed = new URL(value, "https://notarius.invalid");
-    if (parsed.origin !== "https://notarius.invalid") return DEFAULT_RETURN_PATH;
+    const parsed = new URL(value, "https://grafy.invalid");
+    if (parsed.origin !== "https://grafy.invalid") return DEFAULT_RETURN_PATH;
     return `${parsed.pathname}${parsed.search}${parsed.hash}`;
   } catch {
     return DEFAULT_RETURN_PATH;

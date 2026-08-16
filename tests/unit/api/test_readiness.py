@@ -10,14 +10,14 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-import notarius_api.health as health_module
-import notarius_api.main as main_module
-from notarius_core.application.collaboration import CollaborationService
-from notarius_persistence.database import Database, create_database
-from notarius_persistence.orm import metadata
+import grafy_api.health as health_module
+import grafy_api.main as main_module
+from grafy_core.application.collaboration import CollaborationService
+from grafy_persistence.database import Database, create_database
+from grafy_persistence.orm import metadata
 
-from notarius_api.main import create_app
-from notarius_api.settings import Settings, get_settings
+from grafy_api.main import create_app
+from grafy_api.settings import Settings, get_settings
 
 
 class _SwitchableReadinessEngine:
@@ -133,9 +133,9 @@ def test_readiness_uses_the_settings_attached_to_its_application(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("NOTARIUS_EXECUTION_BACKEND", "prefect")
+    monkeypatch.setenv("GRAFY_EXECUTION_BACKEND", "prefect")
     monkeypatch.delenv("PREFECT_API_URL", raising=False)
-    monkeypatch.delenv("NOTARIUS_PREFECT_API_URL", raising=False)
+    monkeypatch.delenv("GRAFY_PREFECT_API_URL", raising=False)
     get_settings.cache_clear()
     application, _readiness_engine = _readiness_application(
         tmp_path,
@@ -215,7 +215,7 @@ def test_prefect_readiness_checks_configured_health_endpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("PREFECT_API_URL", "http://prefect.test:4200/api/")
-    monkeypatch.delenv("NOTARIUS_PREFECT_API_URL", raising=False)
+    monkeypatch.delenv("GRAFY_PREFECT_API_URL", raising=False)
     application, _readiness_engine = _readiness_application(
         tmp_path,
         monkeypatch,

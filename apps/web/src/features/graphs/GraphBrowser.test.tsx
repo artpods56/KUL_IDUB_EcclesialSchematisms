@@ -233,15 +233,15 @@ describe("graph-first browser", () => {
     );
     const container = await renderBrowser();
 
-    expect(container.querySelectorAll(".ns-graphs__row")).toHaveLength(8);
+    expect(container.querySelectorAll(".grafy-graphs__row")).toHaveLength(8);
     await click(button(container, "All"));
-    expect(container.querySelectorAll(".ns-graphs__row")).toHaveLength(9);
+    expect(container.querySelectorAll(".grafy-graphs__row")).toHaveLength(9);
 
     const location = container.querySelector<HTMLSelectElement>(
       'select[aria-label="Filter by location"]',
     )!;
     await change(location, team.id);
-    expect(container.querySelectorAll(".ns-graphs__row")).toHaveLength(1);
+    expect(container.querySelectorAll(".grafy-graphs__row")).toHaveLength(1);
     expect(container.textContent).toContain("Graph 8");
   });
 

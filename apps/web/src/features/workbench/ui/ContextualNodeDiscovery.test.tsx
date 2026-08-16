@@ -36,7 +36,7 @@ import {
 const roots = new Map<Root, HTMLElement>();
 
 beforeEach(() => {
-  document.documentElement.style.setProperty("--ns-mobile-overlay-top", "68px");
+  document.documentElement.style.setProperty("--grafy-mobile-overlay-top", "68px");
 });
 
 function port(
@@ -179,7 +179,7 @@ afterEach(async () => {
   }
   roots.clear();
   document.body.innerHTML = "";
-  document.documentElement.style.removeProperty("--ns-mobile-overlay-top");
+  document.documentElement.style.removeProperty("--grafy-mobile-overlay-top");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -299,7 +299,7 @@ describe("ContextualNodeDiscovery", () => {
   });
 
   it("uses the root mobile overlay token for compact geometry", async () => {
-    document.documentElement.style.setProperty("--ns-mobile-overlay-top", "92px");
+    document.documentElement.style.setProperty("--grafy-mobile-overlay-top", "92px");
     vi.stubGlobal("innerWidth", 320);
     vi.stubGlobal("innerHeight", 480);
 

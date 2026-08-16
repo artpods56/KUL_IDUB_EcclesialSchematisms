@@ -6,8 +6,8 @@ export const workbenchStyles = stylex.create({
   /* Sits beside the docked workspace rail; floating chrome anchors to this box. */
   shell: {
     position: "relative",
-    marginInlineStart: "var(--ns-rail-width, 0px)",
-    width: "calc(100% - var(--ns-rail-width, 0px))",
+    marginInlineStart: "var(--grafy-rail-width, 0px)",
+    width: "calc(100% - var(--grafy-rail-width, 0px))",
     minWidth: 0,
     height: "100svh",
     overflow: "hidden",
@@ -183,7 +183,7 @@ export const workbenchStyles = stylex.create({
     left: {
       default: 0,
       "@media (max-width: 720px)":
-        "calc(var(--ns-rail-width, 0px) + 12px + env(safe-area-inset-left, 0px))",
+        "calc(var(--grafy-rail-width, 0px) + 12px + env(safe-area-inset-left, 0px))",
     },
     bottom: {
       default: "calc(100% + 8px)",
@@ -251,7 +251,7 @@ export const workbenchStyles = stylex.create({
     whiteSpace: "nowrap",
   },
   spinner: {
-    animationName: "ns-spin",
+    animationName: "grafy-spin",
     animationDuration: "900ms",
     animationIterationCount: "infinite",
     animationTimingFunction: "linear",

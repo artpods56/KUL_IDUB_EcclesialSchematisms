@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "notarius-api"
+name = "grafy-api"
 version = "0.1.0"
 requires-python = "==3.12.9"
 dependencies = [
@@ -11,10 +11,10 @@ dependencies = [
     "cryptography>=45.0.0",
     "fastapi>=0.123.0",
     "httpx>=0.28.0",
-    "notarius-core",
-    "notarius-mcp",
-    "notarius-persistence",
-    "notarius-storage",
+    "grafy-core",
+    "grafy-mcp",
+    "grafy-persistence",
+    "grafy-storage",
     "pillow",
     "prefect==3.6.21",
     "pydantic",
@@ -26,13 +26,13 @@ dependencies = [
 ]
 
 [project.scripts]
-notarius-admin = "notarius_api.admin:main"
+grafy-admin = "grafy_api.admin:main"
 
 [tool.uv.sources]
-notarius-core = { workspace = true }
-notarius-mcp = { workspace = true }
-notarius-persistence = { workspace = true }
-notarius-storage = { workspace = true }
+grafy-core = { workspace = true }
+grafy-mcp = { workspace = true }
+grafy-persistence = { workspace = true }
+grafy-storage = { workspace = true }
 
 [tool.basedpyright]
 extends = "../../pyproject.toml"

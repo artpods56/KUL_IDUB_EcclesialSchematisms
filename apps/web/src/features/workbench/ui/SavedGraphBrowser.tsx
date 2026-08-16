@@ -153,7 +153,7 @@ const s = stylex.create({
   },
   error: { color: tokens.colorDanger },
   spinner: {
-    animationName: "ns-spin",
+    animationName: "grafy-spin",
     animationDuration: "900ms",
     animationIterationCount: "infinite",
     animationTimingFunction: "linear",

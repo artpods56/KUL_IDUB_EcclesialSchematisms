@@ -35,7 +35,7 @@ describe("auth API client", () => {
       .mockResolvedValueOnce(new Response("server failure", { status: 503 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("document", { cookie: `notarius_csrf=${csrfToken}` });
+    vi.stubGlobal("document", { cookie: `grafy_csrf=${csrfToken}` });
 
     await expect(deleteSession()).rejects.toBeInstanceOf(ApiError);
     await expect(deleteSession()).resolves.toBeUndefined();

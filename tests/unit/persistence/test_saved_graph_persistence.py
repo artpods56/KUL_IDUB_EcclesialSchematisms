@@ -8,9 +8,9 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
-from notarius_core.artifacts import ArtifactTypeKey
-from notarius_core.domain.errors import ConcurrentWriteError
-from notarius_core.domain.saved_graphs import (
+from grafy_core.artifacts import ArtifactTypeKey
+from grafy_core.domain.errors import ConcurrentWriteError
+from grafy_core.domain.saved_graphs import (
     GraphFolder,
     GraphOrganization,
     GraphPoint,
@@ -26,9 +26,9 @@ from notarius_core.domain.saved_graphs import (
     UserGraphState,
 )
 
-from notarius_persistence.database import Database, create_database
-from notarius_persistence.orm import metadata
-from notarius_persistence.unit_of_work import SqlAlchemySavedGraphUnitOfWork
+from grafy_persistence.database import Database, create_database
+from grafy_persistence.orm import metadata
+from grafy_persistence.unit_of_work import SqlAlchemySavedGraphUnitOfWork
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000001")

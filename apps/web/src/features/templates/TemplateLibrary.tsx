@@ -256,7 +256,7 @@ export function TemplateLibrary() {
   };
 
   return (
-    <div className="ns-template-page">
+    <div className="grafy-template-page">
       {workspaces ? (
         <WorkspaceRail
           workspaces={workspaces}
@@ -264,19 +264,19 @@ export function TemplateLibrary() {
           onLogout={logout}
         />
       ) : null}
-      <main className="ns-template-library">
-        <header className="ns-template-library__header">
+      <main className="grafy-template-library">
+        <header className="grafy-template-library__header">
           <div>
-            <p className="ns-template-library__eyebrow">New graph / Library</p>
+            <p className="grafy-template-library__eyebrow">New graph / Library</p>
             <h1>Templates</h1>
             <p>Start an independent graph from an exact saved snapshot.</p>
           </div>
-          <Link className="ns-workspace-button" href="/">
+          <Link className="grafy-workspace-button" href="/">
             <Workflow size={14} aria-hidden="true" /> My graphs
           </Link>
         </header>
 
-        <label className="ns-template-search" htmlFor="template-search">
+        <label className="grafy-template-search" htmlFor="template-search">
           <Search size={16} aria-hidden="true" />
           <input
             ref={searchRef}
@@ -315,16 +315,16 @@ export function TemplateLibrary() {
         </label>
 
         {isLoading || !workspaces ? (
-          <section className="ns-template-state" aria-live="polite">
+          <section className="grafy-template-state" aria-live="polite">
             <BrandLoader size={34} label="Loading templates" />
             <p>Loading templates from your graph locations…</p>
           </section>
         ) : error ? (
-          <section className="ns-template-state" role="alert">
+          <section className="grafy-template-state" role="alert">
             <h2>Templates could not be loaded</h2>
             <p>Check the connection, then retry without leaving this page.</p>
             <button
-              className="ns-workspace-button"
+              className="grafy-workspace-button"
               type="button"
               onClick={() => void mutate()}
             >
@@ -332,7 +332,7 @@ export function TemplateLibrary() {
             </button>
           </section>
         ) : templates?.length === 0 ? (
-          <section className="ns-template-state">
+          <section className="grafy-template-state">
             <FileStack size={28} aria-hidden="true" />
             <h2>No templates yet</h2>
             <p>
@@ -341,11 +341,11 @@ export function TemplateLibrary() {
             </p>
           </section>
         ) : filtered.length === 0 ? (
-          <section className="ns-template-state">
+          <section className="grafy-template-state">
             <h2>No matching templates</h2>
             <p>Try a template name, source graph, or save location.</p>
             <button
-              className="ns-workspace-button"
+              className="grafy-workspace-button"
               type="button"
               onClick={() => setQuery("")}
             >
@@ -353,9 +353,9 @@ export function TemplateLibrary() {
             </button>
           </section>
         ) : (
-          <div className="ns-template-library__workspace">
-            <section className="ns-template-results" aria-label="Template results">
-              <div className="ns-template-results__heading">
+          <div className="grafy-template-library__workspace">
+            <section className="grafy-template-results" aria-label="Template results">
+              <div className="grafy-template-results__heading">
                 <h2>
                   {filtered.length} {filtered.length === 1 ? "template" : "templates"}
                 </h2>
@@ -378,7 +378,7 @@ export function TemplateLibrary() {
                           setUseOpen(false);
                         }}
                       >
-                        <span className="ns-template-results__icon">
+                        <span className="grafy-template-results__icon">
                           <FileStack size={16} aria-hidden="true" />
                         </span>
                         <span>
@@ -397,16 +397,16 @@ export function TemplateLibrary() {
             </section>
 
             {selected ? (
-              <aside className="ns-template-preview" aria-live="polite">
-                <div className="ns-template-preview__topline">
+              <aside className="grafy-template-preview" aria-live="polite">
+                <div className="grafy-template-preview__topline">
                   <span>Preview</span>
                   <span>{templateLocationLabel(selected.location)}</span>
                 </div>
                 <h2>{selected.template.name}</h2>
-                <p className="ns-template-preview__description">
+                <p className="grafy-template-preview__description">
                   {selected.template.description ?? "No description provided."}
                 </p>
-                <dl className="ns-template-preview__facts">
+                <dl className="grafy-template-preview__facts">
                   <div>
                     <dt>Snapshot</dt>
                     <dd>{templatePreviewSummary(selected.template)}</dd>
@@ -425,8 +425,8 @@ export function TemplateLibrary() {
                 </dl>
 
                 {useOpen ? (
-                  <form className="ns-template-use" onSubmit={submitUse}>
-                    <div className="ns-template-use__heading">
+                  <form className="grafy-template-use" onSubmit={submitUse}>
+                    <div className="grafy-template-use__heading">
                       <h3>Create independent graph</h3>
                       <p>Later edits to either graph will not affect the other.</p>
                     </div>
@@ -475,18 +475,18 @@ export function TemplateLibrary() {
                       </select>
                     </label>
                     {folderError ? (
-                      <p className="ns-template-use__error" role="alert">
+                      <p className="grafy-template-use__error" role="alert">
                         Folders could not be loaded. Choose Unfiled or try again.
                       </p>
                     ) : null}
                     {useError ? (
-                      <p className="ns-template-use__error" role="alert">
+                      <p className="grafy-template-use__error" role="alert">
                         {useError}
                       </p>
                     ) : null}
-                    <div className="ns-template-use__actions">
+                    <div className="grafy-template-use__actions">
                       <button
-                        className="ns-workspace-button"
+                        className="grafy-workspace-button"
                         type="button"
                         onClick={closeUse}
                         disabled={useBusy}
@@ -494,12 +494,12 @@ export function TemplateLibrary() {
                         Cancel
                       </button>
                       <button
-                        className="ns-workspace-button ns-workspace-button--primary"
+                        className="grafy-workspace-button grafy-workspace-button--primary"
                         type="submit"
                         disabled={useBusy || !destinationId || !graphName.trim()}
                       >
                         {useBusy ? (
-                          <LoaderCircle className="ns-template-spin" size={14} />
+                          <LoaderCircle className="grafy-template-spin" size={14} />
                         ) : (
                           <ArrowRight size={14} />
                         )}
@@ -508,11 +508,11 @@ export function TemplateLibrary() {
                     </div>
                   </form>
                 ) : (
-                  <div className="ns-template-preview__actions">
+                  <div className="grafy-template-preview__actions">
                     <button
                       ref={useTriggerRef}
                       type="button"
-                      className="ns-workspace-button ns-workspace-button--primary"
+                      className="grafy-workspace-button grafy-workspace-button--primary"
                       disabled={createLocations.length === 0}
                       title={
                         createLocations.length === 0
@@ -528,7 +528,7 @@ export function TemplateLibrary() {
                     ) ? (
                       <button
                         type="button"
-                        className="ns-workspace-button"
+                        className="grafy-workspace-button"
                         onClick={() => void archiveSelected()}
                       >
                         <Archive size={14} aria-hidden="true" /> Archive
@@ -537,18 +537,18 @@ export function TemplateLibrary() {
                   </div>
                 )}
                 {createLocations.length === 0 ? (
-                  <p className="ns-template-preview__permission">
+                  <p className="grafy-template-preview__permission">
                     You can inspect templates, but you need graph creation
                     permission in a save location to use one.
                   </p>
                 ) : null}
                 {archiveError ? (
-                  <p className="ns-template-use__error" role="alert">
+                  <p className="grafy-template-use__error" role="alert">
                     {archiveError}
                   </p>
                 ) : null}
                 <Link
-                  className="ns-template-preview__source"
+                  className="grafy-template-preview__source"
                   href={workbenchGraphPath(
                     selected.location.slug,
                     selected.template.source_graph_id,

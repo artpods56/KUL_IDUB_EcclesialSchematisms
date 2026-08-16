@@ -1,5 +1,5 @@
 {
-  "name": "web",
+  "name": "grafy-web",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -10,9 +10,9 @@
     "test": "vitest run",
     "lint": "eslint",
     "typecheck": "tsc --noEmit --incremental false",
-    "generate:api:schema": "uv run --directory ../.. --package notarius-api python -m notarius_api.openapi apps/web/openapi/notarius.json",
-    "generate:api": "npm run generate:api:schema && openapi-typescript openapi/notarius.json --immutable --alphabetize --empty-objects-unknown -o src/lib/api/generated/notarius.ts",
-    "check:api": "npm run generate:api:schema && openapi-typescript openapi/notarius.json --immutable --alphabetize --empty-objects-unknown -o src/lib/api/generated/notarius.ts --check"
+    "generate:api:schema": "uv run --directory ../.. --package grafy-api python -m grafy_api.openapi apps/web/openapi/grafy.json",
+    "generate:api": "npm run generate:api:schema && openapi-typescript openapi/grafy.json --immutable --alphabetize --empty-objects-unknown -o src/lib/api/generated/grafy.ts",
+    "check:api": "npm run generate:api:schema && openapi-typescript openapi/grafy.json --immutable --alphabetize --empty-objects-unknown -o src/lib/api/generated/grafy.ts --check"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

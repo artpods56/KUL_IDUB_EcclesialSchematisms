@@ -5,9 +5,9 @@ from uuid import UUID, uuid4
 from fastapi.testclient import TestClient
 import pytest
 
-from notarius_core.domain.collaboration import RenameGraphCommand
-from notarius_core.domain.errors import NotFoundError
-from notarius_core.domain.identity import ActorContext
+from grafy_core.domain.collaboration import RenameGraphCommand
+from grafy_core.domain.errors import NotFoundError
+from grafy_core.domain.identity import ActorContext
 
 from .conftest import TEST_USER_ID, WORKSPACE_ID, workspace_api_path
 

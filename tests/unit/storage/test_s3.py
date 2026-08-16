@@ -6,10 +6,10 @@ from typing import BinaryIO
 import pytest
 from obstore.exceptions import AlreadyExistsError
 
-from notarius_core.domain.errors import ObjectAlreadyExistsError
-from notarius_core.ports.storage import SaveFileCommand
-from notarius_storage.adapters import s3 as s3_module
-from notarius_storage.adapters.s3 import S3ObjectStore
+from grafy_core.domain.errors import ObjectAlreadyExistsError
+from grafy_core.ports.storage import SaveFileCommand
+from grafy_storage.adapters import s3 as s3_module
+from grafy_storage.adapters.s3 import S3ObjectStore
 
 
 class _FakeS3Store:

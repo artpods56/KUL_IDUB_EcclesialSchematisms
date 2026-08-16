@@ -11,23 +11,23 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import delete
 
-from notarius_core.artifacts import ArtifactObject, ArtifactRef, ArtifactRefSequence
-from notarius_core.domain.identity import Workspace, User, WorkspaceMembership, WorkspaceRole
-from notarius_core.domain.materialized_outputs import MaterializedNodeOutputs
-from notarius_persistence import schema
-from notarius_persistence.database import create_database
-from notarius_persistence.orm import metadata
-from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
+from grafy_core.artifacts import ArtifactObject, ArtifactRef, ArtifactRefSequence
+from grafy_core.domain.identity import Workspace, User, WorkspaceMembership, WorkspaceRole
+from grafy_core.domain.materialized_outputs import MaterializedNodeOutputs
+from grafy_persistence import schema
+from grafy_persistence.database import create_database
+from grafy_persistence.orm import metadata
+from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
-from notarius_api.main import create_app
+from grafy_api.main import create_app
 from tests.unit.api.conftest import install_browser_actor_override
-from notarius_api.v1.routes.executions.models import (
+from grafy_api.v1.routes.executions.models import (
     GraphMaterializationsResponse,
     RunPortOutputResponse,
     RunResponse,
 )
-from notarius_api.v1.routes.saved_graphs.models import SavedGraphResponse
-from notarius_api.settings import Settings
+from grafy_api.v1.routes.saved_graphs.models import SavedGraphResponse
+from grafy_api.settings import Settings
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")

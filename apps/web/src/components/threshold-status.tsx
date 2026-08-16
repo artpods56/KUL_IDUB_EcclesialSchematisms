@@ -16,20 +16,20 @@ export function ThresholdStatus({
   loading = false,
 }: ThresholdStatusProps) {
   return (
-    <main className="ns-auth-threshold">
-      <div className="ns-auth-threshold__panel">
-        <div className="ns-auth-threshold__brand">
+    <main className="grafy-auth-threshold">
+      <div className="grafy-auth-threshold__panel">
+        <div className="grafy-auth-threshold__brand">
           {loading ? (
             <BrandLoader size={88} label={title} />
           ) : (
             <BrandWordmark height={72} />
           )}
         </div>
-        <div className="ns-auth-threshold__rule" aria-hidden="true" />
-        <div className="ns-auth-threshold__copy">
+        <div className="grafy-auth-threshold__rule" aria-hidden="true" />
+        <div className="grafy-auth-threshold__copy">
           <h1>{title}</h1>
-          <p className="ns-auth-threshold__detail">{detail}</p>
-          {action ? <div className="ns-auth-threshold__action">{action}</div> : null}
+          <p className="grafy-auth-threshold__detail">{detail}</p>
+          {action ? <div className="grafy-auth-threshold__action">{action}</div> : null}
         </div>
       </div>
     </main>

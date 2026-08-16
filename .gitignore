@@ -23,6 +23,7 @@ apps/web/out/
 apps/web/output/
 *.tsbuildinfo
 
+.grafy-artifacts/
 .notarius-artifacts/
 .playwright-cli/
 .playwright-mcp/

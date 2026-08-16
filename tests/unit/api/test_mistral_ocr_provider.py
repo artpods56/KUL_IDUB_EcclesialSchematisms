@@ -5,8 +5,8 @@ import pytest
 from mistralai.client.models import ImageURLChunk, OCRResponse
 from pydantic import BaseModel
 
-from notarius_plugin_ocr.mistral import EncodedPageImage, MistralOcrConfig
-from notarius_plugin_ocr.mistral_sdk import (
+from grafy_plugin_ocr.mistral import EncodedPageImage, MistralOcrConfig
+from grafy_plugin_ocr.mistral_sdk import (
     MistralOcrProviderError,
     MistralSdkOcrProvider,
 )

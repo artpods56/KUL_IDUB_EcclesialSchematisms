@@ -4,8 +4,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from notarius_core.application.collaboration import CollaborationService
-from notarius_core.domain.collaboration import (
+from grafy_core.application.collaboration import CollaborationService
+from grafy_core.domain.collaboration import (
     CollaborativeGraphHead,
     CommandReceiptOutcome,
     GraphActiveExecutionSlot,
@@ -18,7 +18,7 @@ from notarius_core.domain.collaboration import (
     ReplaceDocumentCommand,
     UpdateNodeConfigurationAndInputPlugsCommand,
 )
-from notarius_core.domain.errors import (
+from grafy_core.domain.errors import (
     CapabilityDeniedError,
     CollaborationActiveExecutionError,
     CollaborationCommandRejectedError,
@@ -29,14 +29,14 @@ from notarius_core.domain.errors import (
     MissingCollaborativeHeadError,
     SavedGraphRevisionConflictError,
 )
-from notarius_core.domain.identity import (
+from grafy_core.domain.identity import (
     ActorContext,
     User,
     Workspace,
     WorkspaceMembership,
     WorkspaceRole,
 )
-from notarius_core.domain.saved_graphs import (
+from grafy_core.domain.saved_graphs import (
     GraphPoint,
     SavedGraph,
     SavedGraphDocument,
@@ -44,11 +44,11 @@ from notarius_core.domain.saved_graphs import (
     SavedGraphNode,
     SavedGraphRevision,
 )
-from notarius_core.domain.security_audit import (
+from grafy_core.domain.security_audit import (
     SecurityAuditEvent,
     SecurityAuditOutcome,
 )
-from notarius_core.plugins import PluginRegistry
+from grafy_core.plugins import PluginRegistry
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000201")

@@ -7,7 +7,7 @@ from typing import Annotated, cast, override
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactFieldProjection,
     ArtifactTypeKey,
     ArtifactTypeSpec,
@@ -18,18 +18,18 @@ from notarius_core.artifacts import (
     NodeInput,
     NodeOutput,
 )
-from notarius_core.conversions import (
+from grafy_core.conversions import (
     ArtifactConversion,
     ArtifactConversionKey,
     conversion_runtime_types_are_compatible,
 )
-from notarius_core.nodes import (
+from grafy_core.nodes import (
     MAX_NODE_PROGRESS_COUNTER,
     InPort,
     Node,
     NodeExecutionContext,
 )
-from notarius_core.plugins import (
+from grafy_core.plugins import (
     NodeCachePolicy,
     NodeSecretInput,
     Plugin,
@@ -38,8 +38,8 @@ from notarius_core.plugins import (
     PluginRuntimeContext,
     UnknownOperatorError,
 )
-from notarius_core.ports.node_secrets import NodeSecretUnavailableError
-from notarius_storage import LocalFileObjectStore
+from grafy_core.ports.node_secrets import NodeSecretUnavailableError
+from grafy_storage import LocalFileObjectStore
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")

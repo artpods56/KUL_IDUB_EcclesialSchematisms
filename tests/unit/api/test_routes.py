@@ -11,27 +11,27 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from notarius_persistence.database import create_database
-from notarius_persistence.orm import metadata
+from grafy_persistence.database import create_database
+from grafy_persistence.orm import metadata
 
-from notarius_api.main import create_app
+from grafy_api.main import create_app
 from tests.unit.api.conftest import WORKSPACE_ID, install_browser_actor_override
-from notarius_api.v1.routes.catalog.models import NodeRegistryResponse
-from notarius_api.v1.routes.executions.models import (
+from grafy_api.v1.routes.catalog.models import NodeRegistryResponse
+from grafy_api.v1.routes.executions.models import (
     RunExecutionCapacityErrorResponse,
     RunExecutionResponse,
     RunResponse,
 )
-from notarius_api.v1.routes.executions.dependencies import run_execution_manager
-from notarius_api.v1.routes.executions.dependencies import execution_admission_limiter
-from notarius_api.v1.routes.executions.runtime.admission import (
+from grafy_api.v1.routes.executions.dependencies import run_execution_manager
+from grafy_api.v1.routes.executions.dependencies import execution_admission_limiter
+from grafy_api.v1.routes.executions.runtime.admission import (
     ExecutionAdmissionLimiter,
     RunExecutionCapacityError,
 )
-from notarius_api.v1.routes.uploads.services import ImageUploadService
-from notarius_api.settings import Settings
-from notarius_core.artifacts import InMemoryUnitOfWork
-from notarius_core.plugins import PluginOrigin
+from grafy_api.v1.routes.uploads.services import ImageUploadService
+from grafy_api.settings import Settings
+from grafy_core.artifacts import InMemoryUnitOfWork
+from grafy_core.plugins import PluginOrigin
 
 
 def _parse_sse_events(body: str) -> list[dict[str, object]]:

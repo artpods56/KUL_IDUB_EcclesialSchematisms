@@ -1,22 +1,22 @@
 [project]
-name = "notarius-workspace"
+name = "grafy-workspace"
 version = "0.1.0"
-description = "Notarius typed artifact-graph workbench"
+description = "Grafy typed artifact-graph workbench"
 requires-python = "==3.12.9"
 dependencies = [
     "fastapi[standard]>=0.136.1",
-    "notarius-api",
-    "notarius-core",
-    "notarius-mcp",
-    "notarius-persistence",
-    "notarius-storage",
+    "grafy-api",
+    "grafy-core",
+    "grafy-mcp",
+    "grafy-persistence",
+    "grafy-storage",
 ]
 
 [project.optional-dependencies]
-gis = ["notarius-plugin-gis"]
-llm = ["notarius-plugin-llm"]
-ocr = ["notarius-plugin-ocr"]
-sql = ["notarius-plugin-sql"]
+gis = ["grafy-plugin-gis"]
+llm = ["grafy-plugin-llm"]
+ocr = ["grafy-plugin-ocr"]
+sql = ["grafy-plugin-sql"]
 
 [tool.uv]
 package = false
@@ -35,15 +35,15 @@ members = [
 ]
 
 [tool.uv.sources]
-notarius-api = { workspace = true }
-notarius-core = { workspace = true }
-notarius-mcp = { workspace = true }
-notarius-persistence = { workspace = true }
-notarius-plugin-llm = { workspace = true }
-notarius-plugin-ocr = { workspace = true }
-notarius-plugin-gis = { workspace = true }
-notarius-plugin-sql = { workspace = true }
-notarius-storage = { workspace = true }
+grafy-api = { workspace = true }
+grafy-core = { workspace = true }
+grafy-mcp = { workspace = true }
+grafy-persistence = { workspace = true }
+grafy-plugin-llm = { workspace = true }
+grafy-plugin-ocr = { workspace = true }
+grafy-plugin-gis = { workspace = true }
+grafy-plugin-sql = { workspace = true }
+grafy-storage = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -72,7 +72,7 @@ include = [
 ]
 exclude = [
     ".venv",
-    ".notarius-artifacts",
+    ".grafy-artifacts",
     ".playwright-cli",
     "apps/web",
 ]

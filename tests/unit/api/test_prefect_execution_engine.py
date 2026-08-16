@@ -19,7 +19,7 @@ from prefect.settings import (
 from prefect.testing.utilities import prefect_test_harness
 from pydantic import Field, StrictInt, StrictStr
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactRefSequence,
     InMemoryUnitOfWork,
     NoConfig,
@@ -27,18 +27,18 @@ from notarius_core.artifacts import (
     NodeInput,
     NodeOutput,
 )
-from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
-from notarius_core.operators.arithmetic import INTEGER_VALUE, IntegerValueResolver
-from notarius_core.plugins import Plugin
+from grafy_core.nodes import InPort, Node, NodeExecutionContext, OutPort
+from grafy_core.operators.arithmetic import INTEGER_VALUE, IntegerValueResolver
+from grafy_core.plugins import Plugin
 
-from notarius_api.builtins import builtin_plugins
-from notarius_api.plugin_discovery import build_plugin_registry
-from notarius_api.v1.routes.executions.models import (
+from grafy_api.builtins import builtin_plugins
+from grafy_api.plugin_discovery import build_plugin_registry
+from grafy_api.v1.routes.executions.models import (
     RunEdgeRequest,
     RunNodeRequest,
     RunRequest,
 )
-from notarius_api.services.composition import (
+from grafy_api.services.composition import (
     WorkbenchComponents,
     build_workbench_components,
 )

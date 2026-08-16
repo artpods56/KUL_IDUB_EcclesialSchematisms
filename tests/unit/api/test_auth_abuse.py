@@ -12,7 +12,7 @@ from starlette.types import ASGIApp
 from uvicorn._types import ASGI3Application
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-from notarius_api.v1.routes.auth.abuse import (
+from grafy_api.v1.routes.auth.abuse import (
     AuthAbuseControl,
     make_browser_abuse_cookie,
     request_browser_keys,
@@ -141,7 +141,7 @@ def test_forged_browser_cookie_is_rejected_without_using_the_submitted_handle() 
     valid_cookie = make_browser_abuse_cookie("stable-browser", secret=secret)
     request = SimpleNamespace(
         state=SimpleNamespace(),
-        cookies={"notarius_browser_abuse": valid_cookie[:-1] + "x"},
+        cookies={"grafy_browser_abuse": valid_cookie[:-1] + "x"},
         client=SimpleNamespace(host="127.0.0.1"),
         url=SimpleNamespace(path="/v1/auth/oidc/login"),
     )

@@ -6,13 +6,13 @@ import pytest
 from pydantic import SecretStr
 from sqlalchemy import TextClause, URL
 
-from notarius_plugin_sql.models import SqlStatement, SqlValue
-from notarius_plugin_sql.nodes import (
+from grafy_plugin_sql.models import SqlStatement, SqlValue
+from grafy_plugin_sql.nodes import (
     ExecuteSqlConfig,
     PostgresSslMode,
     SqlExecutionError,
 )
-from notarius_plugin_sql.sqlalchemy import SqlAlchemyPostgresBatchExecutor
+from grafy_plugin_sql.sqlalchemy import SqlAlchemyPostgresBatchExecutor
 
 
 class FakeResult:
@@ -108,7 +108,7 @@ def postgres_config() -> ExecuteSqlConfig:
         host="postgres.internal",
         port=5433,
         database="documents",
-        username="notarius",
+        username="grafy",
         ssl_mode=PostgresSslMode.VERIFY_FULL,
         timeout_seconds=12.5,
     )
@@ -124,7 +124,7 @@ async def test_sqlalchemy_executor_runs_named_batch_in_order_and_commits() -> No
     engine = FakeEngine(connection)
     factory = FakeEngineFactory(engine)
 
-    with patch("notarius_plugin_sql.sqlalchemy.create_async_engine", factory):
+    with patch("grafy_plugin_sql.sqlalchemy.create_async_engine", factory):
         results = await SqlAlchemyPostgresBatchExecutor().execute(
             postgres_config(),
             SecretStr("postgres-password"),
@@ -138,7 +138,7 @@ async def test_sqlalchemy_executor_runs_named_batch_in_order_and_commits() -> No
         )
 
     assert factory.url == (
-        "postgresql+asyncpg://notarius:postgres-password@"
+        "postgresql+asyncpg://grafy:postgres-password@"
         "postgres.internal:5433/documents"
     )
     assert factory.options == {
@@ -191,7 +191,7 @@ async def test_sqlalchemy_executor_rolls_back_and_reports_statement_index() -> N
     engine = FakeEngine(connection)
 
     with patch(
-        "notarius_plugin_sql.sqlalchemy.create_async_engine",
+        "grafy_plugin_sql.sqlalchemy.create_async_engine",
         FakeEngineFactory(engine),
     ):
         with pytest.raises(
@@ -223,7 +223,7 @@ async def test_sqlalchemy_executor_rolls_back_when_result_exceeds_row_limit() ->
     config = postgres_config().model_copy(update={"max_result_rows": 2})
 
     with patch(
-        "notarius_plugin_sql.sqlalchemy.create_async_engine",
+        "grafy_plugin_sql.sqlalchemy.create_async_engine",
         FakeEngineFactory(engine),
     ):
         with pytest.raises(

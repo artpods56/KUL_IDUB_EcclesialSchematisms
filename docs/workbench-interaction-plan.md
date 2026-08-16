@@ -3,7 +3,7 @@
 ## Purpose
 
 This document records the interaction and runtime decisions for the first usable
-Notarius workbench. It is an implementation plan for contributors, not a list of
+Grafy workbench. It is an implementation plan for contributors, not a list of
 possible features. A task belongs in the committed slice only when its acceptance
 criteria appear below.
 
@@ -58,7 +58,7 @@ rewrite:
 | Produced-artifact appendix after execution | Done | Results remain associated with the operation that produced them and can expose their content links. |
 | Nominal artifact types, schema versions, and declared projections | Done | Compatibility is deterministic and can be validated before execution. |
 | Declared, versioned artifact conversions | Done | Canonical representation changes such as integer to text remain explicit without requiring boilerplate nodes. |
-| Plugin discovery through `notarius.plugins` entry points | Done | External plugins can depend on their own optional packages without adding those dependencies to the Notarius host. |
+| Plugin discovery through `grafy.plugins` entry points | Done | External plugins can depend on their own optional packages without adding those dependencies to the Grafy host. |
 | Host-assigned catalog origin | Done | The registry and node catalog expose and visually separate built-in families from registered external plugins; plugins cannot self-label their origin. |
 | Generic Image, Sequence, Arithmetic, Text, Schema, and Prompt built-ins | Done | The base catalog admits only producer-neutral artifacts and broadly reusable, deterministic, dependency-light nodes; Schema is one recursive builder rather than a canvas-level algebra of schema tokens. |
 | OCR and table extraction as an external plugin package | Done | Current table semantics are OCR-specific, so the optional entry-point plugin owns OCR and table artifacts, nodes, and dependencies. |

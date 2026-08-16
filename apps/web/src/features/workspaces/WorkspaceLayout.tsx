@@ -49,7 +49,8 @@ interface WorkspaceContextValue {
 
 export type WorkspaceRouteAccessState = "available" | "missing" | "revoked";
 
-const RAIL_COLLAPSED_KEY = "ns-workspace-rail-collapsed";
+const RAIL_COLLAPSED_KEY = "grafy-workspace-rail-collapsed";
+const LEGACY_RAIL_COLLAPSED_KEY = "ns-workspace-rail-collapsed";
 const RAIL_EXPANDED_WIDTH = 200;
 const RAIL_COLLAPSED_WIDTH = 64;
 const RAIL_COLLAPSE_THRESHOLD = 132;
@@ -65,7 +66,10 @@ function subscribeRailCollapsed(listener: () => void): () => void {
 
 function readRailCollapsed(): boolean {
   try {
-    return window.localStorage.getItem(RAIL_COLLAPSED_KEY) === "1";
+    const stored =
+      window.localStorage.getItem(RAIL_COLLAPSED_KEY) ??
+      window.localStorage.getItem(LEGACY_RAIL_COLLAPSED_KEY);
+    return stored === "1";
   } catch {
     return false;
   }
@@ -82,16 +86,16 @@ function writeRailCollapsed(next: boolean): void {
 
 function clearRailWidthOverride(): void {
   const root = document.documentElement;
-  root.style.removeProperty("--ns-rail-width");
-  root.classList.remove("ns-rail-resizing");
-  document.body.classList.remove("ns-rail-resizing");
+  root.style.removeProperty("--grafy-rail-width");
+  root.classList.remove("grafy-rail-resizing");
+  document.body.classList.remove("grafy-rail-resizing");
 }
 
 function setRailWidthOverride(width: number): void {
   const root = document.documentElement;
-  root.style.setProperty("--ns-rail-width", `${Math.round(width)}px`);
-  root.classList.add("ns-rail-resizing");
-  document.body.classList.add("ns-rail-resizing");
+  root.style.setProperty("--grafy-rail-width", `${Math.round(width)}px`);
+  root.classList.add("grafy-rail-resizing");
+  document.body.classList.add("grafy-rail-resizing");
 }
 
 function useRailCollapsed(): [boolean, (next: boolean) => void] {
@@ -584,13 +588,13 @@ export function WorkspaceRail({
 
   return (
     <>
-      <header className="ns-mobile-nav">
+      <header className="grafy-mobile-nav">
         <button
           ref={mobileMenuButtonRef}
           type="button"
-          className="ns-mobile-nav__menu"
+          className="grafy-mobile-nav__menu"
           aria-label={mobileOpen ? "Close navigation" : "Open navigation"}
-          aria-controls="ns-primary-navigation"
+          aria-controls="grafy-primary-navigation"
           aria-expanded={mobileOpen}
           onClick={() => {
             if (mobileOpen) {
@@ -610,25 +614,25 @@ export function WorkspaceRail({
         </button>
         <button
           type="button"
-          className="ns-mobile-nav__brand"
+          className="grafy-mobile-nav__brand"
           aria-label="Graphs"
           onClick={activateBrand}
         >
           <BrandWordmark height={22} />
         </button>
-        <span className="ns-mobile-nav__location">{mobileContextLabel}</span>
+        <span className="grafy-mobile-nav__location">{mobileContextLabel}</span>
       </header>
 
       <div
-        className={`ns-mobile-nav__backdrop${mobileOpen ? " is-open" : ""}`}
+        className={`grafy-mobile-nav__backdrop${mobileOpen ? " is-open" : ""}`}
         aria-hidden="true"
         onClick={() => closeMobileNavigation(true)}
       />
 
       <aside
         ref={mobileRailRef}
-        id="ns-primary-navigation"
-        className={`ns-workspace-rail${visuallyCollapsed ? " is-collapsed" : ""}${mobileOpen ? " is-mobile-open" : ""}`}
+        id="grafy-primary-navigation"
+        className={`grafy-workspace-rail${visuallyCollapsed ? " is-collapsed" : ""}${mobileOpen ? " is-mobile-open" : ""}`}
         role={mobileViewport && mobileOpen ? "dialog" : undefined}
         aria-modal={mobileViewport && mobileOpen ? true : undefined}
         aria-hidden={mobileNavigationHidden ? true : undefined}
@@ -637,7 +641,7 @@ export function WorkspaceRail({
       >
         <button
           type="button"
-          className="ns-workspace-rail__item ns-workspace-rail__mobile-close"
+          className="grafy-workspace-rail__item grafy-workspace-rail__mobile-close"
           onClick={() => closeMobileNavigation(true)}
         >
           <span>Close navigation</span>
@@ -645,26 +649,26 @@ export function WorkspaceRail({
         </button>
         <button
           type="button"
-          className="ns-workspace-rail__brand"
+          className="grafy-workspace-rail__brand"
           aria-label="Graphs"
           onClick={activateBrand}
         >
           <BrandWordmark
-            className="ns-workspace-rail__brand-wordmark"
+            className="grafy-workspace-rail__brand-wordmark"
             height={24}
           />
           <BrandIcon
-            className="ns-workspace-rail__brand-icon"
+            className="grafy-workspace-rail__brand-icon"
             size={28}
             alt=""
           />
         </button>
 
-        <nav className="ns-workspace-rail__nav" aria-label="Workspaces">
-          <p className="ns-workspace-rail__section-label">Workspaces</p>
-          <label className="ns-workspace-rail__workspace-select">
+        <nav className="grafy-workspace-rail__nav" aria-label="Workspaces">
+          <p className="grafy-workspace-rail__section-label">Workspaces</p>
+          <label className="grafy-workspace-rail__workspace-select">
             <span
-              className="ns-workspace-rail__workspace-select-icon"
+              className="grafy-workspace-rail__workspace-select-icon"
               aria-hidden="true"
             >
               {selectedWorkspace?.kind === "personal" ? (
@@ -686,7 +690,7 @@ export function WorkspaceRail({
               ))}
             </select>
             <span
-              className="ns-workspace-rail__workspace-select-chevron"
+              className="grafy-workspace-rail__workspace-select-chevron"
               aria-hidden="true"
             >
               <ChevronsUpDown size={12} />
@@ -694,11 +698,11 @@ export function WorkspaceRail({
           </label>
         </nav>
 
-        <nav className="ns-workspace-rail__nav" aria-label="Graphs">
-          <p className="ns-workspace-rail__section-label">Graphs</p>
+        <nav className="grafy-workspace-rail__nav" aria-label="Graphs">
+          <p className="grafy-workspace-rail__section-label">Graphs</p>
           <button
             type="button"
-            className={`ns-workspace-rail__item${graphBrowserActive ? " is-active" : ""}`}
+            className={`grafy-workspace-rail__item${graphBrowserActive ? " is-active" : ""}`}
             title="Browse all graphs"
             onClick={goGraphs}
           >
@@ -708,7 +712,7 @@ export function WorkspaceRail({
           {activeWorkspace || onNewGraph ? (
             <button
               type="button"
-              className="ns-workspace-rail__item"
+              className="grafy-workspace-rail__item"
               title="New graph"
               onClick={() => {
                 closeMobileNavigation(true);
@@ -737,7 +741,7 @@ export function WorkspaceRail({
                 type="button"
                 data-graph-panel-trigger=""
                 aria-expanded={graphPanelOpen}
-                className={`ns-workspace-rail__item${graphPanelOpen ? " is-active" : ""}`}
+                className={`grafy-workspace-rail__item${graphPanelOpen ? " is-active" : ""}`}
                 title={`Quickly switch graphs in ${workspaceDisplayName(activeWorkspace)}`}
                 onClick={() => {
                   closeMobileNavigation(false);
@@ -754,7 +758,7 @@ export function WorkspaceRail({
               {chrome ? (
                 <button
                   type="button"
-                  className={`ns-workspace-rail__item${chrome.isDirty ? " is-active" : ""}`}
+                  className={`grafy-workspace-rail__item${chrome.isDirty ? " is-active" : ""}`}
                   title={
                     chrome.saving
                       ? "Saving graph…"
@@ -769,7 +773,7 @@ export function WorkspaceRail({
                     <LoaderCircle
                       size={15}
                       aria-hidden="true"
-                      className="ns-workspace-rail__spin"
+                      className="grafy-workspace-rail__spin"
                     />
                   ) : (
                     <Save size={15} aria-hidden="true" />
@@ -788,10 +792,10 @@ export function WorkspaceRail({
         </nav>
 
         {activeWorkspace ? (
-          <nav className="ns-workspace-rail__nav" aria-label="Graph location">
-            <p className="ns-workspace-rail__section-label">Location</p>
+          <nav className="grafy-workspace-rail__nav" aria-label="Graph location">
+            <p className="grafy-workspace-rail__section-label">Location</p>
             <div
-              className="ns-workspace-rail__item ns-workspace-rail__location"
+              className="grafy-workspace-rail__item grafy-workspace-rail__location"
               title={`Current location · ${workspaceDisplayName(activeWorkspace)}`}
               aria-label={`Current graph location ${workspaceDisplayName(activeWorkspace)}`}
             >
@@ -807,19 +811,19 @@ export function WorkspaceRail({
 
         {activeWorkspace && !visuallyCollapsed && recentGraphs.length ? (
           <nav
-            className="ns-workspace-rail__nav ns-workspace-rail__nav--open"
+            className="grafy-workspace-rail__nav grafy-workspace-rail__nav--open"
             aria-label="Recent graphs"
           >
-            <p className="ns-workspace-rail__section-label">Recent</p>
-            <div className="ns-workspace-rail__items">
+            <p className="grafy-workspace-rail__section-label">Recent</p>
+            <div className="grafy-workspace-rail__items">
               {recentGraphs.map((graph) => (
                 <div
                   key={graph.id}
-                  className={`ns-graph-row${activeGraphId === graph.id ? " is-active" : ""}`}
+                  className={`grafy-graph-row${activeGraphId === graph.id ? " is-active" : ""}`}
                 >
                   <button
                     type="button"
-                    className="ns-workspace-rail__item ns-graph-row__open"
+                    className="grafy-workspace-rail__item grafy-graph-row__open"
                     title={graph.name}
                     aria-label={graph.name}
                     onClick={() => {
@@ -846,7 +850,7 @@ export function WorkspaceRail({
 
         <button
           type="button"
-          className={`ns-workspace-rail__settings${teamSettingsActive ? " is-active" : ""}`}
+          className={`grafy-workspace-rail__settings${teamSettingsActive ? " is-active" : ""}`}
           onClick={() => {
             closeMobileNavigation(true);
             router.push("/workspaces");
@@ -857,7 +861,7 @@ export function WorkspaceRail({
           <span>Teams &amp; access</span>
         </button>
 
-        <div className="ns-workspace-rail__footer">
+        <div className="grafy-workspace-rail__footer">
           <Popover.Root
             open={accountMenuOpen}
             onOpenChange={(open) => {
@@ -866,19 +870,19 @@ export function WorkspaceRail({
             }}
           >
             <Popover.Trigger
-              className="ns-workspace-rail__account"
+              className="grafy-workspace-rail__account"
               title={displayName}
               aria-label="Account menu"
             >
-              <span className="ns-workspace-rail__avatar" aria-hidden="true">
+              <span className="grafy-workspace-rail__avatar" aria-hidden="true">
                 {initials}
               </span>
-              <span className="ns-workspace-rail__account-copy">
-                <span className="ns-workspace-rail__account-name">
+              <span className="grafy-workspace-rail__account-copy">
+                <span className="grafy-workspace-rail__account-name">
                   {displayName}
                 </span>
                 {email ? (
-                  <span className="ns-workspace-rail__account-email">
+                  <span className="grafy-workspace-rail__account-email">
                     {email}
                   </span>
                 ) : null}
@@ -886,15 +890,15 @@ export function WorkspaceRail({
             </Popover.Trigger>
             <Popover.Portal container={mobileViewport ? mobileRailRef : null}>
               <Popover.Positioner
-                className="ns-workspace-rail__account-positioner"
+                className="grafy-workspace-rail__account-positioner"
                 side="top"
                 align="start"
                 sideOffset={8}
               >
-                <Popover.Popup className="ns-workspace-rail__account-menu">
+                <Popover.Popup className="grafy-workspace-rail__account-menu">
                   <button
                     type="button"
-                    className="ns-workspace-rail__account-menu-item"
+                    className="grafy-workspace-rail__account-menu-item"
                     onClick={() => {
                       cycleTheme();
                       setAccountMenuPath(null);
@@ -905,7 +909,7 @@ export function WorkspaceRail({
                   </button>
                   <button
                     type="button"
-                    className="ns-workspace-rail__account-menu-item"
+                    className="grafy-workspace-rail__account-menu-item"
                     onClick={() => {
                       setAccountMenuPath(null);
                       void onLogout();
@@ -921,7 +925,7 @@ export function WorkspaceRail({
         </div>
 
         <div
-          className="ns-workspace-rail__resize"
+          className="grafy-workspace-rail__resize"
           role="separator"
           aria-orientation="vertical"
           aria-label="Resize sidebar"
@@ -1038,14 +1042,14 @@ export default function WorkspaceLayout({
         refreshWorkspaces: () => mutate(),
       }}
     >
-      <div className="ns-workspace-frame">
+      <div className="grafy-workspace-frame">
         <WorkspaceRail
           workspaces={data}
           activeSlug={workspace.slug}
           session={session}
           onLogout={logout}
         />
-        <div className="ns-workspace-frame__main">{children}</div>
+        <div className="grafy-workspace-frame__main">{children}</div>
       </div>
     </WorkspaceContext.Provider>
   );

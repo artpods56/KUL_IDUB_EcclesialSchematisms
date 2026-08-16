@@ -22,7 +22,7 @@ export function GraphRowMenu({
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger
-        className="ns-graph-row__menu-trigger"
+        className="grafy-graph-row__menu-trigger"
         disabled={busy}
         aria-label={`Actions for ${graph.name}`}
         title="Graph actions"
@@ -35,15 +35,15 @@ export function GraphRowMenu({
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Positioner
-          className="ns-workspace-rail__account-positioner"
+          className="grafy-workspace-rail__account-positioner"
           side="right"
           align="start"
           sideOffset={4}
         >
-          <Popover.Popup className="ns-workspace-rail__account-menu">
+          <Popover.Popup className="grafy-workspace-rail__account-menu">
             <button
               type="button"
-              className="ns-workspace-rail__account-menu-item"
+              className="grafy-workspace-rail__account-menu-item"
               onClick={() => {
                 setOpen(false);
                 onRename(graph);
@@ -54,7 +54,7 @@ export function GraphRowMenu({
             </button>
             <button
               type="button"
-              className="ns-workspace-rail__account-menu-item ns-workspace-rail__account-menu-item--danger"
+              className="grafy-workspace-rail__account-menu-item grafy-workspace-rail__account-menu-item--danger"
               onClick={() => {
                 setOpen(false);
                 onDelete(graph);

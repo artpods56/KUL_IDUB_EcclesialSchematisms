@@ -19,19 +19,19 @@ from mistralai.client.models.textchunk import TextChunk
 from mistralai.client.models.usageinfo import UsageInfo
 from mistralai.client.models.usermessage import UserMessage
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactObject,
     InMemoryUnitOfWork,
 )
-from notarius_core.operators.images import RASTER_IMAGE
-from notarius_core.operators.prompts import (
+from grafy_core.operators.images import RASTER_IMAGE
+from grafy_core.operators.prompts import (
     PromptMessage,
     PromptMessageRole,
 )
-from notarius_core.operators.schemas import parse_json_schema
-from notarius_core.ports.storage import SaveFileCommand, StoredFile, StoredObjectInfo
-from notarius_plugin_llm.mistral import MistralStructuredConfig
-from notarius_plugin_llm.mistral_sdk import (
+from grafy_core.operators.schemas import parse_json_schema
+from grafy_core.ports.storage import SaveFileCommand, StoredFile, StoredObjectInfo
+from grafy_plugin_llm.mistral import MistralStructuredConfig
+from grafy_plugin_llm.mistral_sdk import (
     MISTRAL_MAX_IMAGE_BYTES,
     MISTRAL_MAX_IMAGES,
     MistralStructuredProviderError,
@@ -600,7 +600,7 @@ async def test_sdk_provider_bounds_reads_without_size_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "notarius_plugin_llm.mistral_sdk.MISTRAL_MAX_IMAGE_BYTES",
+        "grafy_plugin_llm.mistral_sdk.MISTRAL_MAX_IMAGE_BYTES",
         8,
     )
     uow = InMemoryUnitOfWork()

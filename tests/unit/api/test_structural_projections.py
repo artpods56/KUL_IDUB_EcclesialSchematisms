@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
-from notarius_api.v1.routes.catalog.models import NodeRegistryResponse
-from notarius_api.v1.routes.executions.models import RunResponse
+from grafy_api.v1.routes.catalog.models import NodeRegistryResponse
+from grafy_api.v1.routes.executions.models import RunResponse
 
 
 def test_registry_derives_nested_json_scalar_projections(

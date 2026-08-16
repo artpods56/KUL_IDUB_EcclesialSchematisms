@@ -3,7 +3,7 @@ from typing import cast
 
 from fastapi.testclient import TestClient
 
-from notarius_api.v1.routes.executions.models import RunResponse
+from grafy_api.v1.routes.executions.models import RunResponse
 
 
 def test_schema_builders_compose_nested_objects_and_sequence_items_by_plug(

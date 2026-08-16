@@ -12,12 +12,12 @@ from fastmcp.client.transports import StreamableHttpTransport
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 
-from notarius_api.main import create_app
-from notarius_api.settings import Settings
-from notarius_mcp.request_context import bind_mcp_request, current_mcp_binding, reset_mcp_request
-from notarius_mcp.operations import McpCallerContext
-from notarius_persistence.database import create_database
-from notarius_persistence.orm import metadata
+from grafy_api.main import create_app
+from grafy_api.settings import Settings
+from grafy_mcp.request_context import bind_mcp_request, current_mcp_binding, reset_mcp_request
+from grafy_mcp.operations import McpCallerContext
+from grafy_persistence.database import create_database
+from grafy_persistence.orm import metadata
 
 
 @pytest.mark.asyncio

@@ -8,19 +8,19 @@ import httpx
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactObject,
     InMemoryUnitOfWork,
     JsonObject,
 )
-from notarius_core.operators.images import RASTER_IMAGE
-from notarius_core.operators.prompts import PromptMessage, PromptMessageRole
-from notarius_core.ports.storage import SaveFileCommand, StoredFile, StoredObjectInfo
-from notarius_plugin_llm.openai_compatible import (
+from grafy_core.operators.images import RASTER_IMAGE
+from grafy_core.operators.prompts import PromptMessage, PromptMessageRole
+from grafy_core.ports.storage import SaveFileCommand, StoredFile, StoredObjectInfo
+from grafy_plugin_llm.openai_compatible import (
     OpenAICompatibleConfig,
     OpenAICompatibleProviderError,
 )
-from notarius_plugin_llm.openai_compatible_sdk import (
+from grafy_plugin_llm.openai_compatible_sdk import (
     OPENAI_COMPATIBLE_MAX_IMAGES,
     OpenAICompatibleSdkProvider,
 )
@@ -779,7 +779,7 @@ async def test_provider_enforces_aggregate_image_limit_before_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "notarius_plugin_llm.openai_compatible_sdk."
+        "grafy_plugin_llm.openai_compatible_sdk."
         "OPENAI_COMPATIBLE_MAX_TOTAL_IMAGE_BYTES",
         8,
     )

@@ -3,11 +3,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from notarius_api import plugin_discovery
-from notarius_api.plugin_discovery import PluginDiscoveryError, build_plugin_registry
-from notarius_core.operators.arithmetic import INTEGER_VALUE
-from notarius_core.operators.text import TEXT
-from notarius_core.plugins import (
+from grafy_api import plugin_discovery
+from grafy_api.plugin_discovery import PluginDiscoveryError, build_plugin_registry
+from grafy_core.operators.arithmetic import INTEGER_VALUE
+from grafy_core.operators.text import TEXT
+from grafy_core.plugins import (
     PLUGIN_ENTRY_POINT_GROUP,
     Plugin,
     PluginOrigin,
@@ -20,7 +20,7 @@ def test_entry_point_loads_plugin_declaration(
 ) -> None:
     entry_point = EntryPoint(
         name="text",
-        value="notarius_core.operators.text:TEXT",
+        value="grafy_core.operators.text:TEXT",
         group=PLUGIN_ENTRY_POINT_GROUP,
     )
 
@@ -38,7 +38,7 @@ def test_entry_point_rejects_non_plugin_value_with_context(
 ) -> None:
     entry_point = EntryPoint(
         name="integer-value",
-        value="notarius_core.operators.arithmetic:INTEGER_VALUE",
+        value="grafy_core.operators.arithmetic:INTEGER_VALUE",
         group=PLUGIN_ENTRY_POINT_GROUP,
     )
 
@@ -65,7 +65,7 @@ def test_entry_point_load_failure_preserves_entry_point_context(
 ) -> None:
     entry_point = EntryPoint(
         name="missing",
-        value="notarius_core.operators.text:DOES_NOT_EXIST",
+        value="grafy_core.operators.text:DOES_NOT_EXIST",
         group=PLUGIN_ENTRY_POINT_GROUP,
     )
 
@@ -79,7 +79,7 @@ def test_entry_point_load_failure_preserves_entry_point_context(
         PluginDiscoveryError,
         match=(
             "Failed to load plugin entry point 'missing' from distribution "
-            r"'unknown' \(notarius_core.operators.text:DOES_NOT_EXIST\)"
+            r"'unknown' \(grafy_core.operators.text:DOES_NOT_EXIST\)"
         ),
     ) as raised:
         plugin_discovery.discover_plugins()

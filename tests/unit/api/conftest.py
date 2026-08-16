@@ -9,11 +9,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictInt, StrictStr
 
-from notarius_persistence.database import create_database
-from notarius_persistence.orm import metadata
-from notarius_persistence.unit_of_work import SqlAlchemySavedGraphUnitOfWork
+from grafy_persistence.database import create_database
+from grafy_persistence.orm import metadata
+from grafy_persistence.unit_of_work import SqlAlchemySavedGraphUnitOfWork
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactTypeKey,
     ArtifactTypeSpec,
     InMemoryUnitOfWork,
@@ -22,39 +22,39 @@ from notarius_core.artifacts import (
     NodeInput,
     NodeOutput,
 )
-from notarius_core.application.saved_graphs import SavedGraphService
-from notarius_core.domain.identity import (
+from grafy_core.application.saved_graphs import SavedGraphService
+from grafy_core.domain.identity import (
     ActorContext,
     User,
     Workspace,
     WorkspaceMembership,
     WorkspaceRole,
 )
-from notarius_core.conversions import ArtifactConversion, ArtifactConversionKey
-from notarius_core.nodes import InPort, Node, NodeExecutionContext, OutPort
-from notarius_core.operators.arithmetic import INTEGER_VALUE
-from notarius_core.operators.tables import TableArtifactWriter
-from notarius_core.operators.text import TEXT_VALUE
-from notarius_core.plugins import Plugin
-from notarius_core.runtime.persistence import InlineModelOutputWriter
-from notarius_core.runtime.resolvers import InlineModelResolver
+from grafy_core.conversions import ArtifactConversion, ArtifactConversionKey
+from grafy_core.nodes import InPort, Node, NodeExecutionContext, OutPort
+from grafy_core.operators.arithmetic import INTEGER_VALUE
+from grafy_core.operators.tables import TableArtifactWriter
+from grafy_core.operators.text import TEXT_VALUE
+from grafy_core.plugins import Plugin
+from grafy_core.runtime.persistence import InlineModelOutputWriter
+from grafy_core.runtime.resolvers import InlineModelResolver
 
-from notarius_api.builtins import builtin_plugins
-from notarius_api.main import create_app
-from notarius_api.plugin_discovery import build_plugin_registry
-from notarius_api.services.composition import (
+from grafy_api.builtins import builtin_plugins
+from grafy_api.main import create_app
+from grafy_api.plugin_discovery import build_plugin_registry
+from grafy_api.services.composition import (
     WorkbenchComponents,
     build_workbench_components,
 )
-from notarius_api.settings import Settings
-from notarius_api.v1.routes.artifacts.dependencies import artifact_service
-from notarius_api.v1.routes.auth.dependencies import browser_actor
-from notarius_api.v1.routes.catalog.dependencies import (
+from grafy_api.settings import Settings
+from grafy_api.v1.routes.artifacts.dependencies import artifact_service
+from grafy_api.v1.routes.auth.dependencies import browser_actor
+from grafy_api.v1.routes.catalog.dependencies import (
     graph_module_catalog,
     graph_module_executor,
     plugin_registry,
 )
-from notarius_api.v1.routes.executions.dependencies import (
+from grafy_api.v1.routes.executions.dependencies import (
     execution_admission_limiter,
     execution_history_service,
     materialization_service,
@@ -62,8 +62,8 @@ from notarius_api.v1.routes.executions.dependencies import (
     run_graph_service,
     run_result_presenter,
 )
-from notarius_api.v1.routes.uploads.dependencies import image_upload_service
-from notarius_storage import LocalFileObjectStore
+from grafy_api.v1.routes.uploads.dependencies import image_upload_service
+from grafy_storage import LocalFileObjectStore
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
@@ -73,8 +73,8 @@ TEST_COMMAND_HMAC_KEY = "test-api-command-hmac-key"
 
 @pytest.fixture(autouse=True)
 def _configure_command_hmac_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("NOTARIUS_COMMAND_HMAC_KEY", TEST_COMMAND_HMAC_KEY)
-    monkeypatch.setenv("NOTARIUS_COMMAND_HMAC_KEY_VERSION", "1")
+    monkeypatch.setenv("GRAFY_COMMAND_HMAC_KEY", TEST_COMMAND_HMAC_KEY)
+    monkeypatch.setenv("GRAFY_COMMAND_HMAC_KEY_VERSION", "1")
 
 
 def workspace_api_path(suffix: str) -> str:

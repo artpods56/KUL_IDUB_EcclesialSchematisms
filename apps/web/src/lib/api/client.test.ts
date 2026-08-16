@@ -27,11 +27,11 @@ describe("browser API transport", () => {
 
   it("parses the browser-readable CSRF cookie without matching similar names", () => {
     vi.stubGlobal("document", {
-      cookie: `other=value; notarius_csrf=${encodeURIComponent(csrfSentinel)}; notarius_csrf_extra=wrong`,
+      cookie: `other=value; grafy_csrf=${encodeURIComponent(csrfSentinel)}; grafy_csrf_extra=wrong`,
     });
 
-    expect(readBrowserCookie("notarius_csrf")).toBe(csrfSentinel);
-    expect(readBrowserCookie("notarius_csrf_extra")).toBe("wrong");
+    expect(readBrowserCookie("grafy_csrf")).toBe(csrfSentinel);
+    expect(readBrowserCookie("grafy_csrf_extra")).toBe("wrong");
   });
 
   it("adds the CSRF token only to unsafe requests", async () => {
@@ -39,7 +39,7 @@ describe("browser API transport", () => {
       Promise.resolve(new Response("{}", { status: 200 }))
     );
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("document", { cookie: `notarius_csrf=${csrfSentinel}` });
+    vi.stubGlobal("document", { cookie: `grafy_csrf=${csrfSentinel}` });
 
     await request("GET", "/v1/read");
     await request("HEAD", "/v1/head");
@@ -83,7 +83,7 @@ describe("browser API transport", () => {
       statusText: "Bad Request",
     }));
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("document", { cookie: `notarius_csrf=${csrfSentinel}` });
+    vi.stubGlobal("document", { cookie: `grafy_csrf=${csrfSentinel}` });
 
     let error: unknown;
     try {
@@ -120,7 +120,7 @@ describe("browser API transport", () => {
       statusText: "Bad Request",
     }));
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("document", { cookie: `notarius_csrf=${csrfSentinel}` });
+    vi.stubGlobal("document", { cookie: `grafy_csrf=${csrfSentinel}` });
 
     let error: unknown;
     try {

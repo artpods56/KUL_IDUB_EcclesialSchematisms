@@ -22,7 +22,7 @@ const s = stylex.create({
     top: {
       default: "70px",
       "@media (max-width: 620px)":
-        "calc(var(--ns-mobile-overlay-top, 68px) + env(safe-area-inset-top, 0px))",
+        "calc(var(--grafy-mobile-overlay-top, 68px) + env(safe-area-inset-top, 0px))",
     },
     right: {
       default: "13px",

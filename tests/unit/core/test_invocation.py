@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactRef,
     ArtifactRefSequence,
     ArtifactTypeKey,
@@ -14,8 +14,8 @@ from notarius_core.artifacts import (
     NodeInput,
     NodeOutput,
 )
-from notarius_core.domain.invocation_cache import InvocationCacheEntry
-from notarius_core.nodes import (
+from grafy_core.domain.invocation_cache import InvocationCacheEntry
+from grafy_core.nodes import (
     InPort,
     Node,
     NodeExecutionContext,
@@ -24,13 +24,13 @@ from notarius_core.nodes import (
     derive_input_contract,
     derive_output_contract,
 )
-from notarius_core.plugins import NodeCachePolicy
-from notarius_core.runtime.execution import NodeRuntime
-from notarius_core.runtime.invocation_cache import (
+from grafy_core.plugins import NodeCachePolicy
+from grafy_core.runtime.execution import NodeRuntime
+from grafy_core.runtime.invocation_cache import (
     InvocationCachePort,
     invocation_cache_key,
 )
-from notarius_core.runtime.invocation import (
+from grafy_core.runtime.invocation import (
     InvocationError,
     InvocationMode,
     NodeInvocation,
@@ -40,19 +40,19 @@ from notarius_core.runtime.invocation import (
     supported_invocation_modes,
     validate_invocation,
 )
-from notarius_core.runtime.materialization import (
+from grafy_core.runtime.materialization import (
     InputMaterializer,
     MaterializationError,
     MaterializationProvenance,
 )
-from notarius_core.runtime.persistence import (
+from grafy_core.runtime.persistence import (
     ArtifactOutputWriter,
     ArtifactWriteContext,
     ArtifactWriterRegistry,
     OutputPersister,
     PersistedNodeOutput,
 )
-from notarius_core.runtime.resolvers import Resolver, ResolverRegistry
+from grafy_core.runtime.resolvers import Resolver, ResolverRegistry
 
 
 INPUT_VALUE = ArtifactTypeSpec(

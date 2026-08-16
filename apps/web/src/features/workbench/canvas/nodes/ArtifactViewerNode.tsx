@@ -81,7 +81,7 @@ const s = stylex.create({
     whiteSpace: "nowrap",
   },
   spinner: {
-    animationName: "ns-spin",
+    animationName: "grafy-spin",
     animationDuration: "900ms",
     animationIterationCount: "infinite",
     animationTimingFunction: "linear",

@@ -2,21 +2,21 @@ import tomllib
 from io import BytesIO
 from pathlib import Path
 
-from notarius_core.artifacts import InMemoryUnitOfWork
-from notarius_core.operators.tables import (
+from grafy_core.artifacts import InMemoryUnitOfWork
+from grafy_core.operators.tables import (
     TABLES,
     TABLE_DATA,
     TableArtifactResolver,
     TableArtifactWriter,
 )
-from notarius_core.plugins import PluginOrigin, PluginRegistry, PluginRuntimeContext
-from notarius_core.ports.storage import SaveFileCommand, StoredFile, StoredObjectInfo
-from notarius_core.runtime.persistence import InlineModelOutputWriter
-from notarius_core.runtime.resolvers import InlineModelResolver
-from notarius_plugin_sql import SQL
-from notarius_plugin_sql.artifacts import SQL_RESULT, SQL_STATEMENT
-from notarius_plugin_sql.models import SqlResult, SqlStatement
-from notarius_plugin_sql.nodes import (
+from grafy_core.plugins import PluginOrigin, PluginRegistry, PluginRuntimeContext
+from grafy_core.ports.storage import SaveFileCommand, StoredFile, StoredObjectInfo
+from grafy_core.runtime.persistence import InlineModelOutputWriter
+from grafy_core.runtime.resolvers import InlineModelResolver
+from grafy_plugin_sql import SQL
+from grafy_plugin_sql.artifacts import SQL_RESULT, SQL_STATEMENT
+from grafy_plugin_sql.models import SqlResult, SqlStatement
+from grafy_plugin_sql.nodes import (
     ExecuteSqlNode,
     QueryArtifactTablesNode,
     RawSqlStatementNode,
@@ -147,8 +147,8 @@ def test_sql_package_metadata_declares_plugin_entry_point() -> None:
         (project_root / "plugins" / "sql" / "pyproject.toml").read_text()
     )
 
-    assert metadata["project"]["name"] == "notarius-plugin-sql"
+    assert metadata["project"]["name"] == "grafy-plugin-sql"
     assert "duckdb==1.5.5" in metadata["project"]["dependencies"]
-    assert metadata["project"]["entry-points"]["notarius.plugins"] == {
-        "sql": "notarius_plugin_sql.plugin:SQL"
+    assert metadata["project"]["entry-points"]["grafy.plugins"] == {
+        "sql": "grafy_plugin_sql.plugin:SQL"
     }

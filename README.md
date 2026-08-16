@@ -1,6 +1,6 @@
-# Notarius Workbench
+# Grafy Workbench
 
-Notarius is a node-first workbench for building and running typed artifact
+Grafy is a node-first workbench for building and running typed artifact
 graphs. Nodes declare typed ports, while edges may select schema-derived or
 explicit fields from compound artifacts or apply an ordered path of declared,
 versioned artifact conversions before a downstream node executes.
@@ -49,7 +49,7 @@ flowchart LR
   FastAPI routes, persistence, storage, or plugin implementations.
 - `apps/api` owns plugin discovery, runtime composition, and the HTTP adapters
   for execution and saved-graph CRUD under `/v1`.
-- `libs/core/src/notarius_core` owns artifacts, nodes, ports, projections,
+- `libs/core/src/grafy_core` owns artifacts, nodes, ports, projections,
   conversions, runtime execution, saved-graph aggregates and use cases, the
   plugin contract, and the generic Image, Sequence, Arithmetic, Text, Schema,
   Prompt, and Table built-in operator families.
@@ -107,11 +107,11 @@ refs; stale or inaccessible refs are evicted lazily.
 ## Register a plugin
 
 Plugins are ordinary Python distributions that export one
-`notarius_core.plugins.Plugin` declaration through the `notarius.plugins`
+`grafy_core.plugins.Plugin` declaration through the `grafy.plugins`
 entry-point group:
 
 ```toml
-[project.entry-points."notarius.plugins"]
+[project.entry-points."grafy.plugins"]
 my_plugin = "my_package.plugin:PLUGIN"
 ```
 
@@ -253,14 +253,49 @@ just deploy
 ```
 
 Use `just status`, `just logs`, and `just minio-status` for routine operations.
-The production recipes read `/etc/graphy/graphy.env` and merge
-`/etc/graphy/storage.override.yaml`; override those paths with
-`GRAPHY_ENV_FILE` and `GRAPHY_COMPOSE_OVERRIDE` when required.
+The production recipes read `/etc/grafy/grafy.env` and merge
+`/etc/grafy/storage.override.yaml`; override those paths with
+`GRAFY_ENV_FILE` and `GRAFY_COMPOSE_OVERRIDE` when required.
+
+### Upgrade an existing Notarius checkout
+
+The Grafy release uses `GRAFY_*` environment variables. Rename every
+`NOTARIUS_*` key before starting the new code; unprefixed provider variables
+such as `PREFECT_API_URL` and `MISTRAL_API_KEY` do not change.
+
+External plugins must also move their dependency and import names to
+`grafy-core` and `grafy_core`, then publish through the `grafy.plugins`
+entry-point group. The old Python package and plugin-entry-point namespaces are
+not retained as aliases.
+
+Local defaults reuse `.notarius-artifacts/workbench` and its
+`notarius.sqlite3` database only when the corresponding Grafy workspace or
+database does not exist. New installations write `.grafy-artifacts/workbench`
+and `grafy.sqlite3`. Legacy chunked table and JSON-collection manifests remain
+readable; new manifests use the `grafy.*` storage-format identifiers.
+
+For an existing Compose deployment, point `GRAFY_DATA_VOLUME` at the exact old
+Docker volume name and keep the existing SQLite filename in
+`GRAFY_DOCKER_DATABASE_URL` for the first Grafy deployment. Inspect the names
+before starting anything:
+
+```bash
+docker volume ls
+# Examples from the former local and production project names:
+GRAFY_DATA_VOLUME=notarius_notarius-data
+GRAFY_DATA_VOLUME=graphy_notarius-data
+GRAFY_DOCKER_DATABASE_URL=sqlite+aiosqlite:////data/workbench/notarius.sqlite3
+```
+
+After Grafy is healthy against the existing data, volume and database files
+may be renamed during a separately backed-up maintenance window. Do not let
+Compose create an empty `grafy-data` volume and mistake it for a successful
+migration.
 
 ### Assemble graphs through MCP
 
 The local FastMCP server exposes six deliberately narrow tools over the public
-Notarius HTTP API:
+Grafy HTTP API:
 
 - `search_nodes` searches the live node catalog without returning every large
   schema.
@@ -282,19 +317,19 @@ The repository includes `.codex/config.toml` for an HTTP MCP client once a PAT
 is available:
 
 ```toml
-[mcp_servers.notarius]
+[mcp_servers.grafy]
 url = "http://127.0.0.1:8000/mcp"
 default_tools_approval_mode = "auto"
 startup_timeout_sec = 30
 tool_timeout_sec = 60
 
-[mcp_servers.notarius.tools.create_graph]
+[mcp_servers.grafy.tools.create_graph]
 approval_mode = "prompt"
 
-[mcp_servers.notarius.tools.replace_graph]
+[mcp_servers.grafy.tools.replace_graph]
 approval_mode = "prompt"
 
-[mcp_servers.notarius.tools.submit_graph_command]
+[mcp_servers.grafy.tools.submit_graph_command]
 approval_mode = "prompt"
 ```
 
@@ -303,9 +338,9 @@ server. Read tools run directly; mutating tools keep explicit prompt policies.
 
 `just api` applies pending Alembic migrations before starting FastAPI. Saved
 graphs, artifact metadata, and materialization bindings are stored in SQLite at
-`.notarius-artifacts/workbench/notarius.sqlite3` by default, together with exact
+`.grafy-artifacts/workbench/grafy.sqlite3` by default, together with exact
 invocation-cache entries. Override
-`NOTARIUS_DATABASE_URL` with another SQLite URL or a
+`GRAFY_DATABASE_URL` with another SQLite URL or a
 `postgresql+asyncpg://...` URL for PostgreSQL. Useful
 migration commands are `just db-current`, `just db-history`, and
 `just db-revision "describe change"`.
@@ -370,19 +405,19 @@ Open <http://localhost:3000>. The API is available at
 <http://localhost:8000>; its health endpoint is `/health`.
 
 The workbench defaults to local artifact storage and a local API URL. Set
-`NOTARIUS_STORAGE_BACKEND=s3` plus the S3 settings shown in `.env.example` for
+`GRAFY_STORAGE_BACKEND=s3` plus the S3 settings shown in `.env.example` for
 AWS S3 or an S3-compatible service such as MinIO. `MISTRAL_API_KEY` is required
 by Mistral OCR and structured-output nodes and must remain server-side.
 
 The OpenAI-compatible node uses a write-only key configured on a saved node,
 not an environment-specific provider variable. Generate one stable encryption
-key for the Notarius server and put it in `.env` before configuring node keys:
+key for the Grafy server and put it in `.env` before configuring node keys:
 
 ```bash
 openssl rand -base64 32
 ```
 
-Assign the result to `NOTARIUS_CREDENTIAL_ENCRYPTION_KEY`. Keep that value
+Assign the result to `GRAFY_CREDENTIAL_ENCRYPTION_KEY`. Keep that value
 stable and backed up: replacing or losing it makes existing encrypted node
 keys unusable. Graph documents, run requests, artifact payloads, and read APIs
 never contain provider keys. Stored ciphertext is bound to graph id, node id,
@@ -420,7 +455,7 @@ Connect Schema Builder only when structured output is needed. It emits Draft
 2020-12 JSON text with an object root. Add primitive fields inside the node;
 choose Schema, or Sequence with Schema items, to expose a field-owned input
 socket for another builder. The request uses Chat Completions `json_schema`
-response format and Notarius validates the returned object locally. For
+response format and Grafy validates the returned object locally. For
 example:
 
 ```json
@@ -441,7 +476,7 @@ bytes per image, and 50,000,000 image bytes in aggregate before base64 encoding.
 Node secrets currently use trusted-collaboration semantics. Any visitor who can
 access a graph can run it without retrieving the configured key. Because this
 repository does not yet have authentication or graph roles, those visitors can
-also replace or remove the key through the API. Put the Notarius API behind
+also replace or remove the key through the API. Put the Grafy API behind
 HTTPS and an access-controlled boundary before exposing it to untrusted users.
 
 ## Verify
@@ -470,7 +505,7 @@ The API Dockerfile's default `api` target contains no OCR, LLM, or Mistral
 dependency. The Compose stack explicitly selects its `api-plugins` target so the
 optional OCR and structured-output nodes are available in that deployment. A
 one-shot migration service must complete before the API starts. SQLite, uploads,
-and artifact objects share the durable `notarius-data` volume.
+and artifact objects share the durable `grafy-data` volume.
 
 ```bash
 just docker-up

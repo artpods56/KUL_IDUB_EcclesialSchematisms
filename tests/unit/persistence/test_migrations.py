@@ -13,8 +13,8 @@ from sqlalchemy.schema import CreateIndex, CreateTable
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects import sqlite
 
-from notarius_api.settings import get_settings
-from notarius_persistence.schema import staged_uploads
+from grafy_api.settings import get_settings
+from grafy_persistence.schema import staged_uploads
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -140,7 +140,7 @@ def test_tenant_upgrade_preflight_leaves_no_temporary_tables_and_retries_cleanly
 ) -> None:
     database_path = tmp_path / "preflight" / "migrated.sqlite3"
     monkeypatch.setenv(
-        "NOTARIUS_DATABASE_URL",
+        "GRAFY_DATABASE_URL",
         f"sqlite+aiosqlite:///{database_path}",
     )
     get_settings.cache_clear()
@@ -175,7 +175,7 @@ def test_tenant_downgrade_preflight_rejects_leftovers_before_rebuild(
 ) -> None:
     database_path = tmp_path / "downgrade-preflight" / "migrated.sqlite3"
     monkeypatch.setenv(
-        "NOTARIUS_DATABASE_URL",
+        "GRAFY_DATABASE_URL",
         f"sqlite+aiosqlite:///{database_path}",
     )
     get_settings.cache_clear()
@@ -204,7 +204,7 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
 ) -> None:
     database_path = tmp_path / "fresh" / "nested" / "migrated.sqlite3"
     monkeypatch.setenv(
-        "NOTARIUS_DATABASE_URL",
+        "GRAFY_DATABASE_URL",
         f"sqlite+aiosqlite:///{database_path}",
     )
     get_settings.cache_clear()
@@ -350,7 +350,7 @@ def test_identity_migration_creates_sealed_local_workspace_and_audit_indexes(
 ) -> None:
     database_path = tmp_path / "identity" / "migrated.sqlite3"
     monkeypatch.setenv(
-        "NOTARIUS_DATABASE_URL",
+        "GRAFY_DATABASE_URL",
         f"sqlite+aiosqlite:///{database_path}",
     )
     get_settings.cache_clear()
@@ -421,7 +421,7 @@ def test_saved_graph_revision_migration_backfills_the_current_head(
 ) -> None:
     database_path = tmp_path / "backfill" / "migrated.sqlite3"
     monkeypatch.setenv(
-        "NOTARIUS_DATABASE_URL",
+        "GRAFY_DATABASE_URL",
         f"sqlite+aiosqlite:///{database_path}",
     )
     get_settings.cache_clear()
@@ -499,7 +499,7 @@ def test_collaboration_head_migration_backfills_exactly_one_sequence_zero_head(
 ) -> None:
     database_path = tmp_path / "collab-heads" / "migrated.sqlite3"
     monkeypatch.setenv(
-        "NOTARIUS_DATABASE_URL",
+        "GRAFY_DATABASE_URL",
         f"sqlite+aiosqlite:///{database_path}",
     )
     get_settings.cache_clear()
@@ -607,7 +607,7 @@ def test_tenant_migration_backfills_all_0006_resources_and_checks_composite_keys
 ) -> None:
     database_path = tmp_path / "tenant-backfill" / "migrated.sqlite3"
     monkeypatch.setenv(
-        "NOTARIUS_DATABASE_URL",
+        "GRAFY_DATABASE_URL",
         f"sqlite+aiosqlite:///{database_path}",
     )
     get_settings.cache_clear()
@@ -822,7 +822,7 @@ def test_direct_0007_downgrade_refuses_identity_data_but_allows_empty_bootstrap(
 ) -> None:
     database_path = tmp_path / "identity-guard" / "migrated.sqlite3"
     monkeypatch.setenv(
-        "NOTARIUS_DATABASE_URL",
+        "GRAFY_DATABASE_URL",
         f"sqlite+aiosqlite:///{database_path}",
     )
     get_settings.cache_clear()
@@ -842,7 +842,7 @@ def test_direct_0007_downgrade_refuses_identity_data_but_allows_empty_bootstrap(
 
     empty_database_path = tmp_path / "identity-empty" / "migrated.sqlite3"
     monkeypatch.setenv(
-        "NOTARIUS_DATABASE_URL",
+        "GRAFY_DATABASE_URL",
         f"sqlite+aiosqlite:///{empty_database_path}",
     )
     get_settings.cache_clear()

@@ -12,10 +12,10 @@ describe("ThresholdStatus", () => {
         loading
       />,
     );
-    expect(markup).toContain("ns-brand-loader");
+    expect(markup).toContain("grafy-brand-loader");
     expect(markup).toContain("Loading graph location");
     expect(markup).toContain("Checking your current access…");
-    expect(markup).not.toContain("ns-brand-wordmark");
+    expect(markup).not.toContain("grafy-brand-wordmark");
   });
 
   it("uses the wordmark and action once the route has settled", () => {
@@ -26,8 +26,8 @@ describe("ThresholdStatus", () => {
         action={<a href="/graphs">Return to graphs</a>}
       />,
     );
-    expect(markup).toContain("ns-brand-wordmark");
+    expect(markup).toContain("grafy-brand-wordmark");
     expect(markup).toContain("Return to graphs");
-    expect(markup).not.toContain("ns-brand-loader");
+    expect(markup).not.toContain("grafy-brand-loader");
   });
 });

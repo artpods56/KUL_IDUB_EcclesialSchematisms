@@ -6,11 +6,11 @@ import pytest
 from asgi_lifespan import LifespanManager
 from pydantic import SecretStr
 
-from notarius_api.main import create_app
-from notarius_api.settings import Settings
-from notarius_api.single_owner import ApiOwnerLease, assert_single_http_worker
-from notarius_persistence.database import create_database
-from notarius_persistence.orm import metadata
+from grafy_api.main import create_app
+from grafy_api.settings import Settings
+from grafy_api.single_owner import ApiOwnerLease, assert_single_http_worker
+from grafy_persistence.database import create_database
+from grafy_persistence.orm import metadata
 
 
 pytestmark = pytest.mark.single_api_owner
@@ -19,7 +19,7 @@ pytestmark = pytest.mark.single_api_owner
 def test_require_single_api_owner_defaults_true(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("NOTARIUS_REQUIRE_SINGLE_API_OWNER", raising=False)
+    monkeypatch.delenv("GRAFY_REQUIRE_SINGLE_API_OWNER", raising=False)
     assert Settings().require_single_api_owner is True
 
 
@@ -32,12 +32,12 @@ def test_assert_single_http_worker_rejects_multi_worker_env(
 
 
 def test_api_owner_lease_rejects_second_holder(tmp_path: Path) -> None:
-    lock_path = tmp_path / ".notarius-api-owner.lock"
+    lock_path = tmp_path / ".grafy-api-owner.lock"
     first = ApiOwnerLease(lock_path)
     first.acquire()
     try:
         second = ApiOwnerLease(lock_path)
-        with pytest.raises(RuntimeError, match="Another Notarius API owner"):
+        with pytest.raises(RuntimeError, match="Another Grafy API owner"):
             second.acquire()
     finally:
         first.release()
@@ -61,8 +61,8 @@ async def test_create_app_startup_acquires_owner_lease(tmp_path: Path) -> None:
     )
     app = create_app(settings)
     async with LifespanManager(app):
-        lock_path = workspace / ".notarius-api-owner.lock"
+        lock_path = workspace / ".grafy-api-owner.lock"
         assert lock_path.is_file()
         contested = ApiOwnerLease(lock_path)
-        with pytest.raises(RuntimeError, match="Another Notarius API owner"):
+        with pytest.raises(RuntimeError, match="Another Grafy API owner"):
             contested.acquire()

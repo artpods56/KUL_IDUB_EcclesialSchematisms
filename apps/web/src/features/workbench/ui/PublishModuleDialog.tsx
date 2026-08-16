@@ -616,7 +616,7 @@ export function PublishModuleDialog({
                 <div {...stylex.props(s.boundaryToolbar)}>
                   <button
                     type="button"
-                    className="ns-workspace-button"
+                    className="grafy-workspace-button"
                     disabled={!canEdit || !canAddInputBoundary}
                     title={
                       canAddInputBoundary
@@ -629,7 +629,7 @@ export function PublishModuleDialog({
                   </button>
                   <button
                     type="button"
-                    className="ns-workspace-button"
+                    className="grafy-workspace-button"
                     disabled={!canEdit || !canAddOutputBoundary}
                     title={
                       canAddOutputBoundary
@@ -670,7 +670,7 @@ export function PublishModuleDialog({
                         </div>
                         <button
                           type="button"
-                          className="ns-workspace-button"
+                          className="grafy-workspace-button"
                           onClick={() => {
                             setDialogOpen(false);
                             onSelectBoundary?.(boundary.id);
@@ -749,7 +749,7 @@ export function PublishModuleDialog({
                       <div {...stylex.props(s.successActions)}>
                         <button
                           type="button"
-                          className="ns-workspace-button ns-workspace-button--primary"
+                          className="grafy-workspace-button grafy-workspace-button--primary"
                           onClick={() => {
                             setDialogOpen(false);
                             onViewModule?.(publishedModule.id);
@@ -759,7 +759,7 @@ export function PublishModuleDialog({
                         </button>
                         <button
                           type="button"
-                          className="ns-workspace-button"
+                          className="grafy-workspace-button"
                           onClick={() => onOpenSourceGraph?.(publishedModule.source_graph_id)}
                         >
                           Open source
@@ -774,7 +774,7 @@ export function PublishModuleDialog({
                     </span>
                     <button
                       type="button"
-                      className="ns-workspace-button ns-workspace-button--primary"
+                      className="grafy-workspace-button grafy-workspace-button--primary"
                       disabled={busy || !publishReady}
                       onClick={() => void confirm()}
                     >

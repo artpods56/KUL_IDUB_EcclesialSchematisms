@@ -67,13 +67,13 @@ Already shared with production (leave as is): `components/canvas/config-schema.t
 - StyleX only, all values from `src/lib/stylex/tokens.stylex.ts` tokens (`light-dark()` aware — no hardcoded colors).
 - Base UI (`@base-ui/react/popover`) for popovers; `lucide-react` icons (`CircleHelp`, `X`).
 - Every interactive element inside a node needs `className="nodrag"` (+ `nowheel` for scrollables) or React Flow will swallow events.
-- Don't regenerate `src/lib/api/generated/notarius.ts`; all needed types exist: `ArtifactTypeSpec`, `ArtifactSummary`, `RunNodeResult`, `NodeSpec`, `Port`, `NodeRegistry` from `@/lib/api`.
+- Don't regenerate `src/lib/api/generated/grafy.ts`; all needed types exist: `ArtifactTypeSpec`, `ArtifactSummary`, `RunNodeResult`, `NodeSpec`, `Port`, `NodeRegistry` from `@/lib/api`.
 - React Compiler is on — avoid manual `useMemo` on values derived from props it can't verify (it produced a lint error in the spike once; plain derivation is fine).
 
 ## Verification
 
 1. `cd apps/web && npx tsc --noEmit && npx eslint src`.
-2. Run the API (`uv run uvicorn notarius_api.main:app --port 8791` from repo root) and web (`NOTARIUS_API_UPSTREAM=http://127.0.0.1:8791 npm run dev` in `apps/web`), open the workbench, and check:
+2. Run the API (`uv run uvicorn grafy_api.main:app --port 8791` from repo root) and web (`GRAFY_API_UPSTREAM=http://127.0.0.1:8791 npm run dev` in `apps/web`), open the workbench, and check:
    - add nodes from the palette; port tabs render, connections still validate (type + shape) and edge pills/projection editing still work;
    - port tab click → type inspector with schema tree (try any installed plugin compound output; automated projection coverage uses `test.compound_result@1` rather than a production arithmetic tutorial node);
    - "?" and "x" in the top-left work; "x" removes the node;

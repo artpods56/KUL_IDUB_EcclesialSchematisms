@@ -4,17 +4,17 @@ from uuid import UUID
 import pytest
 from fastapi.testclient import TestClient
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactObject,
     ArtifactRef,
     ArtifactRefSequence,
     InMemoryUnitOfWork,
 )
-from notarius_core.operators.images import RASTER_IMAGE
-from notarius_core.operators.sequences import ItemAtConfig, SliceConfig
+from grafy_core.operators.images import RASTER_IMAGE
+from grafy_core.operators.sequences import ItemAtConfig, SliceConfig
 
-from notarius_api.v1.routes.catalog.models import NodeRegistryResponse
-from notarius_api.v1.routes.executions.models import RunResponse
+from grafy_api.v1.routes.catalog.models import NodeRegistryResponse
+from grafy_api.v1.routes.executions.models import RunResponse
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")

@@ -16,30 +16,30 @@ from pydantic import SecretStr
 from starlette.testclient import WebSocketDenialResponse
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
-from notarius_api.main import create_app
-from notarius_api.settings import Settings
-from notarius_api.v1.routes.auth.dependencies import browser_actor
-from notarius_api.v1.routes.collaboration.hub import (
+from grafy_api.main import create_app
+from grafy_api.settings import Settings
+from grafy_api.v1.routes.auth.dependencies import browser_actor
+from grafy_api.v1.routes.collaboration.hub import (
     CLOSE_SLOW_CONSUMER,
     OUTBOUND_QUEUE_MAXSIZE,
     GraphRoomHub,
     GraphRoomSession,
 )
-from notarius_api.v1.routes.collaboration.models import (
+from grafy_api.v1.routes.collaboration.models import (
     ActorPresentation,
     RoomHeartbeatMessage,
     RoomReadyMessage,
 )
-from notarius_core.domain.identity import (
+from grafy_core.domain.identity import (
     ActorContext,
     User,
     Workspace,
     WorkspaceMembership,
     WorkspaceRole,
 )
-from notarius_persistence.database import create_database
-from notarius_persistence.orm import metadata
-from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
+from grafy_persistence.database import create_database
+from grafy_persistence.orm import metadata
+from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from tests.unit.api.conftest import (
     TEST_USER_ID,
@@ -660,7 +660,7 @@ def test_heartbeat_revalidation_closes_on_lost_role_invalidation(
         return None
 
     monkeypatch.setattr(
-        "notarius_api.v1.routes.workspaces.views.close_user_rooms_for_permission_change",
+        "grafy_api.v1.routes.workspaces.views.close_user_rooms_for_permission_change",
         _skip_close,
     )
 
@@ -811,7 +811,7 @@ def test_presence_rate_limit_and_stale_sequence_drop() -> None:
         while not peer.outbound.empty():
             peer.outbound.get_nowait()
 
-        from notarius_api.v1.routes.collaboration.models import (
+        from grafy_api.v1.routes.collaboration.models import (
             PresenceUpdateSubmitMessage,
         )
 

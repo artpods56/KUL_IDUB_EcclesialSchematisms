@@ -1,4 +1,4 @@
-# Notarius Workbench Context
+# Grafy Workbench Context
 
 ## Product scope
 
@@ -263,7 +263,7 @@ An installable declaration that groups nodes, artifact types, artifact
 conversions, and the runtime resolver/writer factories they require under one
 stable slug. The host assigns every installed plugin a catalog origin. Built-in
 plugins are installed explicitly with `builtin` origin; external plugins are
-discovered from the `notarius.plugins` Python entry-point group and installed
+discovered from the `grafy.plugins` Python entry-point group and installed
 with `external` origin. A plugin does not declare its own origin. Plugins depend
 inward on core contracts and ports, never on the API host or concrete storage
 adapters.
@@ -374,7 +374,7 @@ invocation policy into an immutable plan. A graph execution port receives that
 prepared plan. Its production adapter creates one local Prefect flow per graph
 run, one task per invoked logical node, and one nested task per scalar MAP item.
 Production MAP items may run concurrently, bounded by
-`NOTARIUS_MAP_MAX_CONCURRENCY` (default `4`). Their completion order is not
+`GRAFY_MAP_MAX_CONCURRENCY` (default `4`). Their completion order is not
 observable: aggregation remains aligned to source position. When one item
 fails, unfinished sibling items are cancelled on a best-effort basis. The
 inline adapter follows the same coordinator contract without starting Prefect,
@@ -388,7 +388,7 @@ aggregation. Edge value resolution applies the already compiled projection and
 conversion chain.
 `NodeRuntime` executes and persists exactly one scalar node invocation; it does
 not schedule graphs or implement collection mapping. Prefect result persistence
-and caching are disabled: Notarius remains the source of truth for artifacts,
+and caching are disabled: Grafy remains the source of truth for artifacts,
 invocation caching, materialized outputs, and encrypted node secrets. Decrypted
 secrets and live runtime collaborators never become Prefect parameters or
 results.

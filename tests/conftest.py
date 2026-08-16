@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the Notarius test suite."""
+"""Shared pytest fixtures for the Grafy test suite."""
 
 import pytest
 
@@ -12,4 +12,4 @@ def _disable_single_api_owner_by_default(
 
     if request.node.get_closest_marker("single_api_owner") is not None:
         return
-    monkeypatch.setenv("NOTARIUS_REQUIRE_SINGLE_API_OWNER", "false")
+    monkeypatch.setenv("GRAFY_REQUIRE_SINGLE_API_OWNER", "false")

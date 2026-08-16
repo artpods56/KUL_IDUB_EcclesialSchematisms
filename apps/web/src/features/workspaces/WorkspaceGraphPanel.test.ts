@@ -156,7 +156,7 @@ describe("workspace graph panel interactions", () => {
     trigger.dataset.graphPanelTrigger = "";
     document.body.append(trigger);
     const accountMenu = document.createElement("div");
-    accountMenu.className = "ns-workspace-rail__account-menu";
+    accountMenu.className = "grafy-workspace-rail__account-menu";
     document.body.append(accountMenu);
     const { onClose } = await renderPanel();
 
@@ -181,7 +181,7 @@ describe("workspace graph panel interactions", () => {
   it("navigates before reporting graph selection", async () => {
     const { container, onClose } = await renderPanel();
     const graph = container.querySelector<HTMLButtonElement>(
-      ".ns-graph-panel__row-open",
+      ".grafy-graph-panel__row-open",
     );
 
     await act(async () => graph?.click());
@@ -251,7 +251,7 @@ describe("workspace graph panel interactions", () => {
     );
     const { container } = await renderPanel();
     const graphButton = container.querySelector<HTMLButtonElement>(
-      ".ns-graph-panel__row-open",
+      ".grafy-graph-panel__row-open",
     );
     graphButton?.focus();
 

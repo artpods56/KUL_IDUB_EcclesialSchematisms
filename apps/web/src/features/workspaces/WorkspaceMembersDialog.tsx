@@ -68,10 +68,10 @@ export function WorkspaceMembersDialog() {
 
   return (
     <>
-      <button type="button" className="ns-workspace-button" disabled={authorityUncertain} onClick={() => setOpen(true)}>
+      <button type="button" className="grafy-workspace-button" disabled={authorityUncertain} onClick={() => setOpen(true)}>
         <UserPlus size={14} /> Manage members
       </button>
-      {authorityUncertain && message ? <p className="ns-member-message" role="status">{message}</p> : null}
+      {authorityUncertain && message ? <p className="grafy-member-message" role="status">{message}</p> : null}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
@@ -79,20 +79,20 @@ export function WorkspaceMembersDialog() {
             <DialogDescription>Member changes use user UUIDs. Server capabilities remain authoritative.</DialogDescription>
           </DialogHeader>
           <DialogBody>
-            <form className="ns-member-form" onSubmit={(event) => void addMember(event)}>
+            <form className="grafy-member-form" onSubmit={(event) => void addMember(event)}>
               <label>User UUID<input value={userId} onChange={(event) => setUserId(event.target.value)} placeholder="xxxxxxxx-xxxx-…" /></label>
               <label>Role<select value={role} onChange={(event) => setRole(event.target.value as WorkspaceRole)}>{roles.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
-              <button className="ns-workspace-button ns-workspace-button--primary" type="submit" disabled={busyKey !== null}>Add</button>
+              <button className="grafy-workspace-button grafy-workspace-button--primary" type="submit" disabled={busyKey !== null}>Add</button>
             </form>
-            {message ? <p className="ns-member-message" role="status">{message}</p> : null}
-            {error ? <p className="ns-member-message" role="status">Members could not be loaded.</p> : null}
-            {!members ? <p className="ns-member-empty">Loading members…</p> : members.length === 0 ? <p className="ns-member-empty">No members returned.</p> : (
-              <div className="ns-member-list">
+            {message ? <p className="grafy-member-message" role="status">{message}</p> : null}
+            {error ? <p className="grafy-member-message" role="status">Members could not be loaded.</p> : null}
+            {!members ? <p className="grafy-member-empty">Loading members…</p> : members.length === 0 ? <p className="grafy-member-empty">No members returned.</p> : (
+              <div className="grafy-member-list">
                 {members.map((member) => (
-                  <div className="ns-member-row" key={member.user.id}>
+                  <div className="grafy-member-row" key={member.user.id}>
                     <div><strong>{member.user.display_name ?? member.user.email ?? member.user.id}</strong><span>{member.user.id}</span></div>
                     <select aria-label={`Role for ${member.user.id}`} value={member.role} disabled={busyKey === member.user.id} onChange={(event) => void runMutation(member.user.id, () => changeWorkspaceMemberRole(workspace.id, member.user.id, { role: event.target.value as WorkspaceRole }))}>{roles.map((option) => <option key={option} value={option}>{option}</option>)}</select>
-                    <button type="button" className="ns-member-remove" disabled={busyKey === member.user.id} onClick={() => void runMutation(member.user.id, () => removeWorkspaceMember(workspace.id, member.user.id))}>Remove</button>
+                    <button type="button" className="grafy-member-remove" disabled={busyKey === member.user.id} onClick={() => void runMutation(member.user.id, () => removeWorkspaceMember(workspace.id, member.user.id))}>Remove</button>
                   </div>
                 ))}
               </div>

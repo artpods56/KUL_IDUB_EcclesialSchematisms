@@ -7,13 +7,13 @@ from uuid import UUID
 import pytest
 from sqlalchemy import text
 
-from notarius_core.application.identity import IdentityService
-from notarius_core.domain.errors import (
+from grafy_core.application.identity import IdentityService
+from grafy_core.domain.errors import (
     BootstrapOwnerMismatchError,
     IdentityInvariantError,
     LastWorkspaceOwnerError,
 )
-from notarius_core.domain.identity import (
+from grafy_core.domain.identity import (
     ActorContext,
     AuthSession,
     PersonalAccessToken,
@@ -23,9 +23,9 @@ from notarius_core.domain.identity import (
     WorkspaceMembership,
     WorkspaceRole,
 )
-from notarius_persistence.database import Database, create_database
-from notarius_persistence.orm import metadata
-from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
+from grafy_persistence.database import Database, create_database
+from grafy_persistence.orm import metadata
+from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 
 @pytest.fixture

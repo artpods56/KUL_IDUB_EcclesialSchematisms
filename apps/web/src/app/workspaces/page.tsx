@@ -28,18 +28,18 @@ function slugFromName(name: string): string {
 function LocationRow({ workspace }: { workspace: Workspace }) {
   return (
     <Link
-      className="ns-workspace-list__row"
+      className="grafy-workspace-list__row"
       href={`/workspaces/${encodeURIComponent(workspace.slug)}`}
       aria-label={`Open settings for ${workspaceDisplayName(workspace)}`}
     >
-      <span className="ns-workspace-list__icon" aria-hidden="true">
+      <span className="grafy-workspace-list__icon" aria-hidden="true">
         {workspace.kind === "personal" ? (
           <Workflow size={16} />
         ) : (
           <Users size={16} />
         )}
       </span>
-      <span className="ns-workspace-list__copy">
+      <span className="grafy-workspace-list__copy">
         <strong>{workspaceDisplayName(workspace)}</strong>
         <small>
           {workspace.kind === "personal"
@@ -47,7 +47,7 @@ function LocationRow({ workspace }: { workspace: Workspace }) {
             : "A graph location shared with this team"}
         </small>
       </span>
-      <span className="ns-workspace-list__open">Settings</span>
+      <span className="grafy-workspace-list__open">Settings</span>
       <ArrowUpRight size={15} aria-hidden="true" />
     </Link>
   );
@@ -62,14 +62,14 @@ function LocationSection({
 }) {
   if (workspaces.length === 0) return null;
   return (
-    <section className="ns-workspace-section" aria-label={title}>
-      <div className="ns-workspace-section__heading">
+    <section className="grafy-workspace-section" aria-label={title}>
+      <div className="grafy-workspace-section__heading">
         <h2>{title}</h2>
-        <span className="ns-workspace-section__meta">
+        <span className="grafy-workspace-section__meta">
           {workspaces.length} {workspaces.length === 1 ? "location" : "locations"}
         </span>
       </div>
-      <div className="ns-workspace-list">
+      <div className="grafy-workspace-list">
         {workspaces.map((workspace) => (
           <LocationRow key={workspace.id} workspace={workspace} />
         ))}
@@ -136,7 +136,7 @@ export default function WorkspacesPage() {
   const teams = filtered.filter((workspace) => workspace.kind === "shared");
 
   return (
-    <div className="ns-workspace-directory">
+    <div className="grafy-workspace-directory">
       {workspaces ? (
         <WorkspaceRail
           workspaces={workspaces}
@@ -144,20 +144,20 @@ export default function WorkspacesPage() {
           onLogout={logout}
         />
       ) : null}
-      <main className="ns-workspace-directory__main">
-        <header className="ns-workspace-directory__header">
+      <main className="grafy-workspace-directory__main">
+        <header className="grafy-workspace-directory__header">
           <div>
-            <p className="ns-workspace-overview__eyebrow">Settings</p>
+            <p className="grafy-workspace-overview__eyebrow">Settings</p>
             <h1>Teams &amp; access</h1>
             <p>
               Manage the locations that own your graphs and control who can work
               with them.
             </p>
           </div>
-          <div className="ns-workspace-directory__actions">
+          <div className="grafy-workspace-directory__actions">
             <button
               type="button"
-              className="ns-workspace-button ns-workspace-button--primary"
+              className="grafy-workspace-button grafy-workspace-button--primary"
               onClick={() => {
                 setCreateOpen((current) => !current);
                 setJoinOpen(false);
@@ -167,7 +167,7 @@ export default function WorkspacesPage() {
             </button>
             <button
               type="button"
-              className="ns-workspace-button"
+              className="grafy-workspace-button"
               onClick={() => {
                 setJoinOpen((current) => !current);
                 setCreateOpen(false);
@@ -180,7 +180,7 @@ export default function WorkspacesPage() {
 
         {createOpen ? (
           <form
-            className="ns-workspace-create"
+            className="grafy-workspace-create"
             onSubmit={(event) => void submit(event)}
           >
             <label>
@@ -194,13 +194,13 @@ export default function WorkspacesPage() {
             </label>
             <button
               type="submit"
-              className="ns-workspace-button ns-workspace-button--primary"
+              className="grafy-workspace-button grafy-workspace-button--primary"
               disabled={busy || name.trim() === ""}
             >
               {busy ? "Creating…" : "Create team"}
             </button>
             {message ? (
-              <span className="ns-member-message" role="status">
+              <span className="grafy-member-message" role="status">
                 {message}
               </span>
             ) : null}
@@ -209,7 +209,7 @@ export default function WorkspacesPage() {
 
         {joinOpen ? (
           <div
-            className="ns-workspace-join"
+            className="grafy-workspace-join"
             role="region"
             aria-label="Join a team"
           >
@@ -220,8 +220,8 @@ export default function WorkspacesPage() {
           </div>
         ) : null}
 
-        <div className="ns-workspace-toolbar">
-          <label className="ns-workspace-search">
+        <div className="grafy-workspace-toolbar">
+          <label className="grafy-workspace-search">
             <Search size={15} aria-hidden="true" />
             <input
               type="search"
@@ -234,23 +234,23 @@ export default function WorkspacesPage() {
         </div>
 
         {error ? (
-          <div className="ns-workspace-empty" role="alert">
+          <div className="grafy-workspace-empty" role="alert">
             <p>Teams and access couldn&apos;t be loaded.</p>
             <button
               type="button"
-              className="ns-workspace-button"
+              className="grafy-workspace-button"
               onClick={() => void mutate()}
             >
               Retry
             </button>
           </div>
         ) : !workspaces ? (
-          <div className="ns-workspace-directory__loading">
+          <div className="grafy-workspace-directory__loading">
             <BrandLoader size={40} label="Loading teams and access" />
             <span>Loading teams &amp; access…</span>
           </div>
         ) : filtered.length === 0 ? (
-          <div className="ns-workspace-empty">
+          <div className="grafy-workspace-empty">
             <p>
               {normalizedQuery
                 ? "No teams or locations match that search."
@@ -259,7 +259,7 @@ export default function WorkspacesPage() {
             {normalizedQuery ? (
               <button
                 type="button"
-                className="ns-workspace-button"
+                className="grafy-workspace-button"
                 onClick={() => setQuery("")}
               >
                 Clear search
@@ -273,7 +273,7 @@ export default function WorkspacesPage() {
           </>
         )}
 
-        <aside className="ns-workspace-edu" aria-label="About graph locations">
+        <aside className="grafy-workspace-edu" aria-label="About graph locations">
           <div>
             <h2>How locations work</h2>
             <p>
@@ -281,7 +281,7 @@ export default function WorkspacesPage() {
               with that Team while keeping access and graph data together.
             </p>
           </div>
-          <span className="ns-workspace-edu__mark" aria-hidden="true" />
+          <span className="grafy-workspace-edu__mark" aria-hidden="true" />
         </aside>
       </main>
     </div>

@@ -3,16 +3,16 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "notarius-storage"
+name = "grafy-storage"
 version = "0.1.0"
 requires-python = "==3.12.9"
 dependencies = [
-    "notarius-core",
+    "grafy-core",
     "obstore>=0.9.3",
 ]
 
 [tool.uv.sources]
-notarius-core = { workspace = true }
+grafy-core = { workspace = true }
 
 [tool.basedpyright]
 extends = "../../pyproject.toml"

@@ -5,6 +5,7 @@
 .venv
 .pytest_cache
 .ruff_cache
+.grafy-artifacts
 .notarius-artifacts
 .playwright-cli
 **/__pycache__

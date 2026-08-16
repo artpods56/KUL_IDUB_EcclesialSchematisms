@@ -1,11 +1,11 @@
 from uuid import UUID, uuid4
 
-from notarius_plugin_ocr.mistral import (
+from grafy_plugin_ocr.mistral import (
     MistralOcrPagePayload,
     MistralOcrResponsePayload,
     MistralOcrTablePayload,
 )
-from notarius_plugin_ocr.tables import (
+from grafy_plugin_ocr.tables import (
     extract_table_fragments,
     is_markdown_separator,
     markdown_table_rows,

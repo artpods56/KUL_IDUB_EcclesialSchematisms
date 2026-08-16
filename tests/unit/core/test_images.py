@@ -4,14 +4,14 @@ from uuid import UUID, uuid4
 import pytest
 from PIL import Image
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactRef,
     ArtifactRefSequence,
     InMemoryUnitOfWork,
 )
-from notarius_core.domain.staged_uploads import StagedUpload
-from notarius_core.nodes import NodeExecutionContext
-from notarius_core.operators.images import (
+from grafy_core.domain.staged_uploads import StagedUpload
+from grafy_core.nodes import NodeExecutionContext
+from grafy_core.operators.images import (
     IMAGES,
     RASTER_IMAGE,
     ImageUploadError,
@@ -19,25 +19,25 @@ from notarius_core.operators.images import (
     RasterImageOutputWriter,
     UploadImagesNode,
 )
-from notarius_core.operators.sequences import CollectNode
-from notarius_core.plugins import PluginRegistry, PluginRuntimeContext
-from notarius_core.runtime.execution import NodeRuntime
-from notarius_core.runtime.materialization import (
+from grafy_core.operators.sequences import CollectNode
+from grafy_core.plugins import PluginRegistry, PluginRuntimeContext
+from grafy_core.runtime.execution import NodeRuntime
+from grafy_core.runtime.materialization import (
     InputMaterializer,
     MaterializationProvenance,
 )
-from notarius_core.runtime.persistence import (
+from grafy_core.runtime.persistence import (
     ArtifactWriteContext,
     ArtifactWriterRegistry,
     OutputPersister,
     PersistedNodeOutput,
 )
-from notarius_core.runtime.resolvers import ResolverRegistry
-from notarius_plugin_ocr.artifacts import OCR_PAGE_RESULT
-from notarius_plugin_ocr.persistence import OcrPageResultOutputWriter
-from notarius_plugin_ocr.resolvers import PilImageResolver
-from notarius_plugin_ocr.tesseract import FakeOcrEngine, TesseractOcrNode
-from notarius_storage import LocalFileObjectStore
+from grafy_core.runtime.resolvers import ResolverRegistry
+from grafy_plugin_ocr.artifacts import OCR_PAGE_RESULT
+from grafy_plugin_ocr.persistence import OcrPageResultOutputWriter
+from grafy_plugin_ocr.resolvers import PilImageResolver
+from grafy_plugin_ocr.tesseract import FakeOcrEngine, TesseractOcrNode
+from grafy_storage import LocalFileObjectStore
 
 
 TEST_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")

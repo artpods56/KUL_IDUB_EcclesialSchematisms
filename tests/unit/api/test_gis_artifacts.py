@@ -13,18 +13,19 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from notarius_core.artifact_collections import (
+from grafy_core.artifact_collections import (
     JSON_COLLECTIONS_STORAGE_FORMAT,
     JsonCollection,
+    JsonCollectionsManifest,
     save_json_collections,
 )
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactObject,
     ArtifactTypeKey,
     InMemoryUnitOfWork,
     JsonObject,
 )
-from notarius_core.ports.storage import (
+from grafy_core.ports.storage import (
     FileStoragePort,
     FileStreamProtocol,
     SaveFileCommand,
@@ -32,7 +33,7 @@ from notarius_core.ports.storage import (
     StoredObjectInfo,
 )
 
-from notarius_core.domain.identity import (
+from grafy_core.domain.identity import (
     ActorContext,
     WorkspaceAccess,
     WorkspaceCapability,
@@ -40,17 +41,17 @@ from notarius_core.domain.identity import (
     WorkspaceRole,
 )
 
-from notarius_core.application.identity import IdentityService
-from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
+from grafy_core.application.identity import IdentityService
+from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
-from notarius_api.app_state import AppIdentity
-from notarius_api.v1.routes.artifacts import services as artifact_services
-from notarius_api.v1.routes.artifacts.dependencies import artifact_service
-from notarius_api.v1.routes.artifacts.services import ArtifactService
-from notarius_api.v1.routes.artifacts.views import router as artifacts_router
-from notarius_api.v1.routes.auth.dependencies import browser_actor
-from notarius_api.v1.routes.auth.services import AuthService
-from notarius_storage import LocalFileObjectStore
+from grafy_api.app_state import AppIdentity
+from grafy_api.v1.routes.artifacts import services as artifact_services
+from grafy_api.v1.routes.artifacts.dependencies import artifact_service
+from grafy_api.v1.routes.artifacts.services import ArtifactService
+from grafy_api.v1.routes.artifacts.views import router as artifacts_router
+from grafy_api.v1.routes.auth.dependencies import browser_actor
+from grafy_api.v1.routes.auth.services import AuthService
+from grafy_storage import LocalFileObjectStore
 
 
 FEATURE_KEY = ArtifactTypeKey("geo.feature_collection", 1)
@@ -59,6 +60,18 @@ LAYER_KEY = ArtifactTypeKey("geo.map_layer", 1)
 DOCUMENT_KEY = ArtifactTypeKey("geo.map_document", 1)
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
 TEST_USER_ID = UUID(int=1)
+
+
+def test_json_collections_manifest_accepts_legacy_storage_format() -> None:
+    manifest = JsonCollectionsManifest.model_validate(
+        {
+            "format": "notarius.json-collections.chunked.v1",
+            "total_items": 0,
+            "collections": [],
+        }
+    )
+
+    assert manifest.format == "notarius.json-collections.chunked.v1"
 
 
 class _AllowAllIdentityService:

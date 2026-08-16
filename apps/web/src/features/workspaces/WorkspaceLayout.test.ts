@@ -282,19 +282,19 @@ describe("workspace rail route lifecycle", () => {
 
     await act(async () => openNavigation?.click());
     expect(
-      container.querySelector(".ns-workspace-rail.is-mobile-open"),
+      container.querySelector(".grafy-workspace-rail.is-mobile-open"),
     ).not.toBeNull();
 
     testState.pathname = "/workspaces/operations/graphs/graph-b";
     await rerender();
     expect(
-      container.querySelector(".ns-workspace-rail.is-mobile-open"),
+      container.querySelector(".grafy-workspace-rail.is-mobile-open"),
     ).toBeNull();
 
     testState.pathname = "/workspaces/operations/graphs/graph-a";
     await rerender();
     expect(
-      container.querySelector(".ns-workspace-rail.is-mobile-open"),
+      container.querySelector(".grafy-workspace-rail.is-mobile-open"),
     ).toBeNull();
   });
 

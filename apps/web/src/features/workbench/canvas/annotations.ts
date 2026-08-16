@@ -4,7 +4,7 @@ export type AnnotationKind = "text" | "rectangle" | "ellipse";
 /** `#RRGGBB` stroke/text color for an annotation. */
 export type AnnotationColor = string;
 
-export const ANNOTATION_NODE_TYPE = "notariusAnnotationNode";
+export const ANNOTATION_NODE_TYPE = "grafyAnnotationNode";
 export const DEFAULT_ANNOTATION_COLOR = "#475569";
 /**
  * Stay under default workflow nodes (z=0) even when React Flow adds

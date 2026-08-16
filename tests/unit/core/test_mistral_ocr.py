@@ -2,8 +2,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from notarius_core.nodes import NodeExecutionContext
-from notarius_plugin_ocr.mistral import (
+from grafy_core.nodes import NodeExecutionContext
+from grafy_plugin_ocr.mistral import (
     EncodedPageImage,
     MistralOcrConfig,
     MistralOcrExecutionError,

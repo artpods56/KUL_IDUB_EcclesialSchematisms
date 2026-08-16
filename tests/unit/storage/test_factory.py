@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from notarius_storage import LocalFileObjectStore, S3ObjectStore
-from notarius_storage.factory import create_file_storage
+from grafy_storage import LocalFileObjectStore, S3ObjectStore
+from grafy_storage.factory import create_file_storage
 
 
 def test_create_file_storage_builds_local_adapter(tmp_path: Path) -> None:

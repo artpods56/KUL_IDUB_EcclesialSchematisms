@@ -144,7 +144,7 @@ export async function request<T>(
   const { body, signal } = options;
   const normalizedMethod = method.toUpperCase();
   const csrfToken = isUnsafeMethod(normalizedMethod)
-    ? readBrowserCookie("notarius_csrf")
+    ? readBrowserCookie("grafy_csrf")
     : undefined;
   const headers: Record<string, string> = { Accept: "application/json" };
   if (csrfToken) headers["X-CSRF-Token"] = csrfToken;

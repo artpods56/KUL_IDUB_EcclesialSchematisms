@@ -1,7 +1,7 @@
-# Notarius Workbench
+# Grafy Workbench
 
 A ComfyUI-like workbench for assembling typed artifact transformations over the
-Notarius runtime. It is built with Next.js 16, StyleX, Base UI
+Grafy runtime. It is built with Next.js 16, StyleX, Base UI
 primitives, React Flow, and SWR.
 
 The root route renders the canonical cross-location graph browser after
@@ -38,10 +38,10 @@ changing the source node.
 
 The authoritative backend contract for this app is the workbench implementation:
 
-- `libs/core/src/notarius_core/` owns node, port, artifact, resolver,
+- `libs/core/src/grafy_core/` owns node, port, artifact, resolver,
   persistence, and runtime behavior.
-- `apps/api/src/notarius_api/schemas/workbench.py` owns the HTTP models.
-- `apps/api/src/notarius_api/v1/routes/workbench.py` exposes the node
+- `apps/api/src/grafy_api/schemas/workbench.py` owns the HTTP models.
+- `apps/api/src/grafy_api/v1/routes/workbench.py` exposes the node
   catalog and execution routes.
 
 The web workbench depends on no routes outside this contract.
@@ -57,8 +57,8 @@ npm run generate:api
 
 This updates:
 
-- `openapi/notarius.json`
-- `src/lib/api/generated/notarius.ts`
+- `openapi/grafy.json`
+- `src/lib/api/generated/grafy.ts`
 
 Refresh the OpenAPI JSON and check that the committed TypeScript types are
 current:
@@ -82,7 +82,7 @@ Requirements:
 
 1. Node 20+ and npm.
 2. Python 3.12.9 with the repository uv workspace synced.
-3. The Notarius API running on `http://127.0.0.1:8000` (the Next.js dev
+3. The Grafy API running on `http://127.0.0.1:8000` (the Next.js dev
    server proxies browser `/api` requests to it).
 4. `just install-ocr` and `just api-ocr` used from the repository root when OCR
    operators should be available.
@@ -167,7 +167,7 @@ src/
   hooks/use-api.ts             # node registry hook
   lib/
     api/
-      generated/notarius.ts    # generated OpenAPI transport types
+      generated/grafy.ts    # generated OpenAPI transport types
       contract.ts              # application-facing generated aliases
       workbench.ts             # workbench HTTP calls
     stylex/                    # design tokens

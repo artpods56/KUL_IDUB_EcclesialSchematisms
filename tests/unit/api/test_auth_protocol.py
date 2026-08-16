@@ -16,31 +16,31 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import SecretStr
 
-from notarius_api.settings import Settings
-from notarius_api.v1.routes.auth.services import (
+from grafy_api.settings import Settings
+from grafy_api.v1.routes.auth.services import (
     AuthService,
     OidcCallbackInternalError,
     OidcProtocolError,
     ProviderMetadata,
 )
-from notarius_core.application.identity import IdentityService
-from notarius_core.domain.identity import OidcLoginTransaction, User, Workspace
-from notarius_core.domain.security_audit import SecurityAuditEvent
-from notarius_core.ports.identity import (
+from grafy_core.application.identity import IdentityService
+from grafy_core.domain.identity import OidcLoginTransaction, User, Workspace
+from grafy_core.domain.security_audit import SecurityAuditEvent
+from grafy_core.ports.identity import (
     IdentityRepositoryPort,
     IdentityUnitOfWorkPort,
     SecurityAuditRepositoryPort,
 )
-from notarius_persistence.database import create_database
-from notarius_persistence.orm import metadata
-from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
+from grafy_persistence.database import create_database
+from grafy_persistence.orm import metadata
+from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 
 def _auth_service() -> AuthService:
     settings = Settings(
         public_origin="https://app.example.test",
         oidc_issuer="https://issuer.example.test",
-        oidc_client_id="notarius-client",
+        oidc_client_id="grafy-client",
         oidc_auth_wrapping_key=SecretStr("test-wrapping-key"),
         execution_backend="inline",
     )
@@ -86,7 +86,7 @@ def _claims(**overrides: object) -> dict[str, object]:
     now = int(datetime.now(UTC).timestamp())
     claims: dict[str, object] = {
         "iss": "https://issuer.example.test",
-        "aud": "notarius-client",
+        "aud": "grafy-client",
         "sub": "provider-user",
         "nonce": "expected-nonce",
         "exp": now + 300,
@@ -180,7 +180,7 @@ def test_oidc_transaction_return_path_is_sensitive_state() -> None:
         {"iss": "https://other-issuer.example.test"},
         {"aud": "other-client"},
         {"azp": "other-client"},
-        {"aud": ["notarius-client", "second-client"]},
+        {"aud": ["grafy-client", "second-client"]},
         {"exp": float("nan")},
         {"iat": True},
         {"nbf": float("inf")},
@@ -361,7 +361,7 @@ async def test_protocol_issuer_successfully_provisions_identity_and_rotates_sess
     settings = Settings(
         public_origin="https://app.example.test",
         oidc_issuer="https://issuer.example.test",
-        oidc_client_id="notarius-client",
+        oidc_client_id="grafy-client",
         oidc_auth_wrapping_key=SecretStr("protocol-wrapping-key"),
         auth_cookie_secure=False,
         database_url=SecretStr(database_url),

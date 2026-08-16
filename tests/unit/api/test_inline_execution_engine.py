@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactRef,
     ArtifactRefSequence,
     ArtifactTypeKey,
@@ -16,44 +16,44 @@ from notarius_core.artifacts import (
     NodeInput,
     NodeOutput,
 )
-from notarius_core.domain.artifact_outputs import ArtifactOutputValue
-from notarius_core.domain.invocation_cache import InvocationCacheEntry
-from notarius_core.nodes import (
+from grafy_core.domain.artifact_outputs import ArtifactOutputValue
+from grafy_core.domain.invocation_cache import InvocationCacheEntry
+from grafy_core.nodes import (
     InPort,
     Node,
     NodeExecutionContext,
     OutPort,
     resolve_node_contracts,
 )
-from notarius_core.plugins import NodeCachePolicy, NodeRegistration
-from notarius_core.ports.node_secrets import UnavailableNodeSecretResolver
-from notarius_core.runtime.execution import NodeRuntime
-from notarius_core.runtime.invocation import InvocationMode, NodeInvocation
-from notarius_core.runtime.invocation_cache import InvocationCachePort
-from notarius_core.runtime.materialization import InputMaterializer
-from notarius_core.runtime.persistence import (
+from grafy_core.plugins import NodeCachePolicy, NodeRegistration
+from grafy_core.ports.node_secrets import UnavailableNodeSecretResolver
+from grafy_core.runtime.execution import NodeRuntime
+from grafy_core.runtime.invocation import InvocationMode, NodeInvocation
+from grafy_core.runtime.invocation_cache import InvocationCachePort
+from grafy_core.runtime.materialization import InputMaterializer
+from grafy_core.runtime.persistence import (
     ArtifactOutputWriter,
     ArtifactWriteContext,
     ArtifactWriterRegistry,
     OutputPersister,
 )
-from notarius_core.runtime.resolvers import Resolver, ResolverRegistry
+from grafy_core.runtime.resolvers import Resolver, ResolverRegistry
 
-from notarius_api.v1.routes.executions.models import RunEdgeRequest, RunNodeRequest
-from notarius_api.v1.routes.executions.runtime.control import RunExecutionControl
-from notarius_api.v1.routes.executions.runtime.coordinator import (
+from grafy_api.v1.routes.executions.models import RunEdgeRequest, RunNodeRequest
+from grafy_api.v1.routes.executions.runtime.control import RunExecutionControl
+from grafy_api.v1.routes.executions.runtime.coordinator import (
     GraphExecutionCoordinator,
 )
-from notarius_api.v1.routes.executions.runtime.edge_values import EdgeValueResolver
-from notarius_api.v1.routes.executions.runtime.engine import PreparedGraphExecution
-from notarius_api.v1.routes.executions.runtime.errors import GraphExecutionError
-from notarius_api.v1.routes.executions.runtime.inline import InlineExecutionEngine
-from notarius_api.v1.routes.executions.runtime.models import (
+from grafy_api.v1.routes.executions.runtime.edge_values import EdgeValueResolver
+from grafy_api.v1.routes.executions.runtime.engine import PreparedGraphExecution
+from grafy_api.v1.routes.executions.runtime.errors import GraphExecutionError
+from grafy_api.v1.routes.executions.runtime.inline import InlineExecutionEngine
+from grafy_api.v1.routes.executions.runtime.models import (
     CompiledEdge,
     CompiledGraph,
     CompiledNode,
 )
-from notarius_api.v1.routes.executions.runtime.node_execution import (
+from grafy_api.v1.routes.executions.runtime.node_execution import (
     NodeExecutionService,
 )
 

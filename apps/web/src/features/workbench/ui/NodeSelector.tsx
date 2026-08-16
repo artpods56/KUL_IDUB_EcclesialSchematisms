@@ -1904,14 +1904,14 @@ export function NodeSelector({
                   {...stylex.props(s.inspectorBody)}
                   className={[
                     stylex.props(s.inspectorBody).className,
-                    "ns-node-detail",
+                    "grafy-node-detail",
                   ].filter(Boolean).join(" ")}
                 >
                   <div
                     {...stylex.props(s.previewStage)}
                     className={[
                       stylex.props(s.previewStage).className,
-                      "ns-node-preview-stage",
+                      "grafy-node-preview-stage",
                     ].filter(Boolean).join(" ")}
                   >
                     <CatalogNodePreview

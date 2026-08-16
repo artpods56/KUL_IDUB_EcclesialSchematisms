@@ -276,8 +276,8 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   onOpenExecutionHistory?: (nodeId: string, executionId?: string) => void;
 }
 
-export const WORKFLOW_NODE_TYPE = "notariusWorkflowNode";
-export const WORKFLOW_EDGE_TYPE = "notariusWorkflowEdge";
+export const WORKFLOW_NODE_TYPE = "grafyWorkflowNode";
+export const WORKFLOW_EDGE_TYPE = "grafyWorkflowEdge";
 export const IMAGE_UPLOAD_OPERATOR_ID = "image.upload";
 export const TABLE_FILE_IMPORT_OPERATOR_ID = "table.file.import";
 export const GEOJSON_UPLOAD_OPERATOR_ID = "gis.geojson.upload";

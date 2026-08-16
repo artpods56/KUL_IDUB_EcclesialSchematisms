@@ -4,17 +4,17 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from notarius_core.domain.node_secrets import JsonValue
-from notarius_core.nodes import NodeExecutionContext, PortShape
-from notarius_core.operators.tables import (
+from grafy_core.domain.node_secrets import JsonValue
+from grafy_core.nodes import NodeExecutionContext, PortShape
+from grafy_core.operators.tables import (
     TABLE_DATA,
     Table,
     TableColumn,
     TableValueType,
 )
-from notarius_plugin_sql.artifacts import SQL_RESULT, SQL_STATEMENT
-from notarius_plugin_sql.models import SqlResult, SqlStatement
-from notarius_plugin_sql.nodes import (
+from grafy_plugin_sql.artifacts import SQL_RESULT, SQL_STATEMENT
+from grafy_plugin_sql.models import SqlResult, SqlStatement
+from grafy_plugin_sql.nodes import (
     ArtifactQueryExecutionError,
     ArtifactQueryRelation,
     ExecuteSqlConfig,
@@ -133,7 +133,7 @@ class FakeArtifactTableExecutor:
 def execute_config() -> ExecuteSqlConfig:
     return ExecuteSqlConfig(
         host="db.internal",
-        database="notarius",
+        database="grafy",
         username="worker",
         ssl_mode=PostgresSslMode.REQUIRE,
     )
@@ -391,7 +391,7 @@ async def test_execute_sql_resolves_bound_secret_and_preserves_result_order() ->
         "dependencies": {
             "host": "db.internal",
             "port": 5432,
-            "database": "notarius",
+            "database": "grafy",
             "username": "worker",
             "ssl_mode": "require",
         },
@@ -407,7 +407,7 @@ async def test_execute_sql_chains_batch_failure_with_connection_context() -> Non
 
     with pytest.raises(
         SqlExecutionError,
-        match="notarius.*db.internal.*2 statements",
+        match="grafy.*db.internal.*2 statements",
     ) as captured:
         await node.run(
             NodeExecutionContext(workspace_id=WORKSPACE_ID, node_id="execute-postgres"),

@@ -2,7 +2,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from notarius_core.domain.module_library import (
+from grafy_core.domain.module_library import (
     Module,
     ModuleLibraryError,
     ModulePublicationState,

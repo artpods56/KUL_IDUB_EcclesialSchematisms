@@ -2,8 +2,8 @@
 
 ## Scope
 - Mode: repository (frontend)
-- Reviewed: the Notarius workbench frontend — `apps/web` (Next.js 16 + React 19 + React Flow + Stylex). Source under `src/`: `app/` (route pages), `features/` (auth, graphs, templates, workspaces, workbench), `hooks/` (SWR data hooks), `lib/api/` (generated OpenAPI client + domain-specific modules), `components/` (shared UI), `lib/stylex/` (tokens). ~118 non-generated TypeScript/TSX source files; ~68,000 lines.
-- Excluded: generated/vendor code — `src/lib/api/generated/notarius.ts` (openapi-typescript output, 6,035 lines), `node_modules`, `.next`, and test files (`*.test.ts`, `*.test.tsx`, `*.spec.ts`).
+- Reviewed: the Grafy workbench frontend — `apps/web` (Next.js 16 + React 19 + React Flow + Stylex). Source under `src/`: `app/` (route pages), `features/` (auth, graphs, templates, workspaces, workbench), `hooks/` (SWR data hooks), `lib/api/` (generated OpenAPI client + domain-specific modules), `components/` (shared UI), `lib/stylex/` (tokens). ~118 non-generated TypeScript/TSX source files; ~68,000 lines.
+- Excluded: generated/vendor code — `src/lib/api/generated/grafy.ts` (openapi-typescript output, 6,035 lines), `node_modules`, `.next`, and test files (`*.test.ts`, `*.test.tsx`, `*.spec.ts`).
 
 ## Summary
 - Findings: 1

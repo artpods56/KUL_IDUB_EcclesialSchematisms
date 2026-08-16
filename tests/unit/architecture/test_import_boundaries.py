@@ -11,37 +11,37 @@ FORBIDDEN_CORE_IMPORTS = (
     "asyncpg",
     "fastapi",
     "mistralai",
-    "notarius_api",
-    "notarius_persistence",
-    "notarius_plugin_gis",
-    "notarius_plugin_llm",
-    "notarius_plugin_ocr",
-    "notarius_plugin_sql",
-    "notarius_storage",
+    "grafy_api",
+    "grafy_persistence",
+    "grafy_plugin_gis",
+    "grafy_plugin_llm",
+    "grafy_plugin_ocr",
+    "grafy_plugin_sql",
+    "grafy_storage",
     "sqlalchemy",
 )
 FORBIDDEN_OCR_PLUGIN_IMPORTS = (
-    "notarius_api",
-    "notarius_storage",
+    "grafy_api",
+    "grafy_storage",
 )
 FORBIDDEN_LLM_PLUGIN_IMPORTS = FORBIDDEN_OCR_PLUGIN_IMPORTS
 FORBIDDEN_API_PLUGIN_IMPORTS = (
     "mistralai",
-    "notarius_plugin_gis",
-    "notarius_plugin_llm",
-    "notarius_plugin_ocr",
-    "notarius_plugin_sql",
+    "grafy_plugin_gis",
+    "grafy_plugin_llm",
+    "grafy_plugin_ocr",
+    "grafy_plugin_sql",
 )
 FORBIDDEN_MCP_IMPORTS = (
     "aiosqlite",
     "fastapi",
-    "notarius_api",
-    "notarius_persistence",
-    "notarius_plugin_gis",
-    "notarius_plugin_llm",
-    "notarius_plugin_ocr",
-    "notarius_plugin_sql",
-    "notarius_storage",
+    "grafy_api",
+    "grafy_persistence",
+    "grafy_plugin_gis",
+    "grafy_plugin_llm",
+    "grafy_plugin_ocr",
+    "grafy_plugin_sql",
+    "grafy_storage",
     "sqlalchemy",
 )
 LEGACY_NAMESPACE = "proto" + "type"
@@ -72,7 +72,7 @@ API_ROUTE_STANDARD_FILES = (
 
 
 def test_api_routes_are_organized_as_capability_slices() -> None:
-    routes_root = REPO_ROOT / "apps/api/src/notarius_api/v1/routes"
+    routes_root = REPO_ROOT / "apps/api/src/grafy_api/v1/routes"
 
     assert {path.name for path in routes_root.glob("*.py")} == {"__init__.py"}
     for area in API_ROUTE_AREAS[:6]:
@@ -129,28 +129,28 @@ def test_mistral_sdk_dependency_is_owned_by_optional_plugins() -> None:
     llm_plugin_dependencies = cast(list[str], llm_plugin_project["dependencies"])
 
     assert not any(
-        requirement.startswith("notarius-plugin-ocr")
+        requirement.startswith("grafy-plugin-ocr")
         for requirement in root_dependencies
     )
     assert not any(
-        requirement.startswith("notarius-plugin-llm")
+        requirement.startswith("grafy-plugin-llm")
         for requirement in root_dependencies
     )
     assert not any(
-        requirement.startswith("notarius-plugin-sql")
+        requirement.startswith("grafy-plugin-sql")
         for requirement in root_dependencies
     )
     assert not any(
         requirement.startswith("mistralai") for requirement in root_dependencies
     )
-    assert root_extras["ocr"] == ["notarius-plugin-ocr"]
-    assert root_extras["llm"] == ["notarius-plugin-llm"]
-    assert root_extras["sql"] == ["notarius-plugin-sql"]
+    assert root_extras["ocr"] == ["grafy-plugin-ocr"]
+    assert root_extras["llm"] == ["grafy-plugin-llm"]
+    assert root_extras["sql"] == ["grafy-plugin-sql"]
 
     for dependencies in (api_dependencies, core_dependencies):
         assert not any(
             requirement.startswith(
-                ("notarius-plugin-llm", "notarius-plugin-ocr", "notarius-plugin-sql")
+                ("grafy-plugin-llm", "grafy-plugin-ocr", "grafy-plugin-sql")
             )
             for requirement in dependencies
         )
@@ -180,7 +180,7 @@ def test_relational_dependencies_are_owned_by_persistence() -> None:
     core_dependencies = cast(list[str], core_project["dependencies"])
     persistence_dependencies = cast(list[str], persistence_project["dependencies"])
 
-    assert "notarius-persistence" in api_dependencies
+    assert "grafy-persistence" in api_dependencies
     for dependencies in (api_dependencies, core_dependencies):
         assert not any(
             requirement.startswith(("aiosqlite", "alembic", "sqlalchemy"))
@@ -194,7 +194,7 @@ def test_relational_dependencies_are_owned_by_persistence() -> None:
 
 
 def test_core_does_not_import_outer_layers_or_domain_adapters() -> None:
-    core_root = REPO_ROOT / "libs/core/src/notarius_core"
+    core_root = REPO_ROOT / "libs/core/src/grafy_core"
     offenders: list[str] = []
 
     for path in core_root.rglob("*.py"):
@@ -207,17 +207,17 @@ def test_core_does_not_import_outer_layers_or_domain_adapters() -> None:
 
 
 def test_persistence_does_not_import_api_or_plugins() -> None:
-    persistence_root = REPO_ROOT / "libs/persistence/src/notarius_persistence"
+    persistence_root = REPO_ROOT / "libs/persistence/src/grafy_persistence"
     offenders: list[str] = []
 
     for path in persistence_root.rglob("*.py"):
         text = path.read_text()
         for forbidden in (
-            "notarius_api",
-            "notarius_plugin_gis",
-            "notarius_plugin_llm",
-            "notarius_plugin_ocr",
-            "notarius_plugin_sql",
+            "grafy_api",
+            "grafy_plugin_gis",
+            "grafy_plugin_llm",
+            "grafy_plugin_ocr",
+            "grafy_plugin_sql",
         ):
             if f"import {forbidden}" in text or f"from {forbidden}" in text:
                 offenders.append(f"{path.relative_to(REPO_ROOT)}: {forbidden}")
@@ -226,7 +226,7 @@ def test_persistence_does_not_import_api_or_plugins() -> None:
 
 
 def test_api_host_does_not_import_optional_plugin_implementations() -> None:
-    api_root = REPO_ROOT / "apps/api/src/notarius_api"
+    api_root = REPO_ROOT / "apps/api/src/grafy_api"
     offenders: list[str] = []
 
     for path in api_root.rglob("*.py"):
@@ -239,7 +239,7 @@ def test_api_host_does_not_import_optional_plugin_implementations() -> None:
 
 
 def test_mcp_depends_on_the_http_api_contract_not_internal_packages() -> None:
-    mcp_root = REPO_ROOT / "apps/mcp/src/notarius_mcp"
+    mcp_root = REPO_ROOT / "apps/mcp/src/grafy_mcp"
     offenders: list[str] = []
 
     for path in mcp_root.rglob("*.py"):
@@ -252,7 +252,7 @@ def test_mcp_depends_on_the_http_api_contract_not_internal_packages() -> None:
 
 
 def test_ocr_plugin_depends_on_core_ports_not_outer_layers() -> None:
-    plugin_root = REPO_ROOT / "plugins/ocr/src/notarius_plugin_ocr"
+    plugin_root = REPO_ROOT / "plugins/ocr/src/grafy_plugin_ocr"
     offenders: list[str] = []
 
     for path in plugin_root.rglob("*.py"):
@@ -265,7 +265,7 @@ def test_ocr_plugin_depends_on_core_ports_not_outer_layers() -> None:
 
 
 def test_llm_plugin_depends_on_core_ports_not_outer_layers() -> None:
-    plugin_root = REPO_ROOT / "plugins/llm/src/notarius_plugin_llm"
+    plugin_root = REPO_ROOT / "plugins/llm/src/grafy_plugin_llm"
     offenders: list[str] = []
 
     for path in plugin_root.rglob("*.py"):
@@ -278,7 +278,7 @@ def test_llm_plugin_depends_on_core_ports_not_outer_layers() -> None:
 
 
 def test_sql_plugin_depends_on_core_ports_not_outer_layers() -> None:
-    plugin_root = REPO_ROOT / "plugins/sql/src/notarius_plugin_sql"
+    plugin_root = REPO_ROOT / "plugins/sql/src/grafy_plugin_sql"
     offenders: list[str] = []
 
     for path in plugin_root.rglob("*.py"):
@@ -292,11 +292,11 @@ def test_sql_plugin_depends_on_core_ports_not_outer_layers() -> None:
 
 def test_retained_python_sources_do_not_use_legacy_namespace() -> None:
     source_roots = (
-        REPO_ROOT / "libs/core/src/notarius_core",
-        REPO_ROOT / "plugins/llm/src/notarius_plugin_llm",
-        REPO_ROOT / "plugins/ocr/src/notarius_plugin_ocr",
-        REPO_ROOT / "plugins/sql/src/notarius_plugin_sql",
-        REPO_ROOT / "apps/api/src/notarius_api",
+        REPO_ROOT / "libs/core/src/grafy_core",
+        REPO_ROOT / "plugins/llm/src/grafy_plugin_llm",
+        REPO_ROOT / "plugins/ocr/src/grafy_plugin_ocr",
+        REPO_ROOT / "plugins/sql/src/grafy_plugin_sql",
+        REPO_ROOT / "apps/api/src/grafy_api",
     )
     offenders: list[str] = []
 

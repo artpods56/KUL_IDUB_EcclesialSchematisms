@@ -2,8 +2,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from notarius_core.artifacts import ArtifactTypeKey
-from notarius_core.domain.collaboration import (
+from grafy_core.artifacts import ArtifactTypeKey
+from grafy_core.domain.collaboration import (
     AddEdgeCommand,
     AddNodeCommand,
     ClearNodeArtifactTypeBindingCommand,
@@ -32,8 +32,8 @@ from notarius_core.domain.collaboration import (
     empty_collaborative_document,
     sanitize_document_for_cross_workspace_copy,
 )
-from notarius_core.domain.errors import CollaborationCommandRejectedError
-from notarius_core.domain.saved_graphs import (
+from grafy_core.domain.errors import CollaborationCommandRejectedError
+from grafy_core.domain.saved_graphs import (
     GraphPoint,
     GraphPresentationAnnotation,
     GraphPresentationDocument,

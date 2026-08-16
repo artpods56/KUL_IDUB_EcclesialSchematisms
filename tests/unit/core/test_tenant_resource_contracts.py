@@ -2,7 +2,7 @@ from uuid import UUID
 
 import pytest
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactObject,
     ArtifactRef,
     ArtifactTypeKey,
@@ -10,9 +10,9 @@ from notarius_core.artifacts import (
     InMemoryInvocationCacheRepository,
     InMemoryUnitOfWork,
 )
-from notarius_core.domain.invocation_cache import InvocationCacheEntry
-from notarius_core.domain.errors import ObjectAlreadyExistsError
-from notarius_core.domain.staged_uploads import StagedUpload
+from grafy_core.domain.invocation_cache import InvocationCacheEntry
+from grafy_core.domain.errors import ObjectAlreadyExistsError
+from grafy_core.domain.staged_uploads import StagedUpload
 
 
 WORKSPACE_ONE = UUID("00000000-0000-0000-0000-000000000101")

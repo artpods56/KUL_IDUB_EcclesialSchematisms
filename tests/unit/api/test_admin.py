@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from notarius_api import admin
+from grafy_api import admin
 
 
 def test_bootstrap_owner_defaults_to_configured_oidc_issuer(
@@ -28,7 +28,7 @@ def test_bootstrap_owner_defaults_to_configured_oidc_issuer(
         sys,
         "argv",
         [
-            "notarius-admin",
+            "grafy-admin",
             "bootstrap-oidc-owner",
             "--subject",
             "first-owner-subject",

@@ -1,18 +1,60 @@
+from pathlib import Path
+
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from notarius_api.settings import Settings
+from grafy_api.settings import Settings
+
+
+def test_default_workspace_reuses_legacy_data(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    legacy_workspace = tmp_path / ".notarius-artifacts" / "workbench"
+    legacy_workspace.mkdir(parents=True)
+
+    settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+    assert settings.workspace == Path(".notarius-artifacts/workbench")
+
+
+def test_default_workspace_prefers_grafy_when_both_exist(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".notarius-artifacts" / "workbench").mkdir(parents=True)
+    (tmp_path / ".grafy-artifacts" / "workbench").mkdir(parents=True)
+
+    settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+    assert settings.workspace == Path(".grafy-artifacts/workbench")
+
+
+def test_database_url_reuses_legacy_database(tmp_path: Path) -> None:
+    legacy_database = tmp_path / "notarius.sqlite3"
+    legacy_database.touch()
+
+    settings = Settings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
+        workspace=tmp_path,
+    )
+
+    assert settings.resolved_database_url == (
+        f"sqlite+aiosqlite:///{legacy_database.resolve()}"
+    )
 
 
 def test_execution_defaults_to_prefect_with_bounded_map_concurrency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("NOTARIUS_EXECUTION_BACKEND", raising=False)
-    monkeypatch.delenv("NOTARIUS_MAP_MAX_CONCURRENCY", raising=False)
-    monkeypatch.delenv("NOTARIUS_MAX_ACTIVE_EXECUTIONS", raising=False)
-    monkeypatch.delenv("NOTARIUS_PREFECT_TASK_RETRIES", raising=False)
+    monkeypatch.delenv("GRAFY_EXECUTION_BACKEND", raising=False)
+    monkeypatch.delenv("GRAFY_MAP_MAX_CONCURRENCY", raising=False)
+    monkeypatch.delenv("GRAFY_MAX_ACTIVE_EXECUTIONS", raising=False)
+    monkeypatch.delenv("GRAFY_PREFECT_TASK_RETRIES", raising=False)
     monkeypatch.delenv(
-        "NOTARIUS_PREFECT_TASK_RETRY_DELAY_SECONDS",
+        "GRAFY_PREFECT_TASK_RETRY_DELAY_SECONDS",
         raising=False,
     )
     # Defaults must be tested independently from a developer's local .env.
@@ -28,21 +70,21 @@ def test_execution_defaults_to_prefect_with_bounded_map_concurrency(
 def test_execution_backend_can_be_selected_from_the_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("NOTARIUS_EXECUTION_BACKEND", "inline")
+    monkeypatch.setenv("GRAFY_EXECUTION_BACKEND", "inline")
 
     assert Settings().execution_backend == "inline"
 
 
 @pytest.mark.parametrize(
     "environment_variable",
-    ["PREFECT_API_URL", "NOTARIUS_PREFECT_API_URL"],
+    ["PREFECT_API_URL", "GRAFY_PREFECT_API_URL"],
 )
 def test_prefect_api_url_accepts_supported_environment_names(
     monkeypatch: pytest.MonkeyPatch,
     environment_variable: str,
 ) -> None:
     monkeypatch.delenv("PREFECT_API_URL", raising=False)
-    monkeypatch.delenv("NOTARIUS_PREFECT_API_URL", raising=False)
+    monkeypatch.delenv("GRAFY_PREFECT_API_URL", raising=False)
     monkeypatch.setenv(environment_variable, "http://prefect.test:4200/api")
 
     settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
@@ -67,7 +109,7 @@ def test_execution_backend_rejects_unknown_values() -> None:
 def test_map_max_concurrency_can_be_selected_from_the_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("NOTARIUS_MAP_MAX_CONCURRENCY", "7")
+    monkeypatch.setenv("GRAFY_MAP_MAX_CONCURRENCY", "7")
 
     assert Settings().map_max_concurrency == 7
 
@@ -80,7 +122,7 @@ def test_map_max_concurrency_must_be_positive() -> None:
 def test_max_active_executions_can_be_selected_from_the_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("NOTARIUS_MAX_ACTIVE_EXECUTIONS", "6")
+    monkeypatch.setenv("GRAFY_MAX_ACTIVE_EXECUTIONS", "6")
 
     assert Settings().max_active_executions == 6
 
@@ -117,7 +159,7 @@ def test_oidc_configuration_rejects_empty_security_values(
 ) -> None:
     configured: dict[str, object] = {
         "oidc_issuer": "https://issuer.example.test",
-        "oidc_client_id": "notarius-web",
+        "oidc_client_id": "grafy-web",
         "oidc_auth_wrapping_key": SecretStr("wrapping-key"),
     }
     configured[field] = value
@@ -178,7 +220,7 @@ def test_command_hmac_key_is_redacted_and_resolved() -> None:
 
 def test_command_hmac_key_fails_closed_when_missing() -> None:
     settings = Settings(command_hmac_key=None)
-    with pytest.raises(ValueError, match="NOTARIUS_COMMAND_HMAC_KEY"):
+    with pytest.raises(ValueError, match="GRAFY_COMMAND_HMAC_KEY"):
         settings.resolved_command_hmac_key()
 
 

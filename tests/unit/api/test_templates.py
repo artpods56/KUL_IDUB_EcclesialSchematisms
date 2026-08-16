@@ -10,13 +10,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from notarius_api.main import create_app
-from notarius_api.settings import Settings
-from notarius_api.v1.routes.auth.dependencies import browser_actor
-from notarius_core.artifacts import ArtifactObject
-from notarius_core.domain.collaboration import CollaborativeGraphHead
-from notarius_core.domain.execution_history import GraphExecution
-from notarius_core.domain.identity import (
+from grafy_api.main import create_app
+from grafy_api.settings import Settings
+from grafy_api.v1.routes.auth.dependencies import browser_actor
+from grafy_core.artifacts import ArtifactObject
+from grafy_core.domain.collaboration import CollaborativeGraphHead
+from grafy_core.domain.execution_history import GraphExecution
+from grafy_core.domain.identity import (
     ActorContext,
     User,
     Workspace,
@@ -24,17 +24,17 @@ from notarius_core.domain.identity import (
     WorkspaceMembership,
     WorkspaceRole,
 )
-from notarius_core.domain.node_secrets import EncryptedNodeSecret
-from notarius_core.domain.saved_graphs import (
+from grafy_core.domain.node_secrets import EncryptedNodeSecret
+from grafy_core.domain.saved_graphs import (
     GraphPoint,
     SavedGraph,
     SavedGraphDocument,
     SavedGraphNode,
     SavedGraphRevision,
 )
-from notarius_persistence.database import create_database
-from notarius_persistence.orm import metadata
-from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
+from grafy_persistence.database import create_database
+from grafy_persistence.orm import metadata
+from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 
 SOURCE_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000701")

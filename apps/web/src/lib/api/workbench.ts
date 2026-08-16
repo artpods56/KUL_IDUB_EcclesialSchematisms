@@ -548,7 +548,7 @@ export function artifactContentUrl(
 
   const resolved = new URL(
     contentUrl,
-    `https://notarius.invalid/api/v1/workspaces/${encodeURIComponent(workspaceId)}/`,
+    `https://grafy.invalid/api/v1/workspaces/${encodeURIComponent(workspaceId)}/`,
   );
   return `${resolved.pathname}${resolved.search}${resolved.hash}`;
 }

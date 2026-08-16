@@ -10,45 +10,45 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import text
 
-from notarius_core.application.collaboration import CollaborationService
-from notarius_core.application.saved_graphs import SavedGraphService
-from notarius_core.artifacts import NodeConfig, NodeInput, NodeOutput
-from notarius_core.domain.saved_graphs import (
+from grafy_core.application.collaboration import CollaborationService
+from grafy_core.application.saved_graphs import SavedGraphService
+from grafy_core.artifacts import NodeConfig, NodeInput, NodeOutput
+from grafy_core.domain.saved_graphs import (
     GraphPoint,
     SavedGraphDocument,
     SavedGraphNode,
 )
-from notarius_core.domain.identity import (
+from grafy_core.domain.identity import (
     User,
     Workspace,
     WorkspaceMembership,
     WorkspaceRole,
 )
-from notarius_core.domain.errors import SavedGraphRevisionConflictError
-from notarius_core.nodes import Node, NodeExecutionContext
-from notarius_core.plugins import NodeSecretInput, Plugin, PluginRegistry
-from notarius_core.ports.node_secrets import NodeSecretUnavailableError
+from grafy_core.domain.errors import SavedGraphRevisionConflictError
+from grafy_core.nodes import Node, NodeExecutionContext
+from grafy_core.plugins import NodeSecretInput, Plugin, PluginRegistry
+from grafy_core.ports.node_secrets import NodeSecretUnavailableError
 
-from notarius_persistence.database import Database, create_database
-from notarius_persistence.orm import metadata
-from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
+from grafy_persistence.database import Database, create_database
+from grafy_persistence.orm import metadata
+from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
-from notarius_api.main import create_app
+from grafy_api.main import create_app
 from tests.unit.api.conftest import install_browser_actor_override
-from notarius_api.v1.routes.executions.models import RunNodeRequest, RunRequest
-from notarius_api.services.composition import (
+from grafy_api.v1.routes.executions.models import RunNodeRequest, RunRequest
+from grafy_api.services.composition import (
     WorkbenchComponents,
     build_workbench_components,
 )
-from notarius_api.v1.routes.executions.runtime.errors import GraphExecutionError
-from notarius_api.v1.routes.node_secrets.services import (
+from grafy_api.v1.routes.executions.runtime.errors import GraphExecutionError
+from grafy_api.v1.routes.node_secrets.services import (
     NodeSecretConfigurationError,
     NodeSecretDeclarationError,
     NodeSecretService,
     NodeSecretValueError,
 )
-from notarius_api.settings import Settings
-from notarius_api.v1.routes.node_secrets.dependencies import node_secret_service
+from grafy_api.settings import Settings
+from grafy_api.v1.routes.node_secrets.dependencies import node_secret_service
 
 from tests.unit.api.conftest import install_workbench_dependency_overrides
 

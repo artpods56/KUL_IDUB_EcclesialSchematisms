@@ -12,20 +12,20 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 
-from notarius_api.main import create_app
-from notarius_api.settings import Settings
-from notarius_api.v1.routes.auth.services import AuthService, IssuedSession
-from notarius_core.application.identity import IdentityService
-from notarius_core.domain.identity import (
+from grafy_api.main import create_app
+from grafy_api.settings import Settings
+from grafy_api.v1.routes.auth.services import AuthService, IssuedSession
+from grafy_core.application.identity import IdentityService
+from grafy_core.domain.identity import (
     User,
     Workspace,
     WorkspaceCapability,
     WorkspaceMembership,
     WorkspaceRole,
 )
-from notarius_persistence.database import create_database
-from notarius_persistence.orm import metadata
-from notarius_persistence.unit_of_work import SqlAlchemyUnitOfWork
+from grafy_persistence.database import create_database
+from grafy_persistence.orm import metadata
+from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 
 def _settings(database_url: str) -> Settings:
@@ -182,8 +182,8 @@ def _issue_pat(
     scopes: list[str],
 ) -> tuple[str, str]:
     with TestClient(create_app(_settings(database_url))) as client:
-        client.cookies.set("notarius_session", issued.cookie_value)
-        client.cookies.set("notarius_csrf", issued.csrf_value)
+        client.cookies.set("grafy_session", issued.cookie_value)
+        client.cookies.set("grafy_csrf", issued.csrf_value)
         response = client.post(
             f"/v1/workspaces/{workspace_id}/personal-access-tokens",
             headers={
@@ -266,8 +266,8 @@ async def test_mcp_rejects_missing_and_revoked_pats(tmp_path: Path) -> None:
             assert listed.structured_content["graphs"] == []
 
         with TestClient(create_app(_settings(database_url))) as browser:
-            browser.cookies.set("notarius_session", issued.cookie_value)
-            browser.cookies.set("notarius_csrf", issued.csrf_value)
+            browser.cookies.set("grafy_session", issued.cookie_value)
+            browser.cookies.set("grafy_csrf", issued.csrf_value)
             revoked = browser.delete(
                 f"/v1/workspaces/{workspace.id}/personal-access-tokens/{token_id}",
                 headers={
@@ -498,8 +498,8 @@ async def test_mcp_fails_closed_after_membership_removal(tmp_path: Path) -> None
             assert listed.structured_content["graphs"] == []
 
         with TestClient(create_app(_settings(database_url))) as browser:
-            browser.cookies.set("notarius_session", owner_session.cookie_value)
-            browser.cookies.set("notarius_csrf", owner_session.csrf_value)
+            browser.cookies.set("grafy_session", owner_session.cookie_value)
+            browser.cookies.set("grafy_csrf", owner_session.csrf_value)
             removed = browser.delete(
                 f"/v1/workspaces/{workspace.id}/members/{member.id}",
                 headers={

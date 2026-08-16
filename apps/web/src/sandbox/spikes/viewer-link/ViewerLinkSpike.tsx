@@ -614,7 +614,7 @@ function MapPreview({
   ];
   return (
     <svg viewBox="0 0 276 136" width="100%" height="136">
-      <rect width="276" height="136" fill="var(--ns-map-land, transparent)" />
+      <rect width="276" height="136" fill="var(--grafy-map-land, transparent)" />
       <path
         d="M0 68 H276"
         stroke="currentColor"

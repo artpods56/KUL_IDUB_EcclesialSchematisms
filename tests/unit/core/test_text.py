@@ -4,14 +4,14 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from notarius_core.artifacts import (
+from grafy_core.artifacts import (
     ArtifactRef,
     InMemoryUnitOfWork,
     NoConfig,
 )
-from notarius_core.nodes import NodeExecutionContext, PortShape
-from notarius_core.operators.arithmetic import ARITHMETIC, INTEGER_VALUE
-from notarius_core.operators.text import (
+from grafy_core.nodes import NodeExecutionContext, PortShape
+from grafy_core.operators.arithmetic import ARITHMETIC, INTEGER_VALUE
+from grafy_core.operators.text import (
     INTEGER_TO_TEXT,
     MARKDOWN,
     TEXT,
@@ -36,15 +36,15 @@ from notarius_core.operators.text import (
     TextValuePayload,
     TextValueResolver,
 )
-from notarius_core.plugins import PluginRegistry, PluginRuntimeContext
-from notarius_core.runtime.invocation import (
+from grafy_core.plugins import PluginRegistry, PluginRuntimeContext
+from grafy_core.runtime.invocation import (
     InvocationMode,
     map_input_candidates,
     supported_invocation_modes,
 )
-from notarius_core.runtime.materialization import MaterializationProvenance
-from notarius_core.runtime.persistence import ArtifactWriteContext
-from notarius_storage import LocalFileObjectStore
+from grafy_core.runtime.materialization import MaterializationProvenance
+from grafy_core.runtime.persistence import ArtifactWriteContext
+from grafy_storage import LocalFileObjectStore
 
 
 TEST_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")

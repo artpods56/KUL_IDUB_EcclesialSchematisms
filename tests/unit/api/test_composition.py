@@ -3,13 +3,13 @@ from typing import cast
 
 from pydantic import BaseModel, ConfigDict, StrictInt
 
-from notarius_core.artifacts import ArtifactTypeKey, ArtifactTypeSpec, JsonObject
-from notarius_core.plugins import Plugin, PluginRuntimeContext
-from notarius_core.runtime.resolvers import InlineModelResolver
+from grafy_core.artifacts import ArtifactTypeKey, ArtifactTypeSpec, JsonObject
+from grafy_core.plugins import Plugin, PluginRuntimeContext
+from grafy_core.runtime.resolvers import InlineModelResolver
 
-from notarius_api.builtins import builtin_plugins
-from notarius_api.plugin_discovery import build_plugin_registry
-from notarius_api.services.composition import build_workbench_components
+from grafy_api.builtins import builtin_plugins
+from grafy_api.plugin_discovery import build_plugin_registry
+from grafy_api.services.composition import build_workbench_components
 
 
 class CompositionPayload(BaseModel):

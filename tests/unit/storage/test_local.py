@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from notarius_core.ports.storage import SaveFileCommand
-from notarius_storage import LocalFileObjectStore
+from grafy_core.ports.storage import SaveFileCommand
+from grafy_storage import LocalFileObjectStore
 
 
 @pytest.mark.asyncio

@@ -3957,7 +3957,7 @@ function WorkbenchBody({
               isVisible
               position={Position.Top}
               offset={20}
-              className={`ns-node-detail ${stylex.props(s.selectionToolbar).className}`}
+              className={`grafy-node-detail ${stylex.props(s.selectionToolbar).className}`}
             >
               <span {...stylex.props(s.selectionLabel)}>
                 {selectedNodeCount} selected

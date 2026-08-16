@@ -1,10 +1,10 @@
-# Local-only Keycloak for Notarius OIDC development.
+# Local-only Keycloak for Grafy OIDC development.
 # Pattern mirrors Stacking's keycloak.localhost:8081 setup.
 #
 #   docker compose -f infra/docker/compose.keycloak.yaml up -d --wait
 #   open http://keycloak.localhost:8081  (admin / admin)
 
-name: notarius-keycloak
+name: grafy-keycloak
 
 services:
   keycloak:

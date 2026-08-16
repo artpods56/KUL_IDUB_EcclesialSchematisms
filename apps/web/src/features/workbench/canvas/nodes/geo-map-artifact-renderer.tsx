@@ -48,8 +48,8 @@ maplibregl.workerUrl = "/maplibre-gl-csp-worker.js";
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 const MAP_FIT_OPTIONS = { padding: 28, maxZoom: 14 } as const;
 const FEATURE_HIT_RADIUS = 12;
-const OSM_SOURCE_ID = "notarius-openstreetmap";
-const OSM_LAYER_ID = "notarius-openstreetmap-raster";
+const OSM_SOURCE_ID = "grafy-openstreetmap";
+const OSM_LAYER_ID = "grafy-openstreetmap-raster";
 const POINT_FILTER: maplibregl.FilterSpecification = [
   "any",
   ["==", ["geometry-type"], "Point"],
@@ -548,11 +548,11 @@ function pmtilesUrl(workspaceId: string, path: string): string {
 }
 
 function sourceId(layer: GeoRenderLayer): string {
-  return `notarius-geo-source-${layer.id}`;
+  return `grafy-geo-source-${layer.id}`;
 }
 
 function layerId(layer: GeoRenderLayer, kind: string): string {
-  return `notarius-geo-${layer.id}-${kind}`;
+  return `grafy-geo-${layer.id}-${kind}`;
 }
 
 function categoryLayerId(
@@ -2329,7 +2329,7 @@ function GeoMapPreview({
 
   return (
     <div
-      data-notarius-geo-map="true"
+      data-grafy-geo-map="true"
       {...mapInteractionProps(stylex.props(s.shell))}
       style={{ height: Math.max(320, availableHeight ?? 420) }}
     >

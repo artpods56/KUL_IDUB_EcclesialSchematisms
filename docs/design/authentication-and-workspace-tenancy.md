@@ -14,13 +14,13 @@
 ## Summary
 
 This design adds application identity, workspace tenancy, and continuing
-authorization to Notarius. The implementation through Phase 6 matches this
+authorization to Grafy. The implementation through Phase 6 matches this
 contract; Phase 7 still needs live SSH/OIDC and backup/restore operator
 rehearsal before calling the refactor release-ready.
 
 The design makes these decisions:
 
-1. Notarius uses `User`, `Workspace`, and `WorkspaceMembership`. A shared
+1. Grafy uses `User`, `Workspace`, and `WorkspaceMembership`. A shared
    workspace is the product's team or organization boundary; there is no second
    team aggregate and no per-graph ACL in the first delivery.
 2. FastAPI is the OpenID Connect relying party. The browser receives an opaque,
@@ -64,7 +64,7 @@ The design makes these decisions:
 - Moving a graph and its dependent state between workspaces.
 - Sharing the browser-local Artifact Viewer document.
 - Multiple API owners, replicas, or a distributed graph-room broker.
-- Giving an unrelated Streamlit application access to Notarius sessions,
+- Giving an unrelated Streamlit application access to Grafy sessions,
   cookies, tokens, or workspace data.
 - Workspace deletion in the first delivery. Graph deletion remains an
   owner-only workflow; bulk workspace destruction needs a separate lifecycle.
@@ -613,7 +613,7 @@ storage services are not published directly.
 The public OIDC callback is
 `https://<configured-host>:<port>/api/v1/auth/oidc/callback`. The complete URL
 must exactly match provider registration, while its origin must equal
-`NOTARIUS_PUBLIC_ORIGIN`. The browser must trust the TLS certificate for that
+`GRAFY_PUBLIC_ORIGIN`. The browser must trust the TLS certificate for that
 hostname even when SSH forwards the gateway port.
 
 ## Persistence model
