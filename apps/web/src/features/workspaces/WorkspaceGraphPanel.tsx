@@ -5,16 +5,23 @@ import { Search, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { useSavedGraphs } from "@/hooks/use-api";
+import {
+  FINE_POINTER_QUERY,
+  useMediaQuery,
+} from "@/hooks/use-media-query";
 import type { SavedGraphSummary } from "@/lib/api";
 import { workbenchGraphPath } from "@/features/workbench/routes";
 import { GraphRowMenu } from "./GraphRowMenu";
+
+export type WorkspaceGraphPanelCloseReason =
+  "close-button" | "escape" | "graph-selected" | "outside-pointer";
+
 
 export function sortGraphsByRecency(
   graphs: readonly SavedGraphSummary[],
 ): readonly SavedGraphSummary[] {
   return [...graphs].sort(
-    (left, right) =>
-      Date.parse(right.updated_at) - Date.parse(left.updated_at),
+    (left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at),
   );
 }
 
@@ -56,21 +63,25 @@ export function WorkspaceGraphPanel({
   busyGraphId?: string | null;
   onRename: (graph: SavedGraphSummary) => void;
   onDelete: (graph: SavedGraphSummary) => void;
-  onClose: (restoreFocus?: boolean) => void;
+  onClose: (reason: WorkspaceGraphPanelCloseReason) => void;
 }) {
   const router = useRouter();
   const { data, isLoading } = useSavedGraphs(workspaceId);
+  const finePointer = useMediaQuery(FINE_POINTER_QUERY);
   const [query, setQuery] = React.useState("");
   const panelRef = React.useRef<HTMLDivElement | null>(null);
   const searchRef = React.useRef<HTMLInputElement | null>(null);
+  const autoFocusAttemptedRef = React.useRef(false);
 
   React.useEffect(() => {
-    searchRef.current?.focus();
-  }, []);
+    if (autoFocusAttemptedRef.current) return;
+    autoFocusAttemptedRef.current = true;
+    if (finePointer) searchRef.current?.focus();
+  }, [finePointer]);
 
   React.useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose(true);
+      if (event.key === "Escape") onClose("escape");
     };
     const onPointerDown = (event: PointerEvent) => {
       const panel = panelRef.current;
@@ -85,7 +96,7 @@ export function WorkspaceGraphPanel({
       ) {
         return;
       }
-      onClose(false);
+      onClose("outside-pointer");
     };
     document.addEventListener("keydown", onKeyDown);
     document.addEventListener("pointerdown", onPointerDown);
@@ -103,7 +114,7 @@ export function WorkspaceGraphPanel({
 
   const openGraph = (graphId: string) => {
     router.push(workbenchGraphPath(workspaceSlug, graphId));
-    onClose(false);
+    onClose("graph-selected");
   };
 
   return (
@@ -124,7 +135,7 @@ export function WorkspaceGraphPanel({
           type="button"
           className="ns-graph-panel__icon-button"
           aria-label="Close quick graph switcher"
-          onClick={() => onClose(true)}
+          onClick={() => onClose("close-button")}
         >
           <X size={14} aria-hidden="true" />
         </button>

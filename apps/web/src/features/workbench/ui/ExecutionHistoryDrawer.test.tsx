@@ -58,6 +58,7 @@ afterEach(async () => {
     container.remove();
   }
   mountedRoots.clear();
+  document.body.replaceChildren();
   vi.clearAllMocks();
 });
 
@@ -127,6 +128,8 @@ async function renderDrawer(
 ) {
   const container = document.createElement("div");
   document.body.append(container);
+  const returnFocusElement = document.createElement("button");
+  document.body.append(returnFocusElement);
   const root = createRoot(container);
   mountedRoots.set(root, container);
   const swrConfig = { provider: () => cache, dedupingInterval: 0 };
@@ -139,6 +142,7 @@ async function renderDrawer(
     nodeTitles: { "node-1": "Extract invoice" },
     executionRunning: false,
     isDirty: false,
+    returnFocusRef: { current: returnFocusElement },
     onClose: () => undefined,
     ...props,
   };
@@ -166,7 +170,7 @@ async function renderDrawer(
     mountedRoots.delete(root);
     container.remove();
   };
-  return { container, rerender, unmount };
+  return { container, rerender, returnFocusElement, unmount };
 }
 
 function buttonNamed(container: HTMLElement, name: string): HTMLButtonElement {
@@ -180,6 +184,28 @@ function buttonNamed(container: HTMLElement, name: string): HTMLButtonElement {
 }
 
 describe("ExecutionHistoryDrawer", () => {
+  it("closes on Escape after focus leaves the drawer and restores the trigger", async () => {
+    apiMocks.listGraphExecutions.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+    });
+    const onClose = vi.fn();
+    const { container, returnFocusElement } = await renderDrawer({ onClose });
+
+    const closeButton = buttonNamed(container, "Close execution history");
+    expect(document.activeElement).toBe(closeButton);
+    returnFocusElement.focus();
+
+    await React.act(async () => {
+      returnFocusElement.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(returnFocusElement);
+  });
+
   it("lists run provenance and renders historical artifacts without touching canvas state", async () => {
     const execution = summary("execution-1");
     apiMocks.listGraphExecutions.mockResolvedValue({

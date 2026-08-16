@@ -219,7 +219,6 @@ import {
   type GraphCommand,
 } from "../model/graph-document";
 import {
-  missingRequiredInputsFor,
   selectedNodeAndAncestorIds,
   type WorkflowNode,
 } from "../model/execution-plan";
@@ -231,6 +230,7 @@ import {
 } from "../model/node-catalog";
 import { workbenchGraphPath } from "../routes";
 import { useNodeRegistry } from "@/hooks/use-api";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import {
   uploadFile,
   type ArtifactTypeKey,
@@ -247,6 +247,20 @@ interface WorkbenchProps {
 
 const MOBILE_WORKBENCH_QUERY = "(max-width: 720px)";
 
+interface SafeAreaInsets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+const ZERO_SAFE_AREA_INSETS: SafeAreaInsets = {
+  top: 0,
+  right: 0,
+  bottom: 0,
+  left: 0,
+};
+
 const WORKBENCH_DESKTOP_FIT_VIEW_OPTIONS = {
   padding: {
     top: "90px",
@@ -257,15 +271,61 @@ const WORKBENCH_DESKTOP_FIT_VIEW_OPTIONS = {
   maxZoom: 0.88,
 } as const;
 
-const WORKBENCH_MOBILE_FIT_VIEW_OPTIONS = {
-  padding: {
-    top: "76px",
-    right: "20px",
-    bottom: "96px",
-    left: "20px",
-  },
-  maxZoom: 0.88,
+const WORKBENCH_MOBILE_FIT_PADDING = {
+  top: 76,
+  right: 20,
+  bottom: 96,
+  left: 20,
 } as const;
+
+function readSafeAreaInsets(): SafeAreaInsets {
+  const probe = document.createElement("div");
+  probe.style.cssText = [
+    "position: fixed",
+    "visibility: hidden",
+    "pointer-events: none",
+    "padding-top: env(safe-area-inset-top, 0px)",
+    "padding-right: env(safe-area-inset-right, 0px)",
+    "padding-bottom: env(safe-area-inset-bottom, 0px)",
+    "padding-left: env(safe-area-inset-left, 0px)",
+  ].join(";");
+  document.body.append(probe);
+  const style = window.getComputedStyle(probe);
+  const insets = {
+    top: Number.parseFloat(style.paddingTop) || 0,
+    right: Number.parseFloat(style.paddingRight) || 0,
+    bottom: Number.parseFloat(style.paddingBottom) || 0,
+    left: Number.parseFloat(style.paddingLeft) || 0,
+  };
+  probe.remove();
+  return insets;
+}
+
+function useSafeAreaInsets(enabled: boolean): SafeAreaInsets {
+  const [insets, setInsets] = React.useState(ZERO_SAFE_AREA_INSETS);
+  React.useLayoutEffect(() => {
+    if (!enabled) return;
+    const updateInsets = () => {
+      const next = readSafeAreaInsets();
+      setInsets((current) =>
+        current.top === next.top &&
+        current.right === next.right &&
+        current.bottom === next.bottom &&
+        current.left === next.left
+          ? current
+          : next,
+      );
+    };
+    updateInsets();
+    window.addEventListener("resize", updateInsets);
+    window.visualViewport?.addEventListener("resize", updateInsets);
+    return () => {
+      window.removeEventListener("resize", updateInsets);
+      window.visualViewport?.removeEventListener("resize", updateInsets);
+    };
+  }, [enabled]);
+  return insets;
+}
 
 interface PendingBoundEdge {
   nodeId: string;
@@ -292,17 +352,23 @@ function WorkbenchBody({
   workspaceSlug,
   initialGraphId,
 }: WorkbenchProps) {
-  const [mobileWorkbench, setMobileWorkbench] = React.useState(false);
-  React.useLayoutEffect(() => {
-    const media = window.matchMedia(MOBILE_WORKBENCH_QUERY);
-    const updateMobileWorkbench = () => setMobileWorkbench(media.matches);
-    updateMobileWorkbench();
-    media.addEventListener("change", updateMobileWorkbench);
-    return () => media.removeEventListener("change", updateMobileWorkbench);
-  }, []);
-  const workbenchFitViewOptions = mobileWorkbench
-    ? WORKBENCH_MOBILE_FIT_VIEW_OPTIONS
-    : WORKBENCH_DESKTOP_FIT_VIEW_OPTIONS;
+  const mobileWorkbench = useMediaQuery(MOBILE_WORKBENCH_QUERY);
+  const safeAreaInsets = useSafeAreaInsets(mobileWorkbench);
+  const workbenchFitViewOptions = React.useMemo(
+    () => {
+      if (!mobileWorkbench) return WORKBENCH_DESKTOP_FIT_VIEW_OPTIONS;
+      return {
+        padding: {
+          top: `${WORKBENCH_MOBILE_FIT_PADDING.top + safeAreaInsets.top}px`,
+          right: `${WORKBENCH_MOBILE_FIT_PADDING.right + safeAreaInsets.right}px`,
+          bottom: `${WORKBENCH_MOBILE_FIT_PADDING.bottom + safeAreaInsets.bottom}px`,
+          left: `${WORKBENCH_MOBILE_FIT_PADDING.left + safeAreaInsets.left}px`,
+        },
+        maxZoom: 0.88,
+      } as const;
+    },
+    [mobileWorkbench, safeAreaInsets],
+  );
   const {
     data: registry,
     error: registryError,
@@ -523,6 +589,7 @@ function WorkbenchBody({
     nodeId: string | null;
     executionId: string | null;
   } | null>(null);
+  const executionHistoryReturnFocusRef = React.useRef<HTMLElement | null>(null);
   const [transientRunError, setRunError] = React.useState<string | null>(null);
   const runError = authoringState.error ?? transientRunError;
   const clearRunError = React.useCallback(() => {
@@ -1079,6 +1146,9 @@ function WorkbenchBody({
     nodeId: string,
     executionId?: string,
   ) => {
+    if (document.activeElement instanceof HTMLElement) {
+      executionHistoryReturnFocusRef.current = document.activeElement;
+    }
     setLibraryOpen(false);
     setExecutionHistoryTarget({ nodeId, executionId: executionId ?? null });
   }, []);
@@ -1280,17 +1350,9 @@ function WorkbenchBody({
     clearPersistenceError,
     dismissPersistenceError,
     persistenceOperationBusy,
-    graphBrowserOpen,
-    toggleGraphBrowser,
     closeGraphBrowser,
-    savedGraphs,
-    savedGraphsLoading,
-    savedGraphsRefreshing,
-    savedGraphsError,
     refreshSavedGraphs,
-    requestNewGraph,
     saveCurrentGraph,
-    openSavedGraph,
     removeSavedGraph,
     syncFromCollaborativeHead,
     purgeLocalGraphState,
@@ -1502,6 +1564,9 @@ function WorkbenchBody({
       }
     },
   });
+  const canSubmitRoomCommands = graphRoom.canSubmitCommands;
+  const submitRoomCommand = graphRoom.submitCommand;
+  const reconcileCheckpointHead = graphRoom.reconcileCheckpointHead;
   React.useLayoutEffect(() => {
     replaceHeadRef.current = graphRoom.replaceHead;
     graphRoomHeadRef.current = graphRoom.head;
@@ -1510,11 +1575,11 @@ function WorkbenchBody({
   React.useEffect(() => {
     roomCommandSyncRef.current = {
       submitLocal: (commands, before) => {
-        if (!graphRoom.canSubmitCommands) return;
+        if (!canSubmitRoomCommands) return;
         for (const command of commands) {
           const roomCommand = toRoomGraphCommand(command, before);
           if (!roomCommand) continue;
-          void graphRoom.submitCommand(roomCommand).catch((error: unknown) => {
+          void submitRoomCommand(roomCommand).catch((error: unknown) => {
             if (
               error instanceof GraphRoomCommandError &&
               (error.errorCode === "superseded" ||
@@ -1533,16 +1598,16 @@ function WorkbenchBody({
         }
       },
     };
-  }, [graphRoom.canSubmitCommands, graphRoom.submitCommand]);
+  }, [canSubmitRoomCommands, submitRoomCommand]);
   React.useEffect(() => {
     presentationRoomSyncRef.current = {
       submitReplace: (state) => {
-        if (!graphRoom.canSubmitCommands) return;
+        if (!canSubmitRoomCommands) return;
         const command = {
           kind: "replace_presentation",
           presentation: presentationFromArtifactViewers(state),
         } as RoomGraphCommand;
-        void graphRoom.submitCommand(command).catch((error: unknown) => {
+        void submitRoomCommand(command).catch((error: unknown) => {
           if (
             error instanceof GraphRoomCommandError &&
             (error.errorCode === "superseded" ||
@@ -1560,12 +1625,12 @@ function WorkbenchBody({
         });
       },
       submitMove: (positions) => {
-        if (!graphRoom.canSubmitCommands || !positions.length) return;
+        if (!canSubmitRoomCommands || !positions.length) return;
         const command = {
           kind: "move_artifact_viewers",
           positions: [...positions],
         } as RoomGraphCommand;
-        void graphRoom.submitCommand(command).catch((error: unknown) => {
+        void submitRoomCommand(command).catch((error: unknown) => {
           if (
             error instanceof GraphRoomCommandError &&
             (error.errorCode === "superseded" ||
@@ -1583,12 +1648,12 @@ function WorkbenchBody({
         });
       },
       submitMoveAnnotations: (positions) => {
-        if (!graphRoom.canSubmitCommands || !positions.length) return;
+        if (!canSubmitRoomCommands || !positions.length) return;
         const command = {
           kind: "move_annotations",
           positions: [...positions],
         } as RoomGraphCommand;
-        void graphRoom.submitCommand(command).catch((error: unknown) => {
+        void submitRoomCommand(command).catch((error: unknown) => {
           if (
             error instanceof GraphRoomCommandError &&
             (error.errorCode === "superseded" ||
@@ -1606,11 +1671,11 @@ function WorkbenchBody({
         });
       },
     };
-  }, [graphRoom.canSubmitCommands, graphRoom.submitCommand]);
+  }, [canSubmitRoomCommands, submitRoomCommand]);
   React.useEffect(() => {
     const graphId = activeGraph?.id;
     roomPersistenceRef.current = {
-      canPersist: graphRoom.canSubmitCommands && graphId !== undefined,
+      canPersist: canSubmitRoomCommands && graphId !== undefined,
       persistDocument: async (draft) => {
         if (!graphId) {
           throw new Error("Graph room requires a saved graph id.");
@@ -1625,12 +1690,12 @@ function WorkbenchBody({
             presentation: draft.presentation ?? emptyGraphPresentation(),
           },
         } as RoomGraphCommand;
-        const { head: replacedHead } = await graphRoom.submitCommand(command);
+        const { head: replacedHead } = await submitRoomCommand(command);
         const checkpointed = await checkpointGraph(workspaceId, graphId, {
           expected_room_epoch: replacedHead.room_epoch,
           expected_sequence: replacedHead.collaboration_sequence,
         });
-        return graphRoom.reconcileCheckpointHead(
+        return reconcileCheckpointHead(
           checkpointed.head,
           replacedHead.room_epoch,
         );
@@ -1638,9 +1703,9 @@ function WorkbenchBody({
     };
   }, [
     activeGraph?.id,
-    graphRoom.canSubmitCommands,
-    graphRoom.reconcileCheckpointHead,
-    graphRoom.submitCommand,
+    canSubmitRoomCommands,
+    reconcileCheckpointHead,
+    submitRoomCommand,
     workspaceId,
   ]);
   const {
@@ -1700,12 +1765,6 @@ function WorkbenchBody({
     return () => window.cancelAnimationFrame(frame);
   }, [fitRevision, flow, workbenchFitViewOptions]);
 
-  const imageUploadWithoutImages = nodes.some(
-    (node) =>
-      workflowNodeIsSupported(node.data) &&
-      isFileUploadOperator(node.data.spec.operator_id) &&
-      !imageUploads(node.data).length,
-  );
   const selectedNodeIds = React.useMemo(
     () => [
       ...nodes.flatMap((node) => (node.selected ? [node.id] : [])),
@@ -1817,10 +1876,6 @@ function WorkbenchBody({
       !selectedWithDependencyIds.has(node.id) ||
       workflowNodeIsSupported(node.data),
   );
-  const missingRequiredInputs = missingRequiredInputsFor(nodes, edges);
-  const connectionInstruction = missingRequiredInputs.length
-    ? `${missingRequiredInputs.length} required input${missingRequiredInputs.length === 1 ? "" : "s"} unconnected · drag between ports to connect them`
-    : null;
   const selectedWorkflowCount = nodes.filter((node) => node.selected).length;
   const selectedViewerCount = artifactViewers.nodes.filter(
     (node) => node.selected,
@@ -1830,12 +1885,6 @@ function WorkbenchBody({
     !canExecuteGraph || runSelectionBusy || !selectedNodesAreRunnable;
   const runSelectedWithDependenciesDisabled =
     !canExecuteGraph || runSelectionBusy || !selectedWithDependenciesAreRunnable;
-  const nodeErrorCount = nodes.filter(
-    (node) => Boolean(node.data.execution.error),
-  ).length;
-  const compatibilityIssueCount =
-    nodes.filter((node) => !workflowNodeIsSupported(node.data)).length +
-    edges.filter((edge) => edge.data?.compatibilityIssues?.length).length;
   const globalIssues = React.useMemo<GlobalIssue[]>(() => {
     const issues: GlobalIssue[] = [];
     if (registryError) {
@@ -4134,10 +4183,11 @@ function WorkbenchBody({
             ? "Browse previous executions"
             : "Save the graph to browse executions"}
           {...stylex.props(s.railButton)}
-          onClick={() => {
+          onClick={(event) => {
             closeGraphBrowser();
             setLibraryOpen(false);
             setGridPanelOpen(false);
+            executionHistoryReturnFocusRef.current = event.currentTarget;
             setExecutionHistoryTarget({ nodeId: null, executionId: null });
           }}
         >
@@ -4196,6 +4246,7 @@ function WorkbenchBody({
           nodeTitles={nodeTitles}
           executionRunning={running}
           isDirty={isDirty}
+          returnFocusRef={executionHistoryReturnFocusRef}
           onClose={() => setExecutionHistoryTarget(null)}
         />
       ) : null}

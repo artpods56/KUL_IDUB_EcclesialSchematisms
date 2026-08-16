@@ -10,6 +10,7 @@ import { useAuthSession } from "@/features/auth/AuthSessionBoundary";
 import { workbenchGraphPath } from "@/features/workbench/routes";
 import { WorkspaceRail } from "@/features/workspaces/WorkspaceLayout";
 import { useSavedGraphs, useWorkspaces } from "@/hooks/use-api";
+import { FINE_POINTER_QUERY } from "@/hooks/use-media-query";
 import { createWorkspaceTemplate } from "@/lib/api";
 import { templateLocationLabel, templateUseErrorMessage } from "./TemplateLibrary";
 
@@ -21,7 +22,24 @@ export interface SaveAsTemplateSource {
 }
 
 
-export function SaveAsTemplate({ source }: { source: SaveAsTemplateSource | null }) {
+export function SaveAsTemplate({
+  source,
+}: {
+  source: SaveAsTemplateSource | null;
+}) {
+  const sourceKey = source
+    ? JSON.stringify([source.workspaceId, source.graphId, source.revision])
+    : "missing-source";
+
+  return <SaveAsTemplateFlow key={sourceKey} source={source} />;
+}
+
+
+function SaveAsTemplateFlow({
+  source,
+}: {
+  source: SaveAsTemplateSource | null;
+}) {
   const router = useRouter();
   const { session, logout } = useAuthSession();
   const { data: workspaces } = useWorkspaces(session.user_id);
@@ -54,7 +72,7 @@ export function SaveAsTemplate({ source }: { source: SaveAsTemplateSource | null
     if (
       typeof window !== "undefined" &&
       typeof window.matchMedia === "function" &&
-      window.matchMedia("(pointer: fine)").matches
+      window.matchMedia(FINE_POINTER_QUERY).matches
     ) {
       nameInputRef.current?.focus();
     }

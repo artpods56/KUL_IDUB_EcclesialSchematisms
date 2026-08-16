@@ -35,16 +35,23 @@ const s = stylex.create({
     top: {
       default: "66px",
       "@media (max-width: 720px)": "12px",
-      "@media (max-width: 620px)": "calc(68px + env(safe-area-inset-top, 0px))",
+      "@media (max-width: 620px)":
+        "calc(var(--ns-mobile-overlay-top, 68px) + env(safe-area-inset-top, 0px))",
     },
     right: {
       default: "13px",
-      "@media (max-width: 720px)": "12px",
+      "@media (max-width: 720px)":
+        "calc(12px + env(safe-area-inset-right, 0px))",
     },
-    bottom: "12px",
+    bottom: {
+      default: "12px",
+      "@media (max-width: 720px)":
+        "calc(12px + env(safe-area-inset-bottom, 0px))",
+    },
     left: {
       default: "auto",
-      "@media (max-width: 720px)": "12px",
+      "@media (max-width: 720px)":
+        "calc(12px + env(safe-area-inset-left, 0px))",
     },
     width: {
       default: "min(880px, calc(100% - 26px))",
@@ -459,6 +466,7 @@ export interface ExecutionHistoryDrawerProps {
   nodeTitles: Readonly<Record<string, string>>;
   executionRunning: boolean;
   isDirty: boolean;
+  returnFocusRef: React.RefObject<HTMLElement | null>;
   onClose: () => void;
 }
 
@@ -471,9 +479,12 @@ export function ExecutionHistoryDrawer({
   nodeTitles,
   executionRunning,
   isDirty,
+  returnFocusRef,
   onClose,
 }: ExecutionHistoryDrawerProps) {
   const { data: registry } = useNodeRegistry(workspaceId);
+  const drawerRef = React.useRef<HTMLElement>(null);
+  const closeButtonRef = React.useRef<HTMLButtonElement>(null);
   const [selectedExecutionId, setSelectedExecutionId] =
     React.useState<string | null>(initialExecutionId);
   const historyKey = React.useCallback(
@@ -552,6 +563,29 @@ export function ExecutionHistoryDrawer({
     void refreshHistory();
     void refreshDetail();
   }, [executionRunning, refreshDetail, refreshHistory]);
+  const closeDrawer = React.useCallback(() => {
+    returnFocusRef.current?.focus();
+    onClose();
+  }, [onClose, returnFocusRef]);
+  React.useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      closeDrawer();
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [closeDrawer]);
+  React.useEffect(() => {
+    const drawer = drawerRef.current;
+    const returnFocusElement = returnFocusRef.current;
+    closeButtonRef.current?.focus();
+    return () => {
+      if (drawer?.contains(document.activeElement)) {
+        returnFocusElement?.focus();
+      }
+    };
+  }, [returnFocusRef]);
   const listError = historyError
     ? errorMessage(historyError, "Could not load execution history.")
     : null;
@@ -569,7 +603,12 @@ export function ExecutionHistoryDrawer({
   const filteredNodeTitle = nodeId ? (nodeTitles[nodeId] ?? nodeId) : null;
 
   return (
-    <aside aria-label="Execution history" {...stylex.props(s.drawer)}>
+    <aside
+      ref={drawerRef}
+      role="dialog"
+      aria-label="Execution history"
+      {...stylex.props(s.drawer)}
+    >
       <header {...stylex.props(s.header)}>
         <span aria-hidden="true" {...stylex.props(s.headerIcon)}>
           <History size={14} />
@@ -596,10 +635,11 @@ export function ExecutionHistoryDrawer({
           <RefreshCw size={13} {...stylex.props(historyValidating ? s.spinner : null)} />
         </button>
         <button
+          ref={closeButtonRef}
           type="button"
           aria-label="Close execution history"
           {...stylex.props(s.headerButton)}
-          onClick={onClose}
+          onClick={closeDrawer}
         >
           <X size={14} />
         </button>

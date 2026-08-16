@@ -1,16 +1,83 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
 
-import type { Workspace } from "@/lib/api";
+import * as React from "react";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { Session, Workspace } from "@/lib/api";
 import {
+  WorkspaceRail,
   resolveSelectedWorkspace,
   sessionDisplayName,
   sessionInitials,
   workspaceCanManageMembers,
   workspaceDisplayName,
+  workspaceMobileContextLabel,
   workspaceRouteAccessState,
   workspaceRouteGraphId,
   workspaceSelectorLabel,
 } from "./WorkspaceLayout";
+
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
+const testState = vi.hoisted(() => ({
+  pathname: "/workspaces/operations/graphs/graph-a",
+  push: vi.fn(),
+}));
+
+vi.mock("next/navigation", () => ({
+  useParams: () => ({ workspaceSlug: "operations" }),
+  usePathname: () => testState.pathname,
+  useRouter: () => ({ push: testState.push }),
+}));
+
+vi.mock("next/link", () => ({
+  default: ({ children, ...props }: React.ComponentProps<"a">) =>
+    React.createElement("a", props, children),
+}));
+
+vi.mock("@/components/brand", () => ({
+  BrandIcon: () => React.createElement("span"),
+  BrandWordmark: () => React.createElement("span"),
+}));
+
+vi.mock("@/components/theme", () => ({
+  useTheme: () => ({ cycleTheme: vi.fn(), preference: "system" }),
+}));
+
+vi.mock("@/components/threshold-status", () => ({
+  ThresholdStatus: () => null,
+}));
+
+vi.mock("@/features/auth/AuthSessionBoundary", () => ({
+  useAuthSession: () => ({ session: testSession, logout: vi.fn() }),
+}));
+
+vi.mock("@/features/workbench/ui/WorkbenchChromeContext", () => ({
+  useWorkbenchChrome: () => null,
+}));
+
+vi.mock("@/hooks/use-api", () => ({
+  useSavedGraphs: () => ({
+    data: { graphs: [] },
+    mutate: vi.fn(),
+  }),
+  useWorkspaces: () => ({ data: [] }),
+}));
+
+const mountedRoots = new Set<Root>();
+
+afterEach(async () => {
+  for (const root of mountedRoots) {
+    await act(async () => root.unmount());
+  }
+  mountedRoots.clear();
+  document.body.replaceChildren();
+  testState.pathname = "/workspaces/operations/graphs/graph-a";
+  testState.push.mockReset();
+  vi.unstubAllGlobals();
+});
 
 const workspace = (
   capabilities: readonly Workspace["capabilities"][number][],
@@ -25,11 +92,71 @@ const workspace = (
   ...overrides,
 });
 
+const testSession: Session = {
+  id: "session-1",
+  user_id: "user-1",
+  display_name: "Ada Lovelace",
+  email: "ada@example.test",
+  current: true,
+  created_at: "2026-08-15T00:00:00Z",
+  expires_at: "2026-08-16T00:00:00Z",
+  last_used_at: null,
+  revoked_at: null,
+};
+
+async function renderWorkspaceRail(): Promise<{
+  container: HTMLDivElement;
+  rerender: () => Promise<void>;
+}> {
+  const media = {
+    matches: true,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  };
+  vi.stubGlobal("matchMedia", vi.fn(() => media));
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    callback(0);
+    return 1;
+  });
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  mountedRoots.add(root);
+  const rerender = async () => {
+    await act(async () => {
+      root.render(
+        React.createElement(WorkspaceRail, {
+          workspaces: [workspace([])],
+          activeSlug: "operations",
+          session: testSession,
+          onLogout: vi.fn(),
+        }),
+      );
+    });
+  };
+  await rerender();
+  return { container, rerender };
+}
+
 describe("workspace route and capability state", () => {
   it("distinguishes direct missing routes from revoked access", () => {
-    expect(workspaceRouteAccessState("unknown", undefined, undefined)).toBe("missing");
-    expect(workspaceRouteAccessState("operations", undefined, { slug: "operations", id: "workspace-1" })).toBe("revoked");
-    expect(workspaceRouteAccessState("operations", workspace([]), { slug: "operations", id: "workspace-1" })).toBe("available");
+    expect(workspaceRouteAccessState("unknown", undefined, undefined)).toBe(
+      "missing",
+    );
+    expect(
+      workspaceRouteAccessState("operations", undefined, {
+        slug: "operations",
+        id: "workspace-1",
+      }),
+    ).toBe("revoked");
+    expect(
+      workspaceRouteAccessState("operations", workspace([]), {
+        slug: "operations",
+        id: "workspace-1",
+      }),
+    ).toBe("available");
   });
 
   it("only exposes member management while the server capability is present", () => {
@@ -70,9 +197,34 @@ describe("workspace route and capability state", () => {
         workspace([], { kind: "personal", name: "Personal workspace" }),
       ),
     ).toBe("Personal");
+    expect(workspaceSelectorLabel(workspace([], { name: "Operations" }))).toBe(
+      "Operations",
+    );
+  });
+
+  it("labels the mobile header with route context instead of a fallback workspace", () => {
+    const personal = workspace([], {
+      kind: "personal",
+      name: "Personal workspace",
+    });
+
+    expect(workspaceMobileContextLabel("/graphs", personal)).toBe("Graphs");
+    expect(workspaceMobileContextLabel("/templates", personal)).toBe(
+      "Templates",
+    );
+    expect(workspaceMobileContextLabel("/templates/new", personal)).toBe(
+      "Save template",
+    );
+    expect(workspaceMobileContextLabel("/workspaces", personal)).toBe(
+      "Teams & access",
+    );
     expect(
-      workspaceSelectorLabel(workspace([], { name: "Operations" })),
+      workspaceMobileContextLabel(
+        "/workspaces/operations/graphs/graph-1",
+        workspace([], { name: "Operations" }),
+      ),
     ).toBe("Operations");
+    expect(workspaceMobileContextLabel("/unknown", personal)).toBe("Graphs");
   });
 
   it("resolves the selected workspace to the active slug, else personal", () => {
@@ -86,9 +238,7 @@ describe("workspace route and capability state", () => {
       slug: "operations",
       name: "Operations",
     });
-    expect(
-      resolveSelectedWorkspace([personal, team], "operations"),
-    ).toBe(team);
+    expect(resolveSelectedWorkspace([personal, team], "operations")).toBe(team);
     expect(resolveSelectedWorkspace([personal, team], "missing")).toBe(
       personal,
     );
@@ -120,5 +270,58 @@ describe("workspace route and capability state", () => {
         user_id: "user-1",
       }),
     ).toBe("AD");
+  });
+});
+
+describe("workspace rail route lifecycle", () => {
+  it("does not reopen a mobile drawer after navigating away and back", async () => {
+    const { container, rerender } = await renderWorkspaceRail();
+    const openNavigation = container.querySelector<HTMLButtonElement>(
+      "[aria-label='Open navigation']",
+    );
+
+    await act(async () => openNavigation?.click());
+    expect(
+      container.querySelector(".ns-workspace-rail.is-mobile-open"),
+    ).not.toBeNull();
+
+    testState.pathname = "/workspaces/operations/graphs/graph-b";
+    await rerender();
+    expect(
+      container.querySelector(".ns-workspace-rail.is-mobile-open"),
+    ).toBeNull();
+
+    testState.pathname = "/workspaces/operations/graphs/graph-a";
+    await rerender();
+    expect(
+      container.querySelector(".ns-workspace-rail.is-mobile-open"),
+    ).toBeNull();
+  });
+
+  it("does not reopen quick switch after navigating away and back", async () => {
+    const { container, rerender } = await renderWorkspaceRail();
+    const openNavigation = container.querySelector<HTMLButtonElement>(
+      "[aria-label='Open navigation']",
+    );
+    await act(async () => openNavigation?.click());
+    const quickSwitch = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.includes("Quick switch"),
+    );
+    await act(async () => quickSwitch?.click());
+    expect(
+      document.querySelector("[aria-label='Quick graph switcher']"),
+    ).not.toBeNull();
+
+    testState.pathname = "/workspaces/operations/graphs/graph-b";
+    await rerender();
+    expect(
+      document.querySelector("[aria-label='Quick graph switcher']"),
+    ).toBeNull();
+
+    testState.pathname = "/workspaces/operations/graphs/graph-a";
+    await rerender();
+    expect(
+      document.querySelector("[aria-label='Quick graph switcher']"),
+    ).toBeNull();
   });
 });

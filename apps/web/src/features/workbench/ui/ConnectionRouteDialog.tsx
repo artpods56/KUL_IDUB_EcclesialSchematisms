@@ -152,7 +152,7 @@ export function ConnectionRouteDialog({
         if (!open) onClose();
       }}
     >
-      <DialogContent style={{ width: "430px" }}>
+      <DialogContent size="compact">
         <DialogHeader>
           <DialogTitle>
             {pendingRoute

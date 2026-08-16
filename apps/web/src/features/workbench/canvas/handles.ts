@@ -71,8 +71,7 @@ export function canonicalHandleId(
   const decoded = decodeHandleId(id);
   if (!decoded) return id ?? null;
   if (!decoded.feed) return id ?? null;
-  const { feed: _feed, ...port } = decoded;
-  return encodeHandleId(port);
+  return encodeHandleId({ ...decoded, feed: undefined });
 }
 
 interface DecodedHandleBase {

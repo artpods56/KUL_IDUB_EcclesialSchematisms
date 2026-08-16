@@ -51,11 +51,13 @@ export const workbenchStyles = stylex.create({
     },
     left: {
       default: "50%",
-      "@media (max-width: 720px)": "12px",
+      "@media (max-width: 720px)":
+        "calc(12px + env(safe-area-inset-left, 0px))",
     },
     right: {
       default: "auto",
-      "@media (max-width: 720px)": "12px",
+      "@media (max-width: 720px)":
+        "calc(12px + env(safe-area-inset-right, 0px))",
     },
     display: "flex",
     alignItems: "center",
@@ -180,7 +182,8 @@ export const workbenchStyles = stylex.create({
     },
     left: {
       default: 0,
-      "@media (max-width: 720px)": "calc(var(--ns-rail-width, 0px) + 12px)",
+      "@media (max-width: 720px)":
+        "calc(var(--ns-rail-width, 0px) + 12px + env(safe-area-inset-left, 0px))",
     },
     bottom: {
       default: "calc(100% + 8px)",
@@ -203,7 +206,8 @@ export const workbenchStyles = stylex.create({
     minHeight: "42px",
     maxWidth: {
       default: "none",
-      "@media (max-width: 720px)": "calc(100vw - 24px)",
+      "@media (max-width: 720px)":
+        "calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))",
     },
     display: "flex",
     alignItems: "center",

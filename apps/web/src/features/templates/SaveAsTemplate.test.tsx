@@ -14,6 +14,7 @@ const testState = vi.hoisted(() => ({
   push: vi.fn(),
   create: vi.fn(),
 }));
+const mountedRoots = new Set<Root>();
 
 const location: Workspace = {
   id: "personal-location",
@@ -77,24 +78,21 @@ vi.mock("@/lib/api", async (importOriginal) => {
 import { SaveAsTemplate } from "./SaveAsTemplate";
 
 
-async function renderSaveFlow(): Promise<{
+async function renderSaveFlow(
+  source: Parameters<typeof SaveAsTemplate>[0]["source"] = {
+    workspaceId: location.id,
+    graphId: "source-graph",
+    revision: 7,
+  },
+): Promise<{
   container: HTMLDivElement;
   root: Root;
 }> {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
-  await act(async () =>
-    root.render(
-      <SaveAsTemplate
-        source={{
-          workspaceId: location.id,
-          graphId: "source-graph",
-          revision: 7,
-        }}
-      />,
-    ),
-  );
+  mountedRoots.add(root);
+  await act(async () => root.render(<SaveAsTemplate source={source} />));
   return { container, root };
 }
 
@@ -104,7 +102,11 @@ beforeEach(() => {
   testState.create.mockReset();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await act(async () => {
+    for (const root of mountedRoots) root.unmount();
+  });
+  mountedRoots.clear();
   vi.unstubAllGlobals();
   document.body.replaceChildren();
 });
@@ -120,12 +122,11 @@ describe("save as template flow", () => {
       const matchMedia = vi.fn().mockReturnValue({ matches });
       vi.stubGlobal("matchMedia", matchMedia);
 
-      const { container, root } = await renderSaveFlow();
+      const { container } = await renderSaveFlow();
       const nameInput = container.querySelector("input");
 
       expect(matchMedia).toHaveBeenCalledWith("(pointer: fine)");
       expect(document.activeElement === nameInput).toBe(shouldFocus);
-      await act(async () => root.unmount());
     },
   );
 
@@ -133,7 +134,7 @@ describe("save as template flow", () => {
     testState.create
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce({ id: "created-template" });
-    const { container, root } = await renderSaveFlow();
+    const { container } = await renderSaveFlow();
     expect(container.textContent).toContain("revision 7 · My graphs");
 
     const form = container.querySelector("form");
@@ -156,16 +157,53 @@ describe("save as template flow", () => {
     expect(testState.push).toHaveBeenCalledWith(
       "/templates?created=created-template",
     );
-    await act(async () => root.unmount());
+  });
+
+  it("resets draft state when the exact source revision changes", async () => {
+    const { container, root } = await renderSaveFlow();
+    const nameInput = container.querySelector<HTMLInputElement>("input");
+    const descriptionInput = container.querySelector<HTMLTextAreaElement>(
+      "textarea",
+    );
+
+    await act(async () => {
+      if (nameInput) {
+        nameInput.value = "Unsaved custom name";
+        nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      if (descriptionInput) {
+        descriptionInput.value = "Unsaved description";
+        descriptionInput.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    });
+
+    expect(nameInput?.value).toBe("Unsaved custom name");
+    expect(descriptionInput?.value).toBe("Unsaved description");
+
+    await act(async () =>
+      root.render(
+        <SaveAsTemplate
+          source={{
+            workspaceId: location.id,
+            graphId: "source-graph",
+            revision: 8,
+          }}
+        />,
+      ),
+    );
+
+    expect(container.querySelector<HTMLInputElement>("input")?.value).toBe(
+      "Quarterly analysis",
+    );
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(
+      "",
+    );
+    expect(container.textContent).toContain("revision 8 · My graphs");
   });
 
   it("fails closed when the route has no exact source", async () => {
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    await act(async () => root.render(<SaveAsTemplate source={null} />));
+    const { container } = await renderSaveFlow(null);
     expect(container.textContent).toContain("Source graph is missing");
     expect(container.querySelector("form")).toBeNull();
-    await act(async () => root.unmount());
   });
 });

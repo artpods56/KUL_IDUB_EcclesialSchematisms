@@ -46,7 +46,11 @@ const s = stylex.create({
       "@media (max-width: 720px)": "calc(80px + env(safe-area-inset-bottom))",
     },
     left: "50%",
-    width: "min(460px, calc(100% - 24px))",
+    width: {
+      default: "min(460px, calc(100% - 24px))",
+      "@media (max-width: 720px)":
+        "min(460px, calc(100% - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)))",
+    },
     minHeight: "52px",
     display: "grid",
     gridTemplateColumns: "28px minmax(0, 1fr)",

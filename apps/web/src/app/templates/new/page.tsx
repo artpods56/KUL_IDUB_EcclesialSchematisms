@@ -3,16 +3,13 @@ import {
   type SaveAsTemplateSource,
 } from "@/features/templates/SaveAsTemplate";
 
-
 interface SaveAsTemplatePageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
-
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
-
 
 export default async function SaveAsTemplatePage({
   searchParams,

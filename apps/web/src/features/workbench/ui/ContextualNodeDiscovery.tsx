@@ -6,6 +6,10 @@ import { Search } from "lucide-react";
 import { useStore, ViewportPortal } from "@xyflow/react";
 
 import type { NodeRegistry } from "@/lib/api";
+import {
+  FINE_POINTER_QUERY,
+  useMediaQuery,
+} from "@/hooks/use-media-query";
 import { overlay } from "@/lib/stylex/overlay.stylex";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import { schemaFields } from "../canvas/config-schema";
@@ -60,6 +64,45 @@ const POPUP_WIDTH = 340;
 const POPUP_MAX_HEIGHT = 480;
 const POPUP_GAP = 16;
 const POPUP_MARGIN = 12;
+const MOBILE_OVERLAY_TOP = "var(--ns-mobile-overlay-top)";
+const SAFE_AREA_TOP = "env(safe-area-inset-top, 0px)";
+const SAFE_AREA_BOTTOM = "env(safe-area-inset-bottom, 0px)";
+const SAFE_AREA_LEFT = "env(safe-area-inset-left, 0px)";
+const SAFE_AREA_RIGHT = "env(safe-area-inset-right, 0px)";
+
+interface ViewportGeometry {
+  layoutWidth: number;
+  visualTop: number;
+  visualHeight: number;
+  mobileOverlayTop: number;
+}
+
+function readViewportGeometry(): ViewportGeometry {
+  if (typeof window === "undefined") {
+    return {
+      layoutWidth: POPUP_WIDTH + POPUP_MARGIN * 2,
+      visualTop: 0,
+      visualHeight: POPUP_MAX_HEIGHT + POPUP_MARGIN * 2,
+      mobileOverlayTop: 0,
+    };
+  }
+  const layoutWidth = window.innerWidth;
+  const layoutHeight = window.innerHeight;
+  const mobileOverlayTop = Number.parseFloat(
+    window
+      .getComputedStyle(document.documentElement)
+      .getPropertyValue("--ns-mobile-overlay-top"),
+  );
+  if (!Number.isFinite(mobileOverlayTop)) {
+    throw new Error("--ns-mobile-overlay-top must resolve to a pixel length");
+  }
+  return {
+    layoutWidth,
+    visualTop: window.visualViewport?.offsetTop ?? 0,
+    visualHeight: window.visualViewport?.height ?? layoutHeight,
+    mobileOverlayTop,
+  };
+}
 
 const s = stylex.create({
   popup: {
@@ -68,10 +111,15 @@ const s = stylex.create({
       default: 40,
       "@media (max-width: 620px)": 85,
     },
-    width: `min(${POPUP_WIDTH}px, calc(100vw - ${POPUP_MARGIN * 2}px))`,
+    width: {
+      default: `min(${POPUP_WIDTH}px, calc(100vw - ${POPUP_MARGIN * 2}px))`,
+      "@media (max-width: 620px)":
+        `min(${POPUP_WIDTH}px, calc(100vw - ${POPUP_MARGIN * 2}px - ${SAFE_AREA_LEFT} - ${SAFE_AREA_RIGHT}))`,
+    },
     maxHeight: {
       default: `min(${POPUP_MAX_HEIGHT}px, calc(100svh - ${POPUP_MARGIN * 2}px))`,
-      "@media (max-width: 620px)": `min(${POPUP_MAX_HEIGHT}px, calc(100svh - 80px - env(safe-area-inset-top, 0px)))`,
+      "@media (max-width: 620px)":
+        `min(${POPUP_MAX_HEIGHT}px, calc(100svh - ${MOBILE_OVERLAY_TOP} - ${POPUP_MARGIN}px - ${SAFE_AREA_TOP}))`,
     },
     display: "flex",
     flexDirection: "column",
@@ -97,14 +145,20 @@ const s = stylex.create({
   searchWrap: { position: "relative" },
   searchIcon: {
     position: "absolute",
-    top: "10px",
+    top: {
+      default: "10px",
+      "@media (max-width: 620px)": "14px",
+    },
     left: "11px",
     color: tokens.colorSubtle,
     pointerEvents: "none",
   },
   search: {
     width: "100%",
-    height: "36px",
+    height: {
+      default: "36px",
+      "@media (max-width: 620px)": "44px",
+    },
     padding: "0 10px 0 32px",
     borderWidth: 1,
     borderStyle: "solid",
@@ -171,13 +225,20 @@ const s = stylex.create({
     display: "flex",
     justifyContent: "space-between",
     gap: "8px",
-    padding: "8px 12px",
+    padding: {
+      default: "8px 12px",
+      "@media (max-width: 620px)":
+        "8px 12px calc(8px + env(safe-area-inset-bottom, 0px))",
+    },
     borderTopWidth: 1,
     borderTopStyle: "solid",
     borderTopColor: tokens.colorBorder,
   },
   ghostButton: {
-    minHeight: "28px",
+    minHeight: {
+      default: "28px",
+      "@media (max-width: 620px)": "44px",
+    },
     paddingInline: "8px",
     borderWidth: 0,
     borderRadius: tokens.radiusSm,
@@ -199,15 +260,6 @@ const s = stylex.create({
   canvasEdge: {
     position: "absolute",
     overflow: "visible",
-    pointerEvents: "none",
-  },
-  safeAreaProbe: {
-    position: "fixed",
-    top: 0,
-    left: 0,
-    width: 0,
-    height: "env(safe-area-inset-top, 0px)",
-    visibility: "hidden",
     pointerEvents: "none",
   },
 });
@@ -283,18 +335,19 @@ export function ContextualNodeDiscovery({
   onClose,
   onConfirm,
 }: ContextualNodeDiscoveryProps) {
+  const finePointer = useMediaQuery(FINE_POINTER_QUERY);
   const [query, setQuery] = React.useState("");
   const [pendingCandidate, setPendingCandidate] =
     React.useState<ContextualCandidate | null>(null);
   const [previewedKey, setPreviewedKey] = React.useState<string | null>(null);
   const [hoveredChoiceIndex, setHoveredChoiceIndex] = React.useState(0);
   const [previewBox, setPreviewBox] = React.useState<DOMRect | null>(null);
-  const [safeAreaTop, setSafeAreaTop] = React.useState(0);
+  const [viewport, setViewport] = React.useState(readViewportGeometry);
   const rootRef = React.useRef<HTMLDivElement>(null);
   const searchRef = React.useRef<HTMLInputElement>(null);
   const previewRef = React.useRef<HTMLDivElement>(null);
-  const safeAreaProbeRef = React.useRef<HTMLSpanElement>(null);
   const resultRefs = React.useRef(new Map<string, HTMLButtonElement>());
+  const autoFocusSessionKeyRef = React.useRef<string | null>(null);
 
   const sourcePoint = useStore((state) => {
     if (!session) return null;
@@ -323,10 +376,30 @@ export function ContextualNodeDiscovery({
     };
   });
 
+  const autoFocusSessionKey = session
+    ? JSON.stringify([
+        session.graphId,
+        session.sourceNodeId,
+        session.sourceHandle,
+        session.direction,
+        session.flowPosition.x,
+        session.flowPosition.y,
+      ])
+    : null;
+
   React.useEffect(() => {
-    if (!session) return;
-    window.requestAnimationFrame(() => searchRef.current?.focus());
-  }, [session]);
+    if (!autoFocusSessionKey) {
+      autoFocusSessionKeyRef.current = null;
+      return;
+    }
+    if (autoFocusSessionKeyRef.current === autoFocusSessionKey) return;
+    autoFocusSessionKeyRef.current = autoFocusSessionKey;
+    if (!finePointer) return;
+    const focusFrame = window.requestAnimationFrame(() =>
+      searchRef.current?.focus(),
+    );
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [autoFocusSessionKey, finePointer]);
 
   React.useEffect(() => {
     if (!session) return;
@@ -366,19 +439,16 @@ export function ContextualNodeDiscovery({
 
   React.useLayoutEffect(() => {
     if (!session) return;
-    const updateSafeAreaTop = () => {
-      const nextSafeAreaTop =
-        safeAreaProbeRef.current?.getBoundingClientRect().height ?? 0;
-      setSafeAreaTop((current) =>
-        current === nextSafeAreaTop ? current : nextSafeAreaTop,
-      );
-    };
-    updateSafeAreaTop();
-    window.addEventListener("resize", updateSafeAreaTop);
-    window.visualViewport?.addEventListener("resize", updateSafeAreaTop);
+    const updateViewport = () => setViewport(readViewportGeometry());
+    const visualViewport = window.visualViewport;
+    updateViewport();
+    window.addEventListener("resize", updateViewport);
+    visualViewport?.addEventListener("resize", updateViewport);
+    visualViewport?.addEventListener("scroll", updateViewport);
     return () => {
-      window.removeEventListener("resize", updateSafeAreaTop);
-      window.visualViewport?.removeEventListener("resize", updateSafeAreaTop);
+      window.removeEventListener("resize", updateViewport);
+      visualViewport?.removeEventListener("resize", updateViewport);
+      visualViewport?.removeEventListener("scroll", updateViewport);
     };
   }, [session]);
 
@@ -442,28 +512,16 @@ export function ContextualNodeDiscovery({
     ? artifactTypeColor(representativeArtifact.id, tokens.colorAccent)
     : tokens.colorAccent;
 
-  const layoutViewportWidth =
-    typeof window === "undefined"
-      ? POPUP_WIDTH + POPUP_MARGIN * 2
-      : window.innerWidth;
-  const layoutViewportHeight =
-    typeof window === "undefined"
-      ? POPUP_MAX_HEIGHT + POPUP_MARGIN * 2
-      : window.innerHeight;
-  const visualViewport =
-    typeof window === "undefined" ? null : window.visualViewport;
-  const viewportTop = visualViewport?.offsetTop ?? 0;
-  const viewportHeight = visualViewport?.height ?? layoutViewportHeight;
-  const viewportBottom = viewportTop + viewportHeight;
-  const compactViewport = layoutViewportWidth <= 620;
+  const viewportBottom = viewport.visualTop + viewport.visualHeight;
+  const compactViewport = viewport.layoutWidth <= 620;
   const popupWidth = Math.min(
     POPUP_WIDTH,
-    layoutViewportWidth - POPUP_MARGIN * 2,
+    viewport.layoutWidth - POPUP_MARGIN * 2,
   );
   const popupTopOffset = compactViewport
-    ? 68 + safeAreaTop
+    ? viewport.mobileOverlayTop
     : POPUP_MARGIN;
-  const popupTopMargin = viewportTop + popupTopOffset;
+  const popupTopMargin = viewport.visualTop + popupTopOffset;
   const popupHeight = Math.max(
     0,
     Math.min(
@@ -476,12 +534,18 @@ export function ContextualNodeDiscovery({
     session.clientAnchor,
     popupWidth,
     popupHeight,
-    { width: layoutViewportWidth, height: viewportBottom },
+    { width: viewport.layoutWidth, height: viewportBottom },
   );
   const position = {
     left: unclampedPosition.left,
     top: Math.max(popupTopMargin, unclampedPosition.top),
   };
+  const compactPopupTop =
+    `max(${position.top}px, calc(${MOBILE_OVERLAY_TOP} + ${SAFE_AREA_TOP}))`;
+  const compactPopupLeft =
+    `max(${position.left}px, calc(${POPUP_MARGIN}px + ${SAFE_AREA_LEFT}))`;
+  const compactPopupMaxHeight =
+    `min(${popupHeight}px, calc(100dvh - ${MOBILE_OVERLAY_TOP} - ${POPUP_MARGIN}px - ${SAFE_AREA_TOP} - ${SAFE_AREA_BOTTOM}))`;
 
   const selectCandidate = (candidate: ContextualCandidate) => {
     if (!canInsert) return;
@@ -531,11 +595,6 @@ export function ContextualNodeDiscovery({
 
   return (
     <>
-      <span
-        ref={safeAreaProbeRef}
-        aria-hidden="true"
-        {...stylex.props(s.safeAreaProbe)}
-      />
       <ViewportPortal>
         {previewedCandidate ? (
           <>
@@ -590,11 +649,9 @@ export function ContextualNodeDiscovery({
         aria-label={`Continue from ${session.sourcePortTitle}`}
         {...stylex.props(overlay.popup, s.popup)}
         style={{
-          left: position.left,
-          top: compactViewport
-            ? `max(${position.top}px, calc(68px + env(safe-area-inset-top, 0px)))`
-            : position.top,
-          maxHeight: popupHeight,
+          left: compactViewport ? compactPopupLeft : position.left,
+          top: compactViewport ? compactPopupTop : position.top,
+          maxHeight: compactViewport ? compactPopupMaxHeight : popupHeight,
         }}
       >
         <div {...stylex.props(s.header)}>
@@ -731,7 +788,11 @@ export function ContextualNodeDiscovery({
             </button>
           )}
           <span {...stylex.props(s.hint)}>
-            {canInsert ? "Hover to preview · Enter adds" : insertDisabledReason}
+            {canInsert
+              ? finePointer
+                ? "Hover to preview · Enter adds"
+                : "Tap to choose a node"
+              : insertDisabledReason}
           </span>
         </div>
       </div>

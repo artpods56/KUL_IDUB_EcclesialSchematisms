@@ -543,7 +543,7 @@ export function PublishModuleDialog({
 
   return (
     <Dialog open={open} onOpenChange={setDialogOpen}>
-      <DialogContent style={{ width: "min(920px, 94vw)", maxHeight: "90vh" }}>
+      <DialogContent size="wide">
         <DialogHeader>
           <DialogTitle>Module setup</DialogTitle>
           <DialogDescription>

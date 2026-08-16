@@ -47,12 +47,19 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - `graphAgeLabel`, `sortGraphsByRecency`, and `filterGraphsByQuery` live in
   `WorkspaceGraphPanel.tsx` — they are reused outside the panel and should
   remain importable.
+- `DialogContent` owns dialog frame geometry through its typed `size` prop.
+  Consumers may own their internal layout, but must not override popup width,
+  height, or responsive frame constraints inline.
+- Use `useMediaQuery` for reactive JavaScript breakpoint state. Keep ARIA and
+  behavior breakpoints aligned with the corresponding CSS media query.
 
 ## CSS
 
-- All classes use the `.ns-` prefix with BEM-ish structure:
+- Global classes use the `.ns-` prefix with BEM-ish structure:
   `.ns-workspace-rail__item`, `.ns-home__section-header`, etc.
-- All styles are in `src/app/globals.css`. There are no per-component CSS files.
+- Shared shell and route styles live in `src/app/globals.css`; complex feature
+  components may keep component-scoped styles in their `.tsx` file with StyleX.
+  Do not split one layout contract between global CSS, StyleX, and inline styles.
 - Light/dark theming uses `light-dark()` — do not use raw hex literals for
   component styling.
 - `--ns-rail-width` is the single source of truth for sidebar width. Main
@@ -60,10 +67,11 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 ## Tests
 
-- `@testing-library/react` is **not** installed. Tests either use
-  `react-dom/server`'s `renderToStaticMarkup` or import pure functions directly.
+- `@testing-library/react` is **not** installed. Tests use
+  `renderToStaticMarkup`, import pure functions directly, or mount interaction
+  tests with `react-dom/client` and `act`.
 - Test files need `.tsx` extension when they contain JSX.
-- `vitest run` is the test command. There is no separate `npm test`.
+- `npm test` runs the Vitest suite (`vitest run`).
 
 ## API hooks
 

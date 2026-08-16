@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const flowMocks = vi.hoisted(() => ({
+  compactCanvas: false,
+  controlsRendered: 0,
   props: null as Record<string, unknown> | null,
 }));
 
@@ -28,7 +30,10 @@ vi.mock("@xyflow/react", () => ({
   },
   Background: () => null,
   BackgroundVariant: { Lines: "lines" },
-  Controls: () => null,
+  Controls: () => {
+    flowMocks.controlsRendered += 1;
+    return null;
+  },
   addEdge: vi.fn(),
   applyEdgeChanges: vi.fn(),
   applyNodeChanges: vi.fn(),
@@ -36,6 +41,10 @@ vi.mock("@xyflow/react", () => ({
 
 vi.mock("@/components/theme", () => ({
   useTheme: () => ({ resolved: "light" }),
+}));
+
+vi.mock("@/hooks/use-media-query", () => ({
+  useMediaQuery: () => flowMocks.compactCanvas,
 }));
 
 vi.mock("./handles", () => ({
@@ -56,6 +65,8 @@ afterEach(() => {
   React.act(() => {
     for (const root of roots.splice(0)) root.unmount();
   });
+  flowMocks.compactCanvas = false;
+  flowMocks.controlsRendered = 0;
   flowMocks.props = null;
 });
 
@@ -105,5 +116,26 @@ describe("WorkflowCanvas", () => {
       edgesReconnectable: false,
       deleteKeyCode: null,
     });
+  });
+
+  it("removes duplicate zoom controls from the compact canvas", () => {
+    flowMocks.compactCanvas = true;
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    roots.push(root);
+
+    React.act(() => {
+      root.render(
+        <WorkflowCanvas
+          nodes={[]}
+          edges={[]}
+          onNodesChange={() => undefined}
+          onEdgesChange={() => undefined}
+          onConnect={() => undefined}
+        />,
+      );
+    });
+
+    expect(flowMocks.controlsRendered).toBe(0);
   });
 });

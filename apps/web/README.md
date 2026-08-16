@@ -4,9 +4,9 @@ A ComfyUI-like workbench for assembling typed artifact transformations over the
 Notarius runtime. It is built with Next.js 16, StyleX, Base UI
 primitives, React Flow, and SWR.
 
-The root route redirects to the canonical blank draft at
-`/workspaces/local/graphs/new`. Saved workflows open at their own canonical
-graph URLs. The built-in catalog is limited to generic Image, Sequence,
+The root route renders the canonical cross-location graph browser after
+authentication. New and saved workflows open at their workspace-scoped graph
+URLs. The built-in catalog is limited to generic Image, Sequence,
 Arithmetic, Text, and Prompt families. OCR and table extraction appear as
 external nodes only when the OCR entry-point plugin is installed.
 

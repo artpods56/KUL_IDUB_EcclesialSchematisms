@@ -811,7 +811,7 @@ export function WorkspaceLibraryDialog({
         </button>
       ) : null}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent style={{ width: "min(980px, 94vw)", maxHeight: "90vh" }}>
+        <DialogContent size="wide">
           <DialogHeader>
             <DialogTitle>{libraryLabel(workspace)}</DialogTitle>
             <DialogDescription>

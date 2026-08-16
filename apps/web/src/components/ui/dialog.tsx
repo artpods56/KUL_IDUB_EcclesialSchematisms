@@ -20,10 +20,15 @@ const s = stylex.create({
     left: "50%",
     top: "50%",
     transform: "translate(-50%, -50%)",
-    width: {
-      default: "640px",
-      "@media (max-width: 620px)": "100vw",
+    borderRadius: {
+      default: tokens.radiusLg,
+      "@media (max-width: 620px)": 0,
     },
+    backgroundColor: tokens.colorSurface,
+    border: `1px solid ${tokens.colorBorder}`,
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
     maxWidth: {
       default: "92vw",
       "@media (max-width: 620px)": "100vw",
@@ -36,15 +41,50 @@ const s = stylex.create({
       default: "85vh",
       "@media (max-width: 620px)": "100dvh",
     },
-    borderRadius: {
-      default: tokens.radiusLg,
-      "@media (max-width: 620px)": 0,
+  },
+  sizeCompact: {
+    width: {
+      default: "430px",
+      "@media (max-width: 620px)": "100vw",
     },
-    backgroundColor: tokens.colorSurface,
-    border: `1px solid ${tokens.colorBorder}`,
-    display: "flex",
-    flexDirection: "column",
-    overflow: "hidden",
+  },
+  sizeDefault: {
+    width: {
+      default: "640px",
+      "@media (max-width: 620px)": "100vw",
+    },
+  },
+  sizeForm: {
+    width: {
+      default: "520px",
+      "@media (max-width: 620px)": "100vw",
+    },
+  },
+  sizeWide: {
+    width: {
+      default: "min(960px, 94vw)",
+      "@media (max-width: 620px)": "100vw",
+    },
+    maxWidth: {
+      default: "94vw",
+      "@media (max-width: 620px)": "100vw",
+    },
+    maxHeight: {
+      default: "90vh",
+      "@media (max-width: 620px)": "100dvh",
+    },
+  },
+  sizeViewport: {
+    width: {
+      default: "min(1340px, calc(100vw - 28px))",
+      "@media (max-width: 720px)": "calc(100vw - 16px)",
+    },
+    maxWidth: "none",
+    height: {
+      default: "min(900px, calc(100svh - 28px))",
+      "@media (max-width: 720px)": "calc(100svh - 16px)",
+    },
+    maxHeight: "none",
   },
   header: {
     paddingTop: {
@@ -128,12 +168,28 @@ const s = stylex.create({
 
 export const Dialog = DialogPrimitive.Root;
 
+export type DialogContentSize =
+  | "compact"
+  | "default"
+  | "form"
+  | "wide"
+  | "viewport";
+
+const dialogSizeStyles = {
+  compact: s.sizeCompact,
+  default: s.sizeDefault,
+  form: s.sizeForm,
+  wide: s.sizeWide,
+  viewport: s.sizeViewport,
+} satisfies Record<DialogContentSize, stylex.StyleXStyles>;
+
 export const DialogContent = React.forwardRef<
   HTMLDivElement,
   Omit<React.ComponentPropsWithoutRef<typeof DialogPrimitive.Popup>, "className"> & {
     className?: string;
+    size?: DialogContentSize;
   }
->(({ className, children, ...props }, ref) => (
+>(({ className, children, size = "default", ...props }, ref) => (
   <DialogPrimitive.Portal>
     <DialogPrimitive.Backdrop
       className={cx(stylex.props(s.overlay).className, "ns-dialog-backdrop")}
@@ -141,7 +197,7 @@ export const DialogContent = React.forwardRef<
     <DialogPrimitive.Popup
       ref={ref}
       className={cx(
-        stylex.props(s.content).className,
+        stylex.props(s.content, dialogSizeStyles[size]).className,
         "ns-dialog-popup",
         className,
       )}

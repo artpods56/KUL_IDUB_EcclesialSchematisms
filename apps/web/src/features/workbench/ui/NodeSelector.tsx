@@ -53,6 +53,10 @@ import type {
   NodeSpec,
   Port,
 } from "@/lib/api";
+import {
+  FINE_POINTER_QUERY,
+  useMediaQuery,
+} from "@/hooks/use-media-query";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import {
   buildCatalogFilters,
@@ -66,6 +70,7 @@ import {
 } from "../model/node-catalog";
 
 const MODULE_PLUGIN_SLUG = "graph.module";
+const MOBILE_NODE_SELECTOR_QUERY = "(max-width: 720px)";
 
 type BrowserFilterId =
   | "all"
@@ -379,18 +384,6 @@ function BrowserFilterIcon({ filter }: { filter: BrowserFilter }) {
 }
 
 const s = stylex.create({
-  dialogContent: {
-    width: {
-      default: "min(1340px, calc(100vw - 28px))",
-      "@media (max-width: 720px)": "calc(100vw - 16px)",
-    },
-    maxWidth: "none",
-    height: {
-      default: "min(900px, calc(100svh - 28px))",
-      "@media (max-width: 720px)": "calc(100svh - 16px)",
-    },
-    maxHeight: "none",
-  },
   header: {
     display: "grid",
     gridTemplateColumns: {
@@ -402,7 +395,8 @@ const s = stylex.create({
     gap: "12px",
     padding: {
       default: "16px 52px 16px 20px",
-      "@media (max-width: 720px)": "16px 48px 14px 16px",
+      "@media (max-width: 720px)":
+        "calc(16px + env(safe-area-inset-top, 0px)) calc(48px + env(safe-area-inset-right, 0px)) 14px calc(16px + env(safe-area-inset-left, 0px))",
     },
     borderBottomWidth: 1,
     borderBottomStyle: "solid",
@@ -459,19 +453,29 @@ const s = stylex.create({
       "@media (max-width: 720px)": "auto",
     },
     overscrollBehaviorY: "contain",
+    paddingBottom: {
+      default: 0,
+      "@media (max-width: 720px)": "env(safe-area-inset-bottom, 0px)",
+    },
     gridTemplateColumns: {
       default: "168px minmax(340px, 1fr) minmax(380px, 440px)",
       "@media (max-width: 1080px)": "160px minmax(0, 1fr)",
+      "@media (min-width: 720.01px) and (max-height: 620px)":
+        "150px minmax(280px, 1fr) minmax(300px, 0.9fr)",
       "@media (max-width: 720px)": "1fr",
     },
     gridTemplateRows: {
       default: "minmax(0, 1fr)",
       "@media (max-width: 1080px)": "minmax(280px, 1fr) minmax(280px, 0.9fr)",
+      "@media (min-width: 720.01px) and (max-height: 620px)":
+        "minmax(0, 1fr)",
       "@media (max-width: 720px)": "auto minmax(280px, 46svh) minmax(420px, 72svh)",
     },
     gridTemplateAreas: {
       default: '"filters nodes inspector"',
       "@media (max-width: 1080px)": '"filters nodes" "inspector inspector"',
+      "@media (min-width: 720.01px) and (max-height: 620px)":
+        '"filters nodes inspector"',
       "@media (max-width: 720px)": '"filters" "nodes" "inspector"',
     },
   },
@@ -580,6 +584,7 @@ const s = stylex.create({
     borderBottomWidth: {
       default: 0,
       "@media (max-width: 1080px)": 1,
+      "@media (min-width: 720.01px) and (max-height: 620px)": 0,
     },
     borderBottomStyle: "solid",
     borderBottomColor: tokens.colorBorder,
@@ -1363,6 +1368,8 @@ export function NodeSelector({
   onOpenGraph,
   onOpenWorkspaceLibrary,
 }: NodeSelectorProps) {
+  const mobileNodeSelector = useMediaQuery(MOBILE_NODE_SELECTOR_QUERY);
+  const finePointer = useMediaQuery(FINE_POINTER_QUERY);
   const [query, setQuery] = React.useState("");
   const [filterId, setFilterId] = React.useState<BrowserFilterId>("all");
   const [selectedNodeKey, setSelectedNodeKey] = React.useState<string | null>(null);
@@ -1375,6 +1382,8 @@ export function NodeSelector({
     React.useState<{ specKey: string; portKey: string } | null>(null);
   const resultRefs = React.useRef(new Map<string, HTMLButtonElement>());
   const filterRefs = React.useRef(new Map<BrowserFilterId, HTMLButtonElement>());
+  const dialogRef = React.useRef<HTMLDivElement>(null);
+  const searchRef = React.useRef<HTMLInputElement>(null);
   const pendingResultFocusKey = React.useRef<string | null>(null);
   const wasOpen = React.useRef(false);
 
@@ -1597,10 +1606,12 @@ export function NodeSelector({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
+        ref={dialogRef}
+        size="viewport"
         aria-labelledby="node-selector-title"
         aria-describedby="node-selector-description"
+        initialFocus={finePointer ? searchRef : dialogRef}
         finalFocus={providedReturnFocusRef}
-        {...stylex.props(s.dialogContent)}
       >
         <div {...stylex.props(s.header)}>
           <div {...stylex.props(s.heading)}>
@@ -1619,7 +1630,7 @@ export function NodeSelector({
           <div {...stylex.props(s.searchWrap)}>
             <Search size={14} {...stylex.props(s.searchIcon)} />
             <input
-              autoFocus
+              ref={searchRef}
               aria-label="Search nodes"
               aria-autocomplete="list"
               aria-controls="node-selector-results"
@@ -1650,7 +1661,7 @@ export function NodeSelector({
             <div
               role="toolbar"
               aria-label="Node filters"
-              aria-orientation="vertical"
+              aria-orientation={mobileNodeSelector ? "horizontal" : "vertical"}
               {...stylex.props(s.categoryToolbar)}
             >
               {browserFilters.map((filter, index) => {

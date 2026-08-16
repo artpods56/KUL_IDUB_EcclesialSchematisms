@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { NodeRegistry, NodeSpec, Port } from "@/lib/api";
 import { encodeHandleId } from "../canvas/handles";
@@ -34,6 +34,10 @@ import {
 } from "./ContextualNodeDiscovery";
 
 const roots = new Map<Root, HTMLElement>();
+
+beforeEach(() => {
+  document.documentElement.style.setProperty("--ns-mobile-overlay-top", "68px");
+});
 
 function port(
   name: string,
@@ -175,6 +179,7 @@ afterEach(async () => {
   }
   roots.clear();
   document.body.innerHTML = "";
+  document.documentElement.style.removeProperty("--ns-mobile-overlay-top");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -218,22 +223,121 @@ describe("popupPositionBesidePreview", () => {
 });
 
 describe("ContextualNodeDiscovery", () => {
-  it("reserves the measured mobile safe area in its height clamp", async () => {
+  it.each([
+    { matches: true, shouldFocus: true },
+    { matches: false, shouldFocus: false },
+  ])(
+    "focuses search only for fine pointers: $matches",
+    async ({ matches, shouldFocus }) => {
+      vi.stubGlobal(
+        "matchMedia",
+        vi.fn(
+          (query: string): MediaQueryList =>
+            ({
+              matches: query === "(pointer: fine)" && matches,
+              media: query,
+              onchange: null,
+              addEventListener: vi.fn(),
+              removeEventListener: vi.fn(),
+              addListener: vi.fn(),
+              removeListener: vi.fn(),
+              dispatchEvent: vi.fn(),
+            }) satisfies MediaQueryList,
+        ),
+      );
+      const { container } = await renderDiscovery();
+      const search = container.querySelector<HTMLInputElement>(
+        '[aria-label="Search compatible nodes"]',
+      );
+
+      await vi.waitFor(() => {
+        expect(document.activeElement === search).toBe(shouldFocus);
+      });
+      expect(container.textContent).toContain(
+        shouldFocus ? "Hover to preview · Enter adds" : "Tap to choose a node",
+      );
+    },
+  );
+
+  it("does not steal focus when pointer capability changes during a session", async () => {
+    let matches = false;
+    const listeners = new Set<EventListener>();
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(
+        (query: string): MediaQueryList =>
+          ({
+            get matches() {
+              return query === "(pointer: fine)" && matches;
+            },
+            media: query,
+            onchange: null,
+            addEventListener: ((_type: string, listener: EventListener) => {
+              listeners.add(listener);
+            }) as MediaQueryList["addEventListener"],
+            removeEventListener: ((_type: string, listener: EventListener) => {
+              listeners.delete(listener);
+            }) as MediaQueryList["removeEventListener"],
+            addListener: vi.fn(),
+            removeListener: vi.fn(),
+            dispatchEvent: vi.fn(),
+          }) satisfies MediaQueryList,
+      ),
+    );
+    const { container } = await renderDiscovery();
+    const cancelButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Cancel",
+    );
+    cancelButton?.focus();
+
+    matches = true;
+    await React.act(async () => {
+      for (const listener of listeners) listener(new Event("change"));
+    });
+
+    expect(document.activeElement).toBe(cancelButton);
+  });
+
+  it("uses the root mobile overlay token for compact geometry", async () => {
+    document.documentElement.style.setProperty("--ns-mobile-overlay-top", "92px");
     vi.stubGlobal("innerWidth", 320);
     vi.stubGlobal("innerHeight", 480);
+
     const { container } = await renderDiscovery();
-    const safeAreaProbe = container.firstElementChild as HTMLSpanElement;
-    vi.spyOn(safeAreaProbe, "getBoundingClientRect").mockReturnValue(
-      DOMRect.fromRect({ height: 20 }),
+    const dialog = container.querySelector<HTMLElement>('[role="dialog"]');
+
+    expect(dialog?.style.top).toContain("92px");
+    expect(dialog?.style.maxHeight).toContain("376px");
+  });
+
+  it("reclamps to visual viewport height changes without a safe-area probe", async () => {
+    vi.stubGlobal("innerWidth", 320);
+    vi.stubGlobal("innerHeight", 480);
+    const viewportEvents = new EventTarget();
+    let visualHeight = 480;
+    vi.stubGlobal("visualViewport", {
+      get height() {
+        return visualHeight;
+      },
+      offsetTop: 0,
+      addEventListener: viewportEvents.addEventListener.bind(viewportEvents),
+      removeEventListener:
+        viewportEvents.removeEventListener.bind(viewportEvents),
+    });
+    const { container } = await renderDiscovery();
+    const dialog = container.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog?.style.maxHeight).toContain("400px");
+    expect(container.firstElementChild?.getAttribute("data-testid")).toBe(
+      "canvas-preview",
     );
 
     await React.act(async () => {
-      window.dispatchEvent(new Event("resize"));
+      visualHeight = 300;
+      viewportEvents.dispatchEvent(new Event("resize"));
       await Promise.resolve();
     });
 
-    const dialog = container.querySelector<HTMLElement>('[role="dialog"]');
-    expect(dialog?.style.maxHeight).toBe("380px");
+    expect(dialog?.style.maxHeight).toContain("220px");
     expect(dialog?.style.top).toContain("safe-area-inset-top");
   });
 

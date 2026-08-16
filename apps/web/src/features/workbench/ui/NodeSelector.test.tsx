@@ -224,6 +224,7 @@ afterEach(async () => {
   }
   roots.clear();
   document.body.innerHTML = "";
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -231,6 +232,11 @@ describe("NodeSelector", () => {
   it("uses the mockup artifact-family rail", async () => {
     await renderSelector();
 
+    expect(
+      dialog()
+        .querySelector('[role="toolbar"]')
+        ?.getAttribute("aria-orientation"),
+    ).toBe("vertical");
     const filters = [
       ...dialog().querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'),
     ];
@@ -254,7 +260,8 @@ describe("NodeSelector", () => {
     const onAddNode = vi.fn();
     await renderSelector({ onAddNode });
 
-    expect(searchInput()).toBe(document.activeElement);
+    expect(searchInput().hasAttribute("autofocus")).toBe(false);
+    await vi.waitFor(() => expect(document.activeElement).toBe(dialog()));
     await enterSearch("OCR");
 
     expect(options()).toHaveLength(1);
@@ -264,6 +271,74 @@ describe("NodeSelector", () => {
       "Read image with OCR description",
     );
     expect(onAddNode).not.toHaveBeenCalled();
+  });
+
+  it("focuses search when a fine pointer opens the controlled dialog", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(
+        (query: string): MediaQueryList =>
+          ({
+            matches: query === "(pointer: fine)",
+            media: query,
+            onchange: null,
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+            addListener: vi.fn(),
+            removeListener: vi.fn(),
+            dispatchEvent: vi.fn(),
+          }) satisfies MediaQueryList,
+      ),
+    );
+
+    await renderSelector();
+
+    await vi.waitFor(() => expect(document.activeElement).toBe(searchInput()));
+  });
+
+  it("keeps toolbar semantics aligned with live compact-layout changes", async () => {
+    let compact = true;
+    const listeners = new Set<EventListener>();
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(
+        (query: string): MediaQueryList =>
+          ({
+            get matches() {
+              return query === "(max-width: 720px)" && compact;
+            },
+            media: query,
+            onchange: null,
+            addEventListener: ((_type: string, listener: EventListener) => {
+              listeners.add(listener);
+            }) as MediaQueryList["addEventListener"],
+            removeEventListener: ((_type: string, listener: EventListener) => {
+              listeners.delete(listener);
+            }) as MediaQueryList["removeEventListener"],
+            addListener: vi.fn(),
+            removeListener: vi.fn(),
+            dispatchEvent: vi.fn(),
+          }) satisfies MediaQueryList,
+      ),
+    );
+
+    await renderSelector();
+
+    expect(
+      dialog()
+        .querySelector('[role="toolbar"]')
+        ?.getAttribute("aria-orientation"),
+    ).toBe("horizontal");
+
+    compact = false;
+    await React.act(async () => {
+      for (const listener of listeners) listener(new Event("change"));
+    });
+    expect(
+      dialog()
+        .querySelector('[role="toolbar"]')
+        ?.getAttribute("aria-orientation"),
+    ).toBe("vertical");
   });
 
   it("renders the selected node in the inspector with its ports and settings", async () => {

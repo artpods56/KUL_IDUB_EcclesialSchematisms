@@ -21,15 +21,18 @@ const s = stylex.create({
     zIndex: 40,
     top: {
       default: "70px",
-      "@media (max-width: 620px)": "calc(68px + env(safe-area-inset-top, 0px))",
+      "@media (max-width: 620px)":
+        "calc(var(--ns-mobile-overlay-top, 68px) + env(safe-area-inset-top, 0px))",
     },
     right: {
       default: "13px",
-      "@media (max-width: 620px)": "12px",
+      "@media (max-width: 620px)":
+        "calc(12px + env(safe-area-inset-right, 0px))",
     },
     left: {
       default: "auto",
-      "@media (max-width: 620px)": "12px",
+      "@media (max-width: 620px)":
+        "calc(12px + env(safe-area-inset-left, 0px))",
     },
     width: {
       default: "min(280px, calc(100% - 26px))",
@@ -37,7 +40,8 @@ const s = stylex.create({
     },
     maxHeight: {
       default: "calc(100% - 96px)",
-      "@media (max-width: 620px)": "calc(100% - 92px - env(safe-area-inset-top, 0px))",
+      "@media (max-width: 620px)":
+        "calc(100% - 92px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))",
     },
     display: "grid",
     gap: "10px",
@@ -119,21 +123,32 @@ const s = stylex.create({
     lineHeight: 1.35,
   },
   switch: {
-    position: "relative",
     width: {
       default: "36px",
       "@media (max-width: 620px)": "44px",
     },
     height: {
       default: "20px",
-      "@media (max-width: 620px)": "28px",
+      "@media (max-width: 620px)": "44px",
     },
+    display: "grid",
+    placeItems: "center",
     flexShrink: 0,
     borderWidth: 0,
-    borderRadius: "999px",
-    backgroundColor: tokens.colorSurfaceSunken,
+    backgroundColor: "transparent",
     cursor: "pointer",
     padding: 0,
+  },
+  switchTrack: {
+    position: "relative",
+    width: "100%",
+    height: {
+      default: "20px",
+      "@media (max-width: 620px)": "28px",
+    },
+    display: "block",
+    borderRadius: "999px",
+    backgroundColor: tokens.colorSurfaceSunken,
   },
   switchOn: {
     backgroundColor: tokens.colorAccent,
@@ -273,12 +288,14 @@ function Toggle({
         aria-checked={checked}
         aria-label={label}
         disabled={disabled}
-        {...stylex.props(s.switch, checked ? s.switchOn : null)}
+        {...stylex.props(s.switch)}
         onClick={() => onChange(!checked)}
       >
-        <span
-          {...stylex.props(s.switchThumb, checked ? s.switchThumbOn : null)}
-        />
+        <span {...stylex.props(s.switchTrack, checked ? s.switchOn : null)}>
+          <span
+            {...stylex.props(s.switchThumb, checked ? s.switchThumbOn : null)}
+          />
+        </span>
       </button>
     </div>
   );

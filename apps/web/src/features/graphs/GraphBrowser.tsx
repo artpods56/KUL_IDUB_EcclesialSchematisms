@@ -334,7 +334,7 @@ export function GraphBrowser() {
       </main>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="ns-graphs__create-dialog">
+        <DialogContent size="form">
           <DialogHeader>
             <DialogTitle>Choose a location</DialogTitle>
             <DialogDescription>

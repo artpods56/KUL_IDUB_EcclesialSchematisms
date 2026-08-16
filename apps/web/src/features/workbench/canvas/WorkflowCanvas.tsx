@@ -23,6 +23,7 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { useTheme } from "@/components/theme";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { tokens } from "@/lib/stylex/tokens.stylex";
 import { ANNOTATION_NODE_TYPE } from "./annotations";
 import {
@@ -107,6 +108,7 @@ export function WorkflowCanvas({
   gridGap = 54,
 }: WorkflowCanvasProps) {
   const { resolved } = useTheme();
+  const compactCanvas = useMediaQuery("(max-width: 720px)");
   const renderedEdges = React.useMemo(
     () => edges.map((edge) => ({
       ...edge,
@@ -178,17 +180,18 @@ export function WorkflowCanvas({
             color={tokens.colorGrid}
           />
         ) : null}
-        <Controls
-          className="ns-flow-controls"
-          showInteractive={false}
-          showFitView={false}
-          style={{
-            backgroundColor: tokens.colorFlowControls,
-            borderColor: tokens.colorBorderStrong,
-            borderRadius: "7px",
-            overflow: "hidden",
-          }}
-        />
+        {compactCanvas ? null : (
+          <Controls
+            showInteractive={false}
+            showFitView={false}
+            style={{
+              backgroundColor: tokens.colorFlowControls,
+              borderColor: tokens.colorBorderStrong,
+              borderRadius: "7px",
+              overflow: "hidden",
+            }}
+          />
+        )}
       </ReactFlow>
     </div>
   );

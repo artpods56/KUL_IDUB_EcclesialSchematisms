@@ -1,11 +1,61 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+
+import * as React from "react";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SavedGraphSummary } from "@/lib/api";
 import {
+  WorkspaceGraphPanel,
   filterGraphsByQuery,
   graphAgeLabel,
   sortGraphsByRecency,
 } from "./WorkspaceGraphPanel";
+
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
+const testState = vi.hoisted(() => ({
+  push: vi.fn(),
+}));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: testState.push }),
+}));
+
+vi.mock("@/hooks/use-api", () => ({
+  useSavedGraphs: () => ({
+    data: {
+      graphs: [
+        {
+          id: "graph-invoice",
+          name: "Invoice intake",
+          node_count: 2,
+          edge_count: 1,
+          revision: 1,
+          updated_at: "2026-08-10T12:00:00Z",
+        },
+      ],
+    },
+    isLoading: false,
+  }),
+}));
+
+vi.mock("./GraphRowMenu", () => ({
+  GraphRowMenu: () => null,
+}));
+
+const mountedRoots = new Set<Root>();
+
+afterEach(async () => {
+  for (const root of mountedRoots) {
+    await act(async () => root.unmount());
+  }
+  mountedRoots.clear();
+  document.body.replaceChildren();
+  vi.unstubAllGlobals();
+  testState.push.mockReset();
+});
 
 const graph = (
   name: string,
@@ -55,5 +105,161 @@ describe("workspace graph panel listing", () => {
     expect(graphAgeLabel("2026-08-10T11:15:00Z", now)).toBe("45m ago");
     expect(graphAgeLabel("2026-08-10T09:00:00Z", now)).toBe("3h ago");
     expect(graphAgeLabel("2026-08-06T12:00:00Z", now)).toBe("4d ago");
+  });
+});
+
+describe("workspace graph panel interactions", () => {
+  async function renderPanel(onClose = vi.fn()) {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.add(root);
+    await act(async () => {
+      root.render(
+        React.createElement(WorkspaceGraphPanel, {
+          workspaceId: "workspace-1",
+          workspaceSlug: "operations",
+          activeGraphId: null,
+          onRename: vi.fn(),
+          onDelete: vi.fn(),
+          onClose,
+        }),
+      );
+    });
+    return { container, onClose };
+  }
+
+  it.each([
+    {
+      name: "keyboard dismissal",
+      dismiss: () =>
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })),
+      reason: "escape",
+    },
+    {
+      name: "outside pointer dismissal",
+      dismiss: () =>
+        document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })),
+      reason: "outside-pointer",
+    },
+  ] as const)("reports $name", async ({ dismiss, reason }) => {
+    const { onClose } = await renderPanel();
+
+    dismiss();
+
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledWith(reason);
+  });
+
+  it("ignores pointer events owned by its trigger and the account menu", async () => {
+    const trigger = document.createElement("button");
+    trigger.dataset.graphPanelTrigger = "";
+    document.body.append(trigger);
+    const accountMenu = document.createElement("div");
+    accountMenu.className = "ns-workspace-rail__account-menu";
+    document.body.append(accountMenu);
+    const { onClose } = await renderPanel();
+
+    trigger.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    accountMenu.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("reports an explicit close", async () => {
+    const { container, onClose } = await renderPanel();
+    const close = container.querySelector<HTMLButtonElement>(
+      "[aria-label='Close quick graph switcher']",
+    );
+
+    await act(async () => close?.click());
+
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledWith("close-button");
+  });
+
+  it("navigates before reporting graph selection", async () => {
+    const { container, onClose } = await renderPanel();
+    const graph = container.querySelector<HTMLButtonElement>(
+      ".ns-graph-panel__row-open",
+    );
+
+    await act(async () => graph?.click());
+
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledWith("graph-selected");
+    expect(testState.push).toHaveBeenCalledWith(
+      "/workspaces/operations/graphs/graph-invoice",
+    );
+  });
+
+  it.each([
+    { matches: true, shouldFocus: true },
+    { matches: false, shouldFocus: false },
+  ])(
+    "focuses search only for fine pointers: $matches",
+    async ({ matches, shouldFocus }) => {
+      vi.stubGlobal(
+        "matchMedia",
+        vi.fn(
+          (query: string): MediaQueryList =>
+            ({
+              matches: query === "(pointer: fine)" && matches,
+              media: query,
+              onchange: null,
+              addEventListener: vi.fn(),
+              removeEventListener: vi.fn(),
+              addListener: vi.fn(),
+              removeListener: vi.fn(),
+              dispatchEvent: vi.fn(),
+            }) satisfies MediaQueryList,
+        ),
+      );
+      const { container } = await renderPanel();
+      const search = container.querySelector<HTMLInputElement>(
+        '[aria-label="Search graphs"]',
+      );
+
+      expect(document.activeElement === search).toBe(shouldFocus);
+    },
+  );
+
+  it("does not steal focus when pointer capability changes after opening", async () => {
+    let matches = false;
+    const listeners = new Set<EventListener>();
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(
+        (query: string): MediaQueryList =>
+          ({
+            get matches() {
+              return query === "(pointer: fine)" && matches;
+            },
+            media: query,
+            onchange: null,
+            addEventListener: ((_type: string, listener: EventListener) => {
+              listeners.add(listener);
+            }) as MediaQueryList["addEventListener"],
+            removeEventListener: ((_type: string, listener: EventListener) => {
+              listeners.delete(listener);
+            }) as MediaQueryList["removeEventListener"],
+            addListener: vi.fn(),
+            removeListener: vi.fn(),
+            dispatchEvent: vi.fn(),
+          }) satisfies MediaQueryList,
+      ),
+    );
+    const { container } = await renderPanel();
+    const graphButton = container.querySelector<HTMLButtonElement>(
+      ".ns-graph-panel__row-open",
+    );
+    graphButton?.focus();
+
+    matches = true;
+    await act(async () => {
+      for (const listener of listeners) listener(new Event("change"));
+    });
+
+    expect(document.activeElement).toBe(graphButton);
   });
 });
