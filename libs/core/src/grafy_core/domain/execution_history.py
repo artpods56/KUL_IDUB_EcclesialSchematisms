@@ -108,6 +108,56 @@ class GraphExecution:
                 "finished_at"
             )
 
+    def transition_to_running(self) -> None:
+        """Advance a queued execution into running, stamping its start time.
+
+        Only a queued execution may start; this keeps the start timestamp
+        correlated with the running status and rejects running-without-start or
+        queued-with-start states.
+        """
+
+        if self.status != "queued":
+            raise ValueError(
+                f"Graph execution cannot start from status {self.status!r}"
+            )
+        self.status = "running"
+        self.started_at = _utc_now()
+
+    def transition_to_cancelling(self) -> None:
+        """Request cancellation from a queued or running execution."""
+
+        if self.status not in {"queued", "running"}:
+            raise ValueError(
+                f"Graph execution cannot cancel from status {self.status!r}"
+            )
+        self.status = "cancelling"
+
+    def transition_to_terminal(
+        self,
+        status: GraphExecutionStatus,
+        *,
+        workflow_run_id: UUID | None,
+        error: str | None,
+    ) -> None:
+        """Advance to one terminal outcome, stamping finish time and workflow id.
+
+        The terminal status, finish timestamp, workflow identity, and error
+        move together so a terminal record always carries a complete outcome.
+        """
+
+        if status not in _TERMINAL_EXECUTION_STATUSES:
+            raise ValueError(
+                f"Execution completion status {status!r} is not terminal"
+            )
+        if self.status == "cancelling" and status != "cancelled":
+            raise ValueError(
+                "A cancelling graph execution can only complete as cancelled"
+            )
+        self.status = status
+        self.finished_at = _utc_now()
+        self.error = error
+        self.workflow_run_id = workflow_run_id
+
 @dataclass
 class GraphExecutionNodeResult:
     workspace_id: UUID

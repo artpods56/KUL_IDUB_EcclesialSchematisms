@@ -212,3 +212,115 @@ async def test_in_memory_interrupt_all_active_recovers_every_workspace() -> None
         "failed",
         "succeeded",
     ]
+
+
+def _execution(
+    status: str,
+    *,
+    finished_at: datetime | None = None,
+) -> GraphExecution:
+    return GraphExecution(
+        workspace_id=WORKSPACE_ONE,
+        execution_id=UUID("00000000-0000-0000-0000-000000000001"),
+        graph_id=UUID("00000000-0000-0000-0000-000000000002"),
+        graph_revision=1,
+        status=status,  # type: ignore[arg-type]
+        finished_at=finished_at,
+    )
+
+
+def test_durable_transition_table_enforces_legal_lifecycle() -> None:
+    """Explicit transitions keep status, timestamps, workflow id, and error
+    correlated; illegal sequences are rejected."""
+
+    # queued -> running stamps the start time.
+    running = _execution("queued")
+    running.transition_to_running()
+    assert running.status == "running"
+    assert running.started_at is not None
+    assert running.finished_at is None
+    assert running.error is None
+
+    # running -> terminal succeeded carries workflow id and finish time.
+    succeeded = _execution("running")
+    succeeded.transition_to_terminal(
+        "succeeded",
+        workflow_run_id=UUID("00000000-0000-0000-0000-000000000099"),
+        error=None,
+    )
+    assert succeeded.status == "succeeded"
+    assert succeeded.finished_at is not None
+    assert succeeded.workflow_run_id == UUID(
+        "00000000-0000-0000-0000-000000000099"
+    )
+
+    # running -> failed terminal carries error and finish time together.
+    failed = _execution("running")
+    failed.transition_to_terminal(
+        "failed",
+        workflow_run_id=None,
+        error="boom",
+    )
+    assert failed.status == "failed"
+    assert failed.finished_at is not None
+    assert failed.error == "boom"
+
+    # queued -> cancelling -> cancelled.
+    cancelling = _execution("queued")
+    cancelling.transition_to_cancelling()
+    assert cancelling.status == "cancelling"
+    cancelling.transition_to_terminal(
+        "cancelled",
+        workflow_run_id=None,
+        error=None,
+    )
+    assert cancelling.status == "cancelled"
+    assert cancelling.finished_at is not None
+
+    # Illegal: starting from running, cancel from terminal, cancelling to success.
+    with pytest.raises(ValueError, match="cannot start from"):
+        _execution("running").transition_to_running()
+    with pytest.raises(ValueError, match="cannot cancel from"):
+        GraphExecution(
+            workspace_id=WORKSPACE_ONE,
+            execution_id=UUID("00000000-0000-0000-0000-000000000001"),
+            graph_id=UUID("00000000-0000-0000-0000-000000000002"),
+            graph_revision=1,
+            status="succeeded",
+            created_at=datetime(2026, 7, 18, 11, 0, tzinfo=UTC),
+            finished_at=datetime(2026, 7, 18, 13, 0, tzinfo=UTC),
+        ).transition_to_cancelling()
+    with pytest.raises(ValueError, match="only complete as cancelled"):
+        _execution("cancelling").transition_to_terminal(
+            "succeeded",
+            workflow_run_id=None,
+            error=None,
+        )
+
+
+def test_terminal_transition_carries_one_complete_outcome() -> None:
+    """A terminal record always carries finish time plus workflow identity and
+    error together (exactly one typed outcome)."""
+
+    terminal = _execution("running")
+    terminal.transition_to_terminal(
+        "failed",
+        workflow_run_id=UUID("00000000-0000-0000-0000-000000000101"),
+        error="boom",
+    )
+    assert terminal.status == "failed"
+    assert terminal.finished_at is not None
+    assert terminal.workflow_run_id is not None
+    assert terminal.error == "boom"
+
+    # A non-terminal execution cannot be constructed as finished (post_init).
+    with pytest.raises(ValueError, match="cannot have finished_at"):
+        GraphExecution(
+            workspace_id=WORKSPACE_ONE,
+            execution_id=UUID("00000000-0000-0000-0000-000000000002"),
+            graph_id=UUID("00000000-0000-0000-0000-000000000003"),
+            graph_revision=1,
+            status="queued",
+            created_at=datetime(2026, 7, 18, 11, 0, tzinfo=UTC),
+            finished_at=datetime(2026, 7, 18, 12, 0, tzinfo=UTC),
+        )
