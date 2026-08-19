@@ -37,7 +37,11 @@ from grafy_core.operators.tables import (
     table_artifact_is_accessible,
 )
 from grafy_core.plugins import PluginRegistry, PluginRuntimeContext
-from grafy_core.ports.storage import SaveFileCommand
+from grafy_core.ports.storage import (
+    SaveFileCommand,
+    StoredFile,
+    StoredObjectInfo,
+)
 from grafy_core.runtime.materialization import MaterializationProvenance
 from grafy_core.runtime.persistence import ArtifactWriteContext
 from grafy_core.runtime.resolvers import ResolutionError
@@ -694,6 +698,77 @@ async def test_table_accessibility_requires_every_chunk(tmp_path: Path) -> None:
     assert await table_artifact_is_accessible(artifact, storage)
     await storage.delete(artifact.bucket, manifest.chunks[1].object_key)
     assert not await table_artifact_is_accessible(artifact, storage)
+
+
+class AsyncStatOnlyStorage:
+    """A storage fake exposing only the async interface, never a synchronous
+    presence method, so flows cannot accidentally call synchronous remote I/O."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = root
+        self.stat_calls: list[tuple[str, str]] = []
+
+    async def save(self, command: SaveFileCommand) -> StoredFile:
+        raise AssertionError("unexpected save")
+
+    async def move(
+        self,
+        bucket: str,
+        source_path: str,
+        destination_path: str,
+    ) -> None:
+        raise AssertionError("unexpected move")
+
+    async def load(self, bucket: str, path: str) -> BytesIO:
+        raise AssertionError(f"unexpected load {bucket}/{path}")
+
+    async def stat(self, bucket: str, path: str) -> StoredObjectInfo | None:
+        self.stat_calls.append((bucket, path))
+        file_path = self._root / bucket / path
+        if not file_path.is_file():
+            return None
+        return StoredObjectInfo(
+            bucket=bucket,
+            path=path,
+            byte_size=file_path.stat().st_size,
+            etag=None,
+            version_id=None,
+        )
+
+    async def load_range(
+        self,
+        bucket: str,
+        path: str,
+        start: int,
+        end_exclusive: int,
+    ) -> bytes:
+        raise AssertionError("unexpected range load")
+
+    async def delete(self, bucket: str, path: str) -> None:
+        raise AssertionError("unexpected delete")
+
+
+@pytest.mark.asyncio
+async def test_table_accessibility_uses_only_async_stat(tmp_path: Path) -> None:
+    """Async table accessibility uses the async presence operation and never a
+    synchronous remote HEAD; the fake has no sync ``exists`` attribute at all."""
+
+    storage = AsyncStatOnlyStorage(tmp_path / "artifacts")
+    assert not hasattr(storage, "exists")
+    artifact = ArtifactObject(
+        workspace_id=TEST_WORKSPACE_ID,
+        id=UUID("00000000-0000-0000-0000-000000000999"),
+        artifact_type="table.data",
+        schema_version=1,
+        content_type="application/json",
+        storage_backend="local",
+        bucket="artifacts",
+        object_key="missing.json",
+        byte_size=0,
+        sha256="d" * 64,
+    )
+    assert not await table_artifact_is_accessible(artifact, storage)
+    assert storage.stat_calls == [("artifacts", "missing.json")]
 
 
 @pytest.mark.asyncio

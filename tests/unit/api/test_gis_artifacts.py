@@ -131,9 +131,6 @@ class TrackingStorage(FileStoragePort):
     async def delete(self, bucket: str, path: str) -> None:
         await self._storage.delete(bucket, path)
 
-    def exists(self, bucket: str, path: str) -> bool:
-        return self._storage.exists(bucket, path)
-
 
 @pytest.fixture
 def geo_artifact_client(

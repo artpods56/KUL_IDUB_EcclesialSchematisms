@@ -4,7 +4,9 @@
 > flows, and structural diagrams. This document complements the product
 > vocabulary in `CONTEXT.md` and the interaction plan in
 > `docs/workbench-interaction-plan.md`. It describes the *current* committed
-> backend as built — not a target architecture.
+> backend as built — not a target architecture. Intended Plugin discovery
+> (register / publish / isolated freeze, not `grafy.plugins`) is
+> [plugin unification](plugin-unification.md).
 
 - **Audience:** contributors who need to know where code lives, how services are
   composed, and which dependencies may legally exist between packages.
