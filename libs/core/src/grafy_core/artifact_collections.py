@@ -453,7 +453,7 @@ async def json_collections_artifact_is_accessible(
 ) -> bool:
     if artifact.bucket is None or artifact.object_key is None:
         return False
-    if not storage.exists(artifact.bucket, artifact.object_key):
+    if await storage.stat(artifact.bucket, artifact.object_key) is None:
         return False
     try:
         manifest = await load_json_collections_manifest(artifact, storage)
@@ -463,11 +463,11 @@ async def json_collections_artifact_is_accessible(
         if isinstance(exc.__cause__, ValueError):
             return False
         raise
-    return all(
-        storage.exists(artifact.bucket, chunk.object_key)
-        for collection in manifest.collections
-        for chunk in collection.chunks
-    )
+    for collection in manifest.collections:
+        for chunk in collection.chunks:
+            if await storage.stat(artifact.bucket, chunk.object_key) is None:
+                return False
+    return True
 
 
 async def json_collections_artifact_is_intact(
@@ -476,7 +476,7 @@ async def json_collections_artifact_is_intact(
 ) -> bool:
     if artifact.bucket is None or artifact.object_key is None:
         return False
-    if not storage.exists(artifact.bucket, artifact.object_key):
+    if await storage.stat(artifact.bucket, artifact.object_key) is None:
         return False
     try:
         manifest = await load_json_collections_manifest(artifact, storage)
@@ -488,7 +488,7 @@ async def json_collections_artifact_is_intact(
         raise
     for collection in manifest.collections:
         for descriptor in collection.chunks:
-            if not storage.exists(artifact.bucket, descriptor.object_key):
+            if await storage.stat(artifact.bucket, descriptor.object_key) is None:
                 return False
             try:
                 chunk = await _load_stored_model(

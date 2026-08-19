@@ -437,7 +437,7 @@ async def table_artifact_is_accessible(
         return True
     if artifact.bucket is None or artifact.object_key is None:
         return False
-    if not storage.exists(artifact.bucket, artifact.object_key):
+    if await storage.stat(artifact.bucket, artifact.object_key) is None:
         return False
     try:
         manifest = await load_table_manifest(artifact, storage)
@@ -447,10 +447,10 @@ async def table_artifact_is_accessible(
         if isinstance(exc.__cause__, ValueError):
             return False
         raise
-    return all(
-        storage.exists(artifact.bucket, descriptor.object_key)
-        for descriptor in manifest.chunks
-    )
+    for descriptor in manifest.chunks:
+        if await storage.stat(artifact.bucket, descriptor.object_key) is None:
+            return False
+    return True
 
 
 # CSV export buffer target; rows are accumulated and flushed as it fills.

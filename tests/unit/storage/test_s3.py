@@ -88,7 +88,8 @@ def fake_s3(monkeypatch: pytest.MonkeyPatch) -> type[_FakeS3Store]:
     return _FakeS3Store
 
 
-def test_s3_object_store_configures_minio_endpoint_and_reuses_bucket_store(
+@pytest.mark.asyncio
+async def test_s3_object_store_configures_minio_endpoint_and_reuses_bucket_store(
     fake_s3: type[_FakeS3Store],
 ) -> None:
     storage = S3ObjectStore(
@@ -99,8 +100,8 @@ def test_s3_object_store_configures_minio_endpoint_and_reuses_bucket_store(
         force_path_style=True,
     )
 
-    assert storage.exists("artifacts", "missing") is False
-    assert storage.exists("artifacts", "still-missing") is False
+    assert await storage.stat("artifacts", "missing") is None
+    assert await storage.stat("artifacts", "still-missing") is None
 
     assert len(fake_s3.instances) == 1
     store = fake_s3.instances[0]
@@ -158,13 +159,13 @@ async def test_s3_object_store_loads_moves_and_deletes(
         loaded.close()
 
     await storage.move("artifacts", "runs/output.bin", "runs/final.bin")
-    assert storage.exists("artifacts", "runs/output.bin") is False
-    assert storage.exists("artifacts", "runs/final.bin") is True
+    assert await storage.stat("artifacts", "runs/output.bin") is None
+    assert await storage.stat("artifacts", "runs/final.bin") is not None
 
     await storage.move("artifacts", "runs/output.bin", "runs/final.bin")
 
     await storage.delete("artifacts", "runs/final.bin")
-    assert storage.exists("artifacts", "runs/final.bin") is False
+    assert await storage.stat("artifacts", "runs/final.bin") is None
     await storage.delete("artifacts", "runs/final.bin")
 
     assert len(fake_s3.instances) == 1

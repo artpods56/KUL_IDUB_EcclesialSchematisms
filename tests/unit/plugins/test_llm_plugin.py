@@ -56,9 +56,6 @@ class EmptyStorage:
     async def delete(self, bucket: str, path: str) -> None:
         raise AssertionError(f"Unexpected delete from {bucket}/{path}")
 
-    def exists(self, bucket: str, path: str) -> bool:
-        return False
-
 
 def test_llm_plugin_declares_complete_runtime_contributions(tmp_path: Path) -> None:
     registry = PluginRegistry()

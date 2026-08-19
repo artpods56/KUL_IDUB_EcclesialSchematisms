@@ -119,10 +119,6 @@ class S3ObjectStore(FileStoragePort):
     async def delete(self, bucket: str, path: str) -> None:
         await self._store_for(bucket).delete_async(path)
 
-    @override
-    def exists(self, bucket: str, path: str) -> bool:
-        return self._file_exists(self._store_for(bucket), path)
-
     def _save_sync(self, command: SaveFileCommand) -> StoredFile:
         digest = sha256()
         byte_size = 0

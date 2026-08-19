@@ -154,9 +154,6 @@ class FakeStorage:
     async def delete(self, bucket: str, path: str) -> None:
         raise AssertionError(f"Unexpected delete from {bucket}/{path}")
 
-    def exists(self, bucket: str, path: str) -> bool:
-        return (bucket, path) in self.files
-
 
 def sdk_provider(
     monkeypatch: pytest.MonkeyPatch,

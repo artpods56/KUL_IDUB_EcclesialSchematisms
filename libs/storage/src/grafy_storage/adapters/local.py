@@ -126,10 +126,6 @@ class LocalFileObjectStore(FileStoragePort):
         if file_path.exists():
             file_path.unlink()
 
-    @override
-    def exists(self, bucket: str, path: str) -> bool:
-        return self._path_for(bucket, path).is_file()
-
     def _path_for(self, bucket: str, key: str) -> Path:
         _validate_segment(bucket)
         _validate_key(key)
