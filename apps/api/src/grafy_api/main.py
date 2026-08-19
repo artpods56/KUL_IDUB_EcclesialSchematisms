@@ -35,7 +35,6 @@ from grafy_storage import create_file_storage
 
 from grafy_api.app_state import AppIdentity, AppResources, get_identity
 from grafy_api.builtins import builtin_plugins
-from grafy_api.mcp import create_mounted_mcp_app
 from grafy_api.plugin_discovery import build_plugin_registry
 from grafy_api.services.composition import build_workbench_components
 from grafy_api.settings import Settings, get_settings
@@ -230,13 +229,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     database = create_database(resolved_settings.resolved_database_url)
 
-    # Placeholder replaced after the FastAPI app exists so PAT middleware can
-    # close over the parent application state.
-    mcp_http_app_holder: dict[str, object] = {}
-
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        mcp_http_app = mcp_http_app_holder["app"]
         owner_lease: ApiOwnerLease | None = None
         try:
             if resolved_settings.require_single_api_owner:
@@ -244,135 +238,134 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     resolved_settings.workspace / ".grafy-api-owner.lock"
                 )
                 owner_lease.acquire()
-            async with mcp_http_app.lifespan(app):  # type: ignore[attr-defined]
-                registry = build_plugin_registry(builtin_plugins())
-                s3_access_key_id: str | None = None
-                if resolved_settings.s3_access_key_id is not None:
-                    configured_access_key_id = (
-                        resolved_settings.s3_access_key_id.get_secret_value().strip()
-                    )
-                    if configured_access_key_id != "":
-                        s3_access_key_id = configured_access_key_id
-                s3_secret_access_key: str | None = None
-                if resolved_settings.s3_secret_access_key is not None:
-                    configured_secret_access_key = (
-                        resolved_settings.s3_secret_access_key.get_secret_value()
-                    )
-                    if configured_secret_access_key != "":
-                        s3_secret_access_key = configured_secret_access_key
-                s3_endpoint_url = resolved_settings.s3_endpoint_url
-                if s3_endpoint_url == "":
-                    s3_endpoint_url = None
-                storage = create_file_storage(
-                    backend=resolved_settings.storage_backend,
-                    local_root=resolved_settings.workspace / "objects",
-                    s3_endpoint_url=s3_endpoint_url,
-                    s3_region=resolved_settings.s3_region,
-                    s3_access_key_id=s3_access_key_id,
-                    s3_secret_access_key=s3_secret_access_key,
-                    s3_force_path_style=resolved_settings.s3_force_path_style,
+            registry = build_plugin_registry(builtin_plugins())
+            s3_access_key_id: str | None = None
+            if resolved_settings.s3_access_key_id is not None:
+                configured_access_key_id = (
+                    resolved_settings.s3_access_key_id.get_secret_value().strip()
                 )
-                saved_graphs = SavedGraphService(
-                    lambda: SqlAlchemySavedGraphUnitOfWork(database.sessions),
-                    registry,
+                if configured_access_key_id != "":
+                    s3_access_key_id = configured_access_key_id
+            s3_secret_access_key: str | None = None
+            if resolved_settings.s3_secret_access_key is not None:
+                configured_secret_access_key = (
+                    resolved_settings.s3_secret_access_key.get_secret_value()
                 )
-                module_library = ModuleLibraryService(
-                    lambda: SqlAlchemyUnitOfWork(database.sessions),
-                    registry,
+                if configured_secret_access_key != "":
+                    s3_secret_access_key = configured_secret_access_key
+            s3_endpoint_url = resolved_settings.s3_endpoint_url
+            if s3_endpoint_url == "":
+                s3_endpoint_url = None
+            storage = create_file_storage(
+                backend=resolved_settings.storage_backend,
+                local_root=resolved_settings.workspace / "objects",
+                s3_endpoint_url=s3_endpoint_url,
+                s3_region=resolved_settings.s3_region,
+                s3_access_key_id=s3_access_key_id,
+                s3_secret_access_key=s3_secret_access_key,
+                s3_force_path_style=resolved_settings.s3_force_path_style,
+            )
+            saved_graphs = SavedGraphService(
+                lambda: SqlAlchemySavedGraphUnitOfWork(database.sessions),
+                registry,
+            )
+            module_library = ModuleLibraryService(
+                lambda: SqlAlchemyUnitOfWork(database.sessions),
+                registry,
+            )
+            templates = TemplateService(
+                lambda: SqlAlchemyUnitOfWork(database.sessions)
+            )
+            collaboration = CollaborationService(
+                lambda: SqlAlchemyUnitOfWork(database.sessions),
+                registry,
+                command_hmac_key=resolved_settings.resolved_command_hmac_key(),
+                command_hmac_key_version=resolved_settings.command_hmac_key_version,
+                saved_graphs=saved_graphs,
+            )
+            node_secrets = NodeSecretService(
+                unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(
+                    database.sessions
+                ),
+                plugin_registry=registry,
+                encryption_key=resolved_settings.credential_encryption_key,
+            )
+            components = build_workbench_components(
+                plugin_registry=registry,
+                workspace=resolved_settings.workspace,
+                unit_of_work=SqlAlchemyUnitOfWork(database.sessions),
+                storage=storage,
+                execution_backend=resolved_settings.execution_backend,
+                map_max_concurrency=resolved_settings.map_max_concurrency,
+                max_active_executions=resolved_settings.max_active_executions,
+                prefect_task_retries=resolved_settings.prefect_task_retries,
+                prefect_task_retry_delay_seconds=(
+                    resolved_settings.prefect_task_retry_delay_seconds
+                ),
+                storage_backend=resolved_settings.storage_backend,
+                bucket=resolved_settings.storage_bucket,
+                staged_upload_max_bytes=resolved_settings.staged_upload_max_bytes,
+                saved_graphs=saved_graphs,
+                module_library=module_library,
+                node_secrets=node_secrets,
+            )
+            resources = AppResources(
+                database=database,
+                plugin_registry=components.plugin_registry,
+                uploads=components.uploads,
+                graph_modules=components.modules,
+                module_library=module_library,
+                templates=templates,
+                run_graph=components.run_graph,
+                execution_admission=components.execution_admission,
+                execution_manager=components.execution_manager,
+                execution_history=components.execution_history,
+                materializations=components.materializations,
+                presenter=components.presenter,
+                artifacts=components.artifacts,
+                saved_graphs=saved_graphs,
+                collaboration=collaboration,
+                node_secrets=node_secrets,
+                graph_room_hub=graph_room_hub,
+            )
+            try:
+                components.execution_manager.bind_room_publisher(
+                    ActiveExecutionRoomPublisher(graph_room_hub)
                 )
-                templates = TemplateService(
-                    lambda: SqlAlchemyUnitOfWork(database.sessions)
-                )
-                collaboration = CollaborationService(
-                    lambda: SqlAlchemyUnitOfWork(database.sessions),
-                    registry,
-                    command_hmac_key=resolved_settings.resolved_command_hmac_key(),
-                    command_hmac_key_version=resolved_settings.command_hmac_key_version,
-                    saved_graphs=saved_graphs,
-                )
-                node_secrets = NodeSecretService(
-                    unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(
-                        database.sessions
-                    ),
-                    plugin_registry=registry,
-                    encryption_key=resolved_settings.credential_encryption_key,
-                )
-                components = build_workbench_components(
-                    plugin_registry=registry,
-                    workspace=resolved_settings.workspace,
-                    unit_of_work=SqlAlchemyUnitOfWork(database.sessions),
-                    storage=storage,
-                    execution_backend=resolved_settings.execution_backend,
-                    map_max_concurrency=resolved_settings.map_max_concurrency,
-                    max_active_executions=resolved_settings.max_active_executions,
-                    prefect_task_retries=resolved_settings.prefect_task_retries,
-                    prefect_task_retry_delay_seconds=(
-                        resolved_settings.prefect_task_retry_delay_seconds
-                    ),
-                    storage_backend=resolved_settings.storage_backend,
-                    bucket=resolved_settings.storage_bucket,
-                    staged_upload_max_bytes=resolved_settings.staged_upload_max_bytes,
-                    saved_graphs=saved_graphs,
-                    module_library=module_library,
-                    node_secrets=node_secrets,
-                )
-                resources = AppResources(
-                    database=database,
-                    plugin_registry=components.plugin_registry,
-                    uploads=components.uploads,
-                    graph_modules=components.modules,
-                    module_library=module_library,
-                    templates=templates,
-                    run_graph=components.run_graph,
-                    execution_admission=components.execution_admission,
-                    execution_manager=components.execution_manager,
-                    execution_history=components.execution_history,
-                    materializations=components.materializations,
-                    presenter=components.presenter,
-                    artifacts=components.artifacts,
-                    saved_graphs=saved_graphs,
-                    collaboration=collaboration,
-                    node_secrets=node_secrets,
-                    graph_room_hub=graph_room_hub,
-                )
-                try:
-                    components.execution_manager.bind_room_publisher(
-                        ActiveExecutionRoomPublisher(graph_room_hub)
-                    )
-                    await components.execution_history.interrupt_all_active()
-                    # Migration 0009 backfills heads; refuse to serve if any graph still lacks one.
-                    await collaboration.verify_every_graph_has_head()
-                    app.state.resources = resources
+                await components.execution_history.interrupt_all_active()
+                # Migration 0009 backfills heads; refuse to serve if any graph still lacks one.
+                await collaboration.verify_every_graph_has_head()
+                app.state.resources = resources
 
-                    async def cleanup_expired_auth_data() -> None:
-                        while True:
-                            await asyncio.sleep(
-                                resolved_settings.auth_cleanup_interval_seconds
+                async def cleanup_expired_auth_data() -> None:
+                    while True:
+                        await asyncio.sleep(
+                            resolved_settings.auth_cleanup_interval_seconds
+                        )
+                        try:
+                            await auth_service.cleanup_expired()
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as error:
+                            logger.warning(
+                                "auth_cleanup_failed operation=cleanup_expired "
+                                "error_class=%s",
+                                type(error).__name__,
                             )
-                            try:
-                                await auth_service.cleanup_expired()
-                            except asyncio.CancelledError:
-                                raise
-                            except Exception as error:
-                                logger.warning(
-                                    "auth_cleanup_failed operation=cleanup_expired "
-                                    "error_class=%s",
-                                    type(error).__name__,
-                                )
-                                continue
+                            continue
 
-                    cleanup_task = asyncio.create_task(cleanup_expired_auth_data())
-                    try:
-                        yield
-                    finally:
-                        cleanup_task.cancel()
-                        await asyncio.gather(cleanup_task, return_exceptions=True)
+                cleanup_task = asyncio.create_task(cleanup_expired_auth_data())
+                try:
+                    yield
                 finally:
-                    try:
-                        await resources.cleanup()
-                    finally:
-                        if getattr(app.state, "resources", None) is resources:
-                            del app.state.resources
+                    cleanup_task.cancel()
+                    await asyncio.gather(cleanup_task, return_exceptions=True)
+            finally:
+                try:
+                    await resources.cleanup()
+                finally:
+                    if getattr(app.state, "resources", None) is resources:
+                        del app.state.resources
         finally:
             try:
                 await database.dispose()
@@ -388,9 +381,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redoc_url=None,
         openapi_url=None,
     )
-    mcp_http_app = create_mounted_mcp_app(application)
-    mcp_http_app_holder["app"] = mcp_http_app
-    application.mount("/mcp", mcp_http_app)
 
     async def browser_abuse_cookie_boundary(
         request: Request,

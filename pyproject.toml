@@ -7,7 +7,6 @@ dependencies = [
     "fastapi[standard]>=0.136.1",
     "grafy-api",
     "grafy-core",
-    "grafy-mcp",
     "grafy-persistence",
     "grafy-storage",
 ]
@@ -31,13 +30,11 @@ members = [
     "plugins/gis",
     "plugins/sql",
     "apps/api",
-    "apps/mcp",
 ]
 
 [tool.uv.sources]
 grafy-api = { workspace = true }
 grafy-core = { workspace = true }
-grafy-mcp = { workspace = true }
 grafy-persistence = { workspace = true }
 grafy-plugin-llm = { workspace = true }
 grafy-plugin-ocr = { workspace = true }
@@ -68,7 +65,6 @@ include = [
     "plugins/gis/*",
     "plugins/sql/*",
     "apps/api/*",
-    "apps/mcp/*",
 ]
 exclude = [
     ".venv",
@@ -86,6 +82,5 @@ executionEnvironments = [
         "plugins/gis/src",
         "plugins/sql/src",
         "apps/api/src",
-        "apps/mcp/src",
     ] },
 ]

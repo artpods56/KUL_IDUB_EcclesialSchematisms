@@ -12,7 +12,6 @@ dependencies = [
     "fastapi>=0.123.0",
     "httpx>=0.28.0",
     "grafy-core",
-    "grafy-mcp",
     "grafy-persistence",
     "grafy-storage",
     "pillow",
@@ -30,7 +29,6 @@ grafy-admin = "grafy_api.admin:main"
 
 [tool.uv.sources]
 grafy-core = { workspace = true }
-grafy-mcp = { workspace = true }
 grafy-persistence = { workspace = true }
 grafy-storage = { workspace = true }
 
