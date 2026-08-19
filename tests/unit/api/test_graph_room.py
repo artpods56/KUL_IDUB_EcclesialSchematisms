@@ -27,6 +27,7 @@ from grafy_api.v1.routes.collaboration.hub import (
 )
 from grafy_api.v1.routes.collaboration.models import (
     ActorPresentation,
+    PresenceUpdateSubmitMessage,
     RoomHeartbeatMessage,
     RoomReadyMessage,
 )
@@ -844,6 +845,95 @@ def test_presence_rate_limit_and_stale_sequence_drop() -> None:
     asyncio.run(_exercise())
 
 
+def _room_session(websocket: AsyncMock) -> GraphRoomSession:
+    return GraphRoomSession(
+        workspace_id=WORKSPACE_ID,
+        graph_id=uuid4(),
+        graph_room_session_id=uuid4(),
+        actor_user_id=TEST_USER_ID,
+        credential_reference="test-session",
+        authorization_version=1,
+        actor_presentation=ActorPresentation(
+            actor_id=TEST_USER_ID,
+            display_name="Owner",
+            color="indigo",
+        ),
+        websocket=websocket,
+    )
+
+
+def test_presence_update_after_close_cannot_recreate_membership() -> None:
+    """A delayed presence update after close is dropped; it must not recreate
+    presence for an already-closed (unregistered) participant."""
+
+    async def _exercise() -> None:
+        hub = GraphRoomHub()
+        websocket = AsyncMock()
+        websocket.application_state = WebSocketState.CONNECTED
+        session = _room_session(websocket)
+        await hub.join(session)
+        await hub.register_presence(session)
+        await hub.close_session(session, code=1000, reason="left")
+
+        # A stale update racing after close: no member remains, so it is dropped.
+        result = await hub.apply_presence_update(
+            session,
+            PresenceUpdateSubmitMessage(
+                presence_sequence=1,
+                cursor={"x": 1.0, "y": 2.0},
+            ),
+        )
+        assert result is None
+        # Presence cannot be recreated: no participant is present for the graph.
+        assert await hub.participants_for(
+            workspace_id=WORKSPACE_ID,
+            graph_id=session.graph_id,
+        ) == []
+        await hub.shutdown()
+
+    asyncio.run(_exercise())
+
+
+def test_presence_update_race_with_close_never_recreates_after_close() -> None:
+    """Even when an update arrives between join and close, a subsequent close
+    removes the member; a later update cannot resurrect presence."""
+
+    async def _exercise() -> None:
+        hub = GraphRoomHub()
+        websocket = AsyncMock()
+        websocket.application_state = WebSocketState.CONNECTED
+        session = _room_session(websocket)
+        await hub.join(session)
+        await hub.register_presence(session)
+
+        first = await hub.apply_presence_update(
+            session,
+            PresenceUpdateSubmitMessage(
+                presence_sequence=1,
+                cursor={"x": 3.0, "y": 4.0},
+            ),
+        )
+        assert first is not None
+        await hub.close_session(session, code=1000, reason="left")
+
+        # After close the exact session is gone; a late update is dropped.
+        late = await hub.apply_presence_update(
+            session,
+            PresenceUpdateSubmitMessage(
+                presence_sequence=2,
+                cursor={"x": 9.0, "y": 9.0},
+            ),
+        )
+        assert late is None
+        assert await hub.participants_for(
+            workspace_id=WORKSPACE_ID,
+            graph_id=session.graph_id,
+        ) == []
+        await hub.shutdown()
+
+    asyncio.run(_exercise())
+
+
 def test_slow_consumer_is_disconnected_instead_of_unbounded_queue() -> None:
     """Phase 4 exit: one slow connection cannot grow an unbounded send queue."""
 
@@ -882,7 +972,68 @@ def test_slow_consumer_is_disconnected_instead_of_unbounded_queue() -> None:
     asyncio.run(_exercise())
 
 
+def test_activated_session_has_one_fifo_post_activation_writer() -> None:
+    """After activation every message routes through the hub's single sender.
+
+    A blocked socket must not allow direct writes to overtake queued messages;
+    the activated session owns exactly one sender task, so ``deliver_private``
+    messages are delivered strictly in FIFO order.
+    """
+
+    async def _exercise() -> None:
+        hub = GraphRoomHub()
+        websocket = AsyncMock()
+        websocket.application_state = WebSocketState.CONNECTED
+        session = GraphRoomSession(
+            workspace_id=WORKSPACE_ID,
+            graph_id=uuid4(),
+            graph_room_session_id=uuid4(),
+            actor_user_id=TEST_USER_ID,
+            credential_reference="test-session",
+            authorization_version=1,
+            actor_presentation=ActorPresentation(
+                actor_id=TEST_USER_ID,
+                display_name="Owner",
+                color="indigo",
+            ),
+            websocket=websocket,
+        )
+        await hub.join(session)
+        await hub.activate(session)
+
+        # Simulate a blocked socket: the sender task awaits an event that never
+        # fires until after both messages have been enqueued, so the queue is
+        # the only path and delivery is strictly FIFO.
+        blocked = asyncio.Event()
+
+        async def _blocking_send(payload: dict) -> None:
+            await blocked.wait()
+
+        websocket.send_json.side_effect = _blocking_send
+
+        first = RoomHeartbeatMessage(authorization_version=1)
+        second = RoomHeartbeatMessage(authorization_version=2)
+        await hub.deliver_private(session, first)
+        await hub.deliver_private(session, second)
+
+        await asyncio.sleep(0.05)
+        # Unblock the single sender so it drains the queue in order.
+        blocked.set()
+        await asyncio.sleep(0.05)
+        calls = websocket.send_json.await_args_list
+        sent = [call.args[0]["authorization_version"] for call in calls]
+        assert sent == [1, 2], sent
+        assert len(calls) == 2
+
+        # Exactly one sender task exists for this activated session.
+        assert session.sender_task is not None
+        await hub.shutdown()
+
+    asyncio.run(_exercise())
+
+
 def _create_graph_with_revision(
+
     client: TestClient,
     name: str = "Execution room graph",
 ) -> tuple[UUID, int]:

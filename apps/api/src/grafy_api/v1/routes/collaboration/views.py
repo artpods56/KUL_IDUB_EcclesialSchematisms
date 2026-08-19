@@ -371,60 +371,31 @@ async def _handle_command_submit(
             graph_room_session_id=session.graph_room_session_id,
         )
     except CapabilityDeniedError as exc:
-        await session.websocket.send_json(
-            GraphCommandRejectedMessage(
-                command_id=message.command_id,
-                error_code="forbidden",
-                detail=str(exc),
-            ).model_dump(mode="json")
-        )
+        await _reject_command(session, hub, message, "forbidden", str(exc))
         return
     except NotFoundError as exc:
-        await session.websocket.send_json(
-            GraphCommandRejectedMessage(
-                command_id=message.command_id,
-                error_code="not_found",
-                detail=str(exc),
-            ).model_dump(mode="json")
-        )
+        await _reject_command(session, hub, message, "not_found", str(exc))
         return
     except MissingCollaborativeHeadError as exc:
-        await session.websocket.send_json(
-            GraphCommandRejectedMessage(
-                command_id=message.command_id,
-                error_code="missing_head",
-                detail=str(exc),
-            ).model_dump(mode="json")
-        )
+        await _reject_command(session, hub, message, "missing_head", str(exc))
         return
     except CollaborationCommandRejectedError as exc:
-        await session.websocket.send_json(
-            GraphCommandRejectedMessage(
-                command_id=message.command_id,
-                error_code="command_rejected",
-                detail=str(exc),
-            ).model_dump(mode="json")
-        )
+        await _reject_command(session, hub, message, "command_rejected", str(exc))
         return
     except CollaborationHeadConflictError as exc:
-        await session.websocket.send_json(
+        await hub.deliver_private(
+            session,
             GraphCommandRejectedMessage(
                 command_id=message.command_id,
                 error_code="head_conflict",
                 detail=str(exc),
                 current_room_epoch=exc.room_epoch,
                 current_sequence=exc.actual_sequence,
-            ).model_dump(mode="json")
+            ),
         )
         return
     except CollaborationIdempotencyMismatchError as exc:
-        await session.websocket.send_json(
-            GraphCommandRejectedMessage(
-                command_id=message.command_id,
-                error_code="idempotency_mismatch",
-                detail=str(exc),
-            ).model_dump(mode="json")
-        )
+        await _reject_command(session, hub, message, "idempotency_mismatch", str(exc))
         return
 
     deduplicated = receipt.outcome is CommandReceiptOutcome.IDEMPOTENT_REPLAY
@@ -457,4 +428,29 @@ async def _handle_command_submit(
         accepted=accepted,
         receipt=receipt_message,
         receipt_session_id=session.graph_room_session_id,
+    )
+
+
+async def _reject_command(
+    session: GraphRoomSession,
+    hub: GraphRoomHub,
+    message: GraphCommandSubmitMessage,
+    error_code: str,
+    detail: str,
+) -> None:
+    """Route a command rejection through the hub's single outbound sender.
+
+    After activation the hub queue is the sole outbound interface; direct
+    ``websocket.send_json`` writes are reserved for the pre-activation
+    ``room.ready`` handshake. Routing rejections through ``deliver_private``
+    preserves FIFO ordering, queue backpressure, and slow-consumer handling.
+    """
+
+    await hub.deliver_private(
+        session,
+        GraphCommandRejectedMessage(
+            command_id=message.command_id,
+            error_code=error_code,
+            detail=detail,
+        ),
     )

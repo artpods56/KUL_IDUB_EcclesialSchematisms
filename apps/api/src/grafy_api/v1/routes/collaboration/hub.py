@@ -64,6 +64,18 @@ class _PresenceEntry:
     last_accept_at: float
 
 
+@dataclass(slots=True)
+class _RoomMember:
+    """A registered room participant co-located with its ephemeral presence.
+
+    Presence lives on the member so a delayed update cannot recreate it after
+    the member has closed; TTL expiry clears presence, never membership.
+    """
+
+    session: GraphRoomSession
+    presence: _PresenceEntry | None = None
+
+
 class GraphRoomHub:
     """In-process hub keyed by (workspace_id, graph_id)."""
 
@@ -73,8 +85,7 @@ class GraphRoomHub:
         presence_ttl_seconds: float = DEFAULT_PRESENCE_TTL_SECONDS,
         presence_max_updates_per_second: float = DEFAULT_PRESENCE_MAX_UPDATES_PER_SECOND,
     ) -> None:
-        self._rooms: dict[tuple[UUID, UUID], dict[UUID, GraphRoomSession]] = {}
-        self._presence: dict[tuple[UUID, UUID], dict[UUID, _PresenceEntry]] = {}
+        self._rooms: dict[tuple[UUID, UUID], dict[UUID, _RoomMember]] = {}
         self._lock = asyncio.Lock()
         self._presence_ttl_seconds = presence_ttl_seconds
         self._presence_min_interval = (
@@ -94,7 +105,7 @@ class GraphRoomHub:
         key = (session.workspace_id, session.graph_id)
         async with self._lock:
             room = self._rooms.setdefault(key, {})
-            room[session.graph_room_session_id] = session
+            room[session.graph_room_session_id] = _RoomMember(session=session)
 
     async def activate(self, session: GraphRoomSession) -> None:
         """Release buffered outbound messages for a registered session."""
@@ -102,10 +113,11 @@ class GraphRoomHub:
         key = (session.workspace_id, session.graph_id)
         async with self._lock:
             room = self._rooms.get(key)
+            member = room.get(session.graph_room_session_id) if room is not None else None
             if (
                 session.closed
-                or room is None
-                or room.get(session.graph_room_session_id) is not session
+                or member is None
+                or member.session is not session
                 or session.sender_task is not None
             ):
                 return
@@ -138,17 +150,21 @@ class GraphRoomHub:
         key = (session.workspace_id, session.graph_id)
         async with self._lock:
             removed, cleared = self._expire_locked(key, now)
-            room_presence = self._presence.setdefault(key, {})
-            room_presence[session.graph_room_session_id] = _PresenceEntry(
+            room = self._rooms.setdefault(key, {})
+            member = room.setdefault(
+                session.graph_room_session_id,
+                _RoomMember(session=session),
+            )
+            member.presence = _PresenceEntry(
                 participant=participant,
                 updated_at=now,
                 last_accept_at=0.0,
             )
             recipients = [
-                peer
-                for peer in self._rooms.get(key, {}).values()
-                if peer.graph_room_session_id != session.graph_room_session_id
-                and not peer.closed
+                peer.session
+                for peer in room.values()
+                if peer.session.graph_room_session_id != session.graph_room_session_id
+                and not peer.session.closed
             ]
         await self._fanout_expiry(
             workspace_id=session.workspace_id,
@@ -171,8 +187,12 @@ class GraphRoomHub:
         key = (workspace_id, graph_id)
         async with self._lock:
             removed, cleared = self._expire_locked(key, now)
-            room_presence = self._presence.get(key, {})
-            participants = [entry.participant for entry in room_presence.values()]
+            room = self._rooms.get(key, {})
+            participants = [
+                member.presence.participant
+                for member in room.values()
+                if member.presence is not None
+            ]
         await self._fanout_expiry(
             workspace_id=workspace_id,
             graph_id=graph_id,
@@ -195,53 +215,61 @@ class GraphRoomHub:
         key = (session.workspace_id, session.graph_id)
         async with self._lock:
             removed, cleared = self._expire_locked(key, now)
-            room_presence = self._presence.setdefault(key, {})
-            entry = room_presence.get(session.graph_room_session_id)
-            if entry is None:
-                entry = _PresenceEntry(
-                    participant=PresenceParticipant(
-                        graph_room_session_id=session.graph_room_session_id,
-                        actor=session.actor_presentation,
-                        presence_sequence=0,
-                    ),
-                    updated_at=now,
-                    last_accept_at=0.0,
-                )
-                room_presence[session.graph_room_session_id] = entry
-            if message.presence_sequence <= entry.participant.presence_sequence:
+            room = self._rooms.get(key)
+            member = room.get(session.graph_room_session_id) if room is not None else None
+            # A delayed update must match the exact open registered session; it
+            # must never recreate presence for an already-closed member.
+            if member is None or member.session is not session or session.closed:
                 drop = True
                 participant = None
                 recipients: list[GraphRoomSession] = []
-            elif (
-                self._presence_min_interval > 0
-                and entry.last_accept_at > 0
-                and (now - entry.last_accept_at) < self._presence_min_interval
-            ):
-                drop = True
-                participant = None
-                recipients = []
             else:
-                drop = False
-                participant = PresenceParticipant(
-                    graph_room_session_id=session.graph_room_session_id,
-                    actor=session.actor_presentation,
-                    presence_sequence=message.presence_sequence,
-                    cursor=message.cursor,
-                    selected_node_ids=message.selected_node_ids,
-                    selected_edge_ids=message.selected_edge_ids,
-                    activity=message.activity,
-                    activity_target_ids=message.activity_target_ids,
-                    transient_node_positions=message.transient_node_positions,
-                )
-                entry.participant = participant
-                entry.updated_at = now
-                entry.last_accept_at = now
-                recipients = [
-                    peer
-                    for peer in self._rooms.get(key, {}).values()
-                    if peer.graph_room_session_id != session.graph_room_session_id
-                    and not peer.closed
-                ]
+                entry = member.presence
+                if entry is None:
+                    entry = _PresenceEntry(
+                        participant=PresenceParticipant(
+                            graph_room_session_id=session.graph_room_session_id,
+                            actor=session.actor_presentation,
+                            presence_sequence=0,
+                        ),
+                        updated_at=now,
+                        last_accept_at=0.0,
+                    )
+                    member.presence = entry
+                if message.presence_sequence <= entry.participant.presence_sequence:
+                    drop = True
+                    participant = None
+                    recipients = []
+                elif (
+                    self._presence_min_interval > 0
+                    and entry.last_accept_at > 0
+                    and (now - entry.last_accept_at) < self._presence_min_interval
+                ):
+                    drop = True
+                    participant = None
+                    recipients = []
+                else:
+                    drop = False
+                    participant = PresenceParticipant(
+                        graph_room_session_id=session.graph_room_session_id,
+                        actor=session.actor_presentation,
+                        presence_sequence=message.presence_sequence,
+                        cursor=message.cursor,
+                        selected_node_ids=message.selected_node_ids,
+                        selected_edge_ids=message.selected_edge_ids,
+                        activity=message.activity,
+                        activity_target_ids=message.activity_target_ids,
+                        transient_node_positions=message.transient_node_positions,
+                    )
+                    entry.participant = participant
+                    entry.updated_at = now
+                    entry.last_accept_at = now
+                    recipients = [
+                        peer.session
+                        for peer in room.values()
+                        if peer.session.graph_room_session_id != session.graph_room_session_id
+                        and not peer.session.closed
+                    ]
         await self._fanout_expiry(
             workspace_id=session.workspace_id,
             graph_id=session.graph_id,
@@ -341,12 +369,11 @@ class GraphRoomHub:
     async def shutdown(self) -> None:
         async with self._lock:
             sessions = [
-                session
+                member.session
                 for room in self._rooms.values()
-                for session in room.values()
+                for member in room.values()
             ]
             self._rooms.clear()
-            self._presence.clear()
         for session in sessions:
             await self._close_session(session, code=1001, reason="shutdown")
 
@@ -357,7 +384,7 @@ class GraphRoomHub:
     ) -> list[GraphRoomSession]:
         async with self._lock:
             room = self._rooms.get((workspace_id, graph_id), {})
-            return list(room.values())
+            return [member.session for member in room.values()]
 
     async def _sessions_for_workspace_user(
         self,
@@ -369,9 +396,9 @@ class GraphRoomHub:
             for (room_workspace_id, _graph_id), room in self._rooms.items():
                 if room_workspace_id != workspace_id:
                     continue
-                for session in room.values():
-                    if session.actor_user_id == user_id:
-                        matched.append(session)
+                for member in room.values():
+                    if member.session.actor_user_id == user_id:
+                        matched.append(member.session)
             return matched
 
     def _expire_locked(
@@ -379,19 +406,26 @@ class GraphRoomHub:
         key: tuple[UUID, UUID],
         now: float,
     ) -> tuple[list[UUID], list[PresenceParticipant]]:
-        """Clear stale cursor/activity fields; remove entries idle past 2× TTL."""
+        """Clear stale cursor/activity fields; clear presence idle past 2× TTL.
 
-        room_presence = self._presence.get(key)
-        if not room_presence:
+        TTL expiry clears presence but never room membership, so a participant
+        that stops updating stays registered until it closes.
+        """
+
+        room = self._rooms.get(key)
+        if not room:
             return [], []
         removed: list[UUID] = []
         cleared: list[PresenceParticipant] = []
         ttl = self._presence_ttl_seconds
         remove_after = ttl * 2
-        for session_id, entry in list(room_presence.items()):
+        for session_id, member in list(room.items()):
+            entry = member.presence
+            if entry is None:
+                continue
             age = now - entry.updated_at
             if age >= remove_after:
-                room_presence.pop(session_id, None)
+                member.presence = None
                 removed.append(session_id)
                 continue
             if age < ttl:
@@ -412,8 +446,6 @@ class GraphRoomHub:
                 presence_sequence=participant.presence_sequence,
             )
             cleared.append(entry.participant)
-        if not room_presence:
-            self._presence.pop(key, None)
         return removed, cleared
 
     async def _fanout_expiry(
@@ -512,17 +544,15 @@ class GraphRoomHub:
         leave_recipients: list[GraphRoomSession] = []
         had_presence = False
         async with self._lock:
-            room_presence = self._presence.get(key)
-            if room_presence is not None and session.graph_room_session_id in room_presence:
-                room_presence.pop(session.graph_room_session_id, None)
-                had_presence = True
-                if not room_presence:
-                    self._presence.pop(key, None)
             room = self._rooms.get(key)
             if room is not None:
+                member = room.get(session.graph_room_session_id)
+                had_presence = member is not None and member.presence is not None
                 room.pop(session.graph_room_session_id, None)
                 if had_presence:
-                    leave_recipients = [peer for peer in room.values() if not peer.closed]
+                    leave_recipients = [
+                        peer.session for peer in room.values() if not peer.session.closed
+                    ]
                 if not room:
                     self._rooms.pop(key, None)
         if had_presence:
