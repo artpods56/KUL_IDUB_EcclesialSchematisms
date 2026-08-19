@@ -1,7 +1,10 @@
 from dataclasses import dataclass
 from uuid import UUID
 
-from grafy_core.application.modules import ModuleLibraryService
+from grafy_core.application.modules import (
+    ModuleLibraryService,
+    validate_optional_input_targets,
+)
 from grafy_core.application.saved_graphs import SavedGraphService
 from grafy_core.domain.errors import NotFoundError
 from grafy_core.domain.module_library import ModulePublicationState
@@ -11,10 +14,9 @@ from grafy_core.domain.modules import (
     GraphModuleDefinition,
     GraphModuleDefinitionError,
     GraphModuleReference,
-    GraphModuleReferenceError,
 )
 from grafy_core.domain.saved_graphs import SavedGraphDocument
-from grafy_core.plugins import PluginRegistry, UnknownOperatorError
+from grafy_core.plugins import PluginRegistry
 
 GRAPH_MODULE_PLUGIN_SLUG = "graph.module"
 
@@ -79,13 +81,8 @@ class GraphModuleCatalog:
         for module, release, definition in await self._module_library.catalog_definitions(
             workspace_id
         ):
-            try:
-                await self._validate_optional_input_targets(
-                    definition,
-                    workspace_id=workspace_id,
-                )
-            except GraphModuleDefinitionError:
-                continue
+            # catalog_definitions already validates and skips invalid
+            # definitions, so no re-validation is needed here.
             is_current = module.current_library_release == release.revision
             entries.append(
                 GraphModuleCatalogEntry(
@@ -104,6 +101,24 @@ class GraphModuleCatalog:
         *,
         workspace_id: UUID,
     ) -> GraphModuleDefinition:
+        if self._module_library is not None:
+            try:
+                return await self._module_library.resolve_definition(
+                    reference,
+                    workspace_id=workspace_id,
+                )
+            except NotFoundError as exc:
+                raise NotFoundError(
+                    "Saved graph module",
+                    f"{reference.graph_id}@{reference.revision}",
+                ) from exc
+            except GraphModuleDefinitionError as exc:
+                raise GraphModuleCatalogError(
+                    f"Saved graph {reference.graph_id} revision {reference.revision} "
+                    f"is not a valid module: {exc}"
+                ) from exc
+        # Lightweight configuration: no module library, resolve from saved graphs
+        # directly through the same canonical validation rules.
         if self._saved_graphs is None:
             raise GraphModuleCatalogError(
                 "Saved graph modules are not configured for this workbench"
@@ -115,9 +130,11 @@ class GraphModuleCatalog:
                 reference.revision,
             )
             definition = GraphModuleDefinition.from_saved_graph_revision(revision)
-            await self._validate_optional_input_targets(
+            await validate_optional_input_targets(
                 definition,
                 workspace_id=workspace_id,
+                graphs=self._saved_graphs,
+                plugin_registry=self._plugin_registry,
             )
         except NotFoundError as exc:
             raise NotFoundError(
@@ -130,102 +147,6 @@ class GraphModuleCatalog:
                 f"is not a valid module: {exc}"
             ) from exc
         return definition
-
-    async def _validate_optional_input_targets(
-        self,
-        definition: GraphModuleDefinition,
-        *,
-        workspace_id: UUID,
-    ) -> None:
-        nodes_by_id = {node.id: node for node in definition.document.nodes}
-        for public_port in definition.input_ports:
-            if public_port.required:
-                continue
-            for edge in definition.document.edges:
-                if not edge.enabled or edge.from_node != public_port.boundary_node_id:
-                    continue
-                target_node = nodes_by_id[edge.to_node]
-                try:
-                    target_reference = GraphModuleReference.try_from_operator_identity(
-                        target_node.operator_id,
-                        target_node.operator_version,
-                    )
-                except GraphModuleReferenceError as exc:
-                    raise GraphModuleDefinitionError(
-                        f"Graph module {definition.reference.graph_id} revision "
-                        f"{definition.reference.revision} optional public input "
-                        f"{public_port.name!r} edge {edge.id!r} targets invalid "
-                        f"graph module operator {target_node.operator_id}@"
-                        f"{target_node.operator_version}: {exc}"
-                    ) from exc
-
-                if target_reference is not None:
-                    if self._saved_graphs is None:
-                        raise GraphModuleDefinitionError(
-                            f"Graph module {definition.reference.graph_id} revision "
-                            f"{definition.reference.revision} optional public input "
-                            f"{public_port.name!r} edge {edge.id!r} cannot resolve "
-                            "its target graph module because saved graphs are not "
-                            "configured"
-                        )
-                    try:
-                        target_revision = await self._saved_graphs.get_revision(
-                            workspace_id,
-                            target_reference.graph_id,
-                            target_reference.revision,
-                        )
-                        target_definition = (
-                            GraphModuleDefinition.from_saved_graph_revision(
-                                target_revision
-                            )
-                        )
-                        target_port = target_definition.input_port(edge.to_port)
-                    except (GraphModuleDefinitionError, NotFoundError) as exc:
-                        raise GraphModuleDefinitionError(
-                            f"Graph module {definition.reference.graph_id} revision "
-                            f"{definition.reference.revision} optional public input "
-                            f"{public_port.name!r} edge {edge.id!r} cannot resolve "
-                            f"target input {target_node.id!r}.{edge.to_port!r} "
-                            f"({target_node.operator_id}@"
-                            f"{target_node.operator_version}): {exc}"
-                        ) from exc
-                    target_required = target_port.required
-                else:
-                    try:
-                        registration = self._plugin_registry.node_registration(
-                            target_node.operator_id,
-                            target_node.operator_version,
-                        )
-                    except UnknownOperatorError as exc:
-                        raise GraphModuleDefinitionError(
-                            f"Graph module {definition.reference.graph_id} revision "
-                            f"{definition.reference.revision} optional public input "
-                            f"{public_port.name!r} edge {edge.id!r} targets unknown "
-                            f"operator {target_node.operator_id}@"
-                            f"{target_node.operator_version}"
-                        ) from exc
-                    target_port = registration.node_class.input_contract.ports.get(
-                        edge.to_port
-                    )
-                    if target_port is None:
-                        raise GraphModuleDefinitionError(
-                            f"Graph module {definition.reference.graph_id} revision "
-                            f"{definition.reference.revision} optional public input "
-                            f"{public_port.name!r} edge {edge.id!r} targets missing "
-                            f"input {target_node.id!r}.{edge.to_port!r} "
-                            f"({target_node.operator_id}@"
-                            f"{target_node.operator_version})"
-                        )
-                    target_required = target_port.required
-
-                if target_required:
-                    raise GraphModuleDefinitionError(
-                        f"Graph module {definition.reference.graph_id} revision "
-                        f"{definition.reference.revision} optional public input "
-                        f"{public_port.name!r} edge {edge.id!r} targets required "
-                        f"input {target_node.id!r}.{edge.to_port!r} "
-                        f"({target_node.operator_id}@{target_node.operator_version})"
-                    )
 
 
 __all__ = [

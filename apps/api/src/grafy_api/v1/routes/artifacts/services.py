@@ -1646,7 +1646,7 @@ class ArtifactService:
                 continue
             if artifact.bucket is None or artifact.object_key is None:
                 return False
-            if not self._storage.exists(artifact.bucket, artifact.object_key):
+            if await self._storage.stat(artifact.bucket, artifact.object_key) is None:
                 return False
         return True
 

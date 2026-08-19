@@ -12,6 +12,8 @@ from pydantic import Field, SecretStr, StrictStr
 
 from grafy_core.application.modules import ModuleLibraryService
 from grafy_core.application.saved_graphs import SavedGraphService
+from grafy_core.domain.errors import NotFoundError
+from grafy_core.domain.modules import GraphModuleReference
 from grafy_core.artifacts import (
     InMemoryUnitOfWork,
     NoConfig,
@@ -1472,3 +1474,45 @@ def test_withdrawn_module_stays_executable_for_pinned_calls(
     output = cast(list[dict[str, object]], _module_node_run(result)["outputs"])[0]
     artifacts = cast(list[dict[str, object]], output["artifacts"])
     assert artifacts[0]["text"] == '"A"'
+
+
+def test_module_library_resolve_definition_is_the_core_contract(
+    module_client: TestClient,
+) -> None:
+    """The canonical resolver resolves and validates a pinned revision and
+    raises NotFoundError for a missing one (core contract)."""
+
+    created = module_client.post(
+        f"/v1/workspaces/{WORKSPACE}/graphs",
+        json=_text_module_payload(),
+    ).json()
+    graph_id = UUID(created["id"])
+    module_client.post(
+        f"/v1/workspaces/{WORKSPACE}/modules/publish",
+        json={"source_graph_id": str(graph_id)},
+    ).status_code
+
+    module_library = module_client.app.dependency_overrides[
+        module_library_service
+    ]()
+
+    reference = GraphModuleReference(graph_id=graph_id, revision=1)
+    definition = asyncio.run(
+        module_library.resolve_definition(
+            reference,
+            workspace_id=UUID(WORKSPACE),
+        )
+    )
+    assert definition.reference.graph_id == graph_id
+    assert definition.reference.revision == 1
+    assert definition.name == "Capitalize A"
+    assert [port.name for port in definition.input_ports] == ["text"]
+    assert [port.name for port in definition.output_ports] == ["result"]
+
+    with pytest.raises(NotFoundError):
+        asyncio.run(
+            module_library.resolve_definition(
+                GraphModuleReference(graph_id=graph_id, revision=999),
+                workspace_id=UUID(WORKSPACE),
+            )
+        )
