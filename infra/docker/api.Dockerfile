@@ -16,7 +16,6 @@ COPY plugins/ocr ./plugins/ocr
 COPY plugins/gis ./plugins/gis
 COPY plugins/sql ./plugins/sql
 COPY apps/api ./apps/api
-COPY apps/mcp ./apps/mcp
 COPY infra/db ./infra/db
 
 EXPOSE 8000

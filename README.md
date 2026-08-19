@@ -26,9 +26,7 @@ Configurable or domain-significant transformations remain nodes.
 
 ```mermaid
 flowchart LR
-    Agents["Codex and other MCP clients"] --> MCP["FastMCP graph tools"]
-    MCP --> API["FastAPI workbench API"]
-    Web["Next.js workbench"] --> API
+    Web["Next.js workbench"] --> API["FastAPI workbench API"]
     API --> Core["Typed artifact-graph runtime"]
     API --> Persistence["SQLAlchemy repositories + UoW"]
     Persistence --> SQL["SQLite or PostgreSQL"]
@@ -43,10 +41,6 @@ flowchart LR
 
 - `apps/web` owns the canvas, node rendering, schema-driven controls, and edge
   projection/conversion/mapping editor.
-- `apps/mcp` owns the mountable FastMCP Streamable HTTP tools for agent graph
-  discovery and collaboration-aware authoring. The API mounts it at `/mcp` and
-  injects request-scoped PAT actor context; the package does not import
-  FastAPI routes, persistence, storage, or plugin implementations.
 - `apps/api` owns plugin discovery, runtime composition, and the HTTP adapters
   for execution and saved-graph CRUD under `/v1`.
 - `libs/core/src/grafy_core` owns artifacts, nodes, ports, projections,
@@ -207,7 +201,7 @@ Install both workspaces:
 just install
 ```
 
-The default installation contains the API, MCP adapter, core, persistence,
+The default installation contains the API, core, persistence,
 storage, and web application; it does not install OCR or Mistral. Enable the
 optional OCR plugin with:
 
@@ -291,50 +285,6 @@ After Grafy is healthy against the existing data, volume and database files
 may be renamed during a separately backed-up maintenance window. Do not let
 Compose create an empty `grafy-data` volume and mistake it for a successful
 migration.
-
-### Assemble graphs through MCP
-
-The local FastMCP server exposes six deliberately narrow tools over the public
-Grafy HTTP API:
-
-- `search_nodes` searches the live node catalog without returning every large
-  schema.
-- `inspect_node` returns the complete schema and port contract for one exact
-  operator id and version.
-- `list_graphs` and `get_live_head` inspect the catalog and collaborative head.
-- `submit_graph_command` applies one semantic collaboration command.
-- `create_graph` bootstraps a new graph at sequence 1.
-- `replace_graph` performs collaboration-aware epoch reset of a checkpointed
-  head.
-
-MCP is mounted on the API at `/mcp` (stateless Streamable HTTP). Create a
-workspace-bound personal access token in the browser, then point an MCP client
-at `http://127.0.0.1:8000/mcp` (or the gateway `/mcp`) with
-`Authorization: Bearer <token>`. Workspace identity comes from the PAT and is
-not a tool argument.
-
-The repository includes `.codex/config.toml` for an HTTP MCP client once a PAT
-is available:
-
-```toml
-[mcp_servers.grafy]
-url = "http://127.0.0.1:8000/mcp"
-default_tools_approval_mode = "auto"
-startup_timeout_sec = 30
-tool_timeout_sec = 60
-
-[mcp_servers.grafy.tools.create_graph]
-approval_mode = "prompt"
-
-[mcp_servers.grafy.tools.replace_graph]
-approval_mode = "prompt"
-
-[mcp_servers.grafy.tools.submit_graph_command]
-approval_mode = "prompt"
-```
-
-Supply the PAT through the client's Authorization configuration for that
-server. Read tools run directly; mutating tools keep explicit prompt policies.
 
 `just api` applies pending Alembic migrations before starting FastAPI. Saved
 graphs, artifact metadata, and materialization bindings are stored in SQLite at

@@ -28,7 +28,7 @@ boundary.
 | `UserGraphState` | Per-user state for one workspace-owned graph: starred and last-opened activity. It is never shared graph state and never grants access. |
 | `OidcLoginTransaction` | Short-lived, single-use Authorization Code + PKCE handshake state. |
 | `AuthSession` | Opaque, revocable browser session (raw secret never persisted). |
-| `PersonalAccessToken` (`PAT`) | Workspace-bound bearer credential for Streamable HTTP MCP; effective permission is token scope ∩ current membership. |
+| `PersonalAccessToken` (`PAT`) | Workspace-bound bearer credential; effective permission is token scope ∩ current membership. |
 | `SecurityAuditEvent` | Metadata-only security audit row; never stores credentials, provider payloads, or command/config bodies. |
 | `GraphRoomSession` | Ephemeral WebSocket participant identity inside one `(workspace_id, graph_id)` collaboration room. |
 | Capability | Fine-grained permission derived from role (and intersected with PAT scopes), such as `edit_graph`, `execute_graph`, or `join_graph_room`. |
@@ -259,14 +259,34 @@ to own its projection and artifact conversion path.
 
 ### Plugin
 
-An installable declaration that groups nodes, artifact types, artifact
-conversions, and the runtime resolver/writer factories they require under one
-stable slug. The host assigns every installed plugin a catalog origin. Built-in
-plugins are installed explicitly with `builtin` origin; external plugins are
-discovered from the `grafy.plugins` Python entry-point group and installed
-with `external` origin. A plugin does not declare its own origin. Plugins depend
-inward on core contracts and ports, never on the API host or concrete storage
-adapters.
+A uv-managed project that groups nodes, artifact types, artifact conversions,
+and the resolver/writer factories those types require under one stable slug.
+The working copy is a directory; execution trusts an immutable **Plugin
+release** (a freeze in object storage), not an import into the API process.
+Intended lifecycle: **Register** a directory under a deployment **Plugin
+root**, then **Publish** to create Workspace-scoped revision N. Humans and the
+coding agent use the same verbs. Diffs compare the working copy to the last
+freeze; they do not auto-publish or retarget graph pins. See
+[plugin unification](docs/design/plugin-unification.md).
+
+The host currently still loads monorepo plugins in-process: it assigns every
+installed plugin a catalog origin; built-in plugins are installed explicitly
+with `builtin` origin; external plugins are discovered from the
+`grafy.plugins` Python entry-point group and installed with `external` origin.
+A plugin does not declare its own origin. Plugins depend inward on core
+contracts and ports, never on the API host or concrete storage adapters.
+
+### Plugin root
+
+A deployment-allowlisted directory under which `grafy plugin register` may
+point. Roots are not the node catalog and do not grant Workspace visibility.
+
+### Plugin release
+
+An append-only, digest-addressed freeze of one Plugin for one Workspace
+(source, lock, profile, runtime image). Graphs pin exact node revisions from
+that release (`notes.table.summarize@1`). Same bytes do not create a new
+revision.
 
 ### Module (workspace library)
 
@@ -312,9 +332,11 @@ construction; provider-backed execution remains an optional external plugin.
 OCR table fragments remain OCR-owned because deciding how Markdown rows become
 headers, columns, and inferred values is a source-specific normalization rather
 than a shape-preserving artifact conversion. Installing optional entry-point
-plugins contributes remote or domain-specific nodes as external catalog entries.
-The catalog exposes the host-assigned origin and visually separates built-in
-families from registered external plugins.
+plugins currently contributes remote or domain-specific nodes as external
+catalog entries. The intended third overlay is Workspace **Plugin releases**
+(register a directory, publish a freeze) rather than loading Team Python into
+the API process. The catalog exposes origin and visually separates built-in
+families from registered Plugins.
 
 ### Port
 
@@ -459,7 +481,7 @@ expanded graph. Pins and live running state remain transient; revision-scoped
 materialized outputs are restored when a saved graph is reopened.
 
 Every saved graph presented as a supported product workflow must be reproducible,
-inspectable, and editable through the production Workbench UI. MCP tools, HTTP
+inspectable, and editable through the production Workbench UI. HTTP
 APIs, scripts, and direct graph-document manipulation may automate only authoring
 operations that the UI itself exposes; they must not populate hidden
 configuration or create graph states that a user cannot subsequently maintain in

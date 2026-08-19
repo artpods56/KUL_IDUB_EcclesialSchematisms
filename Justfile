@@ -62,13 +62,6 @@ api-sql: db-upgrade
 api-all: db-upgrade
     uv run --exact --no-dev --extra llm --extra gis --extra ocr --extra sql uvicorn grafy_api.main:app --reload --host 0.0.0.0 --port 8000
 
-# Explain how to connect an MCP client to the API.
-mcp:
-    @echo "MCP is mounted on the API at /mcp (stateless Streamable HTTP)."
-    @echo "Start the API (just api), create a workspace-bound PAT, then connect"
-    @echo "an MCP client to http://127.0.0.1:8000/mcp with Authorization: Bearer <token>."
-    @exit 1
-
 # Start the local Prefect server.
 prefect:
     .venv/bin/prefect server start
@@ -84,7 +77,7 @@ test:
 
 # Run Python and web linters.
 lint:
-    uv run ruff check apps/api/src apps/mcp/src libs/core/src libs/persistence/src libs/storage/src plugins/gis/src plugins/llm/src plugins/ocr/src plugins/sql/src infra/db/migrations scripts tests
+    uv run ruff check apps/api/src libs/core/src libs/persistence/src libs/storage/src plugins/gis/src plugins/llm/src plugins/ocr/src plugins/sql/src infra/db/migrations scripts tests
     npm --prefix apps/web run lint
 
 # Run Python and TypeScript type checks.

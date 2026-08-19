@@ -124,9 +124,8 @@ file as TLS termination or as a complete two-proxy configuration.
 - `/` proxies to the Next.js web process.
 - `/api/` proxies to the API process with a trailing-slash `proxy_pass` that
   strips only `/api`, so public `/api/v1/...` becomes FastAPI `/v1/...`.
-- `/mcp` proxies to the same API process without rewriting the path.
 - Preserve WebSocket upgrade on graph-room paths and disable proxy buffering
-  for SSE and MCP long-lived responses.
+  for SSE and long-lived responses.
 - For this direct plain-HTTP hop, overwrite rather than append forwarding
   headers:
 
@@ -143,9 +142,9 @@ file as TLS termination or as a complete two-proxy configuration.
   `GRAFY_DOCKER_SUBNET` and `GRAFY_DOCKER_GATEWAY` together; never use
   `*` as the trusted range.
 
-Browser traffic uses the opaque Grafy session cookie after OIDC login. MCP
-clients use a workspace-bound PAT in `Authorization: Bearer` against
-`https://<origin>/mcp`. The operator-supplied public endpoint must terminate TLS
+Browser traffic uses the opaque Grafy session cookie after OIDC login. The
+operator-supplied public endpoint must terminate TLS for that origin before
+production login.
 for that origin before production login.
 
 ## One API owner
@@ -224,20 +223,6 @@ data unless that revision's Alembic head matches. Use external PostgreSQL and
 S3-compatible storage before introducing multiple API replicas; that topology
 is out of scope for the current release gate.
 
-## MCP on the VPS
-
-Streamable HTTP MCP is mounted on the API process at `/mcp` under the same
-public origin as `/api/v1` once the operator-supplied TLS endpoint is in place.
-Create a workspace-bound personal access token in the browser UI, then point an
-MCP client at:
-
-`${GRAFY_PUBLIC_ORIGIN}/mcp`
-
-with `Authorization: Bearer <token>`. First delivery is stateless: every request
-re-resolves the PAT. There is no separate stdio MCP process or ambient API
-credential. `executions:run` MCP tools are deferred; shared runs stay on the
-browser/REST path.
-
 ## Phase 7 release checklist (operator)
 
 Automatable pieces already covered in CI/unit tests: one-owner fence, Compose
@@ -248,11 +233,11 @@ a human on a real host/IdP/data copy.
 - [ ] Exact `GRAFY_PUBLIC_ORIGIN` and OIDC callback registered
 - [ ] Secrets generated and backed up outside the data volume
 - [ ] `bootstrap-oidc-owner` mapping written for the intended first subject
-- [ ] Plain HTTP gateway serves `/`, `/api/v1`, `/mcp` on loopback `:8080` only
+- [ ] Plain HTTP gateway serves `/`, `/api/v1` on loopback `:8080` only
 - [ ] Separate TLS endpoint and both proxy hops validated for the public origin
 - [ ] One API replica / one worker; second owner fails startup
 - [ ] Backup + integrity check rehearsed on a copy of realistic data
-- [ ] Authenticated browser smoke and PAT MCP smoke through the gateway
+- [ ] Authenticated browser smoke through the gateway
 - [ ] Live two-browser collaboration smoke (converge, presence, shared run, revoke)
 - [ ] Collaboration drain before upgrade; restore rehearsed
 
