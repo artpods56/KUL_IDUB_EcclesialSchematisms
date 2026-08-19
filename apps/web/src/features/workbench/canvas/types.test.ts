@@ -5,7 +5,6 @@ import { decodeHandleId, encodeHandleId } from "./handles";
 import {
   bindArtifactTypeVariable,
   createWorkflowNodeData,
-  invalidateWorkflowNodeRuns,
   portMetaForPort,
   resetArtifactTypeBinding,
   serializeRunNode,
@@ -290,95 +289,5 @@ describe("run node serialization", () => {
       { id: "active", port: "items" },
     ]);
     expect(data.inputPlugs).toHaveLength(2);
-  });
-});
-
-function nodeWithRun(id: string) {
-  const data = createWorkflowNodeData(genericNodeSpec);
-  data.run = {
-    node_id: id,
-    status: "succeeded",
-    outputs: [],
-    error: null,
-  };
-  data.execution = { status: "succeeded" };
-  data.progress = {
-    omittedCount: 0,
-    entries: [{
-      sequence: 1,
-      message: `Progress for ${id}`,
-      current: 1,
-      total: 1,
-      sourceNodePath: [],
-      invocationIndex: null,
-      invocationPath: [],
-    }],
-  };
-  return { id, data };
-}
-
-describe("workflow result invalidation", () => {
-  it("preserves upstream and unrelated runs while clearing the target branch", () => {
-    const source = nodeWithRun("source");
-    const target = nodeWithRun("target");
-    const descendant = nodeWithRun("descendant");
-    const unrelated = nodeWithRun("unrelated");
-
-    const next = invalidateWorkflowNodeRuns(
-      [source, target, descendant, unrelated],
-      [
-        { source: "source", target: "target" },
-        { source: "target", target: "descendant" },
-      ],
-      ["target"],
-    );
-
-    expect(next[0]).toBe(source);
-    expect(next[0]?.data.run).toBe(source.data.run);
-    expect(next[0]?.data.progress).toBe(source.data.progress);
-    expect(next[3]).toBe(unrelated);
-    expect(next[3]?.data.run).toBe(unrelated.data.run);
-    expect(next[1]?.data.run).toBeNull();
-    expect(next[1]?.data.execution).toEqual({ status: "idle" });
-    expect(next[1]?.data.progress).toBeNull();
-    expect(next[2]?.data.run).toBeNull();
-    expect(next[2]?.data.execution).toEqual({ status: "idle" });
-    expect(next[2]?.data.progress).toBeNull();
-  });
-
-  it("clears only descendants reached through enabled edges", () => {
-    const target = nodeWithRun("target");
-    const activeDescendant = nodeWithRun("active-descendant");
-    const disabledDescendant = nodeWithRun("disabled-descendant");
-    const disabledGrandchild = nodeWithRun("disabled-grandchild");
-
-    const next = invalidateWorkflowNodeRuns(
-      [target, activeDescendant, disabledDescendant, disabledGrandchild],
-      [
-        {
-          source: "target",
-          target: "active-descendant",
-          data: { enabled: true },
-        },
-        {
-          source: "target",
-          target: "disabled-descendant",
-          data: { enabled: false },
-        },
-        {
-          source: "disabled-descendant",
-          target: "disabled-grandchild",
-          data: { enabled: true },
-        },
-      ],
-      ["target"],
-    );
-
-    expect(next[0]?.data.run).toBeNull();
-    expect(next[1]?.data.run).toBeNull();
-    expect(next[2]).toBe(disabledDescendant);
-    expect(next[2]?.data.run).toBe(disabledDescendant.data.run);
-    expect(next[3]).toBe(disabledGrandchild);
-    expect(next[3]?.data.run).toBe(disabledGrandchild.data.run);
   });
 });

@@ -187,7 +187,6 @@ import {
   createWorkflowNodeData,
   effectivePortShape,
   imageUploads,
-  invalidateWorkflowNodeRuns,
   removeImageUpload,
   resolvedPortArtifactType,
   type WorkflowEdge,
@@ -2274,24 +2273,6 @@ function WorkbenchBody({
     ],
   );
 
-  const invalidateWorkflowResults = React.useCallback(
-    (
-      changedTargetNodeIds: readonly string[],
-      workflowEdges: readonly WorkflowEdge[],
-    ) => {
-      if (!changedTargetNodeIds.length) return;
-      setNodes((current) =>
-        invalidateWorkflowNodeRuns(
-          current,
-          workflowEdges,
-          changedTargetNodeIds,
-        ),
-      );
-      setRunError(null);
-    },
-    [setNodes],
-  );
-
   const onEdgesChange: OnEdgesChange<CanvasEdge> = React.useCallback(
     (changes) => {
       const workflowEdgeIds = new Set(edges.map((edge) => edge.id));
@@ -2317,20 +2298,6 @@ function WorkbenchBody({
           ? change.item.type === ARTIFACT_VIEWER_INTERACTION_EDGE_TYPE
           : artifactViewerInteractionEdgeIds.has(change.id)
       ) as EdgeChange<ArtifactViewerInteractionEdge>[];
-      const changedTargetNodeIds = new Set<string>();
-      for (const change of workflowChanges) {
-        if (change.type === "remove" || change.type === "replace") {
-          const previousEdge = edges.find((edge) => edge.id === change.id);
-          if (previousEdge && previousEdge.data?.enabled !== false) {
-            changedTargetNodeIds.add(previousEdge.target);
-          }
-        }
-        if (change.type === "add" || change.type === "replace") {
-          if (change.item.data?.enabled !== false) {
-            changedTargetNodeIds.add(change.item.target);
-          }
-        }
-      }
       if (workflowChanges.length) {
         const semanticChanges = graphCommandsFromEdgeChanges(workflowChanges);
         const transientChanges = workflowChanges.filter(
@@ -2340,7 +2307,7 @@ function WorkbenchBody({
           setEdges((current) => applyEdgeChanges(transientChanges, current));
         }
         if (semanticChanges.length) applyAuthoringCommands(semanticChanges);
-        invalidateWorkflowResults([...changedTargetNodeIds], edges);
+        else clearRunError();
       }
       if (artifactViewerChanges.length) {
         commitArtifactViewers((current) => ({
@@ -2371,9 +2338,9 @@ function WorkbenchBody({
       artifactViewers.bindings,
       artifactViewers.edges,
       applyAuthoringCommands,
+      clearRunError,
       commitArtifactViewers,
       edges,
-      invalidateWorkflowResults,
       setEdges,
     ],
   );
@@ -2522,15 +2489,11 @@ function WorkbenchBody({
         addEdgeCommand(committedConnection, edge.data, edge.id),
       ]);
     }
-    const changedNodeIds = binding?.endpoint === "source" && newlyBoundNodeId
-      ? [newlyBoundNodeId, edge.target]
-      : [edge.target];
-    invalidateWorkflowResults(changedNodeIds, [...edges, edge]);
+    clearRunError();
     return edge.id;
   }, [
     applyAuthoringCommands,
-    edges,
-    invalidateWorkflowResults,
+    clearRunError,
     nodes,
   ]);
 
@@ -2950,36 +2913,14 @@ function WorkbenchBody({
       setSelectedNodeIdSet(new Set([id]));
       setSelectedEdgeIdSet(new Set());
       setContextualDiscovery(null);
-      invalidateWorkflowResults(
-        [id],
-        [
-          ...edges,
-          {
-            id: edgeId,
-            ...edgeConnection,
-            type: WORKFLOW_EDGE_TYPE,
-            data: {
-              enabled: true,
-              collectionMode: choice.collectionMode,
-              projection: selection.projection
-                ? { path: [...selection.projection.path] }
-                : undefined,
-              conversionPath: selection.conversionPath.map((conversion) => ({
-                id: conversion.id,
-                version: conversion.version,
-              })),
-            },
-          },
-        ],
-      );
+      clearRunError();
     },
     [
       applyAuthoringCommands,
       attachNodeCallbacks,
       canEditGraph,
+      clearRunError,
       contextualDiscovery,
-      edges,
-      invalidateWorkflowResults,
       registry,
       running,
     ],

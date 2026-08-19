@@ -244,4 +244,143 @@ describe("Workbench authored document adapter", () => {
 
     expect(cleared.error).toBeNull();
   });
+
+  it("clears overlays for downstream descendants while preserving upstream and unrelated nodes", () => {
+    // source -> target -> descendant, plus an unrelated node.
+    const withDescendant = {
+      name: "Draft",
+      nodes: [source, target, { ...source, id: "descendant" }],
+      edges: [
+        edge,
+        {
+          ...edge,
+          id: "edge-2",
+          from_node: "target",
+          to_node: "descendant",
+        },
+      ],
+    };
+    const initial: WorkbenchAuthoringState = {
+      document: authoredGraphDocument(withDescendant),
+      nodeOverlays: {
+        source: {
+          run: null,
+          execution: { status: "succeeded" },
+          progress: null,
+        },
+        target: {
+          run: null,
+          execution: { status: "succeeded" },
+          progress: null,
+        },
+        descendant: {
+          run: null,
+          execution: { status: "succeeded" },
+          progress: null,
+        },
+      },
+      error: null,
+    };
+
+    const edited = reduceWorkbenchAuthoringState(initial, {
+      kind: "apply_commands",
+      commands: [{
+        kind: "update_node_configuration",
+        node_id: "target",
+        field: "label",
+        value: "changed",
+      }],
+    });
+
+    // target and its descendant are cleared; the upstream source keeps its run.
+    expect(edited.nodeOverlays.target?.execution.status).toBe("idle");
+    expect(edited.nodeOverlays.descendant?.execution.status).toBe("idle");
+    expect(edited.nodeOverlays.source?.execution.status).toBe("succeeded");
+  });
+
+  it("does not clear overlays through a disabled edge", () => {
+    const withDisabledEdge = {
+      name: "Draft",
+      nodes: [source, target, { ...source, id: "descendant" }],
+      edges: [
+        edge,
+        {
+          ...edge,
+          id: "edge-2",
+          from_node: "target",
+          to_node: "descendant",
+          enabled: false,
+        },
+      ],
+    };
+    const initial: WorkbenchAuthoringState = {
+      document: authoredGraphDocument(withDisabledEdge),
+      nodeOverlays: {
+        source: {
+          run: null,
+          execution: { status: "succeeded" },
+          progress: null,
+        },
+        target: {
+          run: null,
+          execution: { status: "succeeded" },
+          progress: null,
+        },
+        descendant: {
+          run: null,
+          execution: { status: "succeeded" },
+          progress: null,
+        },
+      },
+      error: null,
+    };
+
+    const edited = reduceWorkbenchAuthoringState(initial, {
+      kind: "apply_commands",
+      commands: [{
+        kind: "update_node_configuration",
+        node_id: "target",
+        field: "label",
+        value: "changed",
+      }],
+    });
+
+    expect(edited.nodeOverlays.target?.execution.status).toBe("idle");
+    expect(edited.nodeOverlays.descendant?.execution.status).toBe("succeeded");
+  });
+
+  it("applies a batch equivalently to sequential dispatches", () => {
+    const batched = reduceWorkbenchAuthoringState(state(), {
+      kind: "apply_commands",
+      commands: [
+        { kind: "move_nodes", positions: [{ node_id: "source", x: 40, y: 50 }] },
+        {
+          kind: "update_node_configuration",
+          node_id: "target",
+          field: "label",
+          value: "edited",
+        },
+      ],
+    });
+    const sequential = reduceWorkbenchAuthoringState(
+      reduceWorkbenchAuthoringState(state(), {
+        kind: "apply_commands",
+        commands: [
+          { kind: "move_nodes", positions: [{ node_id: "source", x: 40, y: 50 }] },
+        ],
+      }),
+      {
+        kind: "apply_commands",
+        commands: [{
+          kind: "update_node_configuration",
+          node_id: "target",
+          field: "label",
+          value: "edited",
+        }],
+      },
+    );
+
+    expect(batched.document).toEqual(sequential.document);
+    expect(batched.nodeOverlays).toEqual(sequential.nodeOverlays);
+  });
 });

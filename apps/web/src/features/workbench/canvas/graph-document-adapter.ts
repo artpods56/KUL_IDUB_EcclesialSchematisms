@@ -5,7 +5,7 @@ import type {
 } from "@xyflow/react";
 
 import {
-  applyGraphCommand,
+  applyGraphCommandNormalized,
   authoredGraphDocument,
   createSavedGraphRequest,
   executionInvalidatedNodeIds,
@@ -77,13 +77,17 @@ export function reduceWorkbenchAuthoringState(
   }
 
   try {
-    let nextDocument = state.document;
+    // Normalize the starting document once per batch, then apply each command
+    // through the canonical transition without re-normalizing per command.
+    let nextDocument = authoredGraphDocument(
+      createSavedGraphRequest(state.document),
+    );
     const invalidatedNodeIds = new Set<string>();
     for (const command of action.commands) {
       for (const nodeId of executionInvalidatedNodeIds(nextDocument, command)) {
         invalidatedNodeIds.add(nodeId);
       }
-      nextDocument = applyGraphCommand(nextDocument, command);
+      nextDocument = applyGraphCommandNormalized(nextDocument, command);
     }
 
     const nodeOverlays: NodeOverlays = {};

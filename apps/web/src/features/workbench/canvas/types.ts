@@ -538,57 +538,6 @@ export function updateNodeRun(
   };
 }
 
-interface WorkflowNodeState {
-  id: string;
-  data: WorkflowNodeData;
-}
-
-interface WorkflowConnectionState {
-  source: string;
-  target: string;
-  data?: {
-    enabled?: boolean;
-  };
-}
-
-export function invalidateWorkflowNodeRuns<NodeType extends WorkflowNodeState>(
-  nodes: readonly NodeType[],
-  edges: readonly WorkflowConnectionState[],
-  changedTargetNodeIds: readonly string[],
-): NodeType[] {
-  const invalidatedNodeIds = new Set(changedTargetNodeIds);
-  const pendingNodeIds = [...invalidatedNodeIds];
-
-  while (pendingNodeIds.length) {
-    const sourceNodeId = pendingNodeIds.shift();
-    if (sourceNodeId === undefined) continue;
-    for (const edge of edges) {
-      if (
-        edge.data?.enabled === false ||
-        edge.source !== sourceNodeId ||
-        invalidatedNodeIds.has(edge.target)
-      ) {
-        continue;
-      }
-      invalidatedNodeIds.add(edge.target);
-      pendingNodeIds.push(edge.target);
-    }
-  }
-
-  return nodes.map((node) => {
-    if (!invalidatedNodeIds.has(node.id)) return node;
-    return {
-      ...node,
-      data: {
-        ...node.data,
-        run: null,
-        execution: { status: "idle" },
-        progress: null,
-      },
-    };
-  });
-}
-
 export function effectivePortShape(
   data: WorkflowNodeData,
   port: Port,

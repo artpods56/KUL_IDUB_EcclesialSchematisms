@@ -365,11 +365,16 @@ function updateNode(
   };
 }
 
-export function applyGraphCommand(
+/**
+ * Apply one command to an already-normalized authored document without
+ * re-normalizing or deep-cloning the whole document. Callers that batch
+ * several commands normalize the starting document once and then reuse this
+ * canonical transition to avoid O(K × (V+E)) work per batch.
+ */
+export function applyGraphCommandNormalized(
   document: AuthoredGraphDocument,
   command: GraphCommand,
 ): AuthoredGraphDocument {
-  document = authoredGraphDocument(createSavedGraphRequest(document));
   switch (command.kind) {
     case "rename_graph":
       return { ...document, name: command.name };
@@ -532,4 +537,15 @@ export function applyGraphCommand(
     case "replace_document":
       return authoredGraphDocument(createSavedGraphRequest(command.document));
   }
+}
+
+/** Normalize the document, apply one command, and return the result. */
+export function applyGraphCommand(
+  document: AuthoredGraphDocument,
+  command: GraphCommand,
+): AuthoredGraphDocument {
+  return applyGraphCommandNormalized(
+    authoredGraphDocument(createSavedGraphRequest(document)),
+    command,
+  );
 }
