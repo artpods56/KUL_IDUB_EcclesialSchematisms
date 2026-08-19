@@ -28,7 +28,7 @@ from grafy_core.operators.tables import (
 )
 from grafy_core.runtime.materialization import MaterializationProvenance
 from grafy_core.runtime.persistence import ArtifactWriteContext
-from grafy_core.ports.storage import SaveFileCommand
+from grafy_core.ports.storage import SaveFileCommand, StoredObjectInfo
 from grafy_core.domain.identity import Workspace
 from grafy_persistence.database import create_database
 from grafy_persistence.orm import metadata
@@ -67,7 +67,7 @@ async def _seed_workspace(database_url: str) -> None:
         await database.dispose()
 
 
-def _raise_storage_outage(bucket: str, path: str) -> bool:
+async def _raise_storage_outage(bucket: str, path: str) -> StoredObjectInfo | None:
     raise RuntimeError(f"Storage unavailable for {bucket}/{path}")
 
 
@@ -211,7 +211,7 @@ async def test_storage_outage_preserves_the_cache_entry(
         await entered.commit()
 
     storage = LocalFileObjectStore(tmp_path / "objects")
-    monkeypatch.setattr(storage, "exists", _raise_storage_outage)
+    monkeypatch.setattr(storage, "stat", _raise_storage_outage)
     cache = PersistentInvocationCache(
         unit_of_work=unit_of_work,
         storage=storage,

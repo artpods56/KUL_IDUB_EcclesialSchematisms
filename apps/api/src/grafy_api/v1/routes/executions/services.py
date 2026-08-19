@@ -132,8 +132,7 @@ class ExecutionHistoryService:
     ) -> None:
         if execution.workspace_id != workspace_id:
             raise NotFoundError("Graph execution", str(execution.execution_id))
-        execution.status = "running"
-        execution.started_at = datetime.now(UTC)
+        execution.transition_to_running()
         async with self._unit_of_work as unit_of_work:
             await unit_of_work.execution_history.update(execution)
             await unit_of_work.commit()
@@ -145,7 +144,7 @@ class ExecutionHistoryService:
     ) -> None:
         if execution.workspace_id != workspace_id:
             raise NotFoundError("Graph execution", str(execution.execution_id))
-        execution.status = "cancelling"
+        execution.transition_to_cancelling()
         async with self._unit_of_work as unit_of_work:
             await unit_of_work.execution_history.update(execution)
             await unit_of_work.commit()
@@ -161,14 +160,16 @@ class ExecutionHistoryService:
     ) -> None:
         if execution.workspace_id != workspace_id:
             raise NotFoundError("Graph execution", str(execution.execution_id))
-        if status not in {"cancelled", "succeeded", "failed"}:
-            raise ValueError(f"Execution completion status {status!r} is not terminal")
-        completed_at = datetime.now(UTC)
-        execution.status = status
-        execution.finished_at = completed_at
-        execution.error = error
-        if result is not None:
-            execution.workflow_run_id = result.workflow_run_id
+        execution.transition_to_terminal(
+            status,
+            workflow_run_id=result.workflow_run_id if result is not None else None,
+            error=error,
+        )
+        completed_at = execution.finished_at
+        if completed_at is None:
+            raise RuntimeError(
+                "Graph execution completed without a finish timestamp"
+            )
 
         async with self._unit_of_work as unit_of_work:
             await unit_of_work.execution_history.update(execution)

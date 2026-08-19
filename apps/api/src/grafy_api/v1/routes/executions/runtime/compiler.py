@@ -222,17 +222,22 @@ def _topological_order(
             )
 
     incoming_count = {node.id: 0 for node in nodes}
+    # Phase-local adjacency index: group internal edges by source node once so
+    # topological traversal touches only each node's outgoing edges instead of
+    # rescanning the whole edge list per dequeued node.
+    outgoing_by_node: dict[str, list[RunEdgeRequest]] = {}
     for edge in edges:
         if edge.from_node in by_id:
             incoming_count[edge.to_node] += 1
+            outgoing_by_node.setdefault(edge.from_node, []).append(edge)
 
     queue = deque(node for node in nodes if incoming_count[node.id] == 0)
     ordered: list[RunNodeRequest] = []
     while queue:
         node = queue.popleft()
         ordered.append(node)
-        for edge in edges:
-            if edge.from_node != node.id or edge.to_node not in by_id:
+        for edge in outgoing_by_node.get(node.id, ()):
+            if edge.to_node not in by_id:
                 continue
             incoming_count[edge.to_node] -= 1
             if incoming_count[edge.to_node] == 0:

@@ -24,7 +24,11 @@ from grafy_api.v1.routes.executions.models import (
     RunRequest,
 )
 from grafy_api.v1.routes.catalog.services import GraphModuleCatalog
-from grafy_api.v1.routes.executions.runtime.compiler import GraphCompiler
+from grafy_api.v1.routes.executions.runtime.compiler import (
+    GraphCompiler,
+    _topological_order,
+)
+from grafy_api.v1.routes.executions.runtime.errors import GraphExecutionError
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
@@ -215,3 +219,82 @@ async def test_compiler_accepts_an_external_edge_only_with_its_exact_pin(
 
     assert compiled.pinned_outputs == {("upstream", "text"): pinned_ref}
     assert [node.request.id for node in compiled.nodes] == ["replace"]
+
+
+def _node(node_id: str) -> RunNodeRequest:
+    return RunNodeRequest(
+        id=node_id,
+        operator_id="text.input",
+        operator_version=1,
+        config={"text": "x"},
+    )
+
+
+def _edge(from_node: str, to_node: str) -> RunEdgeRequest:
+    return RunEdgeRequest(
+        from_node=from_node,
+        from_port="text",
+        to_node=to_node,
+        to_port="text",
+    )
+
+
+def test_topological_order_handles_fan_in_fan_out_and_duplicate_edges() -> None:
+    """Phase-local adjacency ordering preserves zero-indegree, fan-in/fan-out,
+    and parallel-edge multiplicity."""
+
+    nodes = [_node("a"), _node("b"), _node("c"), _node("d")]
+    # a fans out to b and c; both b and c fan in to d; duplicate a->d edge.
+    edges = [
+        _edge("a", "b"),
+        _edge("a", "c"),
+        _edge("b", "d"),
+        _edge("c", "d"),
+        _edge("a", "d"),
+    ]
+    ordered = _topological_order(nodes, edges)
+    assert [node.id for node in ordered] == ["a", "b", "c", "d"]
+
+    # A duplicate edge into d must still be decremented twice (it is one extra
+    # indegree), so d appears after b and c even when the duplicate is present.
+    nodes2 = [_node("x"), _node("y"), _node("z")]
+    edges2 = [_edge("x", "y"), _edge("x", "y"), _edge("y", "z")]
+    ordered2 = _topological_order(nodes2, edges2)
+    assert [node.id for node in ordered2] == ["x", "y", "z"]
+
+
+def test_topological_order_rejects_cycles() -> None:
+    nodes = [_node("a"), _node("b"), _node("c")]
+    edges = [_edge("a", "b"), _edge("b", "c"), _edge("c", "a")]
+    with pytest.raises(GraphExecutionError, match="cycle"):
+        _topological_order(nodes, edges)
+
+
+def test_topological_order_on_large_sparse_dag() -> None:
+    """A large sparse DAG with a long chain and many parallel branches sorts
+    correctly without rescanning every edge per node."""
+
+    chain = 200
+    nodes = [
+        _node(f"n{i}") for i in range(chain)
+    ] + [_node(f"branch{i}") for i in range(100)]
+    edges: list[RunEdgeRequest] = []
+    for i in range(chain - 1):
+        edges.append(_edge(f"n{i}", f"n{i + 1}"))
+    # Every chain node feeds a distinct branch leaf; every branch leaf fans in
+    # to the final chain node.
+    for i in range(100):
+        edges.append(_edge(f"n{i % (chain - 1)}", f"branch{i}"))
+        edges.append(_edge(f"branch{i}", f"n{chain - 1}"))
+    ordered = _topological_order(nodes, edges)
+    ids = [node.id for node in ordered]
+    assert len(ids) == len(nodes)
+    # Chain order is preserved: n{i} appears before n{i+1}.
+    for i in range(chain - 1):
+        assert ids.index(f"n{i}") < ids.index(f"n{i + 1}")
+    # Every branch leaf depends on the chain, so it must not precede its chain
+    # parent, and must precede the final chain node.
+    for i in range(100):
+        parent = f"n{i % (chain - 1)}"
+        assert ids.index(parent) < ids.index(f"branch{i}")
+        assert ids.index(f"branch{i}") < ids.index(f"n{chain - 1}")

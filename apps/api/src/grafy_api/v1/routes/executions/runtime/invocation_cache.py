@@ -103,9 +103,12 @@ class PersistentInvocationCache(InvocationCachePort):
                 stale = True
                 break
             try:
-                object_exists = self._storage.exists(
-                    artifact.bucket,
-                    artifact.object_key,
+                object_exists = (
+                    await self._storage.stat(
+                        artifact.bucket,
+                        artifact.object_key,
+                    )
+                    is not None
                 )
             except Exception as exc:
                 raise InvocationCacheAccessError(

@@ -221,6 +221,15 @@ class RunExecutionEventSubscription:
         return await self._journal.wait_after(after_sequence, timeout)
 
 
+@dataclass(frozen=True, slots=True)
+class _TerminalOutcome:
+    """One typed terminal outcome: status, result, and error move together."""
+
+    status: Literal["cancelled", "succeeded", "failed"]
+    result: GraphExecutionResult | None
+    error: str | None
+
+
 @dataclass(slots=True)
 class _RunExecutionRecord:
     workspace_id: UUID
@@ -234,17 +243,26 @@ class _RunExecutionRecord:
     transition_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     status: RunExecutionStatus = "queued"
     task: asyncio.Task[None] | None = None
-    result: GraphExecutionResult | None = None
     error: str | None = None
-    retained_terminal: bool = False
+    terminal: _TerminalOutcome | None = None
 
     def snapshot(self) -> RunExecutionSnapshot:
+        terminal = self.terminal
+        if terminal is not None:
+            return RunExecutionSnapshot(
+                workspace_id=self.workspace_id,
+                execution_id=self.execution_id,
+                status=terminal.status,
+                active_node_id=self.control.active_node_id,
+                result=terminal.result,
+                error=terminal.error,
+            )
         return RunExecutionSnapshot(
             workspace_id=self.workspace_id,
             execution_id=self.execution_id,
             status=self.status,
             active_node_id=self.control.active_node_id,
-            result=self.result,
+            result=None,
             error=self.error,
         )
 
@@ -578,7 +596,7 @@ class RunExecutionManager:
         error: str | None = None,
     ) -> None:
         async with record.transition_lock:
-            if record.status in _TERMINAL_STATUSES:
+            if record.status in _TERMINAL_STATUSES or record.terminal is not None:
                 return
             history_error: str | None = None
             if (
@@ -631,21 +649,22 @@ class RunExecutionManager:
             active_node_id = record.control.active_node_id
             if active_node_id is not None:
                 record.control.finish_outer_node(active_node_id)
+            final_error = error
+            if history_error is not None:
+                if final_error is None:
+                    final_error = history_error
+                else:
+                    final_error = f"{final_error} <- caused by {history_error}"
             record.status = status
             record.task = None
-            record.result = result
             record.admission_lease.release()
-            if history_error is None:
-                record.error = error
-            elif error is None:
-                record.error = history_error
-            else:
-                record.error = f"{error} <- caused by {history_error}"
+            record.terminal = _TerminalOutcome(
+                status=status,
+                result=result,
+                error=final_error,
+            )
             record.control.publish_execution_status(status, None)
             await self._publish_cleared(record, status=status)
-            if record.retained_terminal:
-                return
-            record.retained_terminal = True
             self._terminal_order.append(record.execution_id)
             while len(self._terminal_order) > self._terminal_retention:
                 expired_id = self._terminal_order.popleft()
@@ -682,6 +701,7 @@ class RunExecutionManager:
         history = record.history_execution
         if publisher is None or history is None:
             return
+        terminal = record.terminal
         try:
             await publisher.publish_cleared(
                 workspace_id=record.workspace_id,
@@ -689,7 +709,7 @@ class RunExecutionManager:
                 execution_id=record.execution_id,
                 status=status,
                 graph_revision=history.graph_revision,
-                error=record.error,
+                error=terminal.error if terminal is not None else None,
             )
         except Exception:
             logger.exception(

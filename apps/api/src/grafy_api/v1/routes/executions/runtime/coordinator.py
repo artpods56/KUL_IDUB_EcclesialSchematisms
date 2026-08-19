@@ -10,6 +10,7 @@ from .engine import (
 )
 from .errors import GraphExecutionError
 from .models import (
+    CompiledEdge,
     GraphExecutionResult,
     NodeExecutionResult,
 )
@@ -33,11 +34,14 @@ class GraphExecutionCoordinator:
             node_id: dict(node_outputs)
             for node_id, node_outputs in execution.initial_outputs.items()
         }
+        # Phase-local adjacency index: group compiled edges by target node once
+        # instead of rescanning the whole edge list per node (O(VE) -> O(V+E)).
+        incoming_by_node: dict[str, list[CompiledEdge]] = {}
+        for edge in plan.edges:
+            incoming_by_node.setdefault(edge.request.to_node, []).append(edge)
         incoming_edges = {
             compiled_node.request.id: tuple(
-                edge
-                for edge in plan.edges
-                if edge.request.to_node == compiled_node.request.id
+                incoming_by_node.get(compiled_node.request.id, ())
             )
             for compiled_node in plan.nodes
         }

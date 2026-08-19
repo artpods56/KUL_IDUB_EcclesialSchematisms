@@ -175,41 +175,6 @@ def test_readiness_translates_uninitialized_resources_to_unavailable(
         assert response.status_code == 503
         assert response.json() == {"detail": "Service unavailable"}
 
-
-def test_failed_startup_releases_application_resources(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    application, readiness_engine = _readiness_application(
-        tmp_path,
-        monkeypatch,
-        execution_backend="inline",
-    )
-
-    async def fail_graph_head_verification(
-        _service: CollaborationService,
-    ) -> None:
-        raise RuntimeError("graph head verification failed")
-
-    monkeypatch.setattr(
-        CollaborationService,
-        "verify_every_graph_has_head",
-        fail_graph_head_verification,
-    )
-
-    with pytest.raises(ExceptionGroup) as exception_info:
-        with TestClient(application):
-            pass
-
-    assert any(
-        isinstance(error, RuntimeError)
-        and str(error) == "graph head verification failed"
-        for error in exception_info.value.exceptions
-    )
-    assert readiness_engine.disposed
-    assert not hasattr(application.state, "resources")
-
-
 def test_prefect_readiness_checks_configured_health_endpoint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

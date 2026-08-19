@@ -49,13 +49,19 @@ class EdgeValueResolver:
     ) -> dict[str, object]:
         values: dict[str, object] = {}
         node_request = compiled_node.request
+        # Phase-local adjacency index: group the node's incoming edges by input
+        # port once instead of rescanning per port.
+        incoming_by_port: dict[str, list[CompiledEdge]] = {}
+        for edge in incoming_edges:
+            if edge.request.to_node != node_request.id:
+                continue
+            incoming_by_port.setdefault(edge.request.to_port, []).append(edge)
         for name, spec in compiled_node.resolved_contracts.input_contract.ports.items():
+            port_edges = incoming_by_port.get(name, [])
             incoming_by_plug = {
                 edge.request.to_plug: edge
-                for edge in incoming_edges
-                if edge.request.to_node == node_request.id
-                and edge.request.to_port == name
-                and edge.request.to_plug is not None
+                for edge in port_edges
+                if edge.request.to_plug is not None
             }
             if spec.instance_plugs:
                 matching_edges = [
@@ -64,12 +70,7 @@ class EdgeValueResolver:
                     if plug.port == name
                 ]
             else:
-                matching_edges = [
-                    edge
-                    for edge in incoming_edges
-                    if edge.request.to_node == node_request.id
-                    and edge.request.to_port == name
-                ]
+                matching_edges = port_edges
 
             port_values: list[ArtifactOutputValue] = []
             for edge in matching_edges:
