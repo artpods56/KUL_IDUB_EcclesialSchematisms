@@ -104,7 +104,7 @@ def test_compose_data_volume_has_an_explicit_migration_override() -> None:
     assert "GRAFY_DATA_VOLUME=grafy-data" in env_example
 
 
-def test_nginx_gateway_routes_web_api_and_mcp_to_same_origin_upstreams() -> None:
+def test_nginx_gateway_routes_web_and_api_to_same_origin_upstreams() -> None:
     repository = Path(__file__).parents[3]
     nginx = (repository / "infra/docker/gateway/nginx.conf").read_text()
 
@@ -125,19 +125,11 @@ def test_nginx_gateway_routes_web_api_and_mcp_to_same_origin_upstreams() -> None
         nginx,
         re.DOTALL,
     )
-    mcp_location = re.search(
-        r"location\s+/mcp\s*\{(.*?)\n\s*\}",
-        nginx,
-        re.DOTALL,
-    )
     assert root_location is not None, "gateway must expose / to Next.js"
     assert api_location is not None, "gateway must expose /api/ to FastAPI"
-    assert mcp_location is not None, "gateway must expose /mcp to mounted MCP"
     assert "proxy_pass http://grafy_web;" in root_location.group(1)
     assert "proxy_pass http://grafy_api/;" in api_location.group(1)
-    assert "proxy_pass http://grafy_api;" in mcp_location.group(1)
     assert "proxy_buffering off;" in api_location.group(1)
-    assert "proxy_buffering off;" in mcp_location.group(1)
 
 
 def test_compose_publishes_loopback_gateway_and_keeps_api_web_internal() -> None:

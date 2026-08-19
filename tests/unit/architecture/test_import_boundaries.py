@@ -32,18 +32,6 @@ FORBIDDEN_API_PLUGIN_IMPORTS = (
     "grafy_plugin_ocr",
     "grafy_plugin_sql",
 )
-FORBIDDEN_MCP_IMPORTS = (
-    "aiosqlite",
-    "fastapi",
-    "grafy_api",
-    "grafy_persistence",
-    "grafy_plugin_gis",
-    "grafy_plugin_llm",
-    "grafy_plugin_ocr",
-    "grafy_plugin_sql",
-    "grafy_storage",
-    "sqlalchemy",
-)
 LEGACY_NAMESPACE = "proto" + "type"
 API_ROUTE_AREAS = (
     "artifacts",
@@ -232,19 +220,6 @@ def test_api_host_does_not_import_optional_plugin_implementations() -> None:
     for path in api_root.rglob("*.py"):
         text = path.read_text()
         for forbidden in FORBIDDEN_API_PLUGIN_IMPORTS:
-            if f"import {forbidden}" in text or f"from {forbidden}" in text:
-                offenders.append(f"{path.relative_to(REPO_ROOT)}: {forbidden}")
-
-    assert offenders == []
-
-
-def test_mcp_depends_on_the_http_api_contract_not_internal_packages() -> None:
-    mcp_root = REPO_ROOT / "apps/mcp/src/grafy_mcp"
-    offenders: list[str] = []
-
-    for path in mcp_root.rglob("*.py"):
-        text = path.read_text()
-        for forbidden in FORBIDDEN_MCP_IMPORTS:
             if f"import {forbidden}" in text or f"from {forbidden}" in text:
                 offenders.append(f"{path.relative_to(REPO_ROOT)}: {forbidden}")
 
