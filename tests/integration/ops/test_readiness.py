@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 import grafy_api.health as health_module
 import grafy_api.main as main_module
-from grafy_core.application.collaboration import CollaborationService
 from grafy_persistence.database import Database, create_database
 from grafy_persistence.orm import metadata
 

@@ -23,7 +23,7 @@ from grafy_persistence.unit_of_work import (
 
 from grafy_api.builtins import builtin_plugins
 from grafy_api.main import create_app
-from tests.unit.api.conftest import install_browser_actor_override
+from tests.support.identity import install_browser_actor_override
 from grafy_api.plugin_discovery import build_plugin_registry
 from grafy_api.v1.routes.executions.models import (
     GraphExecutionDetailResponse,

@@ -32,7 +32,7 @@ from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from grafy_api.builtins import builtin_plugins
 from grafy_api.main import create_app
-from tests.unit.api.conftest import install_browser_actor_override
+from tests.support.identity import install_browser_actor_override
 from grafy_api.plugin_discovery import build_plugin_registry
 from grafy_api.v1.routes.node_secrets.services import NodeSecretService
 from grafy_api.services.composition import (
@@ -43,7 +43,7 @@ from grafy_api.v1.routes.modules.dependencies import module_library_service
 from grafy_api.v1.routes.node_secrets.dependencies import node_secret_service
 from grafy_api.v1.routes.saved_graphs.dependencies import saved_graph_service
 
-from tests.unit.api.conftest import install_workbench_dependency_overrides
+from tests.support.workbench import install_workbench_dependency_overrides
 
 WORKSPACE = "00000000-0000-0000-0000-000000000007"
 

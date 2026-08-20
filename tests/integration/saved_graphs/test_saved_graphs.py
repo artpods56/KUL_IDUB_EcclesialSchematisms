@@ -9,7 +9,7 @@ from grafy_core.domain.collaboration import RenameGraphCommand
 from grafy_core.domain.errors import NotFoundError
 from grafy_core.domain.identity import ActorContext
 
-from .conftest import TEST_USER_ID, WORKSPACE_ID, workspace_api_path
+from tests.support.identity import TEST_USER_ID, WORKSPACE_ID, workspace_api_path
 
 
 def _graph_payload(name: str = "Draft graph") -> dict[str, object]:

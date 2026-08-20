@@ -34,7 +34,7 @@ from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from grafy_api.main import create_app
-from tests.unit.api.conftest import install_browser_actor_override
+from tests.support.identity import install_browser_actor_override
 from grafy_api.v1.routes.executions.models import RunNodeRequest, RunRequest
 from grafy_api.services.composition import (
     WorkbenchComponents,
@@ -50,7 +50,7 @@ from grafy_api.v1.routes.node_secrets.services import (
 from grafy_api.settings import Settings
 from grafy_api.v1.routes.node_secrets.dependencies import node_secret_service
 
-from tests.unit.api.conftest import install_workbench_dependency_overrides
+from tests.support.workbench import install_workbench_dependency_overrides
 
 
 class SecretTestConfig(NodeConfig):

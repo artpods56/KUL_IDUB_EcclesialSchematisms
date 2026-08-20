@@ -17,7 +17,7 @@ from grafy_api.v1.routes.uploads.dependencies import image_upload_service
 from grafy_api.v1.routes.uploads.services import ImageUploadService
 from grafy_core.artifacts import InMemoryUnitOfWork
 from grafy_core.domain.staged_uploads import StagedUpload
-from tests.unit.api.conftest import TEST_USER_ID, WORKSPACE_ID
+from tests.support.identity import TEST_USER_ID, WORKSPACE_ID
 
 
 async def _list_staged_uploads(

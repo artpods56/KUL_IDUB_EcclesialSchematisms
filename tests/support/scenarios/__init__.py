@@ -1,0 +1,1 @@
+"""Reusable test scenarios (fake plugins, artifacts, and nodes)."""

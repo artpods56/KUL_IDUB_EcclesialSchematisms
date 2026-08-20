@@ -28,7 +28,7 @@ from grafy_persistence.database import create_database
 from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
-from tests.unit.api.conftest import WORKSPACE_ID
+from tests.support.identity import WORKSPACE_ID
 
 
 WORKSPACE_A = WORKSPACE_ID

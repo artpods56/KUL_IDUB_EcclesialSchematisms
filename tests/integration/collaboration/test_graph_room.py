@@ -42,13 +42,13 @@ from grafy_persistence.database import create_database
 from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
-from tests.unit.api.conftest import (
+from tests.support.identity import (
     TEST_USER_ID,
     WORKSPACE_ID,
     workspace_api_path,
 )
 
-FIXTURES = Path(__file__).parent / "fixtures"
+FIXTURES = Path(__file__).parents[2] / "fixtures"
 
 
 PUBLIC_ORIGIN = "http://localhost:3000"

@@ -20,7 +20,7 @@ from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from grafy_api.main import create_app
-from tests.unit.api.conftest import install_browser_actor_override
+from tests.support.identity import install_browser_actor_override
 from grafy_api.v1.routes.executions.models import (
     GraphMaterializationsResponse,
     RunPortOutputResponse,

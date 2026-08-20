@@ -15,7 +15,7 @@ from grafy_persistence.database import create_database
 from grafy_persistence.orm import metadata
 
 from grafy_api.main import create_app
-from tests.unit.api.conftest import WORKSPACE_ID, install_browser_actor_override
+from tests.support.identity import WORKSPACE_ID, install_browser_actor_override
 from grafy_api.v1.routes.catalog.models import NodeRegistryResponse
 from grafy_api.v1.routes.executions.models import (
     RunExecutionCapacityErrorResponse,
