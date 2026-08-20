@@ -3,7 +3,13 @@ from typing import cast
 
 from fastapi.testclient import TestClient
 
-from grafy_api.v1.routes.executions.models import RunResponse
+from grafy_api.v1.routes.executions.models import (
+    RunEdgeRequest,
+    RunInputPlugRequest,
+    RunNodeRequest,
+    RunRequest,
+    RunResponse,
+)
 
 
 def test_schema_builders_compose_nested_objects_and_sequence_items_by_plug(
@@ -11,13 +17,13 @@ def test_schema_builders_compose_nested_objects_and_sequence_items_by_plug(
 ) -> None:
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "supplier-schema",
-                    "operator_id": "schema.builder",
-                    "operator_version": 1,
-                    "config": {
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="supplier-schema",
+                    operator_id="schema.builder",
+                    operator_version=1,
+                    config={
                         "title": "Supplier",
                         "fields": [
                             {
@@ -29,12 +35,12 @@ def test_schema_builders_compose_nested_objects_and_sequence_items_by_plug(
                             }
                         ],
                     },
-                },
-                {
-                    "id": "line-schema",
-                    "operator_id": "schema.builder",
-                    "operator_version": 1,
-                    "config": {
+                ),
+                RunNodeRequest(
+                    id="line-schema",
+                    operator_id="schema.builder",
+                    operator_version=1,
+                    config={
                         "title": "Line item",
                         "fields": [
                             {
@@ -53,12 +59,12 @@ def test_schema_builders_compose_nested_objects_and_sequence_items_by_plug(
                             },
                         ],
                     },
-                },
-                {
-                    "id": "invoice-schema",
-                    "operator_id": "schema.builder",
-                    "operator_version": 1,
-                    "config": {
+                ),
+                RunNodeRequest(
+                    id="invoice-schema",
+                    operator_id="schema.builder",
+                    operator_version=1,
+                    config={
                         "title": "Invoice",
                         "description": "Structured invoice extraction",
                         "additional_properties": False,
@@ -95,29 +101,29 @@ def test_schema_builders_compose_nested_objects_and_sequence_items_by_plug(
                             },
                         ],
                     },
-                    "input_plugs": [
-                        {"id": "line-items", "port": "schemas"},
-                        {"id": "supplier", "port": "schemas"},
+                    input_plugs=[
+                        RunInputPlugRequest(id="line-items", port="schemas"),
+                        RunInputPlugRequest(id="supplier", port="schemas"),
                     ],
-                },
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "supplier-schema",
-                    "from_port": "json_schema",
-                    "to_node": "invoice-schema",
-                    "to_port": "schemas",
-                    "to_plug": "supplier",
-                },
-                {
-                    "from_node": "line-schema",
-                    "from_port": "json_schema",
-                    "to_node": "invoice-schema",
-                    "to_port": "schemas",
-                    "to_plug": "line-items",
-                },
+            edges=[
+                RunEdgeRequest(
+                    from_node="supplier-schema",
+                    from_port="json_schema",
+                    to_node="invoice-schema",
+                    to_port="schemas",
+                    to_plug="supplier",
+                ),
+                RunEdgeRequest(
+                    from_node="line-schema",
+                    from_port="json_schema",
+                    to_node="invoice-schema",
+                    to_port="schemas",
+                    to_plug="line-items",
+                ),
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200, response.text
@@ -165,13 +171,13 @@ def test_schema_builder_requires_one_connection_for_each_nested_field_plug(
 ) -> None:
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "parent",
-                    "operator_id": "schema.builder",
-                    "operator_version": 1,
-                    "config": {
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="parent",
+                    operator_id="schema.builder",
+                    operator_version=1,
+                    config={
                         "fields": [
                             {
                                 "id": "nested",
@@ -182,11 +188,11 @@ def test_schema_builder_requires_one_connection_for_each_nested_field_plug(
                             }
                         ]
                     },
-                    "input_plugs": [{"id": "nested", "port": "schemas"}],
-                }
+                    input_plugs=[RunInputPlugRequest(id="nested", port="schemas")],
+                )
             ],
-            "edges": [],
-        },
+            edges=[],
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 422

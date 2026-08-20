@@ -1,13 +1,24 @@
 from fastapi.testclient import TestClient
 
+from grafy_api.v1.models import ArtifactTypeBindingModel, ArtifactTypeKeyResponse
 from grafy_api.v1.routes.catalog.models import NodeRegistryResponse
-from grafy_api.v1.routes.executions.models import RunResponse
+from grafy_api.v1.routes.executions.models import (
+    ArtifactConversionRequest,
+    FieldProjectionRequest,
+    RunEdgeRequest,
+    RunInputPlugRequest,
+    RunNodeRequest,
+    RunRequest,
+    RunResponse,
+)
 
 
 def test_registry_derives_nested_json_scalar_projections(
     structural_projection_client: TestClient,
 ) -> None:
-    response = structural_projection_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes")
+    response = structural_projection_client.get(
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes"
+    )
 
     assert response.status_code == 200
     registry = NodeRegistryResponse.model_validate(response.json())
@@ -43,50 +54,54 @@ def test_nested_json_string_projects_directly_and_integer_converts_to_text(
 ) -> None:
     response = structural_projection_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "api",
-                    "operator_id": "test.api_response",
-                    "operator_version": 1,
-                    "config": {},
-                },
-                {
-                    "id": "name",
-                    "operator_id": "text.replace",
-                    "operator_version": 1,
-                    "config": {"search": "b", "replacement": "B"},
-                },
-                {
-                    "id": "retries",
-                    "operator_id": "text.replace",
-                    "operator_version": 1,
-                    "config": {"search": "4", "replacement": "four-"},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="api",
+                    operator_id="test.api_response",
+                    operator_version=1,
+                    config={},
+                ),
+                RunNodeRequest(
+                    id="name",
+                    operator_id="text.replace",
+                    operator_version=1,
+                    config={"search": "b", "replacement": "B"},
+                ),
+                RunNodeRequest(
+                    id="retries",
+                    operator_id="text.replace",
+                    operator_version=1,
+                    config={"search": "4", "replacement": "four-"},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "api",
-                    "from_port": "response",
-                    "to_node": "name",
-                    "to_port": "text",
-                    "projection": {"path": ["customer", "display_name"]},
-                },
-                {
-                    "from_node": "api",
-                    "from_port": "response",
-                    "to_node": "retries",
-                    "to_port": "text",
-                    "projection": {"path": ["customer", "retry_count"]},
-                    "conversion_path": [
-                        {
-                            "id": "builtin.scalar.integer_to_text",
-                            "version": 1,
-                        }
+            edges=[
+                RunEdgeRequest(
+                    from_node="api",
+                    from_port="response",
+                    to_node="name",
+                    to_port="text",
+                    projection=FieldProjectionRequest(
+                        path=["customer", "display_name"],
+                    ),
+                ),
+                RunEdgeRequest(
+                    from_node="api",
+                    from_port="response",
+                    to_node="retries",
+                    to_port="text",
+                    projection=FieldProjectionRequest(
+                        path=["customer", "retry_count"],
+                    ),
+                    conversion_path=[
+                        ArtifactConversionRequest(
+                            id="builtin.scalar.integer_to_text",
+                            version=1,
+                        )
                     ],
-                },
+                ),
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
@@ -112,59 +127,63 @@ def test_projected_values_feed_generic_collect_with_optional_conversion(
 ) -> None:
     response = structural_projection_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "api",
-                    "operator_id": "test.api_response",
-                    "operator_version": 1,
-                    "config": {},
-                },
-                {
-                    "id": "collect",
-                    "operator_id": "sequence.collect",
-                    "operator_version": 1,
-                    "config": {},
-                    "input_plugs": [
-                        {"id": "name", "port": "items"},
-                        {"id": "retries", "port": "items"},
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="api",
+                    operator_id="test.api_response",
+                    operator_version=1,
+                    config={},
+                ),
+                RunNodeRequest(
+                    id="collect",
+                    operator_id="sequence.collect",
+                    operator_version=1,
+                    config={},
+                    input_plugs=[
+                        RunInputPlugRequest(id="name", port="items"),
+                        RunInputPlugRequest(id="retries", port="items"),
                     ],
-                    "artifact_type_bindings": [
-                        {
-                            "variable": "T",
-                            "artifact_type": {
-                                "id": "scalar.text",
-                                "schema_version": 1,
-                            },
-                        }
+                    artifact_type_bindings=[
+                        ArtifactTypeBindingModel(
+                            variable="T",
+                            artifact_type=ArtifactTypeKeyResponse(
+                                id="scalar.text",
+                                schema_version=1,
+                            ),
+                        )
                     ],
-                },
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "api",
-                    "from_port": "response",
-                    "to_node": "collect",
-                    "to_port": "items",
-                    "to_plug": "name",
-                    "projection": {"path": ["customer", "display_name"]},
-                },
-                {
-                    "from_node": "api",
-                    "from_port": "response",
-                    "to_node": "collect",
-                    "to_port": "items",
-                    "to_plug": "retries",
-                    "projection": {"path": ["customer", "retry_count"]},
-                    "conversion_path": [
-                        {
-                            "id": "builtin.scalar.integer_to_text",
-                            "version": 1,
-                        }
+            edges=[
+                RunEdgeRequest(
+                    from_node="api",
+                    from_port="response",
+                    to_node="collect",
+                    to_port="items",
+                    to_plug="name",
+                    projection=FieldProjectionRequest(
+                        path=["customer", "display_name"],
+                    ),
+                ),
+                RunEdgeRequest(
+                    from_node="api",
+                    from_port="response",
+                    to_node="collect",
+                    to_port="items",
+                    to_plug="retries",
+                    projection=FieldProjectionRequest(
+                        path=["customer", "retry_count"],
+                    ),
+                    conversion_path=[
+                        ArtifactConversionRequest(
+                            id="builtin.scalar.integer_to_text",
+                            version=1,
+                        )
                     ],
-                },
+                ),
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200

@@ -2,8 +2,15 @@ from typing import cast
 
 from fastapi.testclient import TestClient
 
+from grafy_api.v1.models import ArtifactTypeBindingModel, ArtifactTypeKeyResponse
 from grafy_api.v1.routes.catalog.models import NodeRegistryResponse
-from grafy_api.v1.routes.executions.models import RunResponse
+from grafy_api.v1.routes.executions.models import (
+    RunEdgeRequest,
+    RunInputPlugRequest,
+    RunNodeRequest,
+    RunRequest,
+    RunResponse,
+)
 from grafy_core.artifacts import ArtifactRefSequence
 from grafy_core.operators.text import (
     MarkdownValue,
@@ -13,69 +20,69 @@ from grafy_core.operators.text import (
 
 
 def _collect_run_payload() -> dict[str, object]:
-    return {
-        "nodes": [
-            {
-                "id": "sequence-input",
-                "operator_id": "text.input",
-                "operator_version": 1,
-                "config": {"text": "first|second"},
-            },
-            {
-                "id": "split",
-                "operator_id": "text.split",
-                "operator_version": 1,
-                "config": {"separator": "|"},
-            },
-            {
-                "id": "single-input",
-                "operator_id": "text.input",
-                "operator_version": 1,
-                "config": {"text": "third"},
-            },
-            {
-                "id": "collect",
-                "operator_id": "sequence.collect",
-                "operator_version": 1,
-                "config": {},
-                "input_plugs": [
-                    {"id": "sequence", "port": "items"},
-                    {"id": "single", "port": "items"},
+    return RunRequest(
+        nodes=[
+            RunNodeRequest(
+                id="sequence-input",
+                operator_id="text.input",
+                operator_version=1,
+                config={"text": "first|second"},
+            ),
+            RunNodeRequest(
+                id="split",
+                operator_id="text.split",
+                operator_version=1,
+                config={"separator": "|"},
+            ),
+            RunNodeRequest(
+                id="single-input",
+                operator_id="text.input",
+                operator_version=1,
+                config={"text": "third"},
+            ),
+            RunNodeRequest(
+                id="collect",
+                operator_id="sequence.collect",
+                operator_version=1,
+                config={},
+                input_plugs=[
+                    RunInputPlugRequest(id="sequence", port="items"),
+                    RunInputPlugRequest(id="single", port="items"),
                 ],
-                "artifact_type_bindings": [
-                    {
-                        "variable": "T",
-                        "artifact_type": {
-                            "id": "scalar.text",
-                            "schema_version": 1,
-                        },
-                    }
+                artifact_type_bindings=[
+                    ArtifactTypeBindingModel(
+                        variable="T",
+                        artifact_type=ArtifactTypeKeyResponse(
+                            id="scalar.text",
+                            schema_version=1,
+                        ),
+                    )
                 ],
-            },
+            ),
         ],
-        "edges": [
-            {
-                "from_node": "sequence-input",
-                "from_port": "text",
-                "to_node": "split",
-                "to_port": "text",
-            },
-            {
-                "from_node": "single-input",
-                "from_port": "text",
-                "to_node": "collect",
-                "to_port": "items",
-                "to_plug": "single",
-            },
-            {
-                "from_node": "split",
-                "from_port": "parts",
-                "to_node": "collect",
-                "to_port": "items",
-                "to_plug": "sequence",
-            },
+        edges=[
+            RunEdgeRequest(
+                from_node="sequence-input",
+                from_port="text",
+                to_node="split",
+                to_port="text",
+            ),
+            RunEdgeRequest(
+                from_node="single-input",
+                from_port="text",
+                to_node="collect",
+                to_port="items",
+                to_plug="single",
+            ),
+            RunEdgeRequest(
+                from_node="split",
+                from_port="parts",
+                to_node="collect",
+                to_port="items",
+                to_plug="sequence",
+            ),
         ],
-    }
+    ).model_dump(mode="json")
 
 
 def _collect_node(payload: dict[str, object]) -> dict[str, object]:
@@ -95,7 +102,9 @@ def _collect_edges(payload: dict[str, object]) -> list[dict[str, object]]:
 def test_registry_declares_text_artifact_and_operator_contracts(
     builtin_client: TestClient,
 ) -> None:
-    response = builtin_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes")
+    response = builtin_client.get(
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes"
+    )
 
     assert response.status_code == 200
     registry = NodeRegistryResponse.model_validate(response.json())
@@ -151,30 +160,30 @@ def test_as_markdown_graph_persists_exact_source(
     source = "# Café\r\n\r\n- first\n- **second**\n\n"
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "source",
-                    "operator_id": "text.input",
-                    "operator_version": 1,
-                    "config": {"text": source},
-                },
-                {
-                    "id": "markdown",
-                    "operator_id": "text.as_markdown",
-                    "operator_version": 1,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="source",
+                    operator_id="text.input",
+                    operator_version=1,
+                    config={"text": source},
+                ),
+                RunNodeRequest(
+                    id="markdown",
+                    operator_id="text.as_markdown",
+                    operator_version=1,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "source",
-                    "from_port": "text",
-                    "to_node": "markdown",
-                    "to_port": "text",
-                }
+            edges=[
+                RunEdgeRequest(
+                    from_node="source",
+                    from_port="text",
+                    to_node="markdown",
+                    to_port="text",
+                )
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
@@ -227,55 +236,55 @@ def test_text_graph_splits_maps_replacement_and_joins(
 ) -> None:
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "input",
-                    "operator_id": "text.input",
-                    "operator_version": 1,
-                    "config": {"text": "alpha||beta||||gamma||"},
-                },
-                {
-                    "id": "split",
-                    "operator_id": "text.split",
-                    "operator_version": 1,
-                    "config": {"separator": "||"},
-                },
-                {
-                    "id": "replace",
-                    "operator_id": "text.replace",
-                    "operator_version": 1,
-                    "config": {"search": "a", "replacement": "A"},
-                },
-                {
-                    "id": "join",
-                    "operator_id": "text.join",
-                    "operator_version": 1,
-                    "config": {"separator": "|"},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="input",
+                    operator_id="text.input",
+                    operator_version=1,
+                    config={"text": "alpha||beta||||gamma||"},
+                ),
+                RunNodeRequest(
+                    id="split",
+                    operator_id="text.split",
+                    operator_version=1,
+                    config={"separator": "||"},
+                ),
+                RunNodeRequest(
+                    id="replace",
+                    operator_id="text.replace",
+                    operator_version=1,
+                    config={"search": "a", "replacement": "A"},
+                ),
+                RunNodeRequest(
+                    id="join",
+                    operator_id="text.join",
+                    operator_version=1,
+                    config={"separator": "|"},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "input",
-                    "from_port": "text",
-                    "to_node": "split",
-                    "to_port": "text",
-                },
-                {
-                    "from_node": "split",
-                    "from_port": "parts",
-                    "to_node": "replace",
-                    "to_port": "text",
-                    "collection_mode": "map",
-                },
-                {
-                    "from_node": "replace",
-                    "from_port": "text",
-                    "to_node": "join",
-                    "to_port": "parts",
-                },
+            edges=[
+                RunEdgeRequest(
+                    from_node="input",
+                    from_port="text",
+                    to_node="split",
+                    to_port="text",
+                ),
+                RunEdgeRequest(
+                    from_node="split",
+                    from_port="parts",
+                    to_node="replace",
+                    to_port="text",
+                    collection_mode="map",
+                ),
+                RunEdgeRequest(
+                    from_node="replace",
+                    from_port="text",
+                    to_node="join",
+                    to_port="parts",
+                ),
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
@@ -283,28 +292,31 @@ def test_text_graph_splits_maps_replacement_and_joins(
     assert result.status == "succeeded"
     runs = {run.node_id: run for run in result.node_runs}
     assert [
-        builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content").json()[
-            "value"
-        ]
+        builtin_client.get(
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content"
+        ).json()["value"]
         for artifact in runs["split"].outputs[0].artifacts
     ] == ["alpha", "beta", "", "gamma", ""]
     assert [
-        builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content").json()[
-            "value"
-        ]
+        builtin_client.get(
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content"
+        ).json()["value"]
         for artifact in runs["replace"].outputs[0].artifacts
     ] == ["AlphA", "betA", "", "gAmmA", ""]
 
     joined = runs["join"].outputs[0].artifacts[0]
-    assert builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{joined.artifact_id}/content").json() == {
-        "value": "AlphA|betA||gAmmA|"
-    }
+    assert builtin_client.get(
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{joined.artifact_id}/content"
+    ).json() == {"value": "AlphA|betA||gAmmA|"}
 
 
 def test_sequence_collect_accepts_text_shapes_in_declared_plug_order(
     builtin_client: TestClient,
 ) -> None:
-    response = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json=_collect_run_payload())
+    response = builtin_client.post(
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
+        json=_collect_run_payload(),
+    )
 
     assert response.status_code == 200
     result = RunResponse.model_validate(response.json())
@@ -313,9 +325,9 @@ def test_sequence_collect_accepts_text_shapes_in_declared_plug_order(
     output = collect_run.outputs[0]
     assert isinstance(output.value, ArtifactRefSequence)
     assert [
-        builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content").json()[
-            "value"
-        ]
+        builtin_client.get(
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content"
+        ).json()["value"]
         for artifact in output.artifacts
     ] == ["first", "second", "third"]
     assert output.value.metadata == {
@@ -392,7 +404,9 @@ def test_sequence_collect_rejects_invalid_executable_plug_structures(
     invalid_payloads.append((unconnected_plug, "requires exactly one incoming edge"))
 
     for payload, expected_detail in invalid_payloads:
-        response = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json=payload)
+        response = builtin_client.post(
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json=payload
+        )
 
         assert response.status_code == 422
         assert expected_detail in response.json()["detail"]

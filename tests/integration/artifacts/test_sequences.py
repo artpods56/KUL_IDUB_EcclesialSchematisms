@@ -13,8 +13,17 @@ from grafy_core.artifacts import (
 from grafy_core.operators.images import RASTER_IMAGE
 from grafy_core.operators.sequences import ItemAtConfig, SliceConfig
 
+from grafy_api.v1.models import ArtifactTypeBindingModel, ArtifactTypeKeyResponse
 from grafy_api.v1.routes.catalog.models import NodeRegistryResponse
-from grafy_api.v1.routes.executions.models import RunResponse
+from grafy_api.v1.routes.executions.models import (
+    ArtifactConversionRequest,
+    PinnedOutputRequest,
+    RunEdgeRequest,
+    RunInputPlugRequest,
+    RunNodeRequest,
+    RunRequest,
+    RunResponse,
+)
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
@@ -30,22 +39,27 @@ async def _store_artifacts(
         await entered.commit()
 
 
-def _binding(artifact_type: str, schema_version: int = 1) -> list[dict[str, object]]:
+def _binding(
+    artifact_type: str,
+    schema_version: int = 1,
+) -> list[ArtifactTypeBindingModel]:
     return [
-        {
-            "variable": "T",
-            "artifact_type": {
-                "id": artifact_type,
-                "schema_version": schema_version,
-            },
-        }
+        ArtifactTypeBindingModel(
+            variable="T",
+            artifact_type=ArtifactTypeKeyResponse(
+                id=artifact_type,
+                schema_version=schema_version,
+            ),
+        )
     ]
 
 
 def test_registry_declares_sequence_node_contracts(
     builtin_client: TestClient,
 ) -> None:
-    response = builtin_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes")
+    response = builtin_client.get(
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes"
+    )
 
     assert response.status_code == 200
     registry = NodeRegistryResponse.model_validate(response.json())
@@ -93,57 +107,57 @@ def test_count_slice_and_item_at_preserve_refs_and_artifact_content(
 ) -> None:
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "numbers",
-                    "operator_id": "arithmetic.integer_sequence",
-                    "operator_version": 1,
-                    "config": {"start": 10, "count": 4, "step": 10},
-                },
-                {
-                    "id": "count",
-                    "operator_id": "sequence.count",
-                    "operator_version": 1,
-                    "config": {},
-                    "artifact_type_bindings": _binding("scalar.integer"),
-                },
-                {
-                    "id": "slice",
-                    "operator_id": "sequence.slice",
-                    "operator_version": 1,
-                    "config": {"start": 1, "count": 2},
-                    "artifact_type_bindings": _binding("scalar.integer"),
-                },
-                {
-                    "id": "pick",
-                    "operator_id": "sequence.item_at",
-                    "operator_version": 1,
-                    "config": {"index": 1},
-                    "artifact_type_bindings": _binding("scalar.integer"),
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="numbers",
+                    operator_id="arithmetic.integer_sequence",
+                    operator_version=1,
+                    config={"start": 10, "count": 4, "step": 10},
+                ),
+                RunNodeRequest(
+                    id="count",
+                    operator_id="sequence.count",
+                    operator_version=1,
+                    config={},
+                    artifact_type_bindings=_binding("scalar.integer"),
+                ),
+                RunNodeRequest(
+                    id="slice",
+                    operator_id="sequence.slice",
+                    operator_version=1,
+                    config={"start": 1, "count": 2},
+                    artifact_type_bindings=_binding("scalar.integer"),
+                ),
+                RunNodeRequest(
+                    id="pick",
+                    operator_id="sequence.item_at",
+                    operator_version=1,
+                    config={"index": 1},
+                    artifact_type_bindings=_binding("scalar.integer"),
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "numbers",
-                    "from_port": "values",
-                    "to_node": "count",
-                    "to_port": "items",
-                },
-                {
-                    "from_node": "numbers",
-                    "from_port": "values",
-                    "to_node": "slice",
-                    "to_port": "items",
-                },
-                {
-                    "from_node": "slice",
-                    "from_port": "items",
-                    "to_node": "pick",
-                    "to_port": "items",
-                },
+            edges=[
+                RunEdgeRequest(
+                    from_node="numbers",
+                    from_port="values",
+                    to_node="count",
+                    to_port="items",
+                ),
+                RunEdgeRequest(
+                    from_node="numbers",
+                    from_port="values",
+                    to_node="slice",
+                    to_port="items",
+                ),
+                RunEdgeRequest(
+                    from_node="slice",
+                    from_port="items",
+                    to_node="pick",
+                    to_port="items",
+                ),
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
@@ -199,49 +213,49 @@ def test_collect_flattens_image_scalar_and_sequence_in_plug_order(
 
     response = client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "collect",
-                    "operator_id": "sequence.collect",
-                    "operator_version": 1,
-                    "config": {},
-                    "input_plugs": [
-                        {"id": "sequence", "port": "items"},
-                        {"id": "single", "port": "items"},
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="collect",
+                    operator_id="sequence.collect",
+                    operator_version=1,
+                    config={},
+                    input_plugs=[
+                        RunInputPlugRequest(id="sequence", port="items"),
+                        RunInputPlugRequest(id="single", port="items"),
                     ],
-                    "artifact_type_bindings": _binding("image.raster"),
-                }
+                    artifact_type_bindings=_binding("image.raster"),
+                )
             ],
-            "edges": [
-                {
-                    "from_node": "external-sequence",
-                    "from_port": "images",
-                    "to_node": "collect",
-                    "to_port": "items",
-                    "to_plug": "sequence",
-                },
-                {
-                    "from_node": "external-single",
-                    "from_port": "image",
-                    "to_node": "collect",
-                    "to_port": "items",
-                    "to_plug": "single",
-                },
+            edges=[
+                RunEdgeRequest(
+                    from_node="external-sequence",
+                    from_port="images",
+                    to_node="collect",
+                    to_port="items",
+                    to_plug="sequence",
+                ),
+                RunEdgeRequest(
+                    from_node="external-single",
+                    from_port="image",
+                    to_node="collect",
+                    to_port="items",
+                    to_plug="single",
+                ),
             ],
-            "pinned_outputs": [
-                {
-                    "from_node": "external-sequence",
-                    "from_port": "images",
-                    "value": image_sequence.model_dump(mode="json"),
-                },
-                {
-                    "from_node": "external-single",
-                    "from_port": "image",
-                    "value": images[0].ref().model_dump(mode="json"),
-                },
+            pinned_outputs=[
+                PinnedOutputRequest(
+                    from_node="external-sequence",
+                    from_port="images",
+                    value=image_sequence,
+                ),
+                PinnedOutputRequest(
+                    from_node="external-single",
+                    from_port="image",
+                    value=images[0].ref(),
+                ),
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
@@ -278,55 +292,55 @@ def test_collect_converts_each_input_to_its_bound_text_type(
 ) -> None:
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "number",
-                    "operator_id": "arithmetic.number",
-                    "operator_version": 1,
-                    "config": {"value": 42},
-                },
-                {
-                    "id": "text",
-                    "operator_id": "text.input",
-                    "operator_version": 1,
-                    "config": {"text": "answer"},
-                },
-                {
-                    "id": "collect",
-                    "operator_id": "sequence.collect",
-                    "operator_version": 1,
-                    "config": {},
-                    "input_plugs": [
-                        {"id": "number", "port": "items"},
-                        {"id": "text", "port": "items"},
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="number",
+                    operator_id="arithmetic.number",
+                    operator_version=1,
+                    config={"value": 42},
+                ),
+                RunNodeRequest(
+                    id="text",
+                    operator_id="text.input",
+                    operator_version=1,
+                    config={"text": "answer"},
+                ),
+                RunNodeRequest(
+                    id="collect",
+                    operator_id="sequence.collect",
+                    operator_version=1,
+                    config={},
+                    input_plugs=[
+                        RunInputPlugRequest(id="number", port="items"),
+                        RunInputPlugRequest(id="text", port="items"),
                     ],
-                    "artifact_type_bindings": _binding("scalar.text"),
-                },
+                    artifact_type_bindings=_binding("scalar.text"),
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "number",
-                    "from_port": "value",
-                    "to_node": "collect",
-                    "to_port": "items",
-                    "to_plug": "number",
-                    "conversion_path": [
-                        {
-                            "id": "builtin.scalar.integer_to_text",
-                            "version": 1,
-                        }
+            edges=[
+                RunEdgeRequest(
+                    from_node="number",
+                    from_port="value",
+                    to_node="collect",
+                    to_port="items",
+                    to_plug="number",
+                    conversion_path=[
+                        ArtifactConversionRequest(
+                            id="builtin.scalar.integer_to_text",
+                            version=1,
+                        )
                     ],
-                },
-                {
-                    "from_node": "text",
-                    "from_port": "text",
-                    "to_node": "collect",
-                    "to_port": "items",
-                    "to_plug": "text",
-                },
+                ),
+                RunEdgeRequest(
+                    from_node="text",
+                    from_port="text",
+                    to_node="collect",
+                    to_port="items",
+                    to_plug="text",
+                ),
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
@@ -335,9 +349,9 @@ def test_collect_converts_each_input_to_its_bound_text_type(
         run.outputs[0] for run in result.node_runs if run.node_id == "collect"
     )
     assert [
-        builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content").json()[
-            "value"
-        ]
+        builtin_client.get(
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content"
+        ).json()["value"]
         for artifact in output.artifacts
     ] == ["42", "answer"]
 
@@ -349,25 +363,25 @@ def test_collect_converts_each_input_to_its_bound_text_type(
         (_binding("image.raster", schema_version=99), "unavailable artifact type"),
         (
             [
-                {
-                    "variable": "U",
-                    "artifact_type": {
-                        "id": "image.raster",
-                        "schema_version": 1,
-                    },
-                }
+                ArtifactTypeBindingModel(
+                    variable="U",
+                    artifact_type=ArtifactTypeKeyResponse(
+                        id="image.raster",
+                        schema_version=1,
+                    ),
+                )
             ],
             "unknown artifact type bindings: U",
         ),
         (
             [
-                {
-                    "variable": "U",
-                    "artifact_type": {
-                        "id": "unavailable.type",
-                        "schema_version": 1,
-                    },
-                }
+                ArtifactTypeBindingModel(
+                    variable="U",
+                    artifact_type=ArtifactTypeKeyResponse(
+                        id="unavailable.type",
+                        schema_version=1,
+                    ),
+                )
             ],
             "unknown artifact type bindings: U",
         ),
@@ -375,23 +389,23 @@ def test_collect_converts_each_input_to_its_bound_text_type(
 )
 def test_collect_rejects_invalid_type_bindings(
     builtin_client: TestClient,
-    bindings: list[dict[str, object]],
+    bindings: list[ArtifactTypeBindingModel],
     error_fragment: str,
 ) -> None:
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "collect",
-                    "operator_id": "sequence.collect",
-                    "operator_version": 1,
-                    "config": {},
-                    "input_plugs": [{"id": "value", "port": "items"}],
-                    "artifact_type_bindings": bindings,
-                }
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="collect",
+                    operator_id="sequence.collect",
+                    operator_version=1,
+                    config={},
+                    input_plugs=[RunInputPlugRequest(id="value", port="items")],
+                    artifact_type_bindings=bindings,
+                )
             ]
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 422
@@ -403,16 +417,16 @@ def test_run_rejects_removed_local_upload_operator(
 ) -> None:
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "legacy-upload",
-                    "operator_id": "source.local_upload.images",
-                    "operator_version": 1,
-                    "config": {},
-                }
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="legacy-upload",
+                    operator_id="source.local_upload.images",
+                    operator_version=1,
+                    config={},
+                )
             ]
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 422
@@ -426,18 +440,18 @@ def test_collect_rejects_removed_page_image_artifact_type(
 ) -> None:
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "collect",
-                    "operator_id": "sequence.collect",
-                    "operator_version": 1,
-                    "config": {},
-                    "input_plugs": [{"id": "image", "port": "items"}],
-                    "artifact_type_bindings": _binding("source.page_image"),
-                }
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="collect",
+                    operator_id="sequence.collect",
+                    operator_version=1,
+                    config={},
+                    input_plugs=[RunInputPlugRequest(id="image", port="items")],
+                    artifact_type_bindings=_binding("source.page_image"),
+                )
             ]
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 422
@@ -482,33 +496,33 @@ def test_collect_rejects_an_input_with_a_different_artifact_type(
 ) -> None:
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "number",
-                    "operator_id": "arithmetic.number",
-                    "operator_version": 1,
-                    "config": {"value": 7},
-                },
-                {
-                    "id": "collect",
-                    "operator_id": "sequence.collect",
-                    "operator_version": 1,
-                    "config": {},
-                    "input_plugs": [{"id": "number", "port": "items"}],
-                    "artifact_type_bindings": _binding("image.raster"),
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="number",
+                    operator_id="arithmetic.number",
+                    operator_version=1,
+                    config={"value": 7},
+                ),
+                RunNodeRequest(
+                    id="collect",
+                    operator_id="sequence.collect",
+                    operator_version=1,
+                    config={},
+                    input_plugs=[RunInputPlugRequest(id="number", port="items")],
+                    artifact_type_bindings=_binding("image.raster"),
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "number",
-                    "from_port": "value",
-                    "to_node": "collect",
-                    "to_port": "items",
-                    "to_plug": "number",
-                }
+            edges=[
+                RunEdgeRequest(
+                    from_node="number",
+                    from_port="value",
+                    to_node="collect",
+                    to_port="items",
+                    to_plug="number",
+                )
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 422

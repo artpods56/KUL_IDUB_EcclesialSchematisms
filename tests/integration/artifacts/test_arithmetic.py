@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import cast
+from typing import Literal, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -10,8 +10,13 @@ from pydantic import BaseModel, ValidationError
 
 from grafy_api.v1.routes.catalog.models import NodeRegistryResponse
 from grafy_api.v1.routes.executions.models import (
+    ArtifactConversionRequest,
+    FieldProjectionRequest,
+    PinnedOutputRequest,
     RunEdgeRequest,
+    RunNodeRequest,
     RunPortOutputResponse,
+    RunRequest,
     RunResponse,
 )
 from grafy_core.artifacts import (
@@ -46,117 +51,128 @@ def _compound_run_request(
     right_projection: dict[str, list[str]] | None,
     number_values: tuple[object, object] = (9, 4),
 ) -> dict[str, object]:
-    return {
-        "nodes": [
-            {
-                "id": "nine",
-                "operator_id": "arithmetic.number",
-                "operator_version": 1,
-                "config": {"value": number_values[0]},
-            },
-            {
-                "id": "four",
-                "operator_id": "arithmetic.number",
-                "operator_version": 1,
-                "config": {"value": number_values[1]},
-            },
-            {
-                "id": "compound",
-                "operator_id": "test.compound_producer",
-                "operator_version": 1,
-                "config": {},
-            },
-            {
-                "id": "multiply",
-                "operator_id": "arithmetic.multiply",
-                "operator_version": 1,
-                "config": {},
-            },
+    return RunRequest(
+        nodes=[
+            RunNodeRequest(
+                id="nine",
+                operator_id="arithmetic.number",
+                operator_version=1,
+                config={"value": number_values[0]},
+            ),
+            RunNodeRequest(
+                id="four",
+                operator_id="arithmetic.number",
+                operator_version=1,
+                config={"value": number_values[1]},
+            ),
+            RunNodeRequest(
+                id="compound",
+                operator_id="test.compound_producer",
+                operator_version=1,
+                config={},
+            ),
+            RunNodeRequest(
+                id="multiply",
+                operator_id="arithmetic.multiply",
+                operator_version=1,
+                config={},
+            ),
         ],
-        "edges": [
-            {
-                "from_node": "nine",
-                "from_port": "value",
-                "to_node": "compound",
-                "to_port": "left",
-            },
-            {
-                "from_node": "four",
-                "from_port": "value",
-                "to_node": "compound",
-                "to_port": "right",
-            },
-            {
-                "from_node": "compound",
-                "from_port": "result",
-                "to_node": "multiply",
-                "to_port": "left",
-                "projection": left_projection,
-            },
-            {
-                "from_node": "compound",
-                "from_port": "result",
-                "to_node": "multiply",
-                "to_port": "right",
-                "projection": right_projection,
-            },
+        edges=[
+            RunEdgeRequest(
+                from_node="nine",
+                from_port="value",
+                to_node="compound",
+                to_port="left",
+            ),
+            RunEdgeRequest(
+                from_node="four",
+                from_port="value",
+                to_node="compound",
+                to_port="right",
+            ),
+            RunEdgeRequest(
+                from_node="compound",
+                from_port="result",
+                to_node="multiply",
+                to_port="left",
+                projection=(
+                    FieldProjectionRequest.model_validate(left_projection)
+                    if left_projection is not None
+                    else None
+                ),
+            ),
+            RunEdgeRequest(
+                from_node="compound",
+                from_port="result",
+                to_node="multiply",
+                to_port="right",
+                projection=(
+                    FieldProjectionRequest.model_validate(right_projection)
+                    if right_projection is not None
+                    else None
+                ),
+            ),
         ],
-    }
+    ).model_dump(mode="json")
 
 
 def _mapped_sum_run_request(
     *,
     collection_mode: str,
 ) -> dict[str, object]:
-    return {
-        "nodes": [
-            {
-                "id": "sequence",
-                "operator_id": "arithmetic.integer_sequence",
-                "operator_version": 1,
-                "config": {"start": 1, "count": 3, "step": 1},
-            },
-            {
-                "id": "ten",
-                "operator_id": "arithmetic.number",
-                "operator_version": 1,
-                "config": {"value": 10},
-            },
-            {
-                "id": "multiply",
-                "operator_id": "arithmetic.multiply",
-                "operator_version": 1,
-                "config": {},
-            },
-            {
-                "id": "sum",
-                "operator_id": "arithmetic.sum",
-                "operator_version": 1,
-                "config": {},
-            },
+    return RunRequest(
+        nodes=[
+            RunNodeRequest(
+                id="sequence",
+                operator_id="arithmetic.integer_sequence",
+                operator_version=1,
+                config={"start": 1, "count": 3, "step": 1},
+            ),
+            RunNodeRequest(
+                id="ten",
+                operator_id="arithmetic.number",
+                operator_version=1,
+                config={"value": 10},
+            ),
+            RunNodeRequest(
+                id="multiply",
+                operator_id="arithmetic.multiply",
+                operator_version=1,
+                config={},
+            ),
+            RunNodeRequest(
+                id="sum",
+                operator_id="arithmetic.sum",
+                operator_version=1,
+                config={},
+            ),
         ],
-        "edges": [
-            {
-                "from_node": "sequence",
-                "from_port": "values",
-                "to_node": "multiply",
-                "to_port": "left",
-                "collection_mode": collection_mode,
-            },
-            {
-                "from_node": "ten",
-                "from_port": "value",
-                "to_node": "multiply",
-                "to_port": "right",
-            },
-            {
-                "from_node": "multiply",
-                "from_port": "result",
-                "to_node": "sum",
-                "to_port": "values",
-            },
+        edges=[
+            RunEdgeRequest(
+                from_node="sequence",
+                from_port="values",
+                to_node="multiply",
+                to_port="left",
+                collection_mode=cast(
+                    Literal["direct", "map"],
+                    collection_mode,
+                ),
+            ),
+            RunEdgeRequest(
+                from_node="ten",
+                from_port="value",
+                to_node="multiply",
+                to_port="right",
+            ),
+            RunEdgeRequest(
+                from_node="multiply",
+                from_port="result",
+                to_node="sum",
+                to_port="values",
+            ),
         ],
-    }
+    ).model_dump(mode="json")
 
 
 def _run_output(
@@ -234,34 +250,36 @@ def test_integer_output_converts_to_text_before_text_node_execution(
 ) -> None:
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "number",
-                    "operator_id": "arithmetic.number",
-                    "operator_version": 1,
-                    "config": {"value": 9},
-                },
-                {
-                    "id": "replace",
-                    "operator_id": "text.replace",
-                    "operator_version": 1,
-                    "config": {"search": "9", "replacement": "nine"},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="number",
+                    operator_id="arithmetic.number",
+                    operator_version=1,
+                    config={"value": 9},
+                ),
+                RunNodeRequest(
+                    id="replace",
+                    operator_id="text.replace",
+                    operator_version=1,
+                    config={"search": "9", "replacement": "nine"},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "number",
-                    "from_port": "value",
-                    "to_node": "replace",
-                    "to_port": "text",
-                    "conversion": {
-                        "id": "builtin.scalar.integer_to_text",
-                        "version": 1,
-                    },
-                }
+            edges=[
+                RunEdgeRequest(
+                    from_node="number",
+                    from_port="value",
+                    to_node="replace",
+                    to_port="text",
+                    conversion_path=[
+                        ArtifactConversionRequest(
+                            id="builtin.scalar.integer_to_text",
+                            version=1,
+                        )
+                    ],
+                )
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
@@ -297,59 +315,61 @@ def test_projection_runs_before_declared_integer_to_text_conversion(
     client, _uow = conversion_path_client
     response = client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "nine",
-                    "operator_id": "arithmetic.number",
-                    "operator_version": 1,
-                    "config": {"value": 9},
-                },
-                {
-                    "id": "four",
-                    "operator_id": "arithmetic.number",
-                    "operator_version": 1,
-                    "config": {"value": 4},
-                },
-                {
-                    "id": "compound",
-                    "operator_id": "test.compound_producer",
-                    "operator_version": 1,
-                    "config": {},
-                },
-                {
-                    "id": "replace",
-                    "operator_id": "text.replace",
-                    "operator_version": 1,
-                    "config": {"search": "13", "replacement": "thirteen"},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="nine",
+                    operator_id="arithmetic.number",
+                    operator_version=1,
+                    config={"value": 9},
+                ),
+                RunNodeRequest(
+                    id="four",
+                    operator_id="arithmetic.number",
+                    operator_version=1,
+                    config={"value": 4},
+                ),
+                RunNodeRequest(
+                    id="compound",
+                    operator_id="test.compound_producer",
+                    operator_version=1,
+                    config={},
+                ),
+                RunNodeRequest(
+                    id="replace",
+                    operator_id="text.replace",
+                    operator_version=1,
+                    config={"search": "13", "replacement": "thirteen"},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "nine",
-                    "from_port": "value",
-                    "to_node": "compound",
-                    "to_port": "left",
-                },
-                {
-                    "from_node": "four",
-                    "from_port": "value",
-                    "to_node": "compound",
-                    "to_port": "right",
-                },
-                {
-                    "from_node": "compound",
-                    "from_port": "result",
-                    "to_node": "replace",
-                    "to_port": "text",
-                    "projection": {"path": ["addition"]},
-                    "conversion": {
-                        "id": "builtin.scalar.integer_to_text",
-                        "version": 1,
-                    },
-                },
+            edges=[
+                RunEdgeRequest(
+                    from_node="nine",
+                    from_port="value",
+                    to_node="compound",
+                    to_port="left",
+                ),
+                RunEdgeRequest(
+                    from_node="four",
+                    from_port="value",
+                    to_node="compound",
+                    to_port="right",
+                ),
+                RunEdgeRequest(
+                    from_node="compound",
+                    from_port="result",
+                    to_node="replace",
+                    to_port="text",
+                    projection=FieldProjectionRequest(path=["addition"]),
+                    conversion_path=[
+                        ArtifactConversionRequest(
+                            id="builtin.scalar.integer_to_text",
+                            version=1,
+                        )
+                    ],
+                ),
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
@@ -367,47 +387,49 @@ def test_integer_sequence_conversion_preserves_order_through_mapped_text_node(
 ) -> None:
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "sequence",
-                    "operator_id": "arithmetic.integer_sequence",
-                    "operator_version": 1,
-                    "config": {"start": 1, "count": 3, "step": 1},
-                },
-                {
-                    "id": "replace",
-                    "operator_id": "text.replace",
-                    "operator_version": 1,
-                    "config": {"search": "2", "replacement": "two"},
-                },
-                {
-                    "id": "join",
-                    "operator_id": "text.join",
-                    "operator_version": 1,
-                    "config": {"separator": ","},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="sequence",
+                    operator_id="arithmetic.integer_sequence",
+                    operator_version=1,
+                    config={"start": 1, "count": 3, "step": 1},
+                ),
+                RunNodeRequest(
+                    id="replace",
+                    operator_id="text.replace",
+                    operator_version=1,
+                    config={"search": "2", "replacement": "two"},
+                ),
+                RunNodeRequest(
+                    id="join",
+                    operator_id="text.join",
+                    operator_version=1,
+                    config={"separator": ","},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "sequence",
-                    "from_port": "values",
-                    "to_node": "replace",
-                    "to_port": "text",
-                    "collection_mode": "map",
-                    "conversion": {
-                        "id": "builtin.scalar.integer_to_text",
-                        "version": 1,
-                    },
-                },
-                {
-                    "from_node": "replace",
-                    "from_port": "text",
-                    "to_node": "join",
-                    "to_port": "parts",
-                },
+            edges=[
+                RunEdgeRequest(
+                    from_node="sequence",
+                    from_port="values",
+                    to_node="replace",
+                    to_port="text",
+                    collection_mode="map",
+                    conversion_path=[
+                        ArtifactConversionRequest(
+                            id="builtin.scalar.integer_to_text",
+                            version=1,
+                        )
+                    ],
+                ),
+                RunEdgeRequest(
+                    from_node="replace",
+                    from_port="text",
+                    to_node="join",
+                    to_port="parts",
+                ),
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
@@ -417,13 +439,15 @@ def test_integer_sequence_conversion_preserves_order_through_mapped_text_node(
     assert replaced.value.ordered is True
     assert replaced.value.index_key == "order_index"
     assert [
-        builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content").json()[
-            "value"
-        ]
+        builtin_client.get(
+            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content"
+        ).json()["value"]
         for artifact in replaced.artifacts
     ] == ["1", "two", "3"]
     joined = _run_output(result, "join", "text").artifacts[0]
-    joined_content = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{joined.artifact_id}/content")
+    joined_content = builtin_client.get(
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{joined.artifact_id}/content"
+    )
     assert joined_content.status_code == 200
     assert joined_content.json() == {"value": "1,two,3"}
 
@@ -434,40 +458,40 @@ def test_transitive_conversion_path_composes_in_memory_and_writes_final_only(
     client, uow = conversion_path_client
     response = client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "number",
-                    "operator_id": "arithmetic.number",
-                    "operator_version": 1,
-                    "config": {"value": 9},
-                },
-                {
-                    "id": "consumer",
-                    "operator_id": "test.compound_result_consumer",
-                    "operator_version": 1,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="number",
+                    operator_id="arithmetic.number",
+                    operator_version=1,
+                    config={"value": 9},
+                ),
+                RunNodeRequest(
+                    id="consumer",
+                    operator_id="test.compound_result_consumer",
+                    operator_version=1,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "number",
-                    "from_port": "value",
-                    "to_node": "consumer",
-                    "to_port": "result",
-                    "conversion_path": [
-                        {
-                            "id": "builtin.scalar.integer_to_text",
-                            "version": 1,
-                        },
-                        {
-                            "id": "test.scalar.text_to_compound_result",
-                            "version": 1,
-                        },
+            edges=[
+                RunEdgeRequest(
+                    from_node="number",
+                    from_port="value",
+                    to_node="consumer",
+                    to_port="result",
+                    conversion_path=[
+                        ArtifactConversionRequest(
+                            id="builtin.scalar.integer_to_text",
+                            version=1,
+                        ),
+                        ArtifactConversionRequest(
+                            id="test.scalar.text_to_compound_result",
+                            version=1,
+                        ),
                     ],
-                }
+                )
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
@@ -490,65 +514,65 @@ def test_projection_runs_before_every_step_in_a_transitive_conversion_path(
     client, uow = conversion_path_client
     response = client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "nine",
-                    "operator_id": "arithmetic.number",
-                    "operator_version": 1,
-                    "config": {"value": 9},
-                },
-                {
-                    "id": "four",
-                    "operator_id": "arithmetic.number",
-                    "operator_version": 1,
-                    "config": {"value": 4},
-                },
-                {
-                    "id": "compound",
-                    "operator_id": "test.compound_producer",
-                    "operator_version": 1,
-                    "config": {},
-                },
-                {
-                    "id": "consumer",
-                    "operator_id": "test.compound_result_consumer",
-                    "operator_version": 1,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="nine",
+                    operator_id="arithmetic.number",
+                    operator_version=1,
+                    config={"value": 9},
+                ),
+                RunNodeRequest(
+                    id="four",
+                    operator_id="arithmetic.number",
+                    operator_version=1,
+                    config={"value": 4},
+                ),
+                RunNodeRequest(
+                    id="compound",
+                    operator_id="test.compound_producer",
+                    operator_version=1,
+                    config={},
+                ),
+                RunNodeRequest(
+                    id="consumer",
+                    operator_id="test.compound_result_consumer",
+                    operator_version=1,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "nine",
-                    "from_port": "value",
-                    "to_node": "compound",
-                    "to_port": "left",
-                },
-                {
-                    "from_node": "four",
-                    "from_port": "value",
-                    "to_node": "compound",
-                    "to_port": "right",
-                },
-                {
-                    "from_node": "compound",
-                    "from_port": "result",
-                    "to_node": "consumer",
-                    "to_port": "result",
-                    "projection": {"path": ["addition"]},
-                    "conversion_path": [
-                        {
-                            "id": "builtin.scalar.integer_to_text",
-                            "version": 1,
-                        },
-                        {
-                            "id": "test.scalar.text_to_compound_result",
-                            "version": 1,
-                        },
+            edges=[
+                RunEdgeRequest(
+                    from_node="nine",
+                    from_port="value",
+                    to_node="compound",
+                    to_port="left",
+                ),
+                RunEdgeRequest(
+                    from_node="four",
+                    from_port="value",
+                    to_node="compound",
+                    to_port="right",
+                ),
+                RunEdgeRequest(
+                    from_node="compound",
+                    from_port="result",
+                    to_node="consumer",
+                    to_port="result",
+                    projection=FieldProjectionRequest(path=["addition"]),
+                    conversion_path=[
+                        ArtifactConversionRequest(
+                            id="builtin.scalar.integer_to_text",
+                            version=1,
+                        ),
+                        ArtifactConversionRequest(
+                            id="test.scalar.text_to_compound_result",
+                            version=1,
+                        ),
                     ],
-                },
+                ),
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
@@ -572,41 +596,41 @@ def test_sequence_items_each_traverse_the_full_conversion_path_before_mapping(
     client, uow = conversion_path_client
     response = client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "sequence",
-                    "operator_id": "arithmetic.integer_sequence",
-                    "operator_version": 1,
-                    "config": {"start": 1, "count": 3, "step": 1},
-                },
-                {
-                    "id": "consumer",
-                    "operator_id": "test.compound_result_consumer",
-                    "operator_version": 1,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="sequence",
+                    operator_id="arithmetic.integer_sequence",
+                    operator_version=1,
+                    config={"start": 1, "count": 3, "step": 1},
+                ),
+                RunNodeRequest(
+                    id="consumer",
+                    operator_id="test.compound_result_consumer",
+                    operator_version=1,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "sequence",
-                    "from_port": "values",
-                    "to_node": "consumer",
-                    "to_port": "result",
-                    "collection_mode": "map",
-                    "conversion_path": [
-                        {
-                            "id": "builtin.scalar.integer_to_text",
-                            "version": 1,
-                        },
-                        {
-                            "id": "test.scalar.text_to_compound_result",
-                            "version": 1,
-                        },
+            edges=[
+                RunEdgeRequest(
+                    from_node="sequence",
+                    from_port="values",
+                    to_node="consumer",
+                    to_port="result",
+                    collection_mode="map",
+                    conversion_path=[
+                        ArtifactConversionRequest(
+                            id="builtin.scalar.integer_to_text",
+                            version=1,
+                        ),
+                        ArtifactConversionRequest(
+                            id="test.scalar.text_to_compound_result",
+                            version=1,
+                        ),
                     ],
-                }
+                )
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
@@ -657,31 +681,34 @@ def test_invalid_conversion_paths_are_rejected_before_node_execution(
     client, _uow = conversion_path_client
     response = client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "invalid-number",
-                    "operator_id": "arithmetic.number",
-                    "operator_version": 1,
-                    "config": {"value": "would-fail-if-executed"},
-                },
-                {
-                    "id": "consumer",
-                    "operator_id": "test.compound_result_consumer",
-                    "operator_version": 1,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="invalid-number",
+                    operator_id="arithmetic.number",
+                    operator_version=1,
+                    config={"value": "would-fail-if-executed"},
+                ),
+                RunNodeRequest(
+                    id="consumer",
+                    operator_id="test.compound_result_consumer",
+                    operator_version=1,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "invalid-number",
-                    "from_port": "value",
-                    "to_node": "consumer",
-                    "to_port": "result",
-                    "conversion_path": conversion_path,
-                }
+            edges=[
+                RunEdgeRequest(
+                    from_node="invalid-number",
+                    from_port="value",
+                    to_node="consumer",
+                    to_port="result",
+                    conversion_path=[
+                        ArtifactConversionRequest.model_validate(item)
+                        for item in conversion_path
+                    ],
+                )
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 422
@@ -702,37 +729,40 @@ def test_conversion_path_errors_identify_the_exact_failing_step(
     client, uow = conversion_path_client
     response = client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "number",
-                    "operator_id": "arithmetic.number",
-                    "operator_version": 1,
-                    "config": {"value": 9},
-                },
-                {
-                    "id": "consumer",
-                    "operator_id": "test.compound_result_consumer",
-                    "operator_version": 1,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="number",
+                    operator_id="arithmetic.number",
+                    operator_version=1,
+                    config={"value": 9},
+                ),
+                RunNodeRequest(
+                    id="consumer",
+                    operator_id="test.compound_result_consumer",
+                    operator_version=1,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "number",
-                    "from_port": "value",
-                    "to_node": "consumer",
-                    "to_port": "result",
-                    "conversion_path": [
-                        {
-                            "id": "builtin.scalar.integer_to_text",
-                            "version": 1,
-                        },
-                        {"id": failing_conversion, "version": 1},
+            edges=[
+                RunEdgeRequest(
+                    from_node="number",
+                    from_port="value",
+                    to_node="consumer",
+                    to_port="result",
+                    conversion_path=[
+                        ArtifactConversionRequest(
+                            id="builtin.scalar.integer_to_text",
+                            version=1,
+                        ),
+                        ArtifactConversionRequest(
+                            id=failing_conversion,
+                            version=1,
+                        ),
                     ],
-                }
+                )
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
@@ -843,7 +873,10 @@ def test_invalid_conversion_is_422_before_node_execution(
 ) -> None:
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={"nodes": nodes, "edges": [edge]},
+        json=RunRequest(
+            nodes=[RunNodeRequest.model_validate(node) for node in nodes],
+            edges=[RunEdgeRequest.model_validate(edge)],
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 422
@@ -855,78 +888,78 @@ def test_add_and_subtract_nodes_feed_scalar_results_into_multiply(
 ) -> None:
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "nine",
-                    "operator_id": "arithmetic.number",
-                    "operator_version": 1,
-                    "config": {"value": 9},
-                },
-                {
-                    "id": "four",
-                    "operator_id": "arithmetic.number",
-                    "operator_version": 1,
-                    "config": {"value": 4},
-                },
-                {
-                    "id": "add",
-                    "operator_id": "arithmetic.add",
-                    "operator_version": 1,
-                    "config": {},
-                },
-                {
-                    "id": "subtract",
-                    "operator_id": "arithmetic.subtract",
-                    "operator_version": 1,
-                    "config": {},
-                },
-                {
-                    "id": "multiply",
-                    "operator_id": "arithmetic.multiply",
-                    "operator_version": 1,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="nine",
+                    operator_id="arithmetic.number",
+                    operator_version=1,
+                    config={"value": 9},
+                ),
+                RunNodeRequest(
+                    id="four",
+                    operator_id="arithmetic.number",
+                    operator_version=1,
+                    config={"value": 4},
+                ),
+                RunNodeRequest(
+                    id="add",
+                    operator_id="arithmetic.add",
+                    operator_version=1,
+                    config={},
+                ),
+                RunNodeRequest(
+                    id="subtract",
+                    operator_id="arithmetic.subtract",
+                    operator_version=1,
+                    config={},
+                ),
+                RunNodeRequest(
+                    id="multiply",
+                    operator_id="arithmetic.multiply",
+                    operator_version=1,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "nine",
-                    "from_port": "value",
-                    "to_node": "add",
-                    "to_port": "left",
-                },
-                {
-                    "from_node": "four",
-                    "from_port": "value",
-                    "to_node": "add",
-                    "to_port": "right",
-                },
-                {
-                    "from_node": "nine",
-                    "from_port": "value",
-                    "to_node": "subtract",
-                    "to_port": "left",
-                },
-                {
-                    "from_node": "four",
-                    "from_port": "value",
-                    "to_node": "subtract",
-                    "to_port": "right",
-                },
-                {
-                    "from_node": "add",
-                    "from_port": "result",
-                    "to_node": "multiply",
-                    "to_port": "left",
-                },
-                {
-                    "from_node": "subtract",
-                    "from_port": "result",
-                    "to_node": "multiply",
-                    "to_port": "right",
-                },
+            edges=[
+                RunEdgeRequest(
+                    from_node="nine",
+                    from_port="value",
+                    to_node="add",
+                    to_port="left",
+                ),
+                RunEdgeRequest(
+                    from_node="four",
+                    from_port="value",
+                    to_node="add",
+                    to_port="right",
+                ),
+                RunEdgeRequest(
+                    from_node="nine",
+                    from_port="value",
+                    to_node="subtract",
+                    to_port="left",
+                ),
+                RunEdgeRequest(
+                    from_node="four",
+                    from_port="value",
+                    to_node="subtract",
+                    to_port="right",
+                ),
+                RunEdgeRequest(
+                    from_node="add",
+                    from_port="result",
+                    to_node="multiply",
+                    to_port="left",
+                ),
+                RunEdgeRequest(
+                    from_node="subtract",
+                    from_port="result",
+                    to_node="multiply",
+                    to_port="right",
+                ),
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
@@ -962,14 +995,18 @@ def test_test_compound_graph_projects_both_result_fields_into_multiply(
         "addition": 13,
         "subtraction": 5,
     }
-    compound_content = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{compound.artifact_id}/content")
+    compound_content = client.get(
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{compound.artifact_id}/content"
+    )
     assert compound_content.status_code == 200
     assert compound_content.json() == {"addition": 13, "subtraction": 5}
 
     product = runs["multiply"].outputs[0].artifacts[0]
     assert product.artifact_type == "scalar.integer"
     assert product.text == "65"
-    product_content = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{product.artifact_id}/content")
+    product_content = client.get(
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{product.artifact_id}/content"
+    )
     assert product_content.status_code == 200
     assert product_content.json() == {"value": 65}
 
@@ -994,39 +1031,39 @@ def test_selected_target_projects_two_edges_from_one_pinned_compound_output(
 
     selected_response = client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "multiply",
-                    "operator_id": "arithmetic.multiply",
-                    "operator_version": 1,
-                    "config": {},
-                }
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="multiply",
+                    operator_id="arithmetic.multiply",
+                    operator_version=1,
+                    config={},
+                )
             ],
-            "edges": [
-                {
-                    "from_node": "compound",
-                    "from_port": "result",
-                    "to_node": "multiply",
-                    "to_port": "left",
-                    "projection": {"path": ["addition"]},
-                },
-                {
-                    "from_node": "compound",
-                    "from_port": "result",
-                    "to_node": "multiply",
-                    "to_port": "right",
-                    "projection": {"path": ["subtraction"]},
-                },
+            edges=[
+                RunEdgeRequest(
+                    from_node="compound",
+                    from_port="result",
+                    to_node="multiply",
+                    to_port="left",
+                    projection=FieldProjectionRequest(path=["addition"]),
+                ),
+                RunEdgeRequest(
+                    from_node="compound",
+                    from_port="result",
+                    to_node="multiply",
+                    to_port="right",
+                    projection=FieldProjectionRequest(path=["subtraction"]),
+                ),
             ],
-            "pinned_outputs": [
-                {
-                    "from_node": "compound",
-                    "from_port": "result",
-                    "value": compound_output.value.model_dump(mode="json"),
-                }
+            pinned_outputs=[
+                PinnedOutputRequest(
+                    from_node="compound",
+                    from_port="result",
+                    value=compound_output.value,
+                )
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert selected_response.status_code == 200
@@ -1072,23 +1109,23 @@ def test_selected_mapped_run_uses_exact_pinned_sequence_envelope_in_order(
 ) -> None:
     upstream_response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "sequence",
-                    "operator_id": "arithmetic.integer_sequence",
-                    "operator_version": 1,
-                    "config": {"start": 1, "count": 3, "step": 1},
-                },
-                {
-                    "id": "ten",
-                    "operator_id": "arithmetic.number",
-                    "operator_version": 1,
-                    "config": {"value": 10},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="sequence",
+                    operator_id="arithmetic.integer_sequence",
+                    operator_version=1,
+                    config={"start": 1, "count": 3, "step": 1},
+                ),
+                RunNodeRequest(
+                    id="ten",
+                    operator_id="arithmetic.number",
+                    operator_version=1,
+                    config={"value": 10},
+                ),
             ],
-            "edges": [],
-        },
+            edges=[],
+        ).model_dump(mode="json"),
     )
     assert upstream_response.status_code == 200
     upstream_result = RunResponse.model_validate(upstream_response.json())
@@ -1102,43 +1139,43 @@ def test_selected_mapped_run_uses_exact_pinned_sequence_envelope_in_order(
 
     selected_response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "multiply",
-                    "operator_id": "arithmetic.multiply",
-                    "operator_version": 1,
-                    "config": {},
-                }
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="multiply",
+                    operator_id="arithmetic.multiply",
+                    operator_version=1,
+                    config={},
+                )
             ],
-            "edges": [
-                {
-                    "from_node": "sequence",
-                    "from_port": "values",
-                    "to_node": "multiply",
-                    "to_port": "left",
-                    "collection_mode": "map",
-                },
-                {
-                    "from_node": "ten",
-                    "from_port": "value",
-                    "to_node": "multiply",
-                    "to_port": "right",
-                },
+            edges=[
+                RunEdgeRequest(
+                    from_node="sequence",
+                    from_port="values",
+                    to_node="multiply",
+                    to_port="left",
+                    collection_mode="map",
+                ),
+                RunEdgeRequest(
+                    from_node="ten",
+                    from_port="value",
+                    to_node="multiply",
+                    to_port="right",
+                ),
             ],
-            "pinned_outputs": [
-                {
-                    "from_node": "sequence",
-                    "from_port": "values",
-                    "value": sequence_output.value.model_dump(mode="json"),
-                },
-                {
-                    "from_node": "ten",
-                    "from_port": "value",
-                    "value": ten_output.value.model_dump(mode="json"),
-                },
+            pinned_outputs=[
+                PinnedOutputRequest(
+                    from_node="sequence",
+                    from_port="values",
+                    value=sequence_output.value,
+                ),
+                PinnedOutputRequest(
+                    from_node="ten",
+                    from_port="value",
+                    value=ten_output.value,
+                ),
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert selected_response.status_code == 200
@@ -1164,17 +1201,17 @@ def test_selected_run_uses_submitted_older_or_newer_pin_without_latest_lookup(
     for value in (3, 7):
         response = builtin_client.post(
             "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-            json={
-                "nodes": [
-                    {
-                        "id": "source",
-                        "operator_id": "arithmetic.number",
-                        "operator_version": 1,
-                        "config": {"value": value},
-                    }
+            json=RunRequest(
+                nodes=[
+                    RunNodeRequest(
+                        id="source",
+                        operator_id="arithmetic.number",
+                        operator_version=1,
+                        config={"value": value},
+                    )
                 ],
-                "edges": [],
-            },
+                edges=[],
+            ).model_dump(mode="json"),
         )
         assert response.status_code == 200
         result = RunResponse.model_validate(response.json())
@@ -1187,37 +1224,37 @@ def test_selected_run_uses_submitted_older_or_newer_pin_without_latest_lookup(
     for pinned_value in pinned_values:
         response = builtin_client.post(
             "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-            json={
-                "nodes": [
-                    {
-                        "id": "multiply",
-                        "operator_id": "arithmetic.multiply",
-                        "operator_version": 1,
-                        "config": {},
-                    }
+            json=RunRequest(
+                nodes=[
+                    RunNodeRequest(
+                        id="multiply",
+                        operator_id="arithmetic.multiply",
+                        operator_version=1,
+                        config={},
+                    )
                 ],
-                "edges": [
-                    {
-                        "from_node": "source",
-                        "from_port": "value",
-                        "to_node": "multiply",
-                        "to_port": "left",
-                    },
-                    {
-                        "from_node": "source",
-                        "from_port": "value",
-                        "to_node": "multiply",
-                        "to_port": "right",
-                    },
+                edges=[
+                    RunEdgeRequest(
+                        from_node="source",
+                        from_port="value",
+                        to_node="multiply",
+                        to_port="left",
+                    ),
+                    RunEdgeRequest(
+                        from_node="source",
+                        from_port="value",
+                        to_node="multiply",
+                        to_port="right",
+                    ),
                 ],
-                "pinned_outputs": [
-                    {
-                        "from_node": "source",
-                        "from_port": "value",
-                        "value": pinned_value.model_dump(mode="json"),
-                    }
+                pinned_outputs=[
+                    PinnedOutputRequest(
+                        from_node="source",
+                        from_port="value",
+                        value=pinned_value,
+                    )
                 ],
-            },
+            ).model_dump(mode="json"),
         )
         assert response.status_code == 200
         result = RunResponse.model_validate(response.json())
@@ -1261,25 +1298,25 @@ def test_invalid_selected_run_pins_are_rejected_before_target_execution(
     assert isinstance(compound_value, ArtifactRef)
 
     edges: list[dict[str, object]] = [
-        {
-            "from_node": "source",
-            "from_port": "value",
-            "to_node": "multiply",
-            "to_port": "left",
-        },
-        {
-            "from_node": "source",
-            "from_port": "value",
-            "to_node": "multiply",
-            "to_port": "right",
-        },
+        RunEdgeRequest(
+            from_node="source",
+            from_port="value",
+            to_node="multiply",
+            to_port="left",
+        ).model_dump(mode="json"),
+        RunEdgeRequest(
+            from_node="source",
+            from_port="value",
+            to_node="multiply",
+            to_port="right",
+        ).model_dump(mode="json"),
     ]
     pinned_outputs: list[dict[str, object]] = [
-        {
-            "from_node": "source",
-            "from_port": "value",
-            "value": integer_value.model_dump(mode="json"),
-        }
+        PinnedOutputRequest(
+            from_node="source",
+            from_port="value",
+            value=integer_value,
+        ).model_dump(mode="json"),
     ]
     if case == "missing-artifact":
         missing_value = integer_value.model_copy(
@@ -1297,49 +1334,51 @@ def test_invalid_selected_run_pins_are_rejected_before_target_execution(
         pinned_outputs.append(dict(pinned_outputs[0]))
     elif case == "unused-pin":
         pinned_outputs.append(
-            {
-                "from_node": "unused",
-                "from_port": "value",
-                "value": integer_value.model_dump(mode="json"),
-            }
+            PinnedOutputRequest(
+                from_node="unused",
+                from_port="value",
+                value=integer_value,
+            ).model_dump(mode="json")
         )
     elif case == "wrong-artifact-type":
         edges = [
-            {
-                "from_node": "source",
-                "from_port": "result",
-                "to_node": "multiply",
-                "to_port": "left",
-            },
-            {
-                "from_node": "source",
-                "from_port": "result",
-                "to_node": "multiply",
-                "to_port": "right",
-            },
+            RunEdgeRequest(
+                from_node="source",
+                from_port="result",
+                to_node="multiply",
+                to_port="left",
+            ).model_dump(mode="json"),
+            RunEdgeRequest(
+                from_node="source",
+                from_port="result",
+                to_node="multiply",
+                to_port="right",
+            ).model_dump(mode="json"),
         ]
         pinned_outputs = [
-            {
-                "from_node": "source",
-                "from_port": "result",
-                "value": compound_value.model_dump(mode="json"),
-            }
+            PinnedOutputRequest(
+                from_node="source",
+                from_port="result",
+                value=compound_value,
+            ).model_dump(mode="json"),
         ]
 
     response = client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "multiply",
-                    "operator_id": "arithmetic.multiply",
-                    "operator_version": 1,
-                    "config": {},
-                }
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="multiply",
+                    operator_id="arithmetic.multiply",
+                    operator_version=1,
+                    config={},
+                )
             ],
-            "edges": edges,
-            "pinned_outputs": pinned_outputs,
-        },
+            edges=[RunEdgeRequest.model_validate(edge) for edge in edges],
+            pinned_outputs=[
+                PinnedOutputRequest.model_validate(pin) for pin in pinned_outputs
+            ],
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 422
@@ -1351,17 +1390,17 @@ def test_pin_for_executing_source_is_rejected_before_source_config_runs(
 ) -> None:
     upstream_response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "source",
-                    "operator_id": "arithmetic.number",
-                    "operator_version": 1,
-                    "config": {"value": 3},
-                }
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="source",
+                    operator_id="arithmetic.number",
+                    operator_version=1,
+                    config={"value": 3},
+                )
             ],
-            "edges": [],
-        },
+            edges=[],
+        ).model_dump(mode="json"),
     )
     assert upstream_response.status_code == 200
     upstream_result = RunResponse.model_validate(upstream_response.json())
@@ -1370,43 +1409,43 @@ def test_pin_for_executing_source_is_rejected_before_source_config_runs(
 
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "source",
-                    "operator_id": "arithmetic.number",
-                    "operator_version": 1,
-                    "config": {"value": "invalid"},
-                },
-                {
-                    "id": "multiply",
-                    "operator_id": "arithmetic.multiply",
-                    "operator_version": 1,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="source",
+                    operator_id="arithmetic.number",
+                    operator_version=1,
+                    config={"value": "invalid"},
+                ),
+                RunNodeRequest(
+                    id="multiply",
+                    operator_id="arithmetic.multiply",
+                    operator_version=1,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "source",
-                    "from_port": "value",
-                    "to_node": "multiply",
-                    "to_port": "left",
-                },
-                {
-                    "from_node": "source",
-                    "from_port": "value",
-                    "to_node": "multiply",
-                    "to_port": "right",
-                },
+            edges=[
+                RunEdgeRequest(
+                    from_node="source",
+                    from_port="value",
+                    to_node="multiply",
+                    to_port="left",
+                ),
+                RunEdgeRequest(
+                    from_node="source",
+                    from_port="value",
+                    to_node="multiply",
+                    to_port="right",
+                ),
             ],
-            "pinned_outputs": [
-                {
-                    "from_node": "source",
-                    "from_port": "value",
-                    "value": pinned_value.model_dump(mode="json"),
-                }
+            pinned_outputs=[
+                PinnedOutputRequest(
+                    from_node="source",
+                    from_port="value",
+                    value=pinned_value,
+                )
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 422
@@ -1421,18 +1460,18 @@ def test_crossing_edge_to_unknown_target_is_rejected(
 ) -> None:
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [],
-            "edges": [
-                {
-                    "from_node": "source",
-                    "from_port": "value",
-                    "to_node": "missing-target",
-                    "to_port": "left",
-                }
+        json=RunRequest(
+            nodes=[],
+            edges=[
+                RunEdgeRequest(
+                    from_node="source",
+                    from_port="value",
+                    to_node="missing-target",
+                    to_port="left",
+                )
             ],
-            "pinned_outputs": [],
-        },
+            pinned_outputs=[],
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 422
@@ -1459,31 +1498,31 @@ def test_invalid_map_edge_target_is_rejected_before_execution(
 ) -> None:
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "sequence",
-                    "operator_id": "arithmetic.integer_sequence",
-                    "operator_version": 1,
-                    "config": {"start": 1, "count": 3, "step": 1},
-                },
-                {
-                    "id": "multiply",
-                    "operator_id": "arithmetic.multiply",
-                    "operator_version": 1,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="sequence",
+                    operator_id="arithmetic.integer_sequence",
+                    operator_version=1,
+                    config={"start": 1, "count": 3, "step": 1},
+                ),
+                RunNodeRequest(
+                    id="multiply",
+                    operator_id="arithmetic.multiply",
+                    operator_version=1,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "sequence",
-                    "from_port": "values",
-                    "to_node": "multiply",
-                    "to_port": "missing",
-                    "collection_mode": "map",
-                }
+            edges=[
+                RunEdgeRequest(
+                    from_node="sequence",
+                    from_port="values",
+                    to_node="multiply",
+                    to_port="missing",
+                    collection_mode="map",
+                )
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 422
@@ -1496,44 +1535,44 @@ def test_node_rejects_more_than_one_map_edge(
 ) -> None:
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "left-sequence",
-                    "operator_id": "arithmetic.integer_sequence",
-                    "operator_version": 1,
-                    "config": {"start": 1, "count": 2, "step": 1},
-                },
-                {
-                    "id": "right-sequence",
-                    "operator_id": "arithmetic.integer_sequence",
-                    "operator_version": 1,
-                    "config": {"start": 3, "count": 2, "step": 1},
-                },
-                {
-                    "id": "multiply",
-                    "operator_id": "arithmetic.multiply",
-                    "operator_version": 1,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="left-sequence",
+                    operator_id="arithmetic.integer_sequence",
+                    operator_version=1,
+                    config={"start": 1, "count": 2, "step": 1},
+                ),
+                RunNodeRequest(
+                    id="right-sequence",
+                    operator_id="arithmetic.integer_sequence",
+                    operator_version=1,
+                    config={"start": 3, "count": 2, "step": 1},
+                ),
+                RunNodeRequest(
+                    id="multiply",
+                    operator_id="arithmetic.multiply",
+                    operator_version=1,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "left-sequence",
-                    "from_port": "values",
-                    "to_node": "multiply",
-                    "to_port": "left",
-                    "collection_mode": "map",
-                },
-                {
-                    "from_node": "right-sequence",
-                    "from_port": "values",
-                    "to_node": "multiply",
-                    "to_port": "right",
-                    "collection_mode": "map",
-                },
+            edges=[
+                RunEdgeRequest(
+                    from_node="left-sequence",
+                    from_port="values",
+                    to_node="multiply",
+                    to_port="left",
+                    collection_mode="map",
+                ),
+                RunEdgeRequest(
+                    from_node="right-sequence",
+                    from_port="values",
+                    to_node="multiply",
+                    to_port="right",
+                    collection_mode="map",
+                ),
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 422
@@ -1546,17 +1585,17 @@ def test_unknown_operator_version_is_rejected_before_execution(
 ) -> None:
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "number",
-                    "operator_id": "arithmetic.number",
-                    "operator_version": 99,
-                    "config": {"value": "not-an-integer"},
-                }
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="number",
+                    operator_id="arithmetic.number",
+                    operator_version=99,
+                    config={"value": "not-an-integer"},
+                )
             ],
-            "edges": [],
-        },
+            edges=[],
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 422
@@ -1596,30 +1635,30 @@ def test_missing_required_arithmetic_input_is_422_before_node_execution(
 ) -> None:
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "invalid-number",
-                    "operator_id": "arithmetic.number",
-                    "operator_version": 1,
-                    "config": {"value": "not-an-integer"},
-                },
-                {
-                    "id": "add",
-                    "operator_id": "arithmetic.add",
-                    "operator_version": 1,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="invalid-number",
+                    operator_id="arithmetic.number",
+                    operator_version=1,
+                    config={"value": "not-an-integer"},
+                ),
+                RunNodeRequest(
+                    id="add",
+                    operator_id="arithmetic.add",
+                    operator_version=1,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "invalid-number",
-                    "from_port": "value",
-                    "to_node": "add",
-                    "to_port": "left",
-                }
+            edges=[
+                RunEdgeRequest(
+                    from_node="invalid-number",
+                    from_port="value",
+                    to_node="add",
+                    to_port="left",
+                )
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 422
@@ -1635,17 +1674,17 @@ def test_number_node_config_does_not_coerce_non_integer_values(
 ) -> None:
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "number",
-                    "operator_id": "arithmetic.number",
-                    "operator_version": 1,
-                    "config": {"value": value},
-                }
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="number",
+                    operator_id="arithmetic.number",
+                    operator_version=1,
+                    config={"value": value},
+                )
             ],
-            "edges": [],
-        },
+            edges=[],
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
