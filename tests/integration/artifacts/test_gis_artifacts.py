@@ -47,6 +47,10 @@ from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 from grafy_api.app_state import AppIdentity
 from grafy_api.v1.routes.artifacts import services as artifact_services
 from grafy_api.v1.routes.artifacts.dependencies import artifact_service
+from grafy_api.v1.routes.artifacts.models import (
+    ArtifactExactMatchRow,
+    GeoFeatureQueryRequest,
+)
 from grafy_api.v1.routes.artifacts.services import ArtifactService
 from grafy_api.v1.routes.artifacts.views import router as artifacts_router
 from grafy_api.v1.routes.auth.dependencies import browser_actor
@@ -555,12 +559,12 @@ def test_vector_render_archive_ranges_and_exact_feature_are_bounded(
 
     query = client.post(
         f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/query",
-        json={
-            "rows": [
-                {"values": {"name": "point-55"}},
-                {"values": {"name": "point-2"}},
+        json=GeoFeatureQueryRequest(
+            rows=[
+                ArtifactExactMatchRow(values={"name": "point-55"}),
+                ArtifactExactMatchRow(values={"name": "point-2"}),
             ]
-        },
+        ).model_dump(mode="json"),
     )
     assert query.status_code == 200
     assert query.json() == {
@@ -572,7 +576,9 @@ def test_vector_render_archive_ranges_and_exact_feature_are_bounded(
 
     missing = client.post(
         f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/query",
-        json={"rows": [{"values": {"name": "not-present"}}]},
+        json=GeoFeatureQueryRequest(
+            rows=[ArtifactExactMatchRow(values={"name": "not-present"})]
+        ).model_dump(mode="json"),
     )
     assert missing.status_code == 200
     assert missing.json()["bounds"] is None

@@ -8,7 +8,13 @@ from fastapi.testclient import TestClient
 
 from grafy_api.services.composition import WorkbenchComponents
 from grafy_api.v1.routes.artifacts import services as artifact_services
+from grafy_api.v1.routes.artifacts.models import (
+    ArtifactExactMatchRow,
+    TableExactMatchGroup,
+    TableQueryRequest,
+)
 from grafy_api.v1.routes.artifacts.services import ArtifactService
+from grafy_api.v1.routes.executions.models import RunNodeRequest, RunRequest
 from grafy_api.v1.routes.executions.services import RunResultPresenter
 from grafy_core.artifacts import ArtifactObject, InMemoryUnitOfWork
 from grafy_core.nodes import NodeExecutionContext
@@ -291,16 +297,16 @@ def test_table_page_rejects_non_table_and_invalid_limits(
 
     run_response = client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "text",
-                    "operator_id": "text.input",
-                    "operator_version": 1,
-                    "config": {"text": "not a table"},
-                }
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="text",
+                    operator_id="text.input",
+                    operator_version=1,
+                    config={"text": "not a table"},
+                )
             ]
-        },
+        ).model_dump(mode="json"),
     )
     assert run_response.status_code == 200
     text_artifact_id = run_response.json()["node_runs"][0]["outputs"][0]["value"][
@@ -399,23 +405,29 @@ def test_table_query_filters_composite_keys_and_preserves_source_rows(
 
     response = client.post(
         f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/query",
-        json={
-            "filter_groups": [
-                {
-                    "rows": [
-                        {"values": {"place": "Belynichi"}},
-                        {"values": {"place": "Kniazhitsy"}},
+        json=TableQueryRequest(
+            filter_groups=[
+                TableExactMatchGroup(
+                    rows=[
+                        ArtifactExactMatchRow(values={"place": "Belynichi"}),
+                        ArtifactExactMatchRow(values={"place": "Kniazhitsy"}),
                     ]
-                },
-                {"rows": [{"values": {"district": "Mohilev"}}]},
+                ),
+                TableExactMatchGroup(
+                    rows=[ArtifactExactMatchRow(values={"district": "Mohilev"})]
+                ),
             ],
-            "highlight_groups": [{"rows": [{"values": {"status": "review"}}]}],
-            "offset": 0,
-            "limit": 50,
-            "column_offset": 0,
-            "column_limit": 25,
-            "max_cell_characters": 256,
-        },
+            highlight_groups=[
+                TableExactMatchGroup(
+                    rows=[ArtifactExactMatchRow(values={"status": "review"})]
+                )
+            ],
+            offset=0,
+            limit=50,
+            column_offset=0,
+            column_limit=25,
+            max_cell_characters=256,
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
@@ -430,7 +442,13 @@ def test_table_query_filters_composite_keys_and_preserves_source_rows(
 
     missing_field = client.post(
         f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/query",
-        json={"filter_groups": [{"rows": [{"values": {"missing": "Belynichi"}}]}]},
+        json=TableQueryRequest(
+            filter_groups=[
+                TableExactMatchGroup(
+                    rows=[ArtifactExactMatchRow(values={"missing": "Belynichi"})]
+                )
+            ],
+        ).model_dump(mode="json"),
     )
     assert missing_field.status_code == 400
     assert "missing" in missing_field.json()["detail"]
@@ -483,27 +501,35 @@ def test_table_query_matches_integer_keys_from_string_or_number(
 
     string_key = client.post(
         path,
-        json={
-            "highlight_groups": [{"rows": [{"values": {"id": "12"}}]}],
-        },
+        json=TableQueryRequest(
+            highlight_groups=[
+                TableExactMatchGroup(rows=[ArtifactExactMatchRow(values={"id": "12"})])
+            ],
+        ).model_dump(mode="json"),
     )
     assert string_key.status_code == 200
     assert string_key.json()["highlighted_row_indices"] == [0]
 
     number_key = client.post(
         path,
-        json={
-            "highlight_groups": [{"rows": [{"values": {"id": 12}}]}],
-        },
+        json=TableQueryRequest(
+            highlight_groups=[
+                TableExactMatchGroup(rows=[ArtifactExactMatchRow(values={"id": 12})])
+            ],
+        ).model_dump(mode="json"),
     )
     assert number_key.status_code == 200
     assert number_key.json()["highlighted_row_indices"] == [0]
 
     large_string_key = client.post(
         path,
-        json={
-            "filter_groups": [{"rows": [{"values": {"large_id": str(large_id)}}]}],
-        },
+        json=TableQueryRequest(
+            filter_groups=[
+                TableExactMatchGroup(
+                    rows=[ArtifactExactMatchRow(values={"large_id": str(large_id)})]
+                )
+            ],
+        ).model_dump(mode="json"),
     )
     assert large_string_key.status_code == 200
     assert large_string_key.json()["row_indices"] == [0]
@@ -511,9 +537,11 @@ def test_table_query_matches_integer_keys_from_string_or_number(
 
     padded = client.post(
         path,
-        json={
-            "highlight_groups": [{"rows": [{"values": {"id": "012"}}]}],
-        },
+        json=TableQueryRequest(
+            highlight_groups=[
+                TableExactMatchGroup(rows=[ArtifactExactMatchRow(values={"id": "012"})])
+            ],
+        ).model_dump(mode="json"),
     )
     assert padded.status_code == 200
     assert padded.json()["highlighted_row_indices"] == []
@@ -618,7 +646,7 @@ async def test_iter_table_csv_encodes_utf8_bom_crlf_and_quoting(
             {"name": "Café", "note": "plain"},
             {"name": "a,b", "note": "quoted"},
             {"name": "line\nbreak", "note": "embedded"},
-            {"name": "quoted\"cell", "note": "quote"},
+            {"name": 'quoted"cell', "note": "quote"},
         ],
     )
     artifact = ArtifactObject(
