@@ -1,36 +1,55 @@
 import asyncio
-from collections.abc import Iterator
-from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 from typing import cast
 from uuid import UUID
 
 import pytest
-from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import delete
 
 from grafy_core.artifacts import ArtifactObject, ArtifactRef, ArtifactRefSequence
-from grafy_core.domain.identity import Workspace, User, WorkspaceMembership, WorkspaceRole
+from grafy_core.domain.identity import (
+    Workspace,
+    User,
+    WorkspaceMembership,
+    WorkspaceRole,
+)
 from grafy_core.domain.materialized_outputs import MaterializedNodeOutputs
 from grafy_persistence import schema
 from grafy_persistence.database import create_database
 from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
-from grafy_api.main import create_app
-from tests.support.identity import install_browser_actor_override
+from grafy_api.settings import Settings
+from grafy_api.v1.models import ArtifactTypeBindingModel, ArtifactTypeKeyResponse
+from grafy_api.v1.routes.auth.dependencies import browser_actor
 from grafy_api.v1.routes.executions.models import (
     GraphMaterializationsResponse,
+    PinnedOutputRequest,
+    RunEdgeRequest,
+    RunNodeRequest,
     RunPortOutputResponse,
+    RunRequest,
     RunResponse,
 )
-from grafy_api.v1.routes.saved_graphs.models import SavedGraphResponse
-from grafy_api.settings import Settings
+from grafy_api.v1.routes.saved_graphs.models import (
+    CreateSavedGraphRequest,
+    GraphPointModel,
+    SavedGraphEdgeModel,
+    SavedGraphInputPlugModel,
+    SavedGraphNodeModel,
+    SavedGraphResponse,
+    UpdateSavedGraphRequest,
+)
+from tests.support.identity import browser_actor_override
+from tests.testkit import client_with_overrides
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
+
+# Every durable-API client authenticates through the shared test actor.
+_OVERRIDES = {browser_actor: browser_actor_override}
 
 
 async def _create_schema(database_url: str) -> None:
@@ -119,14 +138,6 @@ async def _persist_partially_accessible_materialization(
         await database.dispose()
 
 
-@contextmanager
-def _client(settings: Settings) -> Iterator[TestClient]:
-    application = create_app(settings)
-    install_browser_actor_override(application)
-    with TestClient(application) as client:
-        yield client
-
-
 @pytest.fixture
 def durable_api(tmp_path: Path) -> tuple[Settings, str]:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'materializations.sqlite3'}"
@@ -141,7 +152,7 @@ def durable_api(tmp_path: Path) -> tuple[Settings, str]:
     )
 
 
-def _graph_payload() -> dict[str, object]:
+def _graph_payload(expected_revision: int | None = None) -> dict[str, object]:
     nodes: list[tuple[str, str, dict[str, object]]] = [
         ("nine", "arithmetic.number", {"value": 9}),
         ("four", "arithmetic.number", {"value": 4}),
@@ -149,22 +160,29 @@ def _graph_payload() -> dict[str, object]:
         ("multiply", "arithmetic.multiply", {}),
     ]
     edges = _edges()
-    return {
-        "name": "Durable arithmetic graph",
-        "nodes": [
-            {
-                "id": node_id,
-                "operator_id": operator_id,
-                "operator_version": 1,
-                "config": config,
-                "position": {"x": float(index * 200), "y": 20.0},
-            }
+    payload = CreateSavedGraphRequest(
+        name="Durable arithmetic graph",
+        nodes=[
+            SavedGraphNodeModel(
+                id=node_id,
+                operator_id=operator_id,
+                operator_version=1,
+                config=config,
+                position=GraphPointModel(x=float(index * 200), y=20.0),
+            )
             for index, (node_id, operator_id, config) in enumerate(nodes)
         ],
-        "edges": [
-            {"id": f"edge-{index}", **edge} for index, edge in enumerate(edges, start=1)
+        edges=[
+            SavedGraphEdgeModel(id=f"edge-{index}", **edge)
+            for index, edge in enumerate(edges, start=1)
         ],
-    }
+    ).model_dump(mode="json")
+    if expected_revision is None:
+        return payload
+    return UpdateSavedGraphRequest(
+        **payload,
+        expected_revision=expected_revision,
+    ).model_dump(mode="json")
 
 
 def _edges() -> list[dict[str, object]]:
@@ -197,128 +215,123 @@ def _edges() -> list[dict[str, object]]:
 
 
 def _collect_graph_payload() -> dict[str, object]:
-    return {
-        "name": "Durable collect graph",
-        "nodes": [
-            {
-                "id": "first",
-                "operator_id": "text.input",
-                "operator_version": 1,
-                "config": {"text": "first"},
-                "position": {"x": 0.0, "y": 0.0},
-            },
-            {
-                "id": "sequence-input",
-                "operator_id": "text.input",
-                "operator_version": 1,
-                "config": {"text": "second|third"},
-                "position": {"x": 200.0, "y": 0.0},
-            },
-            {
-                "id": "split",
-                "operator_id": "text.split",
-                "operator_version": 1,
-                "config": {"separator": "|"},
-                "position": {"x": 400.0, "y": 0.0},
-            },
-            {
-                "id": "collect",
-                "operator_id": "sequence.collect",
-                "operator_version": 1,
-                "config": {},
-                "position": {"x": 600.0, "y": 0.0},
-                "artifact_type_bindings": [
-                    {
-                        "variable": "T",
-                        "artifact_type": {
-                            "id": "scalar.text",
-                            "schema_version": 1,
-                        },
-                    }
+    return CreateSavedGraphRequest(
+        name="Durable collect graph",
+        nodes=[
+            SavedGraphNodeModel(
+                id="first",
+                operator_id="text.input",
+                operator_version=1,
+                config={"text": "first"},
+                position=GraphPointModel(x=0.0, y=0.0),
+            ),
+            SavedGraphNodeModel(
+                id="sequence-input",
+                operator_id="text.input",
+                operator_version=1,
+                config={"text": "second|third"},
+                position=GraphPointModel(x=200.0, y=0.0),
+            ),
+            SavedGraphNodeModel(
+                id="split",
+                operator_id="text.split",
+                operator_version=1,
+                config={"separator": "|"},
+                position=GraphPointModel(x=400.0, y=0.0),
+            ),
+            SavedGraphNodeModel(
+                id="collect",
+                operator_id="sequence.collect",
+                operator_version=1,
+                config={},
+                position=GraphPointModel(x=600.0, y=0.0),
+                artifact_type_bindings=[
+                    ArtifactTypeBindingModel(
+                        variable="T",
+                        artifact_type=ArtifactTypeKeyResponse(
+                            id="scalar.text",
+                            schema_version=1,
+                        ),
+                    )
                 ],
-                "input_plugs": [
-                    {"id": "sequence-plug", "port": "items"},
-                    {"id": "first-plug", "port": "items"},
+                input_plugs=[
+                    SavedGraphInputPlugModel(id="sequence-plug", port="items"),
+                    SavedGraphInputPlugModel(id="first-plug", port="items"),
                 ],
-            },
+            ),
         ],
-        "edges": [
-            {
-                "id": "first-edge",
-                "from_node": "first",
-                "from_port": "text",
-                "to_node": "collect",
-                "to_port": "items",
-                "to_plug": "first-plug",
-            },
-            {
-                "id": "sequence-input-edge",
-                "from_node": "sequence-input",
-                "from_port": "text",
-                "to_node": "split",
-                "to_port": "text",
-            },
-            {
-                "id": "sequence-edge",
-                "from_node": "split",
-                "from_port": "parts",
-                "to_node": "collect",
-                "to_port": "items",
-                "to_plug": "sequence-plug",
-            },
+        edges=[
+            SavedGraphEdgeModel(
+                id="first-edge",
+                from_node="first",
+                from_port="text",
+                to_node="collect",
+                to_port="items",
+                to_plug="first-plug",
+            ),
+            SavedGraphEdgeModel(
+                id="sequence-input-edge",
+                from_node="sequence-input",
+                from_port="text",
+                to_node="split",
+                to_port="text",
+            ),
+            SavedGraphEdgeModel(
+                id="sequence-edge",
+                from_node="split",
+                from_port="parts",
+                to_node="collect",
+                to_port="items",
+                to_plug="sequence-plug",
+            ),
         ],
-    }
+    ).model_dump(mode="json")
 
 
 def _collect_run_payload(graph: SavedGraphResponse) -> dict[str, object]:
     graph_payload = _collect_graph_payload()
     nodes = cast(list[dict[str, object]], graph_payload["nodes"])
     edges = cast(list[dict[str, object]], graph_payload["edges"])
-    return {
-        "nodes": [
-            {key: value for key, value in node.items() if key != "position"}
-            for node in nodes
-        ],
-        "edges": [
-            {key: value for key, value in edge.items() if key != "id"} for edge in edges
-        ],
-        "graph_id": str(graph.id),
-        "graph_revision": graph.revision,
-    }
+    return RunRequest(
+        nodes=[RunNodeRequest.model_validate(node) for node in nodes],
+        edges=[RunEdgeRequest.model_validate(edge) for edge in edges],
+        graph_id=graph.id,
+        graph_revision=graph.revision,
+    ).model_dump(mode="json")
 
 
 def _full_run_payload(graph_id: str, graph_revision: int) -> dict[str, object]:
-    return {
-        "nodes": [
-            {
-                "id": "nine",
-                "operator_id": "arithmetic.number",
-                "operator_version": 1,
-                "config": {"value": 9},
-            },
-            {
-                "id": "four",
-                "operator_id": "arithmetic.number",
-                "operator_version": 1,
-                "config": {"value": 4},
-            },
-            {
-                "id": "add",
-                "operator_id": "arithmetic.add",
-                "operator_version": 1,
-                "config": {},
-            },
-            {
-                "id": "multiply",
-                "operator_id": "arithmetic.multiply",
-                "operator_version": 1,
-                "config": {},
-            },
+    return RunRequest(
+        nodes=[
+            RunNodeRequest(
+                id="nine",
+                operator_id="arithmetic.number",
+                operator_version=1,
+                config={"value": 9},
+            ),
+            RunNodeRequest(
+                id="four",
+                operator_id="arithmetic.number",
+                operator_version=1,
+                config={"value": 4},
+            ),
+            RunNodeRequest(
+                id="add",
+                operator_id="arithmetic.add",
+                operator_version=1,
+                config={},
+            ),
+            RunNodeRequest(
+                id="multiply",
+                operator_id="arithmetic.multiply",
+                operator_version=1,
+                config={},
+            ),
         ],
-        "edges": _edges(),
-        "graph_id": graph_id,
-        "graph_revision": graph_revision,
-    }
+        edges=[RunEdgeRequest.model_validate(edge) for edge in _edges()],
+        graph_id=graph_id,
+        graph_revision=graph_revision,
+    ).model_dump(mode="json")
 
 
 def _downstream_run_payload(
@@ -327,28 +340,28 @@ def _downstream_run_payload(
     *,
     pinned_value: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    payload: dict[str, object] = {
-        "nodes": [
-            {
-                "id": "multiply",
-                "operator_id": "arithmetic.multiply",
-                "operator_version": 1,
-                "config": {},
-            }
+    payload = RunRequest(
+        nodes=[
+            RunNodeRequest(
+                id="multiply",
+                operator_id="arithmetic.multiply",
+                operator_version=1,
+                config={},
+            )
         ],
-        "edges": _edges()[2:],
-        "graph_id": graph_id,
-        "graph_revision": graph_revision,
-    }
+        edges=[RunEdgeRequest.model_validate(edge) for edge in _edges()[2:]],
+        graph_id=graph_id,
+        graph_revision=graph_revision,
+    )
     if pinned_value is not None:
-        payload["pinned_outputs"] = [
-            {
-                "from_node": "add",
-                "from_port": "result",
-                "value": pinned_value,
-            }
+        payload.pinned_outputs = [
+            PinnedOutputRequest(
+                from_node="add",
+                from_port="result",
+                value=pinned_value,
+            )
         ]
-    return payload
+    return payload.model_dump(mode="json")
 
 
 def _output(run: RunResponse, node_id: str) -> RunPortOutputResponse:
@@ -383,7 +396,7 @@ def test_run_graph_context_requires_id_and_revision_together(
     message: str,
 ) -> None:
     settings, _ = durable_api
-    with _client(settings) as client:
+    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
         response = client.post(
             "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
             json={"nodes": [], "edges": [], **graph_context},
@@ -397,7 +410,7 @@ def test_run_graph_contexts_must_identify_same_saved_revision(
     durable_api: tuple[Settings, str],
 ) -> None:
     settings, _ = durable_api
-    with _client(settings) as client:
+    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
         response = client.post(
             "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
             json={
@@ -419,13 +432,16 @@ def test_materialization_context_validates_graph_revision_and_fragment(
 ) -> None:
     settings, _ = durable_api
     missing_graph_id = "00000000-0000-0000-0000-000000000404"
-    with _client(settings) as client:
+    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
         missing = client.get(
             f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{missing_graph_id}/materializations",
             params={"graph_revision": 1},
         )
         graph = SavedGraphResponse.model_validate(
-            client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
+            client.post(
+                "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
+                json=_graph_payload(),
+            ).json()
         )
         missing_revision = client.get(
             f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
@@ -433,19 +449,19 @@ def test_materialization_context_validates_graph_revision_and_fragment(
         )
         rogue = client.post(
             "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-            json={
-                "nodes": [
-                    {
-                        "id": "rogue-node",
-                        "operator_id": "arithmetic.number",
-                        "operator_version": 1,
-                        "config": {"value": 99},
-                    }
+            json=RunRequest(
+                nodes=[
+                    RunNodeRequest(
+                        id="rogue-node",
+                        operator_id="arithmetic.number",
+                        operator_version=1,
+                        config={"value": 99},
+                    )
                 ],
-                "edges": [],
-                "graph_id": str(graph.id),
-                "graph_revision": graph.revision,
-            },
+                edges=[],
+                graph_id=graph.id,
+                graph_revision=graph.revision,
+            ).model_dump(mode="json"),
         )
 
     assert missing.status_code == 404
@@ -458,14 +474,19 @@ def test_graph_context_run_rejects_omitted_saved_incoming_edge(
     durable_api: tuple[Settings, str],
 ) -> None:
     settings, _ = durable_api
-    with _client(settings) as client:
+    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
         graph = SavedGraphResponse.model_validate(
-            client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
+            client.post(
+                "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
+                json=_graph_payload(),
+            ).json()
         )
         payload = _full_run_payload(str(graph.id), graph.revision)
         payload["edges"] = _edges()[:1] + _edges()[2:]
 
-        response = client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json=payload)
+        response = client.post(
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json=payload
+        )
         materializations = client.get(
             f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
             params={"graph_revision": graph.revision},
@@ -484,14 +505,19 @@ def test_graph_context_run_rejects_duplicated_saved_incoming_edge(
     durable_api: tuple[Settings, str],
 ) -> None:
     settings, _ = durable_api
-    with _client(settings) as client:
+    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
         graph = SavedGraphResponse.model_validate(
-            client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
+            client.post(
+                "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
+                json=_graph_payload(),
+            ).json()
         )
         payload = _full_run_payload(str(graph.id), graph.revision)
         payload["edges"] = [*_edges(), _edges()[1]]
 
-        response = client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json=payload)
+        response = client.post(
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json=payload
+        )
         materializations = client.get(
             f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
             params={"graph_revision": graph.revision},
@@ -510,13 +536,19 @@ def test_saved_collect_fragment_matches_ordered_plugs_and_edge_targets(
     durable_api: tuple[Settings, str],
 ) -> None:
     settings, _ = durable_api
-    with _client(settings) as client:
-        created = client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_collect_graph_payload())
+    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
+        created = client.post(
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
+            json=_collect_graph_payload(),
+        )
         assert created.status_code == 201
         graph = SavedGraphResponse.model_validate(created.json())
 
         matching_run = _collect_run_payload(graph)
-        matching = client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json=matching_run)
+        matching = client.post(
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
+            json=matching_run,
+        )
         assert matching.status_code == 200
         assert RunResponse.model_validate(matching.json()).status == "succeeded"
 
@@ -531,7 +563,10 @@ def test_saved_collect_fragment_matches_ordered_plugs_and_edge_targets(
             collect_node["input_plugs"],
         )
         input_plugs.reverse()
-        reordered = client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json=reordered_run)
+        reordered = client.post(
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
+            json=reordered_run,
+        )
 
         retargeted_run = deepcopy(matching_run)
         retargeted_edges = cast(
@@ -545,7 +580,10 @@ def test_saved_collect_fragment_matches_ordered_plugs_and_edge_targets(
             collect_edges[1]["to_plug"],
             collect_edges[0]["to_plug"],
         )
-        retargeted = client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json=retargeted_run)
+        retargeted = client.post(
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
+            json=retargeted_run,
+        )
 
     assert reordered.status_code == 422
     assert "does not match saved graph" in reordered.json()["detail"]
@@ -559,14 +597,20 @@ def test_fresh_app_runs_collect_only_from_persisted_scalar_and_sequence_pins(
     durable_api: tuple[Settings, str],
 ) -> None:
     settings, _ = durable_api
-    with _client(settings) as client:
+    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
         graph = SavedGraphResponse.model_validate(
-            client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_collect_graph_payload()).json()
+            client.post(
+                "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
+                json=_collect_graph_payload(),
+            ).json()
         )
-        full_run = client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json=_collect_run_payload(graph))
+        full_run = client.post(
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
+            json=_collect_run_payload(graph),
+        )
         assert full_run.status_code == 200
 
-    with _client(settings) as fresh_client:
+    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as fresh_client:
         materializations_response = fresh_client.get(
             f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
             params={"graph_revision": graph.revision},
@@ -603,33 +647,24 @@ def test_fresh_app_runs_collect_only_from_persisted_scalar_and_sequence_pins(
         ]
         selected_run = fresh_client.post(
             "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-            json={
-                "nodes": [
-                    {
-                        key: value
-                        for key, value in collect_node.items()
-                        if key != "position"
-                    }
+            json=RunRequest(
+                nodes=[RunNodeRequest.model_validate(collect_node)],
+                edges=[RunEdgeRequest.model_validate(edge) for edge in incoming_edges],
+                pinned_outputs=[
+                    PinnedOutputRequest(
+                        from_node="first",
+                        from_port="text",
+                        value=first_value,
+                    ),
+                    PinnedOutputRequest(
+                        from_node="split",
+                        from_port="parts",
+                        value=split_value,
+                    ),
                 ],
-                "edges": [
-                    {key: value for key, value in edge.items() if key != "id"}
-                    for edge in incoming_edges
-                ],
-                "pinned_outputs": [
-                    {
-                        "from_node": "first",
-                        "from_port": "text",
-                        "value": first_value.model_dump(mode="json"),
-                    },
-                    {
-                        "from_node": "split",
-                        "from_port": "parts",
-                        "value": split_value.model_dump(mode="json"),
-                    },
-                ],
-                "graph_id": str(graph.id),
-                "graph_revision": graph.revision,
-            },
+                graph_id=graph.id,
+                graph_revision=graph.revision,
+            ).model_dump(mode="json"),
         )
 
         assert selected_run.status_code == 200
@@ -637,9 +672,9 @@ def test_fresh_app_runs_collect_only_from_persisted_scalar_and_sequence_pins(
         collected = _output(selected_result, "collect")
         assert isinstance(collected.value, ArtifactRefSequence)
         assert [
-            fresh_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content").json()[
-                "value"
-            ]
+            fresh_client.get(
+                f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content"
+            ).json()["value"]
             for artifact in collected.artifacts
         ] == ["second", "third", "first"]
 
@@ -649,8 +684,11 @@ def test_full_run_persists_outputs_and_fresh_app_reuses_them_for_downstream_run(
 ) -> None:
     settings, _ = durable_api
 
-    with _client(settings) as client:
-        created = client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload())
+    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
+        created = client.post(
+            "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
+            json=_graph_payload(),
+        )
         assert created.status_code == 201
         graph = SavedGraphResponse.model_validate(created.json())
 
@@ -676,7 +714,7 @@ def test_full_run_persists_outputs_and_fresh_app_reuses_them_for_downstream_run(
             "multiply",
         }
 
-    with _client(settings) as fresh_client:
+    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as fresh_client:
         reloaded = fresh_client.get(
             f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
             params={"graph_revision": graph.revision},
@@ -709,7 +747,7 @@ def test_graph_update_carries_compatible_materializations_to_new_revision(
     durable_api: tuple[Settings, str],
 ) -> None:
     settings, _ = durable_api
-    with _client(settings) as client:
+    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
         created = client.post(
             "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
             json=_graph_payload(),
@@ -723,7 +761,7 @@ def test_graph_update_carries_compatible_materializations_to_new_revision(
         )
         assert full_run.status_code == 200
 
-        moved_payload = _graph_payload()
+        moved_payload = _graph_payload(expected_revision=graph.revision)
         nodes = cast(list[dict[str, object]], moved_payload["nodes"])
         nodes[0] = {
             **nodes[0],
@@ -731,7 +769,7 @@ def test_graph_update_carries_compatible_materializations_to_new_revision(
         }
         updated = client.put(
             f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}",
-            json={**moved_payload, "expected_revision": graph.revision},
+            json=moved_payload,
         )
         assert updated.status_code == 200
         next_graph = SavedGraphResponse.model_validate(updated.json())
@@ -768,24 +806,27 @@ def test_downstream_run_without_materialization_returns_dependency_guidance(
     durable_api: tuple[Settings, str],
 ) -> None:
     settings, _ = durable_api
-    with _client(settings) as client:
+    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
         graph = SavedGraphResponse.model_validate(
-            client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
+            client.post(
+                "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
+                json=_graph_payload(),
+            ).json()
         )
         standalone = RunResponse.model_validate(
             client.post(
                 "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-                json={
-                    "nodes": [
-                        {
-                            "id": "standalone",
-                            "operator_id": "arithmetic.number",
-                            "operator_version": 1,
-                            "config": {"value": 5},
-                        }
+                json=RunRequest(
+                    nodes=[
+                        RunNodeRequest(
+                            id="standalone",
+                            operator_id="arithmetic.number",
+                            operator_version=1,
+                            config={"value": 5},
+                        )
                     ],
-                    "edges": [],
-                },
+                    edges=[],
+                ).model_dump(mode="json"),
             ).json()
         )
         unrelated_value = _output(standalone, "standalone").value
@@ -807,9 +848,12 @@ def test_inaccessible_artifact_is_filtered_and_blocks_downstream_reuse(
     durable_api: tuple[Settings, str],
 ) -> None:
     settings, database_url = durable_api
-    with _client(settings) as client:
+    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
         graph = SavedGraphResponse.model_validate(
-            client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
+            client.post(
+                "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
+                json=_graph_payload(),
+            ).json()
         )
         full_run = RunResponse.model_validate(
             client.post(
@@ -824,7 +868,7 @@ def test_inaccessible_artifact_is_filtered_and_blocks_downstream_reuse(
 
     asyncio.run(_delete_artifact(database_url, artifact_id))
 
-    with _client(settings) as client:
+    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
         materializations = client.get(
             f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
             params={"graph_revision": graph.revision},
@@ -853,9 +897,12 @@ def test_materialization_response_keeps_accessible_sibling_ports(
     durable_api: tuple[Settings, str],
 ) -> None:
     settings, database_url = durable_api
-    with _client(settings) as client:
+    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
         graph = SavedGraphResponse.model_validate(
-            client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
+            client.post(
+                "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
+                json=_graph_payload(),
+            ).json()
         )
 
     asyncio.run(
@@ -866,7 +913,7 @@ def test_materialization_response_keeps_accessible_sibling_ports(
         )
     )
 
-    with _client(settings) as client:
+    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
         response = client.get(
             f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
             params={"graph_revision": graph.revision},
@@ -884,9 +931,12 @@ def test_saved_run_rejects_pin_that_is_not_the_latest_materialization(
     durable_api: tuple[Settings, str],
 ) -> None:
     settings, _ = durable_api
-    with _client(settings) as client:
+    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
         graph = SavedGraphResponse.model_validate(
-            client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
+            client.post(
+                "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
+                json=_graph_payload(),
+            ).json()
         )
         persisted = client.post(
             "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
@@ -896,42 +946,42 @@ def test_saved_run_rejects_pin_that_is_not_the_latest_materialization(
 
         alternate = client.post(
             "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-            json={
-                "nodes": [
-                    {
-                        "id": "eight",
-                        "operator_id": "arithmetic.number",
-                        "operator_version": 1,
-                        "config": {"value": 8},
-                    },
-                    {
-                        "id": "three",
-                        "operator_id": "arithmetic.number",
-                        "operator_version": 1,
-                        "config": {"value": 3},
-                    },
-                    {
-                        "id": "add",
-                        "operator_id": "arithmetic.add",
-                        "operator_version": 1,
-                        "config": {},
-                    },
+            json=RunRequest(
+                nodes=[
+                    RunNodeRequest(
+                        id="eight",
+                        operator_id="arithmetic.number",
+                        operator_version=1,
+                        config={"value": 8},
+                    ),
+                    RunNodeRequest(
+                        id="three",
+                        operator_id="arithmetic.number",
+                        operator_version=1,
+                        config={"value": 3},
+                    ),
+                    RunNodeRequest(
+                        id="add",
+                        operator_id="arithmetic.add",
+                        operator_version=1,
+                        config={},
+                    ),
                 ],
-                "edges": [
-                    {
-                        "from_node": "eight",
-                        "from_port": "value",
-                        "to_node": "add",
-                        "to_port": "left",
-                    },
-                    {
-                        "from_node": "three",
-                        "from_port": "value",
-                        "to_node": "add",
-                        "to_port": "right",
-                    },
+                edges=[
+                    RunEdgeRequest(
+                        from_node="eight",
+                        from_port="value",
+                        to_node="add",
+                        to_port="left",
+                    ),
+                    RunEdgeRequest(
+                        from_node="three",
+                        from_port="value",
+                        to_node="add",
+                        to_port="right",
+                    ),
                 ],
-            },
+            ).model_dump(mode="json"),
         )
         assert alternate.status_code == 200
         alternate_result = RunResponse.model_validate(alternate.json())
