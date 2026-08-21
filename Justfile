@@ -62,10 +62,6 @@ api-sql: db-upgrade
 api-all: db-upgrade
     uv run --exact --no-dev --extra llm --extra gis --extra ocr --extra sql uvicorn grafy_api.main:app --reload --host 0.0.0.0 --port 8000
 
-# Start the local Prefect server.
-prefect:
-    .venv/bin/prefect server start
-
 # Start the web development server.
 web:
     npm --prefix apps/web run dev

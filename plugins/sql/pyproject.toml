@@ -5,12 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "grafy-plugin-sql"
 version = "0.1.0"
-requires-python = "==3.12.9"
+requires-python = "==3.14.*"
 dependencies = [
     "asyncpg>=0.30.0",
     "duckdb==1.5.5",
     "grafy-core",
     "pydantic",
+    "pytz>=2024.1",
     "sqlalchemy[asyncio]>=2.0.51",
 ]
 

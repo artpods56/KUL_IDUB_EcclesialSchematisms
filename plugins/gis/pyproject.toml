@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "grafy-plugin-gis"
 version = "0.1.0"
-requires-python = "==3.12.9"
+requires-python = "==3.14.*"
 dependencies = [
     "httpx>=0.28.1",
     "grafy-core",

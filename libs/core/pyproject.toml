@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "grafy-core"
 version = "0.1.0"
-requires-python = "==3.12.9"
+requires-python = "==3.14.*"
 dependencies = [
     "jsonschema>=4.23.0",
     "openpyxl>=3.1.5",
