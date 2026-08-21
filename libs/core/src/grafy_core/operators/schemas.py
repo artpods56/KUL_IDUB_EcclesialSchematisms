@@ -58,6 +58,8 @@ SCHEMAS = Plugin(
     slug="builtin.schema",
     title="Schema",
 )
+
+
 class SchemaFieldKind(StrEnum):
     STRING = "string"
     INTEGER = "integer"

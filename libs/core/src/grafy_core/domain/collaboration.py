@@ -241,9 +241,7 @@ class MoveAnnotationPosition(CollaborationValue):
 
 
 class MoveAnnotationsCommand(CollaborationValue):
-    kind: Literal[GraphCommandKind.MOVE_ANNOTATIONS] = (
-        GraphCommandKind.MOVE_ANNOTATIONS
-    )
+    kind: Literal[GraphCommandKind.MOVE_ANNOTATIONS] = GraphCommandKind.MOVE_ANNOTATIONS
     positions: tuple[MoveAnnotationPosition, ...] = Field(min_length=1)
 
 
@@ -387,9 +385,7 @@ def sanitize_document_for_cross_workspace_copy(
                 ),
             )
     sanitized_nodes = tuple(
-        node.model_copy(
-            update={"config": _sanitize_config_value(node.config_dict())}
-        )
+        node.model_copy(update={"config": _sanitize_config_value(node.config_dict())})
         for node in document.nodes
     )
     known_nodes = {node.id for node in sanitized_nodes}
@@ -537,9 +533,7 @@ def apply_graph_command(
         node = _node_or_raise(document, command.node_id)
         current_ids = tuple(plug.id for plug in node.input_plugs)
         if current_ids != command.expected_plug_ids:
-            raise _field_conflict(
-                f"Input plugs on node {command.node_id} changed"
-            )
+            raise _field_conflict(f"Input plugs on node {command.node_id} changed")
         return name, document.with_topology(
             nodes=tuple(
                 candidate.model_copy(update={"input_plugs": command.input_plugs})
@@ -552,14 +546,10 @@ def apply_graph_command(
     if isinstance(command, UpdateNodeConfigurationAndInputPlugsCommand):
         node = _node_or_raise(document, command.node_id)
         if not _json_equal(node.config_dict(), command.expected_config):
-            raise _field_conflict(
-                f"Configuration on node {command.node_id} changed"
-            )
+            raise _field_conflict(f"Configuration on node {command.node_id} changed")
         current_ids = tuple(plug.id for plug in node.input_plugs)
         if current_ids != command.expected_plug_ids:
-            raise _field_conflict(
-                f"Input plugs on node {command.node_id} changed"
-            )
+            raise _field_conflict(f"Input plugs on node {command.node_id} changed")
         retained_plug_ids = {plug.id for plug in command.input_plugs}
         return name, document.with_topology(
             nodes=tuple(
@@ -686,9 +676,7 @@ def apply_graph_command(
         return name, document.with_topology(
             presentation=GraphPresentationDocument(
                 viewers=tuple(
-                    viewer.model_copy(
-                        update={"position": positions[viewer.id]}
-                    )
+                    viewer.model_copy(update={"position": positions[viewer.id]})
                     if viewer.id in positions
                     else viewer
                     for viewer in document.presentation.viewers
@@ -712,9 +700,7 @@ def apply_graph_command(
                 links=document.presentation.links,
                 bindings=document.presentation.bindings,
                 annotations=tuple(
-                    annotation.model_copy(
-                        update={"position": positions[annotation.id]}
-                    )
+                    annotation.model_copy(update={"position": positions[annotation.id]})
                     if annotation.id in positions
                     else annotation
                     for annotation in document.presentation.annotations
@@ -746,9 +732,7 @@ class CollaborativeGraphHead:
         if self.checkpoint_sequence < 0:
             raise ValueError("Checkpoint sequence must be non-negative")
         if self.checkpoint_sequence > self.collaboration_sequence:
-            raise ValueError(
-                "Checkpoint sequence cannot exceed collaboration sequence"
-            )
+            raise ValueError("Checkpoint sequence cannot exceed collaboration sequence")
         if self.checkpoint_revision < 1:
             raise ValueError("Checkpoint revision must be at least 1")
         self.name = self.name.strip()

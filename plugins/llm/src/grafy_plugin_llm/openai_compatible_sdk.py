@@ -101,9 +101,7 @@ class OpenAICompatibleSdkProvider(OpenAICompatibleProvider):
             provider_title="OpenAI-compatible completions",
             max_image_bytes=OPENAI_COMPATIBLE_MAX_IMAGE_BYTES,
             max_total_image_bytes=OPENAI_COMPATIBLE_MAX_TOTAL_IMAGE_BYTES,
-            supported_content_types=(
-                OPENAI_COMPATIBLE_SUPPORTED_IMAGE_CONTENT_TYPES
-            ),
+            supported_content_types=(OPENAI_COMPATIBLE_SUPPORTED_IMAGE_CONTENT_TYPES),
         )
         for index, message in enumerate(messages):
             if message.role is PromptMessageRole.SYSTEM:
@@ -144,8 +142,7 @@ class OpenAICompatibleSdkProvider(OpenAICompatibleProvider):
                         image_ref,
                         workspace_id=workspace_id,
                         remaining_total_bytes=(
-                            OPENAI_COMPATIBLE_MAX_TOTAL_IMAGE_BYTES
-                            - total_image_bytes
+                            OPENAI_COMPATIBLE_MAX_TOTAL_IMAGE_BYTES - total_image_bytes
                         ),
                     )
                 except PromptImageDataError as exc:

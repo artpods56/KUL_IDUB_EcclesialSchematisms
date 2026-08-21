@@ -214,7 +214,10 @@ class Workspace:
             raise IdentityInvariantError(
                 "Personal workspace must have a personal owner"
             )
-        if self.kind is WorkspaceKind.SHARED and self.personal_owner_user_id is not None:
+        if (
+            self.kind is WorkspaceKind.SHARED
+            and self.personal_owner_user_id is not None
+        ):
             raise IdentityInvariantError(
                 "Shared workspace cannot have a personal owner"
             )
@@ -236,10 +239,7 @@ class Workspace:
 
     @property
     def is_sealed_bootstrap_workspace(self) -> bool:
-        return (
-            self.kind is WorkspaceKind.SHARED
-            and self.slug == LOCAL_WORKSPACE_SLUG
-        )
+        return self.kind is WorkspaceKind.SHARED and self.slug == LOCAL_WORKSPACE_SLUG
 
 
 @dataclass
@@ -422,9 +422,13 @@ class PersonalAccessToken:
         _require_aware(self.created_at, "Personal access token creation timestamp")
         _require_aware(self.expires_at, "Personal access token expiry timestamp")
         if self.last_used_at is not None:
-            _require_aware(self.last_used_at, "Personal access token last-used timestamp")
+            _require_aware(
+                self.last_used_at, "Personal access token last-used timestamp"
+            )
         if self.revoked_at is not None:
-            _require_aware(self.revoked_at, "Personal access token revocation timestamp")
+            _require_aware(
+                self.revoked_at, "Personal access token revocation timestamp"
+            )
 
     @property
     def is_revoked(self) -> bool:

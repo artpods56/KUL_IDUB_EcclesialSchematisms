@@ -42,9 +42,13 @@ class ModuleRelease:
 
     def __post_init__(self) -> None:
         if isinstance(self.revision, bool) or self.revision < 1:
-            raise ModuleLibraryError("Module release revision must be a positive integer")
+            raise ModuleLibraryError(
+                "Module release revision must be a positive integer"
+            )
         if self.published_at.tzinfo is None:
-            raise ModuleLibraryError("Module release published_at must be timezone-aware")
+            raise ModuleLibraryError(
+                "Module release published_at must be timezone-aware"
+            )
 
 
 @dataclass

@@ -129,9 +129,7 @@ def build_mistral_ocr_node(_context: object) -> "MistralOcrNode":
     factory=build_mistral_ocr_node,
 )
 @final
-class MistralOcrNode(
-    Node[MistralOcrConfig, MistralOcrInput, MistralOcrOutput]
-):
+class MistralOcrNode(Node[MistralOcrConfig, MistralOcrInput, MistralOcrOutput]):
     """Runs Mistral OCR while preserving the full provider response."""
 
     def __init__(self, provider: MistralOcrProvider) -> None:

@@ -39,10 +39,17 @@ class SecurityAuditEvent:
         if self.operation.strip() == "" or len(self.operation) > 120:
             raise ValueError("Security audit operation must be 1-120 characters")
         if self.resource_type is not None and len(self.resource_type) > 80:
-            raise ValueError("Security audit resource type must be at most 80 characters")
+            raise ValueError(
+                "Security audit resource type must be at most 80 characters"
+            )
         if self.resource_id is not None and len(self.resource_id) > 255:
-            raise ValueError("Security audit resource id must be at most 255 characters")
-        if self.credential_reference is not None and len(self.credential_reference) > 120:
+            raise ValueError(
+                "Security audit resource id must be at most 255 characters"
+            )
+        if (
+            self.credential_reference is not None
+            and len(self.credential_reference) > 120
+        ):
             raise ValueError(
                 "Security audit credential reference must be at most 120 characters"
             )

@@ -83,8 +83,7 @@ class GraphFolderNameConflictError(GrafyCoreError):
         self.workspace_id = workspace_id
         self.name = name
         super().__init__(
-            f"Graph folder name {name!r} is already in use in workspace "
-            f"{workspace_id}"
+            f"Graph folder name {name!r} is already in use in workspace {workspace_id}"
         )
 
 

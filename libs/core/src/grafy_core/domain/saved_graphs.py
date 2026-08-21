@@ -50,9 +50,7 @@ class SavedGraphNodeLayout(SavedGraphValue):
     """Canvas chrome sizes for a node shell and its artifact appendix."""
 
     width: float | None = Field(default=None, ge=260, le=_LAYOUT_DIMENSION_MAX)
-    body_height: float | None = Field(
-        default=None, ge=96, le=_LAYOUT_DIMENSION_MAX
-    )
+    body_height: float | None = Field(default=None, ge=96, le=_LAYOUT_DIMENSION_MAX)
     appendix_height: float | None = Field(
         default=None, ge=120, le=_LAYOUT_DIMENSION_MAX
     )
@@ -472,9 +470,7 @@ class GraphPresentationDocument(SavedGraphValue):
         known = {viewer.id for viewer in viewers}
         return GraphPresentationDocument(
             viewers=viewers,
-            links=tuple(
-                link for link in self.links if link.target_viewer_id in known
-            ),
+            links=tuple(link for link in self.links if link.target_viewer_id in known),
             bindings=tuple(
                 binding
                 for binding in self.bindings
@@ -589,9 +585,7 @@ class SavedGraphDocument(SavedGraphValue):
         return SavedGraphDocument(
             nodes=self.nodes if nodes is None else nodes,
             edges=self.edges if edges is None else edges,
-            presentation=(
-                self.presentation if presentation is None else presentation
-            ),
+            presentation=(self.presentation if presentation is None else presentation),
         )
 
 

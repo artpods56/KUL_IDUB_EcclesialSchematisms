@@ -102,7 +102,10 @@ class GraphExecution:
             raise ValueError(
                 f"Terminal graph execution status {self.status!r} requires finished_at"
             )
-        if self.status not in _TERMINAL_EXECUTION_STATUSES and self.finished_at is not None:
+        if (
+            self.status not in _TERMINAL_EXECUTION_STATUSES
+            and self.finished_at is not None
+        ):
             raise ValueError(
                 f"Non-terminal graph execution status {self.status!r} cannot have "
                 "finished_at"
@@ -146,9 +149,7 @@ class GraphExecution:
         """
 
         if status not in _TERMINAL_EXECUTION_STATUSES:
-            raise ValueError(
-                f"Execution completion status {status!r} is not terminal"
-            )
+            raise ValueError(f"Execution completion status {status!r} is not terminal")
         if self.status == "cancelling" and status != "cancelled":
             raise ValueError(
                 "A cancelling graph execution can only complete as cancelled"
@@ -157,6 +158,7 @@ class GraphExecution:
         self.finished_at = _utc_now()
         self.error = error
         self.workflow_run_id = workflow_run_id
+
 
 @dataclass
 class GraphExecutionNodeResult:

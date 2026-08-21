@@ -1,7 +1,7 @@
 from contextvars import ContextVar
 from dataclasses import dataclass
 from types import TracebackType
-from typing import override
+from typing import override, Self
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
@@ -229,6 +229,10 @@ class SqlAlchemyUnitOfWork(
         if state is None:
             raise RuntimeError("Unit of work is not entered")
         return state
+
+    @classmethod
+    def from_factory(cls, session_factory: async_sessionmaker[AsyncSession]) -> Self:
+        return cls(session_factory)
 
 
 # Existing callers use the narrower historical name for saved-graph operations.

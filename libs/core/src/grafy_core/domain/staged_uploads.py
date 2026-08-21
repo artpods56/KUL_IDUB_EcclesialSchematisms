@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import UUID
 
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -23,9 +24,7 @@ class StagedUpload:
             or "\\" in self.upload_key
             or "\x00" in self.upload_key
         ):
-            raise ValueError(
-                "Staged upload key must be a non-path opaque key"
-            )
+            raise ValueError("Staged upload key must be a non-path opaque key")
         if len(self.upload_key) > 1024:
             raise ValueError("Staged upload key must be at most 1024 characters")
         if self.original_filename.strip() == "":

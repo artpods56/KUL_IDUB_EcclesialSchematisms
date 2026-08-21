@@ -614,11 +614,9 @@ class SavedGraphService:
                 )
                 continue
             try:
-                config = (
-                    registration.node_class.config_contract.model.model_validate(
-                        node.config_dict()
-                    ).model_dump(mode="json")
-                )
+                config = registration.node_class.config_contract.model.model_validate(
+                    node.config_dict()
+                ).model_dump(mode="json")
             except ValidationError:
                 continue
             for declaration in registration.secret_inputs:

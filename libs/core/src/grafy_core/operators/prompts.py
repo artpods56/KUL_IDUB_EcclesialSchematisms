@@ -65,6 +65,8 @@ PROMPTS = Plugin(
     slug="builtin.prompt",
     title="Prompt",
 )
+
+
 class PromptMessageConfig(NodeConfig):
     role: PromptMessageRole = Field(
         default=PromptMessageRole.USER,

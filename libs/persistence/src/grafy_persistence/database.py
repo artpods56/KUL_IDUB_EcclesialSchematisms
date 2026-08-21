@@ -40,7 +40,11 @@ class Database:
 
 def prepare_database_url(database_url: str) -> str:
     url = make_url(database_url)
-    if url.get_backend_name() == "sqlite" and url.database not in (None, "", ":memory:"):
+    if url.get_backend_name() == "sqlite" and url.database not in (
+        None,
+        "",
+        ":memory:",
+    ):
         Path(url.database).expanduser().resolve().parent.mkdir(
             parents=True,
             exist_ok=True,

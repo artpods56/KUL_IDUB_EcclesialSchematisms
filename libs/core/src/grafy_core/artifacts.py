@@ -113,11 +113,13 @@ class ArtifactTypeSpec:
     materialized_json_type: MaterializedJsonType | None = None
     export_formats: tuple[ArtifactExportFormat, ...] = ()
 
+
 @dataclass(frozen=True, slots=True)
 class Artifact:
     spec: ArtifactTypeSpec
     resolver: "Callable[[PluginRuntimeContext], Resolver[Any]]"
     writer: "Callable[[PluginRuntimeContext], ArtifactOutputWriter]"
+
 
 class ArtifactRef(BaseModel):
     artifact_id: UUID
@@ -243,9 +245,7 @@ class InMemoryDataStore:
     invocation_cache: dict[tuple[UUID, str], "InvocationCacheEntry"] = field(
         default_factory=dict
     )
-    staged_uploads: dict[tuple[UUID, str], "StagedUpload"] = field(
-        default_factory=dict
-    )
+    staged_uploads: dict[tuple[UUID, str], "StagedUpload"] = field(default_factory=dict)
     graph_executions: dict[
         UUID,
         "GraphExecution",
@@ -268,9 +268,7 @@ class InMemoryDataStore:
         self.invocation_cache = _clone(other.invocation_cache)
         self.staged_uploads = _clone(other.staged_uploads)
         self.graph_executions = _clone(other.graph_executions)
-        self.graph_execution_node_results = _clone(
-            other.graph_execution_node_results
-        )
+        self.graph_execution_node_results = _clone(other.graph_execution_node_results)
         self.active_execution_slots = _clone(other.active_execution_slots)
 
 
@@ -300,9 +298,7 @@ class InMemoryArtifactRepository(ArtifactRepositoryPort):
     @override
     async def add(self, artifact: ArtifactObject) -> None:
         if artifact.id in self._store.artifacts:
-            raise ObjectAlreadyExistsError(
-                f"Artifact already exists: {artifact.id}"
-            )
+            raise ObjectAlreadyExistsError(f"Artifact already exists: {artifact.id}")
         self._store.artifacts[artifact.id] = artifact
 
     @override
@@ -325,9 +321,7 @@ class InMemoryArtifactRepository(ArtifactRepositoryPort):
         return {
             artifact_id: artifact
             for artifact_id in artifact_ids
-            if (
-                artifact := self._store.artifacts.get(artifact_id)
-            ) is not None
+            if (artifact := self._store.artifacts.get(artifact_id)) is not None
             and artifact.workspace_id == workspace_id
         }
 
@@ -552,10 +546,7 @@ class InMemoryGraphExecutionHistoryRepository:
             for execution in self._store.graph_executions.values()
             if execution.workspace_id == workspace_id
             and execution.graph_id == graph_id
-            and (
-                graph_revision is None
-                or execution.graph_revision == graph_revision
-            )
+            and (graph_revision is None or execution.graph_revision == graph_revision)
             and (status is None or execution.status == status)
             and (
                 normalized_node_id is None

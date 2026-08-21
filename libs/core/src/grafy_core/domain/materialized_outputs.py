@@ -72,8 +72,7 @@ def _incoming_edges_by_target(
     for edge in document.edges:
         grouped.setdefault(edge.to_node, []).append(_incoming_edge_signature(edge))
     return {
-        node_id: tuple(sorted(signatures))
-        for node_id, signatures in grouped.items()
+        node_id: tuple(sorted(signatures)) for node_id, signatures in grouped.items()
     }
 
 

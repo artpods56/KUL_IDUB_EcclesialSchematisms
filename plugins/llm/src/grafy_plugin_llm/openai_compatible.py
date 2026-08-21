@@ -261,9 +261,7 @@ class OpenAICompatibleNode(
                     ],
                     schema=inputs.json_schema,
                     schema_name=(
-                        config.schema_name
-                        if inputs.json_schema is not None
-                        else None
+                        config.schema_name if inputs.json_schema is not None else None
                     ),
                     schema_strict=(
                         config.strict if inputs.json_schema is not None else None

@@ -23,9 +23,7 @@ def resolve_staged_upload_path(
         or "\\" in upload_key
         or "\x00" in upload_key
     ):
-        raise ValueError(
-            f"Upload key {upload_key!r} must be one opaque relative name"
-        )
+        raise ValueError(f"Upload key {upload_key!r} must be one opaque relative name")
 
     workspace_dir = (uploads_dir / str(workspace_id)).resolve()
     path = (workspace_dir / relative_path).resolve()
@@ -58,8 +56,7 @@ async def resolve_persisted_staged_upload_path(
         record = await entered.staged_uploads.get(workspace_id, upload_key)
     if record is None:
         raise FileNotFoundError(
-            f"Staged upload {upload_key!r} was not found in workspace "
-            f"{workspace_id}"
+            f"Staged upload {upload_key!r} was not found in workspace {workspace_id}"
         )
     return resolve_staged_upload_path(
         uploads_dir,

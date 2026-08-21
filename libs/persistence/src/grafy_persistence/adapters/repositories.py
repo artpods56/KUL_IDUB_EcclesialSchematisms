@@ -754,7 +754,8 @@ class SqlSavedGraphRepository(SavedGraphRepositoryPort):
     @override
     async def list(self, workspace_id: UUID) -> list[SavedGraph]:
         result = await self._session.scalars(
-            select(SavedGraph).order_by(
+            select(SavedGraph)
+            .order_by(
                 schema.saved_graphs.c.updated_at.desc(),
                 schema.saved_graphs.c.id.asc(),
             )
@@ -1149,7 +1150,7 @@ class SqlGraphExecutionHistoryRepository(
         execution_exists = await self._session.scalar(
             select(schema.graph_executions.c.execution_id).where(
                 schema.graph_executions.c.workspace_id == result.workspace_id,
-                schema.graph_executions.c.execution_id == result.execution_id
+                schema.graph_executions.c.execution_id == result.execution_id,
             )
         )
         if execution_exists is None:
@@ -1647,14 +1648,18 @@ class SqlCollaborationRepository:
         command_id: UUID,
     ) -> GraphCommandReceipt | None:
         row = (
-            await self._session.execute(
-                select(schema.graph_command_receipts).where(
-                    schema.graph_command_receipts.c.workspace_id == workspace_id,
-                    schema.graph_command_receipts.c.graph_id == graph_id,
-                    schema.graph_command_receipts.c.command_id == command_id,
+            (
+                await self._session.execute(
+                    select(schema.graph_command_receipts).where(
+                        schema.graph_command_receipts.c.workspace_id == workspace_id,
+                        schema.graph_command_receipts.c.graph_id == graph_id,
+                        schema.graph_command_receipts.c.command_id == command_id,
+                    )
                 )
             )
-        ).mappings().one_or_none()
+            .mappings()
+            .one_or_none()
+        )
         if row is None:
             return None
         return GraphCommandReceipt.model_validate(dict(row))
@@ -1686,16 +1691,20 @@ class SqlCollaborationRepository:
         collaboration_sequence: int,
     ) -> GraphCheckpointMapping | None:
         row = (
-            await self._session.execute(
-                select(schema.graph_checkpoint_mappings).where(
-                    schema.graph_checkpoint_mappings.c.workspace_id == workspace_id,
-                    schema.graph_checkpoint_mappings.c.graph_id == graph_id,
-                    schema.graph_checkpoint_mappings.c.room_epoch == room_epoch,
-                    schema.graph_checkpoint_mappings.c.collaboration_sequence
-                    == collaboration_sequence,
+            (
+                await self._session.execute(
+                    select(schema.graph_checkpoint_mappings).where(
+                        schema.graph_checkpoint_mappings.c.workspace_id == workspace_id,
+                        schema.graph_checkpoint_mappings.c.graph_id == graph_id,
+                        schema.graph_checkpoint_mappings.c.room_epoch == room_epoch,
+                        schema.graph_checkpoint_mappings.c.collaboration_sequence
+                        == collaboration_sequence,
+                    )
                 )
             )
-        ).mappings().one_or_none()
+            .mappings()
+            .one_or_none()
+        )
         if row is None:
             return None
         return GraphCheckpointMapping.model_validate(dict(row))
@@ -1724,15 +1733,20 @@ class SqlCollaborationRepository:
         client_request_id: UUID,
     ) -> GraphExecutionIdempotencyRecord | None:
         row = (
-            await self._session.execute(
-                select(schema.graph_execution_idempotency).where(
-                    schema.graph_execution_idempotency.c.workspace_id == workspace_id,
-                    schema.graph_execution_idempotency.c.graph_id == graph_id,
-                    schema.graph_execution_idempotency.c.client_request_id
-                    == client_request_id,
+            (
+                await self._session.execute(
+                    select(schema.graph_execution_idempotency).where(
+                        schema.graph_execution_idempotency.c.workspace_id
+                        == workspace_id,
+                        schema.graph_execution_idempotency.c.graph_id == graph_id,
+                        schema.graph_execution_idempotency.c.client_request_id
+                        == client_request_id,
+                    )
                 )
             )
-        ).mappings().one_or_none()
+            .mappings()
+            .one_or_none()
+        )
         if row is None:
             return None
         return GraphExecutionIdempotencyRecord.model_validate(dict(row))
@@ -1762,13 +1776,18 @@ class SqlCollaborationRepository:
         graph_id: UUID,
     ) -> GraphActiveExecutionSlot | None:
         row = (
-            await self._session.execute(
-                select(schema.graph_active_execution_slots).where(
-                    schema.graph_active_execution_slots.c.workspace_id == workspace_id,
-                    schema.graph_active_execution_slots.c.graph_id == graph_id,
+            (
+                await self._session.execute(
+                    select(schema.graph_active_execution_slots).where(
+                        schema.graph_active_execution_slots.c.workspace_id
+                        == workspace_id,
+                        schema.graph_active_execution_slots.c.graph_id == graph_id,
+                    )
                 )
             )
-        ).mappings().one_or_none()
+            .mappings()
+            .one_or_none()
+        )
         if row is None:
             return None
         return GraphActiveExecutionSlot.model_validate(dict(row))
@@ -1783,7 +1802,9 @@ class SqlCollaborationRepository:
             "execution_id": slot.execution_id,
             "updated_at": slot.updated_at,
         }
-        dialect = self._session.bind.dialect.name if self._session.bind is not None else ""
+        dialect = (
+            self._session.bind.dialect.name if self._session.bind is not None else ""
+        )
         if dialect == "postgresql":
             statement = (
                 postgresql_insert(schema.graph_active_execution_slots)

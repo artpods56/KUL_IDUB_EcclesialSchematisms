@@ -104,11 +104,7 @@ def _feature_property_fields(
         _FeaturePropertyFieldMetadata(
             id=field_name,
             title=field_name,
-            value_type=(
-                next(iter(value_types))
-                if len(value_types) == 1
-                else "mixed"
-            ),
+            value_type=(next(iter(value_types)) if len(value_types) == 1 else "mixed"),
         )
         for field_name, value_types in observed.items()
     ]
@@ -277,9 +273,7 @@ class FeatureCollectionOutputWriter(ArtifactOutputWriter):
                 "source_name": payload.source_name,
                 "crs": payload.crs,
                 "feature_count": stored.total_items,
-                "property_fields": [
-                    _json_metadata(field) for field in property_fields
-                ],
+                "property_fields": [_json_metadata(field) for field in property_fields],
                 "logical_byte_size": len(logical_content),
                 "storage_byte_size": stored.storage_byte_size,
                 "manifest_byte_size": stored.manifest_byte_size,

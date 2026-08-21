@@ -116,8 +116,10 @@ class ModuleLibraryService:
                 workspace_id,
                 source_graph_id,
             )
-            module_name = name if name is not None else (
-                module.name if module is not None else definition.name
+            module_name = (
+                name
+                if name is not None
+                else (module.name if module is not None else definition.name)
             )
             module_description = (
                 description
@@ -445,13 +447,10 @@ async def validate_optional_input_targets(
                     if target_revision is None:
                         raise NotFoundError(
                             "Saved graph revision",
-                            f"{target_reference.graph_id}@"
-                            f"{target_reference.revision}",
+                            f"{target_reference.graph_id}@{target_reference.revision}",
                         )
-                    target_definition = (
-                        GraphModuleDefinition.from_saved_graph_revision(
-                            target_revision
-                        )
+                    target_definition = GraphModuleDefinition.from_saved_graph_revision(
+                        target_revision
                     )
                     target_port = target_definition.input_port(edge.to_port)
                 except (GraphModuleDefinitionError, NotFoundError) as exc:

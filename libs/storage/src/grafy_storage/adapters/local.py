@@ -23,7 +23,9 @@ class LocalFileObjectStore(FileStoragePort):
     async def save(self, command: SaveFileCommand) -> StoredFile:
         path = self._path_for(command.bucket, command.path)
         if path.exists() and not command.allow_overwrite:
-            raise ObjectAlreadyExistsError(f"File already exists: {command.bucket}/{command.path}")
+            raise ObjectAlreadyExistsError(
+                f"File already exists: {command.bucket}/{command.path}"
+            )
 
         path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = path.with_name(f".{path.name}.tmp-{os.getpid()}")
@@ -55,7 +57,9 @@ class LocalFileObjectStore(FileStoragePort):
         if not source.exists() and destination.exists():
             return
         if not source.exists():
-            raise FileNotFoundError(f"Source file does not exist: {bucket}/{source_path}")
+            raise FileNotFoundError(
+                f"Source file does not exist: {bucket}/{source_path}"
+            )
 
         destination.parent.mkdir(parents=True, exist_ok=True)
         _ = shutil.move(str(source), str(destination))
@@ -141,4 +145,6 @@ def _validate_key(key: str) -> None:
     path = PurePosixPath(key)
     if path.is_absolute() or any(part in {"..", ""} for part in path.parts):
         raise ValueError(f"Unsafe object key: {key}")
+
+
 #

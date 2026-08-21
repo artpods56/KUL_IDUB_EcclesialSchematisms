@@ -67,7 +67,9 @@ class S3ObjectStore(FileStoragePort):
         except FileNotFoundError:
             return None
         except Exception as exc:
-            raise RuntimeError(f"Could not stat stored object: {bucket}/{path}") from exc
+            raise RuntimeError(
+                f"Could not stat stored object: {bucket}/{path}"
+            ) from exc
 
         return StoredObjectInfo(
             bucket=bucket,

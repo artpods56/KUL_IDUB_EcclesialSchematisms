@@ -411,12 +411,10 @@ class Plugin:
     def register_writer(self, factory: WriterFactory) -> None:
         self._writer_factories.append(factory)
 
-
     def register(self, artifact: Artifact) -> None:
         self.register_artifact_type(artifact.spec)
         self._writer_factories.append(artifact.writer)
         self._resolver_factories.append(artifact.resolver)
-
 
     @property
     def nodes(self) -> tuple[NodeRegistration, ...]:

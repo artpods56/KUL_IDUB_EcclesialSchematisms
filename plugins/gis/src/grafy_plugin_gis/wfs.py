@@ -233,8 +233,8 @@ class WfsClient:
                         f"count={request_count}: {exc}"
                     ) from exc
 
-                prospective_total_response_bytes = (
-                    total_response_bytes + len(response_bytes)
+                prospective_total_response_bytes = total_response_bytes + len(
+                    response_bytes
                 )
                 if (
                     prospective_total_response_bytes

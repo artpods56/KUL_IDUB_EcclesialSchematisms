@@ -129,7 +129,9 @@ class TextInputOutput(NodeOutput):
     title="Text input",
     cache_policy=NodeCachePolicy.EXACT,
 )
-async def text_input(config: TextInputConfig, _inputs: TextInputInput) -> TextInputOutput:
+async def text_input(
+    config: TextInputConfig, _inputs: TextInputInput
+) -> TextInputOutput:
     """Produces one configured multiline text value."""
     return TextInputOutput(text=config.text)
 
@@ -199,7 +201,9 @@ class SplitTextOutput(NodeOutput):
     title="Split text",
     cache_policy=NodeCachePolicy.EXACT,
 )
-async def split_text(config: SplitTextConfig, inputs: SplitTextInput) -> SplitTextOutput:
+async def split_text(
+    config: SplitTextConfig, inputs: SplitTextInput
+) -> SplitTextOutput:
     """Splits text on an exact separator while preserving empty parts."""
     return SplitTextOutput(parts=inputs.text.split(config.separator))
 
