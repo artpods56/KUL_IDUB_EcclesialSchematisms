@@ -607,8 +607,8 @@ loopback-bound gateway:
 | `/mcp` | FastMCP Streamable HTTP mounted by FastAPI |
 
 The gateway preserves WebSocket Upgrade, disables response buffering for SSE,
-and sets timeouts longer than transport heartbeats. API, Prefect, database, and
-storage services are not published directly.
+and sets timeouts longer than transport heartbeats. API, database, and storage
+services are not published directly.
 
 The public OIDC callback is
 `https://<configured-host>:<port>/api/v1/auth/oidc/callback`. The complete URL

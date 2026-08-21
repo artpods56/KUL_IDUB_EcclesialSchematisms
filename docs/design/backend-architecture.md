@@ -71,7 +71,7 @@ flowchart LR
 ### Dependency direction (hexagonal)
 
 The core is the architectural center. Concrete infrastructure (SQLAlchemy, S3,
-Mistral SDKs, Prefect) lives behind ports and is wired only at composition time.
+Mistral SDKs) lives behind ports and is wired only at composition time.
 
 ```mermaid
 flowchart TB
@@ -158,7 +158,7 @@ flowchart TB
   `freeze()`s the registry (validating artifact/conversion/port contracts).
 - **`build_workbench_components`** (`services/composition.py`) is the workbench
   composition root: it builds resolvers/writers from the registry, the
-  `NodeRuntime`, the compiler, the execution engine (inline or Prefect), and the
+  `NodeRuntime`, the compiler, the in-process execution engine, and the
   run/execution/artifact/materialization services.
 - **`app.state`** holds two dataclasses — `AppIdentity` (auth) and
   `AppResources` (workbench services) — fetched via `get_identity(app)` and
@@ -279,14 +279,14 @@ JSON-Schema string/integer leaves.
 ## 7. Graph execution dependency flow
 
 Execution is a pipeline: **preflight → compile → run → persist**. The
-composition root selects either the inline engine or the Prefect engine behind
-the same `GraphExecutionEngine` protocol.
+composition root wires one in-process engine behind the
+`GraphExecutionEngine` protocol.
 
 ```mermaid
 flowchart LR
     Run["RunGraph"] --> Preflight["GraphRunPreflight\nvalidate graph + registry"]
     Run --> Compiler["GraphCompiler\ncompile nodes/edges to plan"]
-    Run --> Engine["GraphExecutionEngine\ninline | prefect"]
+    Run --> Engine["GraphExecutionEngine\nin-process"]
     Engine --> Coordinator["GraphExecutionCoordinator"]
     Coordinator --> NodeExec["NodeExecutionService"]
     NodeExec --> Runtime["NodeRuntime"]
@@ -309,10 +309,9 @@ flowchart LR
    instances.
 4. `PersistentInvocationCache` stores content-addressed invocation results.
 
-**Execution backends** (both satisfy `GraphExecutionEngine`):
-- `InlineExecutionEngine` — runs in-process; `map_max_concurrency = 1`.
-- `PrefectExecutionEngine` — task-based; honors `prefect_task_retries`,
-  `retry_delay_seconds`, and `map_max_concurrency` (default 4).
+**Execution engine** (satisfies `GraphExecutionEngine`):
+- `InlineExecutionEngine` — runs in-process; MAP items run concurrently,
+  bounded by `map_max_concurrency` (default 4).
 
 ---
 
@@ -393,8 +392,8 @@ concrete store — so swapping local for S3 changes only the factory call in
 ## 10. Deployment / infrastructure
 
 `infra/docker/compose.yaml` orchestrates the production topology: an nginx
-gateway, the API container, the web container, a Prefect server, and a shared
-volume. Keycloak provides OIDC.
+gateway, the API container, the web container, and a shared volume. Keycloak
+provides OIDC.
 
 ```mermaid
 flowchart TB
@@ -402,8 +401,6 @@ flowchart TB
     User --> Web["Next.js web\nweb.Dockerfile"]
     Gateway --> API["FastAPI API\napi.Dockerfile"]
     Web --> API
-    Gateway --> MCP["/mcp on API\nStreamable HTTP"]
-    API --> Prefect["Prefect server\nprefect:4200"]
     API --> DB["SQLite / PostgreSQL\n/data/workbench"]
     API --> Keycloak["Keycloak\nOIDC issuer"]
     API --> StorageBackend["local objects | S3"]

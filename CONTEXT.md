@@ -225,7 +225,7 @@ carried into the renderer.
 
 ### Prompt message
 
-A provider-neutral conversation message containing a `system` or `user` role,
+A provider-neutral conversation message containing a `system` or `identity.py` role,
 text, and optional ordered image artifact references. It never embeds or copies
 image bytes. System messages cannot carry images.
 
@@ -393,15 +393,11 @@ run preflight, compilation, pin resolution, execution, and successful
 materialization binding. Preflight checks saved-revision and secret bindings;
 compilation resolves topology, contracts, projections, conversion paths, and
 invocation policy into an immutable plan. A graph execution port receives that
-prepared plan. Its production adapter creates one local Prefect flow per graph
-run, one task per invoked logical node, and one nested task per scalar MAP item.
-Production MAP items may run concurrently, bounded by
-`GRAFY_MAP_MAX_CONCURRENCY` (default `4`). Their completion order is not
-observable: aggregation remains aligned to source position. When one item
-fails, unfinished sibling items are cancelled on a best-effort basis. The
-inline adapter follows the same coordinator contract without starting Prefect,
-forces MAP concurrency to one, and exists for focused tests and operational
-diagnosis.
+prepared plan and executes it in-process: one coordinator visit per logical
+node, with scalar MAP items running concurrently inside the node executor,
+bounded by `GRAFY_MAP_MAX_CONCURRENCY` (default `4`). Their completion order is
+not observable: aggregation remains aligned to source position. When one item
+fails, unfinished sibling items are cancelled on a best-effort basis.
 
 The shared graph coordinator only propagates graph state, skips failed
 dependents, and assembles the run result. Node execution owns input assembly,
@@ -409,15 +405,13 @@ opaque secret revisions, ONCE/MAP expansion, and source-position-aligned MAP
 aggregation. Edge value resolution applies the already compiled projection and
 conversion chain.
 `NodeRuntime` executes and persists exactly one scalar node invocation; it does
-not schedule graphs or implement collection mapping. Prefect result persistence
-and caching are disabled: Grafy remains the source of truth for artifacts,
-invocation caching, materialized outputs, and encrypted node secrets. Decrypted
-secrets and live runtime collaborators never become Prefect parameters or
-results.
+not schedule graphs or implement collection mapping. Grafy remains the source
+of truth for artifacts, invocation caching, materialized outputs, and encrypted
+node secrets; decrypted secrets and live runtime collaborators never leave the
+process.
 
 Local execution visits logical nodes sequentially. Only the scalar items within
-one MAP invocation may overlap, and only with the Prefect backend; inline MAP
-execution remains sequential. If execution later moves to a remote single
+one MAP invocation may overlap. If execution later moves to a remote single
 worker, the transport boundary belongs above `RunGraph`: submit a serializable
 run request, then perform preflight and compilation inside that worker. The
 current design does not define multi-worker or per-node remote scheduling.

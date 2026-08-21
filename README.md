@@ -255,7 +255,7 @@ The production recipes read `/etc/grafy/grafy.env` and merge
 
 The Grafy release uses `GRAFY_*` environment variables. Rename every
 `NOTARIUS_*` key before starting the new code; unprefixed provider variables
-such as `PREFECT_API_URL` and `MISTRAL_API_KEY` do not change.
+such as `MISTRAL_API_KEY` do not change.
 
 External plugins must also move their dependency and import names to
 `grafy-core` and `grafy_core`, then publish through the `grafy.plugins`
