@@ -1,18 +1,16 @@
 # Run Grafy with the Compose same-origin gateway
 
-This Compose project runs five processes:
+This Compose project runs four processes:
 
 1. `migrate` applies Alembic migrations and exits.
-2. `prefect` runs the pinned self-hosted Prefect server and background services.
-3. `api` runs one FastAPI process with the GIS, LLM, and OCR plugins installed.
+2. `api` runs one FastAPI process with the GIS, LLM, and OCR plugins installed.
    The SQL plugin is deliberately excluded: user-authored SQL must move to a
    separate networkless, least-privileged worker before production use.
-4. `web` runs the minimal Next.js standalone server.
-5. `gateway` is the only Grafy application listener (`127.0.0.1:8080` by
+3. `web` runs the minimal Next.js standalone server.
+4. `gateway` is the only Grafy application listener (`127.0.0.1:8080` by
    default). It serves plain HTTP and does not terminate TLS.
 
-Web and API stay on the Compose network. Prefect publishes a separate loopback
-dashboard port for SSH-tunneled ops access. Do not scale the `api` service and
+Web and API stay on the Compose network. Do not scale the `api` service and
 do not set `WEB_CONCURRENCY` or Uvicorn `--workers` above 1.
 
 Production OIDC still requires an operator-supplied TLS endpoint for the exact

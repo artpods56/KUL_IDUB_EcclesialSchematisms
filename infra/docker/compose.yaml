@@ -28,7 +28,6 @@ x-api-environment: &api-environment
   GRAFY_COMMAND_HMAC_KEY: ${GRAFY_COMMAND_HMAC_KEY:?GRAFY_COMMAND_HMAC_KEY must be set and non-empty}
   GRAFY_COMMAND_HMAC_KEY_VERSION: ${GRAFY_COMMAND_HMAC_KEY_VERSION:-1}
   GRAFY_REQUIRE_SINGLE_API_OWNER: "true"
-  GRAFY_EXECUTION_BACKEND: ${GRAFY_EXECUTION_BACKEND:-prefect}
   GRAFY_MAP_MAX_CONCURRENCY: ${GRAFY_MAP_MAX_CONCURRENCY:-4}
   GRAFY_MAX_ACTIVE_EXECUTIONS: ${GRAFY_MAX_ACTIVE_EXECUTIONS:-2}
   GRAFY_STORAGE_BACKEND: ${GRAFY_STORAGE_BACKEND:-local}
@@ -40,8 +39,6 @@ x-api-environment: &api-environment
   GRAFY_S3_ACCESS_KEY_ID: ${GRAFY_S3_ACCESS_KEY_ID:-}
   GRAFY_S3_SECRET_ACCESS_KEY: ${GRAFY_S3_SECRET_ACCESS_KEY:-}
   GRAFY_S3_FORCE_PATH_STYLE: ${GRAFY_S3_FORCE_PATH_STYLE:-false}
-  PREFECT_API_URL: http://prefect:4200/api
-  PREFECT_SERVER_ALLOW_EPHEMERAL_MODE: "false"
   # Collaboration assumes one Uvicorn process with one worker.
   WEB_CONCURRENCY: "1"
 
@@ -58,34 +55,6 @@ services:
       - no-new-privileges:true
     volumes:
       - grafy-data:/data
-
-  prefect:
-    image: prefecthq/prefect:3.6.21-python3.12
-    command: ["prefect", "server", "start", "--host", "0.0.0.0"]
-    environment:
-      PREFECT_SERVER_ANALYTICS_ENABLED: "false"
-      PREFECT_UI_API_URL: ${PREFECT_UI_API_URL:-http://127.0.0.1:4200/api}
-    logging: *default-logging
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    stop_grace_period: 60s
-    volumes:
-      - prefect-data:/root/.prefect
-    ports:
-      - "${GRAFY_BIND_ADDRESS:-127.0.0.1}:${PREFECT_PORT:-4200}:4200"
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4200/api/health', timeout=3)",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 18
-      start_period: 30s
 
   api:
     build:
@@ -107,8 +76,6 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-      prefect:
-        condition: service_healthy
     healthcheck:
       test:
         [
@@ -184,7 +151,6 @@ services:
 volumes:
   grafy-data:
     name: ${GRAFY_DATA_VOLUME:-grafy-data}
-  prefect-data:
 
 networks:
   default:
