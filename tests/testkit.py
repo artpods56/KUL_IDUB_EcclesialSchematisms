@@ -13,6 +13,7 @@ either one without confusion.
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from fastapi import FastAPI
@@ -21,7 +22,13 @@ from httpx import ASGITransport, AsyncClient
 
 from grafy_api.main import create_app
 from grafy_api.settings import Settings
-from grafy_core.domain import User, Workspace, WorkspaceMembership, WorkspaceKind, WorkspaceRole
+from grafy_core.domain import (
+    User,
+    Workspace,
+    WorkspaceMembership,
+    WorkspaceKind,
+    WorkspaceRole,
+)
 from grafy_persistence import SqlAlchemyUnitOfWork
 from grafy_persistence.database import Database, create_database
 from grafy_persistence.orm import metadata
@@ -190,3 +197,7 @@ async def db(database_url: str) -> AsyncGenerator[Database]:
 
         yield database
     await database.dispose()
+
+
+def create_db_url(tmp_path: Path, test_name: str) -> str:
+    return f"sqlite+aiosqlite:///{tmp_path / test_name}"

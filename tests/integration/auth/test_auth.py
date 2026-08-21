@@ -36,17 +36,13 @@ from grafy_core.domain.identity import (
 from grafy_persistence.database import create_database
 from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
-from tests.testkit import client_with_overrides, db, seed
+from tests.testkit import client_with_overrides, db, seed, create_db_url
 
 from tests.support.clients import GrafyApi
 
 
-def _database_url(tmp_path: Path, test_name: str) -> str:
-    return f"sqlite+aiosqlite:///{tmp_path / test_name}"
-
-
-async def _seed(database_url: str) -> tuple[User, Workspace, IssuedSession]:
-    database = create_database(database_url)
+async def _seed(test_database_url: str) -> tuple[User, Workspace, IssuedSession]:
+    database = create_database(test_database_url)
     async with database.engine.begin() as connection:
         await connection.run_sync(metadata.create_all)
     user = User(
@@ -66,7 +62,7 @@ async def _seed(database_url: str) -> tuple[User, Workspace, IssuedSession]:
         await unit_of_work.identity.add_membership(membership)
         await unit_of_work.commit()
     auth = AuthService(
-        settings=_settings(database_url),
+        settings=_settings(test_database_url),
         unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
         identity_service=IdentityService(
             lambda: SqlAlchemyUnitOfWork(database.sessions)
@@ -122,9 +118,11 @@ async def test_v1_routes_fail_closed_but_health_is_public(
     tmp_path: Path, settings: Settings
 ) -> None:
     # arrange
-    database_url = _database_url(tmp_path, "auth.sqlite3")
+    database_url = create_db_url(tmp_path, "auth.sqlite3")
     async with db(database_url) as database:
-        app_settings = settings.model_copy(update={"database_url": SecretStr(database_url)})
+        app_settings = settings.model_copy(
+            update={"database_url": SecretStr(database_url)}
+        )
         user, workspace, membership = await seed(database.sessions)
 
         # act
