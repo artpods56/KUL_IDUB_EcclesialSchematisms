@@ -19,6 +19,7 @@ class UserFactory(DataclassFactory[User]):
 
     email = "test@email.com"
     display_name = "Test User"
+    active = True
 
     created_at = datetime.now(tz=timezone.utc)
     updated_at = datetime.now(tz=timezone.utc)

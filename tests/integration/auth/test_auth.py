@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -9,8 +8,11 @@ from pydantic import BaseModel, SecretStr, TypeAdapter
 import pytest
 from sqlalchemy import text
 
-from grafy_api.main import create_app
 from grafy_api.settings import Settings
+from grafy_api.v1.routes.auth.abuse import (
+    BROWSER_ABUSE_COOKIE,
+    make_browser_abuse_cookie,
+)
 from grafy_api.v1.routes.auth.models import (
     PersonalAccessTokenCreatedResponse,
     PersonalAccessTokenCreateRequest,
@@ -18,79 +20,47 @@ from grafy_api.v1.routes.auth.models import (
     WorkspaceCreateRequest,
     WorkspaceMemberRequest,
 )
-
-from grafy_api.v1.routes.auth.abuse import (
-    BROWSER_ABUSE_COOKIE,
-    make_browser_abuse_cookie,
+from grafy_api.v1.routes.auth.services import (
+    OIDC_TRANSACTION_COOKIE,
+    AuthService,
+    IssuedSession,
 )
-from grafy_api.v1.routes.auth.services import AuthService, IssuedSession
 from grafy_core.application.identity import IdentityService
 from grafy_core.domain.identity import (
     OidcLoginTransaction,
-    User,
-    Workspace,
     WorkspaceCapability,
-    WorkspaceMembership,
     WorkspaceRole,
 )
-from grafy_persistence.database import create_database
-from grafy_persistence.orm import metadata
+from grafy_persistence.database import Database
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
-from tests.testkit import client_with_overrides, db, seed, create_db_url
-
 from tests.support.clients import GrafyApi
+from tests.support.factories.identity import IdentitySeeder
+from tests.testkit import (
+    app_with_overrides,
+    client_with_overrides,
+    create_db_url,
+    db,
+    seed,
+)
 
 
-async def _seed(test_database_url: str) -> tuple[User, Workspace, IssuedSession]:
-    database = create_database(test_database_url)
-    async with database.engine.begin() as connection:
-        await connection.run_sync(metadata.create_all)
-    user = User(
-        id=UUID(int=1),
-        email="owner@example.test",
-        display_name="Owner",
+def _csrf_headers(issued: IssuedSession) -> dict[str, str]:
+    return {"Origin": "http://testserver", "X-CSRF-Token": issued.csrf_value}
+
+
+def _auth_service(settings: Settings, database: Database) -> AuthService:
+    def unit_of_work_factory() -> SqlAlchemyUnitOfWork:
+        return SqlAlchemyUnitOfWork(database.sessions)
+
+    return AuthService(
+        settings=settings,
+        unit_of_work_factory=unit_of_work_factory,
+        identity_service=IdentityService(unit_of_work_factory),
     )
-    workspace = Workspace.shared(slug="local", name="Local workspace")
-    membership = WorkspaceMembership(
-        workspace_id=workspace.id,
-        user_id=user.id,
-        role=WorkspaceRole.OWNER,
-    )
-    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-        await unit_of_work.identity.add_user(user)
-        await unit_of_work.identity.add_workspace(workspace)
-        await unit_of_work.identity.add_membership(membership)
-        await unit_of_work.commit()
-    auth = AuthService(
-        settings=_settings(test_database_url),
-        unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
-        identity_service=IdentityService(
-            lambda: SqlAlchemyUnitOfWork(database.sessions)
-        ),
-    )
-    issued = await auth.issue_session(user.id)
-    await database.dispose()
-    return user, workspace, issued
-
-
-async def _set_session_expiry(
-    database_url: str, session_id: UUID, *, expires_at: datetime
-) -> None:
-    database = create_database(database_url)
-    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-        stored = await unit_of_work.identity.get_auth_session(session_id)
-        assert stored is not None
-        stored.expires_at = expires_at
-        await unit_of_work.commit()
-    await database.dispose()
-
-
-def _seed_sync(database_url: str) -> tuple[User, Workspace, IssuedSession]:
-    return asyncio.run(_seed(database_url))
 
 
 async def _seed_oidc_transaction(
-    database_url: str,
+    database: Database,
     auth: AuthService,
     settings: Settings,
     transaction_id: UUID,
@@ -98,7 +68,6 @@ async def _seed_oidc_transaction(
     state: str,
     expires_at: datetime,
 ) -> None:
-    database = create_database(database_url)
     transaction = OidcLoginTransaction(
         id=transaction_id,
         state_digest=auth.digest_secret(state),
@@ -111,40 +80,41 @@ async def _seed_oidc_transaction(
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
         await unit_of_work.identity.add_login_transaction(transaction)
         await unit_of_work.commit()
-    await database.dispose()
 
 
 async def test_v1_routes_fail_closed_but_health_is_public(
     tmp_path: Path, settings: Settings
 ) -> None:
-    # arrange
     database_url = create_db_url(tmp_path, "auth.sqlite3")
     async with db(database_url) as database:
         app_settings = settings.model_copy(
             update={"database_url": SecretStr(database_url)}
         )
-        user, workspace, membership = await seed(database.sessions)
+        _, workspace, _ = await seed(database.sessions)
 
-        # act
-        with client_with_overrides(
-            settings=app_settings,
-        ) as client:
+        with client_with_overrides(settings=app_settings) as client:
             api = GrafyApi(client)
 
-            # assert
             assert api.workspace(workspace.id).list_members().status_code == 401
-            assert api.workspaces.list().status_code == 401, "Unauthorized"
-            assert api.auth.get_session().status_code == 401, "Unauthorized"
+            assert api.workspaces.list().status_code == 401
+            assert api.auth.get_session().status_code == 401
 
 
-def test_unauthenticated_workspace_failure_is_audited_once(tmp_path: Path) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'workspace-auth-failure.sqlite3'}"
-    _seed_sync(database_url)
-    with TestClient(create_app(_settings(database_url))) as client:
-        assert GrafyApi(client).workspaces.list().status_code == 401
+async def test_unauthenticated_workspace_failure_is_audited_once(
+    tmp_path: Path, settings: Settings
+) -> None:
+    database_url = create_db_url(tmp_path, "workspace-auth-failure.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={"database_url": SecretStr(database_url)}
+        )
+        _, workspace, _ = await seed(database.sessions)
 
-    async def read_workspace_auth_failures() -> list[tuple[str, str, str]]:
-        database = create_database(database_url)
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+
+            assert api.workspaces.list().status_code == 401
+
         async with database.engine.connect() as connection:
             rows = (
                 await connection.execute(
@@ -155,46 +125,60 @@ def test_unauthenticated_workspace_failure_is_audited_once(tmp_path: Path) -> No
                     )
                 )
             ).all()
-        await database.dispose()
-        return [(row[0], row[1], row[2]) for row in rows]
 
-    assert asyncio.run(read_workspace_auth_failures()) == [
-        ("auth.session.verify", "authentication_required", "unauthenticated")
-    ]
+        assert [(row[0], row[1], row[2]) for row in rows] == [
+            ("auth.session.verify", "authentication_required", "unauthenticated")
+        ]
 
 
-def test_session_verification_failures_are_rate_limited(tmp_path: Path) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'auth-rate.sqlite3'}"
-    _seed_sync(database_url)
-    settings = _settings(database_url)
-    settings = settings.model_copy(update={"auth_session_failure_rate_limit": 1})
-    with TestClient(create_app(settings)) as client:
-        session = GrafyApi(client).auth
-        assert session.get_session().status_code == 401
-        assert session.get_session().status_code == 429
-
-
-def test_cookie_requests_require_exact_origin_and_csrf(tmp_path: Path) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'csrf.sqlite3'}"
-    _, _, issued = _seed_sync(database_url)
-    with TestClient(create_app(_settings(database_url))) as client:
-        api = GrafyApi(client)
-        api.authenticate(issued)
-        payload = WorkspaceCreateRequest(slug="team", name="Team")
-        assert api.workspaces.create(payload).status_code == 403
-        assert (
-            api.workspaces.create(
-                payload,
-                headers={
-                    "Origin": "http://evil.example",
-                    "X-CSRF-Token": issued.csrf_value,
-                },
-            ).status_code
-            == 403
+async def test_session_verification_failures_are_rate_limited(
+    tmp_path: Path, settings: Settings
+) -> None:
+    database_url = create_db_url(tmp_path, "auth-rate.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={
+                "database_url": SecretStr(database_url),
+                "auth_session_failure_rate_limit": 1,
+            }
         )
+        user, _, _ = await seed(database.sessions)
 
-    async def read_failure_events() -> list[tuple[str, str, str | None]]:
-        database = create_database(database_url)
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+
+            assert api.auth.get_session().status_code == 401
+            assert api.auth.get_session().status_code == 429
+
+
+async def test_cookie_requests_require_exact_origin_and_csrf(
+    tmp_path: Path, settings: Settings
+) -> None:
+    database_url = create_db_url(tmp_path, "csrf.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={"database_url": SecretStr(database_url)}
+        )
+        user, _, _ = await seed(database.sessions)
+        issued = await _auth_service(app_settings, database).issue_session(user.id)
+
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(issued)
+            payload = WorkspaceCreateRequest(slug="team", name="Team")
+
+            assert api.workspaces.create(payload).status_code == 403
+            assert (
+                api.workspaces.create(
+                    payload,
+                    headers={
+                        "Origin": "http://evil.example",
+                        "X-CSRF-Token": issued.csrf_value,
+                    },
+                ).status_code
+                == 403
+            )
+
         async with database.engine.connect() as connection:
             rows = (
                 await connection.execute(
@@ -205,37 +189,38 @@ def test_cookie_requests_require_exact_origin_and_csrf(tmp_path: Path) -> None:
                     )
                 )
             ).all()
-        await database.dispose()
-        return [(row[0], row[1], row[2]) for row in rows]
 
-    events = asyncio.run(read_failure_events())
-    assert events
-    assert all(event[0] == "authenticated" for event in events)
-    assert {event[2] for event in events} == {"origin_rejected"}
+        events = [(row[0], row[1], row[2]) for row in rows]
+        assert events
+        assert all(event[0] == "authenticated" for event in events)
+        assert {event[2] for event in events} == {"origin_rejected"}
 
 
-def test_authenticated_csrf_failure_is_audited_once_at_auth_boundary(
-    tmp_path: Path,
+async def test_authenticated_csrf_failure_is_audited_once_at_auth_boundary(
+    tmp_path: Path, settings: Settings
 ) -> None:
-    # 1. create a dedicated database
-    # 2. create a workspace
-
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'csrf-single-audit.sqlite3'}"
-    _, _, issued = _seed_sync(database_url)
-    with TestClient(create_app(_settings(database_url))) as client:
-        api = GrafyApi(client)
-        api.authenticate(issued)
-        response = api.workspaces.create(
-            WorkspaceCreateRequest(slug="team", name="Team"),
-            headers={
-                "Origin": "http://testserver",
-                "X-CSRF-Token": "wrong-csrf-token",
-            },
+    database_url = create_db_url(tmp_path, "csrf-single-audit.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={"database_url": SecretStr(database_url)}
         )
-        assert response.status_code == 403
+        user, _, _ = await seed(database.sessions)
+        issued = await _auth_service(app_settings, database).issue_session(user.id)
 
-    async def read_failure_events() -> list[tuple[str, str]]:
-        database = create_database(database_url)
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(issued)
+
+            response = api.workspaces.create(
+                WorkspaceCreateRequest(slug="team", name="Team"),
+                headers={
+                    "Origin": "http://testserver",
+                    "X-CSRF-Token": "wrong-csrf-token",
+                },
+            )
+
+            assert response.status_code == 403
+
         async with database.engine.connect() as connection:
             rows = (
                 await connection.execute(
@@ -246,402 +231,410 @@ def test_authenticated_csrf_failure_is_audited_once_at_auth_boundary(
                     )
                 )
             ).all()
-        await database.dispose()
-        return [(row[0], row[1]) for row in rows]
 
-    assert asyncio.run(read_failure_events()) == [
-        ("auth.session.verify", "csrf_rejected")
-    ]
+        assert [(row[0], row[1]) for row in rows] == [
+            ("auth.session.verify", "csrf_rejected")
+        ]
 
 
-def test_session_idle_expiry_is_enforced_at_boundary(tmp_path: Path) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'idle.sqlite3'}"
-    user, _, issued = _seed_sync(database_url)
-    old = datetime.now(UTC) - timedelta(seconds=1800)
-
-    async def age_session() -> None:
-        database = create_database(database_url)
+async def test_session_idle_expiry_is_enforced_at_boundary(
+    tmp_path: Path, settings: Settings
+) -> None:
+    database_url = create_db_url(tmp_path, "idle.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={"database_url": SecretStr(database_url)}
+        )
+        user, _, _ = await seed(database.sessions)
+        issued = await _auth_service(app_settings, database).issue_session(user.id)
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
             stored = await unit_of_work.identity.get_auth_session(issued.session.id)
             assert stored is not None
-            stored.last_used_at = old
+            stored.last_used_at = datetime.now(UTC) - timedelta(
+                seconds=app_settings.auth_session_idle_seconds
+            )
             await unit_of_work.commit()
-        await database.dispose()
 
-    asyncio.run(age_session())
-    del user
-    with TestClient(create_app(_settings(database_url, idle_seconds=1800))) as client:
-        api = GrafyApi(client)
-        api.authenticate(issued)
-        assert api.auth.get_session().status_code == 401
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(issued)
+
+            assert api.auth.get_session().status_code == 401
 
 
-def test_session_absolute_expiry_is_enforced(tmp_path: Path) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'absolute.sqlite3'}"
-    _, _, issued = _seed_sync(database_url)
-    asyncio.run(
-        _set_session_expiry(
-            database_url,
-            issued.session.id,
-            expires_at=datetime.now(UTC),
+async def test_session_absolute_expiry_is_enforced(
+    tmp_path: Path, settings: Settings
+) -> None:
+    database_url = create_db_url(tmp_path, "absolute.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={"database_url": SecretStr(database_url)}
         )
-    )
-    with TestClient(create_app(_settings(database_url))) as client:
-        api = GrafyApi(client)
-        api.authenticate(issued)
-        assert api.auth.get_session().status_code == 401
+        user, _, _ = await seed(database.sessions)
+        issued = await _auth_service(app_settings, database).issue_session(user.id)
+        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+            stored = await unit_of_work.identity.get_auth_session(issued.session.id)
+            assert stored is not None
+            stored.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+            await unit_of_work.commit()
+
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(issued)
+
+            assert api.auth.get_session().status_code == 401
 
 
-def test_logout_revokes_the_current_session(tmp_path: Path) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'logout.sqlite3'}"
-    _, _, issued = _seed_sync(database_url)
-    with TestClient(create_app(_settings(database_url))) as client:
-        api = GrafyApi(client)
-        api.authenticate(issued)
-        headers = {
-            "Origin": "http://testserver",
-            "X-CSRF-Token": issued.csrf_value,
-        }
-        assert api.auth.logout(headers=headers).status_code == 204
-        assert api.auth.get_session().status_code == 401
+async def test_logout_revokes_the_current_session(
+    tmp_path: Path, settings: Settings
+) -> None:
+    database_url = create_db_url(tmp_path, "logout.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={"database_url": SecretStr(database_url)}
+        )
+        user, _, _ = await seed(database.sessions)
+        issued = await _auth_service(app_settings, database).issue_session(user.id)
 
-    async def read_session() -> bool:
-        database = create_database(database_url)
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(issued)
+
+            assert api.auth.logout(headers=_csrf_headers(issued)).status_code == 204
+            assert api.auth.get_session().status_code == 401
+
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
             session = await unit_of_work.identity.get_auth_session(issued.session.id)
-        await database.dispose()
+
         assert session is not None
-        return session.is_revoked
-
-    assert asyncio.run(read_session())
+        assert session.is_revoked
 
 
-def test_expired_callback_consumes_transaction_and_releases_reservation(
-    tmp_path: Path,
+async def test_expired_callback_consumes_transaction_and_releases_reservation(
+    tmp_path: Path, settings: Settings
 ) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'expired-callback.sqlite3'}"
-    _seed_sync(database_url)
-    settings = _settings(database_url).model_copy(
-        update={
-            "oidc_issuer": "https://issuer.example.test",
-            "oidc_client_id": "grafy-client",
-            "oidc_auth_wrapping_key": SecretStr("expired-callback-key"),
-            "auth_outstanding_login_limit": 1,
-        }
-    )
-    application = create_app(settings)
-    auth: AuthService = application.state.identity.auth_service
-    transaction_id = UUID(int=701)
-    asyncio.run(
-        _seed_oidc_transaction(
-            database_url,
+    database_url = create_db_url(tmp_path, "expired-callback.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={
+                "database_url": SecretStr(database_url),
+                "oidc_issuer": "https://issuer.example.test",
+                "oidc_client_id": "grafy-client",
+                "oidc_auth_wrapping_key": SecretStr("expired-callback-key"),
+                "auth_outstanding_login_limit": 1,
+            }
+        )
+        _, _, _ = await seed(database.sessions)
+        application = app_with_overrides(settings=app_settings)
+        # The OIDC handlers and abuse-cookie middleware resolve the service
+        # through application.state, and the outstanding-login slots live in
+        # that instance, so callback flows must drive it directly.
+        auth = application.state.identity.auth_service
+        transaction_id = UUID(int=701)
+        await _seed_oidc_transaction(
+            database,
             auth,
-            settings,
+            app_settings,
             transaction_id,
             state="expired-state",
             expires_at=datetime.now(UTC) - timedelta(seconds=1),
         )
-    )
-    asyncio.run(auth.reserve_login("expired-browser", transaction_id))
-    with TestClient(application) as client:
-        client.cookies.set(
-            BROWSER_ABUSE_COOKIE,
-            make_browser_abuse_cookie(
-                "expired-browser",
-                secret=settings.oidc_auth_wrapping_key.get_secret_value().encode(
-                    "utf-8"
-                ),
-            ),
-        )
-        client.cookies.set("grafy_oidc_transaction", str(transaction_id))
-        response = client.get(
-            "/v1/auth/oidc/callback",
-            params={"state": "expired-state", "code": "expired-code"},
-        )
-        assert response.status_code == 400
-        assert "grafy_oidc_transaction" in response.headers.get("set-cookie", "")
+        await auth.reserve_login("expired-browser", transaction_id)
 
-    async def read_transaction() -> bool:
-        database = create_database(database_url)
+        with TestClient(application) as client:
+            wrapping_key = app_settings.oidc_auth_wrapping_key.get_secret_value().encode(
+                "utf-8"
+            )
+            client.cookies.set(
+                BROWSER_ABUSE_COOKIE,
+                make_browser_abuse_cookie("expired-browser", secret=wrapping_key),
+            )
+            client.cookies.set(OIDC_TRANSACTION_COOKIE, str(transaction_id))
+
+            response = client.get(
+                "/v1/auth/oidc/callback",
+                params={"state": "expired-state", "code": "expired-code"},
+            )
+
+            assert response.status_code == 400
+            assert OIDC_TRANSACTION_COOKIE in response.headers.get("set-cookie", "")
+
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
             transaction = await unit_of_work.identity.get_login_transaction(
                 transaction_id
             )
-        await database.dispose()
+
         assert transaction is not None
-        return transaction.is_consumed
-
-    assert asyncio.run(read_transaction())
-    assert asyncio.run(auth.reserve_login("expired-browser", UUID(int=702)))
+        assert transaction.is_consumed
+        assert await auth.reserve_login("expired-browser", UUID(int=702))
 
 
-def test_callback_failure_before_consumption_preserves_transaction_and_slot(
+async def test_callback_failure_before_consumption_preserves_transaction_and_slot(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    settings: Settings,
 ) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'callback-before-consume.sqlite3'}"
-    _seed_sync(database_url)
-    settings = _settings(database_url).model_copy(
-        update={
-            "oidc_issuer": "https://issuer.example.test",
-            "oidc_client_id": "grafy-client",
-            "oidc_auth_wrapping_key": SecretStr("before-consume-key"),
-            "auth_outstanding_login_limit": 1,
-        }
-    )
-    application = create_app(settings)
-    auth: AuthService = application.state.identity.auth_service
-    transaction_id = UUID(int=703)
-    asyncio.run(
-        _seed_oidc_transaction(
-            database_url,
+    database_url = create_db_url(tmp_path, "callback-before-consume.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={
+                "database_url": SecretStr(database_url),
+                "oidc_issuer": "https://issuer.example.test",
+                "oidc_client_id": "grafy-client",
+                "oidc_auth_wrapping_key": SecretStr("before-consume-key"),
+                "auth_outstanding_login_limit": 1,
+            }
+        )
+        _, _, _ = await seed(database.sessions)
+        application = app_with_overrides(settings=app_settings)
+        # The OIDC handlers and abuse-cookie middleware resolve the service
+        # through application.state, and the outstanding-login slots live in
+        # that instance, so callback flows must drive it directly.
+        auth = application.state.identity.auth_service
+        transaction_id = UUID(int=703)
+        await _seed_oidc_transaction(
+            database,
             auth,
-            settings,
+            app_settings,
             transaction_id,
             state="before-state",
             expires_at=datetime.now(UTC) + timedelta(minutes=5),
         )
-    )
-    asyncio.run(auth.reserve_login("before-browser", transaction_id))
+        await auth.reserve_login("before-browser", transaction_id)
 
-    async def fail_before_consumption(**_kwargs: object) -> tuple[object, str, str]:
-        raise RuntimeError("before-consumption sentinel")
+        async def fail_before_consumption(**_kwargs: object) -> tuple[object, str, str]:
+            raise RuntimeError("before-consumption sentinel")
 
-    monkeypatch.setattr(auth, "_consume_transaction", fail_before_consumption)
-    with TestClient(application, raise_server_exceptions=False) as client:
-        client.cookies.set(
-            BROWSER_ABUSE_COOKIE,
-            make_browser_abuse_cookie(
-                "before-browser",
-                secret=settings.oidc_auth_wrapping_key.get_secret_value().encode(
-                    "utf-8"
-                ),
-            ),
-        )
-        client.cookies.set("grafy_oidc_transaction", str(transaction_id))
-        response = client.get(
-            "/v1/auth/oidc/callback",
-            params={"state": "before-state", "code": "before-code"},
-        )
-        assert response.status_code == 500
-        assert "grafy_oidc_transaction" not in response.headers.get("set-cookie", "")
+        monkeypatch.setattr(auth, "_consume_transaction", fail_before_consumption)
 
-    assert not asyncio.run(auth.reserve_login("before-browser", UUID(int=704)))
+        with TestClient(application, raise_server_exceptions=False) as client:
+            wrapping_key = app_settings.oidc_auth_wrapping_key.get_secret_value().encode(
+                "utf-8"
+            )
+            client.cookies.set(
+                BROWSER_ABUSE_COOKIE,
+                make_browser_abuse_cookie("before-browser", secret=wrapping_key),
+            )
+            client.cookies.set(OIDC_TRANSACTION_COOKIE, str(transaction_id))
 
-    async def read_transaction() -> bool:
-        database = create_database(database_url)
+            response = client.get(
+                "/v1/auth/oidc/callback",
+                params={"state": "before-state", "code": "before-code"},
+            )
+
+            assert response.status_code == 500
+            assert OIDC_TRANSACTION_COOKIE not in response.headers.get("set-cookie", "")
+
+        assert not await auth.reserve_login("before-browser", UUID(int=704))
+
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
             transaction = await unit_of_work.identity.get_login_transaction(
                 transaction_id
             )
-        await database.dispose()
+
         assert transaction is not None
-        return transaction.is_consumed
-
-    assert not asyncio.run(read_transaction())
+        assert not transaction.is_consumed
 
 
-def test_callback_failure_after_consumption_clears_transaction_and_releases_slot(
+async def test_callback_failure_after_consumption_clears_transaction_and_releases_slot(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    settings: Settings,
 ) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'callback-after-consume.sqlite3'}"
-    _seed_sync(database_url)
-    settings = _settings(database_url).model_copy(
-        update={
-            "oidc_issuer": "https://issuer.example.test",
-            "oidc_client_id": "grafy-client",
-            "oidc_auth_wrapping_key": SecretStr("after-consume-key"),
-            "auth_outstanding_login_limit": 1,
-        }
-    )
-    application = create_app(settings)
-    auth: AuthService = application.state.identity.auth_service
-    transaction_id = UUID(int=705)
-    asyncio.run(
-        _seed_oidc_transaction(
-            database_url,
+    database_url = create_db_url(tmp_path, "callback-after-consume.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={
+                "database_url": SecretStr(database_url),
+                "oidc_issuer": "https://issuer.example.test",
+                "oidc_client_id": "grafy-client",
+                "oidc_auth_wrapping_key": SecretStr("after-consume-key"),
+                "auth_outstanding_login_limit": 1,
+            }
+        )
+        _, _, _ = await seed(database.sessions)
+        application = app_with_overrides(settings=app_settings)
+        # The OIDC handlers and abuse-cookie middleware resolve the service
+        # through application.state, and the outstanding-login slots live in
+        # that instance, so callback flows must drive it directly.
+        auth = application.state.identity.auth_service
+        transaction_id = UUID(int=705)
+        await _seed_oidc_transaction(
+            database,
             auth,
-            settings,
+            app_settings,
             transaction_id,
             state="after-state",
             expires_at=datetime.now(UTC) + timedelta(minutes=5),
         )
-    )
-    asyncio.run(auth.reserve_login("after-browser", transaction_id))
+        await auth.reserve_login("after-browser", transaction_id)
 
-    async def fail_after_consumption(**_kwargs: object) -> dict[str, object]:
-        raise RuntimeError("after-consumption sentinel")
+        async def fail_after_consumption(**_kwargs: object) -> dict[str, object]:
+            raise RuntimeError("after-consumption sentinel")
 
-    monkeypatch.setattr(auth, "_exchange_code", fail_after_consumption)
-    with TestClient(application, raise_server_exceptions=False) as client:
-        client.cookies.set(
-            BROWSER_ABUSE_COOKIE,
-            make_browser_abuse_cookie(
-                "after-browser",
-                secret=settings.oidc_auth_wrapping_key.get_secret_value().encode(
-                    "utf-8"
-                ),
-            ),
-        )
-        client.cookies.set("grafy_oidc_transaction", str(transaction_id))
-        response = client.get(
-            "/v1/auth/oidc/callback",
-            params={"state": "after-state", "code": "after-code"},
-        )
-        assert response.status_code == 500
-        assert "grafy_oidc_transaction" in response.headers.get("set-cookie", "")
-        assert "Max-Age=0" in response.headers.get("set-cookie", "")
+        monkeypatch.setattr(auth, "_exchange_code", fail_after_consumption)
 
-    assert asyncio.run(auth.reserve_login("after-browser", UUID(int=706)))
+        with TestClient(application, raise_server_exceptions=False) as client:
+            wrapping_key = app_settings.oidc_auth_wrapping_key.get_secret_value().encode(
+                "utf-8"
+            )
+            client.cookies.set(
+                BROWSER_ABUSE_COOKIE,
+                make_browser_abuse_cookie("after-browser", secret=wrapping_key),
+            )
+            client.cookies.set(OIDC_TRANSACTION_COOKIE, str(transaction_id))
 
-    async def read_transaction() -> bool:
-        database = create_database(database_url)
+            response = client.get(
+                "/v1/auth/oidc/callback",
+                params={"state": "after-state", "code": "after-code"},
+            )
+
+            assert response.status_code == 500
+            assert OIDC_TRANSACTION_COOKIE in response.headers.get("set-cookie", "")
+            assert "Max-Age=0" in response.headers.get("set-cookie", "")
+
+        assert await auth.reserve_login("after-browser", UUID(int=706))
+
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
             transaction = await unit_of_work.identity.get_login_transaction(
                 transaction_id
             )
-        await database.dispose()
+
         assert transaction is not None
-        return transaction.is_consumed
-
-    assert asyncio.run(read_transaction())
+        assert transaction.is_consumed
 
 
-def test_pat_create_shows_secret_once_and_revoke_is_audited(tmp_path: Path) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'pat.sqlite3'}"
-    _, workspace, issued = _seed_sync(database_url)
-    with TestClient(create_app(_settings(database_url))) as client:
-        api = GrafyApi(client)
-        api.authenticate(issued)
-        headers = {"Origin": "http://testserver", "X-CSRF-Token": issued.csrf_value}
-        tokens = api.workspace(workspace.id)
-        created = tokens.create_token_ok(
-            PersonalAccessTokenCreateRequest(
-                label="read-only",
-                scopes=[PersonalAccessTokenScope.VIEW_GRAPH],
-                expires_at=datetime.now(UTC) + timedelta(hours=1),
-            ),
-            headers=headers,
+async def test_pat_create_shows_secret_once_and_revoke_is_audited(
+    tmp_path: Path, settings: Settings
+) -> None:
+    database_url = create_db_url(tmp_path, "pat.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={"database_url": SecretStr(database_url)}
         )
-        raw_token = created.token.get_secret_value()
-        assert raw_token not in repr(created)
-        assert raw_token not in str(dict(created))
-        assert raw_token not in str(created.model_dump())
-        assert raw_token not in created.model_dump_json()
-        assert (
-            raw_token
-            not in TypeAdapter(PersonalAccessTokenCreatedResponse)
-            .dump_json(created)
-            .decode()
-        )
+        user, workspace, _ = await seed(database.sessions)
+        issued = await _auth_service(app_settings, database).issue_session(user.id)
 
-        class NestedToken(BaseModel):
-            token: SecretStr
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(issued)
+            tokens = api.workspace(workspace.id)
+            created = tokens.create_token_ok(
+                PersonalAccessTokenCreateRequest(
+                    label="read-only",
+                    scopes=[PersonalAccessTokenScope.VIEW_GRAPH],
+                    expires_at=datetime.now(UTC) + timedelta(hours=1),
+                ),
+                headers=_csrf_headers(issued),
+            )
+            listed = tokens.list_tokens(headers=_csrf_headers(issued))
+            # A scope outside the PAT allow-list cannot be expressed by the
+            # typed request model; exercise that boundary through the raw client.
+            disallowed = client.post(
+                f"/v1/workspaces/{workspace.id}/personal-access-tokens",
+                headers=_csrf_headers(issued),
+                json={
+                    "label": "admin",
+                    "scopes": [WorkspaceCapability.MANAGE_MEMBERS.value],
+                    "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+                },
+            )
+            revoked = tokens.revoke_token(created.id, headers=_csrf_headers(issued))
+            raw_token = created.token.get_secret_value()
 
-        assert raw_token not in NestedToken(token=created.token).model_dump_json()
-        redacted_with_caller_exclude = created.model_dump_json(exclude={"label"})
-        assert raw_token not in redacted_with_caller_exclude
-        assert '"label"' not in redacted_with_caller_exclude
-        listed = tokens.list_tokens(headers=headers)
-        assert listed.status_code == 200
-        assert raw_token not in listed.text
-        # A scope outside the PAT allow-list cannot be expressed by the
-        # typed request model; exercise that boundary through the raw client.
-        disallowed = client.post(
-            f"/v1/workspaces/{workspace.id}/personal-access-tokens",
-            headers=headers,
-            json={
-                "label": "admin",
-                "scopes": [WorkspaceCapability.MANAGE_MEMBERS.value],
-                "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
-            },
-        )
-        assert disallowed.status_code == 422
-        assert tokens.revoke_token(created.id, headers=headers).status_code == 204
+            assert raw_token not in repr(created)
+            assert raw_token not in str(dict(created))
+            assert raw_token not in str(created.model_dump())
+            assert raw_token not in created.model_dump_json()
+            assert (
+                raw_token
+                not in TypeAdapter(PersonalAccessTokenCreatedResponse)
+                .dump_json(created)
+                .decode()
+            )
 
-    async def read_audits() -> list[str]:
-        database = create_database(database_url)
+            class NestedToken(BaseModel):
+                token: SecretStr
+
+            assert raw_token not in NestedToken(token=created.token).model_dump_json()
+            redacted_with_caller_exclude = created.model_dump_json(exclude={"label"})
+            assert raw_token not in redacted_with_caller_exclude
+            assert '"label"' not in redacted_with_caller_exclude
+            assert listed.status_code == 200
+            assert raw_token not in listed.text
+            assert disallowed.status_code == 422
+            assert revoked.status_code == 204
+
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
             events = await unit_of_work.security_audit.list_for_workspace(
                 workspace.id,
                 limit=100,
             )
-        await database.dispose()
-        return [event.operation for event in events]
 
-    assert "credential.pat.create" in asyncio.run(read_audits())
-    assert "credential.pat.revoke" in asyncio.run(read_audits())
+        operations = [event.operation for event in events]
+        assert "credential.pat.create" in operations
+        assert "credential.pat.revoke" in operations
 
 
-def test_callback_validation_is_bounded_and_consumes_transaction(
-    tmp_path: Path,
+async def test_callback_validation_is_bounded_and_consumes_transaction(
+    tmp_path: Path, settings: Settings
 ) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'callback-validation.sqlite3'}"
-    _seed_sync(database_url)
-    settings = _settings(database_url)
-    settings = settings.model_copy(
-        update={
-            "oidc_issuer": "https://issuer.example.test",
-            "oidc_client_id": "grafy-client",
-            "oidc_auth_wrapping_key": SecretStr("callback-test-key"),
-            "auth_callback_rate_limit": 1,
-        }
-    )
-    application = create_app(settings)
-    auth = application.state.identity.auth_service
-    transaction_id = UUID(int=42)
-    transaction = OidcLoginTransaction(
-        id=transaction_id,
-        state_digest=auth.digest_secret("valid-state"),
-        nonce_digest=auth.digest_secret("valid-nonce"),
-        encrypted_pkce_verifier=auth._encrypt_verifier("verifier", transaction_id),
-        pkce_key_version=settings.oidc_auth_wrapping_key_version,
-        return_path="/",
-        expires_at=datetime.now(UTC) + timedelta(minutes=5),
-    )
-
-    async def seed_transaction() -> None:
-        database = create_database(database_url)
-        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-            await unit_of_work.identity.add_login_transaction(transaction)
-            await unit_of_work.commit()
-        await database.dispose()
-
-    asyncio.run(seed_transaction())
-    asyncio.run(auth.reserve_login("testclient", transaction_id))
-    state_sentinel = "S" * 513
-    with TestClient(application) as client:
-        client.cookies.set(
-            BROWSER_ABUSE_COOKIE,
-            make_browser_abuse_cookie(
-                "testclient",
-                secret=settings.oidc_auth_wrapping_key.get_secret_value().encode(
-                    "utf-8"
-                ),
-            ),
+    database_url = create_db_url(tmp_path, "callback-validation.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={
+                "database_url": SecretStr(database_url),
+                "oidc_issuer": "https://issuer.example.test",
+                "oidc_client_id": "grafy-client",
+                "oidc_auth_wrapping_key": SecretStr("callback-test-key"),
+                "auth_callback_rate_limit": 1,
+            }
         )
-        client.cookies.set("grafy_oidc_transaction", str(transaction_id))
-        first = client.get(
-            "/v1/auth/oidc/callback",
-            params={"state": state_sentinel},
+        _, _, _ = await seed(database.sessions)
+        application = app_with_overrides(settings=app_settings)
+        # The OIDC handlers and abuse-cookie middleware resolve the service
+        # through application.state, and the outstanding-login slots live in
+        # that instance, so callback flows must drive it directly.
+        auth = application.state.identity.auth_service
+        transaction_id = UUID(int=42)
+        await _seed_oidc_transaction(
+            database,
+            auth,
+            app_settings,
+            transaction_id,
+            state="valid-state",
+            expires_at=datetime.now(UTC) + timedelta(minutes=5),
         )
-        assert first.status_code == 422
-        assert state_sentinel not in first.text
-        assert "grafy_oidc_transaction" in first.headers.get("set-cookie", "")
-        assert "Path=/api/v1/auth/oidc" in first.headers.get("set-cookie", "")
-        second = client.get(
-            "/v1/auth/oidc/callback",
-            params={"state": state_sentinel},
-        )
-        assert second.status_code == 429
-        assert "Too many callback attempts" in second.text
+        await auth.reserve_login("testclient", transaction_id)
+        state_sentinel = "S" * 513
 
-    async def read_transaction() -> tuple[bool, list[tuple[str, str]]]:
-        database = create_database(database_url)
+        with TestClient(application) as client:
+            wrapping_key = app_settings.oidc_auth_wrapping_key.get_secret_value().encode(
+                "utf-8"
+            )
+            client.cookies.set(
+                BROWSER_ABUSE_COOKIE,
+                make_browser_abuse_cookie("testclient", secret=wrapping_key),
+            )
+            client.cookies.set(OIDC_TRANSACTION_COOKIE, str(transaction_id))
+            first = client.get(
+                "/v1/auth/oidc/callback",
+                params={"state": state_sentinel},
+            )
+            second = client.get(
+                "/v1/auth/oidc/callback",
+                params={"state": state_sentinel},
+            )
+
+            assert first.status_code == 422
+            assert state_sentinel not in first.text
+            assert OIDC_TRANSACTION_COOKIE in first.headers.get("set-cookie", "")
+            assert "Path=/api/v1/auth/oidc" in first.headers.get("set-cookie", "")
+            assert second.status_code == 429
+            assert "Too many callback attempts" in second.text
+
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
             stored = await unit_of_work.identity.lock_login_transaction(transaction_id)
-            assert stored is not None
             async with database.engine.connect() as connection:
                 rows = (
                     await connection.execute(
@@ -651,38 +644,44 @@ def test_callback_validation_is_bounded_and_consumes_transaction(
                         )
                     )
                 ).all()
-        await database.dispose()
-        return stored.is_consumed, [(row[0], row[1]) for row in rows]
 
-    consumed, audits = asyncio.run(read_transaction())
-    assert consumed
-    assert set(audits) == {
-        ("oidc.login.callback", "rate_limited"),
-        ("oidc.login.callback", "validation_failed"),
-    }
-    assert asyncio.run(auth.reserve_login("testclient", UUID(int=43)))
+        assert stored is not None
+        assert stored.is_consumed
+        assert {(row[0], row[1]) for row in rows} == {
+            ("oidc.login.callback", "rate_limited"),
+            ("oidc.login.callback", "validation_failed"),
+        }
+        assert await auth.reserve_login("testclient", UUID(int=43))
 
 
-def test_login_validation_is_bounded_and_audited(tmp_path: Path) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'login-validation.sqlite3'}"
-    _seed_sync(database_url)
-    settings = _settings(database_url).model_copy(
-        update={"auth_login_start_rate_limit": 1}
-    )
-    application = create_app(settings)
-    sentinel = "R" * 2049
-    with TestClient(application) as client:
-        first = client.get("/v1/auth/oidc/login", params={"return_path": sentinel})
-        client.cookies.clear()
-        second = client.get("/v1/auth/oidc/login", params={"return_path": sentinel})
+async def test_login_validation_is_bounded_and_audited(
+    tmp_path: Path, settings: Settings
+) -> None:
+    database_url = create_db_url(tmp_path, "login-validation.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={
+                "database_url": SecretStr(database_url),
+                "auth_login_start_rate_limit": 1,
+            }
+        )
+        _, _, _ = await seed(database.sessions)
+        sentinel = "R" * 2049
 
-    assert first.status_code == 422
-    assert second.status_code == 429
-    assert sentinel not in first.text
-    assert sentinel not in second.text
+        with client_with_overrides(settings=app_settings) as client:
+            first = client.get(
+                "/v1/auth/oidc/login", params={"return_path": sentinel}
+            )
+            client.cookies.clear()
+            second = client.get(
+                "/v1/auth/oidc/login", params={"return_path": sentinel}
+            )
 
-    async def read_audits() -> list[str]:
-        database = create_database(database_url)
+            assert first.status_code == 422
+            assert second.status_code == 429
+            assert sentinel not in first.text
+            assert sentinel not in second.text
+
         async with database.engine.connect() as connection:
             rows = (
                 await connection.execute(
@@ -692,66 +691,73 @@ def test_login_validation_is_bounded_and_audited(tmp_path: Path) -> None:
                     )
                 )
             ).all()
-        await database.dispose()
-        return [row[0] for row in rows]
 
-    assert set(asyncio.run(read_audits())) == {
-        "validation_failed",
-        "rate_limited",
-    }
+        assert {row[0] for row in rows} == {
+            "validation_failed",
+            "rate_limited",
+        }
 
 
-def test_oidc_query_sentinels_are_absent_from_request_logs(
+async def test_oidc_query_sentinels_are_absent_from_request_logs(
     tmp_path: Path,
+    settings: Settings,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'oidc-query-logs.sqlite3'}"
-    _seed_sync(database_url)
-    return_path = "/after?one-time=return-path-sentinel"
-    code = "oidc-code-sentinel"
-    state = "oidc-state-sentinel"
-    provider_error = "provider-error-sentinel"
-    caplog.set_level(logging.INFO)
-    with TestClient(create_app(_settings(database_url))) as client:
-        client.get("/v1/auth/oidc/login", params={"return_path": return_path})
-        client.get(
-            "/v1/auth/oidc/callback",
-            params={"code": code, "state": state, "error": provider_error},
+    database_url = create_db_url(tmp_path, "oidc-query-logs.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={"database_url": SecretStr(database_url)}
+        )
+        _, _, _ = await seed(database.sessions)
+        return_path = "/after?one-time=return-path-sentinel"
+        code = "oidc-code-sentinel"
+        state = "oidc-state-sentinel"
+        provider_error = "provider-error-sentinel"
+        caplog.set_level(logging.INFO)
+
+        with client_with_overrides(settings=app_settings) as client:
+            client.get("/v1/auth/oidc/login", params={"return_path": return_path})
+            client.get(
+                "/v1/auth/oidc/callback",
+                params={"code": code, "state": state, "error": provider_error},
+            )
+
+        assert all(
+            sentinel not in caplog.text
+            for sentinel in (
+                return_path,
+                "return-path-sentinel",
+                "%2Fafter%3Fone-time%3Dreturn-path-sentinel",
+                code,
+                state,
+                provider_error,
+            )
         )
 
-    assert all(
-        sentinel not in caplog.text
-        for sentinel in (
-            return_path,
-            "return-path-sentinel",
-            "%2Fafter%3Fone-time%3Dreturn-path-sentinel",
-            code,
-            state,
-            provider_error,
-        )
-    )
 
-
-def test_auth_http_exception_is_audited_as_authenticated_failure(
-    tmp_path: Path,
+async def test_auth_http_exception_is_audited_as_authenticated_failure(
+    tmp_path: Path, settings: Settings
 ) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'auth-http-error.sqlite3'}"
-    _, _, issued = _seed_sync(database_url)
-    with TestClient(create_app(_settings(database_url))) as client:
-        client.cookies.set("grafy_session", issued.cookie_value)
-        client.cookies.set("grafy_csrf", issued.csrf_value)
-        response = client.delete(
-            "/v1/auth/sessions/not-a-uuid",
-            headers={
-                "Origin": "http://testserver",
-                "X-CSRF-Token": issued.csrf_value,
-            },
+    database_url = create_db_url(tmp_path, "auth-http-error.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={"database_url": SecretStr(database_url)}
         )
+        user, _, _ = await seed(database.sessions)
+        issued = await _auth_service(app_settings, database).issue_session(user.id)
 
-    assert response.status_code == 404
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(issued)
+            # A malformed session id cannot be expressed by the typed
+            # facade method; exercise that boundary through the raw client.
+            response = client.delete(
+                "/v1/auth/sessions/not-a-uuid",
+                headers=_csrf_headers(issued),
+            )
 
-    async def read_audits() -> list[tuple[str, str, str]]:
-        database = create_database(database_url)
+            assert response.status_code == 404
+
         async with database.engine.connect() as connection:
             rows = (
                 await connection.execute(
@@ -762,133 +768,114 @@ def test_auth_http_exception_is_audited_as_authenticated_failure(
                     )
                 )
             ).all()
-        await database.dispose()
-        return [(row[0], row[1], row[2]) for row in rows]
 
-    assert asyncio.run(read_audits()) == [
-        ("authenticated", "auth.session.request", "not_found")
-    ]
+        assert [(row[0], row[1], row[2]) for row in rows] == [
+            ("authenticated", "auth.session.request", "not_found")
+        ]
 
 
-def test_workspace_and_pat_request_validation_is_bounded(tmp_path: Path) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'dto-validation.sqlite3'}"
-    _, workspace, issued = _seed_sync(database_url)
-    with TestClient(create_app(_settings(database_url))) as client:
-        api = GrafyApi(client)
-        api.authenticate(issued)
-        headers = {"Origin": "http://testserver", "X-CSRF-Token": issued.csrf_value}
-        # Rejected payloads cannot be expressed by the typed request
-        # models; exercise those boundaries through the raw client.
-        whitespace = client.post(
-            "/v1/workspaces",
-            headers=headers,
-            json={"slug": "   ", "name": "Team"},
+async def test_workspace_and_pat_request_validation_is_bounded(
+    tmp_path: Path, settings: Settings
+) -> None:
+    database_url = create_db_url(tmp_path, "dto-validation.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={"database_url": SecretStr(database_url)}
         )
-        assert whitespace.status_code == 422
-        invalid_slug = client.post(
-            "/v1/workspaces",
-            headers=headers,
-            json={"slug": "bad slug!", "name": "Team"},
-        )
-        assert invalid_slug.status_code == 422
-        normalized = api.workspaces.create(
-            WorkspaceCreateRequest(slug="  Team-Name  ", name="Team"),
-            headers=headers,
-        )
-        assert normalized.status_code == 201
-        assert normalized.json()["slug"] == "team-name"
-        duplicate_normalized = api.workspaces.create(
-            WorkspaceCreateRequest(slug=" team-name ", name="Duplicate team"),
-            headers=headers,
-        )
-        assert duplicate_normalized.status_code == 409
-        duplicate_scopes = client.post(
-            f"/v1/workspaces/{workspace.id}/personal-access-tokens",
-            headers=headers,
-            json={
-                "label": "duplicate",
-                "scopes": ["view_graph", "view_graph"],
-                "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
-            },
-        )
-        assert duplicate_scopes.status_code == 422
-        blank_label = client.post(
-            f"/v1/workspaces/{workspace.id}/personal-access-tokens",
-            headers=headers,
-            json={
-                "label": "   ",
-                "scopes": ["view_graph"],
-                "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
-            },
-        )
-        assert blank_label.status_code == 422
+        user, workspace, _ = await seed(database.sessions)
+        issued = await _auth_service(app_settings, database).issue_session(user.id)
 
-
-def test_workspace_failure_audits_preserve_route_metadata(tmp_path: Path) -> None:
-    database_url = f"{tmp_path / 'workspace-failure-metadata.sqlite3'}"
-    owner, workspace, _ = _seed_sync(f"sqlite+aiosqlite:///{database_url}")
-    viewer = User(
-        id=UUID(int=2),
-        email="viewer@example.test",
-        display_name="Viewer",
-    )
-
-    async def seed_viewer() -> IssuedSession:
-        database = create_database(f"sqlite+aiosqlite:///{database_url}")
-        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-            await unit_of_work.identity.add_user(viewer)
-            await unit_of_work.identity.add_membership(
-                WorkspaceMembership(
-                    workspace_id=workspace.id,
-                    user_id=viewer.id,
-                    role=WorkspaceRole.VIEWER,
-                )
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(issued)
+            # Rejected payloads cannot be expressed by the typed request
+            # models; exercise those boundaries through the raw client.
+            whitespace = client.post(
+                "/v1/workspaces",
+                headers=_csrf_headers(issued),
+                json={"slug": "   ", "name": "Team"},
             )
-            await unit_of_work.commit()
-        auth = AuthService(
-            settings=_settings(f"sqlite+aiosqlite:///{database_url}"),
-            unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
-            identity_service=IdentityService(
-                lambda: SqlAlchemyUnitOfWork(database.sessions)
-            ),
-        )
-        issued = await auth.issue_session(viewer.id)
-        await database.dispose()
-        return issued
+            invalid_slug = client.post(
+                "/v1/workspaces",
+                headers=_csrf_headers(issued),
+                json={"slug": "bad slug!", "name": "Team"},
+            )
+            normalized = api.workspaces.create(
+                WorkspaceCreateRequest(slug="  Team-Name  ", name="Team"),
+                headers=_csrf_headers(issued),
+            )
+            duplicate_normalized = api.workspaces.create(
+                WorkspaceCreateRequest(slug=" team-name ", name="Duplicate team"),
+                headers=_csrf_headers(issued),
+            )
+            duplicate_scopes = client.post(
+                f"/v1/workspaces/{workspace.id}/personal-access-tokens",
+                headers=_csrf_headers(issued),
+                json={
+                    "label": "duplicate",
+                    "scopes": ["view_graph", "view_graph"],
+                    "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+                },
+            )
+            blank_label = client.post(
+                f"/v1/workspaces/{workspace.id}/personal-access-tokens",
+                headers=_csrf_headers(issued),
+                json={
+                    "label": "   ",
+                    "scopes": ["view_graph"],
+                    "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+                },
+            )
 
-    viewer_session = asyncio.run(seed_viewer())
-    missing_workspace_id = UUID(int=999)
-    with TestClient(
-        create_app(_settings(f"sqlite+aiosqlite:///{database_url}"))
-    ) as client:
-        api = GrafyApi(client)
-        api.authenticate(viewer_session)
-        headers = {
-            "Origin": "http://testserver",
-            "X-CSRF-Token": viewer_session.csrf_value,
-        }
-        capability = api.workspace(workspace.id).add_member(
-            WorkspaceMemberRequest(
-                user_id=owner.id,
-                role=WorkspaceRole.VIEWER,
-            ),
-            headers=headers,
-        )
-        not_found = api.workspace(missing_workspace_id).list_members()
-        # A whitespace-only name is rejected server-side and cannot be
-        # expressed by the typed request model; use the raw client.
-        validation = client.post(
-            "/v1/workspaces",
-            headers=headers,
-            json={"slug": "valid", "name": "   "},
-        )
+            assert whitespace.status_code == 422
+            assert invalid_slug.status_code == 422
+            assert normalized.status_code == 201
+            assert normalized.json()["slug"] == "team-name"
+            assert duplicate_normalized.status_code == 409
+            assert duplicate_scopes.status_code == 422
+            assert blank_label.status_code == 422
 
-    assert capability.status_code == 403
-    assert not_found.status_code == 404
-    assert validation.status_code == 422
 
-    async def read_failures() -> list[tuple[object, ...]]:
-        database = create_database(f"sqlite+aiosqlite:///{database_url}")
+async def test_workspace_failure_audits_preserve_route_metadata(
+    tmp_path: Path, settings: Settings
+) -> None:
+    database_url = create_db_url(tmp_path, "workspace-failure-metadata.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={"database_url": SecretStr(database_url)}
+        )
+        owner, workspace, _ = await seed(database.sessions)
+        seeder = IdentitySeeder(lambda: SqlAlchemyUnitOfWork(database.sessions))
+        viewer = await seeder.user(email="viewer@example.test", display_name="Viewer")
+        await seeder.membership(
+            user=viewer, workspace=workspace, role=WorkspaceRole.VIEWER
+        )
+        viewer_issued = await _auth_service(app_settings, database).issue_session(viewer.id)
+        missing_workspace_id = UUID(int=999)
+
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(viewer_issued)
+            capability = api.workspace(workspace.id).add_member(
+                WorkspaceMemberRequest(
+                    user_id=owner.id,
+                    role=WorkspaceRole.VIEWER,
+                ),
+                headers=_csrf_headers(viewer_issued),
+            )
+            not_found = api.workspace(missing_workspace_id).list_members()
+            # A whitespace-only name is rejected server-side and cannot be
+            # expressed by the typed request model; use the raw client.
+            validation = client.post(
+                "/v1/workspaces",
+                headers=_csrf_headers(viewer_issued),
+                json={"slug": "valid", "name": "   "},
+            )
+
+            assert capability.status_code == 403
+            assert not_found.status_code == 404
+            assert validation.status_code == 422
+
         async with database.engine.connect() as connection:
             rows = (
                 await connection.execute(
@@ -900,32 +887,30 @@ def test_workspace_failure_audits_preserve_route_metadata(tmp_path: Path) -> Non
                     )
                 )
             ).all()
-        await database.dispose()
-        return [tuple(row) for row in rows]
 
-    assert asyncio.run(read_failures()) == [
-        (
-            "authenticated",
-            "workspace.membership.upsert",
-            workspace.id.hex,
-            "user",
-            None,
-            "capability_denied",
-        ),
-        (
-            "authenticated",
-            "workspace.membership.list",
-            missing_workspace_id.hex,
-            "workspace_membership",
-            None,
-            "not_found",
-        ),
-        (
-            "authenticated",
-            "workspace.create",
-            None,
-            "workspace",
-            None,
-            "validation_failed",
-        ),
-    ]
+        assert [tuple(row) for row in rows] == [
+            (
+                "authenticated",
+                "workspace.membership.upsert",
+                workspace.id.hex,
+                "user",
+                None,
+                "capability_denied",
+            ),
+            (
+                "authenticated",
+                "workspace.membership.list",
+                missing_workspace_id.hex,
+                "workspace_membership",
+                None,
+                "not_found",
+            ),
+            (
+                "authenticated",
+                "workspace.create",
+                None,
+                "workspace",
+                None,
+                "validation_failed",
+            ),
+        ]
