@@ -167,9 +167,7 @@ class ExecutionHistoryService:
         )
         completed_at = execution.finished_at
         if completed_at is None:
-            raise RuntimeError(
-                "Graph execution completed without a finish timestamp"
-            )
+            raise RuntimeError("Graph execution completed without a finish timestamp")
 
         async with self._unit_of_work as unit_of_work:
             await unit_of_work.execution_history.update(execution)
@@ -496,9 +494,7 @@ class RunResultPresenter:
             port=port_name,
             kind=kind,
             value=value,
-            artifacts=[
-                await self.artifact_summary(workspace_id, ref) for ref in refs
-            ],
+            artifacts=[await self.artifact_summary(workspace_id, ref) for ref in refs],
         )
 
     async def artifact_summary(

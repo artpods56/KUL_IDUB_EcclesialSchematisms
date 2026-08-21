@@ -543,13 +543,13 @@ async def test_chunked_table_round_trip_and_cross_chunk_page(tmp_path: Path) -> 
         ),
     )
     async with unit_of_work as uow:
-            artifact = await uow.artifacts.get(TEST_WORKSPACE_ID, ref.artifact_id)
-            assert artifact is not None
-            assert artifact.workspace_id == TEST_WORKSPACE_ID
-            assert artifact.object_key is not None
-            assert artifact.object_key.startswith(
-                f"workspaces/{TEST_WORKSPACE_ID}/table.data/v1/manifests/"
-            )
+        artifact = await uow.artifacts.get(TEST_WORKSPACE_ID, ref.artifact_id)
+        assert artifact is not None
+        assert artifact.workspace_id == TEST_WORKSPACE_ID
+        assert artifact.object_key is not None
+        assert artifact.object_key.startswith(
+            f"workspaces/{TEST_WORKSPACE_ID}/table.data/v1/manifests/"
+        )
     assert artifact is not None
     assert artifact.inline_payload is None
     assert artifact.metadata["row_count"] == 205
@@ -642,7 +642,7 @@ async def test_corrupt_table_chunk_reports_artifact_and_offset(tmp_path: Path) -
         ),
     )
     async with unit_of_work as uow:
-            artifact = await uow.artifacts.get(TEST_WORKSPACE_ID, ref.artifact_id)
+        artifact = await uow.artifacts.get(TEST_WORKSPACE_ID, ref.artifact_id)
     assert artifact is not None
     assert artifact.bucket is not None
     manifest = await load_table_manifest(artifact, storage)
@@ -690,7 +690,7 @@ async def test_table_accessibility_requires_every_chunk(tmp_path: Path) -> None:
         ),
     )
     async with unit_of_work as uow:
-            artifact = await uow.artifacts.get(TEST_WORKSPACE_ID, ref.artifact_id)
+        artifact = await uow.artifacts.get(TEST_WORKSPACE_ID, ref.artifact_id)
     assert artifact is not None
     assert artifact.bucket is not None
     manifest = await load_table_manifest(artifact, storage)
@@ -802,7 +802,7 @@ async def test_large_rows_are_split_by_chunk_byte_budget(tmp_path: Path) -> None
         ),
     )
     async with unit_of_work as uow:
-            artifact = await uow.artifacts.get(TEST_WORKSPACE_ID, ref.artifact_id)
+        artifact = await uow.artifacts.get(TEST_WORKSPACE_ID, ref.artifact_id)
     assert artifact is not None
     manifest = await load_table_manifest(artifact, storage)
     page = await load_table_page(artifact, storage, offset=1, limit=2)
@@ -834,7 +834,7 @@ async def test_table_manifest_and_logical_content_are_authenticated(
         ),
     )
     async with unit_of_work as uow:
-            artifact = await uow.artifacts.get(TEST_WORKSPACE_ID, ref.artifact_id)
+        artifact = await uow.artifacts.get(TEST_WORKSPACE_ID, ref.artifact_id)
     assert artifact is not None
     assert artifact.bucket is not None
     assert artifact.object_key is not None

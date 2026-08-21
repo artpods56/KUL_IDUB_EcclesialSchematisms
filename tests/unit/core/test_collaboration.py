@@ -418,7 +418,9 @@ def test_schema_builder_compound_rejects_partial_field_conflict() -> None:
                 node_id="builder",
                 config={"fields": []},
                 input_plugs=(),
-                expected_config={"fields": [{"id": "stale", "name": "stale", "kind": "string"}]},
+                expected_config={
+                    "fields": [{"id": "stale", "name": "stale", "kind": "string"}]
+                },
                 expected_plug_ids=("a",),
             ),
         )

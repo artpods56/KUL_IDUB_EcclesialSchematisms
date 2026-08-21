@@ -60,7 +60,9 @@ def test_schema_plugin_declares_nominal_string_artifact_and_builder_contract() -
     assert schema_output.shape is PortShape.ONE
 
 
-def test_schema_builder_config_validates_ordered_field_identity_and_item_kinds() -> None:
+def test_schema_builder_config_validates_ordered_field_identity_and_item_kinds() -> (
+    None
+):
     config = JsonSchemaBuilderConfig.model_validate(
         {
             "fields": [
@@ -106,11 +108,7 @@ def test_schema_builder_config_validates_ordered_field_identity_and_item_kinds()
         )
     with pytest.raises(ValidationError, match="must declare item_kind"):
         JsonSchemaBuilderConfig.model_validate(
-            {
-                "fields": [
-                    {"id": "lines", "name": "lines", "kind": "sequence"}
-                ]
-            }
+            {"fields": [{"id": "lines", "name": "lines", "kind": "sequence"}]}
         )
     with pytest.raises(ValidationError, match="Only sequence"):
         JsonSchemaBuilderConfig.model_validate(
@@ -128,7 +126,9 @@ def test_schema_builder_config_validates_ordered_field_identity_and_item_kinds()
 
 
 @pytest.mark.asyncio
-async def test_schema_builder_compiles_inline_fields_to_canonical_object_schema() -> None:
+async def test_schema_builder_compiles_inline_fields_to_canonical_object_schema() -> (
+    None
+):
     output = await JsonSchemaBuilderNode().run(
         NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="invoice-schema"),
         JsonSchemaBuilderConfig.model_validate(
@@ -203,14 +203,15 @@ async def test_schema_builder_compiles_inline_fields_to_canonical_object_schema(
 
 
 @pytest.mark.asyncio
-async def test_schema_builder_inserts_connected_object_and_sequence_item_schemas() -> None:
+async def test_schema_builder_inserts_connected_object_and_sequence_item_schemas() -> (
+    None
+):
     customer_schema = (
         '{"type":"object","title":"Customer","properties":'
         '{"name":{"type":"string"}},"required":["name"]}'
     )
     line_schema = (
-        '{"type":"object","title":"Line","properties":'
-        '{"quantity":{"type":"integer"}}}'
+        '{"type":"object","title":"Line","properties":{"quantity":{"type":"integer"}}}'
     )
     config = JsonSchemaBuilderConfig.model_validate(
         {
@@ -277,9 +278,7 @@ async def test_schema_builder_reports_missing_connected_schema_field_ids() -> No
         await JsonSchemaBuilderNode().run(
             NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="schema"),
             config,
-            JsonSchemaBuilderInput(
-                schemas=['{"type":"object","properties":{}}']
-            ),
+            JsonSchemaBuilderInput(schemas=['{"type":"object","properties":{}}']),
         )
 
     message = str(exc_info.value)
@@ -363,28 +362,26 @@ async def test_schema_artifact_factories_and_typed_instance_plugs_round_trip(
     output = await JsonSchemaBuilderNode().run(
         NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="parent-schema"),
         JsonSchemaBuilderConfig.model_validate(
-            {
-                "fields": [
-                    {"id": "child", "name": "child", "kind": "schema"}
-                ]
-            }
+            {"fields": [{"id": "child", "name": "child", "kind": "schema"}]}
         ),
         inputs,
     )
     parent_ref = await writer.write(
         output.json_schema,
         ArtifactWriteContext(
-        node_context=NodeExecutionContext(
-            workspace_id=TEST_WORKSPACE_ID,
-            node_id="parent-schema",
-        ),
+            node_context=NodeExecutionContext(
+                workspace_id=TEST_WORKSPACE_ID,
+                node_id="parent-schema",
+            ),
             provenance=provenance,
         ),
     )
 
     assert await resolver.resolve(parent_ref, TEST_WORKSPACE_ID) == output.json_schema
     async with uow as entered:
-        artifact = await entered.artifacts.get(TEST_WORKSPACE_ID, parent_ref.artifact_id)
+        artifact = await entered.artifacts.get(
+            TEST_WORKSPACE_ID, parent_ref.artifact_id
+        )
     assert artifact is not None
     assert artifact.inline_payload == {"value": output.json_schema}
     assert artifact.metadata["provenance"] == {

@@ -587,7 +587,9 @@ def test_dynamic_graph_module_node_exposes_concrete_scalar_contracts() -> None:
     assert result.shape is PortShape.ONE
 
 
-def test_dynamic_graph_module_node_exposes_optional_inputs_as_nullable_defaults() -> None:
+def test_dynamic_graph_module_node_exposes_optional_inputs_as_nullable_defaults() -> (
+    None
+):
     node = GraphModuleNode(_optional_definition(), OptionalModuleExecutor())
 
     required_source = node.input_contract.ports["required_source"]

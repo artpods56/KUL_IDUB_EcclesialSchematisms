@@ -340,7 +340,6 @@ def _manager(
     )
     components = build_workbench_components(
         plugin_registry=registry,
-        execution_backend="inline",
         workspace=workspace,
     )
     return RunExecutionManager(
@@ -510,7 +509,7 @@ async def test_manager_isolates_concurrent_execution_progress(tmp_path: Path) ->
                     operator_version=1,
                 )
             ]
-        )
+        ),
     )
     second = await manager.start(
         WORKSPACE_ID,
@@ -522,7 +521,7 @@ async def test_manager_isolates_concurrent_execution_progress(tmp_path: Path) ->
                     operator_version=1,
                 )
             ]
-        )
+        ),
     )
 
     await asyncio.gather(_started["run-a"].wait(), _started["run-b"].wait())
@@ -558,7 +557,7 @@ async def test_manager_shutdown_cancels_and_awaits_active_tasks(tmp_path: Path) 
                     operator_version=1,
                 )
             ]
-        )
+        ),
     )
     second = await manager.start(
         WORKSPACE_ID,
@@ -570,18 +569,14 @@ async def test_manager_shutdown_cancels_and_awaits_active_tasks(tmp_path: Path) 
                     operator_version=1,
                 )
             ]
-        )
+        ),
     )
     await asyncio.gather(_started["run-a"].wait(), _started["run-b"].wait())
 
     await manager.shutdown()
 
-    assert (
-        await manager.get(WORKSPACE_ID, first.execution_id)
-    ).status == "cancelled"
-    assert (
-        await manager.get(WORKSPACE_ID, second.execution_id)
-    ).status == "cancelled"
+    assert (await manager.get(WORKSPACE_ID, first.execution_id)).status == "cancelled"
+    assert (await manager.get(WORKSPACE_ID, second.execution_id)).status == "cancelled"
     with pytest.raises(RuntimeError, match="shutting down"):
         await manager.start(WORKSPACE_ID, RunRequest(nodes=[]))
 
@@ -612,7 +607,7 @@ async def test_manager_preserves_failed_graph_result(tmp_path: Path) -> None:
                     to_port="value",
                 )
             ],
-        )
+        ),
     )
 
     failed = await _terminal(manager, execution.execution_id)
@@ -670,7 +665,7 @@ async def test_manager_replays_lifecycle_and_mapped_progress_events(
                     collection_mode="map",
                 )
             ],
-        )
+        ),
     )
     assert (await _terminal(manager, execution.execution_id)).status == "succeeded"
 
@@ -900,12 +895,8 @@ async def test_manager_bounds_terminal_execution_retention(tmp_path: Path) -> No
 
     with pytest.raises(NotFoundError, match=str(execution_ids[0])):
         await manager.get(WORKSPACE_ID, execution_ids[0])
-    assert (
-        await manager.get(WORKSPACE_ID, execution_ids[1])
-    ).status == "succeeded"
-    assert (
-        await manager.get(WORKSPACE_ID, execution_ids[2])
-    ).status == "succeeded"
+    assert (await manager.get(WORKSPACE_ID, execution_ids[1])).status == "succeeded"
+    assert (await manager.get(WORKSPACE_ID, execution_ids[2])).status == "succeeded"
     assert first_subscription is not None
     retained_events = await first_subscription.wait(after_sequence=0, timeout=0)
     assert retained_events.terminal is True
@@ -989,7 +980,7 @@ async def test_natural_completion_wins_cancel_race_without_durable_downgrade() -
             nodes=[],
             graph_id=uuid4(),
             graph_revision=1,
-        )
+        ),
     )
     await run_graph.started.wait()
     run_graph.release.set()
@@ -1022,7 +1013,7 @@ async def test_cancel_transition_wins_race_and_persists_one_terminal_result() ->
             nodes=[],
             graph_id=uuid4(),
             graph_revision=1,
-        )
+        ),
     )
     await run_graph.started.wait()
 
@@ -1053,7 +1044,7 @@ async def test_terminal_history_write_retries_before_exposing_terminal() -> None
             nodes=[],
             graph_id=uuid4(),
             graph_revision=1,
-        )
+        ),
     )
     await run_graph.started.wait()
 

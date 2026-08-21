@@ -73,8 +73,7 @@ def _rename_rebuild_constraints(
                 direction,
             )
             connection.exec_driver_sql(
-                f'ALTER INDEX "{temporary_name}" '
-                f'RENAME TO "{constraint_name}"'
+                f'ALTER INDEX "{temporary_name}" RENAME TO "{constraint_name}"'
             )
 
 
@@ -105,9 +104,7 @@ def _preflight_upgrade(connection: sa.Connection) -> None:
         )
     local_workspace = connection.execute(
         _bind_local_id(
-            sa.text(
-                "SELECT slug, kind FROM workspaces WHERE id = :local_id"
-            )
+            sa.text("SELECT slug, kind FROM workspaces WHERE id = :local_id")
         ),
         {"local_id": LOCAL_WORKSPACE_ID},
     ).one_or_none()
@@ -140,7 +137,9 @@ def _preflight_downgrade(connection: sa.Connection) -> None:
         )
 
 
-def _staged_upload_constraints(connection: sa.Connection) -> tuple[sa.CheckConstraint, ...]:
+def _staged_upload_constraints(
+    connection: sa.Connection,
+) -> tuple[sa.CheckConstraint, ...]:
     constraints = [
         sa.CheckConstraint(
             "upload_key NOT IN ('.', '..')",
@@ -188,8 +187,7 @@ def _verify_foreign_keys(connection: sa.Connection) -> None:
         ).fetchall()
         if foreign_key_errors:
             raise RuntimeError(
-                "Tenant migration produced foreign-key errors: "
-                f"{foreign_key_errors}"
+                f"Tenant migration produced foreign-key errors: {foreign_key_errors}"
             )
         return
     if connection.dialect.name == "postgresql":
@@ -778,13 +776,19 @@ def _copy_and_replace_tables(connection: sa.Connection) -> None:
         (
             ("saved_graphs", ("pk_saved_graphs", "uq_saved_graphs_workspace_id_id")),
             ("saved_graph_revisions", ("pk_saved_graph_revisions",)),
-            ("artifact_objects", ("pk_artifact_objects", "uq_artifact_objects_workspace_id_id")),
+            (
+                "artifact_objects",
+                ("pk_artifact_objects", "uq_artifact_objects_workspace_id_id"),
+            ),
             ("invocation_cache_entries", ("pk_invocation_cache_entries",)),
             ("materialized_node_outputs", ("pk_materialized_node_outputs",)),
             ("node_secrets", ("pk_node_secrets",)),
             (
                 "graph_executions",
-                ("pk_graph_executions", "uq_graph_executions_workspace_id_execution_id"),
+                (
+                    "pk_graph_executions",
+                    "uq_graph_executions_workspace_id_execution_id",
+                ),
             ),
             (
                 "graph_execution_requested_nodes",
@@ -809,7 +813,9 @@ def _copy_and_replace_tables(connection: sa.Connection) -> None:
         connection.exec_driver_sql("PRAGMA foreign_keys=ON")
     _verify_foreign_keys(connection)
     for table_name, expected_count in counts.items():
-        actual_count = int(connection.scalar(sa.text(f"SELECT COUNT(*) FROM {table_name}")) or 0)
+        actual_count = int(
+            connection.scalar(sa.text(f"SELECT COUNT(*) FROM {table_name}")) or 0
+        )
         if actual_count != expected_count:
             raise RuntimeError(
                 f"Tenant migration changed {table_name} row count from "
@@ -831,8 +837,7 @@ def _assert_downgrade_is_safe(connection: sa.Connection) -> None:
         outside_local = connection.scalar(
             _bind_local_id(
                 sa.text(
-                    f"SELECT COUNT(*) FROM {table_name} "
-                    "WHERE workspace_id != :local_id"
+                    f"SELECT COUNT(*) FROM {table_name} WHERE workspace_id != :local_id"
                 )
             ),
             {"local_id": LOCAL_WORKSPACE_ID},
@@ -1205,9 +1210,7 @@ def _rebuild_legacy_tables(connection: sa.Connection) -> None:
         ),
         "d",
     )
-    op.create_index(
-        "ix_saved_graphs_updated_at", "saved_graphs", ["updated_at"]
-    )
+    op.create_index("ix_saved_graphs_updated_at", "saved_graphs", ["updated_at"])
     op.create_index(
         "ix_artifact_objects_type",
         "artifact_objects",

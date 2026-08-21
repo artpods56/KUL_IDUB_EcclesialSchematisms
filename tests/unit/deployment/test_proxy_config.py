@@ -140,14 +140,13 @@ def test_compose_publishes_loopback_gateway_and_keeps_api_web_internal() -> None
     assert re.search(r"^  gateway:\s*$", compose, re.MULTILINE)
     assert "./gateway/nginx.conf:/etc/nginx/nginx.conf:ro" in compose
     assert (
-        "${GRAFY_BIND_ADDRESS:-127.0.0.1}:${GRAFY_GATEWAY_PORT:-8080}:8080"
-        in compose
+        "${GRAFY_BIND_ADDRESS:-127.0.0.1}:${GRAFY_GATEWAY_PORT:-8080}:8080" in compose
     )
     assert 'GRAFY_REQUIRE_SINGLE_API_OWNER: "true"' in compose
     assert 'WEB_CONCURRENCY: "1"' in compose
 
-    # API and web stay on the Compose network; only gateway (and Prefect SSH
-    # dashboard) publish host ports.
+    # API and web stay on the Compose network; only the gateway publishes
+    # host ports.
     api_block = re.search(
         r"^  api:\n(.*?)(?=^  [a-z]|\Z)",
         compose,

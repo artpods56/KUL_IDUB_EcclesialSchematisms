@@ -228,9 +228,7 @@ def completion_response(
                 "prompt_tokens": 12,
                 "completion_tokens": 4,
                 "total_tokens": 16,
-                "provider_debug": {
-                    "authorization": "Bearer secret-provider-key"
-                },
+                "provider_debug": {"authorization": "Bearer secret-provider-key"},
             },
         },
     )
@@ -401,8 +399,7 @@ async def test_provider_rejects_a_structured_value_that_misses_the_schema(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     provider = sdk_provider(
-        monkeypatch,
-        RequestRecorder(completion_response(content='{"wrong":"value"}'))
+        monkeypatch, RequestRecorder(completion_response(content='{"wrong":"value"}'))
     )
 
     with pytest.raises(
@@ -431,7 +428,7 @@ async def test_provider_reports_refusal_without_exposing_refusal_text(
     refusal_text = "private refusal details"
     provider = sdk_provider(
         monkeypatch,
-        RequestRecorder(completion_response(content="", refusal=refusal_text))
+        RequestRecorder(completion_response(content="", refusal=refusal_text)),
     )
 
     with pytest.raises(OpenAICompatibleProviderError, match="was refused") as captured:
@@ -658,9 +655,7 @@ async def test_provider_sends_verified_images_as_openai_content_parts(
 ) -> None:
     uow = InMemoryUnitOfWork()
     storage = FakeStorage()
-    image = await add_stored_image(
-        uow, storage, name="page", workspace_id=WORKSPACE_ID
-    )
+    image = await add_stored_image(uow, storage, name="page", workspace_id=WORKSPACE_ID)
     recorder = RequestRecorder(completion_response())
     provider = sdk_provider(
         monkeypatch,
@@ -691,9 +686,7 @@ async def test_provider_sends_verified_images_as_openai_content_parts(
                 {"type": "text", "text": "Read the image."},
                 {
                     "type": "image_url",
-                    "image_url": {
-                        "url": "data:image/png;base64,aW1hZ2UtYnl0ZXM="
-                    },
+                    "image_url": {"url": "data:image/png;base64,aW1hZ2UtYnl0ZXM="},
                 },
             ],
         }

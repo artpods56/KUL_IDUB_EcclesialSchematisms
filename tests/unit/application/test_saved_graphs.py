@@ -55,7 +55,10 @@ class FakeSavedGraphRepository:
         self.locked_revisions.append((workspace_id, graph_id, expected_revision))
 
     async def get(self, workspace_id: UUID, graph_id: UUID) -> SavedGraph | None:
-        if self._graphs.get(graph_id) is not None and self._graphs[graph_id].workspace_id != workspace_id:
+        if (
+            self._graphs.get(graph_id) is not None
+            and self._graphs[graph_id].workspace_id != workspace_id
+        ):
             return None
         return self._graphs.get(graph_id)
 
@@ -87,7 +90,9 @@ class FakeSavedGraphRepository:
 
     async def list(self, workspace_id: UUID) -> list[SavedGraph]:
         return [
-            graph for graph in self._graphs.values() if graph.workspace_id == workspace_id
+            graph
+            for graph in self._graphs.values()
+            if graph.workspace_id == workspace_id
         ]
 
     async def remove(self, workspace_id: UUID, graph: SavedGraph) -> None:
@@ -349,7 +354,9 @@ async def test_revision_reads_raise_not_found_for_unknown_values() -> None:
 @pytest.mark.asyncio
 async def test_replace_updates_graph_and_commits_once() -> None:
     factory = FakeSavedGraphUnitOfWorkFactory()
-    graph = SavedGraph(workspace_id=WORKSPACE_ID, name="Original", document=SavedGraphDocument())
+    graph = SavedGraph(
+        workspace_id=WORKSPACE_ID, name="Original", document=SavedGraphDocument()
+    )
     factory.graphs[graph.id] = graph
     service = SavedGraphService(factory, factory.plugin_registry)
     replacement = _document("replacement")
@@ -472,7 +479,9 @@ async def test_replace_preserves_domain_revision_conflict() -> None:
 @pytest.mark.asyncio
 async def test_replace_translates_concurrent_commit_to_revision_conflict() -> None:
     factory = FakeSavedGraphUnitOfWorkFactory()
-    graph = SavedGraph(workspace_id=WORKSPACE_ID, name="Current", document=SavedGraphDocument())
+    graph = SavedGraph(
+        workspace_id=WORKSPACE_ID, name="Current", document=SavedGraphDocument()
+    )
     factory.graphs[graph.id] = graph
     concurrent_error = ConcurrentWriteError("concurrent update")
     factory.commit_error = concurrent_error

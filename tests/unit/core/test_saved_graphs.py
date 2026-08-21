@@ -140,7 +140,9 @@ def test_saved_graph_document_migrates_v2_bindings_to_v3() -> None:
     }
 
 
-def test_saved_graph_node_layout_round_trips_and_rejects_empty_or_out_of_range() -> None:
+def test_saved_graph_node_layout_round_trips_and_rejects_empty_or_out_of_range() -> (
+    None
+):
     layout = SavedGraphNodeLayout(width=420, body_height=180, appendix_height=320)
     node = SavedGraphNode(
         id="resized",
@@ -186,9 +188,7 @@ def test_presentation_annotations_round_trip_and_reject_shape_text() -> None:
         presentation=GraphPresentationDocument(annotations=(annotation,)),
     )
     payload = document.model_dump(mode="json")
-    assert payload["presentation"]["annotations"][0]["text"] == (
-        "Document this branch"
-    )
+    assert payload["presentation"]["annotations"][0]["text"] == ("Document this branch")
     assert payload["presentation"]["annotations"][0]["color"] == "#B45309"
     assert SavedGraphDocument.model_validate(payload) == document
 
@@ -266,9 +266,7 @@ def test_saved_graph_node_serializes_validated_artifact_type_bindings() -> None:
         }
     ]
     assert SavedGraphNode.model_validate(payload) == node
-    assert node.artifact_type_binding_map() == {
-        "T": ArtifactTypeKey("image.raster", 1)
-    }
+    assert node.artifact_type_binding_map() == {"T": ArtifactTypeKey("image.raster", 1)}
 
 
 def test_saved_graph_node_requires_unique_artifact_type_binding_variables() -> None:

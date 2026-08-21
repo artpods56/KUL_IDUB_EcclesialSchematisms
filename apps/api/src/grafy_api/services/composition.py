@@ -3,7 +3,7 @@
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import cast
 
 from grafy_core.artifacts import InMemoryUnitOfWork
 from grafy_core.application.modules import ModuleLibraryService
@@ -48,7 +48,6 @@ from grafy_api.v1.routes.executions.runtime.node_execution import (
 from grafy_api.v1.routes.executions.runtime.admission import (
     ExecutionAdmissionLimiter,
 )
-from grafy_api.v1.routes.executions.runtime.prefect import PrefectExecutionEngine
 from grafy_api.v1.routes.executions.runtime.preflight import GraphRunPreflight
 from grafy_api.v1.routes.executions.runtime.run_graph import RunGraph
 from grafy_api.v1.routes.executions.services import (
@@ -80,11 +79,8 @@ class WorkbenchComponents:
 def build_workbench_components(
     *,
     plugin_registry: PluginRegistry,
-    execution_backend: Literal["prefect", "inline"],
     map_max_concurrency: int = 4,
     max_active_executions: int = 2,
-    prefect_task_retries: int = 0,
-    prefect_task_retry_delay_seconds: float = 0,
     workspace: Path | None = None,
     unit_of_work: WorkbenchUnitOfWorkPort | None = None,
     storage: FileStoragePort | None = None,
@@ -178,24 +174,14 @@ def build_workbench_components(
             storage=resolved_storage,
         ),
     )
-    effective_map_max_concurrency = 1
-    if execution_backend == "prefect":
-        effective_map_max_concurrency = map_max_concurrency
     node_execution = NodeExecutionService(
         runtime=runtime,
         edge_values=edge_values,
         node_secrets=resolved_node_secrets,
-        max_map_concurrency=effective_map_max_concurrency,
+        max_map_concurrency=map_max_concurrency,
     )
     coordinator = GraphExecutionCoordinator(node_execution=node_execution)
-    if execution_backend == "prefect":
-        engine = PrefectExecutionEngine(
-            coordinator=coordinator,
-            task_retries=prefect_task_retries,
-            task_retry_delay_seconds=prefect_task_retry_delay_seconds,
-        )
-    else:
-        engine = InlineExecutionEngine(coordinator=coordinator)
+    engine = InlineExecutionEngine(coordinator=coordinator)
     preflight = GraphRunPreflight(
         plugin_registry=plugin_registry,
         saved_graphs=saved_graphs,

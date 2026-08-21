@@ -78,9 +78,11 @@ class GraphModuleCatalog:
         if self._module_library is None or self._saved_graphs is None:
             return GraphModuleCatalogListing(entries=[], unavailable=[])
         entries: list[GraphModuleCatalogEntry] = []
-        for module, release, definition in await self._module_library.catalog_definitions(
-            workspace_id
-        ):
+        for (
+            module,
+            release,
+            definition,
+        ) in await self._module_library.catalog_definitions(workspace_id):
             # catalog_definitions already validates and skips invalid
             # definitions, so no re-validation is needed here.
             is_current = module.current_library_release == release.revision

@@ -109,7 +109,10 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(
             ["workspace_id", "graph_id"],
-            ["collaborative_graph_heads.workspace_id", "collaborative_graph_heads.graph_id"],
+            [
+                "collaborative_graph_heads.workspace_id",
+                "collaborative_graph_heads.graph_id",
+            ],
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint(
@@ -152,7 +155,10 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(
             ["workspace_id", "graph_id"],
-            ["collaborative_graph_heads.workspace_id", "collaborative_graph_heads.graph_id"],
+            [
+                "collaborative_graph_heads.workspace_id",
+                "collaborative_graph_heads.graph_id",
+            ],
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("workspace_id", "graph_id", "command_id"),
@@ -176,7 +182,10 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(
             ["workspace_id", "graph_id"],
-            ["collaborative_graph_heads.workspace_id", "collaborative_graph_heads.graph_id"],
+            [
+                "collaborative_graph_heads.workspace_id",
+                "collaborative_graph_heads.graph_id",
+            ],
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
@@ -214,7 +223,10 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(
             ["workspace_id", "graph_id"],
-            ["collaborative_graph_heads.workspace_id", "collaborative_graph_heads.graph_id"],
+            [
+                "collaborative_graph_heads.workspace_id",
+                "collaborative_graph_heads.graph_id",
+            ],
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint(
@@ -232,7 +244,10 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(
             ["workspace_id", "graph_id"],
-            ["collaborative_graph_heads.workspace_id", "collaborative_graph_heads.graph_id"],
+            [
+                "collaborative_graph_heads.workspace_id",
+                "collaborative_graph_heads.graph_id",
+            ],
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("workspace_id", "graph_id"),

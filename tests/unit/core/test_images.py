@@ -195,7 +195,9 @@ async def test_runtime_chains_image_collect_and_ocr_writers(tmp_path: Path) -> N
         )
         for artifact in image_artifacts
     )
-    assert all(artifact.workspace_id == TEST_WORKSPACE_ID for artifact in image_artifacts)
+    assert all(
+        artifact.workspace_id == TEST_WORKSPACE_ID for artifact in image_artifacts
+    )
     assert all("upload_key" not in artifact.metadata for artifact in image_artifacts)
     texts: list[object] = []
     for artifact in ocr_artifacts:

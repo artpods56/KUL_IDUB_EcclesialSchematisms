@@ -117,16 +117,13 @@ def test_mistral_sdk_dependency_is_owned_by_optional_plugins() -> None:
     llm_plugin_dependencies = cast(list[str], llm_plugin_project["dependencies"])
 
     assert not any(
-        requirement.startswith("grafy-plugin-ocr")
-        for requirement in root_dependencies
+        requirement.startswith("grafy-plugin-ocr") for requirement in root_dependencies
     )
     assert not any(
-        requirement.startswith("grafy-plugin-llm")
-        for requirement in root_dependencies
+        requirement.startswith("grafy-plugin-llm") for requirement in root_dependencies
     )
     assert not any(
-        requirement.startswith("grafy-plugin-sql")
-        for requirement in root_dependencies
+        requirement.startswith("grafy-plugin-sql") for requirement in root_dependencies
     )
     assert not any(
         requirement.startswith("mistralai") for requirement in root_dependencies

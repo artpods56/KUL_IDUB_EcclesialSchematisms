@@ -123,7 +123,9 @@ def upgrade() -> None:
             ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_workspaces"),
-        sa.UniqueConstraint("personal_owner_user_id", name="uq_workspaces_personal_owner_user_id"),
+        sa.UniqueConstraint(
+            "personal_owner_user_id", name="uq_workspaces_personal_owner_user_id"
+        ),
         sa.UniqueConstraint("slug", name="uq_workspaces_slug"),
     )
     op.create_index("ix_workspaces_kind", "workspaces", ["kind"], unique=False)
@@ -358,10 +360,14 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     connection = op.get_bind()
-    local_workspace = connection.execute(
-        _local_workspace_guard_query(),
-        {"local_id": LOCAL_WORKSPACE_ID},
-    ).mappings().all()
+    local_workspace = (
+        connection.execute(
+            _local_workspace_guard_query(),
+            {"local_id": LOCAL_WORKSPACE_ID},
+        )
+        .mappings()
+        .all()
+    )
     workspace_count = connection.scalar(sa.text("SELECT COUNT(*) FROM workspaces"))
     if workspace_count != 1 or local_workspace != [
         {
@@ -396,7 +402,9 @@ def downgrade() -> None:
             "Cannot downgrade identity foundation: identity/security data would "
             f"be discarded ({populated})"
         )
-    op.drop_index("ix_security_audit_events_retention", table_name="security_audit_events")
+    op.drop_index(
+        "ix_security_audit_events_retention", table_name="security_audit_events"
+    )
     op.drop_index(
         "ix_security_audit_events_operation_occurred_at",
         table_name="security_audit_events",
@@ -451,6 +459,5 @@ def downgrade() -> None:
 
 def _local_workspace_guard_query() -> sa.TextClause:
     return sa.text(
-        "SELECT slug, kind, personal_owner_user_id FROM workspaces "
-        "WHERE id = :local_id"
+        "SELECT slug, kind, personal_owner_user_id FROM workspaces WHERE id = :local_id"
     ).bindparams(sa.bindparam("local_id", type_=sa.Uuid()))

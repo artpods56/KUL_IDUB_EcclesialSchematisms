@@ -97,7 +97,7 @@ async def test_cache_entry_and_batch_artifacts_round_trip_in_a_fresh_session(
                 first.id,
                 second.id,
                 UUID("00000000-0000-0000-0000-000000000205"),
-            }
+            },
         )
 
     assert loaded is not None

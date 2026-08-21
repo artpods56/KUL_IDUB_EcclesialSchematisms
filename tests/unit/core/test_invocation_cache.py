@@ -166,8 +166,7 @@ async def test_in_memory_artifact_batch_lookup_deduplicates_and_omits_missing() 
 
     async with unit_of_work as entered:
         loaded = await entered.artifacts.get_many(
-            WORKSPACE_ID,
-            [artifact.id, artifact.id, missing_id]
+            WORKSPACE_ID, [artifact.id, artifact.id, missing_id]
         )
 
     assert loaded == {artifact.id: artifact}

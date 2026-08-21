@@ -256,8 +256,7 @@ class RunGraph:
                 plan.pinned_outputs,
             )
         initial_outputs = await self._materializations.resolve_pinned_outputs(
-            workspace_id,
-            plan.pinned_outputs
+            workspace_id, plan.pinned_outputs
         )
         execution = await self._engine.execute(
             PreparedGraphExecution(

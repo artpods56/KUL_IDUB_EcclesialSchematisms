@@ -66,6 +66,7 @@ def test_prompt_plugin_declares_fixed_artifacts_nodes_and_port_contracts() -> No
     assert message_output.produces == PROMPT_MESSAGE.key
     assert message_output.shape is PortShape.ONE
 
+
 def test_prompt_message_payload_validates_role_text_and_image_refs() -> None:
     image_ref = ArtifactRef.from_key(
         artifact_id=UUID("00000000-0000-0000-0000-000000000001"),

@@ -58,7 +58,7 @@ def test_text_payload_keeps_legacy_public_identity() -> None:
 @pytest.mark.asyncio
 async def test_text_input_preserves_multiline_text() -> None:
     output = await TextInputNode().run(
-            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="input"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="input"),
         TextInputConfig(text="first line\n\nthird line\n"),
         TextInputInput(),
     )
@@ -73,7 +73,7 @@ async def test_as_markdown_preserves_source_text_exactly() -> None:
     source = "# Heading\r\n\r\n- café\n- `code`\n\n"
 
     output = await AsMarkdownNode().run(
-            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="markdown"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="markdown"),
         NoConfig(),
         AsMarkdownInput(text=source),
     )
@@ -85,7 +85,7 @@ async def test_as_markdown_preserves_source_text_exactly() -> None:
 @pytest.mark.asyncio
 async def test_text_split_uses_exact_separator_and_preserves_empty_parts() -> None:
     output = await SplitTextNode().run(
-            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="split"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="split"),
         SplitTextConfig(separator="||"),
         SplitTextInput(text="||alpha||||beta||"),
     )
@@ -97,7 +97,7 @@ async def test_text_split_uses_exact_separator_and_preserves_empty_parts() -> No
 @pytest.mark.asyncio
 async def test_text_replace_replaces_every_exact_match() -> None:
     output = await ReplaceTextNode().run(
-            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="replace"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="replace"),
         ReplaceTextConfig(search="cat", replacement="dog"),
         ReplaceTextInput(text="cat scatter cat"),
     )
@@ -113,7 +113,7 @@ async def test_text_replace_replaces_every_exact_match() -> None:
 @pytest.mark.asyncio
 async def test_text_join_preserves_order_and_accepts_empty_parts() -> None:
     output = await JoinTextNode().run(
-            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="join"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="join"),
         JoinTextConfig(separator="|"),
         JoinTextInput(parts=["alpha", "", "beta"]),
     )
@@ -217,10 +217,10 @@ async def test_markdown_inline_factories_round_trip_typed_payload(
     ref = await writers[MARKDOWN.key].write(
         payload,
         ArtifactWriteContext(
-                node_context=NodeExecutionContext(
-                    workspace_id=TEST_WORKSPACE_ID,
-                    node_id="markdown",
-                ),
+            node_context=NodeExecutionContext(
+                workspace_id=TEST_WORKSPACE_ID,
+                node_id="markdown",
+            ),
             provenance=MaterializationProvenance(refs_by_input={}),
         ),
     )
@@ -244,10 +244,10 @@ async def test_text_value_adapters_preserve_inline_payload_and_metadata() -> Non
     ref = await writer.write(
         "persisted text",
         ArtifactWriteContext(
-                node_context=NodeExecutionContext(
-                    workspace_id=TEST_WORKSPACE_ID,
-                    node_id="text",
-                ),
+            node_context=NodeExecutionContext(
+                workspace_id=TEST_WORKSPACE_ID,
+                node_id="text",
+            ),
             provenance=MaterializationProvenance(
                 refs_by_input={"value": (source_ref,)}
             ),

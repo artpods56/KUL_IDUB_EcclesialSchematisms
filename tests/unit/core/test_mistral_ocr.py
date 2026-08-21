@@ -88,9 +88,7 @@ async def test_mistral_node_preserves_full_response_and_source_identity() -> Non
     assert result.engine == "mistral.ocr"
     assert result.model == "mistral-ocr-4-0"
     assert result.markdown == "<!-- page 0 -->\n# page-01.jpg\n"
-    assert result.pages[0].blocks == [
-        {"type": "title", "text": "page-01.jpg"}
-    ]
+    assert result.pages[0].blocks == [{"type": "title", "text": "page-01.jpg"}]
     assert result.raw_response["usage_info"] == {"pages_processed": 1}
     assert "document_annotation" in result.raw_response
     assert result.raw_response["document_annotation"] is None

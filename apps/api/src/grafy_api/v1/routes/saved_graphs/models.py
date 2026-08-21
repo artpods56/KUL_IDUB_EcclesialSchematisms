@@ -775,9 +775,7 @@ class GraphBrowserListResponse(SavedGraphApiModel):
 
     @classmethod
     def from_items(cls, items: list[GraphBrowserItem]) -> "GraphBrowserListResponse":
-        return cls(
-            graphs=[GraphBrowserItemResponse.from_item(item) for item in items]
-        )
+        return cls(graphs=[GraphBrowserItemResponse.from_item(item) for item in items])
 
 
 class CollaborativeHeadResponse(SavedGraphApiModel):

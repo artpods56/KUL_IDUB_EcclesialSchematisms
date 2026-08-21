@@ -41,8 +41,7 @@ class PersistentInvocationCache(InvocationCachePort):
                 return None
             refs = _artifact_refs(entry.outputs)
             artifacts = await unit_of_work.artifacts.get_many(
-                workspace_id,
-                {ref.artifact_id for ref in refs}
+                workspace_id, {ref.artifact_id for ref in refs}
             )
 
         stale = False

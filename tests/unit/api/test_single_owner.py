@@ -55,7 +55,6 @@ async def test_create_app_startup_acquires_owner_lease(tmp_path: Path) -> None:
     settings = Settings(
         workspace=workspace,
         database_url=SecretStr(database_url),
-        execution_backend="inline",
         command_hmac_key=SecretStr("test-single-owner-hmac-key"),
         require_single_api_owner=True,
     )

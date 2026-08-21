@@ -313,9 +313,7 @@ class RunExecutionManager:
         self._execution_history = execution_history
         self._terminal_retention = terminal_retention
         self._event_capacity = event_capacity
-        self._admission_limiter = (
-            admission_limiter or ExecutionAdmissionLimiter(2)
-        )
+        self._admission_limiter = admission_limiter or ExecutionAdmissionLimiter(2)
         self._executions: dict[UUID, _RunExecutionRecord] = {}
         self._terminal_order: deque[UUID] = deque()
         self._lock = asyncio.Lock()
@@ -470,8 +468,7 @@ class RunExecutionManager:
                 ):
                     try:
                         await self._execution_history.mark_cancelling(
-                            workspace_id,
-                            record.history_execution
+                            workspace_id, record.history_execution
                         )
                     except Exception as exc:
                         record.error = (

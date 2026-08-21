@@ -275,9 +275,9 @@ def test_topological_order_on_large_sparse_dag() -> None:
     correctly without rescanning every edge per node."""
 
     chain = 200
-    nodes = [
-        _node(f"n{i}") for i in range(chain)
-    ] + [_node(f"branch{i}") for i in range(100)]
+    nodes = [_node(f"n{i}") for i in range(chain)] + [
+        _node(f"branch{i}") for i in range(100)
+    ]
     edges: list[RunEdgeRequest] = []
     for i in range(chain - 1):
         edges.append(_edge(f"n{i}", f"n{i + 1}"))

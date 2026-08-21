@@ -156,7 +156,7 @@ async def import_geojson(
         byte_size=len(content),
     )
     result = await ImportGeoJsonNode(uploads_dir, unit_of_work=uow).run(
-            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="import"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="import"),
         GeoJsonUploadConfig(
             uploads=[
                 GeoJsonUploadItem(
@@ -1059,7 +1059,7 @@ async def test_wfs_import_rejects_oversized_page_with_context(
         match=r"example.com.*geonode:large.*1024-byte page limit",
     ):
         await node.run(
-                NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="wfs"),
+            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="wfs"),
             WfsImportConfig.model_validate(
                 {
                     "service_url": "https://example.com/geoserver/ows",
@@ -1093,7 +1093,7 @@ async def test_geotiff_upload_and_raster_persistence_produce_cog_and_xyz_tiles(
         byte_size=len(source_content),
     )
     upload = await ImportGeoTiffNode(uploads, unit_of_work=unit_of_work).run(
-            NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="upload"),
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="upload"),
         GeoTiffUploadConfig(
             uploads=[
                 GeoTiffUploadItem(
@@ -1117,10 +1117,10 @@ async def test_geotiff_upload_and_raster_persistence_produce_cog_and_xyz_tiles(
     ref = await writer.write(
         upload.raster,
         ArtifactWriteContext(
-                node_context=NodeExecutionContext(
-                    workspace_id=TEST_WORKSPACE_ID,
-                    node_id="raster",
-                ),
+            node_context=NodeExecutionContext(
+                workspace_id=TEST_WORKSPACE_ID,
+                node_id="raster",
+            ),
             provenance=MaterializationProvenance(refs_by_input={}),
         ),
     )
@@ -1180,10 +1180,10 @@ async def test_feature_collection_storage_keeps_exact_source_and_pmtiles_sidecar
     ref = await writer.write(
         collection,
         ArtifactWriteContext(
-                node_context=NodeExecutionContext(
-                    workspace_id=TEST_WORKSPACE_ID,
-                    node_id="import",
-                ),
+            node_context=NodeExecutionContext(
+                workspace_id=TEST_WORKSPACE_ID,
+                node_id="import",
+            ),
             provenance=MaterializationProvenance(refs_by_input={}),
         ),
     )
@@ -1240,10 +1240,10 @@ async def test_empty_feature_source_is_exact_without_invalid_pmtiles(
     ).write(
         collection,
         ArtifactWriteContext(
-                node_context=NodeExecutionContext(
-                    workspace_id=TEST_WORKSPACE_ID,
-                    node_id="empty",
-                ),
+            node_context=NodeExecutionContext(
+                workspace_id=TEST_WORKSPACE_ID,
+                node_id="empty",
+            ),
             provenance=MaterializationProvenance(refs_by_input={}),
         ),
     )

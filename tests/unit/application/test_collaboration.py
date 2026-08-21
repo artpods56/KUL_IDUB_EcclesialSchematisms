@@ -61,9 +61,7 @@ class FakeCollaborationRepository:
         self.heads: dict[tuple[UUID, UUID], CollaborativeGraphHead] = {}
         self.receipts: dict[tuple[UUID, UUID, UUID], GraphCommandReceipt] = {}
         self.journal: list[GraphCommandJournalEntry] = []
-        self.mappings: dict[
-            tuple[UUID, UUID, UUID, int], GraphCheckpointMapping
-        ] = {}
+        self.mappings: dict[tuple[UUID, UUID, UUID, int], GraphCheckpointMapping] = {}
         self.active_slots: dict[tuple[UUID, UUID], GraphActiveExecutionSlot] = {}
         self.locked: list[tuple[UUID, UUID]] = []
         self.graphs_by_id: dict[UUID, SavedGraph] = {}
@@ -109,9 +107,7 @@ class FakeCollaborationRepository:
         self.journal = [
             entry
             for entry in self.journal
-            if not (
-                entry.workspace_id == workspace_id and entry.graph_id == graph_id
-            )
+            if not (entry.workspace_id == workspace_id and entry.graph_id == graph_id)
         ]
 
     async def get_receipt(
@@ -163,7 +159,9 @@ class FakeCollaborationRepository:
     ) -> GraphActiveExecutionSlot | None:
         return self.active_slots.get((workspace_id, graph_id))
 
-    async def acquire_active_execution_slot(self, slot: GraphActiveExecutionSlot) -> bool:
+    async def acquire_active_execution_slot(
+        self, slot: GraphActiveExecutionSlot
+    ) -> bool:
         key = (slot.workspace_id, slot.graph_id)
         if key in self.active_slots:
             return False
@@ -227,7 +225,9 @@ class FakeSavedGraphRepository:
 
     async def list(self, workspace_id: UUID) -> list[SavedGraph]:
         return [
-            graph for graph in self.graphs.values() if graph.workspace_id == workspace_id
+            graph
+            for graph in self.graphs.values()
+            if graph.workspace_id == workspace_id
         ]
 
     async def remove(self, workspace_id: UUID, graph: SavedGraph) -> None:
@@ -301,8 +301,7 @@ class FakeCollaborationUnitOfWork:
     def _capture_state(self) -> dict[str, object]:
         return {
             "heads": {
-                key: _clone_head(head)
-                for key, head in self.collaboration.heads.items()
+                key: _clone_head(head) for key, head in self.collaboration.heads.items()
             },
             "receipts": {
                 key: receipt.model_copy(deep=True)
@@ -393,7 +392,9 @@ def _clone_head(head: CollaborativeGraphHead) -> CollaborativeGraphHead:
         checkpoint_sequence=head.checkpoint_sequence,
         checkpoint_revision=head.checkpoint_revision,
         name=head.name,
-        document=SavedGraphDocument.model_validate(head.document.model_dump(mode="json")),
+        document=SavedGraphDocument.model_validate(
+            head.document.model_dump(mode="json")
+        ),
         updated_at=head.updated_at,
     )
 
@@ -404,7 +405,9 @@ def _clone_graph(graph: SavedGraph) -> SavedGraph:
         created_by_user_id=graph.created_by_user_id,
         id=graph.id,
         name=graph.name,
-        document=SavedGraphDocument.model_validate(graph.document.model_dump(mode="json")),
+        document=SavedGraphDocument.model_validate(
+            graph.document.model_dump(mode="json")
+        ),
         revision=graph.revision,
         created_at=graph.created_at,
         updated_at=graph.updated_at,
@@ -538,7 +541,12 @@ async def test_bootstrap_graph_commits_head_checkpoint_and_receipt() -> None:
     assert head.checkpoint_revision == 1
     assert receipt.outcome is CommandReceiptOutcome.ACCEPTED
     assert factory.collaboration.journal[0].accepted_sequence == 1
-    assert (WORKSPACE_ID, graph_id, head.room_epoch, 1) in factory.collaboration.mappings
+    assert (
+        WORKSPACE_ID,
+        graph_id,
+        head.room_epoch,
+        1,
+    ) in factory.collaboration.mappings
     assert factory.created[-1].commit_count == 1
 
 
@@ -915,9 +923,7 @@ async def test_accept_command_rebases_move_against_newer_head() -> None:
         command_id=uuid4(),
         observed_sequence=observed_sequence,
         observed_room_epoch=observed_epoch,
-        command=MoveNodesCommand(
-            positions=(MoveNodePosition(node_id="n1", x=9, y=8),)
-        ),
+        command=MoveNodesCommand(positions=(MoveNodePosition(node_id="n1", x=9, y=8),)),
     )
 
     assert updated.collaboration_sequence == 3
@@ -1090,7 +1096,9 @@ async def test_delete_graph_collaboration_aware_discards_uncheckpointed() -> Non
 
 
 @pytest.mark.asyncio
-async def test_accept_command_audits_capability_denied_and_idempotency_mismatch() -> None:
+async def test_accept_command_audits_capability_denied_and_idempotency_mismatch() -> (
+    None
+):
     viewer_factory = FakeFactory(role=WorkspaceRole.VIEWER)
     viewer_service = _service(viewer_factory)
     graph_id = uuid4()

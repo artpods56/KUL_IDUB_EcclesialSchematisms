@@ -273,9 +273,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 lambda: SqlAlchemyUnitOfWork(database.sessions),
                 registry,
             )
-            templates = TemplateService(
-                lambda: SqlAlchemyUnitOfWork(database.sessions)
-            )
+            templates = TemplateService(lambda: SqlAlchemyUnitOfWork(database.sessions))
             collaboration = CollaborationService(
                 lambda: SqlAlchemyUnitOfWork(database.sessions),
                 registry,
@@ -284,9 +282,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 saved_graphs=saved_graphs,
             )
             node_secrets = NodeSecretService(
-                unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(
-                    database.sessions
-                ),
+                unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
                 plugin_registry=registry,
                 encryption_key=resolved_settings.credential_encryption_key,
             )
@@ -295,13 +291,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 workspace=resolved_settings.workspace,
                 unit_of_work=SqlAlchemyUnitOfWork(database.sessions),
                 storage=storage,
-                execution_backend=resolved_settings.execution_backend,
                 map_max_concurrency=resolved_settings.map_max_concurrency,
                 max_active_executions=resolved_settings.max_active_executions,
-                prefect_task_retries=resolved_settings.prefect_task_retries,
-                prefect_task_retry_delay_seconds=(
-                    resolved_settings.prefect_task_retry_delay_seconds
-                ),
                 storage_backend=resolved_settings.storage_backend,
                 bucket=resolved_settings.storage_bucket,
                 staged_upload_max_bytes=resolved_settings.staged_upload_max_bytes,

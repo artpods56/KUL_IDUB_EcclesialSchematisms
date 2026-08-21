@@ -41,11 +41,7 @@ def test_execution_history_models_validate_lifecycle_and_count_artifacts() -> No
         item_refs=[
             first,
             first.model_copy(
-                update={
-                    "artifact_id": UUID(
-                        "00000000-0000-0000-0000-000000000012"
-                    )
-                }
+                update={"artifact_id": UUID("00000000-0000-0000-0000-000000000012")}
             ),
         ],
     )
@@ -60,9 +56,10 @@ def test_execution_history_models_validate_lifecycle_and_count_artifacts() -> No
 
     assert result.node_id == "extract"
     assert result.artifact_count == 3
-    assert GraphExecutionNodeResult.outputs_from_storage(
-        result.storage_envelopes()
-    ) == result.outputs
+    assert (
+        GraphExecutionNodeResult.outputs_from_storage(result.storage_envelopes())
+        == result.outputs
+    )
 
 
 @pytest.mark.asyncio
@@ -132,7 +129,9 @@ async def test_in_memory_execution_history_rejects_unrequested_node_results() ->
 
 
 @pytest.mark.asyncio
-async def test_in_memory_execution_identity_is_global_but_reads_are_workspace_scoped() -> None:
+async def test_in_memory_execution_identity_is_global_but_reads_are_workspace_scoped() -> (
+    None
+):
     unit_of_work = InMemoryUnitOfWork()
     execution = GraphExecution(
         workspace_id=WORKSPACE_ONE,
@@ -144,10 +143,13 @@ async def test_in_memory_execution_identity_is_global_but_reads_are_workspace_sc
 
     async with unit_of_work as entered:
         await entered.execution_history.add(execution)
-        assert await entered.execution_history.get(
-            WORKSPACE_TWO,
-            execution.execution_id,
-        ) is None
+        assert (
+            await entered.execution_history.get(
+                WORKSPACE_TWO,
+                execution.execution_id,
+            )
+            is None
+        )
         await entered.commit()
 
     async with unit_of_work as entered:
@@ -250,9 +252,7 @@ def test_durable_transition_table_enforces_legal_lifecycle() -> None:
     )
     assert succeeded.status == "succeeded"
     assert succeeded.finished_at is not None
-    assert succeeded.workflow_run_id == UUID(
-        "00000000-0000-0000-0000-000000000099"
-    )
+    assert succeeded.workflow_run_id == UUID("00000000-0000-0000-0000-000000000099")
 
     # running -> failed terminal carries error and finish time together.
     failed = _execution("running")

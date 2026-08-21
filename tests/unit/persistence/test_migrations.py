@@ -776,20 +776,14 @@ def test_tenant_migration_backfills_all_0006_resources_and_checks_composite_keys
 
     with create_engine(f"sqlite:///{database_path}").begin() as connection:
         connection.execute(
-            text(
-                "UPDATE node_secrets SET aad_version = 2 "
-                "WHERE graph_id = :graph_id"
-            ),
+            text("UPDATE node_secrets SET aad_version = 2 WHERE graph_id = :graph_id"),
             {"graph_id": graph_id.hex},
         )
     with pytest.raises(RuntimeError, match="AAD version 2"):
         command.downgrade(config, "0006_execution_history")
     with create_engine(f"sqlite:///{database_path}").begin() as connection:
         connection.execute(
-            text(
-                "UPDATE node_secrets SET aad_version = 1 "
-                "WHERE graph_id = :graph_id"
-            ),
+            text("UPDATE node_secrets SET aad_version = 1 WHERE graph_id = :graph_id"),
             {"graph_id": graph_id.hex},
         )
 

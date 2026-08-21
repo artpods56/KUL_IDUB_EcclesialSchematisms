@@ -30,7 +30,6 @@ ACTOR_DISPLAY_COLORS = (
 )
 
 
-
 ActiveExecutionLifecycleStatus = Literal["queued", "running", "cancelling"]
 TerminalExecutionStatus = Literal["cancelled", "succeeded", "failed"]
 
@@ -132,8 +131,12 @@ class PresenceUpdateSubmitMessage(RoomProtocolModel):
     type: Literal["presence.update"] = "presence.update"
     presence_sequence: int = Field(ge=1)
     cursor: PresencePoint | None = None
-    selected_node_ids: tuple[str, ...] = Field(default=(), max_length=PRESENCE_MAX_SELECTED_IDS)
-    selected_edge_ids: tuple[str, ...] = Field(default=(), max_length=PRESENCE_MAX_SELECTED_IDS)
+    selected_node_ids: tuple[str, ...] = Field(
+        default=(), max_length=PRESENCE_MAX_SELECTED_IDS
+    )
+    selected_edge_ids: tuple[str, ...] = Field(
+        default=(), max_length=PRESENCE_MAX_SELECTED_IDS
+    )
     activity: PresenceActivityKind | None = None
     activity_target_ids: tuple[str, ...] = Field(
         default=(),
@@ -148,7 +151,6 @@ class PresenceUpdateSubmitMessage(RoomProtocolModel):
     @classmethod
     def _normalize_id_lists(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         return _normalize_presence_ids(value)
-
 
 
 class ActiveExecutionSummary(RoomProtocolModel):
@@ -179,6 +181,7 @@ class ActiveExecutionSummary(RoomProtocolModel):
             normalized.append(node_id)
         return normalized
 
+
 class RoomReadyMessage(RoomProtocolModel):
     protocol_version: Literal[1] = PROTOCOL_VERSION
     type: Literal["room.ready"] = "room.ready"
@@ -191,7 +194,6 @@ class RoomReadyMessage(RoomProtocolModel):
     participants: list[PresenceParticipant] = Field(default_factory=list)
     active_execution: ActiveExecutionSummary | None = None
     registry_marker: str = "builtin"
-
 
 
 class ExecutionActiveMessage(RoomProtocolModel):
@@ -211,6 +213,7 @@ class ExecutionClearedMessage(RoomProtocolModel):
     status: TerminalExecutionStatus
     graph_revision: int = Field(ge=1)
     error: str | None = Field(default=None, max_length=2000)
+
 
 class GraphCommandSubmitMessage(RoomProtocolModel):
     protocol_version: Literal[1] = PROTOCOL_VERSION

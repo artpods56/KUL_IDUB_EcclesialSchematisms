@@ -50,7 +50,6 @@ def test_plugin_factories_receive_an_existing_upload_directory(tmp_path: Path) -
     build_workbench_components(
         plugin_registry=registry,
         workspace=tmp_path / "workbench",
-        execution_backend="inline",
     )
 
     assert observed_upload_directories == [

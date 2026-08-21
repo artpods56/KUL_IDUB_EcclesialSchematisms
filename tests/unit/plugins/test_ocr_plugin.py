@@ -44,9 +44,9 @@ def test_ocr_plugin_declares_complete_runtime_contributions(tmp_path: Path) -> N
         ("ocr.mistral.tables", 2),
         ("table.markdown.extract", 1),
     }
-    assert {registration.node_class.plugin_slug for registration in ocr_registrations} == {
-        "external.ocr"
-    }
+    assert {
+        registration.node_class.plugin_slug for registration in ocr_registrations
+    } == {"external.ocr"}
     assert {registration.node_class.title for registration in ocr_registrations} == {
         "Tesseract OCR",
         "Mistral OCR 4",

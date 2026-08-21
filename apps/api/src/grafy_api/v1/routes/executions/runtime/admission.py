@@ -9,9 +9,7 @@ from uuid import UUID, uuid4
 class RunExecutionCapacityError(RuntimeError):
     """Raised before admission when the process execution budget is exhausted."""
 
-    error_code: Literal["execution_capacity_exceeded"] = (
-        "execution_capacity_exceeded"
-    )
+    error_code: Literal["execution_capacity_exceeded"] = "execution_capacity_exceeded"
 
     def __init__(self, max_active_executions: int) -> None:
         self.max_active_executions = max_active_executions

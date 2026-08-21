@@ -68,9 +68,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["execution_id"],
             ["graph_executions.execution_id"],
-            name=(
-                "fk_exec_req_nodes_execution"
-            ),
+            name=("fk_exec_req_nodes_execution"),
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint(
@@ -104,9 +102,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["execution_id"],
             ["graph_executions.execution_id"],
-            name=(
-                "fk_exec_result_nodes_execution"
-            ),
+            name=("fk_exec_result_nodes_execution"),
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint(

@@ -90,7 +90,9 @@ async def _persist_graph(
 
 
 @pytest.mark.asyncio
-async def test_in_memory_materializations_follow_unit_of_work_commit_boundaries() -> None:
+async def test_in_memory_materializations_follow_unit_of_work_commit_boundaries() -> (
+    None
+):
     store = InMemoryDataStore()
     unit_of_work = InMemoryUnitOfWork(store)
     graph_id = UUID("00000000-0000-0000-0000-000000000001")
@@ -172,8 +174,7 @@ async def test_artifact_metadata_round_trips_in_a_fresh_session(
         loaded_inline = await entered.artifacts.get(WORKSPACE_ID, inline.id)
         loaded_stored = await entered.artifacts.get(WORKSPACE_ID, stored.id)
         integer_artifacts = await entered.artifacts.list_by_type(
-            WORKSPACE_ID,
-            ArtifactTypeKey("scalar.integer", 1)
+            WORKSPACE_ID, ArtifactTypeKey("scalar.integer", 1)
         )
 
     assert loaded_inline is not None
@@ -498,8 +499,7 @@ async def test_reusable_unit_of_work_is_isolated_per_async_task(
             await asyncio.wait_for(both_entered.wait(), timeout=1)
             return len(
                 await entered.artifacts.list_by_type(
-                    WORKSPACE_ID,
-                    ArtifactTypeKey("scalar.integer", 1)
+                    WORKSPACE_ID, ArtifactTypeKey("scalar.integer", 1)
                 )
             )
 

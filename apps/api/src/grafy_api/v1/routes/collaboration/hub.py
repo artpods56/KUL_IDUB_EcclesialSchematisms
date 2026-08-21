@@ -113,7 +113,9 @@ class GraphRoomHub:
         key = (session.workspace_id, session.graph_id)
         async with self._lock:
             room = self._rooms.get(key)
-            member = room.get(session.graph_room_session_id) if room is not None else None
+            member = (
+                room.get(session.graph_room_session_id) if room is not None else None
+            )
             if (
                 session.closed
                 or member is None
@@ -216,7 +218,9 @@ class GraphRoomHub:
         async with self._lock:
             removed, cleared = self._expire_locked(key, now)
             room = self._rooms.get(key)
-            member = room.get(session.graph_room_session_id) if room is not None else None
+            member = (
+                room.get(session.graph_room_session_id) if room is not None else None
+            )
             # A delayed update must match the exact open registered session; it
             # must never recreate presence for an already-closed member.
             if member is None or member.session is not session or session.closed:
@@ -267,7 +271,8 @@ class GraphRoomHub:
                     recipients = [
                         peer.session
                         for peer in room.values()
-                        if peer.session.graph_room_session_id != session.graph_room_session_id
+                        if peer.session.graph_room_session_id
+                        != session.graph_room_session_id
                         and not peer.session.closed
                     ]
         await self._fanout_expiry(
@@ -320,8 +325,6 @@ class GraphRoomHub:
     ) -> None:
         for session in await self._sessions_for(workspace_id, graph_id):
             await self._enqueue(session, message)
-
-
 
     async def publish_execution_active(
         self,
@@ -551,7 +554,9 @@ class GraphRoomHub:
                 room.pop(session.graph_room_session_id, None)
                 if had_presence:
                     leave_recipients = [
-                        peer.session for peer in room.values() if not peer.session.closed
+                        peer.session
+                        for peer in room.values()
+                        if not peer.session.closed
                     ]
                 if not room:
                     self._rooms.pop(key, None)
@@ -561,7 +566,10 @@ class GraphRoomHub:
             )
             for peer in leave_recipients:
                 await self._enqueue_presence(peer, leave_message)
-        if session.sender_task is not None and session.sender_task is not asyncio.current_task():
+        if (
+            session.sender_task is not None
+            and session.sender_task is not asyncio.current_task()
+        ):
             session.sender_task.cancel()
         try:
             session.outbound.put_nowait(None)

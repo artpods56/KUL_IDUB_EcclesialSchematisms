@@ -265,10 +265,7 @@ async def test_count_supports_empty_and_unordered_sequences(
 
 @pytest.mark.asyncio
 async def test_slice_selects_refs_and_builds_truthful_sequence_metadata() -> None:
-    refs = [
-        ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE_TYPE)
-        for _ in range(4)
-    ]
+    refs = [ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE_TYPE) for _ in range(4)]
     source = ArtifactRefSequence(
         artifact_type=VALUE_TYPE.id,
         schema_version=VALUE_TYPE.schema_version,
@@ -317,10 +314,7 @@ async def test_slice_handles_open_ended_empty_and_beyond_end_ranges(
     expected_indices: list[int],
     expected_count: int | None,
 ) -> None:
-    refs = [
-        ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE_TYPE)
-        for _ in range(4)
-    ]
+    refs = [ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE_TYPE) for _ in range(4)]
     source = ArtifactRefSequence.from_key(key=VALUE_TYPE, item_refs=refs)
 
     result = await _runtime().run_node(
@@ -358,10 +352,7 @@ async def test_slice_rejects_unordered_sequence_with_its_id() -> None:
 
 @pytest.mark.asyncio
 async def test_item_at_returns_the_existing_ref() -> None:
-    refs = [
-        ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE_TYPE)
-        for _ in range(3)
-    ]
+    refs = [ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE_TYPE) for _ in range(3)]
     source = ArtifactRefSequence.from_key(key=VALUE_TYPE, item_refs=refs)
 
     result = await _runtime().run_node(

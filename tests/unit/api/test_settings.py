@@ -46,64 +46,16 @@ def test_database_url_reuses_legacy_database(tmp_path: Path) -> None:
     )
 
 
-def test_execution_defaults_to_prefect_with_bounded_map_concurrency(
+def test_execution_defaults_with_bounded_map_concurrency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("GRAFY_EXECUTION_BACKEND", raising=False)
     monkeypatch.delenv("GRAFY_MAP_MAX_CONCURRENCY", raising=False)
     monkeypatch.delenv("GRAFY_MAX_ACTIVE_EXECUTIONS", raising=False)
-    monkeypatch.delenv("GRAFY_PREFECT_TASK_RETRIES", raising=False)
-    monkeypatch.delenv(
-        "GRAFY_PREFECT_TASK_RETRY_DELAY_SECONDS",
-        raising=False,
-    )
     # Defaults must be tested independently from a developer's local .env.
     settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
 
-    assert settings.execution_backend == "prefect"
     assert settings.map_max_concurrency == 4
     assert settings.max_active_executions == 2
-    assert settings.prefect_task_retries == 0
-    assert settings.prefect_task_retry_delay_seconds == 0
-
-
-def test_execution_backend_can_be_selected_from_the_environment(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("GRAFY_EXECUTION_BACKEND", "inline")
-
-    assert Settings().execution_backend == "inline"
-
-
-@pytest.mark.parametrize(
-    "environment_variable",
-    ["PREFECT_API_URL", "GRAFY_PREFECT_API_URL"],
-)
-def test_prefect_api_url_accepts_supported_environment_names(
-    monkeypatch: pytest.MonkeyPatch,
-    environment_variable: str,
-) -> None:
-    monkeypatch.delenv("PREFECT_API_URL", raising=False)
-    monkeypatch.delenv("GRAFY_PREFECT_API_URL", raising=False)
-    monkeypatch.setenv(environment_variable, "http://prefect.test:4200/api")
-
-    settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
-
-    assert settings.prefect_api_url == "http://prefect.test:4200/api"
-
-
-def test_prefect_api_url_accepts_the_explicit_field_name() -> None:
-    settings = Settings(
-        _env_file=None,  # pyright: ignore[reportCallIssue]
-        prefect_api_url="http://prefect.test:4200/api",
-    )
-
-    assert settings.prefect_api_url == "http://prefect.test:4200/api"
-
-
-def test_execution_backend_rejects_unknown_values() -> None:
-    with pytest.raises(ValidationError):
-        Settings.model_validate({"execution_backend": "worker"})
 
 
 def test_map_max_concurrency_can_be_selected_from_the_environment(
@@ -131,13 +83,6 @@ def test_max_active_executions_can_be_selected_from_the_environment(
 def test_max_active_executions_is_bounded(value: int) -> None:
     with pytest.raises(ValidationError):
         Settings(max_active_executions=value)
-
-
-def test_prefect_task_retry_settings_must_not_be_negative() -> None:
-    with pytest.raises(ValidationError):
-        Settings(prefect_task_retries=-1)
-    with pytest.raises(ValidationError):
-        Settings(prefect_task_retry_delay_seconds=-0.1)
 
 
 def test_oidc_signing_algorithms_are_strictly_allowlisted() -> None:

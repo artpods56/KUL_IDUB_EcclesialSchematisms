@@ -596,10 +596,10 @@ def test_invocation_cache_key_requires_input_content_hashes() -> None:
     assert (
         invocation_cache_key(
             node=ScalarNode(),
-                context=NodeExecutionContext(
-                    workspace_id=TEST_WORKSPACE_ID,
-                    node_id="scalar",
-                ),
+            context=NodeExecutionContext(
+                workspace_id=TEST_WORKSPACE_ID,
+                node_id="scalar",
+            ),
             inputs={"item": input_ref},
             config=NoConfig(),
             artifact_type_bindings={},

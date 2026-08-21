@@ -447,8 +447,7 @@ class NodeSecretService(NodeSecretResolverPort):
     def _resolved_encryption_key(self) -> tuple[bytes, str]:
         if self._encryption_key is None:
             raise NodeSecretConfigurationError(
-                "GRAFY_CREDENTIAL_ENCRYPTION_KEY is required for node secret "
-                "operations"
+                "GRAFY_CREDENTIAL_ENCRYPTION_KEY is required for node secret operations"
             )
         encoded = self._encryption_key.get_secret_value()
         try:

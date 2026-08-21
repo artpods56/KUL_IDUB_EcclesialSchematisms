@@ -85,8 +85,7 @@ class TableSchemaResponse(ApiResponse):
     def from_page(cls, page: TablePage) -> "TableSchemaResponse":
         return cls(
             columns=[
-                TableColumnResponse.from_column(column)
-                for column in page.columns
+                TableColumnResponse.from_column(column) for column in page.columns
             ],
             total_rows=page.total_rows,
         )
@@ -157,18 +156,12 @@ class TablePageResponse(ApiResponse):
         else:
             columns_by_id = {column.id: column for column in page.columns}
             missing_column_ids = [
-                column_id
-                for column_id in column_ids
-                if column_id not in columns_by_id
+                column_id for column_id in column_ids if column_id not in columns_by_id
             ]
             if missing_column_ids:
-                raise ValueError(
-                    f"Table has no column(s) {missing_column_ids!r}"
-                )
+                raise ValueError(f"Table has no column(s) {missing_column_ids!r}")
             effective_column_offset = 0
-            visible_columns = [
-                columns_by_id[column_id] for column_id in column_ids
-            ]
+            visible_columns = [columns_by_id[column_id] for column_id in column_ids]
         return cls(
             columns=[
                 TableColumnResponse.from_column(column) for column in visible_columns
@@ -198,9 +191,7 @@ class TablePageResponse(ApiResponse):
         )
 
 
-type ArtifactInteractionScalar = (
-    StrictStr | StrictInt | StrictFloat | StrictBool | None
-)
+type ArtifactInteractionScalar = StrictStr | StrictInt | StrictFloat | StrictBool | None
 
 
 class ArtifactExactMatchRow(BaseModel):
@@ -251,9 +242,9 @@ class TableQueryRequest(BaseModel):
     limit: StrictInt = Field(default=50, ge=1, le=100)
     column_offset: StrictInt = Field(default=0, ge=0)
     column_limit: StrictInt = Field(default=25, ge=1, le=100)
-    column_ids: list[
-        Annotated[str, Field(min_length=1, max_length=255)]
-    ] | None = Field(default=None, min_length=1, max_length=100)
+    column_ids: list[Annotated[str, Field(min_length=1, max_length=255)]] | None = (
+        Field(default=None, min_length=1, max_length=100)
+    )
     max_cell_characters: StrictInt = Field(default=256, ge=32, le=2_000)
 
 

@@ -250,9 +250,7 @@ async def test_cursor_paging_is_stable_when_execution_timestamps_tie(
         execution_ids[2],
         execution_ids[1],
     ]
-    assert [item.execution.execution_id for item in second.items] == [
-        execution_ids[0]
-    ]
+    assert [item.execution.execution_id for item in second.items] == [execution_ids[0]]
     assert second.next_cursor is None
 
 
@@ -391,12 +389,10 @@ async def test_restart_recovery_fails_only_active_executions(
         "succeeded",
     )
     execution_ids = [
-        UUID(f"00000000-0000-0000-0000-{index:012d}")
-        for index in range(410, 414)
+        UUID(f"00000000-0000-0000-0000-{index:012d}") for index in range(410, 414)
     ]
     second_workspace_execution_ids = [
-        UUID(f"00000000-0000-0000-0000-{index:012d}")
-        for index in range(420, 424)
+        UUID(f"00000000-0000-0000-0000-{index:012d}") for index in range(420, 424)
     ]
     async with unit_of_work as entered:
         for execution_id, status in zip(execution_ids, statuses, strict=True):
@@ -513,6 +509,5 @@ async def test_deleting_graph_cascades_history_and_preserves_artifacts(
             is None
         )
         assert (
-            await session.scalar(select(schema.graph_executions.c.execution_id))
-            is None
+            await session.scalar(select(schema.graph_executions.c.execution_id)) is None
         )

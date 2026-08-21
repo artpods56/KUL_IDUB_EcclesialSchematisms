@@ -118,9 +118,7 @@ def object_schema() -> str:
 
 
 def test_node_declares_many_messages_optional_schema_and_write_only_key() -> None:
-    assert OpenAICompatibleNode.operator_id == (
-        "llm.openai_compatible.chat_completion"
-    )
+    assert OpenAICompatibleNode.operator_id == ("llm.openai_compatible.chat_completion")
     assert OpenAICompatibleNode.operator_version == 1
     assert OpenAICompatibleNode.plugin_slug == "external.llm"
     assert OpenAICompatibleNode.input_contract.ports["messages"].accepts == (
@@ -314,9 +312,7 @@ async def test_node_maps_provider_error_without_rendering_secret_or_body() -> No
 
     with pytest.raises(
         OpenAICompatibleExecutionError,
-        match=(
-            "text output.*gpt-4.1-mini.*https://api.openai.com/v1.*1 messages"
-        ),
+        match=("text output.*gpt-4.1-mini.*https://api.openai.com/v1.*1 messages"),
     ) as captured:
         await node.run(
             NodeExecutionContext(

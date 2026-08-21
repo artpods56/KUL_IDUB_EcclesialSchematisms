@@ -42,7 +42,6 @@ def _auth_service() -> AuthService:
         oidc_issuer="https://issuer.example.test",
         oidc_client_id="grafy-client",
         oidc_auth_wrapping_key=SecretStr("test-wrapping-key"),
-        execution_backend="inline",
     )
     return AuthService(
         settings=settings,
@@ -365,7 +364,6 @@ async def test_protocol_issuer_successfully_provisions_identity_and_rotates_sess
         oidc_auth_wrapping_key=SecretStr("protocol-wrapping-key"),
         auth_cookie_secure=False,
         database_url=SecretStr(database_url),
-        execution_backend="inline",
     )
     auth = AuthService(
         settings=settings,

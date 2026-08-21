@@ -138,8 +138,7 @@ async def test_sqlalchemy_executor_runs_named_batch_in_order_and_commits() -> No
         )
 
     assert factory.url == (
-        "postgresql+asyncpg://grafy:postgres-password@"
-        "postgres.internal:5433/documents"
+        "postgresql+asyncpg://grafy:postgres-password@postgres.internal:5433/documents"
     )
     assert factory.options == {
         "connect_args": {

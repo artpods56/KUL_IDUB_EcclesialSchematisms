@@ -47,9 +47,7 @@ async def test_concurrent_tasks_commit_without_losing_artifacts() -> None:
     await asyncio.gather(write_first(), write_second())
 
     async with unit_of_work as entered:
-        stored = await entered.artifacts.get_many(
-            WORKSPACE_ID, [first.id, second.id]
-        )
+        stored = await entered.artifacts.get_many(WORKSPACE_ID, [first.id, second.id])
 
     assert stored == {first.id: first, second.id: second}
     assert unit_of_work.commit_count == 2

@@ -458,7 +458,7 @@ async def test_secret_context_rejects_changed_dependency_binding() -> None:
                         },
                     )
                 ],
-            )
+            ),
         )
 
 
@@ -491,7 +491,7 @@ async def test_secret_nodes_require_explicit_secret_context_before_graph_lookup(
                     )
                     for node_id in ("zeta", "alpha")
                 ],
-            )
+            ),
         )
     assert saved_graphs.calls == []
 
@@ -514,5 +514,5 @@ async def test_saved_context_requires_configured_saved_graph_service() -> None:
                 graph_id=graph.id,
                 graph_revision=graph.revision,
                 nodes=[],
-            )
+            ),
         )
