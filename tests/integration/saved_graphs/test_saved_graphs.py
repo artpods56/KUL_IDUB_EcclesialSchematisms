@@ -5,14 +5,99 @@ from uuid import UUID, uuid4
 from fastapi.testclient import TestClient
 import pytest
 
+from grafy_api.v1.models import ArtifactTypeBindingModel, ArtifactTypeKeyResponse
+from grafy_api.v1.routes.saved_graphs.models import (
+    CheckpointGraphRequest,
+    CopyExactHeadRequest,
+    CreateSavedGraphRequest,
+    GraphPointModel,
+    SavedGraphConversionModel,
+    SavedGraphEdgeModel,
+    SavedGraphInputPlugModel,
+    SavedGraphNodeLayoutModel,
+    SavedGraphNodeModel,
+    SavedGraphProjectionModel,
+    SubmitGraphCommandRequest,
+    UpdateSavedGraphRequest,
+)
 from grafy_core.domain.collaboration import RenameGraphCommand
 from grafy_core.domain.errors import NotFoundError
 from grafy_core.domain.identity import ActorContext
 
-from tests.support.identity import TEST_USER_ID, WORKSPACE_ID, workspace_api_path
+from tests.support.clients import GrafyApi
+from tests.support.identity import TEST_USER_ID, WORKSPACE_ID
 
 
-def _graph_payload(name: str = "Draft graph") -> dict[str, object]:
+def _graph_nodes() -> list[SavedGraphNodeModel]:
+    return [
+        SavedGraphNodeModel(
+            id="source",
+            operator_id="plugin.source",
+            operator_version=1,
+            config={"text": "draft"},
+            position=GraphPointModel(x=10.0, y=20.0),
+            layout=SavedGraphNodeLayoutModel(width=420.0, body_height=180.0),
+        ),
+        SavedGraphNodeModel(
+            id="target",
+            operator_id="plugin.target",
+            operator_version=1,
+            config={},
+            position=GraphPointModel(x=300.0, y=20.0),
+            layout=SavedGraphNodeLayoutModel(appendix_height=320.0),
+            input_plugs=[
+                SavedGraphInputPlugModel(id="primary-value", port="value"),
+            ],
+            artifact_type_bindings=[
+                ArtifactTypeBindingModel(
+                    variable="T",
+                    artifact_type=ArtifactTypeKeyResponse(
+                        id="image.raster", schema_version=1
+                    ),
+                )
+            ],
+        ),
+    ]
+
+
+def _graph_edges() -> list[SavedGraphEdgeModel]:
+    return [
+        SavedGraphEdgeModel(
+            id="source-to-target",
+            from_node="source",
+            from_port="result",
+            to_node="target",
+            to_port="value",
+            to_plug="primary-value",
+            collection_mode="map",
+            projection=SavedGraphProjectionModel(path=["payload", "text"]),
+            conversion_path=[
+                SavedGraphConversionModel(id="example.text.normalize", version=2),
+            ],
+            route_offset=GraphPointModel(x=5.0, y=-3.0),
+        ),
+    ]
+
+
+def _graph_request(name: str = "Draft graph") -> CreateSavedGraphRequest:
+    return CreateSavedGraphRequest(
+        name=name,
+        nodes=_graph_nodes(),
+        edges=_graph_edges(),
+    )
+
+
+def _update_request(name: str, expected_revision: int) -> UpdateSavedGraphRequest:
+    return UpdateSavedGraphRequest(
+        name=name,
+        expected_revision=expected_revision,
+        nodes=_graph_nodes(),
+        edges=_graph_edges(),
+    )
+
+
+def _raw_graph_payload(name: str = "Draft graph") -> dict[str, object]:
+    """A hand-built graph body for boundaries the request models reject."""
     return {
         "name": name,
         "nodes": [
@@ -25,7 +110,10 @@ def _graph_payload(name: str = "Draft graph") -> dict[str, object]:
                 "layout": {
                     "width": 420.0,
                     "body_height": 180.0,
+                    "appendix_height": None,
                 },
+                "input_plugs": [],
+                "artifact_type_bindings": [],
             },
             {
                 "id": "target",
@@ -34,11 +122,11 @@ def _graph_payload(name: str = "Draft graph") -> dict[str, object]:
                 "config": {},
                 "position": {"x": 300.0, "y": 20.0},
                 "layout": {
+                    "width": None,
+                    "body_height": None,
                     "appendix_height": 320.0,
                 },
-                "input_plugs": [
-                    {"id": "primary-value", "port": "value"},
-                ],
+                "input_plugs": [{"id": "primary-value", "port": "value"}],
                 "artifact_type_bindings": [
                     {
                         "variable": "T",
@@ -53,6 +141,7 @@ def _graph_payload(name: str = "Draft graph") -> dict[str, object]:
         "edges": [
             {
                 "id": "source-to-target",
+                "enabled": True,
                 "from_node": "source",
                 "from_port": "result",
                 "to_node": "target",
@@ -60,18 +149,25 @@ def _graph_payload(name: str = "Draft graph") -> dict[str, object]:
                 "to_plug": "primary-value",
                 "collection_mode": "map",
                 "projection": {"path": ["payload", "text"]},
-                "conversion": {"id": "example.text.normalize", "version": 2},
+                "conversion_path": [
+                    {"id": "example.text.normalize", "version": 2},
+                ],
                 "route_offset": {"x": 5.0, "y": -3.0},
-            }
+            },
         ],
+        "presentation": {
+            "viewers": [],
+            "links": [],
+            "bindings": [],
+            "annotations": [],
+        },
     }
 
 
 def test_saved_graph_crud_round_trip(builtin_client: TestClient) -> None:
-    create_response = builtin_client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
-        json=_graph_payload("  Parish index draft  "),
-    )
+    api = GrafyApi(builtin_client)
+    graphs = api.workspace(WORKSPACE_ID).graphs
+    create_response = graphs.create(_graph_request("  Parish index draft  "))
 
     assert create_response.status_code == 201
     created = create_response.json()
@@ -114,11 +210,11 @@ def test_saved_graph_crud_round_trip(builtin_client: TestClient) -> None:
     ]
     assert "conversion" not in created["edges"][0]
 
-    get_response = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}")
+    get_response = graphs.get(graph_id)
     assert get_response.status_code == 200
     assert get_response.json() == created
 
-    list_response = builtin_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs")
+    list_response = graphs.list()
     assert list_response.status_code == 200
     assert list_response.json() == {
         "graphs": [
@@ -133,11 +229,8 @@ def test_saved_graph_crud_round_trip(builtin_client: TestClient) -> None:
         ]
     }
 
-    update_payload = _graph_payload("Updated draft")
-    update_payload["expected_revision"] = 1
-    update_response = builtin_client.put(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}",
-        json=update_payload,
+    update_response = graphs.update(
+        graph_id, _update_request("Updated draft", expected_revision=1)
     )
     assert update_response.status_code == 200
     updated = update_response.json()
@@ -146,17 +239,16 @@ def test_saved_graph_crud_round_trip(builtin_client: TestClient) -> None:
     assert updated["revision"] == 2
     assert updated["created_at"] == created["created_at"]
 
-    delete_response = builtin_client.delete(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}",
-        params={"expected_revision": updated["revision"]},
-    )
+    delete_response = graphs.delete(graph_id, expected_revision=updated["revision"])
     assert delete_response.status_code == 204
     assert delete_response.content == b""
-    assert builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}").status_code == 404
+    assert graphs.get(graph_id).status_code == 404
 
 
 def test_create_rejects_structurally_invalid_graph(builtin_client: TestClient) -> None:
-    payload = _graph_payload()
+    api = GrafyApi(builtin_client)
+    graphs = api.workspace(WORKSPACE_ID).graphs
+    payload = _raw_graph_payload()
     payload["edges"] = [
         {
             "id": "dangling",
@@ -167,21 +259,25 @@ def test_create_rejects_structurally_invalid_graph(builtin_client: TestClient) -
         }
     ]
 
-    response = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=payload)
+    response = builtin_client.post(
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=payload
+    )
 
     assert response.status_code == 422
     assert "missing target node missing" in str(response.json())
-    assert builtin_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs").json() == {"graphs": []}
+    assert graphs.list().json() == {"graphs": []}
 
 
 def test_create_rejects_ambiguous_conversion_fields(
     builtin_client: TestClient,
 ) -> None:
-    payload = _graph_payload()
+    payload = _raw_graph_payload()
     edge = cast(list[dict[str, object]], payload["edges"])[0]
-    edge["conversion_path"] = [edge["conversion"]]
+    edge["conversion"] = edge["conversion_path"][0]
 
-    response = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=payload)
+    response = builtin_client.post(
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=payload
+    )
 
     assert response.status_code == 422
     assert "both conversion and conversion_path" in str(response.json())
@@ -190,7 +286,7 @@ def test_create_rejects_ambiguous_conversion_fields(
 def test_create_rejects_duplicate_artifact_type_binding_variables(
     builtin_client: TestClient,
 ) -> None:
-    payload = _graph_payload()
+    payload = _raw_graph_payload()
     nodes = cast(list[dict[str, object]], payload["nodes"])
     target = nodes[1]
     bindings = cast(list[dict[str, object]], target["artifact_type_bindings"])
@@ -204,7 +300,9 @@ def test_create_rejects_duplicate_artifact_type_binding_variables(
         }
     )
 
-    response = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=payload)
+    response = builtin_client.post(
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=payload
+    )
 
     assert response.status_code == 422
     assert "binding variables must be unique" in str(response.json())
@@ -213,42 +311,55 @@ def test_create_rejects_duplicate_artifact_type_binding_variables(
 def test_saved_graph_preserves_conversion_path_order(
     builtin_client: TestClient,
 ) -> None:
-    payload = _graph_payload("Conversion path")
-    edge = cast(list[dict[str, object]], payload["edges"])[0]
-    edge.pop("conversion")
-    edge["conversion_path"] = [
+    api = GrafyApi(builtin_client)
+    graphs = api.workspace(WORKSPACE_ID).graphs
+    edges = _graph_edges()
+    expected_conversion_path = [
         {"id": "example.text.normalize", "version": 2},
         {"id": "example.text.finalize", "version": 7},
     ]
+    edges[0].conversion_path = [
+        SavedGraphConversionModel(id="example.text.normalize", version=2),
+        SavedGraphConversionModel(id="example.text.finalize", version=7),
+    ]
 
-    create_response = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=payload)
+    create_response = graphs.create(
+        CreateSavedGraphRequest(
+            name="Conversion path", nodes=_graph_nodes(), edges=edges
+        )
+    )
 
     assert create_response.status_code == 201
     created = create_response.json()
-    assert created["edges"][0]["conversion_path"] == edge["conversion_path"]
-    loaded = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{created['id']}")
+    assert created["edges"][0]["conversion_path"] == expected_conversion_path
+    loaded = graphs.get(UUID(created["id"]))
     assert loaded.status_code == 200
-    assert loaded.json()["edges"][0]["conversion_path"] == edge["conversion_path"]
+    assert loaded.json()["edges"][0]["conversion_path"] == expected_conversion_path
 
 
 def test_saved_graph_preserves_disabled_edges(builtin_client: TestClient) -> None:
-    payload = _graph_payload("Disabled edge")
-    edge = cast(list[dict[str, object]], payload["edges"])[0]
-    edge["enabled"] = False
+    api = GrafyApi(builtin_client)
+    graphs = api.workspace(WORKSPACE_ID).graphs
+    edges = _graph_edges()
+    edges[0].enabled = False
 
-    create_response = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=payload)
+    create_response = graphs.create(
+        CreateSavedGraphRequest(name="Disabled edge", nodes=_graph_nodes(), edges=edges)
+    )
 
     assert create_response.status_code == 201
     created = create_response.json()
     assert created["edges"][0]["enabled"] is False
-    loaded = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{created['id']}")
+    loaded = graphs.get(UUID(created["id"]))
     assert loaded.status_code == 200
     assert loaded.json()["edges"][0]["enabled"] is False
 
 
 def test_update_requires_positive_expected_revision(builtin_client: TestClient) -> None:
-    created = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
-    payload = _graph_payload("Invalid revision")
+    api = GrafyApi(builtin_client)
+    graphs = api.workspace(WORKSPACE_ID).graphs
+    created = graphs.create(_graph_request()).json()
+    payload = _raw_graph_payload("Invalid revision")
     payload["expected_revision"] = 0
 
     response = builtin_client.put(
@@ -262,19 +373,14 @@ def test_update_requires_positive_expected_revision(builtin_client: TestClient) 
 def test_missing_saved_graph_returns_not_found_for_crud_operations(
     builtin_client: TestClient,
 ) -> None:
+    api = GrafyApi(builtin_client)
+    graphs = api.workspace(WORKSPACE_ID).graphs
     graph_id = UUID("00000000-0000-0000-0000-000000000404")
-    update_payload = _graph_payload()
-    update_payload["expected_revision"] = 1
-
-    get_response = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}")
-    update_response = builtin_client.put(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}",
-        json=update_payload,
+    get_response = graphs.get(graph_id)
+    update_response = graphs.update(
+        graph_id, _update_request("Draft graph", expected_revision=1)
     )
-    delete_response = builtin_client.delete(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}",
-        params={"expected_revision": 1},
-    )
+    delete_response = graphs.delete(graph_id, expected_revision=1)
 
     assert get_response.status_code == 404
     assert update_response.status_code == 404
@@ -283,20 +389,19 @@ def test_missing_saved_graph_returns_not_found_for_crud_operations(
 
 
 def test_stale_update_returns_revision_conflict(builtin_client: TestClient) -> None:
-    created = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
-    graph_id = created["id"]
-    first_update = _graph_payload("First update")
-    first_update["expected_revision"] = 1
-    stale_update = _graph_payload("Stale update")
-    stale_update["expected_revision"] = 1
+    api = GrafyApi(builtin_client)
+    graphs = api.workspace(WORKSPACE_ID).graphs
+    created = graphs.create(_graph_request()).json()
+    graph_id = UUID(created["id"])
 
     assert (
-        builtin_client.put(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}", json=first_update).status_code
+        graphs.update(
+            graph_id, _update_request("First update", expected_revision=1)
+        ).status_code
         == 200
     )
-    conflict_response = builtin_client.put(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}",
-        json=stale_update,
+    conflict_response = graphs.update(
+        graph_id, _update_request("Stale update", expected_revision=1)
     )
 
     assert conflict_response.status_code == 409
@@ -307,31 +412,27 @@ def test_stale_update_returns_revision_conflict(builtin_client: TestClient) -> N
 def test_stale_delete_returns_revision_conflict_and_preserves_graph(
     builtin_client: TestClient,
 ) -> None:
-    created = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs", json=_graph_payload()).json()
-    update_payload = _graph_payload("Newer graph")
-    update_payload["expected_revision"] = created["revision"]
-    updated = builtin_client.put(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{created['id']}",
-        json=update_payload,
+    api = GrafyApi(builtin_client)
+    graphs = api.workspace(WORKSPACE_ID).graphs
+    created = graphs.create(_graph_request()).json()
+    graph_id = UUID(created["id"])
+    updated = graphs.update(
+        graph_id, _update_request("Newer graph", expected_revision=created["revision"])
     ).json()
 
-    response = builtin_client.delete(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{created['id']}",
-        params={"expected_revision": created["revision"]},
-    )
+    response = graphs.delete(graph_id, expected_revision=created["revision"])
 
     assert response.status_code == 409
     assert "current revision is 2" in response.json()["detail"]
-    assert builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{created['id']}").json() == updated
+    assert graphs.get(graph_id).json() == updated
 
 
 def test_name_length_is_checked_after_whitespace_normalization(
     builtin_client: TestClient,
 ) -> None:
-    response = builtin_client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
-        json=_graph_payload("x" * 160 + " "),
-    )
+    api = GrafyApi(builtin_client)
+    graphs = api.workspace(WORKSPACE_ID).graphs
+    response = graphs.create(_graph_request("x" * 160 + " "))
 
     assert response.status_code == 201
     assert response.json()["name"] == "x" * 160
@@ -340,10 +441,9 @@ def test_name_length_is_checked_after_whitespace_normalization(
 def test_http_create_bootstraps_collaborative_head(
     builtin_client: TestClient,
 ) -> None:
-    response = builtin_client.post(
-        workspace_api_path("/graphs"),
-        json=_graph_payload("Bootstrapped"),
-    )
+    api = GrafyApi(builtin_client)
+    graphs = api.workspace(WORKSPACE_ID).graphs
+    response = graphs.create(_graph_request("Bootstrapped"))
     assert response.status_code == 201
     created = response.json()
     graph_id = UUID(created["id"])
@@ -365,10 +465,9 @@ def test_http_create_bootstraps_collaborative_head(
 def test_http_replace_resets_collaborative_epoch_when_checkpointed(
     builtin_client: TestClient,
 ) -> None:
-    created = builtin_client.post(
-        workspace_api_path("/graphs"),
-        json=_graph_payload("Before replace"),
-    ).json()
+    api = GrafyApi(builtin_client)
+    graphs = api.workspace(WORKSPACE_ID).graphs
+    created = graphs.create(_graph_request("Before replace")).json()
     graph_id = UUID(created["id"])
     prior_head = asyncio.run(
         builtin_client.app.state.resources.collaboration.initialize_head_for_existing_graph(
@@ -378,11 +477,9 @@ def test_http_replace_resets_collaborative_epoch_when_checkpointed(
     )
     prior_epoch = prior_head.room_epoch
 
-    payload = _graph_payload("After replace")
-    payload["expected_revision"] = created["revision"]
-    response = builtin_client.put(
-        workspace_api_path(f"/graphs/{graph_id}"),
-        json=payload,
+    response = graphs.update(
+        graph_id,
+        _update_request("After replace", expected_revision=created["revision"]),
     )
 
     assert response.status_code == 200
@@ -405,10 +502,9 @@ def test_http_replace_resets_collaborative_epoch_when_checkpointed(
 def test_http_replace_rejects_uncheckpointed_head(
     builtin_client: TestClient,
 ) -> None:
-    created = builtin_client.post(
-        workspace_api_path("/graphs"),
-        json=_graph_payload("Live draft"),
-    ).json()
+    api = GrafyApi(builtin_client)
+    graphs = api.workspace(WORKSPACE_ID).graphs
+    created = graphs.create(_graph_request("Live draft")).json()
     graph_id = UUID(created["id"])
     collaboration = builtin_client.app.state.resources.collaboration
     head = asyncio.run(
@@ -428,15 +524,14 @@ def test_http_replace_rejects_uncheckpointed_head(
             command_id=uuid4(),
             observed_sequence=head.collaboration_sequence,
             observed_room_epoch=head.room_epoch,
-            command=RenameGraphCommand(name="Uncheckpointed", expected_name="Live draft"),
+            command=RenameGraphCommand(
+                name="Uncheckpointed", expected_name="Live draft"
+            ),
         )
     )
 
-    payload = _graph_payload("Should fail")
-    payload["expected_revision"] = created["revision"]
-    response = builtin_client.put(
-        workspace_api_path(f"/graphs/{graph_id}"),
-        json=payload,
+    response = graphs.update(
+        graph_id, _update_request("Should fail", expected_revision=created["revision"])
     )
 
     assert response.status_code == 409
@@ -446,21 +541,14 @@ def test_http_replace_rejects_uncheckpointed_head(
 def test_http_delete_removes_collaborative_head(
     builtin_client: TestClient,
 ) -> None:
-    created = builtin_client.post(
-        workspace_api_path("/graphs"),
-        json=_graph_payload("Delete me"),
-    ).json()
+    api = GrafyApi(builtin_client)
+    graphs = api.workspace(WORKSPACE_ID).graphs
+    created = graphs.create(_graph_request("Delete me")).json()
     graph_id = UUID(created["id"])
 
-    response = builtin_client.delete(
-        workspace_api_path(f"/graphs/{graph_id}"),
-        params={"expected_revision": created["revision"]},
-    )
+    response = graphs.delete(graph_id, expected_revision=created["revision"])
     assert response.status_code == 204
-    assert (
-        builtin_client.get(workspace_api_path(f"/graphs/{graph_id}")).status_code
-        == 404
-    )
+    assert graphs.get(graph_id).status_code == 404
 
     with pytest.raises(NotFoundError):
         asyncio.run(
@@ -474,31 +562,28 @@ def test_http_delete_removes_collaborative_head(
 def test_http_live_head_command_checkpoint_and_aware_delete(
     builtin_client: TestClient,
 ) -> None:
-    created = builtin_client.post(
-        workspace_api_path("/graphs"),
-        json=_graph_payload("Command graph"),
-    ).json()
-    graph_id = created["id"]
+    api = GrafyApi(builtin_client)
+    graphs = api.workspace(WORKSPACE_ID).graphs
+    created = graphs.create(_graph_request("Command graph")).json()
+    graph_id = UUID(created["id"])
 
-    head_response = builtin_client.get(workspace_api_path(f"/graphs/{graph_id}/head"))
+    head_response = graphs.get_head(graph_id)
     assert head_response.status_code == 200
     head = head_response.json()
     assert head["name"] == "Command graph"
     assert head["collaboration_sequence"] == 1
     assert head["checkpoint_sequence"] == 1
 
-    command_response = builtin_client.post(
-        workspace_api_path(f"/graphs/{graph_id}/commands"),
-        json={
-            "command_id": str(uuid4()),
-            "room_epoch": head["room_epoch"],
-            "observed_sequence": head["collaboration_sequence"],
-            "command": {
-                "kind": "rename_graph",
-                "name": "Renamed live",
-                "expected_name": "Command graph",
-            },
-        },
+    command_response = graphs.submit_command(
+        graph_id,
+        SubmitGraphCommandRequest(
+            command_id=uuid4(),
+            room_epoch=UUID(head["room_epoch"]),
+            observed_sequence=head["collaboration_sequence"],
+            command=RenameGraphCommand(
+                name="Renamed live", expected_name="Command graph"
+            ),
+        ),
     )
     assert command_response.status_code == 200
     command_payload = command_response.json()
@@ -507,44 +592,38 @@ def test_http_live_head_command_checkpoint_and_aware_delete(
     assert command_payload["receipt"]["outcome"] == "accepted"
     assert command_payload["receipt"]["deduplicated"] is False
 
-    checkpoint_response = builtin_client.post(
-        workspace_api_path(f"/graphs/{graph_id}/checkpoint"),
-        json={
-            "expected_room_epoch": command_payload["head"]["room_epoch"],
-            "expected_sequence": command_payload["head"]["collaboration_sequence"],
-        },
+    checkpoint_response = graphs.checkpoint(
+        graph_id,
+        CheckpointGraphRequest(
+            expected_room_epoch=UUID(command_payload["head"]["room_epoch"]),
+            expected_sequence=command_payload["head"]["collaboration_sequence"],
+        ),
     )
     assert checkpoint_response.status_code == 200
     assert checkpoint_response.json()["saved_revision"] == 2
     assert checkpoint_response.json()["head"]["checkpoint_sequence"] == 2
 
-    saved = builtin_client.get(workspace_api_path(f"/graphs/{graph_id}")).json()
+    saved = graphs.get(graph_id).json()
     assert saved["name"] == "Renamed live"
     assert saved["revision"] == 2
 
     # Leave an uncheckpointed command, then discard with exact-head delete.
-    pending = builtin_client.post(
-        workspace_api_path(f"/graphs/{graph_id}/commands"),
-        json={
-            "command_id": str(uuid4()),
-            "room_epoch": checkpoint_response.json()["head"]["room_epoch"],
-            "observed_sequence": checkpoint_response.json()["head"][
+    pending = graphs.submit_command(
+        graph_id,
+        SubmitGraphCommandRequest(
+            command_id=uuid4(),
+            room_epoch=UUID(checkpoint_response.json()["head"]["room_epoch"]),
+            observed_sequence=checkpoint_response.json()["head"][
                 "collaboration_sequence"
             ],
-            "command": {
-                "kind": "rename_graph",
-                "name": "Discard me",
-                "expected_name": "Renamed live",
-            },
-        },
+            command=RenameGraphCommand(name="Discard me", expected_name="Renamed live"),
+        ),
     ).json()
-    delete_response = builtin_client.delete(
-        workspace_api_path(f"/graphs/{graph_id}"),
-        params={
-            "expected_revision": saved["revision"],
-            "expected_room_epoch": pending["head"]["room_epoch"],
-            "expected_sequence": pending["head"]["collaboration_sequence"],
-        },
+    delete_response = graphs.delete(
+        graph_id,
+        expected_revision=saved["revision"],
+        expected_room_epoch=UUID(pending["head"]["room_epoch"]),
+        expected_sequence=pending["head"]["collaboration_sequence"],
     )
     assert delete_response.status_code == 204
 
@@ -552,24 +631,20 @@ def test_http_live_head_command_checkpoint_and_aware_delete(
 def test_http_copy_exact_head_into_same_workspace(
     builtin_client: TestClient,
 ) -> None:
-    created = builtin_client.post(
-        workspace_api_path("/graphs"),
-        json=_graph_payload("Copy source"),
-    ).json()
-    head = builtin_client.get(
-        workspace_api_path(f"/graphs/{created['id']}/head")
-    ).json()
+    api = GrafyApi(builtin_client)
+    graphs = api.workspace(WORKSPACE_ID).graphs
+    created = graphs.create(_graph_request("Copy source")).json()
+    head = graphs.get_head(UUID(created["id"])).json()
 
-    copy_response = builtin_client.post(
-        workspace_api_path("/graphs/copies"),
-        json={
-            "source_workspace_id": str(WORKSPACE_ID),
-            "source_graph_id": created["id"],
-            "expected_room_epoch": head["room_epoch"],
-            "expected_sequence": head["collaboration_sequence"],
-            "command_id": str(uuid4()),
-            "name": "Copied graph",
-        },
+    copy_response = graphs.copy(
+        CopyExactHeadRequest(
+            source_workspace_id=WORKSPACE_ID,
+            source_graph_id=UUID(created["id"]),
+            expected_room_epoch=UUID(head["room_epoch"]),
+            expected_sequence=head["collaboration_sequence"],
+            command_id=uuid4(),
+            name="Copied graph",
+        )
     )
     assert copy_response.status_code == 201
     copied = copy_response.json()
@@ -577,9 +652,7 @@ def test_http_copy_exact_head_into_same_workspace(
     assert copied["name"] == "Copied graph"
     assert copied["revision"] == 1
 
-    copied_head = builtin_client.get(
-        workspace_api_path(f"/graphs/{copied['id']}/head")
-    ).json()
+    copied_head = graphs.get_head(UUID(copied["id"])).json()
     assert copied_head["collaboration_sequence"] == 1
     assert copied_head["checkpoint_sequence"] == 1
     assert copied_head["checkpoint_revision"] == 1

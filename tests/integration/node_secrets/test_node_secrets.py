@@ -6,7 +6,6 @@ from typing import ClassVar, override
 from uuid import UUID
 
 import pytest
-from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import text
 
@@ -33,14 +32,13 @@ from grafy_persistence.database import Database, create_database
 from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
-from grafy_api.main import create_app
-from tests.support.identity import install_browser_actor_override
 from grafy_api.v1.routes.executions.models import RunNodeRequest, RunRequest
 from grafy_api.services.composition import (
     WorkbenchComponents,
     build_workbench_components,
 )
 from grafy_api.v1.routes.executions.runtime.errors import GraphExecutionError
+from grafy_api.v1.routes.node_secrets.models import ConfigureNodeSecretRequest
 from grafy_api.v1.routes.node_secrets.services import (
     NodeSecretConfigurationError,
     NodeSecretDeclarationError,
@@ -50,7 +48,9 @@ from grafy_api.v1.routes.node_secrets.services import (
 from grafy_api.settings import Settings
 from grafy_api.v1.routes.node_secrets.dependencies import node_secret_service
 
-from tests.support.workbench import install_workbench_dependency_overrides
+from tests.support.clients import GrafyApi
+from tests.support.workbench import workbench_dependency_overrides
+from tests.testkit import client_with_overrides
 
 
 class SecretTestConfig(NodeConfig):
@@ -807,7 +807,6 @@ async def test_saved_run_passes_validated_graph_context_to_node(
     graph = await _saved_secret_graph(saved_graphs)
     components = build_workbench_components(
         plugin_registry=registry,
-        execution_backend="inline",
         workspace=tmp_path / "context-workbench",
         saved_graphs=saved_graphs,
     )
@@ -832,7 +831,7 @@ async def test_saved_run_passes_validated_graph_context_to_node(
                     },
                 )
             ],
-        )
+        ),
     )
 
     assert execution.status == "succeeded"
@@ -859,7 +858,6 @@ async def test_dirty_run_uses_saved_secret_binding_without_materialization_conte
     graph = await _saved_secret_graph(saved_graphs)
     components = build_workbench_components(
         plugin_registry=registry,
-        execution_backend="inline",
         workspace=tmp_path / "dirty-context-workbench",
         saved_graphs=saved_graphs,
     )
@@ -888,7 +886,7 @@ async def test_dirty_run_uses_saved_secret_binding_without_materialization_conte
                     operator_version=1,
                 ),
             ],
-        )
+        ),
     )
     materializations = await components.presenter.materializations_response(
         WORKSPACE_ID,
@@ -928,7 +926,6 @@ async def test_secret_bearing_run_requires_explicit_secret_graph_context(
     _, _, _, registry = node_secret_setup
     components = build_workbench_components(
         plugin_registry=registry,
-        execution_backend="inline",
         workspace=tmp_path / "missing-secret-context-workbench",
     )
 
@@ -947,7 +944,7 @@ async def test_secret_bearing_run_requires_explicit_secret_graph_context(
                         config={"base_url": "https://llm.example/v1"},
                     )
                 ]
-            )
+            ),
         )
 
 
@@ -999,7 +996,6 @@ async def test_dirty_run_rejects_invalid_saved_secret_binding(
     )
     components = build_workbench_components(
         plugin_registry=registry,
-        execution_backend="inline",
         workspace=tmp_path / f"invalid-binding-{binding_case}",
         saved_graphs=saved_graphs,
     )
@@ -1018,7 +1014,7 @@ async def test_dirty_run_rejects_invalid_saved_secret_binding(
                         config={"base_url": base_url},
                     )
                 ],
-            )
+            ),
         )
 
 
@@ -1079,7 +1075,6 @@ def test_node_secret_routes_never_return_secret_value(tmp_path: Path) -> None:
         )
         components = build_workbench_components(
             plugin_registry=registry,
-            execution_backend="inline",
             workspace=tmp_path / "route-workbench",
             saved_graphs=saved_graphs,
             node_secrets=service,
@@ -1087,20 +1082,22 @@ def test_node_secret_routes_never_return_secret_value(tmp_path: Path) -> None:
         return service, components, str(graph.id)
 
     service, components, graph_id = asyncio.run(prepare())
-    application = create_app(
-        Settings(
-            workspace=tmp_path / "workbench",
-            database_url=SecretStr(database_url),
-            execution_backend="inline",
-        )
-    )
-    install_browser_actor_override(application)
-    application.dependency_overrides[node_secret_service] = lambda: service
-    install_workbench_dependency_overrides(application, components)
+    overrides = {
+        **workbench_dependency_overrides(components),
+        node_secret_service: lambda: service,
+    }
     plaintext = "route-secret-value"
     try:
-        with TestClient(application) as client:
-            catalog = client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes")
+        with client_with_overrides(
+            settings=Settings(
+                workspace=tmp_path / "workbench",
+                database_url=SecretStr(database_url),
+            ),
+            overrides=overrides,
+        ) as client:
+            api = GrafyApi(client)
+            secrets = api.workspace(WORKSPACE_ID).node_secrets
+            catalog = api.workspace(WORKSPACE_ID).catalog.list_nodes()
             assert catalog.status_code == 200
             secret_node = next(
                 node
@@ -1116,9 +1113,14 @@ def test_node_secret_routes_never_return_secret_value(tmp_path: Path) -> None:
                 }
             ]
 
-            configured = client.put(
-                f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}/nodes/llm/secrets/api_key",
-                json={"value": plaintext, "expected_graph_revision": 1},
+            configured = secrets.configure_secret(
+                UUID(graph_id),
+                "llm",
+                "api_key",
+                ConfigureNodeSecretRequest(
+                    value=SecretStr(plaintext),
+                    expected_graph_revision=1,
+                ),
             )
             assert configured.status_code == 200
             assert configured.json() == {
@@ -1130,12 +1132,13 @@ def test_node_secret_routes_never_return_secret_value(tmp_path: Path) -> None:
 
             invalid = client.put(
                 f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}/nodes/llm/secrets/api_key",
+                # Raw: a SecretStr value would be redacted by model_dump(mode="json").
                 json={"value": plaintext},
             )
             assert invalid.status_code == 422
             assert plaintext not in invalid.text
 
-            status = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}/node-secrets")
+            status = secrets.list_secrets(UUID(graph_id))
             assert status.status_code == 200
             assert status.json() == {
                 "graph_id": graph_id,
@@ -1150,13 +1153,15 @@ def test_node_secret_routes_never_return_secret_value(tmp_path: Path) -> None:
             }
             assert plaintext not in status.text
 
-            saved_graph = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}")
+            saved_graph = api.workspace(WORKSPACE_ID).graphs.get(UUID(graph_id))
             assert saved_graph.status_code == 200
             assert plaintext not in saved_graph.text
 
-            deleted = client.delete(
-                f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}/nodes/llm/secrets/api_key",
-                params={"expected_graph_revision": 1},
+            deleted = secrets.remove_secret(
+                UUID(graph_id),
+                "llm",
+                "api_key",
+                expected_graph_revision=1,
             )
             assert deleted.status_code == 204
             assert deleted.content == b""

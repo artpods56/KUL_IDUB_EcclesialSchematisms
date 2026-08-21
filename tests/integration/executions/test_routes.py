@@ -14,24 +14,28 @@ from pydantic import SecretStr
 from grafy_persistence.database import create_database
 from grafy_persistence.orm import metadata
 
-from grafy_api.main import create_app
-from tests.support.identity import WORKSPACE_ID, install_browser_actor_override
+from tests.support.identity import WORKSPACE_ID, browser_actor_override
+from grafy_api.v1.routes.auth.dependencies import browser_actor
 from grafy_api.v1.routes.catalog.models import NodeRegistryResponse
 from grafy_api.v1.routes.executions.models import (
     RunExecutionCapacityErrorResponse,
-    RunExecutionResponse,
-    RunResponse,
+    RunNodeRequest,
+    RunRequest,
 )
+from tests.support.clients import GrafyApi
 from grafy_api.v1.routes.executions.dependencies import run_execution_manager
 from grafy_api.v1.routes.executions.dependencies import execution_admission_limiter
 from grafy_api.v1.routes.executions.runtime.admission import (
     ExecutionAdmissionLimiter,
     RunExecutionCapacityError,
 )
+from grafy_api.v1.routes.uploads.models import SampleRequest
 from grafy_api.v1.routes.uploads.services import ImageUploadService
 from grafy_api.settings import Settings
 from grafy_core.artifacts import InMemoryUnitOfWork
 from grafy_core.plugins import PluginOrigin
+
+from tests.testkit import app_with_overrides
 
 
 def _parse_sse_events(body: str) -> list[dict[str, object]]:
@@ -66,14 +70,13 @@ def test_application_lifespan_builds_and_releases_workbench_components(
 ) -> None:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'lifespan.sqlite3'}"
     asyncio.run(_prepare_database(database_url))
-    application = create_app(
-        Settings(
+    application = app_with_overrides(
+        settings=Settings(
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
-            execution_backend="inline",
-        )
+        ),
+        overrides={browser_actor: browser_actor_override},
     )
-    install_browser_actor_override(application)
     assert not hasattr(application.state, "resources")
     assert hasattr(application.state, "identity")
 
@@ -91,7 +94,9 @@ def test_application_lifespan_builds_and_releases_workbench_components(
 def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
     builtin_client: TestClient,
 ) -> None:
-    response = builtin_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes")
+    response = builtin_client.get(
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes"
+    )
 
     assert response.status_code == 200
     registry = NodeRegistryResponse.model_validate(response.json())
@@ -248,10 +253,11 @@ def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
 
 
 def test_run_accepts_empty_graph(builtin_client: TestClient) -> None:
-    response = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/runs", json={"nodes": [], "edges": []})
+    api = GrafyApi(builtin_client)
+    executions = api.workspace(WORKSPACE_ID).executions
 
-    assert response.status_code == 200
-    result = RunResponse.model_validate(response.json())
+    result = executions.run_ok(RunRequest(nodes=[]))
+
     assert result.status == "succeeded"
     assert result.node_runs == []
 
@@ -260,24 +266,21 @@ def test_synchronous_run_shares_typed_execution_capacity_contract(
     builtin_client: TestClient,
 ) -> None:
     application = cast(FastAPI, builtin_client.app)
+    api = GrafyApi(builtin_client)
+    executions = api.workspace(WORKSPACE_ID).executions
     admission_limiter = ExecutionAdmissionLimiter(1)
     occupied_lease = admission_limiter.acquire()
-    original_override = application.dependency_overrides[
-        execution_admission_limiter
-    ]
+    original_override = application.dependency_overrides[execution_admission_limiter]
     application.dependency_overrides[execution_admission_limiter] = (
         lambda: admission_limiter
     )
     try:
-        response = builtin_client.post(
-            "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-            json={"nodes": [], "edges": []},
-        )
+        response = executions.run(RunRequest(nodes=[]))
     finally:
         occupied_lease.release()
-        application.dependency_overrides[
-            execution_admission_limiter
-        ] = original_override
+        application.dependency_overrides[execution_admission_limiter] = (
+            original_override
+        )
 
     error = RunExecutionCapacityErrorResponse.model_validate(response.json())
     assert response.status_code == 429
@@ -289,13 +292,11 @@ def test_synchronous_run_shares_typed_execution_capacity_contract(
 def test_async_execution_routes_return_pollable_typed_state(
     builtin_client: TestClient,
 ) -> None:
-    start_response = builtin_client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
-        json={"nodes": [], "edges": []},
-    )
+    api = GrafyApi(builtin_client)
+    executions = api.workspace(WORKSPACE_ID).executions
 
-    assert start_response.status_code == 202
-    started = RunExecutionResponse.model_validate(start_response.json())
+    started = executions.start_execution_ok(RunRequest(nodes=[]))
+
     assert started.status == "queued"
     assert started.active_node_id is None
     assert started.result is None
@@ -303,24 +304,19 @@ def test_async_execution_routes_return_pollable_typed_state(
 
     polled = started
     for _ in range(20):
-        response = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{started.execution_id}")
-        assert response.status_code == 200
-        polled = RunExecutionResponse.model_validate(response.json())
+        polled = executions.get_execution_ok(started.execution_id)
         if polled.status == "succeeded":
             break
     assert polled.status == "succeeded"
     assert polled.result is not None
     assert polled.result.status == "succeeded"
 
-    cancel_response = builtin_client.delete(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{started.execution_id}")
-    assert cancel_response.status_code == 200
-    assert RunExecutionResponse.model_validate(cancel_response.json()).status == (
-        "succeeded"
-    )
+    cancelled = executions.cancel_execution_ok(started.execution_id)
+    assert cancelled.status == "succeeded"
 
     missing_id = uuid4()
-    assert builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{missing_id}").status_code == 404
-    assert builtin_client.delete(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{missing_id}").status_code == 404
+    assert executions.get_execution(missing_id).status_code == 404
+    assert executions.cancel_execution(missing_id).status_code == 404
 
 
 def test_async_execution_route_returns_typed_capacity_error(
@@ -329,17 +325,12 @@ def test_async_execution_route_returns_typed_capacity_error(
     rejecting_manager = AsyncMock()
     rejecting_manager.start.side_effect = RunExecutionCapacityError(2)
     application = cast(FastAPI, builtin_client.app)
-    original_override = application.dependency_overrides[
-        run_execution_manager
-    ]
-    application.dependency_overrides[run_execution_manager] = (
-        lambda: rejecting_manager
-    )
+    api = GrafyApi(builtin_client)
+    executions = api.workspace(WORKSPACE_ID).executions
+    original_override = application.dependency_overrides[run_execution_manager]
+    application.dependency_overrides[run_execution_manager] = lambda: rejecting_manager
     try:
-        response = builtin_client.post(
-            "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
-            json={"nodes": [], "edges": []},
-        )
+        response = executions.start_execution(RunRequest(nodes=[]))
     finally:
         application.dependency_overrides[run_execution_manager] = original_override
 
@@ -354,17 +345,15 @@ def test_async_execution_route_returns_typed_capacity_error(
 def test_execution_event_stream_replays_ids_and_closes_after_terminal(
     builtin_client: TestClient,
 ) -> None:
-    started = builtin_client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
-        json={"nodes": [], "edges": []},
-    ).json()
-    execution_id = started["execution_id"]
+    api = GrafyApi(builtin_client)
+    executions = api.workspace(WORKSPACE_ID).executions
+    started = executions.start_execution_ok(RunRequest(nodes=[]))
+    execution_id = started.execution_id
 
-    response = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{execution_id}/events")
+    response = executions.stream_execution_events(execution_id)
     events = _parse_sse_events(response.text)
-    replay_response = builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{execution_id}/events",
-        headers={"Last-Event-ID": "1"},
+    replay_response = executions.stream_execution_events(
+        execution_id, headers={"Last-Event-ID": "1"}
     )
     replayed = _parse_sse_events(replay_response.text)
 
@@ -378,30 +367,31 @@ def test_execution_event_stream_replays_ids_and_closes_after_terminal(
         "running",
         "succeeded",
     ]
-    assert all(event["execution_id"] == execution_id for event in events)
+    assert all(event["execution_id"] == str(execution_id) for event in events)
     assert [event["sequence"] for event in replayed] == [2, 3]
 
 
 def test_execution_event_stream_validates_replay_and_missing_execution_ids(
     builtin_client: TestClient,
 ) -> None:
-    started = builtin_client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
-        json={"nodes": [], "edges": []},
-    ).json()
-    execution_id = started["execution_id"]
+    api = GrafyApi(builtin_client)
+    executions = api.workspace(WORKSPACE_ID).executions
+    started = executions.start_execution_ok(RunRequest(nodes=[]))
+    execution_id = started.execution_id
     missing_id = uuid4()
 
-    invalid_replay = builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{execution_id}/events",
-        headers={"Last-Event-ID": "not-a-sequence"},
+    invalid_replay = executions.stream_execution_events(
+        execution_id, headers={"Last-Event-ID": "not-a-sequence"}
     )
-    oversized_replay = builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{execution_id}/events",
-        headers={"Last-Event-ID": "9" * 5_000},
+    oversized_replay = executions.stream_execution_events(
+        execution_id, headers={"Last-Event-ID": "9" * 5_000}
     )
-    missing = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{missing_id}/events")
-    malformed = builtin_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/not-a-uuid/events")
+    missing = executions.stream_execution_events(missing_id)
+    # A non-UUID execution id cannot be expressed by the typed client;
+    # exercise that boundary through the raw client.
+    malformed = builtin_client.get(
+        "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/not-a-uuid/events"
+    )
 
     assert invalid_replay.status_code == 422
     assert invalid_replay.json()["detail"] == (
@@ -477,15 +467,11 @@ def test_upload_endpoint_streams_an_opaque_file(
     builtin_client: TestClient,
     tmp_path: Path,
 ) -> None:
-    response = builtin_client.post(
-        f"/v1/workspaces/{WORKSPACE_ID}/uploads",
-        files={
-            "file": (
-                "historical-map.tif",
-                b"geotiff-bytes",
-                "image/tiff",
-            )
-        },
+    api = GrafyApi(builtin_client)
+    response = api.workspace(WORKSPACE_ID).uploads.upload(
+        "historical-map.tif",
+        b"geotiff-bytes",
+        content_type="image/tiff",
     )
 
     assert response.status_code == 200
@@ -503,27 +489,28 @@ def test_upload_endpoint_streams_an_opaque_file(
 def test_image_upload_materializes_sample_images(
     builtin_client: TestClient,
 ) -> None:
-    sample_response = builtin_client.post("/v1/workspaces/00000000-0000-0000-0000-000000000007/samples", json={"count": 2})
+    api = GrafyApi(builtin_client)
+    sample_response = api.workspace(WORKSPACE_ID).uploads.create_samples(
+        SampleRequest(count=2)
+    )
     assert sample_response.status_code == 200
     uploads = sample_response.json()
 
-    run_response = builtin_client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "upload",
-                    "operator_id": "image.upload",
-                    "operator_version": 1,
-                    "config": {"uploads": uploads},
-                },
+    executions = api.workspace(WORKSPACE_ID).executions
+    result = executions.run_ok(
+        RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="upload",
+                    operator_id="image.upload",
+                    operator_version=1,
+                    config={"uploads": uploads},
+                ),
             ],
-            "edges": [],
-        },
+            edges=[],
+        )
     )
 
-    assert run_response.status_code == 200
-    result = RunResponse.model_validate(run_response.json())
     assert result.status == "succeeded"
     upload_run = result.node_runs[0]
     assert upload_run.status == "succeeded"

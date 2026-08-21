@@ -42,6 +42,7 @@ from grafy_api.v1.routes.saved_graphs.models import (
     SavedGraphResponse,
     UpdateSavedGraphRequest,
 )
+from tests.support.clients import GrafyApi
 from tests.support.identity import browser_actor_override
 from tests.testkit import client_with_overrides
 
@@ -146,7 +147,6 @@ def durable_api(tmp_path: Path) -> tuple[Settings, str]:
         Settings(
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
-            execution_backend="inline",
         ),
         database_url,
     )
@@ -671,10 +671,10 @@ def test_fresh_app_runs_collect_only_from_persisted_scalar_and_sequence_pins(
         selected_result = RunResponse.model_validate(selected_run.json())
         collected = _output(selected_result, "collect")
         assert isinstance(collected.value, ArtifactRefSequence)
+        api = GrafyApi(fresh_client)
+        artifacts = api.workspace(WORKSPACE_ID).artifacts
         assert [
-            fresh_client.get(
-                f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content"
-            ).json()["value"]
+            artifacts.content(artifact.artifact_id).json()["value"]
             for artifact in collected.artifacts
         ] == ["second", "third", "first"]
 

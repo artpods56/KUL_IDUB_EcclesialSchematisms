@@ -17,6 +17,7 @@ from grafy_api.v1.routes.uploads.dependencies import image_upload_service
 from grafy_api.v1.routes.uploads.services import ImageUploadService
 from grafy_core.artifacts import InMemoryUnitOfWork
 from grafy_core.domain.staged_uploads import StagedUpload
+from tests.support.clients import GrafyApi
 from tests.support.identity import TEST_USER_ID, WORKSPACE_ID
 
 
@@ -62,15 +63,12 @@ def test_upload_endpoint_rejects_oversize_file_and_removes_partial_stage(
     application = cast(FastAPI, builtin_client.app)
     application.dependency_overrides[image_upload_service] = lambda: service
 
-    response = builtin_client.post(
-        f"/v1/workspaces/{WORKSPACE_ID}/uploads",
-        files={
-            "file": (
-                "large.bin",
-                b"x" * (1024 * 1024 + 1),
-                "application/octet-stream",
-            )
-        },
+    api = GrafyApi(builtin_client)
+    uploads = api.workspace(WORKSPACE_ID).uploads
+    response = uploads.upload(
+        "large.bin",
+        b"x" * (1024 * 1024 + 1),
+        content_type="application/octet-stream",
     )
 
     assert response.status_code == 413

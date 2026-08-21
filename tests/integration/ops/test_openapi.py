@@ -77,11 +77,16 @@ def test_openapi_contains_exact_public_routes() -> None:
         "/v1/workspaces/{workspace_id}/personal-access-tokens",
         "/v1/workspaces/{workspace_id}/personal-access-tokens/{token_id}",
     }
-    assert set(schema["paths"]["/v1/workspaces/{workspace_id}/graphs"]) == {"get", "post"}
-    assert set(schema["paths"]["/v1/workspaces/{workspace_id}/graphs/copies"]) == {"post"}
-    assert set(schema["paths"]["/v1/workspaces/{workspace_id}/graphs/{graph_id}/head"]) == {
-        "get"
+    assert set(schema["paths"]["/v1/workspaces/{workspace_id}/graphs"]) == {
+        "get",
+        "post",
     }
+    assert set(schema["paths"]["/v1/workspaces/{workspace_id}/graphs/copies"]) == {
+        "post"
+    }
+    assert set(
+        schema["paths"]["/v1/workspaces/{workspace_id}/graphs/{graph_id}/head"]
+    ) == {"get"}
     assert set(
         schema["paths"]["/v1/workspaces/{workspace_id}/graphs/{graph_id}/commands"]
     ) == {"post"}
@@ -89,9 +94,9 @@ def test_openapi_contains_exact_public_routes() -> None:
         schema["paths"]["/v1/workspaces/{workspace_id}/graphs/{graph_id}/checkpoint"]
     ) == {"post"}
     assert set(schema["paths"]["/v1/workspaces/{workspace_id}/executions"]) == {"post"}
-    synchronous_run_responses = schema["paths"][
-        "/v1/workspaces/{workspace_id}/runs"
-    ]["post"]["responses"]
+    synchronous_run_responses = schema["paths"]["/v1/workspaces/{workspace_id}/runs"][
+        "post"
+    ]["responses"]
     assert synchronous_run_responses["429"]["content"]["application/json"][
         "schema"
     ] == {"$ref": "#/components/schemas/RunExecutionCapacityErrorResponse"}
@@ -175,7 +180,9 @@ def test_openapi_contains_exact_public_routes() -> None:
         "attribution",
         "scheme",
     }
-    assert set(schema["paths"]["/v1/workspaces/{workspace_id}/executions/{execution_id}"]) == {
+    assert set(
+        schema["paths"]["/v1/workspaces/{workspace_id}/executions/{execution_id}"]
+    ) == {
         "delete",
         "get",
     }
@@ -200,11 +207,19 @@ def test_openapi_contains_exact_public_routes() -> None:
         "get",
         "put",
     }
-    assert set(schema["paths"]["/v1/workspaces/{workspace_id}/graphs/{graph_id}/materializations"]) == {"get"}
-    assert set(schema["paths"]["/v1/workspaces/{workspace_id}/graphs/{graph_id}/executions"]) == {"get"}
-    assert set(schema["paths"]["/v1/workspaces/{workspace_id}/graphs/{graph_id}/executions/{execution_id}"]) == {
-        "get"
-    }
+    assert set(
+        schema["paths"][
+            "/v1/workspaces/{workspace_id}/graphs/{graph_id}/materializations"
+        ]
+    ) == {"get"}
+    assert set(
+        schema["paths"]["/v1/workspaces/{workspace_id}/graphs/{graph_id}/executions"]
+    ) == {"get"}
+    assert set(
+        schema["paths"][
+            "/v1/workspaces/{workspace_id}/graphs/{graph_id}/executions/{execution_id}"
+        ]
+    ) == {"get"}
     history_summary = schema["components"]["schemas"]["GraphExecutionSummaryResponse"]
     assert set(history_summary["properties"]) == {
         "execution_id",
@@ -221,9 +236,13 @@ def test_openapi_contains_exact_public_routes() -> None:
         "workflow_run_id",
         "error",
     }
-    assert set(schema["paths"]["/v1/workspaces/{workspace_id}/graphs/{graph_id}/node-secrets"]) == {"get"}
     assert set(
-        schema["paths"]["/v1/workspaces/{workspace_id}/graphs/{graph_id}/nodes/{node_id}/secrets/{name}"]
+        schema["paths"]["/v1/workspaces/{workspace_id}/graphs/{graph_id}/node-secrets"]
+    ) == {"get"}
+    assert set(
+        schema["paths"][
+            "/v1/workspaces/{workspace_id}/graphs/{graph_id}/nodes/{node_id}/secrets/{name}"
+        ]
     ) == {"delete", "put"}
     node_schema = schema["components"]["schemas"]["NodeSpecResponse"]
     assert "config_schema" in node_schema["properties"]

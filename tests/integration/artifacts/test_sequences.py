@@ -25,6 +25,8 @@ from grafy_api.v1.routes.executions.models import (
     RunResponse,
 )
 
+from tests.support.clients import GrafyApi
+
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
 
@@ -105,6 +107,8 @@ def test_registry_declares_sequence_node_contracts(
 def test_count_slice_and_item_at_preserve_refs_and_artifact_content(
     builtin_client: TestClient,
 ) -> None:
+    api = GrafyApi(builtin_client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json=RunRequest(
@@ -183,12 +187,8 @@ def test_count_slice_and_item_at_preserve_refs_and_artifact_content(
     }
     assert picked.value == numbers.value.item_refs[2]
     assert counted.artifacts[0].text == "4"
-    assert builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{counted.value.artifact_id}/content"
-    ).json() == {"value": 4}
-    assert builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{picked.value.artifact_id}/content"
-    ).json() == {"value": 30}
+    assert artifacts.content(counted.value.artifact_id).json() == {"value": 4}
+    assert artifacts.content(picked.value.artifact_id).json() == {"value": 30}
 
 
 def test_collect_flattens_image_scalar_and_sequence_in_plug_order(
@@ -290,6 +290,8 @@ def test_collect_flattens_image_scalar_and_sequence_in_plug_order(
 def test_collect_converts_each_input_to_its_bound_text_type(
     builtin_client: TestClient,
 ) -> None:
+    api = GrafyApi(builtin_client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json=RunRequest(
@@ -349,9 +351,7 @@ def test_collect_converts_each_input_to_its_bound_text_type(
         run.outputs[0] for run in result.node_runs if run.node_id == "collect"
     )
     assert [
-        builtin_client.get(
-            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content"
-        ).json()["value"]
+        artifacts.content(artifact.artifact_id).json()["value"]
         for artifact in output.artifacts
     ] == ["42", "answer"]
 

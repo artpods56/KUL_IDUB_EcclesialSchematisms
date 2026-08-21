@@ -11,13 +11,17 @@ from grafy_api.v1.routes.executions.models import (
     RunResponse,
 )
 
+from tests.support.clients import GrafyApi
+from tests.support.identity import WORKSPACE_ID
+
 
 def test_schema_builders_compose_nested_objects_and_sequence_items_by_plug(
     builtin_client: TestClient,
 ) -> None:
-    response = builtin_client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json=RunRequest(
+    api = GrafyApi(builtin_client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
+    response = api.workspace(WORKSPACE_ID).executions.run(
+        RunRequest(
             nodes=[
                 RunNodeRequest(
                     id="supplier-schema",
@@ -123,7 +127,7 @@ def test_schema_builders_compose_nested_objects_and_sequence_items_by_plug(
                     to_plug="line-items",
                 ),
             ],
-        ).model_dump(mode="json"),
+        )
     )
 
     assert response.status_code == 200, response.text
@@ -135,9 +139,7 @@ def test_schema_builders_compose_nested_objects_and_sequence_items_by_plug(
         if node_run.node_id == "invoice-schema"
     )
     schema_ref = invoice_run.outputs[0].artifacts[0]
-    stored_payload = builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{schema_ref.artifact_id}/content"
-    ).json()
+    stored_payload = artifacts.content(schema_ref.artifact_id).json()
     schema = cast(dict[str, object], json.loads(stored_payload["value"]))
 
     assert schema["title"] == "Invoice"
@@ -169,9 +171,9 @@ def test_schema_builders_compose_nested_objects_and_sequence_items_by_plug(
 def test_schema_builder_requires_one_connection_for_each_nested_field_plug(
     builtin_client: TestClient,
 ) -> None:
-    response = builtin_client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json=RunRequest(
+    api = GrafyApi(builtin_client)
+    response = api.workspace(WORKSPACE_ID).executions.run(
+        RunRequest(
             nodes=[
                 RunNodeRequest(
                     id="parent",
@@ -192,7 +194,7 @@ def test_schema_builder_requires_one_connection_for_each_nested_field_plug(
                 )
             ],
             edges=[],
-        ).model_dump(mode="json"),
+        )
     )
 
     assert response.status_code == 422

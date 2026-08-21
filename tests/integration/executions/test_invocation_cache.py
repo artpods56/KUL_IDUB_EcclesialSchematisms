@@ -38,6 +38,7 @@ from grafy_storage import LocalFileObjectStore
 from grafy_api.builtins import builtin_plugins
 from grafy_api.plugin_discovery import build_plugin_registry
 from grafy_api.v1.routes.executions.models import RunNodeRequest, RunRequest
+from tests.support.clients import GrafyApi
 from grafy_api.v1.routes.executions.runtime.invocation_cache import (
     InvocationCacheAccessError,
     PersistentInvocationCache,
@@ -78,18 +79,19 @@ def _run_output_artifact_id(
     operator_id: str,
     config: dict[str, object],
 ) -> str:
-    response = client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": node_id,
-                    "operator_id": operator_id,
-                    "operator_version": 1,
-                    "config": config,
-                }
+    api = GrafyApi(client)
+    executions = api.workspace(UUID("00000000-0000-0000-0000-000000000007")).executions
+    response = executions.run(
+        RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id=node_id,
+                    operator_id=operator_id,
+                    operator_version=1,
+                    config=config,
+                )
             ]
-        },
+        )
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -368,7 +370,6 @@ async def test_sql_cache_survives_fresh_workbench_components(tmp_path: Path) -> 
     try:
         first_components = build_workbench_components(
             plugin_registry=registry,
-            execution_backend="inline",
             workspace=tmp_path / "workbench",
             unit_of_work=SqlAlchemyUnitOfWork(database.sessions),
         )
@@ -381,7 +382,6 @@ async def test_sql_cache_survives_fresh_workbench_components(tmp_path: Path) -> 
 
         fresh_components = build_workbench_components(
             plugin_registry=registry,
-            execution_backend="inline",
             workspace=tmp_path / "workbench",
             unit_of_work=SqlAlchemyUnitOfWork(database.sessions),
         )

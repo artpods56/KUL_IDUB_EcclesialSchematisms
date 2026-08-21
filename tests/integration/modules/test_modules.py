@@ -22,7 +22,12 @@ from grafy_core.artifacts import (
     NodeOutput,
 )
 from grafy_core.nodes import InPort, Node, NodeExecutionContext, OutPort
-from grafy_core.domain.identity import User, Workspace, WorkspaceMembership, WorkspaceRole
+from grafy_core.domain.identity import (
+    User,
+    Workspace,
+    WorkspaceMembership,
+    WorkspaceRole,
+)
 from grafy_core.operators.text import TEXT_VALUE
 from grafy_core.plugins import NodeSecretInput, Plugin
 from grafy_core.ports.node_secrets import NodeSecretResolverPort
@@ -31,19 +36,34 @@ from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from grafy_api.builtins import builtin_plugins
-from grafy_api.main import create_app
-from tests.support.identity import install_browser_actor_override
 from grafy_api.plugin_discovery import build_plugin_registry
 from grafy_api.v1.routes.node_secrets.services import NodeSecretService
 from grafy_api.services.composition import (
     build_workbench_components,
 )
 from grafy_api.settings import Settings
+from grafy_api.v1.models import ArtifactTypeBindingModel, ArtifactTypeKeyResponse
+from grafy_api.v1.routes.executions.models import (
+    RunEdgeRequest,
+    RunNodeRequest,
+    RunRequest,
+)
 from grafy_api.v1.routes.modules.dependencies import module_library_service
+from grafy_api.v1.routes.modules.models import PublishModuleReleaseRequest
 from grafy_api.v1.routes.node_secrets.dependencies import node_secret_service
 from grafy_api.v1.routes.saved_graphs.dependencies import saved_graph_service
+from grafy_api.v1.routes.saved_graphs.models import (
+    CreateSavedGraphRequest,
+    GraphPointModel,
+    SavedGraphEdgeModel,
+    SavedGraphInputPlugModel,
+    SavedGraphNodeModel,
+    UpdateSavedGraphRequest,
+)
 
-from tests.support.workbench import install_workbench_dependency_overrides
+from tests.support.clients import GrafyApi
+from tests.support.workbench import workbench_dependency_overrides
+from tests.testkit import client_with_overrides
 
 WORKSPACE = "00000000-0000-0000-0000-000000000007"
 
@@ -212,40 +232,54 @@ def module_client(tmp_path: Path) -> Iterator[TestClient]:
     )
     components = build_workbench_components(
         plugin_registry=registry,
-        execution_backend="inline",
         workspace=tmp_path / "workbench",
         unit_of_work=InMemoryUnitOfWork(),
         saved_graphs=saved_graphs,
         module_library=module_library,
         node_secrets=node_secrets,
     )
-    application = create_app(
-        Settings(
+    overrides = {
+        **workbench_dependency_overrides(components),
+        saved_graph_service: lambda: saved_graphs,
+        node_secret_service: lambda: node_secrets,
+        module_library_service: lambda: module_library,
+    }
+    with client_with_overrides(
+        settings=Settings(
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
-            execution_backend="inline",
-        )
-    )
-    install_browser_actor_override(application)
-    install_workbench_dependency_overrides(application, components)
-    application.dependency_overrides[saved_graph_service] = lambda: saved_graphs
-    application.dependency_overrides[node_secret_service] = lambda: node_secrets
-    application.dependency_overrides[module_library_service] = lambda: module_library
-    with TestClient(application) as client:
+        ),
+        overrides=overrides,
+    ) as client:
         yield client
     asyncio.run(database.dispose())
 
 
-def _artifact_binding() -> list[dict[str, object]]:
+def _artifact_binding() -> list[ArtifactTypeBindingModel]:
     return [
-        {
-            "variable": "T",
-            "artifact_type": {
-                "id": "scalar.text",
-                "schema_version": 1,
-            },
-        }
+        ArtifactTypeBindingModel(
+            variable="T",
+            artifact_type=ArtifactTypeKeyResponse(id="scalar.text", schema_version=1),
+        )
     ]
+
+
+def _module_graph_payload(
+    name: str,
+    nodes: list[SavedGraphNodeModel],
+    edges: list[SavedGraphEdgeModel],
+    expected_revision: int | None = None,
+) -> dict[str, object]:
+    if expected_revision is None:
+        return CreateSavedGraphRequest(name=name, nodes=nodes, edges=edges).model_dump(
+            mode="json"
+        )
+    return UpdateSavedGraphRequest(
+        name=name,
+        expected_revision=expected_revision,
+        nodes=nodes,
+        edges=edges,
+    ).model_dump(mode="json")
 
 
 def _text_module_payload(
@@ -254,277 +288,284 @@ def _text_module_payload(
     replacement: str = "A",
     input_required: bool = True,
     emit_progress: bool = False,
+    expected_revision: int | None = None,
 ) -> dict[str, object]:
-    return {
-        "name": name,
-        "nodes": [
-            {
-                "id": "module-input",
-                "operator_id": "module.input",
-                "operator_version": 1,
-                "config": {
+    return _module_graph_payload(
+        name=name,
+        expected_revision=expected_revision,
+        nodes=[
+            SavedGraphNodeModel(
+                id="module-input",
+                operator_id="module.input",
+                operator_version=1,
+                config={
                     "public_name": "text",
                     "description": "Text to transform",
                     "required": input_required,
                 },
-                "position": {"x": 0, "y": 0},
-                "artifact_type_bindings": _artifact_binding(),
-            },
-            {
-                "id": "replace",
-                "operator_id": (
+                position=GraphPointModel(x=0, y=0),
+                artifact_type_bindings=_artifact_binding(),
+            ),
+            SavedGraphNodeModel(
+                id="replace",
+                operator_id=(
                     "test.module_progress" if emit_progress else "text.replace"
                 ),
-                "operator_version": 1,
-                "config": (
+                operator_version=1,
+                config=(
                     {} if emit_progress else {"search": "a", "replacement": replacement}
                 ),
-                "position": {"x": 240, "y": 0},
-            },
-            {
-                "id": "module-output",
-                "operator_id": "module.output",
-                "operator_version": 1,
-                "config": {
+                position=GraphPointModel(x=240, y=0),
+            ),
+            SavedGraphNodeModel(
+                id="module-output",
+                operator_id="module.output",
+                operator_version=1,
+                config={
                     "public_name": "result",
                     "description": "Transformed text",
                 },
-                "position": {"x": 480, "y": 0},
-                "artifact_type_bindings": _artifact_binding(),
-            },
+                position=GraphPointModel(x=480, y=0),
+                artifact_type_bindings=_artifact_binding(),
+            ),
         ],
-        "edges": [
-            {
-                "id": "input-to-replace",
-                "from_node": "module-input",
-                "from_port": "value",
-                "to_node": "replace",
-                "to_port": "text",
-            },
-            {
-                "id": "replace-to-output",
-                "from_node": "replace",
-                "from_port": "text",
-                "to_node": "module-output",
-                "to_port": "value",
-            },
+        edges=[
+            SavedGraphEdgeModel(
+                id="input-to-replace",
+                from_node="module-input",
+                from_port="value",
+                to_node="replace",
+                to_port="text",
+            ),
+            SavedGraphEdgeModel(
+                id="replace-to-output",
+                from_node="replace",
+                from_port="text",
+                to_node="module-output",
+                to_port="value",
+            ),
         ],
-    }
+    )
 
 
 def _nested_map_progress_module_payload() -> dict[str, object]:
-    return {
-        "name": "Nested map progress",
-        "nodes": [
-            {
-                "id": "module-input",
-                "operator_id": "module.input",
-                "operator_version": 1,
-                "config": {"public_name": "text"},
-                "position": {"x": 0, "y": 0},
-                "artifact_type_bindings": _artifact_binding(),
-            },
-            {
-                "id": "split",
-                "operator_id": "text.split",
-                "operator_version": 1,
-                "config": {"separator": ","},
-                "position": {"x": 240, "y": 120},
-            },
-            {
-                "id": "progress",
-                "operator_id": "test.module_progress",
-                "operator_version": 1,
-                "config": {},
-                "position": {"x": 480, "y": 120},
-            },
-            {
-                "id": "module-output",
-                "operator_id": "module.output",
-                "operator_version": 1,
-                "config": {"public_name": "result"},
-                "position": {"x": 480, "y": 0},
-                "artifact_type_bindings": _artifact_binding(),
-            },
+    return _module_graph_payload(
+        name="Nested map progress",
+        nodes=[
+            SavedGraphNodeModel(
+                id="module-input",
+                operator_id="module.input",
+                operator_version=1,
+                config={"public_name": "text"},
+                position=GraphPointModel(x=0, y=0),
+                artifact_type_bindings=_artifact_binding(),
+            ),
+            SavedGraphNodeModel(
+                id="split",
+                operator_id="text.split",
+                operator_version=1,
+                config={"separator": ","},
+                position=GraphPointModel(x=240, y=120),
+            ),
+            SavedGraphNodeModel(
+                id="progress",
+                operator_id="test.module_progress",
+                operator_version=1,
+                config={},
+                position=GraphPointModel(x=480, y=120),
+            ),
+            SavedGraphNodeModel(
+                id="module-output",
+                operator_id="module.output",
+                operator_version=1,
+                config={"public_name": "result"},
+                position=GraphPointModel(x=480, y=0),
+                artifact_type_bindings=_artifact_binding(),
+            ),
         ],
-        "edges": [
-            {
-                "id": "input-to-split",
-                "from_node": "module-input",
-                "from_port": "value",
-                "to_node": "split",
-                "to_port": "text",
-            },
-            {
-                "id": "split-to-progress",
-                "from_node": "split",
-                "from_port": "parts",
-                "to_node": "progress",
-                "to_port": "text",
-                "collection_mode": "map",
-            },
-            {
-                "id": "input-to-output",
-                "from_node": "module-input",
-                "from_port": "value",
-                "to_node": "module-output",
-                "to_port": "value",
-            },
+        edges=[
+            SavedGraphEdgeModel(
+                id="input-to-split",
+                from_node="module-input",
+                from_port="value",
+                to_node="split",
+                to_port="text",
+            ),
+            SavedGraphEdgeModel(
+                id="split-to-progress",
+                from_node="split",
+                from_port="parts",
+                to_node="progress",
+                to_port="text",
+                collection_mode="map",
+            ),
+            SavedGraphEdgeModel(
+                id="input-to-output",
+                from_node="module-input",
+                from_port="value",
+                to_node="module-output",
+                to_port="value",
+            ),
         ],
-    }
+    )
 
 
-def _secret_module_payload() -> dict[str, object]:
-    return {
-        "name": "Secret-bearing module",
-        "nodes": [
-            {
-                "id": "module-input",
-                "operator_id": "module.input",
-                "operator_version": 1,
-                "config": {"public_name": "text"},
-                "position": {"x": 0, "y": 0},
-                "artifact_type_bindings": _artifact_binding(),
-            },
-            {
-                "id": "secret-gate",
-                "operator_id": "test.module_secret_gate",
-                "operator_version": 1,
-                "config": {"base_url": "https://provider.example/v1"},
-                "position": {"x": 240, "y": 0},
-            },
-            {
-                "id": "module-output",
-                "operator_id": "module.output",
-                "operator_version": 1,
-                "config": {"public_name": "result"},
-                "position": {"x": 480, "y": 0},
-                "artifact_type_bindings": _artifact_binding(),
-            },
+def _secret_module_payload(
+    *,
+    name: str = "Secret-bearing module",
+    expected_revision: int | None = None,
+) -> dict[str, object]:
+    return _module_graph_payload(
+        name=name,
+        expected_revision=expected_revision,
+        nodes=[
+            SavedGraphNodeModel(
+                id="module-input",
+                operator_id="module.input",
+                operator_version=1,
+                config={"public_name": "text"},
+                position=GraphPointModel(x=0, y=0),
+                artifact_type_bindings=_artifact_binding(),
+            ),
+            SavedGraphNodeModel(
+                id="secret-gate",
+                operator_id="test.module_secret_gate",
+                operator_version=1,
+                config={"base_url": "https://provider.example/v1"},
+                position=GraphPointModel(x=240, y=0),
+            ),
+            SavedGraphNodeModel(
+                id="module-output",
+                operator_id="module.output",
+                operator_version=1,
+                config={"public_name": "result"},
+                position=GraphPointModel(x=480, y=0),
+                artifact_type_bindings=_artifact_binding(),
+            ),
         ],
-        "edges": [
-            {
-                "id": "input-to-gate",
-                "from_node": "module-input",
-                "from_port": "value",
-                "to_node": "secret-gate",
-                "to_port": "text",
-            },
-            {
-                "id": "gate-to-output",
-                "from_node": "secret-gate",
-                "from_port": "text",
-                "to_node": "module-output",
-                "to_port": "value",
-            },
+        edges=[
+            SavedGraphEdgeModel(
+                id="input-to-gate",
+                from_node="module-input",
+                from_port="value",
+                to_node="secret-gate",
+                to_port="text",
+            ),
+            SavedGraphEdgeModel(
+                id="gate-to-output",
+                from_node="secret-gate",
+                from_port="text",
+                to_node="module-output",
+                to_port="value",
+            ),
         ],
-    }
+    )
 
 
 def _optional_input_module_payload() -> dict[str, object]:
-    return {
-        "name": "Optional suffix module",
-        "nodes": [
-            {
-                "id": "text-input",
-                "operator_id": "module.input",
-                "operator_version": 1,
-                "config": {"public_name": "text"},
-                "position": {"x": 0, "y": 0},
-                "artifact_type_bindings": _artifact_binding(),
-            },
-            {
-                "id": "suffix-input",
-                "operator_id": "module.input",
-                "operator_version": 1,
-                "config": {"public_name": "suffix", "required": False},
-                "position": {"x": 0, "y": 120},
-                "artifact_type_bindings": _artifact_binding(),
-            },
-            {
-                "id": "append",
-                "operator_id": "test.module_optional_suffix",
-                "operator_version": 1,
-                "config": {},
-                "position": {"x": 240, "y": 0},
-            },
-            {
-                "id": "collect",
-                "operator_id": "sequence.collect",
-                "operator_version": 1,
-                "config": {},
-                "position": {"x": 240, "y": 160},
-                "input_plugs": [
-                    {"id": "active-copy", "port": "items"},
-                    {"id": "disabled-copy", "port": "items"},
+    return _module_graph_payload(
+        name="Optional suffix module",
+        nodes=[
+            SavedGraphNodeModel(
+                id="text-input",
+                operator_id="module.input",
+                operator_version=1,
+                config={"public_name": "text"},
+                position=GraphPointModel(x=0, y=0),
+                artifact_type_bindings=_artifact_binding(),
+            ),
+            SavedGraphNodeModel(
+                id="suffix-input",
+                operator_id="module.input",
+                operator_version=1,
+                config={"public_name": "suffix", "required": False},
+                position=GraphPointModel(x=0, y=120),
+                artifact_type_bindings=_artifact_binding(),
+            ),
+            SavedGraphNodeModel(
+                id="append",
+                operator_id="test.module_optional_suffix",
+                operator_version=1,
+                config={},
+                position=GraphPointModel(x=240, y=0),
+            ),
+            SavedGraphNodeModel(
+                id="collect",
+                operator_id="sequence.collect",
+                operator_version=1,
+                config={},
+                position=GraphPointModel(x=240, y=160),
+                input_plugs=[
+                    SavedGraphInputPlugModel(id="active-copy", port="items"),
+                    SavedGraphInputPlugModel(id="disabled-copy", port="items"),
                 ],
-                "artifact_type_bindings": _artifact_binding(),
-            },
-            {
-                "id": "pick",
-                "operator_id": "sequence.item_at",
-                "operator_version": 1,
-                "config": {"index": 0},
-                "position": {"x": 480, "y": 160},
-                "artifact_type_bindings": _artifact_binding(),
-            },
-            {
-                "id": "module-output",
-                "operator_id": "module.output",
-                "operator_version": 1,
-                "config": {"public_name": "result"},
-                "position": {"x": 480, "y": 0},
-                "artifact_type_bindings": _artifact_binding(),
-            },
+                artifact_type_bindings=_artifact_binding(),
+            ),
+            SavedGraphNodeModel(
+                id="pick",
+                operator_id="sequence.item_at",
+                operator_version=1,
+                config={"index": 0},
+                position=GraphPointModel(x=480, y=160),
+                artifact_type_bindings=_artifact_binding(),
+            ),
+            SavedGraphNodeModel(
+                id="module-output",
+                operator_id="module.output",
+                operator_version=1,
+                config={"public_name": "result"},
+                position=GraphPointModel(x=480, y=0),
+                artifact_type_bindings=_artifact_binding(),
+            ),
         ],
-        "edges": [
-            {
-                "id": "text-to-append",
-                "from_node": "text-input",
-                "from_port": "value",
-                "to_node": "append",
-                "to_port": "text",
-            },
-            {
-                "id": "suffix-to-append",
-                "from_node": "suffix-input",
-                "from_port": "value",
-                "to_node": "append",
-                "to_port": "suffix",
-            },
-            {
-                "id": "text-to-collect",
-                "from_node": "text-input",
-                "from_port": "value",
-                "to_node": "collect",
-                "to_port": "items",
-                "to_plug": "active-copy",
-            },
-            {
-                "id": "disabled-text-to-collect",
-                "enabled": False,
-                "from_node": "text-input",
-                "from_port": "value",
-                "to_node": "collect",
-                "to_port": "items",
-                "to_plug": "disabled-copy",
-            },
-            {
-                "id": "collect-to-pick",
-                "from_node": "collect",
-                "from_port": "items",
-                "to_node": "pick",
-                "to_port": "items",
-            },
-            {
-                "id": "append-to-output",
-                "from_node": "append",
-                "from_port": "text",
-                "to_node": "module-output",
-                "to_port": "value",
-            },
+        edges=[
+            SavedGraphEdgeModel(
+                id="text-to-append",
+                from_node="text-input",
+                from_port="value",
+                to_node="append",
+                to_port="text",
+            ),
+            SavedGraphEdgeModel(
+                id="suffix-to-append",
+                from_node="suffix-input",
+                from_port="value",
+                to_node="append",
+                to_port="suffix",
+            ),
+            SavedGraphEdgeModel(
+                id="text-to-collect",
+                from_node="text-input",
+                from_port="value",
+                to_node="collect",
+                to_port="items",
+                to_plug="active-copy",
+            ),
+            SavedGraphEdgeModel(
+                id="disabled-text-to-collect",
+                enabled=False,
+                from_node="text-input",
+                from_port="value",
+                to_node="collect",
+                to_port="items",
+                to_plug="disabled-copy",
+            ),
+            SavedGraphEdgeModel(
+                id="collect-to-pick",
+                from_node="collect",
+                from_port="items",
+                to_node="pick",
+                to_port="items",
+            ),
+            SavedGraphEdgeModel(
+                id="append-to-output",
+                from_node="append",
+                from_port="text",
+                to_node="module-output",
+                to_port="value",
+            ),
         ],
-    }
+    )
 
 
 def _delegating_module_payload(
@@ -532,51 +573,53 @@ def _delegating_module_payload(
     name: str,
     target_graph_id: str,
     target_revision: int,
+    expected_revision: int,
 ) -> dict[str, object]:
-    return {
-        "name": name,
-        "nodes": [
-            {
-                "id": "module-input",
-                "operator_id": "module.input",
-                "operator_version": 1,
-                "config": {"public_name": "text"},
-                "position": {"x": 0, "y": 0},
-                "artifact_type_bindings": _artifact_binding(),
-            },
-            {
-                "id": "delegate",
-                "operator_id": f"graph.module.{target_graph_id}",
-                "operator_version": target_revision,
-                "config": {},
-                "position": {"x": 240, "y": 0},
-            },
-            {
-                "id": "module-output",
-                "operator_id": "module.output",
-                "operator_version": 1,
-                "config": {"public_name": "result"},
-                "position": {"x": 480, "y": 0},
-                "artifact_type_bindings": _artifact_binding(),
-            },
+    return _module_graph_payload(
+        name=name,
+        expected_revision=expected_revision,
+        nodes=[
+            SavedGraphNodeModel(
+                id="module-input",
+                operator_id="module.input",
+                operator_version=1,
+                config={"public_name": "text"},
+                position=GraphPointModel(x=0, y=0),
+                artifact_type_bindings=_artifact_binding(),
+            ),
+            SavedGraphNodeModel(
+                id="delegate",
+                operator_id=f"graph.module.{target_graph_id}",
+                operator_version=target_revision,
+                config={},
+                position=GraphPointModel(x=240, y=0),
+            ),
+            SavedGraphNodeModel(
+                id="module-output",
+                operator_id="module.output",
+                operator_version=1,
+                config={"public_name": "result"},
+                position=GraphPointModel(x=480, y=0),
+                artifact_type_bindings=_artifact_binding(),
+            ),
         ],
-        "edges": [
-            {
-                "id": "input-to-delegate",
-                "from_node": "module-input",
-                "from_port": "value",
-                "to_node": "delegate",
-                "to_port": "text",
-            },
-            {
-                "id": "delegate-to-output",
-                "from_node": "delegate",
-                "from_port": "result",
-                "to_node": "module-output",
-                "to_port": "value",
-            },
+        edges=[
+            SavedGraphEdgeModel(
+                id="input-to-delegate",
+                from_node="module-input",
+                from_port="value",
+                to_node="delegate",
+                to_port="text",
+            ),
+            SavedGraphEdgeModel(
+                id="delegate-to-output",
+                from_node="delegate",
+                from_port="result",
+                to_node="module-output",
+                to_port="value",
+            ),
         ],
-    }
+    )
 
 
 def _module_node_run(
@@ -596,16 +639,18 @@ def test_saved_graph_module_is_discoverable_and_executes_once(
     ).json()
     graph_id = created["id"]
 
-    unpublished = module_client.get(f"/v1/workspaces/{WORKSPACE}/nodes").json()
+    api = GrafyApi(module_client)
+    catalog = api.workspace(UUID(WORKSPACE)).catalog
+    unpublished = catalog.list_nodes().json()
     assert all(node.get("module_graph_id") != graph_id for node in unpublished["nodes"])
 
-    published = module_client.post(
-        f"/v1/workspaces/{WORKSPACE}/modules/publish",
-        json={"source_graph_id": graph_id},
+    modules = api.workspace(UUID(WORKSPACE)).modules
+    published = modules.publish(
+        PublishModuleReleaseRequest(source_graph_id=UUID(graph_id))
     )
     assert published.status_code == 201, published.text
 
-    registry_response = module_client.get(f"/v1/workspaces/{WORKSPACE}/nodes")
+    registry_response = catalog.list_nodes()
     assert registry_response.status_code == 200
     registry = registry_response.json()
     assert {
@@ -626,30 +671,30 @@ def test_saved_graph_module_is_discoverable_and_executes_once(
 
     response = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "source",
-                    "operator_id": "text.input",
-                    "operator_version": 1,
-                    "config": {"text": "a cat"},
-                },
-                {
-                    "id": "module",
-                    "operator_id": module_spec["operator_id"],
-                    "operator_version": 1,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="source",
+                    operator_id="text.input",
+                    operator_version=1,
+                    config={"text": "a cat"},
+                ),
+                RunNodeRequest(
+                    id="module",
+                    operator_id=module_spec["operator_id"],
+                    operator_version=1,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "source",
-                    "from_port": "text",
-                    "to_node": "module",
-                    "to_port": "text",
-                }
+            edges=[
+                RunEdgeRequest(
+                    from_node="source",
+                    from_port="text",
+                    to_node="module",
+                    to_port="text",
+                )
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
@@ -674,45 +719,47 @@ def test_execution_events_route_nested_nodes_to_each_module_instance(
     operator_id = f"graph.module.{created['id']}"
     started = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
-        json={
-            "nodes": [
-                {
-                    "id": "source",
-                    "operator_id": "text.input",
-                    "operator_version": 1,
-                    "config": {"text": "a cat"},
-                },
-                {
-                    "id": "module-one",
-                    "operator_id": operator_id,
-                    "operator_version": 1,
-                    "config": {},
-                },
-                {
-                    "id": "module-two",
-                    "operator_id": operator_id,
-                    "operator_version": 1,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="source",
+                    operator_id="text.input",
+                    operator_version=1,
+                    config={"text": "a cat"},
+                ),
+                RunNodeRequest(
+                    id="module-one",
+                    operator_id=operator_id,
+                    operator_version=1,
+                    config={},
+                ),
+                RunNodeRequest(
+                    id="module-two",
+                    operator_id=operator_id,
+                    operator_version=1,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "source",
-                    "from_port": "text",
-                    "to_node": "module-one",
-                    "to_port": "text",
-                },
-                {
-                    "from_node": "source",
-                    "from_port": "text",
-                    "to_node": "module-two",
-                    "to_port": "text",
-                },
+            edges=[
+                RunEdgeRequest(
+                    from_node="source",
+                    from_port="text",
+                    to_node="module-one",
+                    to_port="text",
+                ),
+                RunEdgeRequest(
+                    from_node="source",
+                    from_port="text",
+                    to_node="module-two",
+                    to_port="text",
+                ),
             ],
-        },
+        ).model_dump(mode="json"),
     ).json()
 
-    response = module_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{started['execution_id']}/events")
+    response = module_client.get(
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{started['execution_id']}/events"
+    )
     events = [
         json.loads(line.removeprefix("data: "))
         for line in response.text.splitlines()
@@ -752,46 +799,48 @@ def test_mapped_module_events_keep_the_outer_invocation_identity(
     operator_id = f"graph.module.{created['id']}"
     started = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
-        json={
-            "nodes": [
-                {
-                    "id": "source",
-                    "operator_id": "text.input",
-                    "operator_version": 1,
-                    "config": {"text": "a|ba|ca"},
-                },
-                {
-                    "id": "split",
-                    "operator_id": "text.split",
-                    "operator_version": 1,
-                    "config": {"separator": "|"},
-                },
-                {
-                    "id": "module",
-                    "operator_id": operator_id,
-                    "operator_version": 1,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="source",
+                    operator_id="text.input",
+                    operator_version=1,
+                    config={"text": "a|ba|ca"},
+                ),
+                RunNodeRequest(
+                    id="split",
+                    operator_id="text.split",
+                    operator_version=1,
+                    config={"separator": "|"},
+                ),
+                RunNodeRequest(
+                    id="module",
+                    operator_id=operator_id,
+                    operator_version=1,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "source",
-                    "from_port": "text",
-                    "to_node": "split",
-                    "to_port": "text",
-                },
-                {
-                    "from_node": "split",
-                    "from_port": "parts",
-                    "to_node": "module",
-                    "to_port": "text",
-                    "collection_mode": "map",
-                },
+            edges=[
+                RunEdgeRequest(
+                    from_node="source",
+                    from_port="text",
+                    to_node="split",
+                    to_port="text",
+                ),
+                RunEdgeRequest(
+                    from_node="split",
+                    from_port="parts",
+                    to_node="module",
+                    to_port="text",
+                    collection_mode="map",
+                ),
             ],
-        },
+        ).model_dump(mode="json"),
     ).json()
 
-    response = module_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{started['execution_id']}/events")
+    response = module_client.get(
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{started['execution_id']}/events"
+    )
     progress_events = [
         json.loads(line.removeprefix("data: "))
         for line in response.text.splitlines()
@@ -822,46 +871,48 @@ def test_nested_map_events_append_each_local_invocation_index(
     ).json()
     started = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
-        json={
-            "nodes": [
-                {
-                    "id": "source",
-                    "operator_id": "text.input",
-                    "operator_version": 1,
-                    "config": {"text": "a,b|ca,da"},
-                },
-                {
-                    "id": "split",
-                    "operator_id": "text.split",
-                    "operator_version": 1,
-                    "config": {"separator": "|"},
-                },
-                {
-                    "id": "module",
-                    "operator_id": f"graph.module.{created['id']}",
-                    "operator_version": 1,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="source",
+                    operator_id="text.input",
+                    operator_version=1,
+                    config={"text": "a,b|ca,da"},
+                ),
+                RunNodeRequest(
+                    id="split",
+                    operator_id="text.split",
+                    operator_version=1,
+                    config={"separator": "|"},
+                ),
+                RunNodeRequest(
+                    id="module",
+                    operator_id=f"graph.module.{created['id']}",
+                    operator_version=1,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "source",
-                    "from_port": "text",
-                    "to_node": "split",
-                    "to_port": "text",
-                },
-                {
-                    "from_node": "split",
-                    "from_port": "parts",
-                    "to_node": "module",
-                    "to_port": "text",
-                    "collection_mode": "map",
-                },
+            edges=[
+                RunEdgeRequest(
+                    from_node="source",
+                    from_port="text",
+                    to_node="split",
+                    to_port="text",
+                ),
+                RunEdgeRequest(
+                    from_node="split",
+                    from_port="parts",
+                    to_node="module",
+                    to_port="text",
+                    collection_mode="map",
+                ),
             ],
-        },
+        ).model_dump(mode="json"),
     ).json()
 
-    response = module_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{started['execution_id']}/events")
+    response = module_client.get(
+        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{started['execution_id']}/events"
+    )
     progress_events = [
         json.loads(line.removeprefix("data: "))
         for line in response.text.splitlines()
@@ -893,53 +944,54 @@ def test_module_uses_existing_map_semantics_and_keeps_revision_pinned(
     ).json()
     graph_id = created["id"]
     operator_id = f"graph.module.{graph_id}"
+    api = GrafyApi(module_client)
+    modules = api.workspace(UUID(WORKSPACE)).modules
     assert (
-        module_client.post(
-            f"/v1/workspaces/{WORKSPACE}/modules/publish",
-            json={"source_graph_id": graph_id},
+        modules.publish(
+            PublishModuleReleaseRequest(source_graph_id=UUID(graph_id))
         ).status_code
         == 201
     )
 
     mapped_response = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "source",
-                    "operator_id": "text.input",
-                    "operator_version": 1,
-                    "config": {"text": "a|ba|ca"},
-                },
-                {
-                    "id": "split",
-                    "operator_id": "text.split",
-                    "operator_version": 1,
-                    "config": {"separator": "|"},
-                },
-                {
-                    "id": "module",
-                    "operator_id": operator_id,
-                    "operator_version": 1,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="source",
+                    operator_id="text.input",
+                    operator_version=1,
+                    config={"text": "a|ba|ca"},
+                ),
+                RunNodeRequest(
+                    id="split",
+                    operator_id="text.split",
+                    operator_version=1,
+                    config={"separator": "|"},
+                ),
+                RunNodeRequest(
+                    id="module",
+                    operator_id=operator_id,
+                    operator_version=1,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "source",
-                    "from_port": "text",
-                    "to_node": "split",
-                    "to_port": "text",
-                },
-                {
-                    "from_node": "split",
-                    "from_port": "parts",
-                    "to_node": "module",
-                    "to_port": "text",
-                    "collection_mode": "map",
-                },
+            edges=[
+                RunEdgeRequest(
+                    from_node="source",
+                    from_port="text",
+                    to_node="split",
+                    to_port="text",
+                ),
+                RunEdgeRequest(
+                    from_node="split",
+                    from_port="parts",
+                    to_node="module",
+                    to_port="text",
+                    collection_mode="map",
+                ),
             ],
-        },
+        ).model_dump(mode="json"),
     )
     assert mapped_response.status_code == 200
     mapped_result = mapped_response.json()
@@ -954,8 +1006,7 @@ def test_module_uses_existing_map_semantics_and_keeps_revision_pinned(
         for artifact in cast(list[dict[str, object]], mapped_output["artifacts"])
     ] == ['"A"', '"bA"', '"cA"']
 
-    update_payload = _text_module_payload(replacement="X")
-    update_payload["expected_revision"] = 1
+    update_payload = _text_module_payload(replacement="X", expected_revision=1)
     updated_response = module_client.put(
         f"/v1/workspaces/{WORKSPACE}/graphs/{graph_id}",
         json=update_payload,
@@ -963,14 +1014,14 @@ def test_module_uses_existing_map_semantics_and_keeps_revision_pinned(
     assert updated_response.status_code == 200
     assert updated_response.json()["revision"] == 2
     assert (
-        module_client.post(
-            f"/v1/workspaces/{WORKSPACE}/modules/publish",
-            json={"source_graph_id": graph_id, "revision": 2},
+        modules.publish(
+            PublishModuleReleaseRequest(source_graph_id=UUID(graph_id), revision=2)
         ).status_code
         == 201
     )
 
-    registry = module_client.get(f"/v1/workspaces/{WORKSPACE}/nodes").json()
+    catalog = api.workspace(UUID(WORKSPACE)).catalog
+    registry = catalog.list_nodes().json()
     module_specs = [
         node for node in registry["nodes"] if node["module_graph_id"] == graph_id
     ]
@@ -981,30 +1032,30 @@ def test_module_uses_existing_map_semantics_and_keeps_revision_pinned(
 
     pinned_response = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "source",
-                    "operator_id": "text.input",
-                    "operator_version": 1,
-                    "config": {"text": "a"},
-                },
-                {
-                    "id": "module",
-                    "operator_id": operator_id,
-                    "operator_version": 1,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="source",
+                    operator_id="text.input",
+                    operator_version=1,
+                    config={"text": "a"},
+                ),
+                RunNodeRequest(
+                    id="module",
+                    operator_id=operator_id,
+                    operator_version=1,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "source",
-                    "from_port": "text",
-                    "to_node": "module",
-                    "to_port": "text",
-                }
+            edges=[
+                RunEdgeRequest(
+                    from_node="source",
+                    from_port="text",
+                    to_node="module",
+                    to_port="text",
+                )
             ],
-        },
+        ).model_dump(mode="json"),
     )
     pinned_output = cast(
         list[dict[str, object]],
@@ -1022,14 +1073,16 @@ def test_nested_module_omits_absent_optional_input_and_disabled_edges(
         json=_optional_input_module_payload(),
     ).json()
     graph_id = created["id"]
+    api = GrafyApi(module_client)
+    modules = api.workspace(UUID(WORKSPACE)).modules
     assert (
-        module_client.post(
-            f"/v1/workspaces/{WORKSPACE}/modules/publish",
-            json={"source_graph_id": graph_id},
+        modules.publish(
+            PublishModuleReleaseRequest(source_graph_id=UUID(graph_id))
         ).status_code
         == 201
     )
-    registry = module_client.get(f"/v1/workspaces/{WORKSPACE}/nodes").json()
+    catalog = api.workspace(UUID(WORKSPACE)).catalog
+    registry = catalog.list_nodes().json()
     module_spec = next(
         node for node in registry["nodes"] if node["module_graph_id"] == graph_id
     )
@@ -1040,30 +1093,30 @@ def test_nested_module_omits_absent_optional_input_and_disabled_edges(
 
     response = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "source",
-                    "operator_id": "text.input",
-                    "operator_version": 1,
-                    "config": {"text": "hello"},
-                },
-                {
-                    "id": "module",
-                    "operator_id": module_spec["operator_id"],
-                    "operator_version": module_spec["operator_version"],
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="source",
+                    operator_id="text.input",
+                    operator_version=1,
+                    config={"text": "hello"},
+                ),
+                RunNodeRequest(
+                    id="module",
+                    operator_id=module_spec["operator_id"],
+                    operator_version=module_spec["operator_version"],
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "source",
-                    "from_port": "text",
-                    "to_node": "module",
-                    "to_port": "text",
-                }
+            edges=[
+                RunEdgeRequest(
+                    from_node="source",
+                    from_port="text",
+                    to_node="module",
+                    to_port="text",
+                )
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
@@ -1075,42 +1128,42 @@ def test_nested_module_omits_absent_optional_input_and_disabled_edges(
 
     supplied_response = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "text-source",
-                    "operator_id": "text.input",
-                    "operator_version": 1,
-                    "config": {"text": "hello"},
-                },
-                {
-                    "id": "suffix-source",
-                    "operator_id": "text.input",
-                    "operator_version": 1,
-                    "config": {"text": "!"},
-                },
-                {
-                    "id": "module",
-                    "operator_id": module_spec["operator_id"],
-                    "operator_version": module_spec["operator_version"],
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="text-source",
+                    operator_id="text.input",
+                    operator_version=1,
+                    config={"text": "hello"},
+                ),
+                RunNodeRequest(
+                    id="suffix-source",
+                    operator_id="text.input",
+                    operator_version=1,
+                    config={"text": "!"},
+                ),
+                RunNodeRequest(
+                    id="module",
+                    operator_id=module_spec["operator_id"],
+                    operator_version=module_spec["operator_version"],
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "text-source",
-                    "from_port": "text",
-                    "to_node": "module",
-                    "to_port": "text",
-                },
-                {
-                    "from_node": "suffix-source",
-                    "from_port": "text",
-                    "to_node": "module",
-                    "to_port": "suffix",
-                },
+            edges=[
+                RunEdgeRequest(
+                    from_node="text-source",
+                    from_port="text",
+                    to_node="module",
+                    to_port="text",
+                ),
+                RunEdgeRequest(
+                    from_node="suffix-source",
+                    from_port="text",
+                    to_node="module",
+                    to_port="suffix",
+                ),
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert supplied_response.status_code == 200
@@ -1141,31 +1194,31 @@ def test_module_catalog_rejects_optional_input_targeting_required_input(
         "(text.replace@1)"
     )
 
-    publish = module_client.post(
-        f"/v1/workspaces/{WORKSPACE}/modules/publish",
-        json={"source_graph_id": graph_id},
+    api = GrafyApi(module_client)
+    modules = api.workspace(UUID(WORKSPACE)).modules
+    publish = modules.publish(
+        PublishModuleReleaseRequest(source_graph_id=UUID(graph_id))
     )
     assert publish.status_code == 422
     assert reason in publish.json()["detail"]
 
-    registry = module_client.get(f"/v1/workspaces/{WORKSPACE}/nodes").json()
-    assert all(
-        node.get("module_graph_id") != graph_id for node in registry["nodes"]
-    )
+    catalog = api.workspace(UUID(WORKSPACE)).catalog
+    registry = catalog.list_nodes().json()
+    assert all(node.get("module_graph_id") != graph_id for node in registry["nodes"])
     assert registry["unavailable_modules"] == []
 
     response = module_client.post(
         f"/v1/workspaces/{WORKSPACE}/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "module",
-                    "operator_id": f"graph.module.{graph_id}",
-                    "operator_version": 1,
-                    "config": {},
-                }
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="module",
+                    operator_id=f"graph.module.{graph_id}",
+                    operator_version=1,
+                    config={},
+                )
             ]
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 422
@@ -1179,33 +1232,36 @@ def test_module_catalog_reports_invalid_boundary_wiring(
 ) -> None:
     created = module_client.post(
         f"/v1/workspaces/{WORKSPACE}/graphs",
-        json={
-            "name": "Input without output",
-            "nodes": [
-                {
-                    "id": "module-input",
-                    "operator_id": "module.input",
-                    "operator_version": 1,
-                    "config": {"public_name": "text"},
-                    "position": {"x": 0, "y": 0},
-                    "artifact_type_bindings": _artifact_binding(),
-                }
+        json=CreateSavedGraphRequest(
+            name="Input without output",
+            nodes=[
+                SavedGraphNodeModel(
+                    id="module-input",
+                    operator_id="module.input",
+                    operator_version=1,
+                    config={"public_name": "text"},
+                    position=GraphPointModel(x=0, y=0),
+                    artifact_type_bindings=_artifact_binding(),
+                )
             ],
-            "edges": [],
-        },
+            edges=[],
+        ).model_dump(mode="json"),
     ).json()
     graph_id = created["id"]
 
-    publish = module_client.post(
-        f"/v1/workspaces/{WORKSPACE}/modules/publish",
-        json={"source_graph_id": graph_id},
+    api = GrafyApi(module_client)
+    modules = api.workspace(UUID(WORKSPACE)).modules
+    publish = modules.publish(
+        PublishModuleReleaseRequest(source_graph_id=UUID(graph_id))
     )
     assert publish.status_code == 422
-    assert "Module Input boundary must connect its 'value' output" in publish.json()[
-        "detail"
-    ]
+    assert (
+        "Module Input boundary must connect its 'value' output"
+        in publish.json()["detail"]
+    )
 
-    registry = module_client.get(f"/v1/workspaces/{WORKSPACE}/nodes").json()
+    catalog = api.workspace(UUID(WORKSPACE)).catalog
+    registry = catalog.list_nodes().json()
     assert registry["unavailable_modules"] == []
     assert all(node.get("module_graph_id") != graph_id for node in registry["nodes"])
 
@@ -1215,23 +1271,25 @@ def test_module_catalog_ignores_graphs_without_module_boundaries(
 ) -> None:
     created = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
-        json={
-            "name": "Ordinary workflow",
-            "nodes": [
-                {
-                    "id": "source",
-                    "operator_id": "text.input",
-                    "operator_version": 1,
-                    "config": {"text": "hello"},
-                    "position": {"x": 0, "y": 0},
-                }
+        json=CreateSavedGraphRequest(
+            name="Ordinary workflow",
+            nodes=[
+                SavedGraphNodeModel(
+                    id="source",
+                    operator_id="text.input",
+                    operator_version=1,
+                    config={"text": "hello"},
+                    position=GraphPointModel(x=0, y=0),
+                )
             ],
-            "edges": [],
-        },
+            edges=[],
+        ).model_dump(mode="json"),
     ).json()
     graph_id = created["id"]
 
-    registry = module_client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes").json()
+    api = GrafyApi(module_client)
+    catalog = api.workspace(UUID(WORKSPACE)).catalog
+    registry = catalog.list_nodes().json()
     assert all(
         node["module_graph_id"] != graph_id
         for node in registry["nodes"]
@@ -1252,16 +1310,16 @@ def test_graph_module_required_input_is_rejected_by_compiler(
 
     response = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "module",
-                    "operator_id": f"graph.module.{created['id']}",
-                    "operator_version": created["revision"],
-                    "config": {},
-                }
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="module",
+                    operator_id=f"graph.module.{created['id']}",
+                    operator_version=created["revision"],
+                    config={},
+                )
             ]
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 422
@@ -1279,6 +1337,9 @@ def test_nested_module_resolves_secret_from_its_own_pinned_graph(
         json=_secret_module_payload(),
     ).json()
     graph_id = created["id"]
+    # Raw dict on purpose: ConfigureNodeSecretRequest redacts its SecretStr
+    # value to "**********" in model_dump(mode="json"), so the wire body must
+    # carry the plaintext.
     configured = module_client.put(
         f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}/nodes/secret-gate/secrets/api_key",
         json={"value": "module-only-key", "expected_graph_revision": 1},
@@ -1290,9 +1351,9 @@ def test_nested_module_resolves_secret_from_its_own_pinned_graph(
         "configured": True,
     }
 
-    update_payload = _secret_module_payload()
-    update_payload["name"] = "Renamed secret-bearing module"
-    update_payload["expected_revision"] = 1
+    update_payload = _secret_module_payload(
+        name="Renamed secret-bearing module", expected_revision=1
+    )
     assert (
         module_client.put(
             f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}",
@@ -1303,30 +1364,30 @@ def test_nested_module_resolves_secret_from_its_own_pinned_graph(
 
     response = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "source",
-                    "operator_id": "text.input",
-                    "operator_version": 1,
-                    "config": {"text": "request"},
-                },
-                {
-                    "id": "module",
-                    "operator_id": f"graph.module.{graph_id}",
-                    "operator_version": 1,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="source",
+                    operator_id="text.input",
+                    operator_version=1,
+                    config={"text": "request"},
+                ),
+                RunNodeRequest(
+                    id="module",
+                    operator_id=f"graph.module.{graph_id}",
+                    operator_version=1,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "source",
-                    "from_port": "text",
-                    "to_node": "module",
-                    "to_port": "text",
-                }
+            edges=[
+                RunEdgeRequest(
+                    from_node="source",
+                    from_port="text",
+                    to_node="module",
+                    to_port="text",
+                )
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
@@ -1357,8 +1418,8 @@ def test_exact_module_revision_cycle_reports_the_nested_path(
         name="First",
         target_graph_id=second["id"],
         target_revision=2,
+        expected_revision=1,
     )
-    first_update["expected_revision"] = 1
     assert (
         module_client.put(
             f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{first['id']}",
@@ -1371,8 +1432,8 @@ def test_exact_module_revision_cycle_reports_the_nested_path(
         name="Second",
         target_graph_id=first["id"],
         target_revision=2,
+        expected_revision=1,
     )
-    second_update["expected_revision"] = 1
     assert (
         module_client.put(
             f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{second['id']}",
@@ -1383,30 +1444,30 @@ def test_exact_module_revision_cycle_reports_the_nested_path(
 
     response = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "source",
-                    "operator_id": "text.input",
-                    "operator_version": 1,
-                    "config": {"text": "a"},
-                },
-                {
-                    "id": "module",
-                    "operator_id": f"graph.module.{first['id']}",
-                    "operator_version": 2,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="source",
+                    operator_id="text.input",
+                    operator_version=1,
+                    config={"text": "a"},
+                ),
+                RunNodeRequest(
+                    id="module",
+                    operator_id=f"graph.module.{first['id']}",
+                    operator_version=2,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "source",
-                    "from_port": "text",
-                    "to_node": "module",
-                    "to_port": "text",
-                }
+            edges=[
+                RunEdgeRequest(
+                    from_node="source",
+                    from_port="text",
+                    to_node="module",
+                    to_port="text",
+                )
             ],
-        },
+        ).model_dump(mode="json"),
     )
 
     assert response.status_code == 200
@@ -1426,47 +1487,46 @@ def test_withdrawn_module_stays_executable_for_pinned_calls(
         json=_text_module_payload(),
     ).json()
     graph_id = created["id"]
-    published = module_client.post(
-        f"/v1/workspaces/{WORKSPACE}/modules/publish",
-        json={"source_graph_id": graph_id},
-    ).json()
-    module_id = published["id"]
-
-    withdraw = module_client.post(
-        f"/v1/workspaces/{WORKSPACE}/modules/{module_id}/withdraw",
+    api = GrafyApi(module_client)
+    modules = api.workspace(UUID(WORKSPACE)).modules
+    published = modules.publish_ok(
+        PublishModuleReleaseRequest(source_graph_id=UUID(graph_id))
     )
-    assert withdraw.status_code == 200
-    assert withdraw.json()["publication_state"] == "withdrawn"
+    module_id = published.id
 
-    registry = module_client.get(f"/v1/workspaces/{WORKSPACE}/nodes").json()
+    withdraw = modules.withdraw_ok(module_id)
+    assert withdraw.publication_state == "withdrawn"
+
+    catalog = api.workspace(UUID(WORKSPACE)).catalog
+    registry = catalog.list_nodes().json()
     assert all(node.get("module_graph_id") != graph_id for node in registry["nodes"])
 
     response = module_client.post(
         f"/v1/workspaces/{WORKSPACE}/runs",
-        json={
-            "nodes": [
-                {
-                    "id": "source",
-                    "operator_id": "text.input",
-                    "operator_version": 1,
-                    "config": {"text": "a"},
-                },
-                {
-                    "id": "module",
-                    "operator_id": f"graph.module.{graph_id}",
-                    "operator_version": 1,
-                    "config": {},
-                },
+        json=RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="source",
+                    operator_id="text.input",
+                    operator_version=1,
+                    config={"text": "a"},
+                ),
+                RunNodeRequest(
+                    id="module",
+                    operator_id=f"graph.module.{graph_id}",
+                    operator_version=1,
+                    config={},
+                ),
             ],
-            "edges": [
-                {
-                    "from_node": "source",
-                    "from_port": "text",
-                    "to_node": "module",
-                    "to_port": "text",
-                }
+            edges=[
+                RunEdgeRequest(
+                    from_node="source",
+                    from_port="text",
+                    to_node="module",
+                    to_port="text",
+                )
             ],
-        },
+        ).model_dump(mode="json"),
     )
     assert response.status_code == 200
     result = response.json()
@@ -1487,14 +1547,11 @@ def test_module_library_resolve_definition_is_the_core_contract(
         json=_text_module_payload(),
     ).json()
     graph_id = UUID(created["id"])
-    module_client.post(
-        f"/v1/workspaces/{WORKSPACE}/modules/publish",
-        json={"source_graph_id": str(graph_id)},
-    ).status_code
+    api = GrafyApi(module_client)
+    modules = api.workspace(UUID(WORKSPACE)).modules
+    modules.publish(PublishModuleReleaseRequest(source_graph_id=graph_id))
 
-    module_library = module_client.app.dependency_overrides[
-        module_library_service
-    ]()
+    module_library = module_client.app.dependency_overrides[module_library_service]()
 
     reference = GraphModuleReference(graph_id=graph_id, revision=1)
     definition = asyncio.run(

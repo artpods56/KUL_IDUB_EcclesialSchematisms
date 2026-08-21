@@ -28,6 +28,8 @@ from grafy_core.runtime.materialization import MaterializationProvenance
 from grafy_core.runtime.persistence import ArtifactWriteContext
 from grafy_storage import LocalFileObjectStore
 
+from tests.support.clients import GrafyApi
+
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
 
@@ -64,13 +66,11 @@ def test_full_table_content_and_download_return_413_before_reconstruction(
         "BUFFERED_ARTIFACT_RESPONSE_MAX_BYTES",
         1,
     )
-    base_url = (
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/"
-        f"{ref.artifact_id}"
-    )
+    api = GrafyApi(client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
 
-    content = client.get(f"{base_url}/content")
-    download = client.get(f"{base_url}/download", params={"format": "json"})
+    content = artifacts.content(ref.artifact_id)
+    download = artifacts.download(ref.artifact_id, format="json")
 
     assert content.status_code == 413
     assert str(ref.artifact_id) in content.json()["detail"]
@@ -87,6 +87,8 @@ def test_table_page_bounds_cell_previews_and_full_download(
     ],
 ) -> None:
     client, writer, components = table_artifact_client
+    api = GrafyApi(client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     long_geometry = "MULTIPOLYGON (((" + "1 2, " * 300 + "1 2)))"
     table = Table(
         columns=[
@@ -130,9 +132,11 @@ def test_table_page_bounds_cell_previews_and_full_download(
         )
     )
 
-    page_response = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/page",
-        params={"offset": 95, "limit": 10, "max_cell_characters": 32},
+    page_response = artifacts.table_page(
+        ref.artifact_id,
+        offset=95,
+        limit=10,
+        max_cell_characters=32,
     )
 
     assert page_response.status_code == 200
@@ -153,9 +157,10 @@ def test_table_page_bounds_cell_previews_and_full_download(
     assert isinstance(geometry, str)
     assert geometry_preview["original_length"] == len(geometry)
 
-    cell_response = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/cell",
-        params={"row_index": 95, "column_id": "geometry/wkt"},
+    cell_response = artifacts.table_cell(
+        ref.artifact_id,
+        row_index=95,
+        column_id="geometry/wkt",
     )
     assert cell_response.status_code == 200
     assert cell_response.json() == {
@@ -165,9 +170,10 @@ def test_table_page_bounds_cell_previews_and_full_download(
         "encoding": "native",
     }
 
-    large_integer_response = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/cell",
-        params={"row_index": 95, "column_id": "large_id"},
+    large_integer_response = artifacts.table_cell(
+        ref.artifact_id,
+        row_index=95,
+        column_id="large_id",
     )
     assert large_integer_response.json() == {
         "row_index": 95,
@@ -175,9 +181,10 @@ def test_table_page_bounds_cell_previews_and_full_download(
         "value": str(2**60 + 95),
         "encoding": "integer",
     }
-    nested_response = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/cell",
-        params={"row_index": 95, "column_id": "metadata"},
+    nested_response = artifacts.table_cell(
+        ref.artifact_id,
+        row_index=95,
+        column_id="metadata",
     )
     assert nested_response.json() == {
         "row_index": 95,
@@ -186,23 +193,26 @@ def test_table_page_bounds_cell_previews_and_full_download(
         "encoding": "json",
     }
     assert (
-        client.get(
-            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/cell",
-            params={"row_index": 999, "column_id": "id"},
+        artifacts.table_cell(
+            ref.artifact_id,
+            row_index=999,
+            column_id="id",
         ).status_code
         == 400
     )
     assert (
-        client.get(
-            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/cell",
-            params={"row_index": 0, "column_id": "missing"},
+        artifacts.table_cell(
+            ref.artifact_id,
+            row_index=0,
+            column_id="missing",
         ).status_code
         == 400
     )
 
-    column_page_response = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/page",
-        params={"column_offset": 2, "column_limit": 1},
+    column_page_response = artifacts.table_page(
+        ref.artifact_id,
+        column_offset=2,
+        column_limit=1,
     )
     assert column_page_response.status_code == 200
     column_page = column_page_response.json()
@@ -212,12 +222,9 @@ def test_table_page_bounds_cell_previews_and_full_download(
     assert column_page["column_limit"] == 1
     assert column_page["total_columns"] == 4
 
-    selected_columns_response = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/page",
-        params=[
-            ("column_ids", "metadata"),
-            ("column_ids", "id"),
-        ],
+    selected_columns_response = artifacts.table_page(
+        ref.artifact_id,
+        column_ids=["metadata", "id"],
     )
     assert selected_columns_response.status_code == 200
     selected_columns_page = selected_columns_response.json()
@@ -230,16 +237,14 @@ def test_table_page_bounds_cell_previews_and_full_download(
     assert selected_columns_page["column_limit"] == 2
     assert selected_columns_page["total_columns"] == 4
     assert (
-        client.get(
-            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/page",
-            params={"column_ids": "missing"},
+        artifacts.table_page(
+            ref.artifact_id,
+            column_ids=["missing"],
         ).status_code
         == 400
     )
 
-    schema_response = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/schema"
-    )
+    schema_response = artifacts.table_schema(ref.artifact_id)
     assert schema_response.status_code == 200
     assert schema_response.json()["total_rows"] == 120
     assert [column["id"] for column in schema_response.json()["columns"]] == [
@@ -252,9 +257,7 @@ def test_table_page_bounds_cell_previews_and_full_download(
     summary = asyncio.run(components.presenter.artifact_summary(WORKSPACE_ID, ref))
     assert summary.byte_size is not None
 
-    content_response = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/content"
-    )
+    content_response = artifacts.content(ref.artifact_id)
     assert content_response.status_code == 200
     assert Table.model_validate(content_response.json()) == table
     assert len(content_response.content) == summary.byte_size
@@ -264,10 +267,7 @@ def test_table_page_bounds_cell_previews_and_full_download(
     assert [entry.format for entry in summary.download_formats] == ["json", "csv"]
 
     # Downloading as csv streams the full table (header + every row).
-    csv_response = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/download",
-        params={"format": "csv"},
-    )
+    csv_response = artifacts.download(ref.artifact_id, format="csv")
     assert csv_response.status_code == 200
     assert "text/csv" in csv_response.headers["content-type"]
     assert ".csv" in csv_response.headers["content-disposition"]
@@ -294,6 +294,8 @@ def test_table_page_rejects_non_table_and_invalid_limits(
     ],
 ) -> None:
     client, _, _ = table_artifact_client
+    api = GrafyApi(client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
 
     run_response = client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
@@ -312,30 +314,25 @@ def test_table_page_rejects_non_table_and_invalid_limits(
     text_artifact_id = run_response.json()["node_runs"][0]["outputs"][0]["value"][
         "artifact_id"
     ]
-    assert (
-        client.get(
-            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{text_artifact_id}/table/page"
-        ).status_code
-        == 400
-    )
+    assert artifacts.table_page(UUID(text_artifact_id)).status_code == 400
 
     assert (
-        client.get(
-            "/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/00000000-0000-0000-0000-000000000000/table/page"
-        ).status_code
+        artifacts.table_page(UUID("00000000-0000-0000-0000-000000000000")).status_code
         == 404
     )
     assert (
-        client.get(
-            "/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/00000000-0000-0000-0000-000000000000/table/page",
-            params={"limit": 0},
+        artifacts.table_page(
+            UUID("00000000-0000-0000-0000-000000000000"),
+            limit=0,
         ).status_code
         == 422
     )
     assert (
-        client.get(
-            "/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/00000000-0000-0000-0000-000000000000/table/page",
-            params={"limit": 100, "column_limit": 100, "max_cell_characters": 2_000},
+        artifacts.table_page(
+            UUID("00000000-0000-0000-0000-000000000000"),
+            limit=100,
+            column_limit=100,
+            max_cell_characters=2_000,
         ).status_code
         == 400
     )
@@ -349,6 +346,8 @@ def test_table_query_filters_composite_keys_and_preserves_source_rows(
     ],
 ) -> None:
     client, writer, _ = table_artifact_client
+    api = GrafyApi(client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     table = Table(
         columns=[
             TableColumn(
@@ -403,9 +402,9 @@ def test_table_query_filters_composite_keys_and_preserves_source_rows(
         )
     )
 
-    response = client.post(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/query",
-        json=TableQueryRequest(
+    response = artifacts.table_query(
+        ref.artifact_id,
+        TableQueryRequest(
             filter_groups=[
                 TableExactMatchGroup(
                     rows=[
@@ -427,7 +426,7 @@ def test_table_query_filters_composite_keys_and_preserves_source_rows(
             column_offset=0,
             column_limit=25,
             max_cell_characters=256,
-        ).model_dump(mode="json"),
+        ),
     )
 
     assert response.status_code == 200
@@ -440,15 +439,15 @@ def test_table_query_filters_composite_keys_and_preserves_source_rows(
         "Kniazhitsy",
     ]
 
-    missing_field = client.post(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{ref.artifact_id}/table/query",
-        json=TableQueryRequest(
+    missing_field = artifacts.table_query(
+        ref.artifact_id,
+        TableQueryRequest(
             filter_groups=[
                 TableExactMatchGroup(
                     rows=[ArtifactExactMatchRow(values={"missing": "Belynichi"})]
                 )
             ],
-        ).model_dump(mode="json"),
+        ),
     )
     assert missing_field.status_code == 400
     assert "missing" in missing_field.json()["detail"]
@@ -462,6 +461,8 @@ def test_table_query_matches_integer_keys_from_string_or_number(
     ],
 ) -> None:
     client, writer, _ = table_artifact_client
+    api = GrafyApi(client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     large_id = 2**60 + 95
     table = Table(
         columns=[
@@ -494,54 +495,49 @@ def test_table_query_matches_integer_keys_from_string_or_number(
             ),
         )
     )
-    path = (
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007"
-        f"/artifacts/{ref.artifact_id}/table/query"
-    )
-
-    string_key = client.post(
-        path,
-        json=TableQueryRequest(
+    string_key = artifacts.table_query(
+        ref.artifact_id,
+        TableQueryRequest(
             highlight_groups=[
                 TableExactMatchGroup(rows=[ArtifactExactMatchRow(values={"id": "12"})])
             ],
-        ).model_dump(mode="json"),
+        ),
     )
     assert string_key.status_code == 200
     assert string_key.json()["highlighted_row_indices"] == [0]
 
-    number_key = client.post(
-        path,
-        json=TableQueryRequest(
+    number_key = artifacts.table_query(
+        ref.artifact_id,
+        TableQueryRequest(
             highlight_groups=[
                 TableExactMatchGroup(rows=[ArtifactExactMatchRow(values={"id": 12})])
             ],
-        ).model_dump(mode="json"),
+        ),
     )
     assert number_key.status_code == 200
     assert number_key.json()["highlighted_row_indices"] == [0]
 
-    large_string_key = client.post(
-        path,
-        json=TableQueryRequest(
+    large_string_key = artifacts.table_query(
+        ref.artifact_id,
+        TableQueryRequest(
             filter_groups=[
                 TableExactMatchGroup(
                     rows=[ArtifactExactMatchRow(values={"large_id": str(large_id)})]
                 )
             ],
-        ).model_dump(mode="json"),
+        ),
     )
     assert large_string_key.status_code == 200
     assert large_string_key.json()["row_indices"] == [0]
     assert large_string_key.json()["total_rows"] == 1
 
-    padded = client.post(
-        path,
-        json=TableQueryRequest(
+    padded = artifacts.table_query(
+        ref.artifact_id,
+        TableQueryRequest(
             highlight_groups=[
                 TableExactMatchGroup(rows=[ArtifactExactMatchRow(values={"id": "012"})])
             ],
-        ).model_dump(mode="json"),
+        ),
     )
     assert padded.status_code == 200
     assert padded.json()["highlighted_row_indices"] == []

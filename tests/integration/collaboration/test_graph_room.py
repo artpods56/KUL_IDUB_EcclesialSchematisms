@@ -6,6 +6,7 @@ import threading
 from collections.abc import Iterator
 from pathlib import Path
 from queue import Queue
+from typing import cast
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
@@ -16,9 +17,9 @@ from pydantic import SecretStr
 from starlette.testclient import WebSocketDenialResponse
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
-from grafy_api.main import create_app
 from grafy_api.settings import Settings
 from grafy_api.v1.routes.auth.dependencies import browser_actor
+from grafy_api.v1.routes.auth.models import WorkspaceMemberRoleRequest
 from grafy_api.v1.routes.collaboration.hub import (
     CLOSE_SLOW_CONSUMER,
     OUTBOUND_QUEUE_MAXSIZE,
@@ -31,6 +32,14 @@ from grafy_api.v1.routes.collaboration.models import (
     RoomHeartbeatMessage,
     RoomReadyMessage,
 )
+from grafy_api.v1.routes.collaboration.views import websocket_browser_actor
+from grafy_api.v1.routes.executions.models import RunRequest
+from grafy_api.v1.routes.saved_graphs.models import (
+    CreateSavedGraphRequest,
+    SubmitGraphCommandRequest,
+    UpdateSavedGraphRequest,
+)
+from grafy_core.domain.collaboration import RenameGraphCommand
 from grafy_core.domain.identity import (
     ActorContext,
     User,
@@ -43,10 +52,12 @@ from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from tests.support.identity import (
+    ActorSwitcher,
     TEST_USER_ID,
     WORKSPACE_ID,
     workspace_api_path,
 )
+from tests.testkit import client_with_overrides
 
 FIXTURES = Path(__file__).parents[2] / "fixtures"
 
@@ -55,25 +66,6 @@ PUBLIC_ORIGIN = "http://localhost:3000"
 EDITOR_USER_ID = UUID(int=11)
 VIEWER_USER_ID = UUID(int=12)
 STRANGER_USER_ID = UUID(int=13)
-
-
-class ActorSwitcher:
-    def __init__(self, user_id: UUID) -> None:
-        self.user_id = user_id
-
-    def install(self, application: FastAPI) -> None:
-        switcher = self
-
-        def override() -> ActorContext:
-            return ActorContext(
-                user_id=switcher.user_id,
-                credential_reference="test-session",
-            )
-
-        application.dependency_overrides[browser_actor] = override
-
-    def as_user(self, user_id: UUID) -> None:
-        self.user_id = user_id
 
 
 async def _seed_room_users(database_url: str) -> None:
@@ -116,31 +108,23 @@ async def _seed_room_users(database_url: str) -> None:
         await database.dispose()
 
 
-def _build_room_client(
-    tmp_path: Path,
-    *,
-    graph_room_heartbeat_seconds: float = 0.0,
-) -> tuple[TestClient, ActorSwitcher, FastAPI]:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'room.sqlite3'}"
-    asyncio.run(_seed_room_users(database_url))
-    application = create_app(
-        Settings(
-            workspace=tmp_path / "workbench",
-            database_url=SecretStr(database_url),
-            execution_backend="inline",
-            public_origin=PUBLIC_ORIGIN,
-            graph_room_heartbeat_seconds=graph_room_heartbeat_seconds,
-        )
-    )
-    switcher = ActorSwitcher(TEST_USER_ID)
-    switcher.install(application)
-    return TestClient(application), switcher, application
-
-
 @pytest.fixture
 def room_client(tmp_path: Path) -> Iterator[tuple[TestClient, ActorSwitcher]]:
-    client, switcher, _application = _build_room_client(tmp_path)
-    with client:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'room.sqlite3'}"
+    asyncio.run(_seed_room_users(database_url))
+    switcher = ActorSwitcher(TEST_USER_ID)
+    with client_with_overrides(
+        settings=Settings(
+            workspace=tmp_path / "workbench",
+            database_url=SecretStr(database_url),
+            public_origin=PUBLIC_ORIGIN,
+            graph_room_heartbeat_seconds=0.0,
+        ),
+        overrides={
+            browser_actor: switcher.actor,
+            websocket_browser_actor: switcher.actor,
+        },
+    ) as client:
         yield client, switcher
 
 
@@ -148,27 +132,50 @@ def room_client(tmp_path: Path) -> Iterator[tuple[TestClient, ActorSwitcher]]:
 def room_app_client(
     tmp_path: Path,
 ) -> Iterator[tuple[TestClient, ActorSwitcher, FastAPI]]:
-    client, switcher, application = _build_room_client(tmp_path)
-    with client:
-        yield client, switcher, application
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'room.sqlite3'}"
+    asyncio.run(_seed_room_users(database_url))
+    switcher = ActorSwitcher(TEST_USER_ID)
+    with client_with_overrides(
+        settings=Settings(
+            workspace=tmp_path / "workbench",
+            database_url=SecretStr(database_url),
+            public_origin=PUBLIC_ORIGIN,
+            graph_room_heartbeat_seconds=0.0,
+        ),
+        overrides={
+            browser_actor: switcher.actor,
+            websocket_browser_actor: switcher.actor,
+        },
+    ) as client:
+        yield client, switcher, cast(FastAPI, client.app)
 
 
 @pytest.fixture
 def heartbeat_room_client(
     tmp_path: Path,
 ) -> Iterator[tuple[TestClient, ActorSwitcher]]:
-    client, switcher, _application = _build_room_client(
-        tmp_path,
-        graph_room_heartbeat_seconds=0.05,
-    )
-    with client:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'room.sqlite3'}"
+    asyncio.run(_seed_room_users(database_url))
+    switcher = ActorSwitcher(TEST_USER_ID)
+    with client_with_overrides(
+        settings=Settings(
+            workspace=tmp_path / "workbench",
+            database_url=SecretStr(database_url),
+            public_origin=PUBLIC_ORIGIN,
+            graph_room_heartbeat_seconds=0.05,
+        ),
+        overrides={
+            browser_actor: switcher.actor,
+            websocket_browser_actor: switcher.actor,
+        },
+    ) as client:
         yield client, switcher
 
 
 def _create_graph(client: TestClient, name: str = "Room graph") -> UUID:
     response = client.post(
         workspace_api_path("/graphs"),
-        json={"name": name, "nodes": [], "edges": []},
+        json=CreateSavedGraphRequest(name=name).model_dump(mode="json"),
     )
     assert response.status_code == 201, response.text
     return UUID(response.json()["id"])
@@ -240,8 +247,9 @@ def test_room_ready_admits_authenticated_member(
     assert ready["head"]["collaboration_sequence"] == 1
     assert ready["graph_room_session_id"]
     assert len(ready["participants"]) == 1
-    assert ready["participants"][0]["graph_room_session_id"] == (
-        ready["graph_room_session_id"]
+    assert (
+        ready["participants"][0]["graph_room_session_id"]
+        == (ready["graph_room_session_id"])
     )
     assert ready["participants"][0]["actor"]["actor_id"] == str(TEST_USER_ID)
     assert ready["active_execution"] is None
@@ -255,9 +263,7 @@ def test_join_ready_precedes_command_committed_after_head_snapshot(
 
     client, _switcher, application = room_app_client
     graph_id = _create_graph(client)
-    initial_head_response = client.get(
-        workspace_api_path(f"/graphs/{graph_id}/head")
-    )
+    initial_head_response = client.get(workspace_api_path(f"/graphs/{graph_id}/head"))
     assert initial_head_response.status_code == 200, initial_head_response.text
     initial_head = initial_head_response.json()
 
@@ -304,16 +310,15 @@ def test_join_ready_precedes_command_committed_after_head_snapshot(
         raced_command_id = str(uuid4())
         raced_response = client.post(
             workspace_api_path(f"/graphs/{graph_id}/commands"),
-            json={
-                "command_id": raced_command_id,
-                "room_epoch": initial_head["room_epoch"],
-                "observed_sequence": initial_head["collaboration_sequence"],
-                "command": {
-                    "kind": "rename_graph",
-                    "name": "Committed during join",
-                    "expected_name": initial_head["name"],
-                },
-            },
+            json=SubmitGraphCommandRequest(
+                command_id=raced_command_id,
+                room_epoch=initial_head["room_epoch"],
+                observed_sequence=initial_head["collaboration_sequence"],
+                command=RenameGraphCommand(
+                    name="Committed during join",
+                    expected_name=initial_head["name"],
+                ),
+            ).model_dump(mode="json"),
         )
         assert raced_response.status_code == 200, raced_response.text
         raced_head = raced_response.json()["head"]
@@ -329,16 +334,15 @@ def test_join_ready_precedes_command_committed_after_head_snapshot(
     # accepted event was lost; the assertion below then identifies the loss.
     marker_response = client.post(
         workspace_api_path(f"/graphs/{graph_id}/commands"),
-        json={
-            "command_id": str(uuid4()),
-            "room_epoch": raced_head["room_epoch"],
-            "observed_sequence": raced_head["collaboration_sequence"],
-            "command": {
-                "kind": "rename_graph",
-                "name": "Post-ready marker",
-                "expected_name": raced_head["name"],
-            },
-        },
+        json=SubmitGraphCommandRequest(
+            command_id=uuid4(),
+            room_epoch=raced_head["room_epoch"],
+            observed_sequence=raced_head["collaboration_sequence"],
+            command=RenameGraphCommand(
+                name="Post-ready marker",
+                expected_name=raced_head["name"],
+            ),
+        ).model_dump(mode="json"),
     )
     assert marker_response.status_code == 200, marker_response.text
 
@@ -349,8 +353,9 @@ def test_join_ready_precedes_command_committed_after_head_snapshot(
     second = received.get(timeout=1)
 
     assert first["type"] == "room.ready"
-    assert first["head"]["collaboration_sequence"] == (
-        initial_head["collaboration_sequence"]
+    assert (
+        first["head"]["collaboration_sequence"]
+        == (initial_head["collaboration_sequence"])
     )
     assert second["type"] == "graph.command.accepted"
     assert second["command_id"] == raced_command_id
@@ -558,7 +563,9 @@ def test_role_change_closes_with_permissions_changed(
         switcher.as_user(TEST_USER_ID)
         response = client.patch(
             workspace_api_path(f"/members/{EDITOR_USER_ID}"),
-            json={"role": "viewer"},
+            json=WorkspaceMemberRoleRequest(role=WorkspaceRole.VIEWER).model_dump(
+                mode="json"
+            ),
         )
         assert response.status_code == 200, response.text
 
@@ -589,12 +596,12 @@ def test_http_epoch_reset_rehydrates_connected_sessions(
         ready = websocket.receive_json()
         replace = client.put(
             workspace_api_path(f"/graphs/{graph_id}"),
-            json={
-                "name": "Replaced document",
-                "nodes": [],
-                "edges": [],
-                "expected_revision": revision,
-            },
+            json=UpdateSavedGraphRequest(
+                name="Replaced document",
+                nodes=[],
+                edges=[],
+                expected_revision=revision,
+            ).model_dump(mode="json"),
         )
         assert replace.status_code == 200, replace.text
         rehydrate = _receive_until(websocket, "room.rehydrate")
@@ -615,16 +622,15 @@ def test_http_command_publishes_to_room(
         command_id = str(uuid4())
         response = client.post(
             workspace_api_path(f"/graphs/{graph_id}/commands"),
-            json={
-                "command_id": command_id,
-                "room_epoch": ready["head"]["room_epoch"],
-                "observed_sequence": ready["head"]["collaboration_sequence"],
-                "command": {
-                    "kind": "rename_graph",
-                    "name": "HTTP rename",
-                    "expected_name": ready["head"]["name"],
-                },
-            },
+            json=SubmitGraphCommandRequest(
+                command_id=command_id,
+                room_epoch=ready["head"]["room_epoch"],
+                observed_sequence=ready["head"]["collaboration_sequence"],
+                command=RenameGraphCommand(
+                    name="HTTP rename",
+                    expected_name=ready["head"]["name"],
+                ),
+            ).model_dump(mode="json"),
         )
         assert response.status_code == 200, response.text
         accepted = _receive_until(websocket, "graph.command.accepted")
@@ -674,7 +680,9 @@ def test_heartbeat_revalidation_closes_on_lost_role_invalidation(
         switcher.as_user(TEST_USER_ID)
         response = client.patch(
             workspace_api_path(f"/members/{EDITOR_USER_ID}"),
-            json={"role": "viewer"},
+            json=WorkspaceMemberRoleRequest(role=WorkspaceRole.VIEWER).model_dump(
+                mode="json"
+            ),
         )
         assert response.status_code == 200, response.text
 
@@ -696,8 +704,9 @@ def test_presence_join_leave_fanout_and_room_ready_participants(
     with _connect(client, graph_id) as owner_ws:
         owner_ready = owner_ws.receive_json()
         assert len(owner_ready["participants"]) == 1
-        assert owner_ready["participants"][0]["graph_room_session_id"] == (
-            owner_ready["graph_room_session_id"]
+        assert (
+            owner_ready["participants"][0]["graph_room_session_id"]
+            == (owner_ready["graph_room_session_id"])
         )
 
         switcher.as_user(EDITOR_USER_ID)
@@ -712,8 +721,9 @@ def test_presence_join_leave_fanout_and_room_ready_participants(
             }
 
             join = _receive_until(owner_ws, "presence.join")
-            assert join["participant"]["graph_room_session_id"] == (
-                editor_ready["graph_room_session_id"]
+            assert (
+                join["participant"]["graph_room_session_id"]
+                == (editor_ready["graph_room_session_id"])
             )
             assert join["participant"]["actor"]["actor_id"] == str(EDITOR_USER_ID)
 
@@ -765,7 +775,9 @@ def test_presence_cleared_on_access_revoked(
             assert closed.value.reason == "access_revoked"
 
             leave = _receive_until(owner_ws, "presence.leave")
-            assert leave["graph_room_session_id"] == editor_ready["graph_room_session_id"]
+            assert (
+                leave["graph_room_session_id"] == editor_ready["graph_room_session_id"]
+            )
 
 
 def test_presence_rate_limit_and_stale_sequence_drop() -> None:
@@ -885,10 +897,13 @@ def test_presence_update_after_close_cannot_recreate_membership() -> None:
         )
         assert result is None
         # Presence cannot be recreated: no participant is present for the graph.
-        assert await hub.participants_for(
-            workspace_id=WORKSPACE_ID,
-            graph_id=session.graph_id,
-        ) == []
+        assert (
+            await hub.participants_for(
+                workspace_id=WORKSPACE_ID,
+                graph_id=session.graph_id,
+            )
+            == []
+        )
         await hub.shutdown()
 
     asyncio.run(_exercise())
@@ -925,10 +940,13 @@ def test_presence_update_race_with_close_never_recreates_after_close() -> None:
             ),
         )
         assert late is None
-        assert await hub.participants_for(
-            workspace_id=WORKSPACE_ID,
-            graph_id=session.graph_id,
-        ) == []
+        assert (
+            await hub.participants_for(
+                workspace_id=WORKSPACE_ID,
+                graph_id=session.graph_id,
+            )
+            == []
+        )
         await hub.shutdown()
 
     asyncio.run(_exercise())
@@ -960,7 +978,9 @@ def test_slow_consumer_is_disconnected_instead_of_unbounded_queue() -> None:
         for _ in range(OUTBOUND_QUEUE_MAXSIZE):
             session.outbound.put_nowait(filler)
 
-        await hub.deliver_private(session, RoomHeartbeatMessage(authorization_version=1))
+        await hub.deliver_private(
+            session, RoomHeartbeatMessage(authorization_version=1)
+        )
 
         assert session.closed is True
         websocket.close.assert_awaited()
@@ -1033,13 +1053,12 @@ def test_activated_session_has_one_fifo_post_activation_writer() -> None:
 
 
 def _create_graph_with_revision(
-
     client: TestClient,
     name: str = "Execution room graph",
 ) -> tuple[UUID, int]:
     response = client.post(
         workspace_api_path("/graphs"),
-        json={"name": name, "nodes": [], "edges": []},
+        json=CreateSavedGraphRequest(name=name).model_dump(mode="json"),
     )
     assert response.status_code == 201, response.text
     payload = response.json()
@@ -1054,12 +1073,12 @@ def _start_saved_execution(
 ) -> dict:
     response = client.post(
         workspace_api_path("/executions"),
-        json={
-            "nodes": [],
-            "edges": [],
-            "graph_id": str(graph_id),
-            "graph_revision": graph_revision,
-        },
+        json=RunRequest(
+            nodes=[],
+            edges=[],
+            graph_id=graph_id,
+            graph_revision=graph_revision,
+        ).model_dump(mode="json"),
     )
     assert response.status_code == 202, response.text
     return response.json()
@@ -1097,9 +1116,7 @@ def test_two_sessions_see_execution_start_and_complete(
                 "queued",
                 "running",
             }
-            assert owner_active["execution"]["starter"]["actor_id"] == str(
-                TEST_USER_ID
-            )
+            assert owner_active["execution"]["starter"]["actor_id"] == str(TEST_USER_ID)
             assert owner_active["execution"]["cancellable"] is True
 
             owner_cleared = _receive_until(owner_ws, "execution.cleared")
@@ -1182,12 +1199,12 @@ def test_second_saved_execution_conflicts_while_active(
         )
         conflict = client.post(
             workspace_api_path("/executions"),
-            json={
-                "nodes": [],
-                "edges": [],
-                "graph_id": str(graph_id),
-                "graph_revision": revision,
-            },
+            json=RunRequest(
+                nodes=[],
+                edges=[],
+                graph_id=graph_id,
+                graph_revision=revision,
+            ).model_dump(mode="json"),
         )
         assert conflict.status_code == 409, conflict.text
         detail = conflict.json()["detail"]

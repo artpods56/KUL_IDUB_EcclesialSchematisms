@@ -12,16 +12,17 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from starlette.websockets import WebSocketDisconnect
 
-from grafy_api.main import create_app
 from grafy_api.settings import Settings
 from grafy_api.v1.routes.auth.dependencies import browser_actor
+from grafy_api.v1.routes.collaboration.views import websocket_browser_actor
+from grafy_api.v1.routes.auth.models import WorkspaceMemberRequest
+from grafy_api.v1.routes.executions.models import RunRequest
+from grafy_api.v1.routes.saved_graphs.models import CreateSavedGraphRequest
 from grafy_core.domain.identity import (
-    ActorContext,
     User,
     Workspace,
     WorkspaceMembership,
@@ -32,6 +33,9 @@ from grafy_persistence.database import create_database
 from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
+from tests.support.identity import ActorSwitcher
+from tests.testkit import client_with_overrides
+
 
 PUBLIC_ORIGIN = "http://localhost:3000"
 SHARED_WORKSPACE_ID = UUID("00000000-0000-0000-0000-0000000000a1")
@@ -39,25 +43,6 @@ PERSONAL_WORKSPACE_ID = UUID("00000000-0000-0000-0000-0000000000a2")
 OWNER_ID = UUID(int=21)
 EDITOR_ID = UUID(int=22)
 VIEWER_ID = UUID(int=23)
-
-
-class ActorSwitcher:
-    def __init__(self, user_id: UUID) -> None:
-        self.user_id = user_id
-
-    def install(self, application: FastAPI) -> None:
-        switcher = self
-
-        def override() -> ActorContext:
-            return ActorContext(
-                user_id=switcher.user_id,
-                credential_reference="test-session",
-            )
-
-        application.dependency_overrides[browser_actor] = override
-
-    def as_user(self, user_id: UUID) -> None:
-        self.user_id = user_id
 
 
 async def _seed_acceptance_users(database_url: str) -> None:
@@ -116,18 +101,19 @@ def acceptance_client(
 ) -> Iterator[tuple[TestClient, ActorSwitcher]]:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'acceptance.sqlite3'}"
     asyncio.run(_seed_acceptance_users(database_url))
-    application = create_app(
-        Settings(
+    switcher = ActorSwitcher(OWNER_ID)
+    with client_with_overrides(
+        settings=Settings(
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
-            execution_backend="inline",
             public_origin=PUBLIC_ORIGIN,
             graph_room_heartbeat_seconds=0.0,
-        )
-    )
-    switcher = ActorSwitcher(OWNER_ID)
-    switcher.install(application)
-    with TestClient(application) as client:
+        ),
+        overrides={
+            browser_actor: switcher.actor,
+            websocket_browser_actor: switcher.actor,
+        },
+    ) as client:
         yield client, switcher
 
 
@@ -163,7 +149,7 @@ def _create_graph(
 ) -> tuple[UUID, int]:
     response = client.post(
         _api(workspace_id, "/graphs"),
-        json={"name": name, "nodes": [], "edges": []},
+        json=CreateSavedGraphRequest(name=name).model_dump(mode="json"),
     )
     assert response.status_code == 201, response.text
     body = response.json()
@@ -178,7 +164,7 @@ def _add_member(
 ) -> None:
     response = client.post(
         _api(SHARED_WORKSPACE_ID, "/members"),
-        json={"user_id": str(user_id), "role": role.value},
+        json=WorkspaceMemberRequest(user_id=user_id, role=role).model_dump(mode="json"),
     )
     assert response.status_code == 200, response.text
     assert response.json()["role"] == role.value
@@ -235,8 +221,9 @@ def test_phase7_two_session_collaboration_acceptance_journey(
 
             join = _receive_until(owner_ws, "presence.join")
             assert join["participant"]["actor"]["actor_id"] == str(EDITOR_ID)
-            assert join["participant"]["graph_room_session_id"] == (
-                editor_ready["graph_room_session_id"]
+            assert (
+                join["participant"]["graph_room_session_id"]
+                == (editor_ready["graph_room_session_id"])
             )
 
             command_id = str(uuid4())
@@ -269,12 +256,12 @@ def test_phase7_two_session_collaboration_acceptance_journey(
             switcher.as_user(OWNER_ID)
             started = client.post(
                 _api(SHARED_WORKSPACE_ID, "/executions"),
-                json={
-                    "nodes": [],
-                    "edges": [],
-                    "graph_id": str(shared_graph_id),
-                    "graph_revision": revision,
-                },
+                json=RunRequest(
+                    nodes=[],
+                    edges=[],
+                    graph_id=shared_graph_id,
+                    graph_revision=revision,
+                ).model_dump(mode="json"),
             )
             assert started.status_code == 202, started.text
             execution_id = started.json()["execution_id"]
@@ -296,7 +283,9 @@ def test_phase7_two_session_collaboration_acceptance_journey(
                 assert viewer_ready["type"] == "room.ready"
                 assert viewer_ready["head"]["name"] == "Converged name"
                 assert "edit_graph" not in viewer_ready["capabilities"]["capabilities"]
-                assert "execute_graph" not in viewer_ready["capabilities"]["capabilities"]
+                assert (
+                    "execute_graph" not in viewer_ready["capabilities"]["capabilities"]
+                )
 
                 viewer_ws.send_json(
                     {
@@ -337,7 +326,10 @@ def test_phase7_two_session_collaboration_acceptance_journey(
                 leave = owner_ws.receive_json()
                 if leave["type"] != "presence.leave":
                     continue
-                if leave["graph_room_session_id"] == editor_ready["graph_room_session_id"]:
+                if (
+                    leave["graph_room_session_id"]
+                    == editor_ready["graph_room_session_id"]
+                ):
                     break
             else:
                 raise AssertionError("owner did not observe editor presence.leave")

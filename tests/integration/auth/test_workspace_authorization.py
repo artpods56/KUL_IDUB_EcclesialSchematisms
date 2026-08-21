@@ -16,7 +16,18 @@ from pydantic import SecretStr
 from grafy_api.main import create_app
 from grafy_api.settings import Settings
 from grafy_api.v1.routes.auth.dependencies import browser_actor
+from grafy_api.v1.routes.auth.models import WorkspaceMemberRequest
+from grafy_api.v1.routes.executions.models import RunRequest
+from grafy_api.v1.routes.saved_graphs.models import (
+    AssignGraphFolderRequest,
+    CreateSavedGraphRequest,
+    GraphFolderWriteRequest,
+    SubmitGraphCommandRequest,
+    UpdateSavedGraphRequest,
+)
+from grafy_api.v1.routes.uploads.models import SampleRequest
 from grafy_core.artifacts import ArtifactObject
+from grafy_core.domain.collaboration import RenameGraphCommand
 from grafy_core.domain.identity import (
     ActorContext,
     User,
@@ -46,8 +57,17 @@ def _api(workspace_id: UUID, suffix: str) -> str:
     return f"/v1/workspaces/{workspace_id}{normalized}"
 
 
-def _empty_graph_payload(name: str = "Authz graph") -> dict[str, object]:
-    return {"name": name, "nodes": [], "edges": []}
+def _empty_graph_payload(
+    name: str = "Authz graph",
+    *,
+    expected_revision: int | None = None,
+) -> dict[str, object]:
+    if expected_revision is None:
+        return CreateSavedGraphRequest(name=name).model_dump(mode="json")
+    return UpdateSavedGraphRequest(
+        name=name,
+        expected_revision=expected_revision,
+    ).model_dump(mode="json")
 
 
 @dataclass
@@ -146,7 +166,6 @@ def authz_client(
         Settings(
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
-            execution_backend="inline",
             auth_cookie_secure=False,
         )
     )
@@ -183,7 +202,7 @@ def _start_execution(
     actor.as_user(user_id)
     response = client.post(
         _api(workspace_id, "/executions"),
-        json={"nodes": [], "edges": []},
+        json=RunRequest(nodes=[], edges=[]).model_dump(mode="json"),
     )
     assert response.status_code == 202, response.text
     return UUID(response.json()["execution_id"])
@@ -222,32 +241,35 @@ def test_global_graph_browser_is_authorized_and_keeps_user_state_private(
     head = client.get(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/head")).json()
     renamed = client.post(
         _api(WORKSPACE_A, f"/graphs/{graph_a_id}/commands"),
-        json={
-            "command_id": str(uuid4()),
-            "room_epoch": head["room_epoch"],
-            "observed_sequence": head["collaboration_sequence"],
-            "command": {
-                "kind": "rename_graph",
-                "name": "Current live-head name",
-                "expected_name": "Workspace A draft",
-            },
-        },
+        json=SubmitGraphCommandRequest(
+            command_id=uuid4(),
+            room_epoch=UUID(head["room_epoch"]),
+            observed_sequence=head["collaboration_sequence"],
+            command=RenameGraphCommand(
+                name="Current live-head name",
+                expected_name="Workspace A draft",
+            ),
+        ).model_dump(mode="json"),
     )
     assert renamed.status_code == 200, renamed.text
 
     created_folder = client.post(
         _api(WORKSPACE_A, "/graph-folders"),
-        json={"name": "Research"},
+        json=GraphFolderWriteRequest(name="Research").model_dump(mode="json"),
     )
     assert created_folder.status_code == 201, created_folder.text
     folder_id = created_folder.json()["id"]
     assigned = client.put(
         _api(WORKSPACE_A, f"/graphs/{graph_a_id}/folder"),
-        json={"folder_id": folder_id},
+        json=AssignGraphFolderRequest(folder_id=UUID(folder_id)).model_dump(
+            mode="json"
+        ),
     )
     assert assigned.status_code == 200, assigned.text
     assert assigned.json()["folder_id"] == folder_id
-    assert client.put(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/star")).status_code == 200
+    assert (
+        client.put(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/star")).status_code == 200
+    )
     opened = client.post(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/opened"))
     assert opened.status_code == 200, opened.text
     assert opened.json()["last_opened_at"] is not None
@@ -295,11 +317,13 @@ def test_global_graph_browser_is_authorized_and_keeps_user_state_private(
     _assert_forbidden(
         client.post(
             _api(WORKSPACE_A, "/graph-folders"),
-            json={"name": "Viewer folder"},
+            json=GraphFolderWriteRequest(name="Viewer folder").model_dump(mode="json"),
         ),
         context="viewer create folder",
     )
-    assert client.put(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/star")).status_code == 200
+    assert (
+        client.put(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/star")).status_code == 200
+    )
 
     actor.as_user(OWNER_A_ID)
     owner_a_row_after_viewer_star = client.get("/v1/me/graphs").json()["graphs"][0]
@@ -351,26 +375,28 @@ def test_folder_assignment_cannot_cross_workspace_and_delete_unfiles_graphs(
     actor.as_user(OWNER_B_ID)
     foreign_folder = client.post(
         _api(WORKSPACE_B, "/graph-folders"),
-        json={"name": "Foreign"},
+        json=GraphFolderWriteRequest(name="Foreign").model_dump(mode="json"),
     )
     assert foreign_folder.status_code == 201, foreign_folder.text
 
     actor.as_user(OWNER_A_ID)
     rejected = client.put(
         _api(WORKSPACE_A, f"/graphs/{graph_a_id}/folder"),
-        json={"folder_id": foreign_folder.json()["id"]},
+        json=AssignGraphFolderRequest(
+            folder_id=UUID(foreign_folder.json()["id"])
+        ).model_dump(mode="json"),
     )
     _assert_not_found(rejected, context="cross-workspace folder assignment")
 
     own_folder = client.post(
         _api(WORKSPACE_A, "/graph-folders"),
-        json={"name": "Temporary"},
+        json=GraphFolderWriteRequest(name="Temporary").model_dump(mode="json"),
     )
     assert own_folder.status_code == 201, own_folder.text
     own_folder_id = own_folder.json()["id"]
     renamed = client.patch(
         _api(WORKSPACE_A, f"/graph-folders/{own_folder_id}"),
-        json={"name": "  Renamed  "},
+        json=GraphFolderWriteRequest(name="  Renamed  ").model_dump(mode="json"),
     )
     assert renamed.status_code == 200, renamed.text
     assert renamed.json()["name"] == "Renamed"
@@ -379,26 +405,30 @@ def test_folder_assignment_cannot_cross_workspace_and_delete_unfiles_graphs(
     assert listed_folders.json()["folders"] == [renamed.json()]
     duplicate = client.post(
         _api(WORKSPACE_A, "/graph-folders"),
-        json={"name": "Renamed"},
+        json=GraphFolderWriteRequest(name="Renamed").model_dump(mode="json"),
     )
     assert duplicate.status_code == 409, duplicate.text
     assert (
         client.put(
             _api(WORKSPACE_A, f"/graphs/{graph_a_id}/folder"),
-            json={"folder_id": own_folder_id},
+            json=AssignGraphFolderRequest(folder_id=UUID(own_folder_id)).model_dump(
+                mode="json"
+            ),
         ).status_code
         == 200
     )
     unfiled = client.put(
         _api(WORKSPACE_A, f"/graphs/{graph_a_id}/folder"),
-        json={"folder_id": None},
+        json=AssignGraphFolderRequest(folder_id=None).model_dump(mode="json"),
     )
     assert unfiled.status_code == 200, unfiled.text
     assert unfiled.json()["folder_id"] is None
     assert (
         client.put(
             _api(WORKSPACE_A, f"/graphs/{graph_a_id}/folder"),
-            json={"folder_id": own_folder_id},
+            json=AssignGraphFolderRequest(folder_id=UUID(own_folder_id)).model_dump(
+                mode="json"
+            ),
         ).status_code
         == 200
     )
@@ -437,7 +467,7 @@ def test_non_member_cannot_read_or_write_other_workspace_by_uuid(
     _assert_not_found(
         client.put(
             _api(WORKSPACE_B, f"/graphs/{graph_id}"),
-            json={**_empty_graph_payload(), "expected_revision": revision},
+            json=_empty_graph_payload(expected_revision=revision),
         ),
         context="update graph",
     )
@@ -455,16 +485,23 @@ def test_non_member_cannot_read_or_write_other_workspace_by_uuid(
     _assert_not_found(
         client.put(
             _api(WORKSPACE_B, f"/graphs/{graph_id}/nodes/llm/secrets/api_key"),
+            # Raw: a SecretStr value would be redacted by model_dump(mode="json").
             json={"value": "secret", "expected_graph_revision": revision},
         ),
         context="put secret",
     )
     _assert_not_found(
-        client.post(_api(WORKSPACE_B, "/runs"), json={"nodes": [], "edges": []}),
+        client.post(
+            _api(WORKSPACE_B, "/runs"),
+            json=RunRequest(nodes=[], edges=[]).model_dump(mode="json"),
+        ),
         context="run",
     )
     _assert_not_found(
-        client.post(_api(WORKSPACE_B, "/executions"), json={"nodes": [], "edges": []}),
+        client.post(
+            _api(WORKSPACE_B, "/executions"),
+            json=RunRequest(nodes=[], edges=[]).model_dump(mode="json"),
+        ),
         context="start execution",
     )
     _assert_not_found(
@@ -502,14 +539,20 @@ def test_non_member_cannot_read_or_write_other_workspace_by_uuid(
         context="upload",
     )
     _assert_not_found(
-        client.post(_api(WORKSPACE_B, "/samples"), json={"count": 1}),
+        client.post(
+            _api(WORKSPACE_B, "/samples"),
+            json=SampleRequest(count=1).model_dump(mode="json"),
+        ),
         context="samples",
     )
     _assert_not_found(client.get(_api(WORKSPACE_B, "/members")), context="list members")
     _assert_not_found(
         client.post(
             _api(WORKSPACE_B, "/members"),
-            json={"user_id": str(VIEWER_A_ID), "role": "viewer"},
+            json=WorkspaceMemberRequest(
+                user_id=VIEWER_A_ID,
+                role=WorkspaceRole.VIEWER,
+            ).model_dump(mode="json"),
         ),
         context="add member",
     )
@@ -562,10 +605,7 @@ def test_viewer_can_read_but_cannot_mutate_execute_or_manage_secrets(
     _assert_forbidden(
         client.put(
             _api(WORKSPACE_A, f"/graphs/{graph_id}"),
-            json={
-                **_empty_graph_payload("viewer edit"),
-                "expected_revision": revision,
-            },
+            json=_empty_graph_payload("viewer edit", expected_revision=revision),
         ),
         context="viewer update graph",
     )
@@ -579,6 +619,7 @@ def test_viewer_can_read_but_cannot_mutate_execute_or_manage_secrets(
     _assert_forbidden(
         client.put(
             _api(WORKSPACE_A, f"/graphs/{graph_id}/nodes/llm/secrets/api_key"),
+            # Raw: a SecretStr value would be redacted by model_dump(mode="json").
             json={"value": "secret", "expected_graph_revision": revision},
         ),
         context="viewer put secret",
@@ -591,11 +632,17 @@ def test_viewer_can_read_but_cannot_mutate_execute_or_manage_secrets(
         context="viewer delete secret",
     )
     _assert_forbidden(
-        client.post(_api(WORKSPACE_A, "/runs"), json={"nodes": [], "edges": []}),
+        client.post(
+            _api(WORKSPACE_A, "/runs"),
+            json=RunRequest(nodes=[], edges=[]).model_dump(mode="json"),
+        ),
         context="viewer run",
     )
     _assert_forbidden(
-        client.post(_api(WORKSPACE_A, "/executions"), json={"nodes": [], "edges": []}),
+        client.post(
+            _api(WORKSPACE_A, "/executions"),
+            json=RunRequest(nodes=[], edges=[]).model_dump(mode="json"),
+        ),
         context="viewer start execution",
     )
     _assert_forbidden(
@@ -610,13 +657,19 @@ def test_viewer_can_read_but_cannot_mutate_execute_or_manage_secrets(
         context="viewer upload",
     )
     _assert_forbidden(
-        client.post(_api(WORKSPACE_A, "/samples"), json={"count": 1}),
+        client.post(
+            _api(WORKSPACE_A, "/samples"),
+            json=SampleRequest(count=1).model_dump(mode="json"),
+        ),
         context="viewer samples",
     )
     _assert_forbidden(
         client.post(
             _api(WORKSPACE_A, "/members"),
-            json={"user_id": str(OWNER_B_ID), "role": "viewer"},
+            json=WorkspaceMemberRequest(
+                user_id=OWNER_B_ID,
+                role=WorkspaceRole.VIEWER,
+            ).model_dump(mode="json"),
         ),
         context="viewer add member",
     )
@@ -637,20 +690,25 @@ def test_editor_can_edit_and_execute_but_not_manage_secrets_delete_or_members(
     actor.as_user(EDITOR_A_ID)
     update = client.put(
         _api(WORKSPACE_A, f"/graphs/{graph_id}"),
-        json={**_empty_graph_payload("Editor updated"), "expected_revision": revision},
+        json=_empty_graph_payload("Editor updated", expected_revision=revision),
     )
     assert update.status_code == 200
     revision = int(update.json()["revision"])
 
-    run = client.post(_api(WORKSPACE_A, "/runs"), json={"nodes": [], "edges": []})
+    run = client.post(
+        _api(WORKSPACE_A, "/runs"),
+        json=RunRequest(nodes=[], edges=[]).model_dump(mode="json"),
+    )
     assert run.status_code == 200
     execution = client.post(
         _api(WORKSPACE_A, "/executions"),
-        json={"nodes": [], "edges": []},
+        json=RunRequest(nodes=[], edges=[]).model_dump(mode="json"),
     )
     assert execution.status_code == 202
     execution_id = UUID(execution.json()["execution_id"])
-    assert client.get(_api(WORKSPACE_A, f"/executions/{execution_id}")).status_code == 200
+    assert (
+        client.get(_api(WORKSPACE_A, f"/executions/{execution_id}")).status_code == 200
+    )
     with client.stream(
         "GET", _api(WORKSPACE_A, f"/executions/{execution_id}/events")
     ) as events:
@@ -669,6 +727,7 @@ def test_editor_can_edit_and_execute_but_not_manage_secrets_delete_or_members(
     _assert_forbidden(
         client.put(
             _api(WORKSPACE_A, f"/graphs/{graph_id}/nodes/llm/secrets/api_key"),
+            # Raw: a SecretStr value would be redacted by model_dump(mode="json").
             json={"value": "secret", "expected_graph_revision": revision},
         ),
         context="editor put secret",
@@ -694,7 +753,10 @@ def test_editor_can_edit_and_execute_but_not_manage_secrets_delete_or_members(
     _assert_forbidden(
         client.post(
             _api(WORKSPACE_A, "/members"),
-            json={"user_id": str(OWNER_B_ID), "role": "viewer"},
+            json=WorkspaceMemberRequest(
+                user_id=OWNER_B_ID,
+                role=WorkspaceRole.VIEWER,
+            ).model_dump(mode="json"),
         ),
         context="editor add member",
     )
@@ -717,6 +779,7 @@ def test_owner_can_manage_secrets_delete_graph_and_members(
     # (404 for undeclared secret) while editor/viewer receive 403 above.
     secret_put = client.put(
         _api(WORKSPACE_A, f"/graphs/{graph_id}/nodes/missing/secrets/api_key"),
+        # Raw: a SecretStr value would be redacted by model_dump(mode="json").
         json={"value": "secret", "expected_graph_revision": revision},
     )
     assert secret_put.status_code == 404
@@ -792,6 +855,7 @@ def test_cross_workspace_resource_ids_do_not_authorize_via_wrong_path(
 
     wrong_secret = client.put(
         _api(WORKSPACE_B, f"/graphs/{graph_a}/nodes/llm/secrets/api_key"),
+        # Raw: a SecretStr value would be redacted by model_dump(mode="json").
         json={"value": "secret", "expected_graph_revision": revision_a},
     )
     assert wrong_secret.status_code == 404

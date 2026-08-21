@@ -18,6 +18,9 @@ from grafy_core.operators.text import (
     TextValuePayload,
 )
 
+from tests.support.clients import GrafyApi
+from tests.support.identity import WORKSPACE_ID
+
 
 def _collect_run_payload() -> dict[str, object]:
     return RunRequest(
@@ -102,9 +105,8 @@ def _collect_edges(payload: dict[str, object]) -> list[dict[str, object]]:
 def test_registry_declares_text_artifact_and_operator_contracts(
     builtin_client: TestClient,
 ) -> None:
-    response = builtin_client.get(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes"
-    )
+    api = GrafyApi(builtin_client)
+    response = api.workspace(WORKSPACE_ID).catalog.list_nodes()
 
     assert response.status_code == 200
     registry = NodeRegistryResponse.model_validate(response.json())
@@ -158,9 +160,9 @@ def test_as_markdown_graph_persists_exact_source(
     builtin_client: TestClient,
 ) -> None:
     source = "# Café\r\n\r\n- first\n- **second**\n\n"
-    response = builtin_client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json=RunRequest(
+    api = GrafyApi(builtin_client)
+    response = api.workspace(WORKSPACE_ID).executions.run(
+        RunRequest(
             nodes=[
                 RunNodeRequest(
                     id="source",
@@ -183,7 +185,7 @@ def test_as_markdown_graph_persists_exact_source(
                     to_port="text",
                 )
             ],
-        ).model_dump(mode="json"),
+        )
     )
 
     assert response.status_code == 200
@@ -193,11 +195,10 @@ def test_as_markdown_graph_persists_exact_source(
         node_run for node_run in result.node_runs if node_run.node_id == "markdown"
     )
     markdown_ref = markdown_run.outputs[0].artifacts[0]
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     assert markdown_ref.artifact_type == "text.markdown"
     assert markdown_ref.text == source
-    assert builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{markdown_ref.artifact_id}/content"
-    ).json() == {"markdown": source}
+    assert artifacts.content(markdown_ref.artifact_id).json() == {"markdown": source}
 
     # The artifact summary advertises its download formats.
     assert [entry.format for entry in markdown_ref.download_formats] == [
@@ -206,37 +207,28 @@ def test_as_markdown_graph_persists_exact_source(
     ]
 
     # Downloading as txt yields the bare markdown, not the JSON envelope.
-    download = builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{markdown_ref.artifact_id}/download",
-        params={"format": "txt"},
-    )
+    download = artifacts.download(markdown_ref.artifact_id, format="txt")
     assert download.status_code == 200
     assert download.content.decode("utf-8") == source
     assert download.headers["content-disposition"].startswith("attachment")
     assert "text/plain" in download.headers["content-type"]
 
     # Downloading as json returns the canonical payload envelope.
-    json_download = builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{markdown_ref.artifact_id}/download",
-        params={"format": "json"},
-    )
+    json_download = artifacts.download(markdown_ref.artifact_id, format="json")
     assert json_download.status_code == 200
     assert json_download.json() == {"markdown": source}
 
     # An unsupported format is rejected with 400.
-    bad = builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{markdown_ref.artifact_id}/download",
-        params={"format": "csv"},
-    )
+    bad = artifacts.download(markdown_ref.artifact_id, format="csv")
     assert bad.status_code == 400
 
 
 def test_text_graph_splits_maps_replacement_and_joins(
     builtin_client: TestClient,
 ) -> None:
-    response = builtin_client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json=RunRequest(
+    api = GrafyApi(builtin_client)
+    response = api.workspace(WORKSPACE_ID).executions.run(
+        RunRequest(
             nodes=[
                 RunNodeRequest(
                     id="input",
@@ -284,35 +276,35 @@ def test_text_graph_splits_maps_replacement_and_joins(
                     to_port="parts",
                 ),
             ],
-        ).model_dump(mode="json"),
+        )
     )
 
     assert response.status_code == 200
     result = RunResponse.model_validate(response.json())
     assert result.status == "succeeded"
     runs = {run.node_id: run for run in result.node_runs}
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     assert [
-        builtin_client.get(
-            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content"
-        ).json()["value"]
+        artifacts.content(artifact.artifact_id).json()["value"]
         for artifact in runs["split"].outputs[0].artifacts
     ] == ["alpha", "beta", "", "gamma", ""]
     assert [
-        builtin_client.get(
-            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content"
-        ).json()["value"]
+        artifacts.content(artifact.artifact_id).json()["value"]
         for artifact in runs["replace"].outputs[0].artifacts
     ] == ["AlphA", "betA", "", "gAmmA", ""]
 
     joined = runs["join"].outputs[0].artifacts[0]
-    assert builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{joined.artifact_id}/content"
-    ).json() == {"value": "AlphA|betA||gAmmA|"}
+    assert artifacts.content(joined.artifact_id).json() == {
+        "value": "AlphA|betA||gAmmA|"
+    }
 
 
 def test_sequence_collect_accepts_text_shapes_in_declared_plug_order(
     builtin_client: TestClient,
 ) -> None:
+    api = GrafyApi(builtin_client)
+    # Raw: the payload comes from the dict helper that the boundary
+    # tests below mutate; the typed run model cannot express it.
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json=_collect_run_payload(),
@@ -322,12 +314,11 @@ def test_sequence_collect_accepts_text_shapes_in_declared_plug_order(
     result = RunResponse.model_validate(response.json())
     assert result.status == "succeeded"
     collect_run = next(run for run in result.node_runs if run.node_id == "collect")
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     output = collect_run.outputs[0]
     assert isinstance(output.value, ArtifactRefSequence)
     assert [
-        builtin_client.get(
-            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content"
-        ).json()["value"]
+        artifacts.content(artifact.artifact_id).json()["value"]
         for artifact in output.artifacts
     ] == ["first", "second", "third"]
     assert output.value.metadata == {

@@ -1,23 +1,29 @@
 import asyncio
 from collections.abc import Iterator
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from grafy_api.main import create_app
 from grafy_api.settings import Settings
 from grafy_api.v1.routes.auth.dependencies import browser_actor
+from grafy_api.v1.routes.saved_graphs.models import (
+    GraphFolderWriteRequest,
+    UpdateSavedGraphRequest,
+)
+from grafy_api.v1.routes.templates.models import (
+    CreateTemplateRequest,
+    InstantiateTemplateRequest,
+    TemplateResponse,
+    UpdateTemplateMetadataRequest,
+)
 from grafy_core.artifacts import ArtifactObject
 from grafy_core.domain.collaboration import CollaborativeGraphHead
 from grafy_core.domain.execution_history import GraphExecution
 from grafy_core.domain.identity import (
-    ActorContext,
     User,
     Workspace,
     WorkspaceKind,
@@ -36,6 +42,10 @@ from grafy_persistence.database import create_database
 from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
+from tests.support.clients import GrafyApi
+from tests.support.identity import ActorSwitcher
+from tests.testkit import client_with_overrides
+
 
 SOURCE_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000701")
 DESTINATION_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000702")
@@ -53,25 +63,6 @@ CAPABILITY_GRAPH_ID = UUID("00000000-0000-0000-0000-000000000712")
 def _api(workspace_id: UUID, suffix: str) -> str:
     normalized = suffix if suffix.startswith("/") else f"/{suffix}"
     return f"/v1/workspaces/{workspace_id}{normalized}"
-
-
-@dataclass
-class ActorSwitcher:
-    user_id: UUID
-
-    def install(self, application: FastAPI) -> None:
-        switcher = self
-
-        def override() -> ActorContext:
-            return ActorContext(
-                user_id=switcher.user_id,
-                credential_reference="test-session",
-            )
-
-        application.dependency_overrides[browser_actor] = override
-
-    def as_user(self, user_id: UUID) -> None:
-        self.user_id = user_id
 
 
 def _source_revision_document() -> SavedGraphDocument:
@@ -281,34 +272,31 @@ def template_client(
 ) -> Iterator[tuple[TestClient, ActorSwitcher]]:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'templates.sqlite3'}"
     asyncio.run(_seed_templates(database_url))
-    application = create_app(
-        Settings(
+    actor = ActorSwitcher(user_id=OWNER_ID)
+    with client_with_overrides(
+        settings=Settings(
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
-            execution_backend="inline",
             auth_cookie_secure=False,
-        )
-    )
-    actor = ActorSwitcher(user_id=OWNER_ID)
-    actor.install(application)
-    with TestClient(application) as client:
+        ),
+        overrides={browser_actor: actor.actor},
+    ) as client:
         yield client, actor
 
 
 def _create_template(
     client: TestClient, *, name: str = "Starter analysis"
-) -> dict[str, object]:
-    response = client.post(
-        _api(SOURCE_WORKSPACE_ID, "/templates"),
-        json={
-            "source_graph_id": str(SOURCE_GRAPH_ID),
-            "source_revision": 1,
-            "name": name,
-            "description": "A reusable research starting point",
-        },
+) -> TemplateResponse:
+    api = GrafyApi(client)
+    templates = api.workspace(SOURCE_WORKSPACE_ID).templates
+    return templates.create_ok(
+        CreateTemplateRequest(
+            source_graph_id=SOURCE_GRAPH_ID,
+            source_revision=1,
+            name=name,
+            description="A reusable research starting point",
+        )
     )
-    assert response.status_code == 201, response.text
-    return response.json()
 
 
 def test_template_snapshot_and_instantiations_remain_independent_and_safe(
@@ -316,40 +304,36 @@ def test_template_snapshot_and_instantiations_remain_independent_and_safe(
 ) -> None:
     client, actor = template_client
     actor.as_user(OWNER_ID)
+    api = GrafyApi(client)
+    templates = api.workspace(SOURCE_WORKSPACE_ID).templates
     template = _create_template(client)
     folder_response = client.post(
         _api(DESTINATION_WORKSPACE_ID, "/graph-folders"),
-        json={"name": "Fieldwork"},
+        json=GraphFolderWriteRequest(name="Fieldwork").model_dump(mode="json"),
     )
     assert folder_response.status_code == 201, folder_response.text
     folder_id = folder_response.json()["id"]
 
-    first = client.post(
-        _api(SOURCE_WORKSPACE_ID, f"/templates/{template['id']}/instantiate"),
-        json={
-            "destination_workspace_id": str(DESTINATION_WORKSPACE_ID),
-            "name": "Climate review",
-            "folder_id": folder_id,
-        },
+    first = templates.instantiate_ok(
+        template.id,
+        InstantiateTemplateRequest(
+            destination_workspace_id=DESTINATION_WORKSPACE_ID,
+            name="Climate review",
+            folder_id=UUID(folder_id),
+        ),
     )
-    second = client.post(
-        _api(SOURCE_WORKSPACE_ID, f"/templates/{template['id']}/instantiate"),
-        json={
-            "destination_workspace_id": str(DESTINATION_WORKSPACE_ID),
-            "name": "Second review",
-            "folder_id": folder_id,
-        },
+    second = templates.instantiate_ok(
+        template.id,
+        InstantiateTemplateRequest(
+            destination_workspace_id=DESTINATION_WORKSPACE_ID,
+            name="Second review",
+            folder_id=UUID(folder_id),
+        ),
     )
-    assert first.status_code == 201, first.text
-    assert second.status_code == 201, second.text
-    first_copy = first.json()
-    second_copy = second.json()
-    assert first_copy["graph_id"] != second_copy["graph_id"]
-    assert first_copy["folder_id"] == folder_id
+    assert first.graph_id != second.graph_id
+    assert first.folder_id == UUID(folder_id)
 
-    graph = client.get(
-        _api(DESTINATION_WORKSPACE_ID, f"/graphs/{first_copy['graph_id']}")
-    )
+    graph = client.get(_api(DESTINATION_WORKSPACE_ID, f"/graphs/{first.graph_id}"))
     assert graph.status_code == 200, graph.text
     body = graph.json()
     assert body["name"] == "Climate review"
@@ -363,7 +347,7 @@ def test_template_snapshot_and_instantiations_remain_independent_and_safe(
         client.get(
             _api(
                 DESTINATION_WORKSPACE_ID,
-                f"/graphs/{first_copy['graph_id']}/node-secrets",
+                f"/graphs/{first.graph_id}/node-secrets",
             )
         ).json()["secrets"]
         == []
@@ -372,7 +356,7 @@ def test_template_snapshot_and_instantiations_remain_independent_and_safe(
         client.get(
             _api(
                 DESTINATION_WORKSPACE_ID,
-                f"/graphs/{first_copy['graph_id']}/executions",
+                f"/graphs/{first.graph_id}/executions",
             )
         ).json()["items"]
         == []
@@ -387,18 +371,18 @@ def test_template_snapshot_and_instantiations_remain_independent_and_safe(
     mutated_nodes = body["nodes"]
     mutated_nodes[0]["config"]["safe_setting"] = "first copy only"
     updated_first = client.put(
-        _api(DESTINATION_WORKSPACE_ID, f"/graphs/{first_copy['graph_id']}"),
-        json={
-            "expected_revision": 1,
-            "name": body["name"],
-            "nodes": mutated_nodes,
-            "edges": body["edges"],
-            "presentation": body["presentation"],
-        },
+        _api(DESTINATION_WORKSPACE_ID, f"/graphs/{first.graph_id}"),
+        json=UpdateSavedGraphRequest(
+            expected_revision=1,
+            name=body["name"],
+            nodes=mutated_nodes,
+            edges=body["edges"],
+            presentation=body["presentation"],
+        ).model_dump(mode="json"),
     )
     assert updated_first.status_code == 200, updated_first.text
     unchanged_second = client.get(
-        _api(DESTINATION_WORKSPACE_ID, f"/graphs/{second_copy['graph_id']}")
+        _api(DESTINATION_WORKSPACE_ID, f"/graphs/{second.graph_id}")
     )
     assert unchanged_second.status_code == 200
     assert unchanged_second.json()["nodes"][0]["config"]["safe_setting"] == (
@@ -409,13 +393,12 @@ def test_template_snapshot_and_instantiations_remain_independent_and_safe(
     assert source.status_code == 200
     assert [node["id"] for node in source.json()["nodes"]] == ["changed-later"]
 
-    invalid_capability = client.post(
-        _api(SOURCE_WORKSPACE_ID, "/templates"),
-        json={
-            "source_graph_id": str(CAPABILITY_GRAPH_ID),
-            "source_revision": 1,
-            "name": "Unsafe capability",
-        },
+    invalid_capability = templates.create(
+        CreateTemplateRequest(
+            source_graph_id=CAPABILITY_GRAPH_ID,
+            source_revision=1,
+            name="Unsafe capability",
+        )
     )
     assert invalid_capability.status_code == 422
     assert "cannot include module operator" in invalid_capability.text
@@ -426,43 +409,32 @@ def test_template_search_metadata_archive_and_role_authorization(
 ) -> None:
     client, actor = template_client
     actor.as_user(EDITOR_ID)
+    api = GrafyApi(client)
+    templates = api.workspace(SOURCE_WORKSPACE_ID).templates
     template = _create_template(client, name="Survey starter")
-    template_id = template["id"]
+    template_id = template.id
 
-    search = client.get(
-        _api(SOURCE_WORKSPACE_ID, "/templates"),
-        params={"q": "research"},
-    )
-    assert search.status_code == 200
-    assert [item["id"] for item in search.json()["templates"]] == [template_id]
+    search = templates.list_ok(q="research")
+    assert [item.id for item in search.templates] == [template_id]
 
-    updated = client.put(
-        _api(SOURCE_WORKSPACE_ID, f"/templates/{template_id}"),
-        json={"name": "Survey field kit", "description": None},
+    updated = templates.update_metadata_ok(
+        template_id,
+        UpdateTemplateMetadataRequest(name="Survey field kit"),
     )
-    assert updated.status_code == 200
-    assert updated.json()["name"] == "Survey field kit"
-    assert updated.json()["description"] is None
-    assert (
-        client.post(
-            _api(SOURCE_WORKSPACE_ID, f"/templates/{template_id}/archive")
-        ).status_code
-        == 403
-    )
+    assert updated.name == "Survey field kit"
+    assert updated.description is None
+    assert templates.archive(template_id).status_code == 403
 
     actor.as_user(OWNER_ID)
-    archived = client.post(
-        _api(SOURCE_WORKSPACE_ID, f"/templates/{template_id}/archive")
-    )
-    assert archived.status_code == 200
-    assert archived.json()["state"] == "archived"
-    assert client.get(_api(SOURCE_WORKSPACE_ID, "/templates")).json()["templates"] == []
-    use_archived = client.post(
-        _api(SOURCE_WORKSPACE_ID, f"/templates/{template_id}/instantiate"),
-        json={
-            "destination_workspace_id": str(DESTINATION_WORKSPACE_ID),
-            "name": "Should fail",
-        },
+    archived = templates.archive_ok(template_id)
+    assert archived.state == "archived"
+    assert templates.list_ok().templates == []
+    use_archived = templates.instantiate(
+        template_id,
+        InstantiateTemplateRequest(
+            destination_workspace_id=DESTINATION_WORKSPACE_ID,
+            name="Should fail",
+        ),
     )
     assert use_archived.status_code == 422
     assert "Archived templates cannot be used" in use_archived.text
@@ -473,49 +445,44 @@ def test_using_template_requires_source_read_and_destination_create(
 ) -> None:
     client, actor = template_client
     actor.as_user(OWNER_ID)
+    api = GrafyApi(client)
+    templates = api.workspace(SOURCE_WORKSPACE_ID).templates
     template = _create_template(client)
-    template_id = template["id"]
+    template_id = template.id
 
     actor.as_user(OUTSIDER_ID)
-    assert client.get(_api(SOURCE_WORKSPACE_ID, "/templates")).status_code == 404
+    assert templates.list().status_code == 404
 
     actor.as_user(VIEWER_ID)
-    assert (
-        client.get(_api(SOURCE_WORKSPACE_ID, f"/templates/{template_id}")).status_code
-        == 200
+    assert templates.get(template_id).status_code == 200
+    denied_create = templates.create(
+        CreateTemplateRequest(
+            source_graph_id=SOURCE_GRAPH_ID,
+            source_revision=1,
+            name="Denied",
+        )
     )
-    assert (
-        client.post(
-            _api(SOURCE_WORKSPACE_ID, "/templates"),
-            json={
-                "source_graph_id": str(SOURCE_GRAPH_ID),
-                "source_revision": 1,
-                "name": "Denied",
-            },
-        ).status_code
-        == 403
-    )
+    assert denied_create.status_code == 403
 
     actor.as_user(VIEWER_BOTH_ID)
-    denied = client.post(
-        _api(SOURCE_WORKSPACE_ID, f"/templates/{template_id}/instantiate"),
-        json={
-            "destination_workspace_id": str(DESTINATION_WORKSPACE_ID),
-            "name": "No destination create",
-        },
+    denied = templates.instantiate(
+        template_id,
+        InstantiateTemplateRequest(
+            destination_workspace_id=DESTINATION_WORKSPACE_ID,
+            name="No destination create",
+        ),
     )
     assert denied.status_code == 403
 
     actor.as_user(CROSS_LOCATION_ID)
-    allowed = client.post(
-        _api(SOURCE_WORKSPACE_ID, f"/templates/{template_id}/instantiate"),
-        json={
-            "destination_workspace_id": str(DESTINATION_WORKSPACE_ID),
-            "name": "Cross-location copy",
-        },
+    allowed = templates.instantiate_ok(
+        template_id,
+        InstantiateTemplateRequest(
+            destination_workspace_id=DESTINATION_WORKSPACE_ID,
+            name="Cross-location copy",
+        ),
     )
-    assert allowed.status_code == 201, allowed.text
-    assert allowed.json()["destination_workspace_id"] == str(DESTINATION_WORKSPACE_ID)
+    assert allowed.destination_workspace_id == DESTINATION_WORKSPACE_ID
 
 
 def test_template_destination_folder_must_exist_in_destination_workspace(
@@ -523,14 +490,16 @@ def test_template_destination_folder_must_exist_in_destination_workspace(
 ) -> None:
     client, actor = template_client
     actor.as_user(OWNER_ID)
+    api = GrafyApi(client)
+    templates = api.workspace(SOURCE_WORKSPACE_ID).templates
     template = _create_template(client)
-    response = client.post(
-        _api(SOURCE_WORKSPACE_ID, f"/templates/{template['id']}/instantiate"),
-        json={
-            "destination_workspace_id": str(DESTINATION_WORKSPACE_ID),
-            "name": "Missing folder rejected",
-            "folder_id": "00000000-0000-0000-0000-000000000999",
-        },
+    response = templates.instantiate(
+        template.id,
+        InstantiateTemplateRequest(
+            destination_workspace_id=DESTINATION_WORKSPACE_ID,
+            name="Missing folder rejected",
+            folder_id=UUID("00000000-0000-0000-0000-000000000999"),
+        ),
     )
     assert response.status_code == 404
     assert "Graph folder" in response.text

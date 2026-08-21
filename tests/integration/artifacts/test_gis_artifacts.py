@@ -41,10 +41,6 @@ from grafy_core.domain.identity import (
     WorkspaceRole,
 )
 
-from grafy_core.application.identity import IdentityService
-from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
-
-from grafy_api.app_state import AppIdentity
 from grafy_api.v1.routes.artifacts import services as artifact_services
 from grafy_api.v1.routes.artifacts.dependencies import artifact_service
 from grafy_api.v1.routes.artifacts.models import (
@@ -53,9 +49,13 @@ from grafy_api.v1.routes.artifacts.models import (
 )
 from grafy_api.v1.routes.artifacts.services import ArtifactService
 from grafy_api.v1.routes.artifacts.views import router as artifacts_router
-from grafy_api.v1.routes.auth.dependencies import browser_actor
-from grafy_api.v1.routes.auth.services import AuthService
+from grafy_api.v1.routes.auth.dependencies import (
+    browser_actor,
+    identity_service,
+)
 from grafy_storage import LocalFileObjectStore
+
+from tests.support.clients import GrafyApi
 
 
 FEATURE_KEY = ArtifactTypeKey("geo.feature_collection", 1)
@@ -144,16 +144,10 @@ def geo_artifact_client(
     storage = TrackingStorage(LocalFileObjectStore(tmp_path / "objects"))
     application = FastAPI()
     service = ArtifactService(unit_of_work, storage)
-
-    def unused_identity_uow() -> SqlAlchemyUnitOfWork:
-        raise RuntimeError("identity unit of work is unused in geo artifact tests")
-
-    application.state.identity = AppIdentity(
-        identity_uow_factory=unused_identity_uow,
-        identity_service=cast(IdentityService, _AllowAllIdentityService()),
-        auth_service=cast(AuthService, object()),
-    )
     application.dependency_overrides[artifact_service] = lambda: service
+    application.dependency_overrides[identity_service] = (
+        lambda: _AllowAllIdentityService()
+    )
     application.dependency_overrides[browser_actor] = lambda: ActorContext(
         user_id=TEST_USER_ID,
         credential_reference="test-session",
@@ -476,6 +470,8 @@ def test_vector_render_archive_ranges_and_exact_feature_are_bounded(
     geo_artifact_client: tuple[TestClient, InMemoryUnitOfWork, TrackingStorage],
 ) -> None:
     client, unit_of_work, storage = geo_artifact_client
+    api = GrafyApi(client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     features = [
         _point_feature(index, float(index), float(index)) for index in range(65)
     ]
@@ -489,9 +485,7 @@ def test_vector_render_archive_ranges_and_exact_feature_are_bounded(
         )
     )
 
-    render = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/render"
-    )
+    render = artifacts.geo_render(artifact.id)
     assert render.status_code == 200
     descriptor = render.json()
     assert descriptor["kind"] == "feature_collection"
@@ -507,19 +501,17 @@ def test_vector_render_archive_ranges_and_exact_feature_are_bounded(
         "fields": [{"id": "name", "title": "name", "value_type": "text"}],
     }
 
-    full = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/vector.pmtiles"
-    )
-    partial = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/vector.pmtiles",
+    full = artifacts.geo_vector_pmtiles(artifact.id)
+    partial = artifacts.geo_vector_pmtiles(
+        artifact.id,
         headers={"Range": "bytes=2-7"},
     )
-    suffix = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/vector.pmtiles",
+    suffix = artifacts.geo_vector_pmtiles(
+        artifact.id,
         headers={"Range": "bytes=-4"},
     )
-    invalid = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/vector.pmtiles",
+    invalid = artifacts.geo_vector_pmtiles(
+        artifact.id,
         headers={"Range": "bytes=999-1000"},
     )
     assert full.status_code == 200
@@ -542,29 +534,22 @@ def test_vector_render_archive_ranges_and_exact_feature_are_bounded(
     ]
 
     storage.loaded_paths.clear()
-    exact = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/features/55"
-    )
+    exact = artifacts.geo_exact_feature(artifact.id, 55)
     assert exact.status_code == 200
     assert exact.json()["feature_index"] == 55
     assert exact.json()["feature"]["properties"]["name"] == "point-55"
     assert len(storage.loaded_paths) == 2
     assert sum("/chunks/" in path for path in storage.loaded_paths) == 1
-    assert (
-        client.get(
-            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/features/65"
-        ).status_code
-        == 404
-    )
+    assert artifacts.geo_exact_feature(artifact.id, 65).status_code == 404
 
-    query = client.post(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/query",
-        json=GeoFeatureQueryRequest(
+    query = artifacts.query_geo_features(
+        artifact.id,
+        GeoFeatureQueryRequest(
             rows=[
                 ArtifactExactMatchRow(values={"name": "point-55"}),
                 ArtifactExactMatchRow(values={"name": "point-2"}),
             ]
-        ).model_dump(mode="json"),
+        ),
     )
     assert query.status_code == 200
     assert query.json() == {
@@ -574,11 +559,11 @@ def test_vector_render_archive_ranges_and_exact_feature_are_bounded(
         "source_artifact_ids": [str(artifact.id)],
     }
 
-    missing = client.post(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/query",
-        json=GeoFeatureQueryRequest(
+    missing = artifacts.query_geo_features(
+        artifact.id,
+        GeoFeatureQueryRequest(
             rows=[ArtifactExactMatchRow(values={"name": "not-present"})]
-        ).model_dump(mode="json"),
+        ),
     )
     assert missing.status_code == 200
     assert missing.json()["bounds"] is None
@@ -590,6 +575,8 @@ def test_vector_archive_rejects_oversized_buffered_responses_before_loading(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client, unit_of_work, storage = geo_artifact_client
+    api = GrafyApi(client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     artifact = asyncio.run(
         _feature_artifact(
             unit_of_work,
@@ -600,13 +587,12 @@ def test_vector_archive_rejects_oversized_buffered_responses_before_loading(
         )
     )
     monkeypatch.setattr(artifact_services, "PMTILES_RESPONSE_MAX_BYTES", 8)
-    url = (
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/"
-        f"{artifact.id}/geo/vector.pmtiles"
-    )
 
-    full = client.get(url)
-    oversized_range = client.get(url, headers={"Range": "bytes=0-8"})
+    full = artifacts.geo_vector_pmtiles(artifact.id)
+    oversized_range = artifacts.geo_vector_pmtiles(
+        artifact.id,
+        headers={"Range": "bytes=0-8"},
+    )
 
     assert full.status_code == 413
     assert str(artifact.id) in full.json()["detail"]
@@ -622,6 +608,8 @@ def test_empty_feature_collection_has_clear_non_renderable_descriptor(
     geo_artifact_client: tuple[TestClient, InMemoryUnitOfWork, TrackingStorage],
 ) -> None:
     client, unit_of_work, storage = geo_artifact_client
+    api = GrafyApi(client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     artifact = asyncio.run(
         _feature_artifact(
             unit_of_work,
@@ -633,16 +621,12 @@ def test_empty_feature_collection_has_clear_non_renderable_descriptor(
         )
     )
 
-    response = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/render"
-    )
+    response = artifacts.geo_render(artifact.id)
 
     assert response.status_code == 200
     assert response.json()["layers"] == []
     assert response.json()["initial_bounds"] is None
-    archive = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.id}/geo/vector.pmtiles"
-    )
+    archive = artifacts.geo_vector_pmtiles(artifact.id)
     assert archive.status_code == 400
     assert "empty" in archive.json()["detail"]
 
@@ -651,6 +635,8 @@ def test_map_document_resolves_ordered_vector_raster_and_wms_layers(
     geo_artifact_client: tuple[TestClient, InMemoryUnitOfWork, TrackingStorage],
 ) -> None:
     client, unit_of_work, storage = geo_artifact_client
+    api = GrafyApi(client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     first_source = asyncio.run(
         _feature_artifact(
             unit_of_work,
@@ -765,9 +751,7 @@ def test_map_document_resolves_ordered_vector_raster_and_wms_layers(
         )
     )
 
-    response = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{document.id}/geo/render"
-    )
+    response = artifacts.geo_render(document.id)
 
     assert response.status_code == 200
     descriptor = response.json()
@@ -786,6 +770,8 @@ def test_map_document_resolves_ordered_vector_raster_and_wms_layers(
     assert descriptor["layers"][3]["source"]["artifact_id"] is None
     assert descriptor["layers"][3]["source"]["attribution"] == "Atlas Fontium"
 
+    # The `url` query param is not declared by the route (it must be ignored),
+    # so the typed client cannot express this request; use the raw client.
     tilejson = client.get(
         f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{wms_layer.id}/geo/raster/tilejson.json",
         params={"url": "http://127.0.0.1/private"},
@@ -901,19 +887,15 @@ def test_raster_tilejson_and_tiles_read_only_precomputed_xyz_objects(
     geo_artifact_client: tuple[TestClient, InMemoryUnitOfWork, TrackingStorage],
 ) -> None:
     client, unit_of_work, storage = geo_artifact_client
+    api = GrafyApi(client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     raster = asyncio.run(_raster_artifact(unit_of_work, storage))
     storage.loaded_paths.clear()
     storage.range_requests.clear()
 
-    tilejson = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{raster.id}/geo/raster/tilejson.json"
-    )
-    tile = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{raster.id}/geo/raster/2/2/1.png"
-    )
-    blank = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{raster.id}/geo/raster/2/1/1.png"
-    )
+    tilejson = artifacts.raster_tilejson(raster.id)
+    tile = artifacts.raster_tile(raster.id, z=2, x=2, y=1)
+    blank = artifacts.raster_tile(raster.id, z=2, x=1, y=1)
 
     assert tilejson.status_code == 200
     assert tilejson.json()["minzoom"] == 2
@@ -937,6 +919,8 @@ def test_render_rejects_stale_refs_and_private_wms_hosts(
     geo_artifact_client: tuple[TestClient, InMemoryUnitOfWork, TrackingStorage],
 ) -> None:
     client, unit_of_work, storage = geo_artifact_client
+    api = GrafyApi(client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     source = asyncio.run(
         _feature_artifact(
             unit_of_work,
@@ -991,12 +975,8 @@ def test_render_rejects_stale_refs_and_private_wms_hosts(
         )
     )
 
-    stale = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{stale_layer.id}/geo/render"
-    )
-    private = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{private_wms.id}/geo/render"
-    )
+    stale = artifacts.geo_render(stale_layer.id)
+    private = artifacts.geo_render(private_wms.id)
 
     assert stale.status_code == 500
     assert "does not match" in stale.json()["detail"]

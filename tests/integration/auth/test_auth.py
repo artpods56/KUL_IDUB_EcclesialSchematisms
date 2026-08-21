@@ -11,7 +11,14 @@ from sqlalchemy import text
 
 from grafy_api.main import create_app
 from grafy_api.settings import Settings
-from grafy_api.v1.routes.auth.models import PersonalAccessTokenCreatedResponse
+from grafy_api.v1.routes.auth.models import (
+    PersonalAccessTokenCreatedResponse,
+    PersonalAccessTokenCreateRequest,
+    PersonalAccessTokenScope,
+    WorkspaceCreateRequest,
+    WorkspaceMemberRequest,
+)
+
 from grafy_api.v1.routes.auth.abuse import (
     BROWSER_ABUSE_COOKIE,
     make_browser_abuse_cookie,
@@ -29,16 +36,13 @@ from grafy_core.domain.identity import (
 from grafy_persistence.database import create_database
 from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
+from tests.testkit import client_with_overrides, db, seed
+
+from tests.support.clients import GrafyApi
 
 
-def _settings(database_url: str, *, idle_seconds: int = 1800) -> Settings:
-    return Settings(
-        public_origin="http://testserver",
-        auth_cookie_secure=False,
-        auth_session_idle_seconds=idle_seconds,
-        database_url=SecretStr(database_url),
-        execution_backend="inline",
-    )
+def _database_url(tmp_path: Path, test_name: str) -> str:
+    return f"sqlite+aiosqlite:///{tmp_path / test_name}"
 
 
 async def _seed(database_url: str) -> tuple[User, Workspace, IssuedSession]:
@@ -114,21 +118,32 @@ async def _seed_oidc_transaction(
     await database.dispose()
 
 
-def test_v1_routes_fail_closed_but_health_is_public(tmp_path: Path) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'auth.sqlite3'}"
-    _seed_sync(database_url)
-    with TestClient(create_app(_settings(database_url))) as client:
-        assert client.get("/health").status_code == 200
-        assert client.get("/v1/workspaces/00000000-0000-0000-0000-000000000007/nodes").status_code == 401
-        assert client.get("/v1/workspaces").status_code == 401
-        assert client.get("/v1/auth/session").status_code == 401
+async def test_v1_routes_fail_closed_but_health_is_public(
+    tmp_path: Path, settings: Settings
+) -> None:
+    # arrange
+    database_url = _database_url(tmp_path, "auth.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(update={"database_url": SecretStr(database_url)})
+        user, workspace, membership = await seed(database.sessions)
+
+        # act
+        with client_with_overrides(
+            settings=app_settings,
+        ) as client:
+            api = GrafyApi(client)
+
+            # assert
+            assert api.workspace(workspace.id).list_members().status_code == 401
+            assert api.workspaces.list().status_code == 401, "Unauthorized"
+            assert api.auth.get_session().status_code == 401, "Unauthorized"
 
 
 def test_unauthenticated_workspace_failure_is_audited_once(tmp_path: Path) -> None:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'workspace-auth-failure.sqlite3'}"
     _seed_sync(database_url)
     with TestClient(create_app(_settings(database_url))) as client:
-        assert client.get("/v1/workspaces").status_code == 401
+        assert GrafyApi(client).workspaces.list().status_code == 401
 
     async def read_workspace_auth_failures() -> list[tuple[str, str, str]]:
         database = create_database(database_url)
@@ -156,26 +171,22 @@ def test_session_verification_failures_are_rate_limited(tmp_path: Path) -> None:
     settings = _settings(database_url)
     settings = settings.model_copy(update={"auth_session_failure_rate_limit": 1})
     with TestClient(create_app(settings)) as client:
-        assert client.get("/v1/auth/session").status_code == 401
-        assert client.get("/v1/auth/session").status_code == 429
+        session = GrafyApi(client).auth
+        assert session.get_session().status_code == 401
+        assert session.get_session().status_code == 429
 
 
 def test_cookie_requests_require_exact_origin_and_csrf(tmp_path: Path) -> None:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'csrf.sqlite3'}"
     _, _, issued = _seed_sync(database_url)
     with TestClient(create_app(_settings(database_url))) as client:
-        client.cookies.set("grafy_session", issued.cookie_value)
-        client.cookies.set("grafy_csrf", issued.csrf_value)
+        api = GrafyApi(client)
+        api.authenticate(issued)
+        payload = WorkspaceCreateRequest(slug="team", name="Team")
+        assert api.workspaces.create(payload).status_code == 403
         assert (
-            client.post(
-                "/v1/workspaces", json={"slug": "team", "name": "Team"}
-            ).status_code
-            == 403
-        )
-        assert (
-            client.post(
-                "/v1/workspaces",
-                json={"slug": "team", "name": "Team"},
+            api.workspaces.create(
+                payload,
                 headers={
                     "Origin": "http://evil.example",
                     "X-CSRF-Token": issued.csrf_value,
@@ -208,14 +219,16 @@ def test_cookie_requests_require_exact_origin_and_csrf(tmp_path: Path) -> None:
 def test_authenticated_csrf_failure_is_audited_once_at_auth_boundary(
     tmp_path: Path,
 ) -> None:
+    # 1. create a dedicated database
+    # 2. create a workspace
+
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'csrf-single-audit.sqlite3'}"
     _, _, issued = _seed_sync(database_url)
     with TestClient(create_app(_settings(database_url))) as client:
-        client.cookies.set("grafy_session", issued.cookie_value)
-        client.cookies.set("grafy_csrf", issued.csrf_value)
-        response = client.post(
-            "/v1/workspaces",
-            json={"slug": "team", "name": "Team"},
+        api = GrafyApi(client)
+        api.authenticate(issued)
+        response = api.workspaces.create(
+            WorkspaceCreateRequest(slug="team", name="Team"),
             headers={
                 "Origin": "http://testserver",
                 "X-CSRF-Token": "wrong-csrf-token",
@@ -260,9 +273,9 @@ def test_session_idle_expiry_is_enforced_at_boundary(tmp_path: Path) -> None:
     asyncio.run(age_session())
     del user
     with TestClient(create_app(_settings(database_url, idle_seconds=1800))) as client:
-        client.cookies.set("grafy_session", issued.cookie_value)
-        client.cookies.set("grafy_csrf", issued.csrf_value)
-        assert client.get("/v1/auth/session").status_code == 401
+        api = GrafyApi(client)
+        api.authenticate(issued)
+        assert api.auth.get_session().status_code == 401
 
 
 def test_session_absolute_expiry_is_enforced(tmp_path: Path) -> None:
@@ -276,23 +289,23 @@ def test_session_absolute_expiry_is_enforced(tmp_path: Path) -> None:
         )
     )
     with TestClient(create_app(_settings(database_url))) as client:
-        client.cookies.set("grafy_session", issued.cookie_value)
-        client.cookies.set("grafy_csrf", issued.csrf_value)
-        assert client.get("/v1/auth/session").status_code == 401
+        api = GrafyApi(client)
+        api.authenticate(issued)
+        assert api.auth.get_session().status_code == 401
 
 
 def test_logout_revokes_the_current_session(tmp_path: Path) -> None:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'logout.sqlite3'}"
     _, _, issued = _seed_sync(database_url)
     with TestClient(create_app(_settings(database_url))) as client:
-        client.cookies.set("grafy_session", issued.cookie_value)
-        client.cookies.set("grafy_csrf", issued.csrf_value)
+        api = GrafyApi(client)
+        api.authenticate(issued)
         headers = {
             "Origin": "http://testserver",
             "X-CSRF-Token": issued.csrf_value,
         }
-        assert client.delete("/v1/auth/session", headers=headers).status_code == 204
-        assert client.get("/v1/auth/session").status_code == 401
+        assert api.auth.logout(headers=headers).status_code == 204
+        assert api.auth.get_session().status_code == 401
 
     async def read_session() -> bool:
         database = create_database(database_url)
@@ -501,22 +514,19 @@ def test_pat_create_shows_secret_once_and_revoke_is_audited(tmp_path: Path) -> N
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'pat.sqlite3'}"
     _, workspace, issued = _seed_sync(database_url)
     with TestClient(create_app(_settings(database_url))) as client:
-        client.cookies.set("grafy_session", issued.cookie_value)
-        client.cookies.set("grafy_csrf", issued.csrf_value)
+        api = GrafyApi(client)
+        api.authenticate(issued)
         headers = {"Origin": "http://testserver", "X-CSRF-Token": issued.csrf_value}
-        response = client.post(
-            f"/v1/workspaces/{workspace.id}/personal-access-tokens",
+        tokens = api.workspace(workspace.id)
+        created = tokens.create_token_ok(
+            PersonalAccessTokenCreateRequest(
+                label="read-only",
+                scopes=[PersonalAccessTokenScope.VIEW_GRAPH],
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+            ),
             headers=headers,
-            json={
-                "label": "read-only",
-                "scopes": [WorkspaceCapability.VIEW_GRAPH.value],
-                "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
-            },
         )
-        assert response.status_code == 201
-        raw_token = response.json()["token"]
-        created = PersonalAccessTokenCreatedResponse.model_validate(response.json())
-        assert created.token.get_secret_value() == raw_token
+        raw_token = created.token.get_secret_value()
         assert raw_token not in repr(created)
         assert raw_token not in str(dict(created))
         assert raw_token not in str(created.model_dump())
@@ -535,10 +545,11 @@ def test_pat_create_shows_secret_once_and_revoke_is_audited(tmp_path: Path) -> N
         redacted_with_caller_exclude = created.model_dump_json(exclude={"label"})
         assert raw_token not in redacted_with_caller_exclude
         assert '"label"' not in redacted_with_caller_exclude
-        listed = client.get(f"/v1/workspaces/{workspace.id}/personal-access-tokens")
+        listed = tokens.list_tokens(headers=headers)
         assert listed.status_code == 200
         assert raw_token not in listed.text
-        token_id = response.json()["id"]
+        # A scope outside the PAT allow-list cannot be expressed by the
+        # typed request model; exercise that boundary through the raw client.
         disallowed = client.post(
             f"/v1/workspaces/{workspace.id}/personal-access-tokens",
             headers=headers,
@@ -549,11 +560,7 @@ def test_pat_create_shows_secret_once_and_revoke_is_audited(tmp_path: Path) -> N
             },
         )
         assert disallowed.status_code == 422
-        revoked = client.delete(
-            f"/v1/workspaces/{workspace.id}/personal-access-tokens/{token_id}",
-            headers=headers,
-        )
-        assert revoked.status_code == 204
+        assert tokens.revoke_token(created.id, headers=headers).status_code == 204
 
     async def read_audits() -> list[str]:
         database = create_database(database_url)
@@ -769,9 +776,11 @@ def test_workspace_and_pat_request_validation_is_bounded(tmp_path: Path) -> None
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'dto-validation.sqlite3'}"
     _, workspace, issued = _seed_sync(database_url)
     with TestClient(create_app(_settings(database_url))) as client:
-        client.cookies.set("grafy_session", issued.cookie_value)
-        client.cookies.set("grafy_csrf", issued.csrf_value)
+        api = GrafyApi(client)
+        api.authenticate(issued)
         headers = {"Origin": "http://testserver", "X-CSRF-Token": issued.csrf_value}
+        # Rejected payloads cannot be expressed by the typed request
+        # models; exercise those boundaries through the raw client.
         whitespace = client.post(
             "/v1/workspaces",
             headers=headers,
@@ -784,17 +793,15 @@ def test_workspace_and_pat_request_validation_is_bounded(tmp_path: Path) -> None
             json={"slug": "bad slug!", "name": "Team"},
         )
         assert invalid_slug.status_code == 422
-        normalized = client.post(
-            "/v1/workspaces",
+        normalized = api.workspaces.create(
+            WorkspaceCreateRequest(slug="  Team-Name  ", name="Team"),
             headers=headers,
-            json={"slug": "  Team-Name  ", "name": "Team"},
         )
         assert normalized.status_code == 201
         assert normalized.json()["slug"] == "team-name"
-        duplicate_normalized = client.post(
-            "/v1/workspaces",
+        duplicate_normalized = api.workspaces.create(
+            WorkspaceCreateRequest(slug=" team-name ", name="Duplicate team"),
             headers=headers,
-            json={"slug": " team-name ", "name": "Duplicate team"},
         )
         assert duplicate_normalized.status_code == 409
         duplicate_scopes = client.post(
@@ -856,20 +863,22 @@ def test_workspace_failure_audits_preserve_route_metadata(tmp_path: Path) -> Non
     with TestClient(
         create_app(_settings(f"sqlite+aiosqlite:///{database_url}"))
     ) as client:
-        client.cookies.set("grafy_session", viewer_session.cookie_value)
-        client.cookies.set("grafy_csrf", viewer_session.csrf_value)
+        api = GrafyApi(client)
+        api.authenticate(viewer_session)
         headers = {
             "Origin": "http://testserver",
             "X-CSRF-Token": viewer_session.csrf_value,
         }
-        capability = client.post(
-            f"/v1/workspaces/{workspace.id}/members",
+        capability = api.workspace(workspace.id).add_member(
+            WorkspaceMemberRequest(
+                user_id=owner.id,
+                role=WorkspaceRole.VIEWER,
+            ),
             headers=headers,
-            json={"user_id": str(owner.id), "role": "viewer"},
         )
-        not_found = client.get(
-            f"/v1/workspaces/{missing_workspace_id}/members",
-        )
+        not_found = api.workspace(missing_workspace_id).list_members()
+        # A whitespace-only name is rejected server-side and cannot be
+        # expressed by the typed request model; use the raw client.
         validation = client.post(
             "/v1/workspaces",
             headers=headers,

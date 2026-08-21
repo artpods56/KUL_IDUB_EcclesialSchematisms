@@ -12,6 +12,9 @@ from grafy_api.v1.routes.executions.models import (
     RunResponse,
 )
 
+from tests.support.clients import GrafyApi
+from tests.support.identity import WORKSPACE_ID
+
 
 def test_registry_derives_nested_json_scalar_projections(
     structural_projection_client: TestClient,
@@ -52,6 +55,8 @@ def test_registry_derives_nested_json_scalar_projections(
 def test_nested_json_string_projects_directly_and_integer_converts_to_text(
     structural_projection_client: TestClient,
 ) -> None:
+    api = GrafyApi(structural_projection_client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     response = structural_projection_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json=RunRequest(
@@ -114,17 +119,15 @@ def test_nested_json_string_projects_directly_and_integer_converts_to_text(
     }
     name = outputs_by_node["name"]
     retries = outputs_by_node["retries"]
-    assert structural_projection_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{name.artifact_id}/content"
-    ).json() == {"value": "aBc"}
-    assert structural_projection_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{retries.artifact_id}/content"
-    ).json() == {"value": "four-2"}
+    assert artifacts.content(name.artifact_id).json() == {"value": "aBc"}
+    assert artifacts.content(retries.artifact_id).json() == {"value": "four-2"}
 
 
 def test_projected_values_feed_generic_collect_with_optional_conversion(
     structural_projection_client: TestClient,
 ) -> None:
+    api = GrafyApi(structural_projection_client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     response = structural_projection_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json=RunRequest(
@@ -192,8 +195,6 @@ def test_projected_values_feed_generic_collect_with_optional_conversion(
         run.outputs[0] for run in result.node_runs if run.node_id == "collect"
     )
     assert [
-        structural_projection_client.get(
-            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content"
-        ).json()["value"]
+        artifacts.content(artifact.artifact_id).json()["value"]
         for artifact in collect_output.artifacts
     ] == ["abc", "42"]

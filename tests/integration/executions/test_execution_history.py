@@ -22,64 +22,83 @@ from grafy_persistence.unit_of_work import (
 )
 
 from grafy_api.builtins import builtin_plugins
-from grafy_api.main import create_app
-from tests.support.identity import install_browser_actor_override
+from tests.support.identity import browser_actor_override
+from grafy_api.v1.routes.auth.dependencies import browser_actor
 from grafy_api.plugin_discovery import build_plugin_registry
 from grafy_api.v1.routes.executions.models import (
-    GraphExecutionDetailResponse,
-    GraphExecutionListResponse,
     RunExecutionResponse,
+    RunNodeRequest,
+    RunRequest,
 )
-from grafy_api.v1.routes.saved_graphs.models import SavedGraphResponse
+from tests.support.clients import GrafyApi
+from grafy_api.v1.routes.saved_graphs.models import (
+    CreateSavedGraphRequest,
+    GraphPointModel,
+    SavedGraphNodeModel,
+    SavedGraphResponse,
+    UpdateSavedGraphRequest,
+)
 from grafy_api.settings import Settings
+
+from tests.testkit import client_with_overrides
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
 
 
-def _saved_text_graph_payload(name: str, text: str) -> dict[str, object]:
-    return {
-        "name": name,
-        "nodes": [
-            {
-                "id": "text",
-                "operator_id": "text.input",
-                "operator_version": 1,
-                "config": {"text": text},
-                "position": {"x": 0, "y": 0},
-            }
-        ],
-        "edges": [],
-    }
+def _saved_text_graph_nodes(text: str) -> list[SavedGraphNodeModel]:
+    return [
+        SavedGraphNodeModel(
+            id="text",
+            operator_id="text.input",
+            operator_version=1,
+            config={"text": text},
+            position=GraphPointModel(x=0, y=0),
+        )
+    ]
+
+
+def _create_text_graph_request(name: str, text: str) -> CreateSavedGraphRequest:
+    return CreateSavedGraphRequest(
+        name=name, nodes=_saved_text_graph_nodes(text), edges=[]
+    )
+
+
+def _update_text_graph_request(
+    name: str, text: str, *, expected_revision: int
+) -> UpdateSavedGraphRequest:
+    return UpdateSavedGraphRequest(
+        name=name,
+        expected_revision=expected_revision,
+        nodes=_saved_text_graph_nodes(text),
+        edges=[],
+    )
 
 
 def _start_saved_text_execution(
     client: TestClient,
     graph: SavedGraphResponse,
 ) -> RunExecutionResponse:
-    response = client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
-        json={
-            "nodes": [
-                {
-                    "id": "text",
-                    "operator_id": "text.input",
-                    "operator_version": 1,
-                    "config": {"text": "remember this"},
-                }
+    api = GrafyApi(client)
+    executions = api.workspace(WORKSPACE_ID).executions
+    started = executions.start_execution_ok(
+        RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="text",
+                    operator_id="text.input",
+                    operator_version=1,
+                    config={"text": "remember this"},
+                )
             ],
-            "edges": [],
-            "scope": "selected-with-dependencies",
-            "graph_id": str(graph.id),
-            "graph_revision": graph.revision,
-        },
+            edges=[],
+            scope="selected-with-dependencies",
+            graph_id=graph.id,
+            graph_revision=graph.revision,
+        )
     )
-    assert response.status_code == 202
-    started = RunExecutionResponse.model_validate(response.json())
     for _ in range(100):
-        poll = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{started.execution_id}")
-        assert poll.status_code == 200
-        current = RunExecutionResponse.model_validate(poll.json())
+        current = executions.get_execution_ok(started.execution_id)
         if current.status in {"cancelled", "succeeded", "failed"}:
             return current
     raise AssertionError("Execution did not reach a terminal status")
@@ -88,9 +107,11 @@ def _start_saved_text_execution(
 def test_saved_graph_execution_history_lists_filters_and_renders_artifacts(
     builtin_client: TestClient,
 ) -> None:
-    created_response = builtin_client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
-        json=_saved_text_graph_payload("History", "remember this"),
+    api = GrafyApi(builtin_client)
+    executions = api.workspace(WORKSPACE_ID).executions
+    graphs = api.workspace(WORKSPACE_ID).graphs
+    created_response = graphs.create(
+        _create_text_graph_request("History", "remember this")
     )
     assert created_response.status_code == 201
     graph = SavedGraphResponse.model_validate(created_response.json())
@@ -98,9 +119,7 @@ def test_saved_graph_execution_history_lists_filters_and_renders_artifacts(
     first = _start_saved_text_execution(builtin_client, graph)
     assert first.status == "succeeded"
 
-    listing_response = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions")
-    assert listing_response.status_code == 200
-    listing = GraphExecutionListResponse.model_validate(listing_response.json())
+    listing = executions.list_graph_executions_ok(graph.id)
     assert len(listing.items) == 1
     summary = listing.items[0]
     assert summary.execution_id == first.execution_id
@@ -114,11 +133,7 @@ def test_saved_graph_execution_history_lists_filters_and_renders_artifacts(
     assert summary.finished_at is not None
     assert summary.workflow_run_id is not None
 
-    detail_response = builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions/{first.execution_id}"
-    )
-    assert detail_response.status_code == 200
-    detail = GraphExecutionDetailResponse.model_validate(detail_response.json())
+    detail = executions.get_graph_execution_ok(graph.id, first.execution_id)
     assert [(result.node_id, result.status) for result in detail.node_results] == [
         ("text", "succeeded")
     ]
@@ -126,18 +141,16 @@ def test_saved_graph_execution_history_lists_filters_and_renders_artifacts(
     assert output.port == "text"
     assert output.artifacts[0].text == '"remember this"'
 
-    succeeded = builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions",
-        params={"status": "succeeded", "node_id": "text"},
+    succeeded = executions.list_graph_executions_ok(
+        graph.id, status="succeeded", node_id="text"
     )
-    assert succeeded.status_code == 200
-    assert len(GraphExecutionListResponse.model_validate(succeeded.json()).items) == 1
-    no_match = builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions",
-        params={"status": "failed", "node_id": "missing"},
+    assert len(succeeded.items) == 1
+    no_match = executions.list_graph_executions_ok(
+        graph.id, status="failed", node_id="missing"
     )
-    assert no_match.status_code == 200
-    assert GraphExecutionListResponse.model_validate(no_match.json()).items == []
+    assert no_match.items == []
+    # Values the route rejects (whitespace node filter, undecodable cursor)
+    # are deliberate boundary probes; keep them on the raw client.
     assert (
         builtin_client.get(
             f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions",
@@ -153,17 +166,14 @@ def test_saved_graph_execution_history_lists_filters_and_renders_artifacts(
         == 422
     )
     assert (
-        builtin_client.get(
-            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{uuid4()}/executions/{first.execution_id}"
-        ).status_code
-        == 404
+        executions.get_graph_execution(uuid4(), first.execution_id).status_code == 404
     )
 
-    update_payload = _saved_text_graph_payload("History r2", "remember this")
-    update_payload["expected_revision"] = graph.revision
-    updated_response = builtin_client.put(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}",
-        json=update_payload,
+    updated_response = api.workspace(WORKSPACE_ID).graphs.update(
+        graph.id,
+        _update_text_graph_request(
+            "History r2", "remember this", expected_revision=graph.revision
+        ),
     )
     assert updated_response.status_code == 200
     updated_graph = SavedGraphResponse.model_validate(updated_response.json())
@@ -171,41 +181,18 @@ def test_saved_graph_execution_history_lists_filters_and_renders_artifacts(
 
     second = _start_saved_text_execution(builtin_client, updated_graph)
     assert second.status == "succeeded"
-    revision_one_response = builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions",
-        params={"graph_revision": 1},
-    )
-    revision_one = GraphExecutionListResponse.model_validate(
-        revision_one_response.json()
-    )
+    revision_one = executions.list_graph_executions_ok(graph.id, graph_revision=1)
     assert [item.execution_id for item in revision_one.items] == [first.execution_id]
-    revision_two_response = builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions",
-        params={"graph_revision": 2},
-    )
-    revision_two = GraphExecutionListResponse.model_validate(
-        revision_two_response.json()
-    )
+    revision_two = executions.list_graph_executions_ok(graph.id, graph_revision=2)
     assert [item.execution_id for item in revision_two.items] == [second.execution_id]
-    all_revisions_response = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions")
-    assert {
-        item.graph_revision
-        for item in GraphExecutionListResponse.model_validate(
-            all_revisions_response.json()
-        ).items
-    } == {1, 2}
-    first_page_response = builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions",
-        params={"limit": 1},
-    )
-    first_page = GraphExecutionListResponse.model_validate(first_page_response.json())
+    all_revisions = executions.list_graph_executions_ok(graph.id)
+    assert {item.graph_revision for item in all_revisions.items} == {1, 2}
+    first_page = executions.list_graph_executions_ok(graph.id, limit=1)
     assert len(first_page.items) == 1
     assert first_page.next_cursor is not None
-    second_page_response = builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions",
-        params={"limit": 1, "cursor": first_page.next_cursor},
+    second_page = executions.list_graph_executions_ok(
+        graph.id, limit=1, cursor=first_page.next_cursor
     )
-    second_page = GraphExecutionListResponse.model_validate(second_page_response.json())
     assert len(second_page.items) == 1
     assert second_page.items[0].execution_id != first_page.items[0].execution_id
 
@@ -213,14 +200,15 @@ def test_saved_graph_execution_history_lists_filters_and_renders_artifacts(
 def test_saved_graph_execution_is_not_accepted_without_its_revision(
     builtin_client: TestClient,
 ) -> None:
-    response = builtin_client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
-        json={
-            "nodes": [],
-            "edges": [],
-            "graph_id": str(uuid4()),
-            "graph_revision": 1,
-        },
+    api = GrafyApi(builtin_client)
+    executions = api.workspace(WORKSPACE_ID).executions
+    response = executions.start_execution(
+        RunRequest(
+            nodes=[],
+            edges=[],
+            graph_id=uuid4(),
+            graph_revision=1,
+        )
     )
 
     assert response.status_code == 404
@@ -230,45 +218,39 @@ def test_saved_graph_execution_is_not_accepted_without_its_revision(
 def test_duplicate_saved_node_ids_become_a_browsable_failed_execution(
     builtin_client: TestClient,
 ) -> None:
-    created_response = builtin_client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
-        json=_saved_text_graph_payload("Invalid history", "duplicate"),
+    api = GrafyApi(builtin_client)
+    executions = api.workspace(WORKSPACE_ID).executions
+    graphs = api.workspace(WORKSPACE_ID).graphs
+    created_response = graphs.create(
+        _create_text_graph_request("Invalid history", "duplicate")
     )
     assert created_response.status_code == 201
     graph = SavedGraphResponse.model_validate(created_response.json())
-    duplicate_node = {
-        "id": "text",
-        "operator_id": "text.input",
-        "operator_version": 1,
-        "config": {"text": "duplicate"},
-    }
-
-    start_response = builtin_client.post(
-        "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
-        json={
-            "nodes": [duplicate_node, duplicate_node],
-            "scope": "all",
-            "graph_id": str(graph.id),
-            "graph_revision": graph.revision,
-        },
+    duplicate_node = RunNodeRequest(
+        id="text",
+        operator_id="text.input",
+        operator_version=1,
+        config={"text": "duplicate"},
     )
-    assert start_response.status_code == 202
-    execution = RunExecutionResponse.model_validate(start_response.json())
+
+    execution = executions.start_execution_ok(
+        RunRequest(
+            nodes=[duplicate_node, duplicate_node],
+            edges=[],
+            scope="all",
+            graph_id=graph.id,
+            graph_revision=graph.revision,
+        )
+    )
     for _ in range(100):
-        poll_response = builtin_client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/executions/{execution.execution_id}")
-        assert poll_response.status_code == 200
-        execution = RunExecutionResponse.model_validate(poll_response.json())
+        execution = executions.get_execution_ok(execution.execution_id)
         if execution.status == "failed":
             break
     assert execution.status == "failed"
     assert execution.error is not None
     assert "Duplicate node ids" in execution.error
 
-    detail_response = builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/executions/{execution.execution_id}"
-    )
-    assert detail_response.status_code == 200
-    detail = GraphExecutionDetailResponse.model_validate(detail_response.json())
+    detail = executions.get_graph_execution_ok(graph.id, execution.execution_id)
     assert detail.status == "failed"
     assert detail.requested_node_ids == ["text"]
     assert detail.node_results == []
@@ -366,20 +348,17 @@ def test_application_startup_marks_stale_active_execution_failed(
 ) -> None:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'recovery.sqlite3'}"
     graph_id, execution_id = asyncio.run(_seed_active_execution(database_url))
-    application = create_app(
-        Settings(
+    with client_with_overrides(
+        settings=Settings(
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
-            execution_backend="inline",
-        )
-    )
-    install_browser_actor_override(application)
+        ),
+        overrides={browser_actor: browser_actor_override},
+    ) as client:
+        api = GrafyApi(client)
+        executions = api.workspace(WORKSPACE_ID).executions
+        detail = executions.get_graph_execution_ok(graph_id, execution_id)
 
-    with TestClient(application) as client:
-        response = client.get(f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph_id}/executions/{execution_id}")
-
-    assert response.status_code == 200
-    detail = GraphExecutionDetailResponse.model_validate(response.json())
     assert detail.status == "failed"
     assert detail.finished_at is not None
     assert detail.error is not None

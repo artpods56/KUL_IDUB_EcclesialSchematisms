@@ -1,22 +1,18 @@
 import asyncio
 from pathlib import Path
-from types import TracebackType
-from typing import Literal, Self, cast
+from typing import cast
 
-import httpx
 import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-import grafy_api.health as health_module
 import grafy_api.main as main_module
 from grafy_persistence.database import Database, create_database
 from grafy_persistence.orm import metadata
 
-from grafy_api.main import create_app
 from grafy_api.settings import Settings, get_settings
+from tests.testkit import client_with_overrides
 
 
 class _SwitchableReadinessEngine:
@@ -35,43 +31,15 @@ class _SwitchableReadinessEngine:
         await self._engine.dispose()
 
 
-class _PrefectHealthClient:
-    status_code = 200
-    requested_urls: list[str] = []
-
-    def __init__(self, **_kwargs: object) -> None:
-        pass
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        del exc_type, exc_value, traceback
-
-    async def get(self, url: str) -> httpx.Response:
-        self.requested_urls.append(url)
-        return httpx.Response(
-            self.status_code,
-            request=httpx.Request("GET", url),
-        )
-
-
 async def _create_schema(database: Database) -> None:
     async with database.engine.begin() as connection:
         await connection.run_sync(metadata.create_all)
 
 
-def _readiness_application(
+def _readiness_settings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    *,
-    execution_backend: Literal["prefect", "inline"],
-) -> tuple[FastAPI, _SwitchableReadinessEngine]:
+) -> tuple[Settings, _SwitchableReadinessEngine]:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'readiness.sqlite3'}"
     database = create_database(database_url)
     asyncio.run(_create_schema(database))
@@ -89,31 +57,25 @@ def _readiness_application(
         "create_database",
         use_readiness_database,
     )
-    application = create_app(
+    return (
         Settings(
             _env_file=None,  # pyright: ignore[reportCallIssue]
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
-            execution_backend=execution_backend,
             command_hmac_key=SecretStr("readiness-command-key"),
             require_single_api_owner=False,
-        )
+        ),
+        readiness_engine,
     )
-    return application, readiness_engine
 
 
 def test_readiness_reports_database_failure_without_breaking_liveness(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("PREFECT_API_URL", raising=False)
-    application, readiness_engine = _readiness_application(
-        tmp_path,
-        monkeypatch,
-        execution_backend="inline",
-    )
+    settings, readiness_engine = _readiness_settings(tmp_path, monkeypatch)
 
-    with TestClient(application) as client:
+    with client_with_overrides(settings=settings) as client:
         healthy = client.get("/ready")
         assert healthy.status_code == 200
         assert healthy.json() == {"status": "ok"}
@@ -132,19 +94,13 @@ def test_readiness_uses_the_settings_attached_to_its_application(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("GRAFY_EXECUTION_BACKEND", "prefect")
-    monkeypatch.delenv("PREFECT_API_URL", raising=False)
-    monkeypatch.delenv("GRAFY_PREFECT_API_URL", raising=False)
+    monkeypatch.setenv("GRAFY_MAP_MAX_CONCURRENCY", "7")
     get_settings.cache_clear()
-    application, _readiness_engine = _readiness_application(
-        tmp_path,
-        monkeypatch,
-        execution_backend="inline",
-    )
+    settings, _readiness_engine = _readiness_settings(tmp_path, monkeypatch)
 
     try:
-        assert get_settings().execution_backend == "prefect"
-        with TestClient(application) as client:
+        assert get_settings().map_max_concurrency == 7
+        with client_with_overrides(settings=settings) as client:
             response = client.get("/ready")
 
             assert response.status_code == 200
@@ -157,13 +113,10 @@ def test_readiness_translates_uninitialized_resources_to_unavailable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    application, _readiness_engine = _readiness_application(
-        tmp_path,
-        monkeypatch,
-        execution_backend="inline",
-    )
+    settings, _readiness_engine = _readiness_settings(tmp_path, monkeypatch)
 
-    with TestClient(application) as client:
+    with client_with_overrides(settings=settings) as client:
+        application = cast(FastAPI, client.app)
         resources = application.state.resources
         del application.state.resources
         try:
@@ -173,39 +126,3 @@ def test_readiness_translates_uninitialized_resources_to_unavailable(
 
         assert response.status_code == 503
         assert response.json() == {"detail": "Service unavailable"}
-
-def test_prefect_readiness_checks_configured_health_endpoint(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("PREFECT_API_URL", "http://prefect.test:4200/api/")
-    monkeypatch.delenv("GRAFY_PREFECT_API_URL", raising=False)
-    application, _readiness_engine = _readiness_application(
-        tmp_path,
-        monkeypatch,
-        execution_backend="prefect",
-    )
-    _PrefectHealthClient.requested_urls = []
-    _PrefectHealthClient.status_code = 200
-
-    with TestClient(application) as client:
-        monkeypatch.setattr(
-            health_module.httpx,
-            "AsyncClient",
-            _PrefectHealthClient,
-        )
-        healthy = client.get("/ready")
-        assert healthy.status_code == 200
-        assert healthy.json() == {"status": "ok"}
-        assert _PrefectHealthClient.requested_urls == [
-            "http://prefect.test:4200/api/health"
-        ]
-
-        _PrefectHealthClient.status_code = 503
-        response = client.get("/ready")
-
-        assert response.status_code == 503
-        assert response.json() == {"detail": "Service unavailable"}
-        liveness = client.get("/health")
-        assert liveness.status_code == 200
-        assert liveness.json() == {"status": "ok"}

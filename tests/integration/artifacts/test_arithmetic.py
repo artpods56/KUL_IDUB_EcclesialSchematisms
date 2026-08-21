@@ -40,6 +40,8 @@ from grafy_core.operators.arithmetic import (
 )
 from grafy_core.operators.text import TEXT_VALUE
 
+from tests.support.clients import GrafyApi
+
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
 TEST_COMPOUND_RESULT_KEY = ArtifactTypeKey("test.compound_result", 1)
@@ -248,6 +250,8 @@ def test_registry_declares_scalar_arithmetic_nodes_and_test_compound_projections
 def test_integer_output_converts_to_text_before_text_node_execution(
     builtin_client: TestClient,
 ) -> None:
+    api = GrafyApi(builtin_client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json=RunRequest(
@@ -287,9 +291,7 @@ def test_integer_output_converts_to_text_before_text_node_execution(
     replaced = _run_output(result, "replace", "text")
     assert replaced.kind == "single"
     assert replaced.artifacts[0].artifact_type == "scalar.text"
-    replaced_content = builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{replaced.artifacts[0].artifact_id}/content"
-    )
+    replaced_content = artifacts.content(replaced.artifacts[0].artifact_id)
     assert replaced_content.status_code == 200
     assert replaced_content.json() == {"value": "nine"}
 
@@ -302,9 +304,7 @@ def test_integer_output_converts_to_text_before_text_node_execution(
     assert isinstance(converted_refs, list)
     converted_ref = converted_refs[0]
     assert isinstance(converted_ref, dict)
-    converted_content = builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{converted_ref['artifact_id']}/content"
-    )
+    converted_content = artifacts.content(converted_ref["artifact_id"])
     assert converted_content.status_code == 200
     assert converted_content.json() == {"value": "9"}
 
@@ -313,6 +313,8 @@ def test_projection_runs_before_declared_integer_to_text_conversion(
     conversion_path_client: tuple[TestClient, InMemoryUnitOfWork],
 ) -> None:
     client, _uow = conversion_path_client
+    api = GrafyApi(client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     response = client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json=RunRequest(
@@ -375,9 +377,7 @@ def test_projection_runs_before_declared_integer_to_text_conversion(
     assert response.status_code == 200
     result = RunResponse.model_validate(response.json())
     replaced = _run_output(result, "replace", "text")
-    replaced_content = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{replaced.artifacts[0].artifact_id}/content"
-    )
+    replaced_content = artifacts.content(replaced.artifacts[0].artifact_id)
     assert replaced_content.status_code == 200
     assert replaced_content.json() == {"value": "thirteen"}
 
@@ -385,6 +385,8 @@ def test_projection_runs_before_declared_integer_to_text_conversion(
 def test_integer_sequence_conversion_preserves_order_through_mapped_text_node(
     builtin_client: TestClient,
 ) -> None:
+    api = GrafyApi(builtin_client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json=RunRequest(
@@ -439,15 +441,11 @@ def test_integer_sequence_conversion_preserves_order_through_mapped_text_node(
     assert replaced.value.ordered is True
     assert replaced.value.index_key == "order_index"
     assert [
-        builtin_client.get(
-            f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{artifact.artifact_id}/content"
-        ).json()["value"]
+        artifacts.content(artifact.artifact_id).json()["value"]
         for artifact in replaced.artifacts
     ] == ["1", "two", "3"]
     joined = _run_output(result, "join", "text").artifacts[0]
-    joined_content = builtin_client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{joined.artifact_id}/content"
-    )
+    joined_content = artifacts.content(joined.artifact_id)
     assert joined_content.status_code == 200
     assert joined_content.json() == {"value": "1,two,3"}
 
@@ -973,6 +971,8 @@ def test_test_compound_graph_projects_both_result_fields_into_multiply(
     conversion_path_client: tuple[TestClient, InMemoryUnitOfWork],
 ) -> None:
     client, _uow = conversion_path_client
+    api = GrafyApi(client)
+    artifacts = api.workspace(WORKSPACE_ID).artifacts
     response = client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json=_compound_run_request(
@@ -995,18 +995,14 @@ def test_test_compound_graph_projects_both_result_fields_into_multiply(
         "addition": 13,
         "subtraction": 5,
     }
-    compound_content = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{compound.artifact_id}/content"
-    )
+    compound_content = artifacts.content(compound.artifact_id)
     assert compound_content.status_code == 200
     assert compound_content.json() == {"addition": 13, "subtraction": 5}
 
     product = runs["multiply"].outputs[0].artifacts[0]
     assert product.artifact_type == "scalar.integer"
     assert product.text == "65"
-    product_content = client.get(
-        f"/v1/workspaces/00000000-0000-0000-0000-000000000007/artifacts/{product.artifact_id}/content"
-    )
+    product_content = artifacts.content(product.artifact_id)
     assert product_content.status_code == 200
     assert product_content.json() == {"value": 65}
 
