@@ -1,8 +1,9 @@
 """Post-commit publication helpers for HTTP and room command paths."""
 
+from collections.abc import Callable
 from uuid import UUID
 
-from fastapi import FastAPI, Request
+from fastapi import Request
 
 from grafy_core.domain.collaboration import (
     CollaborativeGraphHead,
@@ -10,8 +11,9 @@ from grafy_core.domain.collaboration import (
     GraphCommandReceipt,
 )
 from grafy_core.domain.identity import ActorContext
+from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
-from grafy_api.app_state import get_identity, get_resources
+from grafy_api.app_state import get_resources
 from grafy_api.v1.routes.collaboration.hub import (
     CLOSE_ACCESS_REVOKED,
     CLOSE_GRAPH_DELETED,
@@ -37,11 +39,10 @@ def graph_room_hub_from_request(request: Request) -> GraphRoomHub:
 
 
 async def actor_presentation_for(
-    app: FastAPI,
+    uow_factory: Callable[[], SqlAlchemyUnitOfWork],
     actor: ActorContext,
 ) -> ActorPresentation:
-    factory = get_identity(app).identity_uow_factory
-    async with factory() as unit_of_work:
+    async with uow_factory() as unit_of_work:
         user = await unit_of_work.identity.get_user(actor.user_id)
     display_name = "collaborator"
     if user is not None:
@@ -62,9 +63,10 @@ async def publish_accepted_command(
     command: GraphCommand,
     receipt: GraphCommandReceipt,
     graph_room_session_id: UUID | None = None,
+    uow_factory: Callable[[], SqlAlchemyUnitOfWork],
 ) -> None:
     hub = graph_room_hub_from_request(request)
-    presentation = await actor_presentation_for(request.app, actor)
+    presentation = await actor_presentation_for(uow_factory, actor)
     await hub.publish_accepted(
         workspace_id=workspace_id,
         graph_id=graph_id,

@@ -22,6 +22,7 @@ from grafy_core.domain.errors import (
 from grafy_core.domain.identity import ActorContext, WorkspaceCapability
 
 from grafy_api.v1.routes.auth.dependencies import (
+    IdentityUnitOfWorkFactoryDependency,
     browser_actor,
     require_workspace_capability,
 )
@@ -67,9 +68,7 @@ async def list_accessible_graphs(
     service: SavedGraphDependency,
     actor: Annotated[ActorContext, Depends(browser_actor)],
 ) -> GraphBrowserListResponse:
-    return GraphBrowserListResponse.from_items(
-        await service.list_accessible(actor)
-    )
+    return GraphBrowserListResponse.from_items(await service.list_accessible(actor))
 
 
 @folder_router.get("", response_model=GraphFolderListResponse)
@@ -333,6 +332,7 @@ async def submit_graph_command(
     request: SubmitGraphCommandRequest,
     http_request: Request,
     collaboration: CollaborationDependency,
+    uow_factory: IdentityUnitOfWorkFactoryDependency,
     access: require_workspace_capability(WorkspaceCapability.EDIT_GRAPH),
 ) -> SubmitGraphCommandResponse:
     try:
@@ -366,6 +366,7 @@ async def submit_graph_command(
             graph_id=graph_id,
             command=request.command,
             receipt=receipt,
+            uow_factory=uow_factory,
         )
     return SubmitGraphCommandResponse(
         head=CollaborativeHeadResponse.from_head(head),

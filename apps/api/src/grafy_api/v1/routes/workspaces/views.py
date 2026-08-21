@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
@@ -15,9 +16,14 @@ from grafy_core.domain.identity import (
     WorkspaceMembership,
     WorkspaceRole,
 )
+from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
-from grafy_api.app_state import get_identity
-from grafy_api.v1.routes.auth.dependencies import browser_actor
+from grafy_api.v1.routes.auth.dependencies import (
+    AuthServiceDependency,
+    IdentityServiceDependency,
+    IdentityUnitOfWorkFactoryDependency,
+    browser_actor,
+)
 from grafy_api.v1.routes.auth.models import (
     PersonalAccessTokenCreatedResponse,
     PersonalAccessTokenCreateRequest,
@@ -29,7 +35,6 @@ from grafy_api.v1.routes.auth.models import (
     WorkspaceMemberRoleRequest,
     WorkspaceResponse,
 )
-from grafy_api.v1.routes.auth.services import AuthService
 from grafy_api.v1.routes.collaboration.publish import (
     close_user_rooms_for_permission_change,
 )
@@ -173,10 +178,10 @@ def workspace_failure_metadata(
 
 @router.get("", response_model=list[WorkspaceResponse])
 async def list_workspaces(
-    request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
+    identity: IdentityServiceDependency,
 ) -> list[WorkspaceResponse]:
-    rows = await get_identity(request.app).identity_service.list_workspaces(actor=actor)
+    rows = await identity.list_workspaces(actor=actor)
     return [
         WorkspaceResponse(
             id=workspace.id,
@@ -195,10 +200,10 @@ async def list_workspaces(
 @router.post("", response_model=WorkspaceResponse, status_code=status.HTTP_201_CREATED)
 async def create_workspace(
     payload: WorkspaceCreateRequest,
-    request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
+    identity: IdentityServiceDependency,
 ) -> WorkspaceResponse:
-    workspace = await get_identity(request.app).identity_service.create_shared_workspace(
+    workspace = await identity.create_shared_workspace(
         actor=actor,
         slug=payload.slug,
         name=payload.name,
@@ -216,10 +221,10 @@ async def create_workspace(
 @router.get("/{workspace_id}/members", response_model=list[WorkspaceMemberResponse])
 async def list_members(
     workspace_id: UUID,
-    request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
+    identity: IdentityServiceDependency,
 ) -> list[WorkspaceMemberResponse]:
-    rows = await get_identity(request.app).identity_service.list_members(
+    rows = await identity.list_members(
         actor=actor,
         workspace_id=workspace_id,
     )
@@ -245,8 +250,10 @@ async def add_member(
     payload: WorkspaceMemberRequest,
     request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
+    identity: IdentityServiceDependency,
+    uow_factory: IdentityUnitOfWorkFactoryDependency,
 ) -> WorkspaceMemberResponse:
-    membership = await get_identity(request.app).identity_service.add_or_reactivate_member(
+    membership = await identity.add_or_reactivate_member(
         actor=actor,
         workspace_id=workspace_id,
         user_id=payload.user_id,
@@ -258,7 +265,7 @@ async def add_member(
         user_id=payload.user_id,
         access_revoked=False,
     )
-    return await _member_response(request, membership.user_id, membership)
+    return await _member_response(uow_factory, membership.user_id, membership)
 
 
 @router.patch(
@@ -270,8 +277,10 @@ async def change_member_role(
     payload: WorkspaceMemberRoleRequest,
     request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
+    identity: IdentityServiceDependency,
+    uow_factory: IdentityUnitOfWorkFactoryDependency,
 ) -> WorkspaceMemberResponse:
-    membership = await get_identity(request.app).identity_service.change_member_role(
+    membership = await identity.change_member_role(
         actor=actor,
         workspace_id=workspace_id,
         user_id=user_id,
@@ -283,7 +292,7 @@ async def change_member_role(
         user_id=user_id,
         access_revoked=False,
     )
-    return await _member_response(request, user_id, membership)
+    return await _member_response(uow_factory, user_id, membership)
 
 
 @router.delete("/{workspace_id}/members/{user_id}", status_code=204)
@@ -292,8 +301,9 @@ async def remove_member(
     user_id: UUID,
     request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
+    identity: IdentityServiceDependency,
 ) -> Response:
-    await get_identity(request.app).identity_service.remove_member(
+    await identity.remove_member(
         actor=actor,
         workspace_id=workspace_id,
         user_id=user_id,
@@ -313,10 +323,10 @@ async def remove_member(
 )
 async def list_personal_access_tokens(
     workspace_id: UUID,
-    request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
+    identity: IdentityServiceDependency,
 ) -> list[PersonalAccessTokenResponse]:
-    tokens = await get_identity(request.app).identity_service.list_personal_access_tokens(
+    tokens = await identity.list_personal_access_tokens(
         actor=actor,
         workspace_id=workspace_id,
     )
@@ -333,6 +343,8 @@ async def create_personal_access_token(
     payload: PersonalAccessTokenCreateRequest,
     request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
+    identity: IdentityServiceDependency,
+    auth: AuthServiceDependency,
 ) -> JSONResponse:
     now = datetime.now(UTC)
     if payload.expires_at.tzinfo is None or payload.expires_at <= now:
@@ -350,7 +362,6 @@ async def create_personal_access_token(
             status_code=422,
             detail="Personal access token scope is not available",
         )
-    auth: AuthService = get_identity(request.app).auth_service
     if not await auth.allow_pat_creation(str(actor.user_id)):
         raise HTTPException(status_code=429, detail="Too many token creation attempts")
     token, raw_token = auth.issue_personal_access_token(
@@ -360,7 +371,7 @@ async def create_personal_access_token(
         scopes=scopes,
         expires_at=payload.expires_at,
     )
-    created = await get_identity(request.app).identity_service.create_personal_access_token(
+    created = await identity.create_personal_access_token(
         actor=actor,
         token=token,
     )
@@ -386,10 +397,10 @@ async def create_personal_access_token(
 async def revoke_personal_access_token(
     workspace_id: UUID,
     token_id: UUID,
-    request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
+    identity: IdentityServiceDependency,
 ) -> Response:
-    await get_identity(request.app).identity_service.revoke_personal_access_token(
+    await identity.revoke_personal_access_token(
         actor=actor,
         workspace_id=workspace_id,
         token_id=token_id,
@@ -398,11 +409,11 @@ async def revoke_personal_access_token(
 
 
 async def _member_response(
-    request: Request,
+    uow_factory: Callable[[], SqlAlchemyUnitOfWork],
     user_id: UUID,
     membership: WorkspaceMembership,
 ) -> WorkspaceMemberResponse:
-    async with get_identity(request.app).identity_uow_factory() as unit_of_work:
+    async with uow_factory() as unit_of_work:
         user = await unit_of_work.identity.get_user(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")

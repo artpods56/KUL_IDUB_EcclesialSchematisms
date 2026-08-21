@@ -18,7 +18,10 @@ from grafy_api.services.errors import (
     ArtifactContentUnavailableError,
     WorkbenchOperationError,
 )
-from grafy_api.v1.routes.auth.dependencies import require_workspace_capability
+from grafy_api.v1.routes.auth.dependencies import (
+    IdentityUnitOfWorkFactoryDependency,
+    require_workspace_capability,
+)
 from grafy_api.v1.routes.collaboration.publish import actor_presentation_for
 from grafy_api.v1.routes.saved_graphs.dependencies import SavedGraphDependency
 
@@ -126,13 +129,13 @@ async def run_graph(
 )
 async def start_graph_execution(
     request: RunRequest,
-    http_request: Request,
     manager: RunExecutionManagerDependency,
     presenter: RunResultPresenterDependency,
+    uow_factory: IdentityUnitOfWorkFactoryDependency,
     access: require_workspace_capability(WorkspaceCapability.EXECUTE_GRAPH),
 ) -> RunExecutionResponse:
     try:
-        starter = await actor_presentation_for(http_request.app, access.actor)
+        starter = await actor_presentation_for(uow_factory, access.actor)
         execution = await manager.start(
             access.workspace_id,
             request,
@@ -384,7 +387,9 @@ async def get_graph_execution_history(
         GraphExecutionNodeResultResponse.from_result(
             node_result,
             outputs=[
-                await presenter.port_output_response(access.workspace_id, port_name, value)
+                await presenter.port_output_response(
+                    access.workspace_id, port_name, value
+                )
                 for port_name, value in node_result.outputs.items()
             ],
         )

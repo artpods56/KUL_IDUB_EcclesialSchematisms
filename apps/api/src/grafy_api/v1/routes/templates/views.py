@@ -1,13 +1,15 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from grafy_core.domain.errors import CapabilityDeniedError, NotFoundError
 from grafy_core.domain.identity import WorkspaceCapability
 from grafy_core.domain.templates import TemplateLibraryError
 
-from grafy_api.app_state import get_identity
-from grafy_api.v1.routes.auth.dependencies import require_workspace_capability
+from grafy_api.v1.routes.auth.dependencies import (
+    IdentityServiceDependency,
+    require_workspace_capability,
+)
 from grafy_api.v1.routes.templates.dependencies import TemplateDependency
 from grafy_api.v1.routes.templates.models import (
     CreateTemplateRequest,
@@ -119,11 +121,10 @@ async def instantiate_template(
     body: InstantiateTemplateRequest,
     service: TemplateDependency,
     access: require_workspace_capability(WorkspaceCapability.VIEW_GRAPH),
-    request: Request,
+    identity: IdentityServiceDependency,
 ) -> TemplateInstantiationResponse:
-    identity = get_identity(request.app)
     try:
-        destination_access = await identity.identity_service.authorize(
+        destination_access = await identity.authorize(
             actor=access.actor,
             workspace_id=body.destination_workspace_id,
             capability=WorkspaceCapability.CREATE_GRAPH,

@@ -7,13 +7,15 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from grafy_core.domain.identity import ActorContext
 
-from grafy_api.app_state import get_identity
-from grafy_api.v1.routes.auth.dependencies import browser_actor
+from grafy_api.v1.routes.auth.dependencies import (
+    AuthServiceDependency,
+    IdentityUnitOfWorkFactoryDependency,
+    browser_actor,
+)
 from grafy_api.v1.routes.auth.models import SessionResponse
 from grafy_api.v1.routes.auth.services import (
     OIDC_TRANSACTION_COOKIE,
     SESSION_COOKIE,
-    AuthService,
     OidcCallbackInternalError,
     OidcProtocolError,
     bounded_oidc_failure,
@@ -26,9 +28,9 @@ logger = logging.getLogger(__name__)
 @router.get("/oidc/login", include_in_schema=True)
 async def oidc_login(
     request: Request,
+    auth: AuthServiceDependency,
     return_path: Annotated[str, Query(max_length=2048)] = "/",
 ) -> Response:
-    auth: AuthService = get_identity(request.app).auth_service
     abuse_keys = auth.browser_abuse_keys(request)
     if not await auth.allow_login_start(
         abuse_keys.browser_key,
@@ -78,11 +80,11 @@ async def oidc_login(
 @router.get("/oidc/callback", include_in_schema=True)
 async def oidc_callback(
     request: Request,
+    auth: AuthServiceDependency,
     state: Annotated[str | None, Query(max_length=512)] = None,
     code: Annotated[str | None, Query(max_length=4096)] = None,
     error: Annotated[str | None, Query(max_length=256)] = None,
 ) -> Response:
-    auth: AuthService = get_identity(request.app).auth_service
     abuse_keys = auth.browser_abuse_keys(request)
     transaction_id_value = request.cookies.get(OIDC_TRANSACTION_COOKIE)
     if not await auth.allow_callback(
@@ -158,10 +160,11 @@ async def oidc_callback(
 async def get_session(
     request: Request,
     _actor: Annotated[ActorContext, Depends(browser_actor)],
+    auth: AuthServiceDependency,
+    uow_factory: IdentityUnitOfWorkFactoryDependency,
 ) -> SessionResponse:
-    identity = get_identity(request.app)
-    session = await identity.auth_service.current_session(request)
-    async with identity.identity_uow_factory() as unit_of_work:
+    session = await auth.current_session(request)
+    async with uow_factory() as unit_of_work:
         user = await unit_of_work.identity.get_user(session.user_id)
     if user is None:
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -182,8 +185,8 @@ async def get_session(
 async def delete_session(
     request: Request,
     _actor: Annotated[ActorContext, Depends(browser_actor)],
+    auth: AuthServiceDependency,
 ) -> Response:
-    auth: AuthService = get_identity(request.app).auth_service
     await auth.logout(request)
     response = Response(status_code=204)
     auth.clear_session_cookies(response)
@@ -194,12 +197,12 @@ async def delete_session(
 async def list_sessions(
     request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
+    auth: AuthServiceDependency,
+    uow_factory: IdentityUnitOfWorkFactoryDependency,
 ) -> list[SessionResponse]:
-    identity = get_identity(request.app)
-    auth = identity.auth_service
     sessions = await auth.list_sessions(actor=actor)
     current = await auth.current_session(request)
-    async with identity.identity_uow_factory() as unit_of_work:
+    async with uow_factory() as unit_of_work:
         user = await unit_of_work.identity.get_user(actor.user_id)
     if user is None:
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -224,12 +227,12 @@ async def revoke_session(
     session_id: str,
     request: Request,
     actor: Annotated[ActorContext, Depends(browser_actor)],
+    auth: AuthServiceDependency,
 ) -> Response:
     try:
         parsed_session_id = UUID(session_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Session not found") from exc
-    auth = get_identity(request.app).auth_service
     session = await auth.revoke_session(
         actor=actor,
         session_id=parsed_session_id,

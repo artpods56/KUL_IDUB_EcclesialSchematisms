@@ -7,8 +7,11 @@ from grafy_core.domain.identity import WorkspaceCapability
 from grafy_core.domain.module_library import ModuleLibraryError
 from grafy_core.domain.modules import GraphModuleDefinition, GraphModuleReference
 
-from grafy_api.app_state import get_identity, get_resources
-from grafy_api.v1.routes.auth.dependencies import require_workspace_capability
+from grafy_api.app_state import get_resources
+from grafy_api.v1.routes.auth.dependencies import (
+    IdentityServiceDependency,
+    require_workspace_capability,
+)
 from grafy_api.v1.routes.catalog.services import (
     GraphModuleCatalog,
     GraphModuleCatalogError,
@@ -187,7 +190,7 @@ async def import_module_release(
     body: ImportModuleReleaseRequest,
     service: ModuleLibraryDependency,
     access: require_workspace_capability(WorkspaceCapability.CREATE_GRAPH),
-    request: Request,
+    identity: IdentityServiceDependency,
 ) -> ImportModuleReleaseResponse:
     if body.source_workspace_id == access.workspace_id:
         raise HTTPException(
@@ -197,9 +200,8 @@ async def import_module_release(
                 "publish locally instead"
             ),
         )
-    identity = get_identity(request.app)
     try:
-        await identity.identity_service.authorize(
+        await identity.authorize(
             actor=access.actor,
             workspace_id=body.source_workspace_id,
             capability=WorkspaceCapability.VIEW_GRAPH,

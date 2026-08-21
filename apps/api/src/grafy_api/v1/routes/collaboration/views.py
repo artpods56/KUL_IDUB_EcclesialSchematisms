@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from starlette.websockets import WebSocketDisconnect
 
 from grafy_core.application.collaboration import CollaborationService
+from grafy_core.application.identity import IdentityService
 from grafy_core.domain.collaboration import CommandReceiptOutcome
 from grafy_core.domain.errors import (
     CapabilityDeniedError,
@@ -23,12 +24,15 @@ from grafy_core.domain.identity import (
     WorkspaceCapability,
 )
 
-from grafy_api.app_state import get_identity, get_resources
+from grafy_api.app_state import get_resources
 from grafy_api.v1.routes.auth.dependencies import browser_actor
 from grafy_api.v1.routes.auth.services import SESSION_COOKIE
 from grafy_api.v1.routes.collaboration.dependencies import (
+    AuthServiceWsDependency,
     CollaborationWsDependency,
     GraphRoomHubWsDependency,
+    IdentityServiceWsDependency,
+    IdentityUnitOfWorkFactoryWsDependency,
 )
 from grafy_api.v1.routes.collaboration.hub import (
     CLOSE_ACCESS_REVOKED,
@@ -68,21 +72,22 @@ def _http_request_from_websocket(websocket: WebSocket) -> Request:
     return Request(scope)
 
 
-async def _websocket_browser_actor(websocket: WebSocket) -> ActorContext:
+async def websocket_browser_actor(
+    websocket: WebSocket,
+    auth: AuthServiceWsDependency,
+) -> ActorContext:
     """Resolve the browser actor for WebSocket admission.
 
-    Honors the same ``browser_actor`` dependency override used by HTTP tests.
+    This dependency is the WebSocket counterpart of the HTTP ``browser_actor``
+    seam: tests override it (or its ``auth_service_ws`` inner dependency) the
+    same way they override HTTP dependencies, instead of production code
+    reaching into ``app.dependency_overrides``.
     """
 
-    override = websocket.app.dependency_overrides.get(browser_actor)
-    if override is not None:
-        result = override()
-        if hasattr(result, "__await__"):
-            return await result
-        return result
     request = _http_request_from_websocket(websocket)
     return await browser_actor(
         request,
+        auth,
         request.cookies.get(SESSION_COOKIE),
     )
 
@@ -104,17 +109,19 @@ async def graph_room(
     graph_id: UUID,
     hub: GraphRoomHubWsDependency,
     collaboration: CollaborationWsDependency,
-    actor: Annotated[ActorContext, Depends(_websocket_browser_actor)],
+    identity: IdentityServiceWsDependency,
+    uow_factory: IdentityUnitOfWorkFactoryWsDependency,
+    actor: Annotated[ActorContext, Depends(websocket_browser_actor)],
 ) -> None:
     _require_websocket_origin(websocket)
     try:
-        access = await get_identity(websocket.app).identity_service.authorize(
+        access = await identity.authorize(
             actor=actor,
             workspace_id=workspace_id,
             capability=WorkspaceCapability.JOIN_GRAPH_ROOM,
         )
         access.require(WorkspaceCapability.VIEW_GRAPH)
-        presentation = await actor_presentation_for(websocket.app, actor)
+        presentation = await actor_presentation_for(uow_factory, actor)
     except HTTPException:
         raise
     except NotFoundError as exc:
@@ -235,6 +242,7 @@ async def graph_room(
                         session=session,
                         actor=actor,
                         hub=hub,
+                        identity=identity,
                     )
                     if not still_open:
                         return
@@ -263,14 +271,14 @@ async def graph_room(
                     session=session,
                     actor=actor,
                     hub=hub,
+                    identity=identity,
                     message=message,
                 )
     except WebSocketDisconnect:
         await hub.leave(session)
     except Exception:
         logger.exception(
-            "graph_room_failed workspace_id=%s graph_id=%s "
-            "graph_room_session_id=%s",
+            "graph_room_failed workspace_id=%s graph_id=%s graph_room_session_id=%s",
             workspace_id,
             graph_id,
             session.graph_room_session_id,
@@ -284,6 +292,7 @@ async def _revalidate_and_heartbeat(
     session: GraphRoomSession,
     actor: ActorContext,
     hub: GraphRoomHub,
+    identity: IdentityService,
 ) -> bool:
     """Reauthorize membership and emit ``room.heartbeat``.
 
@@ -295,7 +304,7 @@ async def _revalidate_and_heartbeat(
     if session.closed:
         return False
     try:
-        access = await get_identity(websocket.app).identity_service.authorize(
+        access = await identity.authorize(
             actor=actor,
             workspace_id=session.workspace_id,
             capability=WorkspaceCapability.JOIN_GRAPH_ROOM,
@@ -329,10 +338,11 @@ async def _handle_presence_update(
     session: GraphRoomSession,
     actor: ActorContext,
     hub: GraphRoomHub,
+    identity: IdentityService,
     message: PresenceUpdateSubmitMessage,
 ) -> None:
     try:
-        access = await get_identity(session.websocket.app).identity_service.authorize(
+        access = await identity.authorize(
             actor=actor,
             workspace_id=session.workspace_id,
             capability=WorkspaceCapability.PUBLISH_PRESENCE,
