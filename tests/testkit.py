@@ -13,7 +13,7 @@ either one without confusion.
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -21,6 +21,12 @@ from httpx import ASGITransport, AsyncClient
 
 from grafy_api.main import create_app
 from grafy_api.settings import Settings
+from grafy_core.domain import User, Workspace, WorkspaceMembership, WorkspaceKind, WorkspaceRole
+from grafy_persistence import SqlAlchemyUnitOfWork
+from grafy_persistence.database import Database, create_database
+from grafy_persistence.orm import metadata
+from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+from tests.support.factories.identity import IdentitySeeder
 
 # ---------------------------------------------------------------------------
 # Public type aliases
@@ -160,3 +166,27 @@ def client_with_overrides(
 
     with TestClient(app) as client:
         yield client
+
+
+async def seed(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> tuple[User, Workspace, WorkspaceMembership]:
+    seeder = IdentitySeeder(lambda: SqlAlchemyUnitOfWork.from_factory(session_factory))
+    user = await seeder.user()
+    workspace = await seeder.workspace(
+        kind=WorkspaceKind.PERSONAL, personal_owner_user_id=user.id
+    )
+    membership = await seeder.membership(
+        user=user, workspace=workspace, role=WorkspaceRole.OWNER
+    )
+    return user, workspace, membership
+
+
+@asynccontextmanager
+async def db(database_url: str) -> AsyncGenerator[Database]:
+    database = create_database(database_url)
+    async with database.engine.begin() as connection:
+        await connection.run_sync(metadata.create_all)
+
+        yield database
+    await database.dispose()

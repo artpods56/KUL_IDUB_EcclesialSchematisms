@@ -15,7 +15,6 @@ from grafy_persistence.database import create_database
 from grafy_persistence.unit_of_work import SqlAlchemySavedGraphUnitOfWork
 
 from grafy_api.builtins import builtin_plugins
-from grafy_api.main import create_app
 from grafy_api.plugin_discovery import build_plugin_registry
 from grafy_api.services.composition import (
     WorkbenchComponents,
@@ -29,7 +28,8 @@ from tests.support.scenarios.conversion_path import CONVERSION_PATH_PLUGIN
 from tests.support.scenarios.structural_projection import (
     STRUCTURAL_PROJECTION_PLUGIN,
 )
-from tests.support.workbench import install_workbench_dependency_overrides
+from tests.support.workbench import workbench_dependency_overrides
+from tests.testkit import client_with_overrides
 
 
 @pytest.fixture
@@ -47,20 +47,17 @@ def builtin_client(tmp_path: Path) -> Iterator[TestClient]:
     )
     components = build_workbench_components(
         plugin_registry=registry,
-        execution_backend="inline",
         workspace=tmp_path / "workbench",
         saved_graphs=saved_graphs,
     )
-    application = create_app(
-        Settings(
-            workspace=tmp_path / "workbench",
-            database_url=SecretStr(database_url),
-            execution_backend="inline",
-        )
-    )
-    install_workbench_dependency_overrides(application, components)
     try:
-        with TestClient(application) as client:
+        with client_with_overrides(
+            settings=Settings(
+                workspace=tmp_path / "workbench",
+                database_url=SecretStr(database_url),
+            ),
+            overrides=workbench_dependency_overrides(components),
+        ) as client:
             yield client
     finally:
         asyncio.run(saved_graph_database.dispose())
@@ -80,26 +77,23 @@ def table_artifact_client(
     storage = LocalFileObjectStore(tmp_path / "workbench" / "objects")
     components = build_workbench_components(
         plugin_registry=registry,
-        execution_backend="inline",
         workspace=tmp_path / "workbench",
         unit_of_work=unit_of_work,
         storage=storage,
     )
-    application = create_app(
-        Settings(
-            workspace=tmp_path / "workbench",
-            database_url=SecretStr(database_url),
-            execution_backend="inline",
-        )
-    )
-    install_workbench_dependency_overrides(application, components)
     writer = TableArtifactWriter(
         storage=storage,
         uow=unit_of_work,
         bucket="workbench-artifacts",
         storage_backend="local",
     )
-    with TestClient(application) as client:
+    with client_with_overrides(
+        settings=Settings(
+            workspace=tmp_path / "workbench",
+            database_url=SecretStr(database_url),
+        ),
+        overrides=workbench_dependency_overrides(components),
+    ) as client:
         yield client, writer, components
 
 
@@ -116,19 +110,16 @@ def conversion_path_client(
     uow = InMemoryUnitOfWork()
     components = build_workbench_components(
         plugin_registry=registry,
-        execution_backend="inline",
         workspace=tmp_path / "workbench",
         unit_of_work=uow,
     )
-    application = create_app(
-        Settings(
+    with client_with_overrides(
+        settings=Settings(
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
-            execution_backend="inline",
-        )
-    )
-    install_workbench_dependency_overrides(application, components)
-    with TestClient(application) as client:
+        ),
+        overrides=workbench_dependency_overrides(components),
+    ) as client:
         yield client, uow
 
 
@@ -142,16 +133,13 @@ def structural_projection_client(tmp_path: Path) -> Iterator[TestClient]:
     )
     components = build_workbench_components(
         plugin_registry=registry,
-        execution_backend="inline",
         workspace=tmp_path / "workbench",
     )
-    application = create_app(
-        Settings(
+    with client_with_overrides(
+        settings=Settings(
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
-            execution_backend="inline",
-        )
-    )
-    install_workbench_dependency_overrides(application, components)
-    with TestClient(application) as client:
+        ),
+        overrides=workbench_dependency_overrides(components),
+    ) as client:
         yield client

@@ -1,5 +1,6 @@
 """Shared test identity constants and helpers for the Grafy API test suite."""
 
+from dataclasses import dataclass
 from uuid import UUID
 
 from fastapi import FastAPI
@@ -28,14 +29,37 @@ def workspace_api_path(suffix: str) -> str:
     return f"/v1/workspaces/{WORKSPACE_ID}{normalized}"
 
 
+def browser_actor_override() -> ActorContext:
+    """The shared test actor, usable directly as a dependency override."""
+    return ActorContext(
+        user_id=TEST_USER_ID,
+        credential_reference="test-session",
+    )
+
+
 def install_browser_actor_override(application: FastAPI) -> None:
-    def test_browser_actor() -> ActorContext:
+    application.dependency_overrides[browser_actor] = browser_actor_override
+
+
+@dataclass
+class ActorSwitcher:
+    """A browser-actor override that a test can repoint at another user.
+
+    Register ``ActorSwitcher(user_id).actor`` as the override for the
+    ``browser_actor`` dependency, then call ``as_user()`` to switch the
+    acting user without re-registering anything.
+    """
+
+    user_id: UUID
+
+    def actor(self) -> ActorContext:
         return ActorContext(
-            user_id=TEST_USER_ID,
+            user_id=self.user_id,
             credential_reference="test-session",
         )
 
-    application.dependency_overrides[browser_actor] = test_browser_actor
+    def as_user(self, user_id: UUID) -> None:
+        self.user_id = user_id
 
 
 async def create_schema(database_url: str) -> None:
@@ -77,6 +101,8 @@ __all__ = [
     "TEST_COMMAND_HMAC_KEY",
     "TEST_USER_ID",
     "WORKSPACE_ID",
+    "ActorSwitcher",
+    "browser_actor_override",
     "create_schema",
     "install_browser_actor_override",
     "workspace_api_path",
