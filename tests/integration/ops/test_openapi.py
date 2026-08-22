@@ -1,13 +1,17 @@
-from fastapi.testclient import TestClient
+from pathlib import Path
+
 from fastapi.routing import APIRoute
+from pydantic import SecretStr
 
-from grafy_api.main import app
+from grafy_api.settings import Settings
+from tests.testkit import app_with_overrides, client_with_overrides, create_db_url, db
 
 
-def test_public_routes_are_registered_once() -> None:
+def test_public_routes_are_registered_once(settings: Settings) -> None:
+    application = app_with_overrides(settings=settings)
     operations = [
         (method, route.path)
-        for route in app.routes
+        for route in application.routes
         if isinstance(route, APIRoute) and route.path.startswith("/v1")
         for method in route.methods
     ]
@@ -15,8 +19,8 @@ def test_public_routes_are_registered_once() -> None:
     assert len(operations) == len(set(operations))
 
 
-def test_openapi_contains_exact_public_routes() -> None:
-    schema = app.openapi()
+def test_openapi_contains_exact_public_routes(settings: Settings) -> None:
+    schema = app_with_overrides(settings=settings).openapi()
 
     assert set(schema["paths"]) == {
         "/v1/me/graphs",
@@ -344,29 +348,49 @@ def test_openapi_contains_exact_public_routes() -> None:
     assert saved_edge_schema["properties"]["enabled"]["default"] is True
 
 
-def test_app_health_is_ok() -> None:
-    response = TestClient(app).get("/health")
+async def test_app_health_is_ok(tmp_path: Path, settings: Settings) -> None:
+    database_url = create_db_url(tmp_path, "health.sqlite3")
+    async with db(database_url):
+        app_settings = settings.model_copy(
+            update={"database_url": SecretStr(database_url)}
+        )
 
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+        with client_with_overrides(settings=app_settings) as client:
+            response = client.get("/health")
 
-
-def test_app_allows_local_web_origin() -> None:
-    response = TestClient(app).options(
-        "/v1/workspaces/{workspace_id}/nodes",
-        headers={
-            "Origin": "http://localhost:3000",
-            "Access-Control-Request-Method": "GET",
-        },
-    )
-
-    assert response.status_code == 200
-    assert response.headers["access-control-allow-origin"] == ("http://localhost:3000")
+            assert response.status_code == 200
+            assert response.json() == {"status": "ok"}
 
 
-def test_framework_documentation_routes_are_disabled_but_openapi_is_callable() -> None:
+async def test_app_allows_local_web_origin(tmp_path: Path, settings: Settings) -> None:
+    database_url = create_db_url(tmp_path, "cors-origin.sqlite3")
+    async with db(database_url):
+        app_settings = settings.model_copy(
+            update={"database_url": SecretStr(database_url)}
+        )
+
+        with client_with_overrides(settings=app_settings) as client:
+            response = client.options(
+                "/v1/workspaces/{workspace_id}/nodes",
+                headers={
+                    "Origin": "http://localhost:3000",
+                    "Access-Control-Request-Method": "GET",
+                },
+            )
+
+            assert response.status_code == 200
+            assert response.headers["access-control-allow-origin"] == (
+                "http://localhost:3000"
+            )
+
+
+def test_framework_documentation_routes_are_disabled_but_openapi_is_callable(
+    settings: Settings,
+) -> None:
+    application = app_with_overrides(settings=settings)
+
     assert {
-        route.path for route in app.routes if isinstance(route, APIRoute)
+        route.path for route in application.routes if isinstance(route, APIRoute)
     }.isdisjoint({"/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"})
-    schema = app.openapi()
+    schema = application.openapi()
     assert schema["openapi"].startswith("3.")
