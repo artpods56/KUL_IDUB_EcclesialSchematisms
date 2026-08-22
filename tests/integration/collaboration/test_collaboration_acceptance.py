@@ -7,129 +7,46 @@ personal graph stays invisible. Live OIDC/SSH rehearsal remains an operator gate
 """
 
 import asyncio
-from collections.abc import Iterator
 from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from starlette.websockets import WebSocketDisconnect
 
 from grafy_api.settings import Settings
 from grafy_api.v1.routes.auth.dependencies import browser_actor
-from grafy_api.v1.routes.collaboration.views import websocket_browser_actor
 from grafy_api.v1.routes.auth.models import WorkspaceMemberRequest
+from grafy_api.v1.routes.collaboration.views import websocket_browser_actor
 from grafy_api.v1.routes.executions.models import RunRequest
 from grafy_api.v1.routes.saved_graphs.models import CreateSavedGraphRequest
 from grafy_core.domain.identity import (
     User,
     Workspace,
-    WorkspaceMembership,
+    WorkspaceKind,
     WorkspaceRole,
     personal_workspace_slug,
 )
-from grafy_persistence.database import create_database
-from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
+from tests.support.clients import GrafyApi
+from tests.support.factories.identity import IdentitySeeder
 from tests.support.identity import ActorSwitcher
-from tests.testkit import client_with_overrides
+from tests.testkit import client_with_overrides, create_db_url, db
 
 
-PUBLIC_ORIGIN = "http://localhost:3000"
-SHARED_WORKSPACE_ID = UUID("00000000-0000-0000-0000-0000000000a1")
-PERSONAL_WORKSPACE_ID = UUID("00000000-0000-0000-0000-0000000000a2")
-OWNER_ID = UUID(int=21)
-EDITOR_ID = UUID(int=22)
-VIEWER_ID = UUID(int=23)
-
-
-async def _seed_acceptance_users(database_url: str) -> None:
-    database = create_database(database_url)
-    try:
-        async with database.engine.begin() as connection:
-            await connection.run_sync(metadata.create_all)
-        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-            for user_id, email, name in (
-                (OWNER_ID, "owner@acceptance.test", "Owner"),
-                (EDITOR_ID, "editor@acceptance.test", "Editor"),
-                (VIEWER_ID, "viewer@acceptance.test", "Viewer"),
-            ):
-                await unit_of_work.identity.add_user(
-                    User(id=user_id, email=email, display_name=name)
-                )
-            await unit_of_work.identity.add_workspace(
-                Workspace(
-                    id=PERSONAL_WORKSPACE_ID,
-                    slug=personal_workspace_slug(OWNER_ID),
-                    name="Owner personal",
-                    kind="personal",
-                    personal_owner_user_id=OWNER_ID,
-                )
-            )
-            await unit_of_work.identity.add_workspace(
-                Workspace(
-                    id=SHARED_WORKSPACE_ID,
-                    slug="acceptance-team",
-                    name="Acceptance team",
-                    kind="shared",
-                )
-            )
-            await unit_of_work.identity.add_membership(
-                WorkspaceMembership(
-                    workspace_id=PERSONAL_WORKSPACE_ID,
-                    user_id=OWNER_ID,
-                    role=WorkspaceRole.OWNER,
-                )
-            )
-            await unit_of_work.identity.add_membership(
-                WorkspaceMembership(
-                    workspace_id=SHARED_WORKSPACE_ID,
-                    user_id=OWNER_ID,
-                    role=WorkspaceRole.OWNER,
-                )
-            )
-            await unit_of_work.commit()
-    finally:
-        await database.dispose()
-
-
-@pytest.fixture
-def acceptance_client(
-    tmp_path: Path,
-) -> Iterator[tuple[TestClient, ActorSwitcher]]:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'acceptance.sqlite3'}"
-    asyncio.run(_seed_acceptance_users(database_url))
-    switcher = ActorSwitcher(OWNER_ID)
-    with client_with_overrides(
-        settings=Settings(
-            workspace=tmp_path / "workbench",
-            database_url=SecretStr(database_url),
-            public_origin=PUBLIC_ORIGIN,
-            graph_room_heartbeat_seconds=0.0,
-        ),
-        overrides={
-            browser_actor: switcher.actor,
-            websocket_browser_actor: switcher.actor,
-        },
-    ) as client:
-        yield client, switcher
-
-
-def _api(workspace_id: UUID, suffix: str) -> str:
-    normalized = suffix if suffix.startswith("/") else f"/{suffix}"
-    return f"/v1/workspaces/{workspace_id}{normalized}"
-
-
-def _room_path(workspace_id: UUID, graph_id: UUID) -> str:
-    return f"/v1/workspaces/{workspace_id}/graphs/{graph_id}/room"
-
-
-def _connect(client: TestClient, workspace_id: UUID, graph_id: UUID):
-    return client.websocket_connect(
-        _room_path(workspace_id, graph_id),
-        headers={"Origin": PUBLIC_ORIGIN},
+def _connect_room(
+    api: GrafyApi,
+    workspace_id: UUID,
+    graph_id: UUID,
+    *,
+    origin: str = "http://testserver",
+):
+    # The facade has no typed WebSocket method; the raw TestClient is the
+    # escape hatch for the room handshake.
+    return api.raw.websocket_connect(
+        f"/v1/workspaces/{workspace_id}/graphs/{graph_id}/room",
+        headers={"Origin": origin},
     )
 
 
@@ -141,207 +58,230 @@ def _receive_until(websocket, message_type: str, *, limit: int = 30) -> dict:
     raise AssertionError(f"did not receive {message_type!r} within {limit} messages")
 
 
-def _create_graph(
-    client: TestClient,
-    *,
-    workspace_id: UUID,
-    name: str,
-) -> tuple[UUID, int]:
-    response = client.post(
-        _api(workspace_id, "/graphs"),
-        json=CreateSavedGraphRequest(name=name).model_dump(mode="json"),
-    )
-    assert response.status_code == 201, response.text
-    body = response.json()
-    return UUID(body["id"]), int(body["revision"])
-
-
-def _add_member(
-    client: TestClient,
-    *,
-    user_id: UUID,
-    role: WorkspaceRole,
-) -> None:
-    response = client.post(
-        _api(SHARED_WORKSPACE_ID, "/members"),
-        json=WorkspaceMemberRequest(user_id=user_id, role=role).model_dump(mode="json"),
-    )
-    assert response.status_code == 200, response.text
-    assert response.json()["role"] == role.value
-
-
 def test_phase7_two_session_collaboration_acceptance_journey(
-    acceptance_client: tuple[TestClient, ActorSwitcher],
+    tmp_path: Path, settings: Settings
 ) -> None:
     """Owner invites peers; sessions converge, share a run, and revoke cleanly."""
 
-    client, switcher = acceptance_client
+    database_url = create_db_url(tmp_path, "acceptance.sqlite3")
 
-    switcher.as_user(OWNER_ID)
-    personal_graph_id, _ = _create_graph(
-        client,
-        workspace_id=PERSONAL_WORKSPACE_ID,
-        name="Private draft",
-    )
-    switcher.as_user(EDITOR_ID)
-    denied = client.get(_api(PERSONAL_WORKSPACE_ID, f"/graphs/{personal_graph_id}"))
-    assert denied.status_code == 404, denied.text
-    listed = client.get(_api(PERSONAL_WORKSPACE_ID, "/graphs"))
-    assert listed.status_code == 404, listed.text
+    async def seed_acceptance_cast() -> tuple[User, User, User, Workspace, Workspace]:
+        async with db(database_url) as database:
+            seeder = IdentitySeeder(lambda: SqlAlchemyUnitOfWork(database.sessions))
+            owner = await seeder.user(
+                email="owner@acceptance.test", display_name="Owner"
+            )
+            editor = await seeder.user(
+                email="editor@acceptance.test", display_name="Editor"
+            )
+            viewer = await seeder.user(
+                email="viewer@acceptance.test", display_name="Viewer"
+            )
+            personal = await seeder.workspace(
+                slug=personal_workspace_slug(owner.id),
+                name="Owner personal",
+                kind=WorkspaceKind.PERSONAL,
+                personal_owner_user_id=owner.id,
+            )
+            shared = await seeder.workspace(
+                slug="acceptance-team", name="Acceptance team"
+            )
+            await seeder.membership(
+                user=owner, workspace=personal, role=WorkspaceRole.OWNER
+            )
+            await seeder.membership(
+                user=owner, workspace=shared, role=WorkspaceRole.OWNER
+            )
+            return owner, editor, viewer, personal, shared
 
-    switcher.as_user(OWNER_ID)
-    shared_graph_id, revision = _create_graph(
-        client,
-        workspace_id=SHARED_WORKSPACE_ID,
-        name="Shared acceptance graph",
-    )
-    _add_member(client, user_id=EDITOR_ID, role=WorkspaceRole.EDITOR)
-    _add_member(client, user_id=VIEWER_ID, role=WorkspaceRole.VIEWER)
+    owner, editor, viewer, personal, shared = asyncio.run(seed_acceptance_cast())
+    switcher = ActorSwitcher(owner.id)
 
-    members = client.get(_api(SHARED_WORKSPACE_ID, "/members"))
-    assert members.status_code == 200, members.text
-    member_ids = {UUID(item["user"]["id"]) for item in members.json()}
-    assert member_ids == {OWNER_ID, EDITOR_ID, VIEWER_ID}
-
-    with _connect(client, SHARED_WORKSPACE_ID, shared_graph_id) as owner_ws:
-        owner_ready = owner_ws.receive_json()
-        assert owner_ready["type"] == "room.ready"
-        assert owner_ready["active_execution"] is None
-
-        switcher.as_user(EDITOR_ID)
-        with _connect(client, SHARED_WORKSPACE_ID, shared_graph_id) as editor_ws:
-            editor_ready = editor_ws.receive_json()
-            assert editor_ready["type"] == "room.ready"
-            assert {
-                item["graph_room_session_id"] for item in editor_ready["participants"]
-            } == {
-                owner_ready["graph_room_session_id"],
-                editor_ready["graph_room_session_id"],
+    with client_with_overrides(
+        settings=settings.model_copy(
+            update={
+                "database_url": SecretStr(database_url),
+                "workspace": tmp_path / "workbench",
+                "graph_room_heartbeat_seconds": 0.0,
             }
+        ),
+        overrides={
+            browser_actor: switcher.actor,
+            websocket_browser_actor: switcher.actor,
+        },
+    ) as client:
+        api = GrafyApi(client)
+        personal_api = api.workspace(personal.id)
+        shared_api = api.workspace(shared.id)
 
-            join = _receive_until(owner_ws, "presence.join")
-            assert join["participant"]["actor"]["actor_id"] == str(EDITOR_ID)
-            assert (
-                join["participant"]["graph_room_session_id"]
-                == (editor_ready["graph_room_session_id"])
-            )
+        switcher.as_user(owner.id)
+        personal_graph = personal_api.graphs.create_ok(
+            CreateSavedGraphRequest(name="Private draft")
+        )
 
-            command_id = str(uuid4())
-            expected_sequence = editor_ready["head"]["collaboration_sequence"] + 1
-            editor_ws.send_json(
-                {
-                    "protocol_version": 1,
-                    "type": "graph.command.submit",
-                    "command_id": command_id,
-                    "room_epoch": editor_ready["head"]["room_epoch"],
-                    "observed_sequence": editor_ready["head"]["collaboration_sequence"],
-                    "command": {
-                        "kind": "rename_graph",
-                        "name": "Converged name",
-                        "expected_name": editor_ready["head"]["name"],
-                    },
+        switcher.as_user(editor.id)
+        assert personal_api.graphs.get(personal_graph.id).status_code == 404
+        assert personal_api.graphs.list().status_code == 404
+
+        switcher.as_user(owner.id)
+        shared_graph = shared_api.graphs.create_ok(
+            CreateSavedGraphRequest(name="Shared acceptance graph")
+        )
+        added_editor = shared_api.add_member_ok(
+            WorkspaceMemberRequest(user_id=editor.id, role=WorkspaceRole.EDITOR)
+        )
+        assert added_editor.role is WorkspaceRole.EDITOR
+        added_viewer = shared_api.add_member_ok(
+            WorkspaceMemberRequest(user_id=viewer.id, role=WorkspaceRole.VIEWER)
+        )
+        assert added_viewer.role is WorkspaceRole.VIEWER
+
+        member_ids = {member.user.id for member in shared_api.list_members_ok()}
+        assert member_ids == {owner.id, editor.id, viewer.id}
+
+        with _connect_room(api, shared.id, shared_graph.id) as owner_ws:
+            owner_ready = owner_ws.receive_json()
+            assert owner_ready["type"] == "room.ready"
+            assert owner_ready["active_execution"] is None
+
+            switcher.as_user(editor.id)
+            with _connect_room(api, shared.id, shared_graph.id) as editor_ws:
+                editor_ready = editor_ws.receive_json()
+                assert editor_ready["type"] == "room.ready"
+                assert {
+                    item["graph_room_session_id"]
+                    for item in editor_ready["participants"]
+                } == {
+                    owner_ready["graph_room_session_id"],
+                    editor_ready["graph_room_session_id"],
                 }
-            )
-            editor_accepted = _receive_until(editor_ws, "graph.command.accepted")
-            editor_receipt = _receive_until(editor_ws, "graph.command.receipt")
-            assert editor_accepted["sequence"] == expected_sequence
-            assert editor_receipt["accepted_sequence"] == expected_sequence
 
-            owner_accepted = _receive_until(owner_ws, "graph.command.accepted")
-            assert owner_accepted["command_id"] == command_id
-            assert owner_accepted["sequence"] == expected_sequence
-            assert owner_accepted["command"]["name"] == "Converged name"
-            assert owner_accepted["actor"]["actor_id"] == str(EDITOR_ID)
-
-            switcher.as_user(OWNER_ID)
-            started = client.post(
-                _api(SHARED_WORKSPACE_ID, "/executions"),
-                json=RunRequest(
-                    nodes=[],
-                    edges=[],
-                    graph_id=shared_graph_id,
-                    graph_revision=revision,
-                ).model_dump(mode="json"),
-            )
-            assert started.status_code == 202, started.text
-            execution_id = started.json()["execution_id"]
-
-            owner_active = _receive_until(owner_ws, "execution.active")
-            editor_active = _receive_until(editor_ws, "execution.active")
-            assert owner_active["execution"]["execution_id"] == execution_id
-            assert editor_active["execution"]["execution_id"] == execution_id
-            assert owner_active["execution"]["starter"]["actor_id"] == str(OWNER_ID)
-
-            owner_cleared = _receive_until(owner_ws, "execution.cleared")
-            editor_cleared = _receive_until(editor_ws, "execution.cleared")
-            assert owner_cleared["execution_id"] == execution_id
-            assert editor_cleared["execution_id"] == execution_id
-
-            switcher.as_user(VIEWER_ID)
-            with _connect(client, SHARED_WORKSPACE_ID, shared_graph_id) as viewer_ws:
-                viewer_ready = viewer_ws.receive_json()
-                assert viewer_ready["type"] == "room.ready"
-                assert viewer_ready["head"]["name"] == "Converged name"
-                assert "edit_graph" not in viewer_ready["capabilities"]["capabilities"]
+                join = _receive_until(owner_ws, "presence.join")
+                assert join["participant"]["actor"]["actor_id"] == str(editor.id)
                 assert (
-                    "execute_graph" not in viewer_ready["capabilities"]["capabilities"]
+                    join["participant"]["graph_room_session_id"]
+                    == (editor_ready["graph_room_session_id"])
                 )
 
-                viewer_ws.send_json(
+                command_id = str(uuid4())
+                expected_sequence = (
+                    editor_ready["head"]["collaboration_sequence"] + 1
+                )
+                editor_ws.send_json(
                     {
                         "protocol_version": 1,
                         "type": "graph.command.submit",
-                        "command_id": str(uuid4()),
-                        "room_epoch": viewer_ready["head"]["room_epoch"],
-                        "observed_sequence": viewer_ready["head"][
+                        "command_id": command_id,
+                        "room_epoch": editor_ready["head"]["room_epoch"],
+                        "observed_sequence": editor_ready["head"][
                             "collaboration_sequence"
                         ],
                         "command": {
                             "kind": "rename_graph",
-                            "name": "Viewer should fail",
-                            "expected_name": viewer_ready["head"]["name"],
+                            "name": "Converged name",
+                            "expected_name": editor_ready["head"]["name"],
                         },
                     }
                 )
-                rejected = _receive_until(viewer_ws, "graph.command.rejected")
-                assert rejected["error_code"] == "forbidden"
+                editor_accepted = _receive_until(editor_ws, "graph.command.accepted")
+                editor_receipt = _receive_until(editor_ws, "graph.command.receipt")
+                assert editor_accepted["sequence"] == expected_sequence
+                assert editor_receipt["accepted_sequence"] == expected_sequence
 
-            switcher.as_user(OWNER_ID)
-            revoke = client.delete(_api(SHARED_WORKSPACE_ID, f"/members/{EDITOR_ID}"))
-            assert revoke.status_code == 204, revoke.text
+                owner_accepted = _receive_until(owner_ws, "graph.command.accepted")
+                assert owner_accepted["command_id"] == command_id
+                assert owner_accepted["sequence"] == expected_sequence
+                assert owner_accepted["command"]["name"] == "Converged name"
+                assert owner_accepted["actor"]["actor_id"] == str(editor.id)
 
-            with pytest.raises(WebSocketDisconnect) as closed:
-                while True:
-                    message = editor_ws.receive_json()
-                    assert message["type"] in {
-                        "presence.update",
-                        "presence.leave",
-                        "presence.join",
-                        "room.heartbeat",
-                    }
-            assert closed.value.code == 4004
-            assert closed.value.reason == "access_revoked"
+                switcher.as_user(owner.id)
+                started = shared_api.executions.start_execution_ok(
+                    RunRequest(
+                        nodes=[],
+                        edges=[],
+                        graph_id=shared_graph.id,
+                        graph_revision=shared_graph.revision,
+                    )
+                )
 
-            for _ in range(30):
-                leave = owner_ws.receive_json()
-                if leave["type"] != "presence.leave":
-                    continue
-                if (
-                    leave["graph_room_session_id"]
-                    == editor_ready["graph_room_session_id"]
-                ):
-                    break
-            else:
-                raise AssertionError("owner did not observe editor presence.leave")
+                owner_active = _receive_until(owner_ws, "execution.active")
+                editor_active = _receive_until(editor_ws, "execution.active")
+                assert owner_active["execution"]["execution_id"] == str(
+                    started.execution_id
+                )
+                assert editor_active["execution"]["execution_id"] == str(
+                    started.execution_id
+                )
+                assert owner_active["execution"]["starter"]["actor_id"] == str(owner.id)
 
-    switcher.as_user(EDITOR_ID)
-    after_revoke = client.get(
-        _api(SHARED_WORKSPACE_ID, f"/graphs/{shared_graph_id}/head")
-    )
-    assert after_revoke.status_code == 404, after_revoke.text
+                owner_cleared = _receive_until(owner_ws, "execution.cleared")
+                editor_cleared = _receive_until(editor_ws, "execution.cleared")
+                assert owner_cleared["execution_id"] == str(started.execution_id)
+                assert editor_cleared["execution_id"] == str(started.execution_id)
 
-    switcher.as_user(OWNER_ID)
-    head = client.get(_api(SHARED_WORKSPACE_ID, f"/graphs/{shared_graph_id}/head"))
-    assert head.status_code == 200, head.text
-    assert head.json()["name"] == "Converged name"
-    assert head.json()["collaboration_sequence"] == expected_sequence
+                switcher.as_user(viewer.id)
+                with _connect_room(api, shared.id, shared_graph.id) as viewer_ws:
+                    viewer_ready = viewer_ws.receive_json()
+                    assert viewer_ready["type"] == "room.ready"
+                    assert viewer_ready["head"]["name"] == "Converged name"
+                    assert (
+                        "edit_graph" not in viewer_ready["capabilities"]["capabilities"]
+                    )
+                    assert (
+                        "execute_graph"
+                        not in viewer_ready["capabilities"]["capabilities"]
+                    )
+
+                    viewer_ws.send_json(
+                        {
+                            "protocol_version": 1,
+                            "type": "graph.command.submit",
+                            "command_id": str(uuid4()),
+                            "room_epoch": viewer_ready["head"]["room_epoch"],
+                            "observed_sequence": viewer_ready["head"][
+                                "collaboration_sequence"
+                            ],
+                            "command": {
+                                "kind": "rename_graph",
+                                "name": "Viewer should fail",
+                                "expected_name": viewer_ready["head"]["name"],
+                            },
+                        }
+                    )
+                    rejected = _receive_until(viewer_ws, "graph.command.rejected")
+                    assert rejected["error_code"] == "forbidden"
+
+                switcher.as_user(owner.id)
+                assert shared_api.remove_member(editor.id).status_code == 204
+
+                with pytest.raises(WebSocketDisconnect) as closed:
+                    while True:
+                        message = editor_ws.receive_json()
+                        assert message["type"] in {
+                            "presence.update",
+                            "presence.leave",
+                            "presence.join",
+                            "room.heartbeat",
+                        }
+                assert closed.value.code == 4004
+                assert closed.value.reason == "access_revoked"
+
+                for _ in range(30):
+                    leave = owner_ws.receive_json()
+                    if leave["type"] != "presence.leave":
+                        continue
+                    if (
+                        leave["graph_room_session_id"]
+                        == editor_ready["graph_room_session_id"]
+                    ):
+                        break
+                else:
+                    raise AssertionError("owner did not observe editor presence.leave")
+
+        switcher.as_user(editor.id)
+        assert shared_api.graphs.get_head(shared_graph.id).status_code == 404
+
+        switcher.as_user(owner.id)
+        head = shared_api.graphs.get_head_ok(shared_graph.id)
+        assert head.name == "Converged name"
+        assert head.collaboration_sequence == expected_sequence
