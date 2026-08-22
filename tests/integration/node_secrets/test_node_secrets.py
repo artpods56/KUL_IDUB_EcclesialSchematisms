@@ -50,7 +50,7 @@ from grafy_api.v1.routes.node_secrets.dependencies import node_secret_service
 
 from tests.support.clients import GrafyApi
 from tests.support.workbench import workbench_dependency_overrides
-from tests.testkit import client_with_overrides
+from tests.testkit import client_with_overrides, create_db_url, db
 
 
 class SecretTestConfig(NodeConfig):
@@ -128,50 +128,45 @@ async def node_secret_setup(
 ) -> AsyncIterator[
     tuple[Database, NodeSecretService, SavedGraphService, PluginRegistry]
 ]:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'node-secrets.sqlite3'}"
-    database = create_database(database_url)
-    async with database.engine.begin() as connection:
-        await connection.run_sync(metadata.create_all)
-    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-        await unit_of_work.identity.add_user(
-            User(
-                id=UUID(int=1),
-                email="owner@example.test",
-                display_name="Owner",
+    database_url = create_db_url(tmp_path, "node-secrets.sqlite3")
+    async with db(database_url) as database:
+        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+            await unit_of_work.identity.add_user(
+                User(
+                    id=UUID(int=1),
+                    email="owner@example.test",
+                    display_name="Owner",
+                )
             )
-        )
-        await unit_of_work.identity.add_workspace(
-            Workspace(
-                id=WORKSPACE_ID,
-                slug="local",
-                name="Local workspace",
-                kind="shared",
+            await unit_of_work.identity.add_workspace(
+                Workspace(
+                    id=WORKSPACE_ID,
+                    slug="local",
+                    name="Local workspace",
+                    kind="shared",
+                )
             )
-        )
-        await unit_of_work.identity.add_membership(
-            WorkspaceMembership(
-                workspace_id=WORKSPACE_ID,
-                user_id=UUID(int=1),
-                role=WorkspaceRole.OWNER,
+            await unit_of_work.identity.add_membership(
+                WorkspaceMembership(
+                    workspace_id=WORKSPACE_ID,
+                    user_id=UUID(int=1),
+                    role=WorkspaceRole.OWNER,
+                )
             )
+            await unit_of_work.commit()
+        registry = PluginRegistry()
+        registry.install(SECRET_TEST_PLUGIN)
+        registry.freeze()
+        saved_graphs = SavedGraphService(
+            lambda: SqlAlchemyUnitOfWork(database.sessions),
+            registry,
         )
-        await unit_of_work.commit()
-    registry = PluginRegistry()
-    registry.install(SECRET_TEST_PLUGIN)
-    registry.freeze()
-    saved_graphs = SavedGraphService(
-        lambda: SqlAlchemyUnitOfWork(database.sessions),
-        registry,
-    )
-    service = NodeSecretService(
-        unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
-        plugin_registry=registry,
-        encryption_key=_encryption_key(),
-    )
-    try:
+        service = NodeSecretService(
+            unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
+            plugin_registry=registry,
+            encryption_key=_encryption_key(),
+        )
         yield database, service, saved_graphs, registry
-    finally:
-        await database.dispose()
 
 
 async def _saved_secret_graph(saved_graphs: SavedGraphService):
@@ -1004,7 +999,7 @@ async def test_dirty_run_rejects_invalid_saved_secret_binding(
 
 
 def test_node_secret_routes_never_return_secret_value(tmp_path: Path) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'routes.sqlite3'}"
+    database_url = create_db_url(tmp_path, "routes.sqlite3")
     database = create_database(database_url)
 
     async def prepare() -> tuple[NodeSecretService, WorkbenchComponents, str]:

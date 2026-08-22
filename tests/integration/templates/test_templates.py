@@ -38,13 +38,11 @@ from grafy_core.domain.saved_graphs import (
     SavedGraphNode,
     SavedGraphRevision,
 )
-from grafy_persistence.database import create_database
-from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from tests.support.clients import GrafyApi
 from tests.support.identity import ActorSwitcher
-from tests.testkit import client_with_overrides
+from tests.testkit import client_with_overrides, create_db_url, db
 
 
 SOURCE_WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000701")
@@ -58,11 +56,6 @@ OUTSIDER_ID = UUID("00000000-0000-0000-0000-000000000708")
 SOURCE_GRAPH_ID = UUID("00000000-0000-0000-0000-000000000709")
 SOURCE_ARTIFACT_ID = UUID("00000000-0000-0000-0000-000000000710")
 CAPABILITY_GRAPH_ID = UUID("00000000-0000-0000-0000-000000000712")
-
-
-def _api(workspace_id: UUID, suffix: str) -> str:
-    normalized = suffix if suffix.startswith("/") else f"/{suffix}"
-    return f"/v1/workspaces/{workspace_id}{normalized}"
 
 
 def _source_revision_document() -> SavedGraphDocument:
@@ -89,7 +82,6 @@ def _source_revision_document() -> SavedGraphDocument:
 
 
 async def _seed_templates(database_url: str) -> None:
-    database = create_database(database_url)
     now = datetime.now(UTC)
     revision_one_document = _source_revision_document()
     revision_two_document = SavedGraphDocument(
@@ -132,9 +124,7 @@ async def _seed_templates(database_url: str) -> None:
         created_at=now,
         updated_at=now,
     )
-    try:
-        async with database.engine.begin() as connection:
-            await connection.run_sync(metadata.create_all)
+    async with db(database_url) as database:
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
             for user_id in (
                 OWNER_ID,
@@ -262,15 +252,13 @@ async def _seed_templates(database_url: str) -> None:
                 )
             )
             await unit_of_work.commit()
-    finally:
-        await database.dispose()
 
 
 @pytest.fixture
 def template_client(
     tmp_path: Path,
 ) -> Iterator[tuple[TestClient, ActorSwitcher]]:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'templates.sqlite3'}"
+    database_url = create_db_url(tmp_path, "templates.sqlite3")
     asyncio.run(_seed_templates(database_url))
     actor = ActorSwitcher(user_id=OWNER_ID)
     with client_with_overrides(
@@ -306,20 +294,18 @@ def test_template_snapshot_and_instantiations_remain_independent_and_safe(
     actor.as_user(OWNER_ID)
     api = GrafyApi(client)
     templates = api.workspace(SOURCE_WORKSPACE_ID).templates
+    destination = api.workspace(DESTINATION_WORKSPACE_ID)
     template = _create_template(client)
-    folder_response = client.post(
-        _api(DESTINATION_WORKSPACE_ID, "/graph-folders"),
-        json=GraphFolderWriteRequest(name="Fieldwork").model_dump(mode="json"),
+    folder = destination.graph_folders.create_ok(
+        GraphFolderWriteRequest(name="Fieldwork")
     )
-    assert folder_response.status_code == 201, folder_response.text
-    folder_id = folder_response.json()["id"]
 
     first = templates.instantiate_ok(
         template.id,
         InstantiateTemplateRequest(
             destination_workspace_id=DESTINATION_WORKSPACE_ID,
             name="Climate review",
-            folder_id=UUID(folder_id),
+            folder_id=folder.id,
         ),
     )
     second = templates.instantiate_ok(
@@ -327,13 +313,13 @@ def test_template_snapshot_and_instantiations_remain_independent_and_safe(
         InstantiateTemplateRequest(
             destination_workspace_id=DESTINATION_WORKSPACE_ID,
             name="Second review",
-            folder_id=UUID(folder_id),
+            folder_id=folder.id,
         ),
     )
     assert first.graph_id != second.graph_id
-    assert first.folder_id == UUID(folder_id)
+    assert first.folder_id == folder.id
 
-    graph = client.get(_api(DESTINATION_WORKSPACE_ID, f"/graphs/{first.graph_id}"))
+    graph = destination.graphs.get(first.graph_id)
     assert graph.status_code == 200, graph.text
     body = graph.json()
     assert body["name"] == "Climate review"
@@ -344,52 +330,34 @@ def test_template_snapshot_and_instantiations_remain_independent_and_safe(
         "nested": {"safe": True},
     }
     assert (
-        client.get(
-            _api(
-                DESTINATION_WORKSPACE_ID,
-                f"/graphs/{first.graph_id}/node-secrets",
-            )
-        ).json()["secrets"]
-        == []
+        destination.node_secrets.list_secrets(first.graph_id).json()["secrets"] == []
     )
     assert (
-        client.get(
-            _api(
-                DESTINATION_WORKSPACE_ID,
-                f"/graphs/{first.graph_id}/executions",
-            )
-        ).json()["items"]
+        destination.executions.list_graph_executions(first.graph_id).json()["items"]
         == []
     )
-    assert (
-        client.get(
-            _api(DESTINATION_WORKSPACE_ID, f"/artifacts/{SOURCE_ARTIFACT_ID}")
-        ).status_code
-        == 404
-    )
+    assert destination.artifacts.content(SOURCE_ARTIFACT_ID).status_code == 404
 
     mutated_nodes = body["nodes"]
     mutated_nodes[0]["config"]["safe_setting"] = "first copy only"
-    updated_first = client.put(
-        _api(DESTINATION_WORKSPACE_ID, f"/graphs/{first.graph_id}"),
-        json=UpdateSavedGraphRequest(
+    updated_first = destination.graphs.update(
+        first.graph_id,
+        UpdateSavedGraphRequest(
             expected_revision=1,
             name=body["name"],
             nodes=mutated_nodes,
             edges=body["edges"],
             presentation=body["presentation"],
-        ).model_dump(mode="json"),
+        ),
     )
     assert updated_first.status_code == 200, updated_first.text
-    unchanged_second = client.get(
-        _api(DESTINATION_WORKSPACE_ID, f"/graphs/{second.graph_id}")
-    )
+    unchanged_second = destination.graphs.get(second.graph_id)
     assert unchanged_second.status_code == 200
     assert unchanged_second.json()["nodes"][0]["config"]["safe_setting"] == (
         "preserved"
     )
 
-    source = client.get(_api(SOURCE_WORKSPACE_ID, f"/graphs/{SOURCE_GRAPH_ID}"))
+    source = api.workspace(SOURCE_WORKSPACE_ID).graphs.get(SOURCE_GRAPH_ID)
     assert source.status_code == 200
     assert [node["id"] for node in source.json()["nodes"]] == ["changed-later"]
 

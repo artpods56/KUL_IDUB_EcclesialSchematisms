@@ -32,7 +32,6 @@ from grafy_core.operators.text import TEXT_VALUE
 from grafy_core.plugins import NodeSecretInput, Plugin
 from grafy_core.ports.node_secrets import NodeSecretResolverPort
 from grafy_persistence.database import create_database
-from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from grafy_api.builtins import builtin_plugins
@@ -63,7 +62,7 @@ from grafy_api.v1.routes.saved_graphs.models import (
 
 from tests.support.clients import GrafyApi
 from tests.support.workbench import workbench_dependency_overrides
-from tests.testkit import client_with_overrides
+from tests.testkit import client_with_overrides, create_db_url, db
 
 WORKSPACE = "00000000-0000-0000-0000-000000000007"
 
@@ -176,10 +175,7 @@ async def module_progress(
 
 
 async def _create_schema(database_url: str) -> None:
-    database = create_database(database_url)
-    try:
-        async with database.engine.begin() as connection:
-            await connection.run_sync(metadata.create_all)
+    async with db(database_url) as database:
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
             await unit_of_work.identity.add_user(
                 User(
@@ -204,13 +200,11 @@ async def _create_schema(database_url: str) -> None:
                 )
             )
             await unit_of_work.commit()
-    finally:
-        await database.dispose()
 
 
 @pytest.fixture
 def module_client(tmp_path: Path) -> Iterator[TestClient]:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'modules.sqlite3'}"
+    database_url = create_db_url(tmp_path, "modules.sqlite3")
     asyncio.run(_create_schema(database_url))
     database = create_database(database_url)
     registry = build_plugin_registry(
