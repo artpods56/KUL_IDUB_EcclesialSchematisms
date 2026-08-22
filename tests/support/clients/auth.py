@@ -7,7 +7,7 @@ from httpx import Response
 from starlette.testclient import TestClient
 
 from grafy_api.v1.routes.auth.models import SessionResponse
-from tests.support.clients._http import _expect, _parse
+from tests.support.clients._http import _expect, _parse, _parse_list
 
 
 class AuthApi:
@@ -36,7 +36,7 @@ class AuthApi:
         self, *, headers: Mapping[str, str] | None = None
     ) -> list[SessionResponse]:
         response = _expect(self.list_sessions(headers=headers), 200)
-        return [_parse(SessionResponse, item) for item in response.json()]
+        return _parse_list(SessionResponse, response)
 
     def revoke_session(
         self, session_id: UUID, *, headers: Mapping[str, str] | None = None

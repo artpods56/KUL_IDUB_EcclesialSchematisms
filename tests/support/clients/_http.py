@@ -37,3 +37,7 @@ def _expect(response: Response, status_code: int) -> Response:
 
 def _parse(model_type: type[ModelT], response: Response) -> ModelT:
     return model_type.model_validate(response.json())
+
+
+def _parse_list(model_type: type[ModelT], response: Response) -> list[ModelT]:
+    return [model_type.model_validate(item) for item in response.json()]

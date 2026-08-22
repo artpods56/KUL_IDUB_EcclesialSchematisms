@@ -7,7 +7,7 @@ from httpx import Response
 from starlette.testclient import TestClient
 
 from grafy_api.v1.routes.uploads.models import ImageUploadItemResponse, SampleRequest
-from tests.support.clients._http import _expect, _parse, _request
+from tests.support.clients._http import _expect, _parse, _parse_list, _request
 
 
 class UploadsApi:
@@ -75,4 +75,4 @@ class UploadsApi:
         headers: Mapping[str, str] | None = None,
     ) -> list[ImageUploadItemResponse]:
         response = _expect(self.create_samples(payload, headers=headers), 200)
-        return [_parse(ImageUploadItemResponse, item) for item in response.json()]
+        return _parse_list(ImageUploadItemResponse, response)

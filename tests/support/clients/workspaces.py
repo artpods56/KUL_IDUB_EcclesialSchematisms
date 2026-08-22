@@ -16,7 +16,7 @@ from grafy_api.v1.routes.auth.models import (
     WorkspaceMemberRoleRequest,
     WorkspaceResponse,
 )
-from tests.support.clients._http import _expect, _parse, _request
+from tests.support.clients._http import _expect, _parse, _parse_list, _request
 from tests.support.clients.artifacts import ArtifactsApi
 from tests.support.clients.catalog import CatalogApi
 from tests.support.clients.executions import ExecutionsApi
@@ -85,7 +85,7 @@ class WorkspaceApi:
         self, *, headers: Mapping[str, str] | None = None
     ) -> list[WorkspaceMemberResponse]:
         response = _expect(self.list_members(headers=headers), 200)
-        return [_parse(WorkspaceMemberResponse, item) for item in response.json()]
+        return _parse_list(WorkspaceMemberResponse, response)
 
     def add_member(
         self,
@@ -158,7 +158,7 @@ class WorkspaceApi:
         self, *, headers: Mapping[str, str] | None = None
     ) -> list[PersonalAccessTokenResponse]:
         response = _expect(self.list_tokens(headers=headers), 200)
-        return [_parse(PersonalAccessTokenResponse, item) for item in response.json()]
+        return _parse_list(PersonalAccessTokenResponse, response)
 
     def create_token(
         self,
@@ -211,7 +211,7 @@ class WorkspacesApi:
         self, *, headers: Mapping[str, str] | None = None
     ) -> list[WorkspaceResponse]:
         response = _expect(self.list(headers=headers), 200)
-        return [_parse(WorkspaceResponse, item) for item in response.json()]
+        return _parse_list(WorkspaceResponse, response)
 
     def create(
         self,

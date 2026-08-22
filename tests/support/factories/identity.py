@@ -63,13 +63,18 @@ class IdentitySeeder:
         kind: WorkspaceKind = WorkspaceKind.SHARED,
         personal_owner_user_id: UUID | None = None,
     ) -> Workspace:
+        # Pass the owner explicitly even when None: shared workspaces must
+        # not have one, and dropping the key lets polyfactory invent a
+        # random owner that violates the shared-workspace invariant.
         workspace = WorkspaceFactory.build(
+            personal_owner_user_id=(
+                personal_owner_user_id if kind is WorkspaceKind.PERSONAL else None
+            ),
             **_overrides(
                 slug=slug,
                 name=name,
                 kind=kind,
-                personal_owner_user_id=personal_owner_user_id,
-            )
+            ),
         )
 
         async with self.unit_of_work_factory() as uow:
