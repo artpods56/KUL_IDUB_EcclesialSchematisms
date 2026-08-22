@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, SecretStr, TypeAdapter
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select
 
 from grafy_api.settings import Settings
 from grafy_api.v1.routes.auth.abuse import (
@@ -30,6 +30,11 @@ from grafy_core.domain.identity import (
     OidcLoginTransaction,
     WorkspaceCapability,
     WorkspaceRole,
+)
+from grafy_core.domain.security_audit import (
+    SecurityAuditActorKind,
+    SecurityAuditEvent,
+    SecurityAuditOutcome,
 )
 from grafy_persistence.database import Database
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
@@ -115,19 +120,23 @@ async def test_unauthenticated_workspace_failure_is_audited_once(
 
             assert api.workspaces.list().status_code == 401
 
-        async with database.engine.connect() as connection:
-            rows = (
-                await connection.execute(
-                    text(
-                        "SELECT operation, error_code, actor_kind "
-                        "FROM security_audit_events "
-                        "WHERE operation IN ('auth.session.verify', 'workspace.list')"
+        async with database.sessions() as session:
+            events = list(
+                await session.scalars(
+                    select(SecurityAuditEvent).where(
+                        SecurityAuditEvent.operation.in_(
+                            ["auth.session.verify", "workspace.list"]
+                        )
                     )
                 )
-            ).all()
+            )
 
-        assert [(row[0], row[1], row[2]) for row in rows] == [
-            ("auth.session.verify", "authentication_required", "unauthenticated")
+        assert [(e.operation, e.error_code, e.actor_kind) for e in events] == [
+            (
+                "auth.session.verify",
+                "authentication_required",
+                SecurityAuditActorKind.UNAUTHENTICATED,
+            )
         ]
 
 
@@ -179,21 +188,21 @@ async def test_cookie_requests_require_exact_origin_and_csrf(
                 == 403
             )
 
-        async with database.engine.connect() as connection:
-            rows = (
-                await connection.execute(
-                    text(
-                        "SELECT actor_kind, operation, error_code "
-                        "FROM security_audit_events "
-                        "WHERE operation = 'auth.session.verify'"
+        async with database.sessions() as session:
+            events = list(
+                await session.scalars(
+                    select(SecurityAuditEvent).where(
+                        SecurityAuditEvent.operation == "auth.session.verify"
                     )
                 )
-            ).all()
+            )
 
-        events = [(row[0], row[1], row[2]) for row in rows]
         assert events
-        assert all(event[0] == "authenticated" for event in events)
-        assert {event[2] for event in events} == {"origin_rejected"}
+        assert all(
+            event.actor_kind is SecurityAuditActorKind.AUTHENTICATED
+            for event in events
+        )
+        assert {event.error_code for event in events} == {"origin_rejected"}
 
 
 async def test_authenticated_csrf_failure_is_audited_once_at_auth_boundary(
@@ -221,18 +230,18 @@ async def test_authenticated_csrf_failure_is_audited_once_at_auth_boundary(
 
             assert response.status_code == 403
 
-        async with database.engine.connect() as connection:
-            rows = (
-                await connection.execute(
-                    text(
-                        "SELECT operation, error_code "
-                        "FROM security_audit_events "
-                        "WHERE operation IN ('auth.session.verify', 'workspace.create')"
+        async with database.sessions() as session:
+            events = list(
+                await session.scalars(
+                    select(SecurityAuditEvent).where(
+                        SecurityAuditEvent.operation.in_(
+                            ["auth.session.verify", "workspace.create"]
+                        )
                     )
                 )
-            ).all()
+            )
 
-        assert [(row[0], row[1]) for row in rows] == [
+        assert [(e.operation, e.error_code) for e in events] == [
             ("auth.session.verify", "csrf_rejected")
         ]
 
@@ -635,19 +644,19 @@ async def test_callback_validation_is_bounded_and_consumes_transaction(
 
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
             stored = await unit_of_work.identity.lock_login_transaction(transaction_id)
-            async with database.engine.connect() as connection:
-                rows = (
-                    await connection.execute(
-                        text(
-                            "SELECT operation, error_code FROM security_audit_events "
-                            "WHERE operation = 'oidc.login.callback'"
-                        )
-                    )
-                ).all()
-
         assert stored is not None
         assert stored.is_consumed
-        assert {(row[0], row[1]) for row in rows} == {
+
+        async with database.sessions() as session:
+            callback_events = list(
+                await session.scalars(
+                    select(SecurityAuditEvent).where(
+                        SecurityAuditEvent.operation == "oidc.login.callback"
+                    )
+                )
+            )
+
+        assert {(e.operation, e.error_code) for e in callback_events} == {
             ("oidc.login.callback", "rate_limited"),
             ("oidc.login.callback", "validation_failed"),
         }
@@ -682,17 +691,16 @@ async def test_login_validation_is_bounded_and_audited(
             assert sentinel not in first.text
             assert sentinel not in second.text
 
-        async with database.engine.connect() as connection:
-            rows = (
-                await connection.execute(
-                    text(
-                        "SELECT error_code FROM security_audit_events "
-                        "WHERE operation = 'oidc.login.start'"
+        async with database.sessions() as session:
+            events = list(
+                await session.scalars(
+                    select(SecurityAuditEvent).where(
+                        SecurityAuditEvent.operation == "oidc.login.start"
                     )
                 )
-            ).all()
+            )
 
-        assert {row[0] for row in rows} == {
+        assert {e.error_code for e in events} == {
             "validation_failed",
             "rate_limited",
         }
@@ -758,19 +766,21 @@ async def test_auth_http_exception_is_audited_as_authenticated_failure(
 
             assert response.status_code == 404
 
-        async with database.engine.connect() as connection:
-            rows = (
-                await connection.execute(
-                    text(
-                        "SELECT actor_kind, operation, error_code "
-                        "FROM security_audit_events "
-                        "WHERE operation = 'auth.session.request'"
+        async with database.sessions() as session:
+            events = list(
+                await session.scalars(
+                    select(SecurityAuditEvent).where(
+                        SecurityAuditEvent.operation == "auth.session.request"
                     )
                 )
-            ).all()
+            )
 
-        assert [(row[0], row[1], row[2]) for row in rows] == [
-            ("authenticated", "auth.session.request", "not_found")
+        assert [(e.actor_kind, e.operation, e.error_code) for e in events] == [
+            (
+                SecurityAuditActorKind.AUTHENTICATED,
+                "auth.session.request",
+                "not_found",
+            )
         ]
 
 
@@ -876,37 +886,47 @@ async def test_workspace_failure_audits_preserve_route_metadata(
             assert not_found.status_code == 404
             assert validation.status_code == 422
 
-        async with database.engine.connect() as connection:
-            rows = (
-                await connection.execute(
-                    text(
-                        "SELECT actor_kind, operation, workspace_id, resource_type, "
-                        "resource_id, error_code FROM security_audit_events "
-                        "WHERE outcome = 'failure' AND operation LIKE 'workspace.%' "
-                        "ORDER BY occurred_at"
+        async with database.sessions() as session:
+            failures = list(
+                await session.scalars(
+                    select(SecurityAuditEvent)
+                    .where(
+                        SecurityAuditEvent.outcome == SecurityAuditOutcome.FAILURE,
+                        SecurityAuditEvent.operation.like("workspace.%"),
                     )
+                    .order_by(SecurityAuditEvent.occurred_at)
                 )
-            ).all()
+            )
 
-        assert [tuple(row) for row in rows] == [
+        assert [
             (
-                "authenticated",
+                e.actor_kind,
+                e.operation,
+                e.workspace_id,
+                e.resource_type,
+                e.resource_id,
+                e.error_code,
+            )
+            for e in failures
+        ] == [
+            (
+                SecurityAuditActorKind.AUTHENTICATED,
                 "workspace.membership.upsert",
-                workspace.id.hex,
+                workspace.id,
                 "user",
                 None,
                 "capability_denied",
             ),
             (
-                "authenticated",
+                SecurityAuditActorKind.AUTHENTICATED,
                 "workspace.membership.list",
-                missing_workspace_id.hex,
+                missing_workspace_id,
                 "workspace_membership",
                 None,
                 "not_found",
             ),
             (
-                "authenticated",
+                SecurityAuditActorKind.AUTHENTICATED,
                 "workspace.create",
                 None,
                 "workspace",
