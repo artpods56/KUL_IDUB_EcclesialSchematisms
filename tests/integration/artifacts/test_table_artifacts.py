@@ -556,7 +556,6 @@ def test_interaction_values_equal_integers_across_json_string_encoding() -> None
     assert _interaction_values_equal("Belynichi", "Belynichi")
 
 
-@pytest.mark.asyncio
 async def test_artifact_summaries_never_embed_unbounded_or_table_json(
     tmp_path: Path,
 ) -> None:
@@ -625,7 +624,6 @@ async def test_artifact_summaries_never_embed_unbounded_or_table_json(
     ).text == "bounded"
 
 
-@pytest.mark.asyncio
 async def test_iter_table_csv_encodes_utf8_bom_crlf_and_quoting(
     tmp_path: Path,
 ) -> None:

@@ -207,7 +207,6 @@ def _secret_document(
     )
 
 
-@pytest.mark.asyncio
 async def test_configured_secret_is_encrypted_and_resolves_only_for_binding(
     node_secret_setup: tuple[
         Database,
@@ -280,7 +279,6 @@ async def test_configured_secret_is_encrypted_and_resolves_only_for_binding(
         )
 
 
-@pytest.mark.asyncio
 async def test_secret_cache_revision_is_stable_and_changes_on_replacement(
     node_secret_setup: tuple[
         Database,
@@ -341,7 +339,6 @@ async def test_secret_cache_revision_is_stable_and_changes_on_replacement(
     assert "second-provider-key" not in replaced
 
 
-@pytest.mark.asyncio
 async def test_unrelated_graph_edits_retain_and_resolve_secret(
     node_secret_setup: tuple[
         Database,
@@ -395,7 +392,6 @@ async def test_unrelated_graph_edits_retain_and_resolve_secret(
     assert stored_count == 1
 
 
-@pytest.mark.asyncio
 async def test_unavailable_operator_keeps_secret_dormant_until_supported_again(
     node_secret_setup: tuple[
         Database,
@@ -466,7 +462,6 @@ async def test_unavailable_operator_keeps_secret_dormant_until_supported_again(
     assert restored.get_secret_value() == "dormant-provider-key"
 
 
-@pytest.mark.asyncio
 async def test_secret_resolution_uses_the_pinned_saved_graph_revision(
     node_secret_setup: tuple[
         Database,
@@ -506,7 +501,6 @@ async def test_secret_resolution_uses_the_pinned_saved_graph_revision(
     assert resolved.get_secret_value() == "revision-bound-secret"
 
 
-@pytest.mark.asyncio
 async def test_changing_dependency_deletes_secret_and_changing_back_does_not_revive(
     node_secret_setup: tuple[
         Database,
@@ -575,7 +569,6 @@ async def test_changing_dependency_deletes_secret_and_changing_back_does_not_rev
         )
 
 
-@pytest.mark.asyncio
 async def test_removing_and_readding_node_id_does_not_revive_secret(
     node_secret_setup: tuple[
         Database,
@@ -630,7 +623,6 @@ async def test_removing_and_readding_node_id_does_not_revive_secret(
         )
 
 
-@pytest.mark.asyncio
 async def test_configure_rejects_stale_revision_and_undeclared_slot(
     node_secret_setup: tuple[
         Database,
@@ -662,7 +654,6 @@ async def test_configure_rejects_stale_revision_and_undeclared_slot(
         )
 
 
-@pytest.mark.asyncio
 async def test_status_is_false_and_resolution_fails_with_different_server_key(
     node_secret_setup: tuple[
         Database,
@@ -710,7 +701,6 @@ async def test_status_is_false_and_resolution_fails_with_different_server_key(
         )
 
 
-@pytest.mark.asyncio
 async def test_operator_version_mismatch_cannot_reuse_stored_secret(
     node_secret_setup: tuple[
         Database,
@@ -752,7 +742,6 @@ async def test_operator_version_mismatch_cannot_reuse_stored_secret(
         )
 
 
-@pytest.mark.asyncio
 async def test_missing_encryption_key_fails_closed_and_secret_size_is_bounded(
     node_secret_setup: tuple[
         Database,
@@ -793,7 +782,6 @@ async def test_missing_encryption_key_fails_closed_and_secret_size_is_bounded(
         )
 
 
-@pytest.mark.asyncio
 async def test_saved_run_passes_validated_graph_context_to_node(
     node_secret_setup: tuple[
         Database,
@@ -844,7 +832,6 @@ async def test_saved_run_passes_validated_graph_context_to_node(
     assert context.node_id == "llm"
 
 
-@pytest.mark.asyncio
 async def test_dirty_run_uses_saved_secret_binding_without_materialization_context(
     node_secret_setup: tuple[
         Database,
@@ -913,7 +900,6 @@ async def test_dirty_run_uses_saved_secret_binding_without_materialization_conte
     assert materializations.node_runs == []
 
 
-@pytest.mark.asyncio
 async def test_secret_bearing_run_requires_explicit_secret_graph_context(
     node_secret_setup: tuple[
         Database,
@@ -948,7 +934,6 @@ async def test_secret_bearing_run_requires_explicit_secret_graph_context(
         )
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("binding_case", "message"),
     [

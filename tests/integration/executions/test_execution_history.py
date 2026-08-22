@@ -14,8 +14,6 @@ from grafy_core.domain.identity import (
     WorkspaceRole,
 )
 from grafy_core.domain.saved_graphs import SavedGraphDocument
-from grafy_persistence.database import create_database
-from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import (
     SqlAlchemySavedGraphUnitOfWork,
     SqlAlchemyUnitOfWork,
@@ -40,7 +38,7 @@ from grafy_api.v1.routes.saved_graphs.models import (
 )
 from grafy_api.settings import Settings
 
-from tests.testkit import client_with_overrides
+from tests.testkit import client_with_overrides, create_db_url, db
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
@@ -264,15 +262,12 @@ async def _seed_active_execution(database_url: str) -> tuple[UUID, UUID]:
         GraphActiveExecutionSlot,
     )
 
-    database = create_database(database_url)
-    registry = build_plugin_registry(builtin_plugins(), external_plugins=())
-    saved_graphs = SavedGraphService(
-        lambda: SqlAlchemySavedGraphUnitOfWork(database.sessions),
-        registry,
-    )
-    try:
-        async with database.engine.begin() as connection:
-            await connection.run_sync(metadata.create_all)
+    async with db(database_url) as database:
+        registry = build_plugin_registry(builtin_plugins(), external_plugins=())
+        saved_graphs = SavedGraphService(
+            lambda: SqlAlchemySavedGraphUnitOfWork(database.sessions),
+            registry,
+        )
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
             await unit_of_work.identity.add_user(
                 User(
@@ -339,14 +334,12 @@ async def _seed_active_execution(database_url: str) -> tuple[UUID, UUID]:
             assert acquired
             await unit_of_work.commit()
         return graph.id, execution_id
-    finally:
-        await database.dispose()
 
 
 def test_application_startup_marks_stale_active_execution_failed(
     tmp_path: Path,
 ) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'recovery.sqlite3'}"
+    database_url = create_db_url(tmp_path, "recovery.sqlite3")
     graph_id, execution_id = asyncio.run(_seed_active_execution(database_url))
     with client_with_overrides(
         settings=Settings(

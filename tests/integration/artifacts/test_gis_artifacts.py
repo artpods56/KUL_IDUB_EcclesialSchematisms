@@ -783,7 +783,6 @@ def test_map_document_resolves_ordered_vector_raster_and_wms_layers(
     ]
 
 
-@pytest.mark.asyncio
 async def test_wms_tile_pins_validated_address_against_dns_rebinding(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -30,8 +30,6 @@ from grafy_core.runtime.materialization import MaterializationProvenance
 from grafy_core.runtime.persistence import ArtifactWriteContext
 from grafy_core.ports.storage import SaveFileCommand, StoredObjectInfo
 from grafy_core.domain.identity import Workspace
-from grafy_persistence.database import create_database
-from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 from grafy_storage import LocalFileObjectStore
 
@@ -45,27 +43,10 @@ from grafy_api.v1.routes.executions.runtime.invocation_cache import (
 )
 from grafy_api.services.composition import build_workbench_components
 
+from tests.testkit import create_db_url, db
+
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000901")
-
-
-async def _seed_workspace(database_url: str) -> None:
-    database = create_database(database_url)
-    try:
-        async with database.engine.begin() as connection:
-            await connection.run_sync(metadata.create_all)
-        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-            await unit_of_work.identity.add_workspace(
-                Workspace(
-                    id=WORKSPACE_ID,
-                    slug="cache-test",
-                    name="Cache test workspace",
-                    kind="shared",
-                )
-            )
-            await unit_of_work.commit()
-    finally:
-        await database.dispose()
 
 
 async def _raise_storage_outage(bucket: str, path: str) -> StoredObjectInfo | None:
@@ -151,7 +132,6 @@ def test_external_node_default_policy_does_not_reuse_results(
     assert repeated != first
 
 
-@pytest.mark.asyncio
 async def test_cache_evicts_an_entry_with_a_missing_artifact(tmp_path: Path) -> None:
     unit_of_work = InMemoryUnitOfWork()
     missing_artifact = ArtifactObject(
@@ -184,7 +164,6 @@ async def test_cache_evicts_an_entry_with_a_missing_artifact(tmp_path: Path) -> 
         )
 
 
-@pytest.mark.asyncio
 async def test_storage_outage_preserves_the_cache_entry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -227,7 +206,6 @@ async def test_storage_outage_preserves_the_cache_entry(
     assert preserved.generation == entry.generation
 
 
-@pytest.mark.asyncio
 async def test_cache_evicts_a_table_with_a_missing_chunk(tmp_path: Path) -> None:
     unit_of_work = InMemoryUnitOfWork()
     storage = LocalFileObjectStore(tmp_path / "objects")
@@ -279,7 +257,6 @@ async def test_cache_evicts_a_table_with_a_missing_chunk(tmp_path: Path) -> None
         assert await uow.invocation_cache.get(WORKSPACE_ID, entry.key_sha256) is None
 
 
-@pytest.mark.asyncio
 async def test_cache_evicts_a_json_collection_with_a_corrupt_chunk(
     tmp_path: Path,
 ) -> None:
@@ -350,24 +327,31 @@ async def test_cache_evicts_a_json_collection_with_a_corrupt_chunk(
         assert await uow.invocation_cache.get(WORKSPACE_ID, entry.key_sha256) is None
 
 
-@pytest.mark.asyncio
 async def test_sql_cache_survives_fresh_workbench_components(tmp_path: Path) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'persistent-cache.sqlite3'}"
-    await _seed_workspace(database_url)
-    database = create_database(database_url)
-    registry = build_plugin_registry(builtin_plugins(), external_plugins=())
-    request = RunRequest(
-        nodes=[
-            RunNodeRequest(
-                id="persistent-text",
-                operator_id="text.input",
-                operator_version=1,
-                config={"text": "survives restart"},
+    database_url = create_db_url(tmp_path, "persistent-cache.sqlite3")
+    async with db(database_url) as database:
+        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+            await unit_of_work.identity.add_workspace(
+                Workspace(
+                    id=WORKSPACE_ID,
+                    slug="cache-test",
+                    name="Cache test workspace",
+                    kind="shared",
+                )
             )
-        ]
-    )
+            await unit_of_work.commit()
+        registry = build_plugin_registry(builtin_plugins(), external_plugins=())
+        request = RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="persistent-text",
+                    operator_id="text.input",
+                    operator_version=1,
+                    config={"text": "survives restart"},
+                )
+            ]
+        )
 
-    try:
         first_components = build_workbench_components(
             plugin_registry=registry,
             workspace=tmp_path / "workbench",
@@ -393,5 +377,3 @@ async def test_sql_cache_survives_fresh_workbench_components(tmp_path: Path) -> 
         assert isinstance(repeated_value, ArtifactRef)
 
         assert repeated_value == first_value
-    finally:
-        await database.dispose()

@@ -11,9 +11,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from grafy_persistence.database import create_database
-from grafy_persistence.orm import metadata
-
 from tests.support.identity import WORKSPACE_ID, browser_actor_override
 from grafy_api.v1.routes.auth.dependencies import browser_actor
 from grafy_api.v1.routes.catalog.models import NodeRegistryResponse
@@ -35,7 +32,7 @@ from grafy_api.settings import Settings
 from grafy_core.artifacts import InMemoryUnitOfWork
 from grafy_core.plugins import PluginOrigin
 
-from tests.testkit import app_with_overrides
+from tests.testkit import app_with_overrides, create_db_url, db
 
 
 def _parse_sse_events(body: str) -> list[dict[str, object]]:
@@ -56,20 +53,16 @@ def _parse_sse_events(body: str) -> list[dict[str, object]]:
     return events
 
 
-async def _prepare_database(database_url: str) -> None:
-    database = create_database(database_url)
-    try:
-        async with database.engine.begin() as connection:
-            await connection.run_sync(metadata.create_all)
-    finally:
-        await database.dispose()
-
-
 def test_application_lifespan_builds_and_releases_workbench_components(
     tmp_path: Path,
 ) -> None:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'lifespan.sqlite3'}"
-    asyncio.run(_prepare_database(database_url))
+    database_url = create_db_url(tmp_path, "lifespan.sqlite3")
+
+    async def prepare_schema() -> None:
+        async with db(database_url):
+            pass
+
+    asyncio.run(prepare_schema())
     application = app_with_overrides(
         settings=Settings(
             workspace=tmp_path / "workbench",
@@ -408,6 +401,8 @@ def test_execution_event_stream_validates_replay_and_missing_execution_ids(
 def test_execution_request_rejects_oversized_node_ids(
     builtin_client: TestClient,
 ) -> None:
+    # A node id beyond the 255-character bound is rejected by the request
+    # model itself, so it cannot be expressed client-side; raw body.
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
         json={
@@ -425,7 +420,6 @@ def test_execution_request_rejects_oversized_node_ids(
     assert response.status_code == 422
 
 
-@pytest.mark.asyncio
 async def test_upload_from_relative_workspace_returns_opaque_upload_key(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

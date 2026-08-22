@@ -17,8 +17,6 @@ from grafy_core.domain.identity import (
 )
 from grafy_core.domain.materialized_outputs import MaterializedNodeOutputs
 from grafy_persistence import schema
-from grafy_persistence.database import create_database
-from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from grafy_api.settings import Settings
@@ -44,7 +42,7 @@ from grafy_api.v1.routes.saved_graphs.models import (
 )
 from tests.support.clients import GrafyApi
 from tests.support.identity import browser_actor_override
-from tests.testkit import client_with_overrides
+from tests.testkit import client_with_overrides, create_db_url, db
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
@@ -54,10 +52,7 @@ _OVERRIDES = {browser_actor: browser_actor_override}
 
 
 async def _create_schema(database_url: str) -> None:
-    database = create_database(database_url)
-    try:
-        async with database.engine.begin() as connection:
-            await connection.run_sync(metadata.create_all)
+    async with db(database_url) as database:
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
             await unit_of_work.identity.add_user(
                 User(
@@ -82,21 +77,16 @@ async def _create_schema(database_url: str) -> None:
                 )
             )
             await unit_of_work.commit()
-    finally:
-        await database.dispose()
 
 
 async def _delete_artifact(database_url: str, artifact_id: UUID) -> None:
-    database = create_database(database_url)
-    try:
+    async with db(database_url) as database:
         async with database.engine.begin() as connection:
             await connection.execute(
                 delete(schema.artifact_objects).where(
                     schema.artifact_objects.c.id == artifact_id
                 )
             )
-    finally:
-        await database.dispose()
 
 
 async def _persist_partially_accessible_materialization(
@@ -104,7 +94,6 @@ async def _persist_partially_accessible_materialization(
     graph_id: UUID,
     graph_revision: int,
 ) -> None:
-    database = create_database(database_url)
     accessible = ArtifactObject(
         workspace_id=WORKSPACE_ID,
         artifact_type="scalar.integer",
@@ -118,7 +107,7 @@ async def _persist_partially_accessible_materialization(
         artifact_type="scalar.integer",
         schema_version=1,
     )
-    try:
+    async with db(database_url) as database:
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
             await unit_of_work.artifacts.add(accessible)
             await unit_of_work.materialized_outputs.upsert(
@@ -135,13 +124,11 @@ async def _persist_partially_accessible_materialization(
                 )
             )
             await unit_of_work.commit()
-    finally:
-        await database.dispose()
 
 
 @pytest.fixture
 def durable_api(tmp_path: Path) -> tuple[Settings, str]:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'materializations.sqlite3'}"
+    database_url = create_db_url(tmp_path, "materializations.sqlite3")
     asyncio.run(_create_schema(database_url))
     return (
         Settings(
@@ -397,6 +384,8 @@ def test_run_graph_context_requires_id_and_revision_together(
 ) -> None:
     settings, _ = durable_api
     with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
+        # Half-declared graph contexts are rejected by RunRequest's own model
+        # validator, so they cannot be expressed client-side; use the raw body.
         response = client.post(
             "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
             json={"nodes": [], "edges": [], **graph_context},
@@ -411,6 +400,8 @@ def test_run_graph_contexts_must_identify_same_saved_revision(
 ) -> None:
     settings, _ = durable_api
     with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
+        # Mismatched secret-graph revisions are rejected by RunRequest's own
+        # model validator, so they cannot be expressed client-side; raw body.
         response = client.post(
             "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
             json={

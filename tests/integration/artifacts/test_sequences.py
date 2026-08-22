@@ -463,6 +463,8 @@ def test_collect_rejects_non_integer_artifact_type_schema_versions(
     builtin_client: TestClient,
     schema_version: object,
 ) -> None:
+    # Non-integer schema versions are rejected by the request model itself,
+    # so they cannot be expressed client-side; exercise the boundary raw.
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json={

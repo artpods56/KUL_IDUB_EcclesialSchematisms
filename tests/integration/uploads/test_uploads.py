@@ -82,7 +82,6 @@ def test_upload_endpoint_rejects_oversize_file_and_removes_partial_stage(
     assert asyncio.run(_list_staged_uploads(unit_of_work, WORKSPACE_ID)) == []
 
 
-@pytest.mark.asyncio
 async def test_upload_at_exact_byte_limit_is_staged(tmp_path: Path) -> None:
     unit_of_work = InMemoryUnitOfWork()
     service = ImageUploadService(
