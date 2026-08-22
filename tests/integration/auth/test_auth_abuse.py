@@ -1,8 +1,8 @@
-import httpx
 from types import SimpleNamespace
 from typing import cast
 from uuid import UUID
 
+import httpx
 import pytest
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -19,7 +19,6 @@ from grafy_api.v1.routes.auth.abuse import (
 )
 
 
-@pytest.mark.asyncio
 async def test_abuse_windows_and_outstanding_logins_are_deterministic() -> None:
     current = 100.0
 
@@ -60,7 +59,6 @@ async def test_abuse_windows_and_outstanding_logins_are_deterministic() -> None:
     assert not await abuse.allow_session_failure("browser")
 
 
-@pytest.mark.asyncio
 async def test_outstanding_login_capacity_preserves_existing_browser_count() -> None:
     abuse = AuthAbuseControl(outstanding_login_limit=2)
 
@@ -72,7 +70,6 @@ async def test_outstanding_login_capacity_preserves_existing_browser_count() -> 
     assert not await abuse.reserve_login("existing", UUID(int=10001))
 
 
-@pytest.mark.asyncio
 async def test_outstanding_login_capacity_rejects_new_browser_key() -> None:
     abuse = AuthAbuseControl(outstanding_login_limit=2)
 
@@ -82,7 +79,6 @@ async def test_outstanding_login_capacity_rejects_new_browser_key() -> None:
     assert not await abuse.reserve_login("new-browser", UUID(int=10000))
 
 
-@pytest.mark.asyncio
 async def test_reservations_expire_individually_and_release_by_transaction() -> None:
     current = 100.0
 
@@ -107,7 +103,6 @@ async def test_reservations_expire_individually_and_release_by_transaction() -> 
     assert await abuse.reserve_login("stable-browser", UUID(int=4))
 
 
-@pytest.mark.asyncio
 async def test_network_backstop_handles_missing_forged_and_rotated_cookies() -> None:
     abuse = AuthAbuseControl(
         login_start_limit=1,
@@ -124,7 +119,6 @@ async def test_network_backstop_handles_missing_forged_and_rotated_cookies() -> 
     assert not await abuse.reserve_login("rotated-browser", UUID(int=12), "ip:one")
 
 
-@pytest.mark.asyncio
 async def test_browser_reservation_survives_ip_change_and_releases_by_transaction() -> (
     None
 ):
@@ -150,7 +144,6 @@ def test_forged_browser_cookie_is_rejected_without_using_the_submitted_handle() 
     assert keys.network_key == "ip:127.0.0.1"
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("peer_host", "forwarded_for", "expected"),
     (

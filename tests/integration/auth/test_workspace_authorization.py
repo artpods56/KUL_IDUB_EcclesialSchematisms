@@ -1,23 +1,17 @@
-"""Phase 2 tenant IDOR and role/capability matrix for workspace-qualified routes."""
+"""Tenant IDOR and role/capability matrix for workspace-qualified routes."""
 
-import asyncio
-from collections.abc import Iterator
 from dataclasses import dataclass
-from io import BytesIO
 from pathlib import Path
 from uuid import UUID, uuid4
 
-import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from httpx import Response
 from pydantic import SecretStr
 
-from grafy_api.main import create_app
 from grafy_api.settings import Settings
-from grafy_api.v1.routes.auth.dependencies import browser_actor
 from grafy_api.v1.routes.auth.models import WorkspaceMemberRequest
+from grafy_api.v1.routes.auth.services import AuthService, IssuedSession
 from grafy_api.v1.routes.executions.models import RunRequest
+from grafy_api.v1.routes.node_secrets.models import ConfigureNodeSecretRequest
 from grafy_api.v1.routes.saved_graphs.models import (
     AssignGraphFolderRequest,
     CreateSavedGraphRequest,
@@ -26,186 +20,91 @@ from grafy_api.v1.routes.saved_graphs.models import (
     UpdateSavedGraphRequest,
 )
 from grafy_api.v1.routes.uploads.models import SampleRequest
+from grafy_core.application.identity import IdentityService
 from grafy_core.artifacts import ArtifactObject
 from grafy_core.domain.collaboration import RenameGraphCommand
-from grafy_core.domain.identity import (
-    ActorContext,
-    User,
-    Workspace,
-    WorkspaceMembership,
-    WorkspaceRole,
-)
-from grafy_persistence.database import create_database
-from grafy_persistence.orm import metadata
+from grafy_core.domain.identity import User, Workspace, WorkspaceKind, WorkspaceRole
+from grafy_persistence.database import Database
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
-
-from tests.support.identity import WORKSPACE_ID
-
-
-WORKSPACE_A = WORKSPACE_ID
-WORKSPACE_B = UUID("00000000-0000-0000-0000-00000000000b")
-
-OWNER_A_ID = UUID(int=1)
-VIEWER_A_ID = UUID(int=2)
-EDITOR_A_ID = UUID(int=3)
-OWNER_B_ID = UUID(int=4)
-BOTH_ID = UUID(int=5)
+from tests.support.clients import GrafyApi
+from tests.support.factories.identity import IdentitySeeder
+from tests.testkit import client_with_overrides, create_db_url, db
 
 
-def _api(workspace_id: UUID, suffix: str) -> str:
-    normalized = suffix if suffix.startswith("/") else f"/{suffix}"
-    return f"/v1/workspaces/{workspace_id}{normalized}"
+def _csrf_headers(issued: IssuedSession) -> dict[str, str]:
+    return {"Origin": "http://testserver", "X-CSRF-Token": issued.csrf_value}
 
 
-def _empty_graph_payload(
-    name: str = "Authz graph",
-    *,
-    expected_revision: int | None = None,
-) -> dict[str, object]:
-    if expected_revision is None:
-        return CreateSavedGraphRequest(name=name).model_dump(mode="json")
-    return UpdateSavedGraphRequest(
-        name=name,
-        expected_revision=expected_revision,
-    ).model_dump(mode="json")
+def _auth_service(settings: Settings, database: Database) -> AuthService:
+    def unit_of_work_factory() -> SqlAlchemyUnitOfWork:
+        return SqlAlchemyUnitOfWork(database.sessions)
+
+    return AuthService(
+        settings=settings,
+        unit_of_work_factory=unit_of_work_factory,
+        identity_service=IdentityService(unit_of_work_factory),
+    )
 
 
-@dataclass
-class ActorSwitcher:
-    user_id: UUID
-
-    def install(self, application: FastAPI) -> None:
-        switcher = self
-
-        def override() -> ActorContext:
-            return ActorContext(
-                user_id=switcher.user_id,
-                credential_reference="test-session",
-            )
-
-        application.dependency_overrides[browser_actor] = override
-
-    def as_user(self, user_id: UUID) -> None:
-        self.user_id = user_id
+@dataclass(frozen=True)
+class AuthorizationMatrix:
+    workspace_a: Workspace
+    workspace_b: Workspace
+    owner_a: User
+    viewer_a: User
+    editor_a: User
+    owner_b: User
+    both: User
+    artifact_id: UUID
 
 
-async def _seed_authorization_matrix(database_url: str) -> UUID:
-    """Seed two workspaces, role matrix users, and one inline artifact in A.
-
-    Returns the seeded artifact id owned by workspace A.
-    """
-
-    database = create_database(database_url)
+async def _seed_authorization_matrix(database: Database) -> AuthorizationMatrix:
+    seeder = IdentitySeeder(lambda: SqlAlchemyUnitOfWork(database.sessions))
+    owner_a = await seeder.user(email="owner-a@example.test", display_name="Owner A")
+    viewer_a = await seeder.user(email="viewer-a@example.test", display_name="Viewer A")
+    editor_a = await seeder.user(email="editor-a@example.test", display_name="Editor A")
+    owner_b = await seeder.user(email="owner-b@example.test", display_name="Owner B")
+    both = await seeder.user(email="both@example.test", display_name="Both Workspaces")
+    workspace_a = Workspace(
+        slug="workspace-a", name="Workspace A", kind=WorkspaceKind.SHARED
+    )
+    workspace_b = Workspace(
+        slug="workspace-b", name="Workspace B", kind=WorkspaceKind.SHARED
+    )
+    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        await unit_of_work.identity.add_workspace(workspace_a)
+        await unit_of_work.identity.add_workspace(workspace_b)
+        await unit_of_work.commit()
+    for user, workspace, role in (
+        (owner_a, workspace_a, WorkspaceRole.OWNER),
+        (viewer_a, workspace_a, WorkspaceRole.VIEWER),
+        (editor_a, workspace_a, WorkspaceRole.EDITOR),
+        (both, workspace_a, WorkspaceRole.EDITOR),
+        (owner_b, workspace_b, WorkspaceRole.OWNER),
+        (both, workspace_b, WorkspaceRole.OWNER),
+    ):
+        await seeder.membership(user=user, workspace=workspace, role=role)
     artifact = ArtifactObject(
-        workspace_id=WORKSPACE_A,
+        workspace_id=workspace_a.id,
         artifact_type="scalar.text",
         schema_version=1,
         content_type="application/json",
         storage_backend="inline",
         inline_payload={"value": "workspace-a-secret-payload"},
     )
-    try:
-        async with database.engine.begin() as connection:
-            await connection.run_sync(metadata.create_all)
-        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-            for user_id, email, display_name in (
-                (OWNER_A_ID, "owner-a@example.test", "Owner A"),
-                (VIEWER_A_ID, "viewer-a@example.test", "Viewer A"),
-                (EDITOR_A_ID, "editor-a@example.test", "Editor A"),
-                (OWNER_B_ID, "owner-b@example.test", "Owner B"),
-                (BOTH_ID, "both@example.test", "Both Workspaces"),
-            ):
-                await unit_of_work.identity.add_user(
-                    User(id=user_id, email=email, display_name=display_name)
-                )
-            await unit_of_work.identity.add_workspace(
-                Workspace(
-                    id=WORKSPACE_A,
-                    slug="workspace-a",
-                    name="Workspace A",
-                    kind="shared",
-                )
-            )
-            await unit_of_work.identity.add_workspace(
-                Workspace(
-                    id=WORKSPACE_B,
-                    slug="workspace-b",
-                    name="Workspace B",
-                    kind="shared",
-                )
-            )
-            for workspace_id, user_id, role in (
-                (WORKSPACE_A, OWNER_A_ID, WorkspaceRole.OWNER),
-                (WORKSPACE_A, VIEWER_A_ID, WorkspaceRole.VIEWER),
-                (WORKSPACE_A, EDITOR_A_ID, WorkspaceRole.EDITOR),
-                (WORKSPACE_A, BOTH_ID, WorkspaceRole.EDITOR),
-                (WORKSPACE_B, OWNER_B_ID, WorkspaceRole.OWNER),
-                (WORKSPACE_B, BOTH_ID, WorkspaceRole.OWNER),
-            ):
-                await unit_of_work.identity.add_membership(
-                    WorkspaceMembership(
-                        workspace_id=workspace_id,
-                        user_id=user_id,
-                        role=role,
-                    )
-                )
-            await unit_of_work.artifacts.add(artifact)
-            await unit_of_work.commit()
-    finally:
-        await database.dispose()
-    return artifact.id
-
-
-@pytest.fixture
-def authz_client(
-    tmp_path: Path,
-) -> Iterator[tuple[TestClient, ActorSwitcher, UUID]]:
-    database_url = f"sqlite+aiosqlite:///{tmp_path / 'workspace-authz.sqlite3'}"
-    artifact_id = asyncio.run(_seed_authorization_matrix(database_url))
-    application = create_app(
-        Settings(
-            workspace=tmp_path / "workbench",
-            database_url=SecretStr(database_url),
-            auth_cookie_secure=False,
-        )
+    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        await unit_of_work.artifacts.add(artifact)
+        await unit_of_work.commit()
+    return AuthorizationMatrix(
+        workspace_a=workspace_a,
+        workspace_b=workspace_b,
+        owner_a=owner_a,
+        viewer_a=viewer_a,
+        editor_a=editor_a,
+        owner_b=owner_b,
+        both=both,
+        artifact_id=artifact.id,
     )
-    actor = ActorSwitcher(user_id=OWNER_A_ID)
-    actor.install(application)
-    with TestClient(application) as client:
-        yield client, actor, artifact_id
-
-
-def _create_graph(
-    client: TestClient,
-    actor: ActorSwitcher,
-    *,
-    workspace_id: UUID,
-    user_id: UUID,
-    name: str,
-) -> tuple[UUID, int]:
-    actor.as_user(user_id)
-    response = client.post(
-        _api(workspace_id, "/graphs"),
-        json=_empty_graph_payload(name),
-    )
-    assert response.status_code == 201, response.text
-    body = response.json()
-    return UUID(body["id"]), int(body["revision"])
-
-
-def _start_execution(
-    client: TestClient,
-    actor: ActorSwitcher,
-    user_id: UUID,
-    workspace_id: UUID,
-) -> UUID:
-    actor.as_user(user_id)
-    response = client.post(
-        _api(workspace_id, "/executions"),
-        json=RunRequest(nodes=[], edges=[]).model_dump(mode="json"),
-    )
-    assert response.status_code == 202, response.text
-    return UUID(response.json()["execution_id"])
 
 
 def _assert_not_found(response: Response, *, context: object) -> None:
@@ -218,657 +117,813 @@ def _assert_forbidden(response: Response, *, context: object) -> None:
     assert response.json() == {"detail": "Forbidden"}
 
 
-def test_global_graph_browser_is_authorized_and_keeps_user_state_private(
-    authz_client: tuple[TestClient, ActorSwitcher, UUID],
+async def test_global_graph_browser_is_authorized_and_keeps_user_state_private(
+    tmp_path: Path, settings: Settings
 ) -> None:
-    client, actor, _ = authz_client
-    graph_a_id, _ = _create_graph(
-        client,
-        actor,
-        workspace_id=WORKSPACE_A,
-        user_id=OWNER_A_ID,
-        name="Workspace A draft",
-    )
-    graph_b_id, _ = _create_graph(
-        client,
-        actor,
-        workspace_id=WORKSPACE_B,
-        user_id=OWNER_B_ID,
-        name="Workspace B private",
-    )
+    database_url = create_db_url(tmp_path, "workspace-authz-browser.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={
+                "database_url": SecretStr(database_url),
+                "workspace": tmp_path / "workbench",
+            }
+        )
+        matrix = await _seed_authorization_matrix(database)
+        auth = _auth_service(app_settings, database)
+        owner_a_issued = await auth.issue_session(matrix.owner_a.id)
+        viewer_a_issued = await auth.issue_session(matrix.viewer_a.id)
+        owner_b_issued = await auth.issue_session(matrix.owner_b.id)
+        both_issued = await auth.issue_session(matrix.both.id)
 
-    actor.as_user(OWNER_A_ID)
-    head = client.get(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/head")).json()
-    renamed = client.post(
-        _api(WORKSPACE_A, f"/graphs/{graph_a_id}/commands"),
-        json=SubmitGraphCommandRequest(
-            command_id=uuid4(),
-            room_epoch=UUID(head["room_epoch"]),
-            observed_sequence=head["collaboration_sequence"],
-            command=RenameGraphCommand(
-                name="Current live-head name",
-                expected_name="Workspace A draft",
-            ),
-        ).model_dump(mode="json"),
-    )
-    assert renamed.status_code == 200, renamed.text
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(owner_a_issued)
+            workspace_a = api.workspace(matrix.workspace_a.id)
+            workspace_b = api.workspace(matrix.workspace_b.id)
+            graph_a = workspace_a.graphs.create_ok(
+                CreateSavedGraphRequest(name="Workspace A draft"),
+                headers=_csrf_headers(owner_a_issued),
+            )
+            api.authenticate(owner_b_issued)
+            graph_b = workspace_b.graphs.create_ok(
+                CreateSavedGraphRequest(name="Workspace B private"),
+                headers=_csrf_headers(owner_b_issued),
+            )
 
-    created_folder = client.post(
-        _api(WORKSPACE_A, "/graph-folders"),
-        json=GraphFolderWriteRequest(name="Research").model_dump(mode="json"),
-    )
-    assert created_folder.status_code == 201, created_folder.text
-    folder_id = created_folder.json()["id"]
-    assigned = client.put(
-        _api(WORKSPACE_A, f"/graphs/{graph_a_id}/folder"),
-        json=AssignGraphFolderRequest(folder_id=UUID(folder_id)).model_dump(
-            mode="json"
-        ),
-    )
-    assert assigned.status_code == 200, assigned.text
-    assert assigned.json()["folder_id"] == folder_id
-    assert (
-        client.put(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/star")).status_code == 200
-    )
-    opened = client.post(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/opened"))
-    assert opened.status_code == 200, opened.text
-    assert opened.json()["last_opened_at"] is not None
+            api.authenticate(owner_a_issued)
+            head = workspace_a.graphs.get_head_ok(graph_a.id)
+            renamed = workspace_a.graphs.submit_command_ok(
+                graph_a.id,
+                SubmitGraphCommandRequest(
+                    command_id=uuid4(),
+                    room_epoch=head.room_epoch,
+                    observed_sequence=head.collaboration_sequence,
+                    command=RenameGraphCommand(
+                        name="Current live-head name",
+                        expected_name="Workspace A draft",
+                    ),
+                ),
+                headers=_csrf_headers(owner_a_issued),
+            )
+            folder = workspace_a.graph_folders.create_ok(
+                GraphFolderWriteRequest(name="Research"),
+                headers=_csrf_headers(owner_a_issued),
+            )
+            assigned = workspace_a.graphs.assign_folder_ok(
+                graph_a.id,
+                AssignGraphFolderRequest(folder_id=folder.id),
+                headers=_csrf_headers(owner_a_issued),
+            )
+            starred = workspace_a.graphs.star(
+                graph_a.id, headers=_csrf_headers(owner_a_issued)
+            )
+            opened = workspace_a.graphs.record_open_ok(
+                graph_a.id, headers=_csrf_headers(owner_a_issued)
+            )
 
-    owner_a_browser = client.get("/v1/me/graphs")
-    assert owner_a_browser.status_code == 200, owner_a_browser.text
-    assert [graph["id"] for graph in owner_a_browser.json()["graphs"]] == [
-        str(graph_a_id)
-    ]
-    owner_a_row = owner_a_browser.json()["graphs"][0]
-    assert owner_a_row["location"] == {
-        "id": str(WORKSPACE_A),
-        "slug": "workspace-a",
-        "name": "Workspace A",
-        "kind": "shared",
-    }
-    assert owner_a_row["folder"] == {"id": folder_id, "name": "Research"}
-    assert owner_a_row["starred"] is True
-    assert owner_a_row["last_opened_at"] is not None
-    assert owner_a_row["draft"] == {
-        "name": "Current live-head name",
-        "head_sequence": 2,
-        "checkpoint_sequence": 1,
-        "checkpoint_revision": 1,
-        "updated_at": renamed.json()["head"]["updated_at"],
-        "node_count": 0,
-        "edge_count": 0,
-    }
-    assert owner_a_row["creator"] == {
-        "id": str(OWNER_A_ID),
-        "display_name": "Owner A",
-    }
+            assert assigned.folder_id == folder.id
+            assert starred.status_code == 200
+            assert opened.last_opened_at is not None
+            owner_browser = api.graph_browser.list_ok()
+            assert [item.id for item in owner_browser.graphs] == [graph_a.id]
+            owner_row = owner_browser.graphs[0]
+            location = owner_row.location
+            assert (
+                location.id,
+                location.slug,
+                location.name,
+                location.kind,
+            ) == (
+                matrix.workspace_a.id,
+                "workspace-a",
+                "Workspace A",
+                WorkspaceKind.SHARED,
+            )
+            folder_row = owner_row.folder
+            assert folder_row is not None
+            assert (folder_row.id, folder_row.name) == (folder.id, "Research")
+            assert owner_row.starred is True
+            assert owner_row.last_opened_at is not None
+            draft = owner_row.draft
+            assert draft.name == "Current live-head name"
+            assert draft.head_sequence == 2
+            assert draft.checkpoint_sequence == 1
+            assert draft.checkpoint_revision == 1
+            assert draft.updated_at == renamed.head.updated_at
+            assert (draft.node_count, draft.edge_count) == (0, 0)
+            creator = owner_row.creator
+            assert creator is not None
+            assert (creator.id, creator.display_name) == (
+                matrix.owner_a.id,
+                "Owner A",
+            )
 
-    actor.as_user(VIEWER_A_ID)
-    viewer_browser = client.get("/v1/me/graphs")
-    assert viewer_browser.status_code == 200, viewer_browser.text
-    viewer_row = viewer_browser.json()["graphs"][0]
-    assert viewer_row["id"] == str(graph_a_id)
-    assert viewer_row["starred"] is False
-    assert viewer_row["last_opened_at"] is None
-    _assert_forbidden(
-        client.put(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/archive")),
-        context="viewer archive graph",
-    )
-    _assert_forbidden(
-        client.post(
-            _api(WORKSPACE_A, "/graph-folders"),
-            json=GraphFolderWriteRequest(name="Viewer folder").model_dump(mode="json"),
-        ),
-        context="viewer create folder",
-    )
-    assert (
-        client.put(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/star")).status_code == 200
-    )
+            api.authenticate(viewer_a_issued)
+            viewer_browser = api.graph_browser.list_ok()
+            viewer_row = viewer_browser.graphs[0]
+            assert viewer_row.id == graph_a.id
+            assert viewer_row.starred is False
+            assert viewer_row.last_opened_at is None
+            _assert_forbidden(
+                workspace_a.graphs.archive(
+                    graph_a.id, headers=_csrf_headers(viewer_a_issued)
+                ),
+                context="viewer archive graph",
+            )
+            _assert_forbidden(
+                workspace_a.graph_folders.create(
+                    GraphFolderWriteRequest(name="Viewer folder"),
+                    headers=_csrf_headers(viewer_a_issued),
+                ),
+                context="viewer create folder",
+            )
+            assert (
+                workspace_a.graphs.star(
+                    graph_a.id, headers=_csrf_headers(viewer_a_issued)
+                ).status_code
+                == 200
+            )
 
-    actor.as_user(OWNER_A_ID)
-    owner_a_row_after_viewer_star = client.get("/v1/me/graphs").json()["graphs"][0]
-    assert owner_a_row_after_viewer_star["starred"] is True
-    unstarred = client.delete(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/star"))
-    assert unstarred.status_code == 200, unstarred.text
-    assert unstarred.json()["starred"] is False
-    assert client.get("/v1/me/graphs").json()["graphs"][0]["starred"] is False
+            api.authenticate(owner_a_issued)
+            owner_row_after_viewer_star = api.graph_browser.list_ok().graphs[0]
+            assert owner_row_after_viewer_star.starred is True
+            unstarred = workspace_a.graphs.unstar_ok(
+                graph_a.id, headers=_csrf_headers(owner_a_issued)
+            )
+            assert unstarred.starred is False
+            assert api.graph_browser.list_ok().graphs[0].starred is False
 
-    archived = client.put(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/archive"))
-    assert archived.status_code == 200, archived.text
-    assert archived.json()["archived"] is True
-    assert client.get("/v1/me/graphs").json()["graphs"][0]["archived"] is True
-    restored = client.delete(_api(WORKSPACE_A, f"/graphs/{graph_a_id}/archive"))
-    assert restored.status_code == 200, restored.text
-    assert restored.json()["archived"] is False
+            archived = workspace_a.graphs.archive_ok(
+                graph_a.id, headers=_csrf_headers(owner_a_issued)
+            )
+            assert archived.archived is True
+            assert api.graph_browser.list_ok().graphs[0].archived is True
+            restored = workspace_a.graphs.restore_ok(
+                graph_a.id, headers=_csrf_headers(owner_a_issued)
+            )
+            assert restored.archived is False
 
-    actor.as_user(BOTH_ID)
-    both_browser = client.get("/v1/me/graphs")
-    assert both_browser.status_code == 200, both_browser.text
-    assert {graph["id"] for graph in both_browser.json()["graphs"]} == {
-        str(graph_a_id),
-        str(graph_b_id),
-    }
+            api.authenticate(both_issued)
+            both_browser = api.graph_browser.list_ok()
+            assert {item.id for item in both_browser.graphs} == {
+                graph_a.id,
+                graph_b.id,
+            }
 
-    actor.as_user(OWNER_B_ID)
-    revoked = client.delete(_api(WORKSPACE_B, f"/members/{BOTH_ID}"))
-    assert revoked.status_code == 204, revoked.text
-    actor.as_user(BOTH_ID)
-    after_revocation = client.get("/v1/me/graphs")
-    assert after_revocation.status_code == 200, after_revocation.text
-    assert [graph["id"] for graph in after_revocation.json()["graphs"]] == [
-        str(graph_a_id)
-    ]
+            api.authenticate(owner_b_issued)
+            revoked = workspace_b.remove_member(
+                matrix.both.id,
+                headers=_csrf_headers(owner_b_issued),
+            )
+            assert revoked.status_code == 204
+            api.authenticate(both_issued)
+            after_revocation = api.graph_browser.list_ok()
+            assert [item.id for item in after_revocation.graphs] == [graph_a.id]
 
 
-def test_folder_assignment_cannot_cross_workspace_and_delete_unfiles_graphs(
-    authz_client: tuple[TestClient, ActorSwitcher, UUID],
+async def test_folder_assignment_cannot_cross_workspace_and_delete_unfiles_graphs(
+    tmp_path: Path, settings: Settings
 ) -> None:
-    client, actor, _ = authz_client
-    graph_a_id, _ = _create_graph(
-        client,
-        actor,
-        workspace_id=WORKSPACE_A,
-        user_id=OWNER_A_ID,
-        name="Folder boundary",
-    )
+    database_url = create_db_url(tmp_path, "workspace-authz-folders.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={
+                "database_url": SecretStr(database_url),
+                "workspace": tmp_path / "workbench",
+            }
+        )
+        matrix = await _seed_authorization_matrix(database)
+        auth = _auth_service(app_settings, database)
+        owner_a_issued = await auth.issue_session(matrix.owner_a.id)
+        owner_b_issued = await auth.issue_session(matrix.owner_b.id)
 
-    actor.as_user(OWNER_B_ID)
-    foreign_folder = client.post(
-        _api(WORKSPACE_B, "/graph-folders"),
-        json=GraphFolderWriteRequest(name="Foreign").model_dump(mode="json"),
-    )
-    assert foreign_folder.status_code == 201, foreign_folder.text
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(owner_a_issued)
+            workspace_a = api.workspace(matrix.workspace_a.id)
+            graph_a = workspace_a.graphs.create_ok(
+                CreateSavedGraphRequest(name="Folder boundary"),
+                headers=_csrf_headers(owner_a_issued),
+            )
 
-    actor.as_user(OWNER_A_ID)
-    rejected = client.put(
-        _api(WORKSPACE_A, f"/graphs/{graph_a_id}/folder"),
-        json=AssignGraphFolderRequest(
-            folder_id=UUID(foreign_folder.json()["id"])
-        ).model_dump(mode="json"),
-    )
-    _assert_not_found(rejected, context="cross-workspace folder assignment")
+            api.authenticate(owner_b_issued)
+            foreign_folder = api.workspace(
+                matrix.workspace_b.id
+            ).graph_folders.create_ok(
+                GraphFolderWriteRequest(name="Foreign"),
+                headers=_csrf_headers(owner_b_issued),
+            )
 
-    own_folder = client.post(
-        _api(WORKSPACE_A, "/graph-folders"),
-        json=GraphFolderWriteRequest(name="Temporary").model_dump(mode="json"),
-    )
-    assert own_folder.status_code == 201, own_folder.text
-    own_folder_id = own_folder.json()["id"]
-    renamed = client.patch(
-        _api(WORKSPACE_A, f"/graph-folders/{own_folder_id}"),
-        json=GraphFolderWriteRequest(name="  Renamed  ").model_dump(mode="json"),
-    )
-    assert renamed.status_code == 200, renamed.text
-    assert renamed.json()["name"] == "Renamed"
-    listed_folders = client.get(_api(WORKSPACE_A, "/graph-folders"))
-    assert listed_folders.status_code == 200, listed_folders.text
-    assert listed_folders.json()["folders"] == [renamed.json()]
-    duplicate = client.post(
-        _api(WORKSPACE_A, "/graph-folders"),
-        json=GraphFolderWriteRequest(name="Renamed").model_dump(mode="json"),
-    )
-    assert duplicate.status_code == 409, duplicate.text
-    assert (
-        client.put(
-            _api(WORKSPACE_A, f"/graphs/{graph_a_id}/folder"),
-            json=AssignGraphFolderRequest(folder_id=UUID(own_folder_id)).model_dump(
-                mode="json"
-            ),
-        ).status_code
-        == 200
-    )
-    unfiled = client.put(
-        _api(WORKSPACE_A, f"/graphs/{graph_a_id}/folder"),
-        json=AssignGraphFolderRequest(folder_id=None).model_dump(mode="json"),
-    )
-    assert unfiled.status_code == 200, unfiled.text
-    assert unfiled.json()["folder_id"] is None
-    assert (
-        client.put(
-            _api(WORKSPACE_A, f"/graphs/{graph_a_id}/folder"),
-            json=AssignGraphFolderRequest(folder_id=UUID(own_folder_id)).model_dump(
-                mode="json"
-            ),
-        ).status_code
-        == 200
-    )
+            api.authenticate(owner_a_issued)
+            rejected = workspace_a.graphs.assign_folder(
+                graph_a.id,
+                AssignGraphFolderRequest(folder_id=foreign_folder.id),
+                headers=_csrf_headers(owner_a_issued),
+            )
+            _assert_not_found(rejected, context="cross-workspace folder assignment")
 
-    deleted = client.delete(_api(WORKSPACE_A, f"/graph-folders/{own_folder_id}"))
-    assert deleted.status_code == 204, deleted.text
-    row = client.get("/v1/me/graphs").json()["graphs"][0]
-    assert row["id"] == str(graph_a_id)
-    assert row["folder"] is None
+            own_folder = workspace_a.graph_folders.create_ok(
+                GraphFolderWriteRequest(name="Temporary"),
+                headers=_csrf_headers(owner_a_issued),
+            )
+            renamed = workspace_a.graph_folders.rename_ok(
+                own_folder.id,
+                GraphFolderWriteRequest(name="  Renamed  "),
+                headers=_csrf_headers(owner_a_issued),
+            )
+            listed = workspace_a.graph_folders.list_ok()
+            duplicate = workspace_a.graph_folders.create(
+                GraphFolderWriteRequest(name="Renamed"),
+                headers=_csrf_headers(owner_a_issued),
+            )
+            assert renamed.name == "Renamed"
+            assert listed.folders == [renamed]
+            assert duplicate.status_code == 409
+            assigned = workspace_a.graphs.assign_folder_ok(
+                graph_a.id,
+                AssignGraphFolderRequest(folder_id=own_folder.id),
+                headers=_csrf_headers(owner_a_issued),
+            )
+            assert assigned.folder_id == own_folder.id
+            unfiled = workspace_a.graphs.assign_folder_ok(
+                graph_a.id,
+                AssignGraphFolderRequest(folder_id=None),
+                headers=_csrf_headers(owner_a_issued),
+            )
+            assert unfiled.folder_id is None
+            reassigned = workspace_a.graphs.assign_folder(
+                graph_a.id,
+                AssignGraphFolderRequest(folder_id=own_folder.id),
+                headers=_csrf_headers(owner_a_issued),
+            )
+            assert reassigned.status_code == 200
+
+            deleted = workspace_a.graph_folders.delete(
+                own_folder.id,
+                headers=_csrf_headers(owner_a_issued),
+            )
+            row = api.graph_browser.list_ok().graphs[0]
+            assert deleted.status_code == 204
+            assert row.id == graph_a.id
+            assert row.folder is None
 
 
-def test_non_member_cannot_read_or_write_other_workspace_by_uuid(
-    authz_client: tuple[TestClient, ActorSwitcher, UUID],
+async def test_non_member_cannot_read_or_write_other_workspace_by_uuid(
+    tmp_path: Path, settings: Settings
 ) -> None:
-    client, actor, artifact_id = authz_client
-    graph_id, revision = _create_graph(
-        client,
-        actor,
-        workspace_id=WORKSPACE_B,
-        user_id=OWNER_B_ID,
-        name="B private graph",
-    )
-    execution_id = _start_execution(client, actor, OWNER_B_ID, WORKSPACE_B)
+    database_url = create_db_url(tmp_path, "workspace-authz-idor.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={
+                "database_url": SecretStr(database_url),
+                "workspace": tmp_path / "workbench",
+            }
+        )
+        matrix = await _seed_authorization_matrix(database)
+        auth = _auth_service(app_settings, database)
+        owner_a_issued = await auth.issue_session(matrix.owner_a.id)
+        owner_b_issued = await auth.issue_session(matrix.owner_b.id)
 
-    actor.as_user(OWNER_A_ID)
-    _assert_not_found(client.get(_api(WORKSPACE_B, "/nodes")), context="nodes")
-    _assert_not_found(client.get(_api(WORKSPACE_B, "/graphs")), context="list graphs")
-    _assert_not_found(
-        client.get(_api(WORKSPACE_B, f"/graphs/{graph_id}")),
-        context="get graph",
-    )
-    _assert_not_found(
-        client.post(_api(WORKSPACE_B, "/graphs"), json=_empty_graph_payload()),
-        context="create graph",
-    )
-    _assert_not_found(
-        client.put(
-            _api(WORKSPACE_B, f"/graphs/{graph_id}"),
-            json=_empty_graph_payload(expected_revision=revision),
-        ),
-        context="update graph",
-    )
-    _assert_not_found(
-        client.delete(
-            _api(WORKSPACE_B, f"/graphs/{graph_id}"),
-            params={"expected_revision": revision},
-        ),
-        context="delete graph",
-    )
-    _assert_not_found(
-        client.get(_api(WORKSPACE_B, f"/graphs/{graph_id}/node-secrets")),
-        context="list secrets",
-    )
-    _assert_not_found(
-        client.put(
-            _api(WORKSPACE_B, f"/graphs/{graph_id}/nodes/llm/secrets/api_key"),
-            # Raw: a SecretStr value would be redacted by model_dump(mode="json").
-            json={"value": "secret", "expected_graph_revision": revision},
-        ),
-        context="put secret",
-    )
-    _assert_not_found(
-        client.post(
-            _api(WORKSPACE_B, "/runs"),
-            json=RunRequest(nodes=[], edges=[]).model_dump(mode="json"),
-        ),
-        context="run",
-    )
-    _assert_not_found(
-        client.post(
-            _api(WORKSPACE_B, "/executions"),
-            json=RunRequest(nodes=[], edges=[]).model_dump(mode="json"),
-        ),
-        context="start execution",
-    )
-    _assert_not_found(
-        client.get(_api(WORKSPACE_B, f"/executions/{execution_id}")),
-        context="get execution",
-    )
-    _assert_not_found(
-        client.get(_api(WORKSPACE_B, f"/executions/{execution_id}/events")),
-        context="sse",
-    )
-    _assert_not_found(
-        client.delete(_api(WORKSPACE_B, f"/executions/{execution_id}")),
-        context="cancel execution",
-    )
-    _assert_not_found(
-        client.get(
-            _api(WORKSPACE_B, f"/graphs/{graph_id}/materializations"),
-            params={"graph_revision": revision},
-        ),
-        context="materializations",
-    )
-    _assert_not_found(
-        client.get(_api(WORKSPACE_B, f"/graphs/{graph_id}/executions")),
-        context="history",
-    )
-    _assert_not_found(
-        client.get(_api(WORKSPACE_B, f"/artifacts/{artifact_id}/content")),
-        context="artifact content",
-    )
-    _assert_not_found(
-        client.post(
-            _api(WORKSPACE_B, "/uploads"),
-            files={"file": ("sample.png", BytesIO(b"\x89PNG\r\n\x1a\n"), "image/png")},
-        ),
-        context="upload",
-    )
-    _assert_not_found(
-        client.post(
-            _api(WORKSPACE_B, "/samples"),
-            json=SampleRequest(count=1).model_dump(mode="json"),
-        ),
-        context="samples",
-    )
-    _assert_not_found(client.get(_api(WORKSPACE_B, "/members")), context="list members")
-    _assert_not_found(
-        client.post(
-            _api(WORKSPACE_B, "/members"),
-            json=WorkspaceMemberRequest(
-                user_id=VIEWER_A_ID,
-                role=WorkspaceRole.VIEWER,
-            ).model_dump(mode="json"),
-        ),
-        context="add member",
-    )
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(owner_b_issued)
+            workspace_b = api.workspace(matrix.workspace_b.id)
+            graph_b = workspace_b.graphs.create_ok(
+                CreateSavedGraphRequest(name="B private graph"),
+                headers=_csrf_headers(owner_b_issued),
+            )
+            execution_b = workspace_b.executions.start_execution_ok(
+                RunRequest(nodes=[], edges=[]),
+                headers=_csrf_headers(owner_b_issued),
+            )
+
+            api.authenticate(owner_a_issued)
+            _assert_not_found(workspace_b.catalog.list_nodes(), context="nodes")
+            _assert_not_found(workspace_b.graphs.list(), context="list graphs")
+            _assert_not_found(
+                workspace_b.graphs.get(graph_b.id), context="get graph"
+            )
+            _assert_not_found(
+                workspace_b.graphs.create(
+                    CreateSavedGraphRequest(name="Authz graph"),
+                    headers=_csrf_headers(owner_a_issued),
+                ),
+                context="create graph",
+            )
+            _assert_not_found(
+                workspace_b.graphs.update(
+                    graph_b.id,
+                    UpdateSavedGraphRequest(
+                        name="Authz graph",
+                        expected_revision=graph_b.revision,
+                    ),
+                    headers=_csrf_headers(owner_a_issued),
+                ),
+                context="update graph",
+            )
+            _assert_not_found(
+                workspace_b.graphs.delete(
+                    graph_b.id,
+                    expected_revision=graph_b.revision,
+                    headers=_csrf_headers(owner_a_issued),
+                ),
+                context="delete graph",
+            )
+            _assert_not_found(
+                workspace_b.node_secrets.list_secrets(graph_b.id),
+                context="list secrets",
+            )
+            _assert_not_found(
+                workspace_b.node_secrets.configure_secret(
+                    graph_b.id,
+                    "llm",
+                    "api_key",
+                    ConfigureNodeSecretRequest(
+                        value=SecretStr("secret"),
+                        expected_graph_revision=graph_b.revision,
+                    ),
+                    headers=_csrf_headers(owner_a_issued),
+                ),
+                context="put secret",
+            )
+            _assert_not_found(
+                workspace_b.executions.run(
+                    RunRequest(nodes=[], edges=[]),
+                    headers=_csrf_headers(owner_a_issued),
+                ),
+                context="run",
+            )
+            _assert_not_found(
+                workspace_b.executions.start_execution(
+                    RunRequest(nodes=[], edges=[]),
+                    headers=_csrf_headers(owner_a_issued),
+                ),
+                context="start execution",
+            )
+            _assert_not_found(
+                workspace_b.executions.get_execution(execution_b.execution_id),
+                context="get execution",
+            )
+            _assert_not_found(
+                workspace_b.executions.stream_execution_events(
+                    execution_b.execution_id
+                ),
+                context="sse",
+            )
+            _assert_not_found(
+                workspace_b.executions.cancel_execution(
+                    execution_b.execution_id,
+                    headers=_csrf_headers(owner_a_issued),
+                ),
+                context="cancel execution",
+            )
+            _assert_not_found(
+                workspace_b.executions.list_materializations(
+                    graph_b.id,
+                    graph_revision=graph_b.revision,
+                ),
+                context="materializations",
+            )
+            _assert_not_found(
+                workspace_b.executions.list_graph_executions(graph_b.id),
+                context="history",
+            )
+            _assert_not_found(
+                workspace_b.artifacts.content(matrix.artifact_id),
+                context="artifact content",
+            )
+            _assert_not_found(
+                workspace_b.uploads.upload(
+                    "sample.png",
+                    b"\x89PNG\r\n\x1a\n",
+                    content_type="image/png",
+                    headers=_csrf_headers(owner_a_issued),
+                ),
+                context="upload",
+            )
+            _assert_not_found(
+                workspace_b.uploads.create_samples(
+                    SampleRequest(count=1),
+                    headers=_csrf_headers(owner_a_issued),
+                ),
+                context="samples",
+            )
+            _assert_not_found(workspace_b.list_members(), context="list members")
+            _assert_not_found(
+                workspace_b.add_member(
+                    WorkspaceMemberRequest(
+                        user_id=matrix.viewer_a.id,
+                        role=WorkspaceRole.VIEWER,
+                    ),
+                    headers=_csrf_headers(owner_a_issued),
+                ),
+                context="add member",
+            )
 
 
-def test_viewer_can_read_but_cannot_mutate_execute_or_manage_secrets(
-    authz_client: tuple[TestClient, ActorSwitcher, UUID],
+async def test_viewer_can_read_but_cannot_mutate_execute_or_manage_secrets(
+    tmp_path: Path, settings: Settings
 ) -> None:
-    client, actor, artifact_id = authz_client
-    graph_id, revision = _create_graph(
-        client,
-        actor,
-        workspace_id=WORKSPACE_A,
-        user_id=OWNER_A_ID,
-        name="Shared readable graph",
-    )
-    execution_id = _start_execution(client, actor, EDITOR_A_ID, WORKSPACE_A)
+    database_url = create_db_url(tmp_path, "workspace-authz-viewer.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={
+                "database_url": SecretStr(database_url),
+                "workspace": tmp_path / "workbench",
+            }
+        )
+        matrix = await _seed_authorization_matrix(database)
+        auth = _auth_service(app_settings, database)
+        owner_a_issued = await auth.issue_session(matrix.owner_a.id)
+        editor_a_issued = await auth.issue_session(matrix.editor_a.id)
+        viewer_a_issued = await auth.issue_session(matrix.viewer_a.id)
 
-    actor.as_user(VIEWER_A_ID)
-    assert client.get(_api(WORKSPACE_A, "/nodes")).status_code == 200
-    assert client.get(_api(WORKSPACE_A, "/graphs")).status_code == 200
-    assert client.get(_api(WORKSPACE_A, f"/graphs/{graph_id}")).status_code == 200
-    assert (
-        client.get(_api(WORKSPACE_A, f"/graphs/{graph_id}/node-secrets")).status_code
-        == 200
-    )
-    assert (
-        client.get(_api(WORKSPACE_A, f"/artifacts/{artifact_id}/content")).status_code
-        == 200
-    )
-    assert (
-        client.get(_api(WORKSPACE_A, f"/executions/{execution_id}")).status_code == 200
-    )
-    assert (
-        client.get(
-            _api(WORKSPACE_A, f"/graphs/{graph_id}/materializations"),
-            params={"graph_revision": revision},
-        ).status_code
-        == 200
-    )
-    assert (
-        client.get(_api(WORKSPACE_A, f"/graphs/{graph_id}/executions")).status_code
-        == 200
-    )
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(owner_a_issued)
+            workspace_a = api.workspace(matrix.workspace_a.id)
+            graph_a = workspace_a.graphs.create_ok(
+                CreateSavedGraphRequest(name="Shared readable graph"),
+                headers=_csrf_headers(owner_a_issued),
+            )
+            api.authenticate(editor_a_issued)
+            execution = workspace_a.executions.start_execution_ok(
+                RunRequest(nodes=[], edges=[]),
+                headers=_csrf_headers(editor_a_issued),
+            )
 
-    _assert_forbidden(
-        client.post(_api(WORKSPACE_A, "/graphs"), json=_empty_graph_payload("viewer")),
-        context="viewer create graph",
-    )
-    _assert_forbidden(
-        client.put(
-            _api(WORKSPACE_A, f"/graphs/{graph_id}"),
-            json=_empty_graph_payload("viewer edit", expected_revision=revision),
-        ),
-        context="viewer update graph",
-    )
-    _assert_forbidden(
-        client.delete(
-            _api(WORKSPACE_A, f"/graphs/{graph_id}"),
-            params={"expected_revision": revision},
-        ),
-        context="viewer delete graph",
-    )
-    _assert_forbidden(
-        client.put(
-            _api(WORKSPACE_A, f"/graphs/{graph_id}/nodes/llm/secrets/api_key"),
-            # Raw: a SecretStr value would be redacted by model_dump(mode="json").
-            json={"value": "secret", "expected_graph_revision": revision},
-        ),
-        context="viewer put secret",
-    )
-    _assert_forbidden(
-        client.delete(
-            _api(WORKSPACE_A, f"/graphs/{graph_id}/nodes/llm/secrets/api_key"),
-            params={"expected_graph_revision": revision},
-        ),
-        context="viewer delete secret",
-    )
-    _assert_forbidden(
-        client.post(
-            _api(WORKSPACE_A, "/runs"),
-            json=RunRequest(nodes=[], edges=[]).model_dump(mode="json"),
-        ),
-        context="viewer run",
-    )
-    _assert_forbidden(
-        client.post(
-            _api(WORKSPACE_A, "/executions"),
-            json=RunRequest(nodes=[], edges=[]).model_dump(mode="json"),
-        ),
-        context="viewer start execution",
-    )
-    _assert_forbidden(
-        client.delete(_api(WORKSPACE_A, f"/executions/{execution_id}")),
-        context="viewer cancel",
-    )
-    _assert_forbidden(
-        client.post(
-            _api(WORKSPACE_A, "/uploads"),
-            files={"file": ("sample.png", BytesIO(b"\x89PNG\r\n\x1a\n"), "image/png")},
-        ),
-        context="viewer upload",
-    )
-    _assert_forbidden(
-        client.post(
-            _api(WORKSPACE_A, "/samples"),
-            json=SampleRequest(count=1).model_dump(mode="json"),
-        ),
-        context="viewer samples",
-    )
-    _assert_forbidden(
-        client.post(
-            _api(WORKSPACE_A, "/members"),
-            json=WorkspaceMemberRequest(
-                user_id=OWNER_B_ID,
-                role=WorkspaceRole.VIEWER,
-            ).model_dump(mode="json"),
-        ),
-        context="viewer add member",
-    )
+            api.authenticate(viewer_a_issued)
+            assert workspace_a.catalog.list_nodes().status_code == 200
+            assert workspace_a.graphs.list().status_code == 200
+            assert workspace_a.graphs.get(graph_a.id).status_code == 200
+            assert workspace_a.node_secrets.list_secrets(graph_a.id).status_code == 200
+            assert workspace_a.artifacts.content(matrix.artifact_id).status_code == 200
+            assert (
+                workspace_a.executions.get_execution(execution.execution_id).status_code
+                == 200
+            )
+            assert (
+                workspace_a.executions.list_materializations(
+                    graph_a.id,
+                    graph_revision=graph_a.revision,
+                ).status_code
+                == 200
+            )
+            assert (
+                workspace_a.executions.list_graph_executions(graph_a.id).status_code
+                == 200
+            )
+
+            _assert_forbidden(
+                workspace_a.graphs.create(
+                    CreateSavedGraphRequest(name="viewer"),
+                    headers=_csrf_headers(viewer_a_issued),
+                ),
+                context="viewer create graph",
+            )
+            _assert_forbidden(
+                workspace_a.graphs.update(
+                    graph_a.id,
+                    UpdateSavedGraphRequest(
+                        name="viewer edit",
+                        expected_revision=graph_a.revision,
+                    ),
+                    headers=_csrf_headers(viewer_a_issued),
+                ),
+                context="viewer update graph",
+            )
+            _assert_forbidden(
+                workspace_a.graphs.delete(
+                    graph_a.id,
+                    expected_revision=graph_a.revision,
+                    headers=_csrf_headers(viewer_a_issued),
+                ),
+                context="viewer delete graph",
+            )
+            _assert_forbidden(
+                workspace_a.node_secrets.configure_secret(
+                    graph_a.id,
+                    "llm",
+                    "api_key",
+                    ConfigureNodeSecretRequest(
+                        value=SecretStr("secret"),
+                        expected_graph_revision=graph_a.revision,
+                    ),
+                    headers=_csrf_headers(viewer_a_issued),
+                ),
+                context="viewer put secret",
+            )
+            _assert_forbidden(
+                workspace_a.node_secrets.remove_secret(
+                    graph_a.id,
+                    "llm",
+                    "api_key",
+                    graph_a.revision,
+                    headers=_csrf_headers(viewer_a_issued),
+                ),
+                context="viewer delete secret",
+            )
+            _assert_forbidden(
+                workspace_a.executions.run(
+                    RunRequest(nodes=[], edges=[]),
+                    headers=_csrf_headers(viewer_a_issued),
+                ),
+                context="viewer run",
+            )
+            _assert_forbidden(
+                workspace_a.executions.start_execution(
+                    RunRequest(nodes=[], edges=[]),
+                    headers=_csrf_headers(viewer_a_issued),
+                ),
+                context="viewer start execution",
+            )
+            _assert_forbidden(
+                workspace_a.executions.cancel_execution(
+                    execution.execution_id,
+                    headers=_csrf_headers(viewer_a_issued),
+                ),
+                context="viewer cancel",
+            )
+            _assert_forbidden(
+                workspace_a.uploads.upload(
+                    "sample.png",
+                    b"\x89PNG\r\n\x1a\n",
+                    content_type="image/png",
+                    headers=_csrf_headers(viewer_a_issued),
+                ),
+                context="viewer upload",
+            )
+            _assert_forbidden(
+                workspace_a.uploads.create_samples(
+                    SampleRequest(count=1),
+                    headers=_csrf_headers(viewer_a_issued),
+                ),
+                context="viewer samples",
+            )
+            _assert_forbidden(
+                workspace_a.add_member(
+                    WorkspaceMemberRequest(
+                        user_id=matrix.owner_b.id,
+                        role=WorkspaceRole.VIEWER,
+                    ),
+                    headers=_csrf_headers(viewer_a_issued),
+                ),
+                context="viewer add member",
+            )
 
 
-def test_editor_can_edit_and_execute_but_not_manage_secrets_delete_or_members(
-    authz_client: tuple[TestClient, ActorSwitcher, UUID],
+async def test_editor_can_edit_and_execute_but_not_manage_secrets_delete_or_members(
+    tmp_path: Path, settings: Settings
 ) -> None:
-    client, actor, _artifact_id = authz_client
-    graph_id, revision = _create_graph(
-        client,
-        actor,
-        workspace_id=WORKSPACE_A,
-        user_id=EDITOR_A_ID,
-        name="Editor draft",
-    )
+    database_url = create_db_url(tmp_path, "workspace-authz-editor.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={
+                "database_url": SecretStr(database_url),
+                "workspace": tmp_path / "workbench",
+            }
+        )
+        matrix = await _seed_authorization_matrix(database)
+        auth = _auth_service(app_settings, database)
+        editor_a_issued = await auth.issue_session(matrix.editor_a.id)
 
-    actor.as_user(EDITOR_A_ID)
-    update = client.put(
-        _api(WORKSPACE_A, f"/graphs/{graph_id}"),
-        json=_empty_graph_payload("Editor updated", expected_revision=revision),
-    )
-    assert update.status_code == 200
-    revision = int(update.json()["revision"])
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(editor_a_issued)
+            workspace_a = api.workspace(matrix.workspace_a.id)
+            graph_a = workspace_a.graphs.create_ok(
+                CreateSavedGraphRequest(name="Editor draft"),
+                headers=_csrf_headers(editor_a_issued),
+            )
+            updated = workspace_a.graphs.update_ok(
+                graph_a.id,
+                UpdateSavedGraphRequest(
+                    name="Editor updated",
+                    expected_revision=graph_a.revision,
+                ),
+                headers=_csrf_headers(editor_a_issued),
+            )
+            revision = updated.revision
 
-    run = client.post(
-        _api(WORKSPACE_A, "/runs"),
-        json=RunRequest(nodes=[], edges=[]).model_dump(mode="json"),
-    )
-    assert run.status_code == 200
-    execution = client.post(
-        _api(WORKSPACE_A, "/executions"),
-        json=RunRequest(nodes=[], edges=[]).model_dump(mode="json"),
-    )
-    assert execution.status_code == 202
-    execution_id = UUID(execution.json()["execution_id"])
-    assert (
-        client.get(_api(WORKSPACE_A, f"/executions/{execution_id}")).status_code == 200
-    )
-    with client.stream(
-        "GET", _api(WORKSPACE_A, f"/executions/{execution_id}/events")
-    ) as events:
-        assert events.status_code == 200
-        assert "text/event-stream" in events.headers["content-type"]
-        # Drain a bounded prefix so the stream can finish without hanging the suite.
-        body = events.read()
-        assert body  # at least one lifecycle frame for the empty graph run
+            run = workspace_a.executions.run(
+                RunRequest(nodes=[], edges=[]),
+                headers=_csrf_headers(editor_a_issued),
+            )
+            execution = workspace_a.executions.start_execution_ok(
+                RunRequest(nodes=[], edges=[]),
+                headers=_csrf_headers(editor_a_issued),
+            )
+            events = workspace_a.executions.stream_execution_events(
+                execution.execution_id
+            )
+            upload = workspace_a.uploads.upload(
+                "sample.png",
+                b"\x89PNG\r\n\x1a\n",
+                content_type="image/png",
+                headers=_csrf_headers(editor_a_issued),
+            )
 
-    upload = client.post(
-        _api(WORKSPACE_A, "/uploads"),
-        files={"file": ("sample.png", BytesIO(b"\x89PNG\r\n\x1a\n"), "image/png")},
-    )
-    assert upload.status_code == 200
+            assert run.status_code == 200
+            assert (
+                workspace_a.executions.get_execution(execution.execution_id).status_code
+                == 200
+            )
+            assert events.status_code == 200
+            assert "text/event-stream" in events.headers["content-type"]
+            assert events.text  # at least one lifecycle frame for the empty graph run
+            assert upload.status_code == 200
 
-    _assert_forbidden(
-        client.put(
-            _api(WORKSPACE_A, f"/graphs/{graph_id}/nodes/llm/secrets/api_key"),
-            # Raw: a SecretStr value would be redacted by model_dump(mode="json").
-            json={"value": "secret", "expected_graph_revision": revision},
-        ),
-        context="editor put secret",
-    )
-    _assert_forbidden(
-        client.delete(
-            _api(WORKSPACE_A, f"/graphs/{graph_id}/nodes/llm/secrets/api_key"),
-            params={"expected_graph_revision": revision},
-        ),
-        context="editor delete secret",
-    )
-    _assert_forbidden(
-        client.delete(
-            _api(WORKSPACE_A, f"/graphs/{graph_id}"),
-            params={"expected_revision": revision},
-        ),
-        context="editor delete graph",
-    )
-    _assert_forbidden(
-        client.get(_api(WORKSPACE_A, "/members")),
-        context="editor list members",
-    )
-    _assert_forbidden(
-        client.post(
-            _api(WORKSPACE_A, "/members"),
-            json=WorkspaceMemberRequest(
-                user_id=OWNER_B_ID,
-                role=WorkspaceRole.VIEWER,
-            ).model_dump(mode="json"),
-        ),
-        context="editor add member",
-    )
+            _assert_forbidden(
+                workspace_a.node_secrets.configure_secret(
+                    graph_a.id,
+                    "llm",
+                    "api_key",
+                    ConfigureNodeSecretRequest(
+                        value=SecretStr("secret"),
+                        expected_graph_revision=revision,
+                    ),
+                    headers=_csrf_headers(editor_a_issued),
+                ),
+                context="editor put secret",
+            )
+            _assert_forbidden(
+                workspace_a.node_secrets.remove_secret(
+                    graph_a.id,
+                    "llm",
+                    "api_key",
+                    revision,
+                    headers=_csrf_headers(editor_a_issued),
+                ),
+                context="editor delete secret",
+            )
+            _assert_forbidden(
+                workspace_a.graphs.delete(
+                    graph_a.id,
+                    expected_revision=revision,
+                    headers=_csrf_headers(editor_a_issued),
+                ),
+                context="editor delete graph",
+            )
+            _assert_forbidden(
+                workspace_a.list_members(),
+                context="editor list members",
+            )
+            _assert_forbidden(
+                workspace_a.add_member(
+                    WorkspaceMemberRequest(
+                        user_id=matrix.owner_b.id,
+                        role=WorkspaceRole.VIEWER,
+                    ),
+                    headers=_csrf_headers(editor_a_issued),
+                ),
+                context="editor add member",
+            )
 
 
-def test_owner_can_manage_secrets_delete_graph_and_members(
-    authz_client: tuple[TestClient, ActorSwitcher, UUID],
+async def test_owner_can_manage_secrets_delete_graph_and_members(
+    tmp_path: Path, settings: Settings
 ) -> None:
-    client, actor, _artifact_id = authz_client
-    graph_id, revision = _create_graph(
-        client,
-        actor,
-        workspace_id=WORKSPACE_A,
-        user_id=OWNER_A_ID,
-        name="Owner managed graph",
-    )
+    database_url = create_db_url(tmp_path, "workspace-authz-owner.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={
+                "database_url": SecretStr(database_url),
+                "workspace": tmp_path / "workbench",
+            }
+        )
+        matrix = await _seed_authorization_matrix(database)
+        auth = _auth_service(app_settings, database)
+        owner_a_issued = await auth.issue_session(matrix.owner_a.id)
 
-    actor.as_user(OWNER_A_ID)
-    # Capability gate is before resource lookup: owner clears MANAGE_SECRETS
-    # (404 for undeclared secret) while editor/viewer receive 403 above.
-    secret_put = client.put(
-        _api(WORKSPACE_A, f"/graphs/{graph_id}/nodes/missing/secrets/api_key"),
-        # Raw: a SecretStr value would be redacted by model_dump(mode="json").
-        json={"value": "secret", "expected_graph_revision": revision},
-    )
-    assert secret_put.status_code == 404
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(owner_a_issued)
+            workspace_a = api.workspace(matrix.workspace_a.id)
+            graph_a = workspace_a.graphs.create_ok(
+                CreateSavedGraphRequest(name="Owner managed graph"),
+                headers=_csrf_headers(owner_a_issued),
+            )
 
-    members = client.get(_api(WORKSPACE_A, "/members"))
-    assert members.status_code == 200
-    member_ids = {UUID(item["user"]["id"]) for item in members.json()}
-    assert OWNER_A_ID in member_ids
-    assert VIEWER_A_ID in member_ids
-    assert EDITOR_A_ID in member_ids
+            # Capability gate is before resource lookup: owner clears MANAGE_SECRETS
+            # (404 for undeclared secret) while editor/viewer receive 403 above.
+            secret_put = workspace_a.node_secrets.configure_secret(
+                graph_a.id,
+                "missing",
+                "api_key",
+                ConfigureNodeSecretRequest(
+                    value=SecretStr("secret"),
+                    expected_graph_revision=graph_a.revision,
+                ),
+                headers=_csrf_headers(owner_a_issued),
+            )
+            assert secret_put.status_code == 404
 
-    deleted = client.delete(
-        _api(WORKSPACE_A, f"/graphs/{graph_id}"),
-        params={"expected_revision": revision},
-    )
-    assert deleted.status_code == 204
-    assert client.get(_api(WORKSPACE_A, f"/graphs/{graph_id}")).status_code == 404
+            members = workspace_a.list_members_ok()
+            member_ids = {member.user.id for member in members}
+            deleted = workspace_a.graphs.delete(
+                graph_a.id,
+                expected_revision=graph_a.revision,
+                headers=_csrf_headers(owner_a_issued),
+            )
+
+            assert matrix.owner_a.id in member_ids
+            assert matrix.viewer_a.id in member_ids
+            assert matrix.editor_a.id in member_ids
+            assert deleted.status_code == 204
+            assert workspace_a.graphs.get(graph_a.id).status_code == 404
 
 
-def test_cross_workspace_resource_ids_do_not_authorize_via_wrong_path(
-    authz_client: tuple[TestClient, ActorSwitcher, UUID],
+async def test_cross_workspace_resource_ids_do_not_authorize_via_wrong_path(
+    tmp_path: Path, settings: Settings
 ) -> None:
-    client, actor, artifact_id = authz_client
-    graph_a, revision_a = _create_graph(
-        client,
-        actor,
-        workspace_id=WORKSPACE_A,
-        user_id=OWNER_A_ID,
-        name="Graph in A",
-    )
-    graph_b, revision_b = _create_graph(
-        client,
-        actor,
-        workspace_id=WORKSPACE_B,
-        user_id=OWNER_B_ID,
-        name="Graph in B",
-    )
-    execution_a = _start_execution(client, actor, OWNER_A_ID, WORKSPACE_A)
+    database_url = create_db_url(tmp_path, "workspace-authz-cross-path.sqlite3")
+    async with db(database_url) as database:
+        app_settings = settings.model_copy(
+            update={
+                "database_url": SecretStr(database_url),
+                "workspace": tmp_path / "workbench",
+            }
+        )
+        matrix = await _seed_authorization_matrix(database)
+        auth = _auth_service(app_settings, database)
+        owner_a_issued = await auth.issue_session(matrix.owner_a.id)
+        owner_b_issued = await auth.issue_session(matrix.owner_b.id)
+        both_issued = await auth.issue_session(matrix.both.id)
 
-    # Member of both workspaces still cannot reach A resources under B's path.
-    actor.as_user(BOTH_ID)
-    assert client.get(_api(WORKSPACE_A, f"/graphs/{graph_a}")).status_code == 200
-    assert client.get(_api(WORKSPACE_B, f"/graphs/{graph_b}")).status_code == 200
+        with client_with_overrides(settings=app_settings) as client:
+            api = GrafyApi(client)
+            api.authenticate(owner_a_issued)
+            workspace_a = api.workspace(matrix.workspace_a.id)
+            graph_a = workspace_a.graphs.create_ok(
+                CreateSavedGraphRequest(name="Graph in A"),
+                headers=_csrf_headers(owner_a_issued),
+            )
+            execution_a = workspace_a.executions.start_execution_ok(
+                RunRequest(nodes=[], edges=[]),
+                headers=_csrf_headers(owner_a_issued),
+            )
+            api.authenticate(owner_b_issued)
+            workspace_b = api.workspace(matrix.workspace_b.id)
+            graph_b = workspace_b.graphs.create_ok(
+                CreateSavedGraphRequest(name="Graph in B"),
+                headers=_csrf_headers(owner_b_issued),
+            )
 
-    wrong_path_reads = (
-        _api(WORKSPACE_B, f"/graphs/{graph_a}"),
-        _api(WORKSPACE_A, f"/graphs/{graph_b}"),
-        _api(WORKSPACE_B, f"/graphs/{graph_a}/node-secrets"),
-        _api(WORKSPACE_B, f"/artifacts/{artifact_id}/content"),
-        _api(WORKSPACE_B, f"/executions/{execution_a}"),
-        _api(WORKSPACE_B, f"/executions/{execution_a}/events"),
-        _api(WORKSPACE_B, f"/graphs/{graph_a}/executions"),
-        _api(WORKSPACE_A, f"/graphs/{graph_b}/executions"),
-    )
-    for path in wrong_path_reads:
-        response = client.get(path)
-        assert response.status_code == 404, (path, response.status_code, response.text)
+            # Member of both workspaces still cannot reach A resources under B's path.
+            api.authenticate(both_issued)
+            assert workspace_a.graphs.get(graph_a.id).status_code == 200
+            assert workspace_b.graphs.get(graph_b.id).status_code == 200
 
-    assert (
-        client.get(
-            _api(WORKSPACE_B, f"/graphs/{graph_a}/materializations"),
-            params={"graph_revision": revision_a},
-        ).status_code
-        == 404
-    )
-    assert (
-        client.get(
-            _api(WORKSPACE_A, f"/graphs/{graph_b}/materializations"),
-            params={"graph_revision": revision_b},
-        ).status_code
-        == 404
-    )
+            wrong_path_reads = (
+                workspace_b.graphs.get(graph_a.id),
+                workspace_a.graphs.get(graph_b.id),
+                workspace_b.node_secrets.list_secrets(graph_a.id),
+                workspace_b.artifacts.content(matrix.artifact_id),
+                workspace_b.executions.get_execution(execution_a.execution_id),
+                workspace_b.executions.stream_execution_events(
+                    execution_a.execution_id
+                ),
+                workspace_b.executions.list_graph_executions(graph_a.id),
+                workspace_a.executions.list_graph_executions(graph_b.id),
+            )
+            for response in wrong_path_reads:
+                assert response.status_code == 404, (
+                    response.request.url,
+                    response.status_code,
+                    response.text,
+                )
 
-    wrong_secret = client.put(
-        _api(WORKSPACE_B, f"/graphs/{graph_a}/nodes/llm/secrets/api_key"),
-        # Raw: a SecretStr value would be redacted by model_dump(mode="json").
-        json={"value": "secret", "expected_graph_revision": revision_a},
-    )
-    assert wrong_secret.status_code == 404
+            wrong_materializations = (
+                workspace_b.executions.list_materializations(
+                    graph_a.id,
+                    graph_revision=graph_a.revision,
+                ),
+                workspace_a.executions.list_materializations(
+                    graph_b.id,
+                    graph_revision=graph_b.revision,
+                ),
+            )
+            for response in wrong_materializations:
+                assert response.status_code == 404
 
-    wrong_delete = client.delete(
-        _api(WORKSPACE_B, f"/graphs/{graph_a}"),
-        params={"expected_revision": revision_a},
-    )
-    assert wrong_delete.status_code == 404
+            wrong_secret = workspace_b.node_secrets.configure_secret(
+                graph_a.id,
+                "llm",
+                "api_key",
+                ConfigureNodeSecretRequest(
+                    value=SecretStr("secret"),
+                    expected_graph_revision=graph_a.revision,
+                ),
+                headers=_csrf_headers(both_issued),
+            )
+            wrong_delete = workspace_b.graphs.delete(
+                graph_a.id,
+                expected_revision=graph_a.revision,
+                headers=_csrf_headers(both_issued),
+            )
+            assert wrong_secret.status_code == 404
+            assert wrong_delete.status_code == 404
 
-    # Resource remains readable under its owning workspace path.
-    assert client.get(_api(WORKSPACE_A, f"/graphs/{graph_a}")).status_code == 200
-    assert (
-        client.get(_api(WORKSPACE_A, f"/artifacts/{artifact_id}/content")).status_code
-        == 200
-    )
+            # Resource remains readable under its owning workspace path.
+            assert workspace_a.graphs.get(graph_a.id).status_code == 200
+            assert workspace_a.artifacts.content(matrix.artifact_id).status_code == 200
