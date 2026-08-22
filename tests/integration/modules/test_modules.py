@@ -22,12 +22,6 @@ from grafy_core.artifacts import (
     NodeOutput,
 )
 from grafy_core.nodes import InPort, Node, NodeExecutionContext, OutPort
-from grafy_core.domain.identity import (
-    User,
-    Workspace,
-    WorkspaceMembership,
-    WorkspaceRole,
-)
 from grafy_core.operators.text import TEXT_VALUE
 from grafy_core.plugins import NodeSecretInput, Plugin
 from grafy_core.ports.node_secrets import NodeSecretResolverPort
@@ -62,7 +56,7 @@ from grafy_api.v1.routes.saved_graphs.models import (
 
 from tests.support.clients import GrafyApi
 from tests.support.workbench import workbench_dependency_overrides
-from tests.testkit import client_with_overrides, create_db_url, db
+from tests.testkit import client_with_overrides, create_db_url, db, seed_shared_workspace
 
 WORKSPACE = "00000000-0000-0000-0000-000000000007"
 
@@ -174,38 +168,15 @@ async def module_progress(
     return ModuleProgressOutput(text=inputs.text.replace("a", "A"))
 
 
-async def _create_schema(database_url: str) -> None:
-    async with db(database_url) as database:
-        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-            await unit_of_work.identity.add_user(
-                User(
-                    id=UUID(int=1),
-                    email="owner@example.test",
-                    display_name="Owner",
-                )
-            )
-            await unit_of_work.identity.add_workspace(
-                Workspace(
-                    id=UUID("00000000-0000-0000-0000-000000000007"),
-                    slug="local",
-                    name="Local workspace",
-                    kind="shared",
-                )
-            )
-            await unit_of_work.identity.add_membership(
-                WorkspaceMembership(
-                    workspace_id=UUID("00000000-0000-0000-0000-000000000007"),
-                    user_id=UUID(int=1),
-                    role=WorkspaceRole.OWNER,
-                )
-            )
-            await unit_of_work.commit()
-
-
 @pytest.fixture
 def module_client(tmp_path: Path) -> Iterator[TestClient]:
     database_url = create_db_url(tmp_path, "modules.sqlite3")
-    asyncio.run(_create_schema(database_url))
+
+    async def prepare() -> None:
+        async with db(database_url) as database:
+            await seed_shared_workspace(database)
+
+    asyncio.run(prepare())
     database = create_database(database_url)
     registry = build_plugin_registry(
         builtin_plugins(),

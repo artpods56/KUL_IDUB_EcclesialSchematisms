@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncGenerator
+from uuid import UUID
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -34,6 +35,7 @@ from grafy_persistence.database import Database, create_database
 from grafy_persistence.orm import metadata
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 from tests.support.factories.identity import IdentitySeeder
+from tests.support.identity import TEST_USER_ID, WORKSPACE_ID
 
 # ---------------------------------------------------------------------------
 # Public type aliases
@@ -186,6 +188,39 @@ async def seed(
     membership = await seeder.membership(
         user=user, workspace=workspace, role=WorkspaceRole.OWNER
     )
+    return user, workspace, membership
+
+
+async def seed_shared_workspace(
+    database: Database,
+    *,
+    user_id: UUID = TEST_USER_ID,
+    workspace_id: UUID = WORKSPACE_ID,
+) -> tuple[User, Workspace, WorkspaceMembership]:
+    """Seed the fixed-ID owner behind the built-in workbench clients.
+
+    ``TEST_USER_ID`` and ``WORKSPACE_ID`` are the identities the shared
+    browser-actor override and the workspace URL helpers assume; the
+    workspace is shared and therefore carries no personal owner.
+    """
+
+    user = User(id=user_id, email="owner@example.test", display_name="Owner")
+    workspace = Workspace(
+        id=workspace_id,
+        slug="local",
+        name="Local workspace",
+        kind="shared",
+    )
+    membership = WorkspaceMembership(
+        workspace_id=workspace_id,
+        user_id=user_id,
+        role=WorkspaceRole.OWNER,
+    )
+    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        await unit_of_work.identity.add_user(user)
+        await unit_of_work.identity.add_workspace(workspace)
+        await unit_of_work.identity.add_membership(membership)
+        await unit_of_work.commit()
     return user, workspace, membership
 
 

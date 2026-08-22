@@ -9,12 +9,6 @@ from pydantic import SecretStr
 from sqlalchemy import delete
 
 from grafy_core.artifacts import ArtifactObject, ArtifactRef, ArtifactRefSequence
-from grafy_core.domain.identity import (
-    Workspace,
-    User,
-    WorkspaceMembership,
-    WorkspaceRole,
-)
 from grafy_core.domain.materialized_outputs import MaterializedNodeOutputs
 from grafy_persistence import schema
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
@@ -42,41 +36,18 @@ from grafy_api.v1.routes.saved_graphs.models import (
 )
 from tests.support.clients import GrafyApi
 from tests.support.identity import browser_actor_override
-from tests.testkit import client_with_overrides, create_db_url, db
+from tests.testkit import (
+    client_with_overrides,
+    create_db_url,
+    db,
+    seed_shared_workspace,
+)
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
 
 # Every durable-API client authenticates through the shared test actor.
 _OVERRIDES = {browser_actor: browser_actor_override}
-
-
-async def _create_schema(database_url: str) -> None:
-    async with db(database_url) as database:
-        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-            await unit_of_work.identity.add_user(
-                User(
-                    id=UUID(int=1),
-                    email="owner@example.test",
-                    display_name="Owner",
-                )
-            )
-            await unit_of_work.identity.add_workspace(
-                Workspace(
-                    id=WORKSPACE_ID,
-                    slug="local",
-                    name="Local workspace",
-                    kind="shared",
-                )
-            )
-            await unit_of_work.identity.add_membership(
-                WorkspaceMembership(
-                    workspace_id=WORKSPACE_ID,
-                    user_id=UUID(int=1),
-                    role=WorkspaceRole.OWNER,
-                )
-            )
-            await unit_of_work.commit()
 
 
 async def _delete_artifact(database_url: str, artifact_id: UUID) -> None:
@@ -129,7 +100,12 @@ async def _persist_partially_accessible_materialization(
 @pytest.fixture
 def durable_api(tmp_path: Path) -> tuple[Settings, str]:
     database_url = create_db_url(tmp_path, "materializations.sqlite3")
-    asyncio.run(_create_schema(database_url))
+
+    async def prepare() -> None:
+        async with db(database_url) as database:
+            await seed_shared_workspace(database)
+
+    asyncio.run(prepare())
     return (
         Settings(
             workspace=tmp_path / "workbench",

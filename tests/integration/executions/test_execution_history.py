@@ -7,12 +7,6 @@ from pydantic import SecretStr
 
 from grafy_core.application.saved_graphs import SavedGraphService
 from grafy_core.domain.execution_history import GraphExecution
-from grafy_core.domain.identity import (
-    User,
-    Workspace,
-    WorkspaceMembership,
-    WorkspaceRole,
-)
 from grafy_core.domain.saved_graphs import SavedGraphDocument
 from grafy_persistence.unit_of_work import (
     SqlAlchemySavedGraphUnitOfWork,
@@ -38,7 +32,7 @@ from grafy_api.v1.routes.saved_graphs.models import (
 )
 from grafy_api.settings import Settings
 
-from tests.testkit import client_with_overrides, create_db_url, db
+from tests.testkit import client_with_overrides, create_db_url, db, seed_shared_workspace
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
@@ -268,30 +262,7 @@ async def _seed_active_execution(database_url: str) -> tuple[UUID, UUID]:
             lambda: SqlAlchemySavedGraphUnitOfWork(database.sessions),
             registry,
         )
-        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-            await unit_of_work.identity.add_user(
-                User(
-                    id=UUID(int=1),
-                    email="owner@example.test",
-                    display_name="Owner",
-                )
-            )
-            await unit_of_work.identity.add_workspace(
-                Workspace(
-                    id=WORKSPACE_ID,
-                    slug="local",
-                    name="Local workspace",
-                    kind="shared",
-                )
-            )
-            await unit_of_work.identity.add_membership(
-                WorkspaceMembership(
-                    workspace_id=WORKSPACE_ID,
-                    user_id=UUID(int=1),
-                    role=WorkspaceRole.OWNER,
-                )
-            )
-            await unit_of_work.commit()
+        await seed_shared_workspace(database)
         graph = await saved_graphs.create(
             workspace_id=WORKSPACE_ID,
             created_by_user_id=None,

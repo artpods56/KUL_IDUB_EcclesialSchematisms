@@ -17,12 +17,6 @@ from grafy_core.domain.saved_graphs import (
     SavedGraphDocument,
     SavedGraphNode,
 )
-from grafy_core.domain.identity import (
-    User,
-    Workspace,
-    WorkspaceMembership,
-    WorkspaceRole,
-)
 from grafy_core.domain.errors import SavedGraphRevisionConflictError
 from grafy_core.nodes import Node, NodeExecutionContext
 from grafy_core.plugins import NodeSecretInput, Plugin, PluginRegistry
@@ -50,7 +44,7 @@ from grafy_api.v1.routes.node_secrets.dependencies import node_secret_service
 
 from tests.support.clients import GrafyApi
 from tests.support.workbench import workbench_dependency_overrides
-from tests.testkit import client_with_overrides, create_db_url, db
+from tests.testkit import client_with_overrides, create_db_url, db, seed_shared_workspace
 
 
 class SecretTestConfig(NodeConfig):
@@ -130,30 +124,7 @@ async def node_secret_setup(
 ]:
     database_url = create_db_url(tmp_path, "node-secrets.sqlite3")
     async with db(database_url) as database:
-        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-            await unit_of_work.identity.add_user(
-                User(
-                    id=UUID(int=1),
-                    email="owner@example.test",
-                    display_name="Owner",
-                )
-            )
-            await unit_of_work.identity.add_workspace(
-                Workspace(
-                    id=WORKSPACE_ID,
-                    slug="local",
-                    name="Local workspace",
-                    kind="shared",
-                )
-            )
-            await unit_of_work.identity.add_membership(
-                WorkspaceMembership(
-                    workspace_id=WORKSPACE_ID,
-                    user_id=UUID(int=1),
-                    role=WorkspaceRole.OWNER,
-                )
-            )
-            await unit_of_work.commit()
+        await seed_shared_workspace(database)
         registry = PluginRegistry()
         registry.install(SECRET_TEST_PLUGIN)
         registry.freeze()
@@ -1005,30 +976,7 @@ def test_node_secret_routes_never_return_secret_value(tmp_path: Path) -> None:
     async def prepare() -> tuple[NodeSecretService, WorkbenchComponents, str]:
         async with database.engine.begin() as connection:
             await connection.run_sync(metadata.create_all)
-        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-            await unit_of_work.identity.add_user(
-                User(
-                    id=UUID(int=1),
-                    email="owner@example.test",
-                    display_name="Owner",
-                )
-            )
-            await unit_of_work.identity.add_workspace(
-                Workspace(
-                    id=WORKSPACE_ID,
-                    slug="local",
-                    name="Local workspace",
-                    kind="shared",
-                )
-            )
-            await unit_of_work.identity.add_membership(
-                WorkspaceMembership(
-                    workspace_id=WORKSPACE_ID,
-                    user_id=UUID(int=1),
-                    role=WorkspaceRole.OWNER,
-                )
-            )
-            await unit_of_work.commit()
+        await seed_shared_workspace(database)
         registry = PluginRegistry()
         registry.install(SECRET_TEST_PLUGIN)
         registry.freeze()
