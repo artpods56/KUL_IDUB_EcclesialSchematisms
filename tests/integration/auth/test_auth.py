@@ -36,6 +36,7 @@ from grafy_core.domain.security_audit import (
     SecurityAuditEvent,
     SecurityAuditOutcome,
 )
+from grafy_persistence import schema
 from grafy_persistence.database import Database
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 from tests.support.clients import GrafyApi
@@ -77,7 +78,12 @@ async def _seed_oidc_transaction(
         id=transaction_id,
         state_digest=auth.digest_secret(state),
         nonce_digest=auth.digest_secret("callback-nonce"),
-        encrypted_pkce_verifier=auth._encrypt_verifier("verifier", transaction_id),
+        # Pre-seeding a transaction with a known verifier requires the
+        # private wrapper; start_login would need a live provider round-trip.
+        encrypted_pkce_verifier=auth._encrypt_verifier(  # pyright: ignore[reportPrivateUsage]
+            "verifier",
+            transaction_id,
+        ),
         pkce_key_version=settings.oidc_auth_wrapping_key_version,
         return_path="/",
         expires_at=expires_at,
@@ -113,7 +119,7 @@ async def test_unauthenticated_workspace_failure_is_audited_once(
         app_settings = settings.model_copy(
             update={"database_url": SecretStr(database_url)}
         )
-        _, workspace, _ = await seed(database.sessions)
+        _, _, _ = await seed(database.sessions)
 
         with client_with_overrides(settings=app_settings) as client:
             api = GrafyApi(client)
@@ -124,7 +130,7 @@ async def test_unauthenticated_workspace_failure_is_audited_once(
             events = list(
                 await session.scalars(
                     select(SecurityAuditEvent).where(
-                        SecurityAuditEvent.operation.in_(
+                        schema.security_audit_events.c.operation.in_(
                             ["auth.session.verify", "workspace.list"]
                         )
                     )
@@ -151,7 +157,7 @@ async def test_session_verification_failures_are_rate_limited(
                 "auth_session_failure_rate_limit": 1,
             }
         )
-        user, _, _ = await seed(database.sessions)
+        _, _, _ = await seed(database.sessions)
 
         with client_with_overrides(settings=app_settings) as client:
             api = GrafyApi(client)
@@ -192,7 +198,8 @@ async def test_cookie_requests_require_exact_origin_and_csrf(
             events = list(
                 await session.scalars(
                     select(SecurityAuditEvent).where(
-                        SecurityAuditEvent.operation == "auth.session.verify"
+                        schema.security_audit_events.c.operation
+                        == "auth.session.verify"
                     )
                 )
             )
@@ -234,7 +241,7 @@ async def test_authenticated_csrf_failure_is_audited_once_at_auth_boundary(
             events = list(
                 await session.scalars(
                     select(SecurityAuditEvent).where(
-                        SecurityAuditEvent.operation.in_(
+                        schema.security_audit_events.c.operation.in_(
                             ["auth.session.verify", "workspace.create"]
                         )
                     )
@@ -351,9 +358,9 @@ async def test_expired_callback_consumes_transaction_and_releases_reservation(
         await auth.reserve_login("expired-browser", transaction_id)
 
         with TestClient(application) as client:
-            wrapping_key = app_settings.oidc_auth_wrapping_key.get_secret_value().encode(
-                "utf-8"
-            )
+            configured_key = app_settings.oidc_auth_wrapping_key
+            assert configured_key is not None
+            wrapping_key = configured_key.get_secret_value().encode("utf-8")
             client.cookies.set(
                 BROWSER_ABUSE_COOKIE,
                 make_browser_abuse_cookie("expired-browser", secret=wrapping_key),
@@ -417,9 +424,9 @@ async def test_callback_failure_before_consumption_preserves_transaction_and_slo
         monkeypatch.setattr(auth, "_consume_transaction", fail_before_consumption)
 
         with TestClient(application, raise_server_exceptions=False) as client:
-            wrapping_key = app_settings.oidc_auth_wrapping_key.get_secret_value().encode(
-                "utf-8"
-            )
+            configured_key = app_settings.oidc_auth_wrapping_key
+            assert configured_key is not None
+            wrapping_key = configured_key.get_secret_value().encode("utf-8")
             client.cookies.set(
                 BROWSER_ABUSE_COOKIE,
                 make_browser_abuse_cookie("before-browser", secret=wrapping_key),
@@ -484,9 +491,9 @@ async def test_callback_failure_after_consumption_clears_transaction_and_release
         monkeypatch.setattr(auth, "_exchange_code", fail_after_consumption)
 
         with TestClient(application, raise_server_exceptions=False) as client:
-            wrapping_key = app_settings.oidc_auth_wrapping_key.get_secret_value().encode(
-                "utf-8"
-            )
+            configured_key = app_settings.oidc_auth_wrapping_key
+            assert configured_key is not None
+            wrapping_key = configured_key.get_secret_value().encode("utf-8")
             client.cookies.set(
                 BROWSER_ABUSE_COOKIE,
                 make_browser_abuse_cookie("after-browser", secret=wrapping_key),
@@ -531,7 +538,7 @@ async def test_pat_create_shows_secret_once_and_revoke_is_audited(
             created = tokens.create_token_ok(
                 PersonalAccessTokenCreateRequest(
                     label="read-only",
-                    scopes=[PersonalAccessTokenScope.VIEW_GRAPH],
+                    scopes=(PersonalAccessTokenScope.VIEW_GRAPH,),
                     expires_at=datetime.now(UTC) + timedelta(hours=1),
                 ),
                 headers=_csrf_headers(issued),
@@ -618,9 +625,9 @@ async def test_callback_validation_is_bounded_and_consumes_transaction(
         state_sentinel = "S" * 513
 
         with TestClient(application) as client:
-            wrapping_key = app_settings.oidc_auth_wrapping_key.get_secret_value().encode(
-                "utf-8"
-            )
+            configured_key = app_settings.oidc_auth_wrapping_key
+            assert configured_key is not None
+            wrapping_key = configured_key.get_secret_value().encode("utf-8")
             client.cookies.set(
                 BROWSER_ABUSE_COOKIE,
                 make_browser_abuse_cookie("testclient", secret=wrapping_key),
@@ -651,7 +658,8 @@ async def test_callback_validation_is_bounded_and_consumes_transaction(
             callback_events = list(
                 await session.scalars(
                     select(SecurityAuditEvent).where(
-                        SecurityAuditEvent.operation == "oidc.login.callback"
+                        schema.security_audit_events.c.operation
+                        == "oidc.login.callback"
                     )
                 )
             )
@@ -695,7 +703,7 @@ async def test_login_validation_is_bounded_and_audited(
             events = list(
                 await session.scalars(
                     select(SecurityAuditEvent).where(
-                        SecurityAuditEvent.operation == "oidc.login.start"
+                        schema.security_audit_events.c.operation == "oidc.login.start"
                     )
                 )
             )
@@ -770,7 +778,8 @@ async def test_auth_http_exception_is_audited_as_authenticated_failure(
             events = list(
                 await session.scalars(
                     select(SecurityAuditEvent).where(
-                        SecurityAuditEvent.operation == "auth.session.request"
+                        schema.security_audit_events.c.operation
+                        == "auth.session.request"
                     )
                 )
             )
@@ -891,10 +900,11 @@ async def test_workspace_failure_audits_preserve_route_metadata(
                 await session.scalars(
                     select(SecurityAuditEvent)
                     .where(
-                        SecurityAuditEvent.outcome == SecurityAuditOutcome.FAILURE,
-                        SecurityAuditEvent.operation.like("workspace.%"),
+                        schema.security_audit_events.c.outcome
+                        == SecurityAuditOutcome.FAILURE,
+                        schema.security_audit_events.c.operation.like("workspace.%"),
                     )
-                    .order_by(SecurityAuditEvent.occurred_at)
+                    .order_by(schema.security_audit_events.c.occurred_at)
                 )
             )
 
