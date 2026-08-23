@@ -267,13 +267,9 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "alembic_version",
             "artifact_objects",
             "collaborative_graph_heads",
-            "graph_active_execution_slots",
             "graph_checkpoint_mappings",
-            "graph_command_journal",
             "graph_command_receipts",
-            "graph_execution_idempotency",
-            "graph_execution_node_results",
-            "graph_execution_requested_nodes",
+            "graph_execution_nodes",
             "graph_executions",
             "graph_folders",
             "graph_organizations",
@@ -310,13 +306,9 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "alembic_version",
             "artifact_objects",
             "collaborative_graph_heads",
-            "graph_active_execution_slots",
             "graph_checkpoint_mappings",
-            "graph_command_journal",
             "graph_command_receipts",
-            "graph_execution_idempotency",
-            "graph_execution_node_results",
-            "graph_execution_requested_nodes",
+            "graph_execution_nodes",
             "graph_executions",
             "graph_folders",
             "graph_organizations",
@@ -734,8 +726,7 @@ def test_tenant_migration_backfills_all_0006_resources_and_checks_composite_keys
             "materialized_node_outputs",
             "node_secrets",
             "graph_executions",
-            "graph_execution_requested_nodes",
-            "graph_execution_node_results",
+            "graph_execution_nodes",
         ):
             assert (
                 connection.execute(
@@ -843,4 +834,272 @@ def test_direct_0007_downgrade_refuses_identity_data_but_allows_empty_bootstrap(
     empty_config = Config(REPOSITORY_ROOT / "alembic.ini")
     command.upgrade(empty_config, "0007_identity_workspace_foundation")
     command.downgrade(empty_config, "0006_execution_history")
+    get_settings.cache_clear()
+
+
+def _seed_execution_graph(database_path: Path) -> tuple[str, str]:
+    """Create one workspace/graph/revision at 0012 plus execution fixtures."""
+    workspace_id = UUID("00000000-0000-0000-0000-000000000007")
+    graph_id = UUID("00000000-0000-0000-0000-000000000a01")
+    document = json.dumps({"schema_version": 3, "nodes": [], "edges": []})
+    timestamp = "2026-08-20 08:00:00"
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO saved_graphs "
+                "(workspace_id, id, name, document, revision, created_at, updated_at) "
+                "VALUES (:workspace_id, :id, 'Merged', :document, 1, :ts, :ts)"
+            ),
+            {"workspace_id": workspace_id.hex, "id": graph_id.hex, "document": document, "ts": timestamp},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO saved_graph_revisions "
+                "(workspace_id, graph_id, revision, name, document, created_at) "
+                "VALUES (:workspace_id, :id, 1, 'Merged', :document, :ts)"
+            ),
+            {"workspace_id": workspace_id.hex, "id": graph_id.hex, "document": document, "ts": timestamp},
+        )
+    return workspace_id.hex, graph_id.hex
+
+
+def test_0013_merges_node_tables_preserves_data_and_reconstructs_on_downgrade(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "merge" / "migrated.sqlite3"
+    monkeypatch.setenv(
+        "GRAFY_DATABASE_URL",
+        f"sqlite+aiosqlite:///{database_path}",
+    )
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0012_template_library")
+
+    workspace_hex, graph_hex = _seed_execution_graph(database_path)
+    execution_hex = UUID("00000000-0000-0000-0000-000000000a02").hex
+    active_hex = UUID("00000000-0000-0000-0000-000000000a04").hex
+    timestamp = "2026-08-20 09:00:00"
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO graph_executions "
+                "(workspace_id, execution_id, graph_id, graph_revision, status, "
+                "scope, created_at) VALUES (:ws, :e, :g, 1, 'succeeded', 'all', :ts)"
+            ),
+            {"ws": workspace_hex, "e": execution_hex, "g": graph_hex, "ts": timestamp},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO graph_executions "
+                "(workspace_id, execution_id, graph_id, graph_revision, status, "
+                "scope, created_at) VALUES (:ws, :e, :g, 1, 'running', 'all', :ts)"
+            ),
+            {"ws": workspace_hex, "e": active_hex, "g": graph_hex, "ts": timestamp},
+        )
+        # Requested nodes: two for the finished execution, one for the active.
+        for execution, node, position in (
+            (execution_hex, "alpha", 0),
+            (execution_hex, "beta", 1),
+            (active_hex, "solo", 0),
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO graph_execution_requested_nodes "
+                    "(workspace_id, execution_id, node_id, position) "
+                    "VALUES (:ws, :e, :n, :p)"
+                ),
+                {"ws": workspace_hex, "e": execution, "n": node, "p": position},
+            )
+        # Terminal results recorded out of request order (result position 0 is
+        # beta), preserving compiled-plan visit order semantics.
+        connection.execute(
+            text(
+                "INSERT INTO graph_execution_node_results "
+                "(workspace_id, execution_id, node_id, position, status, outputs, "
+                "artifact_count, error, completed_at) VALUES "
+                "(:ws, :e, 'beta', 0, 'succeeded', '[{\"kind\":\"ref\"}]', 2, NULL, :ts)"
+            ),
+            {"ws": workspace_hex, "e": execution_hex, "ts": timestamp},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO graph_execution_node_results "
+                "(workspace_id, execution_id, node_id, position, status, outputs, "
+                "artifact_count, error, completed_at) VALUES "
+                "(:ws, :e, 'alpha', 1, 'failed', '[]', 0, 'boom', :ts)"
+            ),
+            {"ws": workspace_hex, "e": execution_hex, "ts": timestamp},
+        )
+
+    command.upgrade(config, "head")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+        rows = (
+            connection.execute(
+                text(
+                    "SELECT execution_id, node_id, position, result_status, "
+                    "result_position, artifact_count, error "
+                    "FROM graph_execution_nodes "
+                    "ORDER BY execution_id, position"
+                )
+            )
+            .mappings()
+            .all()
+        )
+        assert [(row["node_id"], row["position"]) for row in rows] == [
+            ("alpha", 0),
+            ("beta", 1),
+            ("solo", 0),
+        ]
+        by_node = {row["node_id"]: row for row in rows}
+        assert by_node["alpha"]["result_status"] == "failed"
+        assert by_node["alpha"]["result_position"] == 1
+        assert by_node["alpha"]["error"] == "boom"
+        assert by_node["beta"]["result_status"] == "succeeded"
+        assert by_node["beta"]["result_position"] == 0
+        assert by_node["beta"]["artifact_count"] == 2
+        assert by_node["solo"]["result_status"] is None
+
+        # One active execution per workspace graph is enforced.
+        index_rows = connection.execute(
+            text("PRAGMA index_list('graph_executions')")
+        ).fetchall()
+        index_names = {row[1] for row in index_rows}
+        assert "uq_graph_executions_one_active_per_graph" in index_names
+        with pytest.raises(IntegrityError):
+            connection.execute(
+                text(
+                    "INSERT INTO graph_executions "
+                    "(workspace_id, execution_id, graph_id, graph_revision, status, "
+                    "scope, created_at) VALUES (:ws, :e, :g, 1, 'queued', 'all', :ts)"
+                ),
+                {
+                    "ws": workspace_hex,
+                    "e": UUID("00000000-0000-0000-0000-000000000a05").hex,
+                    "g": graph_hex,
+                    "ts": timestamp,
+                },
+            )
+
+    command.downgrade(config, "0012_template_library")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        requested = (
+            connection.execute(
+                text(
+                    "SELECT execution_id, node_id, position "
+                    "FROM graph_execution_requested_nodes "
+                    "ORDER BY execution_id, position"
+                )
+            )
+            .mappings()
+            .all()
+        )
+        assert [(row["node_id"], row["position"]) for row in requested] == [
+            ("alpha", 0),
+            ("beta", 1),
+            ("solo", 0),
+        ]
+        results = (
+            connection.execute(
+                text(
+                    "SELECT node_id, position, status, artifact_count "
+                    "FROM graph_execution_node_results "
+                    "ORDER BY execution_id, position"
+                )
+            )
+            .mappings()
+            .all()
+        )
+        assert [(row["node_id"], row["position"], row["status"]) for row in results] == [
+            ("beta", 0, "succeeded"),
+            ("alpha", 1, "failed"),
+        ]
+        slot = (
+            connection.execute(text("SELECT * FROM graph_active_execution_slots"))
+            .mappings()
+            .one()
+        )
+        assert slot["execution_id"] == active_hex
+        assert connection.execute(
+            text("SELECT COUNT(*) FROM graph_command_journal")
+        ).scalar_one() == 0
+        assert connection.execute(
+            text("SELECT COUNT(*) FROM graph_execution_idempotency")
+        ).scalar_one() == 0
+
+    get_settings.cache_clear()
+
+
+def test_0013_upgrade_rejects_duplicate_active_executions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "duplicate-active" / "migrated.sqlite3"
+    monkeypatch.setenv(
+        "GRAFY_DATABASE_URL",
+        f"sqlite+aiosqlite:///{database_path}",
+    )
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0012_template_library")
+    workspace_hex, graph_hex = _seed_execution_graph(database_path)
+    timestamp = "2026-08-20 10:00:00"
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        for suffix in ("0b01", "0b02"):
+            connection.execute(
+                text(
+                    "INSERT INTO graph_executions "
+                    "(workspace_id, execution_id, graph_id, graph_revision, status, "
+                    "scope, created_at) VALUES (:ws, :e, :g, 1, 'running', 'all', :ts)"
+                ),
+                {
+                    "ws": workspace_hex,
+                    "e": UUID(f"00000000-0000-0000-0000-00000000{suffix}").hex,
+                    "g": graph_hex,
+                    "ts": timestamp,
+                },
+            )
+
+    with pytest.raises(RuntimeError, match="multiple queued/running/cancelling"):
+        command.upgrade(config, "head")
+    get_settings.cache_clear()
+
+
+def test_0013_upgrade_rejects_results_without_requested_nodes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "orphan-result" / "migrated.sqlite3"
+    monkeypatch.setenv(
+        "GRAFY_DATABASE_URL",
+        f"sqlite+aiosqlite:///{database_path}",
+    )
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0012_template_library")
+    workspace_hex, graph_hex = _seed_execution_graph(database_path)
+    execution_hex = UUID("00000000-0000-0000-0000-000000000c01").hex
+    timestamp = "2026-08-20 11:00:00"
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO graph_executions "
+                "(workspace_id, execution_id, graph_id, graph_revision, status, "
+                "scope, created_at) VALUES (:ws, :e, :g, 1, 'succeeded', 'all', :ts)"
+            ),
+            {"ws": workspace_hex, "e": execution_hex, "g": graph_hex, "ts": timestamp},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO graph_execution_node_results "
+                "(workspace_id, execution_id, node_id, position, status, outputs, "
+                "artifact_count, error, completed_at) VALUES "
+                "(:ws, :e, 'ghost', 0, 'succeeded', '[]', 0, NULL, :ts)"
+            ),
+            {"ws": workspace_hex, "e": execution_hex, "ts": timestamp},
+        )
+
+    with pytest.raises(RuntimeError, match="without a matching requested node"):
+        command.upgrade(config, "head")
     get_settings.cache_clear()

@@ -75,16 +75,14 @@ protocol does not expose arbitrary JSON Patch operations.
 Command ids are idempotency keys within the workspace-owned graph, with a
 versioned, server-keyed HMAC over the canonical request. A plain digest of
 low-entropy configuration is not persisted. An exact retry returns its original
-receipt; reusing an id for another semantic command is rejected. Minimal
-deduplication tombstones survive payload compaction for the graph's lifetime.
+receipt; reusing an id for another semantic command is rejected. Receipts are
+retained as tombstones across room-epoch resets for the graph's lifetime.
 
-The operational journal may retain the authorized semantic payload required for
-replay and recovery and is protected like the complete graph document. Security
-audit is a separate metadata-only store; neither audit records nor tombstones
-copy command or configuration values.
-
-Complete snapshots remain the recovery path. Incremental command replay is an
-optimization.
+Complete head snapshots are the only recovery path. No operational command
+journal or incremental replay store is retained; accepted commands persist only
+the updated head, receipt, checkpoint mapping or revision when applicable, and
+audit metadata. Security audit remains a separate metadata-only store; neither
+audit records nor receipts copy command or configuration values.
 
 ### Keep saved graph revisions as checkpoints
 
@@ -135,24 +133,29 @@ durable move command when the gesture ends.
 ### Share graph execution observation
 
 One workspace-owned saved graph may have at most one queued, running, or
-cancelling execution. The active slot is scoped by `(workspace_id, graph_id)`,
-and every top-level API path that starts and persists an execution attributed to
-that graph obeys the same application and persistence invariant. Internal
-immutable saved-module invocations remain part of their owning top-level run
-and do not acquire an independent slot.
+cancelling execution. `graph_executions.status` is the sole authority for that
+invariant: a database-level partial unique index over `(workspace_id,
+graph_id)` covers only the active statuses, so terminal transitions release the
+constraint automatically and no second slot table exists. Every top-level API
+path that starts and persists an execution attributed to that graph obeys the
+same application and persistence invariant; a conflicting start is rejected and
+reports the existing active execution identity. Internal immutable saved-module
+invocations remain part of their owning top-level run.
 
 Graph deletion conflicts with an active execution; cancellation and terminal
 commit must finish before deletion can remove revision, history, or
 materialization state.
 
-Top-level start requests use a workspace-and-graph-scoped durable idempotency
-key. An exact retry returns the original execution across terminal state or
-process restart; the same key with different scope, head, or requested nodes is
-rejected.
+Command idempotency through `graph_command_receipts` applies to collaboration
+commands only. Top-level execution-start requests are not durably idempotent in
+the current implementation: a repeated start with a fresh id creates a new
+execution or is rejected by the one-active-execution invariant. Durable
+execution-start idempotency would require its own accepted design and is not
+implied by command receipts.
 
 Synchronous `/v1/runs` becomes draft/diagnostic-only and rejects saved graph
-context. Saved graph runs must acquire the active slot and produce a discoverable
-execution id.
+context. Saved graph runs must respect the one-active-execution invariant and
+produce a discoverable execution id.
 
 The workspace-and-graph room advertises the active execution id, starter
 presentation, checkpoint revision, scope, and lifecycle. Each browser then uses
@@ -247,8 +250,9 @@ protected write commits.
 
 ### Negative
 
-- Persistence gains a collaborative head, command journal, idempotency rules,
-  checkpoint mapping, and retention concerns.
+- Persistence gains a collaborative head, command receipts with idempotency
+  rules, checkpoint mapping, and retention concerns. No command-payload journal
+  is retained; complete head snapshots are the recovery representation.
 - The frontend must reconcile optimistic commands, server acknowledgements,
   rejections, reconnects, and epoch changes.
 - Complete-document REST/MCP replacement can no longer ignore an uncheckpointed

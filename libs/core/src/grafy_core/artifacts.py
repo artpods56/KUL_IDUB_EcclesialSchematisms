@@ -21,7 +21,6 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 if TYPE_CHECKING:
-    from grafy_core.domain.collaboration import GraphActiveExecutionSlot
     from grafy_core.domain.invocation_cache import InvocationCacheEntry
     from grafy_core.domain.execution_history import (
         GraphExecution,
@@ -250,13 +249,11 @@ class InMemoryDataStore:
         UUID,
         "GraphExecution",
     ] = field(default_factory=dict)
-    graph_execution_node_results: dict[
+    # One row per requested node: stable request position plus the optional
+    # terminal result recorded at most once.
+    graph_execution_nodes: dict[
         tuple[UUID, UUID, str],
-        "GraphExecutionNodeResult",
-    ] = field(default_factory=dict)
-    active_execution_slots: dict[
-        tuple[UUID, UUID],
-        "GraphActiveExecutionSlot",
+        tuple[int, "GraphExecutionNodeResult | None"],
     ] = field(default_factory=dict)
 
     def clone(self) -> Self:
@@ -268,8 +265,7 @@ class InMemoryDataStore:
         self.invocation_cache = _clone(other.invocation_cache)
         self.staged_uploads = _clone(other.staged_uploads)
         self.graph_executions = _clone(other.graph_executions)
-        self.graph_execution_node_results = _clone(other.graph_execution_node_results)
-        self.active_execution_slots = _clone(other.active_execution_slots)
+        self.graph_execution_nodes = _clone(other.graph_execution_nodes)
 
 
 class UnitOfWorkPort(Protocol):
@@ -438,13 +434,25 @@ class InMemoryGraphExecutionHistoryRepository:
             raise ObjectAlreadyExistsError(
                 f"Graph execution already exists: {execution.execution_id}"
             )
+        active_execution_id = await self.find_active_execution_id(
+            execution.workspace_id,
+            execution.graph_id,
+        )
+        if active_execution_id is not None:
+            raise CollaborationActiveExecutionError(
+                workspace_id=execution.workspace_id,
+                graph_id=execution.graph_id,
+                execution_id=active_execution_id,
+            )
         self._store.graph_executions[execution_key] = _clone(execution)
+        for position, node_id in enumerate(execution.requested_node_ids):
+            self._store.graph_execution_nodes[
+                (execution.workspace_id, execution.execution_id, node_id)
+            ] = (position, None)
 
     async def update(self, execution: "GraphExecution") -> None:
         current = self._store.graph_executions.get(execution.execution_id)
-        if current is None:
-            raise NotFoundError("Graph execution", str(execution.execution_id))
-        if current.workspace_id != execution.workspace_id:
+        if current is None or current.workspace_id != execution.workspace_id:
             raise NotFoundError("Graph execution", str(execution.execution_id))
         if (
             current.graph_id != execution.graph_id
@@ -461,32 +469,33 @@ class InMemoryGraphExecutionHistoryRepository:
 
     async def add_node_result(self, result: "GraphExecutionNodeResult") -> None:
         execution = self._store.graph_executions.get(result.execution_id)
-        if execution is None:
+        if execution is None or execution.workspace_id != result.workspace_id:
             raise NotFoundError("Graph execution", str(result.execution_id))
-        if execution.workspace_id != result.workspace_id:
-            raise NotFoundError("Graph execution", str(result.execution_id))
-        if result.node_id not in execution.requested_node_ids:
+        key = (result.workspace_id, result.execution_id, result.node_id)
+        row = self._store.graph_execution_nodes.get(key)
+        if row is None:
             raise ValueError(
                 f"Graph execution {result.execution_id} did not request node "
                 f"{result.node_id!r}"
             )
-        key = (result.workspace_id, result.execution_id, result.node_id)
-        if key in self._store.graph_execution_node_results:
+        _, existing_result = row
+        if existing_result is not None:
             raise ObjectAlreadyExistsError(
                 "Graph execution node result already exists: "
                 f"{result.execution_id}/{result.node_id}"
             )
         if any(
-            stored.workspace_id == result.workspace_id
-            and stored.execution_id == result.execution_id
-            and stored.position == result.position
-            for stored in self._store.graph_execution_node_results.values()
+            stored_result is not None and stored_result.position == result.position
+            for execution_key, (_, stored_result) in (
+                self._store.graph_execution_nodes.items()
+            )
+            if execution_key[:2] == (result.workspace_id, result.execution_id)
         ):
             raise ObjectAlreadyExistsError(
                 "Graph execution node result position already exists: "
                 f"{result.execution_id}/{result.position}"
             )
-        self._store.graph_execution_node_results[key] = _clone(result)
+        self._store.graph_execution_nodes[key] = (row[0], _clone(result))
 
     async def get(
         self,
@@ -501,10 +510,13 @@ class InMemoryGraphExecutionHistoryRepository:
         node_results = sorted(
             (
                 result
-                for result in self._store.graph_execution_node_results.values()
+                for stored_key, (_, result) in (
+                    self._store.graph_execution_nodes.items()
+                )
                 if (
-                    result.workspace_id == workspace_id
-                    and result.execution_id == execution_id
+                    stored_key[0] == workspace_id
+                    and stored_key[1] == execution_id
+                    and result is not None
                 )
             ),
             key=lambda result: (result.position, result.node_id),
@@ -573,10 +585,13 @@ class InMemoryGraphExecutionHistoryRepository:
         for execution in page_values:
             results = [
                 result
-                for result in self._store.graph_execution_node_results.values()
+                for stored_key, (_, result) in (
+                    self._store.graph_execution_nodes.items()
+                )
                 if (
-                    result.workspace_id == workspace_id
-                    and result.execution_id == execution.execution_id
+                    stored_key[0] == workspace_id
+                    and stored_key[1] == execution.execution_id
+                    and result is not None
                 )
             ]
             items.append(
@@ -594,6 +609,25 @@ class InMemoryGraphExecutionHistoryRepository:
                 execution_id=last.execution_id,
             )
         return GraphExecutionPage(items=tuple(items), next_cursor=next_cursor)
+
+    async def find_active_execution_id(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> "UUID | None":
+        active = [
+            execution
+            for execution in self._store.graph_executions.values()
+            if execution.workspace_id == workspace_id
+            and execution.graph_id == graph_id
+            and execution.status in {"queued", "running", "cancelling"}
+        ]
+        if not active:
+            return None
+        return min(
+            active,
+            key=lambda execution: (execution.created_at, execution.execution_id.int),
+        ).execution_id
 
     async def interrupt_all_active(
         self,
@@ -617,54 +651,6 @@ class InMemoryGraphExecutionHistoryRepository:
             )
             interrupted += 1
         return interrupted
-
-
-@final
-class InMemoryActiveExecutionSlotRepository:
-    """Minimal slot store for in-memory execution history tests."""
-
-    def __init__(self, store: InMemoryDataStore) -> None:
-        self._store = store
-
-    async def get_active_execution_slot(
-        self,
-        workspace_id: UUID,
-        graph_id: UUID,
-    ) -> "GraphActiveExecutionSlot | None":
-        slot = self._store.active_execution_slots.get((workspace_id, graph_id))
-        if slot is None:
-            return None
-        return _clone(slot)
-
-    async def acquire_active_execution_slot(
-        self,
-        slot: "GraphActiveExecutionSlot",
-    ) -> bool:
-        key = (slot.workspace_id, slot.graph_id)
-        if key in self._store.active_execution_slots:
-            return False
-        self._store.active_execution_slots[key] = _clone(slot)
-        return True
-
-    async def clear_active_execution_slot(
-        self,
-        workspace_id: UUID,
-        graph_id: UUID,
-        *,
-        execution_id: UUID | None = None,
-    ) -> None:
-        key = (workspace_id, graph_id)
-        existing = self._store.active_execution_slots.get(key)
-        if existing is None:
-            return
-        if execution_id is not None and existing.execution_id != execution_id:
-            return
-        self._store.active_execution_slots.pop(key, None)
-
-    async def clear_all_active_execution_slots(self) -> int:
-        count = len(self._store.active_execution_slots)
-        self._store.active_execution_slots.clear()
-        return count
 
 
 @final
@@ -711,7 +697,6 @@ class _InMemoryUnitOfWorkState:
     invocation_cache: "InvocationCacheRepositoryPort"
     staged_uploads: "StagedUploadRepositoryPort"
     execution_history: "GraphExecutionHistoryRepositoryPort"
-    collaboration: InMemoryActiveExecutionSlotRepository
 
 
 class InMemoryUnitOfWork(UnitOfWorkPort):
@@ -746,10 +731,6 @@ class InMemoryUnitOfWork(UnitOfWorkPort):
     def execution_history(self) -> "GraphExecutionHistoryRepositoryPort":
         return self._entered_state().execution_history
 
-    @property
-    def collaboration(self) -> InMemoryActiveExecutionSlotRepository:
-        return self._entered_state().collaboration
-
     @override
     async def __aenter__(self) -> Self:
         if self._state.get() is not None:
@@ -770,7 +751,6 @@ class InMemoryUnitOfWork(UnitOfWorkPort):
                     execution_history=InMemoryGraphExecutionHistoryRepository(
                         working_store
                     ),
-                    collaboration=InMemoryActiveExecutionSlotRepository(working_store),
                 )
             )
         except BaseException:
@@ -816,6 +796,7 @@ class InMemoryUnitOfWork(UnitOfWorkPort):
 
 
 from grafy_core.domain.errors import (  # noqa: E402  # domain package imports artifacts
+    CollaborationActiveExecutionError,
     NotFoundError,
     ObjectAlreadyExistsError,
 )

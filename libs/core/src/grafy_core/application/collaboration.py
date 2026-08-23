@@ -11,8 +11,6 @@ from grafy_core.domain.collaboration import (
     CommandReceiptOutcome,
     GraphCheckpointMapping,
     GraphCommand,
-    GraphCommandJournalEntry,
-    GraphCommandKind,
     GraphCommandReceipt,
     ReplaceDocumentCommand,
     apply_graph_command,
@@ -133,7 +131,6 @@ class CollaborationService:
         command_id: UUID,
         command: GraphCommand,
         graph_id: UUID | None = None,
-        graph_room_session_id: UUID | None = None,
     ) -> tuple[SavedGraph, CollaborativeGraphHead, GraphCommandReceipt]:
         async with self._unit_of_work_factory() as unit_of_work:
             access = await self._authorize(
@@ -237,21 +234,6 @@ class CollaborationService:
                 accepted_sequence=1,
                 outcome=CommandReceiptOutcome.ACCEPTED,
             )
-            journal_entry = GraphCommandJournalEntry(
-                workspace_id=workspace_id,
-                graph_id=resolved_graph_id,
-                room_epoch=room_epoch,
-                command_id=command_id,
-                command_hmac=digest,
-                hmac_key_version=self._command_hmac_key_version,
-                accepted_sequence=1,
-                actor_kind=CollaborationActorKind.USER,
-                actor_user_id=actor.user_id,
-                graph_room_session_id=graph_room_session_id,
-                authorization_version=access.membership.authorization_version,
-                command_kind=GraphCommandKind(command.kind),
-                command_payload=command.model_dump(mode="json"),
-            )
             mapping = GraphCheckpointMapping(
                 workspace_id=workspace_id,
                 graph_id=resolved_graph_id,
@@ -263,7 +245,6 @@ class CollaborationService:
             await unit_of_work.graphs.add_revision(graph.snapshot())
             await unit_of_work.collaboration.add_head(head)
             await unit_of_work.collaboration.add_checkpoint_mapping(mapping)
-            await unit_of_work.collaboration.add_journal_entry(journal_entry)
             await unit_of_work.collaboration.add_receipt(receipt)
             await unit_of_work.security_audit.add(
                 SecurityAuditEvent(
@@ -314,10 +295,9 @@ class CollaborationService:
         observed_sequence: int,
         observed_room_epoch: UUID,
         command: GraphCommand,
-        graph_room_session_id: UUID | None = None,
     ) -> tuple[CollaborativeGraphHead, GraphCommandReceipt]:
         async with self._unit_of_work_factory() as unit_of_work:
-            access = await self._authorize(
+            await self._authorize(
                 unit_of_work,
                 actor=actor,
                 workspace_id=workspace_id,
@@ -420,23 +400,7 @@ class CollaborationService:
                 accepted_sequence=head.collaboration_sequence,
                 outcome=CommandReceiptOutcome.ACCEPTED,
             )
-            journal_entry = GraphCommandJournalEntry(
-                workspace_id=workspace_id,
-                graph_id=graph_id,
-                room_epoch=head.room_epoch,
-                command_id=command_id,
-                command_hmac=digest,
-                hmac_key_version=self._command_hmac_key_version,
-                accepted_sequence=head.collaboration_sequence,
-                actor_kind=CollaborationActorKind.USER,
-                actor_user_id=actor.user_id,
-                graph_room_session_id=graph_room_session_id,
-                authorization_version=access.membership.authorization_version,
-                command_kind=GraphCommandKind(command.kind),
-                command_payload=command.model_dump(mode="json"),
-            )
             await unit_of_work.collaboration.save_head(head)
-            await unit_of_work.collaboration.add_journal_entry(journal_entry)
             await unit_of_work.collaboration.add_receipt(receipt)
             await unit_of_work.security_audit.add(
                 SecurityAuditEvent(
@@ -622,10 +586,8 @@ class CollaborationService:
                     WorkspaceCapability.MANAGE_SECRETS
                 ),
             )
-            # Journal sequences are unique per graph, not per room epoch. Clear
-            # prior journal rows so the reset epoch can accept sequence 1 again.
-            # Receipts remain as obsolete-epoch resolve tombstones.
-            await unit_of_work.collaboration.clear_journal(workspace_id, graph_id)
+            # The complete collaborative head is the recovery representation;
+            # a room-epoch reset only needs receipts kept as tombstones.
             room_epoch = uuid4()
             head.room_epoch = room_epoch
             head.collaboration_sequence = 0
@@ -811,21 +773,6 @@ class CollaborationService:
                 accepted_sequence=1,
                 outcome=CommandReceiptOutcome.ACCEPTED,
             )
-            journal_entry = GraphCommandJournalEntry(
-                workspace_id=target_workspace_id,
-                graph_id=resolved_graph_id,
-                room_epoch=room_epoch,
-                command_id=command_id,
-                command_hmac=digest,
-                hmac_key_version=self._command_hmac_key_version,
-                accepted_sequence=1,
-                actor_kind=CollaborationActorKind.USER,
-                actor_user_id=actor.user_id,
-                graph_room_session_id=None,
-                authorization_version=access.membership.authorization_version,
-                command_kind=GraphCommandKind.REPLACE_DOCUMENT,
-                command_payload=command.model_dump(mode="json"),
-            )
             mapping = GraphCheckpointMapping(
                 workspace_id=target_workspace_id,
                 graph_id=resolved_graph_id,
@@ -837,7 +784,6 @@ class CollaborationService:
             await unit_of_work.graphs.add_revision(graph.snapshot())
             await unit_of_work.collaboration.add_head(head)
             await unit_of_work.collaboration.add_checkpoint_mapping(mapping)
-            await unit_of_work.collaboration.add_journal_entry(journal_entry)
             await unit_of_work.collaboration.add_receipt(receipt)
             await unit_of_work.security_audit.add(
                 SecurityAuditEvent(
@@ -889,15 +835,17 @@ class CollaborationService:
                     workspace_id=workspace_id,
                     graph_id=graph_id,
                 )
-            active_slot = await unit_of_work.collaboration.get_active_execution_slot(
-                workspace_id,
-                graph_id,
+            active_execution_id = (
+                await unit_of_work.execution_history.find_active_execution_id(
+                    workspace_id,
+                    graph_id,
+                )
             )
-            if active_slot is not None:
+            if active_execution_id is not None:
                 raise CollaborationActiveExecutionError(
                     workspace_id=workspace_id,
                     graph_id=graph_id,
-                    execution_id=active_slot.execution_id,
+                    execution_id=active_execution_id,
                 )
             if expected_room_epoch is not None and expected_sequence is not None:
                 if (

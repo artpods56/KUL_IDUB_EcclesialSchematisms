@@ -18,7 +18,6 @@ from grafy_core.domain.identity import (
 )
 from grafy_core.domain.execution_history import (
     GraphExecution,
-    GraphExecutionNodeResult,
     GraphExecutionScope,
     GraphExecutionStatus,
 )
@@ -120,10 +119,6 @@ def start_mappers() -> None:
     mapper_registry.map_imperatively(
         GraphExecutionRecord,
         schema.graph_executions,
-    )
-    mapper_registry.map_imperatively(
-        GraphExecutionNodeResult,
-        schema.graph_execution_node_results,
     )
     mapper_registry.map_imperatively(
         EncryptedNodeSecret,

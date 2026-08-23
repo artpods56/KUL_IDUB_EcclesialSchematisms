@@ -498,7 +498,7 @@ top of this section._
 ## Finding 9 — Execution history owns active-run uniqueness
 
 - **Verdict:** Recommend as a migration after lifecycle transitions are explicit.
-- **Status:** TODO
+- **Status:** DONE (2026-08-23, migration `0013_thin_execution_schema`)
 - **Prerequisite:** Design with finding 7; implement after transitions
 - **Evidence:** `graph_executions.status` already records active states at
   `libs/persistence/src/grafy_persistence/schema.py:565`. A second
@@ -525,6 +525,17 @@ top of this section._
 - **Validation:** Add a real two-transaction race, terminal release, startup
   interruption, deletion rejection, migration-conflict fixtures, and
   dialect-specific partial-index coverage.
+- **Resolution:** Implemented as recommended. The partial unique index
+  `uq_graph_executions_one_active_per_graph` on `graph_executions(workspace_id,
+  graph_id) WHERE status IN ('queued','running','cancelling')` is the sole
+  authority (same SQL predicate on SQLite and PostgreSQL). Conflicting starts
+  surface as translated integrity errors reporting the existing execution id;
+  the migration validates duplicates up front and fails without choosing a
+  winner; the downgrade recreates slots from active executions; deletion gates
+  through `execution_history.find_active_execution_id`; two-transaction races,
+  terminal release, startup interruption, and deletion rejection are covered by
+  tests (`tests/unit/persistence/test_execution_history_persistence.py`,
+  `tests/unit/persistence/test_migrations.py`).
 
 ## Finding 10 — Keep generated-node ports typed throughout the domain module
 

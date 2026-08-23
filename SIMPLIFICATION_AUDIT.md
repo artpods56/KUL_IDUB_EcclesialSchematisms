@@ -1,5 +1,23 @@
 # Backend Simplification Audit — What Is Hard to Justify
 
+> **Implementation update (2026-08-23).** The database-thinning refactor has
+> landed: `graph_execution_idempotency`, `graph_command_journal`, and
+> `graph_active_execution_slots` are deleted, and
+> `graph_execution_requested_nodes` + `graph_execution_node_results` are merged
+> into one monotonic `graph_execution_nodes` table (§3.3, §3.4). The schema now
+> defines exactly **27 application tables**. Three of this audit's deletion
+> recommendations were **rejected by product decision and must not be treated
+> as approved work**: `personal_access_tokens` are retained for near-term
+> external automation and MCP access (§3.2), `user_graph_states` is retained
+> planned product state for favorites and recently-opened graphs (§3.5), and
+> `oidc_bootstrap_owner_mappings` is retained for its LDAP-federated
+> bootstrap-owner security purpose — ADR 0003 records that decision and this
+> audit's §3.7 "first login owns local" recommendation is rejected. The
+> per-table verdicts below reflect the tree as audited and are kept for
+> provenance; where they describe deleted or retained tables, the update above
+> wins.
+
+>
 > Evidence-based audit of the Grafy backend looking for things that are
 > **hard to justify at this moment**: tables, subsystems, protocol elements,
 > configuration, and documentation that cost more than they earn. Every claim
@@ -175,6 +193,12 @@ switched off by the rest of the design. It is a container-shaped ceremony.
 
 #### 3.2 Delete the PAT layer
 
+> **Update (2026-08-23): retained.** PATs are intentionally kept — table,
+> issuance/list/revocation HTTP surface, scopes, and revocation semantics — for
+> near-future external automation and MCP access. No bearer consumer is
+> implemented yet; token digests and revocation behavior are unchanged. This
+> section is no longer approved deletion work.
+
 **Evidence.** The only bearer consumer was the MCP server, removed 2026-08-19
 (`9d3551c`, `250aa51`, `33e9f93`). Now:
 - `browser_actor` **rejects any `Authorization` header** with 401
@@ -202,6 +226,12 @@ switched off by the rest of the design. It is a container-shaped ceremony.
 back.
 
 #### 3.3 Delete the dead collaboration/execution tables
+
+> **Done (2026-08-23).** All three items below are implemented in migration
+> `0013_thin_execution_schema`. The merged table is `graph_execution_nodes`
+> with a monotonic requested → terminal row lifecycle; it keeps two explicitly
+> named positions (`position` = request order, `result_position` =
+> compiled-plan result order) because the two genuinely differ.
 
 - **`graph_execution_idempotency`** — complete vertical slice
   (`schema.py:1117-1138`, `ports/collaboration.py:82-91`,
@@ -232,6 +262,10 @@ back.
 
 #### 3.4 Delete the command journal (or wire a replay consumer)
 
+> **Done (2026-08-23).** The journal is deleted; complete collaborative head
+> snapshots are the recovery path and no incremental replay store is retained
+> (see ADR 0002). Receipts keep their HMAC idempotency semantics.
+
 **Evidence.** Written at 3 sites (`application/collaboration.py:267,440,849`),
 cleared on epoch reset (`:629`), repository add/clear only
 (`repositories.py:1613-1641`). The port (`ports/collaboration.py:23-115`)
@@ -252,6 +286,12 @@ after** the payload-into-receipt move in §3.8, or payload-level replay data is
 lost forever.)
 
 #### 3.5 `user_graph_states` + the star/archive surface: ship or cut
+
+> **Update (2026-08-23): retained.** `user_graph_states` is intentionally kept
+> as planned product state for personal favorites and genuinely user-specific
+> "Recently opened" graphs. It remains per-user state and never grants access.
+> The frontend feature is still pending; this section is no longer deletion
+> work.
 
 **Evidence.** Fully built below the hook: table (`schema.py:401-433`), 4
 endpoints (`saved_graphs/views.py:194-236`), service
@@ -287,6 +327,12 @@ owner-readable endpoint (reusing `list_for_workspace`) or explicitly accept
 append-only log with neither horizon nor reader.
 
 #### 3.7 Replace the bootstrap-owner ceremony with "first login owns `local`"
+
+> **Rejected (2026-08-23).** This recommendation is not approved work.
+> Production users are federated from an LDAP-backed identity provider, and an
+> operator must be able to preselect the exact federated identity that becomes
+> administrator by stable `(issuer, subject)` — not email, display name, or a
+> "first user" rule. ADR 0003 records that decision; the mapping stays.
 
 **Evidence.** `oidc_bootstrap_owner_mappings` gets exactly one row
 (`grafy-admin bootstrap-oidc-owner`, `admin.py:18-27`); the matching identity's
@@ -435,20 +481,24 @@ decision is the most expensive ambiguity in the backend.
 
 ## 4. The table-count roadmap
 
+> Implemented 2026-08-23: the idempotency deletion, journal deletion, node-table
+> merge, and slots → partial unique index steps below are done (31 → 27
+> application tables). The PAT and `user_graph_states` deletion rows were not
+> executed — both tables are retained by product decision, so the count stops
+> at 27 rather than continuing to 25.
+
 | Step | Action | Tables 31 → |
 |---|---|---|
-| now | delete `graph_execution_idempotency` (§3.3) | 30 |
-| now | delete `personal_access_tokens` (§3.2) | 29 |
-| now | delete `graph_command_journal` (§3.4, if no replay planned) | 28 |
-| now | delete `user_graph_states` (§3.5, if UI not shipped) | 27 |
-| next | merge `graph_execution_requested_nodes` into node results (§3.3) | 26 |
-| next | merge `graph_active_execution_slots` → partial unique index (§3.3) | 25 |
-| next | `oidc_bootstrap_owner_mappings` → column/first-login rule (§3.7) | 24 |
+| ~~now~~ done | delete `graph_execution_idempotency` (§3.3) | 30 |
+| ~~now~~ **rejected** | delete `personal_access_tokens` (§3.2) — retained for external automation/MCP | — |
+| ~~now~~ done | delete `graph_command_journal` (§3.4, no replay planned) | 29* |
+| ~~now~~ **rejected** | delete `user_graph_states` (§3.5) — retained planned product state | — |
+| ~~next~~ done | merge `graph_execution_requested_nodes` into one `graph_execution_nodes` table (§3.3) | 28* |
+| ~~next~~ done | merge `graph_active_execution_slots` → partial unique index (§3.3) | 27 |
+| ~~next~~ **rejected** | `oidc_bootstrap_owner_mappings` → column/first-login rule (§3.7) — ADR 0003 keeps the exact `(issuer, subject)` mapping | — |
 | product call | §3.14 membership collapse | −1 to −3 |
 
-**24 tables with no product tradeoff; ~21 if the identity bet is made.**
-The remaining tables each have a named consumer, a retention or boundedness
-story, or a FK role — which is the standard for "justified".
+\* numbering reflects the actual implemented order; the endpoint is 27 tables.
 
 The two biggest *storage* levers are not table counts: bound
 `saved_graph_revisions` (full document per checkpoint, dead browsing surface)

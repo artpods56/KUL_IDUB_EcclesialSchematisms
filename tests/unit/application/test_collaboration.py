@@ -8,9 +8,7 @@ from grafy_core.application.collaboration import CollaborationService
 from grafy_core.domain.collaboration import (
     CollaborativeGraphHead,
     CommandReceiptOutcome,
-    GraphActiveExecutionSlot,
     GraphCheckpointMapping,
-    GraphCommandJournalEntry,
     GraphCommandReceipt,
     MoveNodePosition,
     MoveNodesCommand,
@@ -60,9 +58,7 @@ class FakeCollaborationRepository:
     def __init__(self) -> None:
         self.heads: dict[tuple[UUID, UUID], CollaborativeGraphHead] = {}
         self.receipts: dict[tuple[UUID, UUID, UUID], GraphCommandReceipt] = {}
-        self.journal: list[GraphCommandJournalEntry] = []
         self.mappings: dict[tuple[UUID, UUID, UUID, int], GraphCheckpointMapping] = {}
-        self.active_slots: dict[tuple[UUID, UUID], GraphActiveExecutionSlot] = {}
         self.locked: list[tuple[UUID, UUID]] = []
         self.graphs_by_id: dict[UUID, SavedGraph] = {}
 
@@ -100,16 +96,6 @@ class FakeCollaborationRepository:
             if (graph.workspace_id, graph.id) not in self.heads
         ]
 
-    async def add_journal_entry(self, entry: GraphCommandJournalEntry) -> None:
-        self.journal.append(entry)
-
-    async def clear_journal(self, workspace_id: UUID, graph_id: UUID) -> None:
-        self.journal = [
-            entry
-            for entry in self.journal
-            if not (entry.workspace_id == workspace_id and entry.graph_id == graph_id)
-        ]
-
     async def get_receipt(
         self,
         workspace_id: UUID,
@@ -144,50 +130,6 @@ class FakeCollaborationRepository:
                 mapping.collaboration_sequence,
             )
         ] = mapping
-
-    async def get_execution_idempotency(self, *args, **kwargs):
-        del args, kwargs
-        return None
-
-    async def add_execution_idempotency(self, record) -> None:
-        del record
-
-    async def get_active_execution_slot(
-        self,
-        workspace_id: UUID,
-        graph_id: UUID,
-    ) -> GraphActiveExecutionSlot | None:
-        return self.active_slots.get((workspace_id, graph_id))
-
-    async def acquire_active_execution_slot(
-        self, slot: GraphActiveExecutionSlot
-    ) -> bool:
-        key = (slot.workspace_id, slot.graph_id)
-        if key in self.active_slots:
-            return False
-        self.active_slots[key] = slot
-        return True
-
-    async def clear_active_execution_slot(
-        self,
-        workspace_id: UUID,
-        graph_id: UUID,
-        *,
-        execution_id: UUID | None = None,
-    ) -> None:
-        key = (workspace_id, graph_id)
-        existing = self.active_slots.get(key)
-        if existing is None:
-            return
-        if execution_id is not None and existing.execution_id != execution_id:
-            return
-        self.active_slots.pop(key, None)
-
-    async def clear_all_active_execution_slots(self) -> int:
-        count = len(self.active_slots)
-        self.active_slots.clear()
-        return count
-
 
 class FakeSavedGraphRepository:
     def __init__(self) -> None:
@@ -273,6 +215,18 @@ class FakeSecurityAuditRepository:
         self.events.append(event)
 
 
+class FakeExecutionHistoryRepository:
+    def __init__(self) -> None:
+        self.active_execution_ids: dict[tuple[UUID, UUID], UUID] = {}
+
+    async def find_active_execution_id(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> UUID | None:
+        return self.active_execution_ids.get((workspace_id, graph_id))
+
+
 class FakeCollaborationUnitOfWork:
     def __init__(
         self,
@@ -281,6 +235,7 @@ class FakeCollaborationUnitOfWork:
         graphs: FakeSavedGraphRepository,
         identity: FakeIdentityRepository,
         security_audit: FakeSecurityAuditRepository,
+        execution_history: FakeExecutionHistoryRepository,
         commit_error: ConcurrentWriteError | None = None,
     ) -> None:
         self.collaboration = collaboration
@@ -288,6 +243,7 @@ class FakeCollaborationUnitOfWork:
         self.node_secrets = FakeNodeSecretRepository()
         self.identity = identity
         self.security_audit = security_audit
+        self.execution_history = execution_history
         self._commit_error = commit_error
         self.commit_count = 0
         self.rollback_count = 0
@@ -307,16 +263,9 @@ class FakeCollaborationUnitOfWork:
                 key: receipt.model_copy(deep=True)
                 for key, receipt in self.collaboration.receipts.items()
             },
-            "journal": [
-                entry.model_copy(deep=True) for entry in self.collaboration.journal
-            ],
             "mappings": {
                 key: mapping.model_copy(deep=True)
                 for key, mapping in self.collaboration.mappings.items()
-            },
-            "active_slots": {
-                key: slot.model_copy(deep=True)
-                for key, slot in self.collaboration.active_slots.items()
             },
             "graphs": {
                 key: _clone_graph(graph) for key, graph in self.graphs.graphs.items()
@@ -357,17 +306,9 @@ class FakeCollaborationUnitOfWork:
             key: receipt.model_copy(deep=True)
             for key, receipt in self._snapshot["receipts"].items()  # type: ignore[union-attr]
         }
-        self.collaboration.journal = [
-            entry.model_copy(deep=True)
-            for entry in self._snapshot["journal"]  # type: ignore[union-attr]
-        ]
         self.collaboration.mappings = {
             key: mapping.model_copy(deep=True)
             for key, mapping in self._snapshot["mappings"].items()  # type: ignore[union-attr]
-        }
-        self.collaboration.active_slots = {
-            key: slot.model_copy(deep=True)
-            for key, slot in self._snapshot["active_slots"].items()  # type: ignore[union-attr]
         }
         self.graphs.graphs = {
             key: _clone_graph(graph)
@@ -449,6 +390,7 @@ class FakeFactory:
         self.graphs = FakeSavedGraphRepository()
         self.collaboration.graphs_by_id = self.graphs.graphs
         self.security_audit = FakeSecurityAuditRepository()
+        self.execution_history = FakeExecutionHistoryRepository()
         self.identity = FakeIdentityRepository(
             self.user,
             [self.membership, self.target_membership],
@@ -462,6 +404,7 @@ class FakeFactory:
             graphs=self.graphs,
             identity=self.identity,
             security_audit=self.security_audit,
+            execution_history=self.execution_history,
             commit_error=self.commit_error,
         )
         self.created.append(unit)
@@ -540,7 +483,7 @@ async def test_bootstrap_graph_commits_head_checkpoint_and_receipt() -> None:
     assert head.checkpoint_sequence == 1
     assert head.checkpoint_revision == 1
     assert receipt.outcome is CommandReceiptOutcome.ACCEPTED
-    assert factory.collaboration.journal[0].accepted_sequence == 1
+    assert receipt.accepted_sequence == 1
     assert (
         WORKSPACE_ID,
         graph_id,
@@ -722,7 +665,6 @@ async def test_replace_complete_document_resets_epoch_when_checkpointed() -> Non
     assert new_head.collaboration_sequence == 0
     assert new_head.checkpoint_sequence == 0
     assert new_head.checkpoint_revision == 2
-    assert factory.collaboration.journal == []
     assert (WORKSPACE_ID, graph_id, new_head.room_epoch, 0) in (
         factory.collaboration.mappings
     )
@@ -842,12 +784,8 @@ async def test_delete_graph_rejects_active_execution() -> None:
         graph_id=graph_id,
     )
     execution_id = uuid4()
-    factory.collaboration.active_slots[(WORKSPACE_ID, graph_id)] = (
-        GraphActiveExecutionSlot(
-            workspace_id=WORKSPACE_ID,
-            graph_id=graph_id,
-            execution_id=execution_id,
-        )
+    factory.execution_history.active_execution_ids[(WORKSPACE_ID, graph_id)] = (
+        execution_id
     )
 
     with pytest.raises(CollaborationActiveExecutionError):
