@@ -82,10 +82,18 @@ provider workflow id, terminal error, and ordered per-node results with their ex
 artifact output envelopes. Executions of unsaved or dirty graph documents remain
 ephemeral because they do not identify a durable graph revision.
 
-Execution identities, requested-node membership, and node-result rows are
-append-only. Lifecycle fields on the execution row advance from queued/running (or
-cancelling) to one terminal state. History is not the source used for incremental
-execution: `materialized_node_outputs` remains the mutable latest-successful-output
+Execution identities are append-only, and each accepted node is one immutable
+`graph_execution_nodes` row with a monotonic lifecycle: requested (stable
+request-order position, no terminal result) then terminal (result recorded
+exactly once, carrying its own result position, outputs, artifact count,
+error, and completion timestamp). Nodes that never reach a terminal result
+keep their requested rows. Lifecycle fields on the execution row advance from
+queued/running (or cancelling) to one terminal state; a partial unique index
+on `(workspace_id, graph_id)` over the queued/running/cancelling statuses makes
+`graph_executions.status` the sole authority for one-active-execution per
+Workspace-owned Graph, and terminal transitions release that constraint.
+History is not the source used for incremental execution:
+`materialized_node_outputs` remains the mutable latest-successful-output
 projection used for pins, while history preserves every accepted execution across
 repeated runs and graph revisions. Historical inspection must never hydrate the
 canvas's current run state or make an old artifact eligible as a latest pin.

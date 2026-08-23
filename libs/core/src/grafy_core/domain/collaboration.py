@@ -810,32 +810,6 @@ class CollaborativeGraphHead:
         )
 
 
-class GraphCommandJournalEntry(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
-
-    workspace_id: UUID
-    graph_id: UUID
-    room_epoch: UUID
-    command_id: UUID
-    command_hmac: bytes
-    hmac_key_version: int
-    accepted_sequence: int
-    actor_kind: CollaborationActorKind
-    actor_user_id: UUID | None
-    graph_room_session_id: UUID | None
-    authorization_version: int | None
-    command_kind: GraphCommandKind
-    command_payload: dict[str, object]
-    accepted_at: datetime = Field(default_factory=_utc_now)
-
-    @field_validator("accepted_at")
-    @classmethod
-    def require_aware(cls, value: datetime) -> datetime:
-        if value.tzinfo is None:
-            raise ValueError("Journal acceptance timestamp must be timezone-aware")
-        return value
-
-
 class GraphCommandReceipt(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
 
@@ -877,30 +851,6 @@ class GraphCheckpointMapping(BaseModel):
         return value
 
 
-class GraphExecutionIdempotencyRecord(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
-
-    workspace_id: UUID
-    graph_id: UUID
-    client_request_id: UUID
-    request_hmac: bytes
-    hmac_key_version: int
-    actor_user_id: UUID
-    room_epoch: UUID
-    head_sequence: int
-    execution_id: UUID
-    created_at: datetime = Field(default_factory=_utc_now)
-
-
-class GraphActiveExecutionSlot(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
-
-    workspace_id: UUID
-    graph_id: UUID
-    execution_id: UUID
-    updated_at: datetime = Field(default_factory=_utc_now)
-
-
 __all__ = [
     "AddEdgeCommand",
     "AddNodeCommand",
@@ -910,13 +860,10 @@ __all__ = [
     "CommandReceiptOutcome",
     "DuplicateNodeCommand",
     "GRAPH_COMMAND_ADAPTER",
-    "GraphActiveExecutionSlot",
     "GraphCheckpointMapping",
     "GraphCommand",
-    "GraphCommandJournalEntry",
     "GraphCommandKind",
     "GraphCommandReceipt",
-    "GraphExecutionIdempotencyRecord",
     "MoveAnnotationPosition",
     "MoveAnnotationsCommand",
     "MoveArtifactViewerPosition",

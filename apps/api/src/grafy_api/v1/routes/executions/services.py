@@ -7,7 +7,6 @@ from uuid import UUID
 from grafy_core.application.saved_graphs import SavedGraphService
 from grafy_core.artifacts import ArtifactRef, ArtifactRefSequence
 from grafy_core.domain.artifact_outputs import ArtifactOutputValue
-from grafy_core.domain.collaboration import GraphActiveExecutionSlot
 from grafy_core.domain.execution_history import (
     GraphExecution,
     GraphExecutionCursor,
@@ -18,13 +17,11 @@ from grafy_core.domain.execution_history import (
     GraphExecutionStatus,
 )
 from grafy_core.domain.errors import (
-    CollaborationActiveExecutionError,
     NotFoundError,
 )
 from grafy_core.domain.materialized_outputs import MaterializedNodeOutputs
 from grafy_core.domain.saved_graphs import SavedGraphRevision
 from grafy_core.operators.tables import TABLE_DATA
-from grafy_core.ports.collaboration import CollaborationRepositoryPort
 from grafy_core.ports.execution_history import ExecutionHistoryUnitOfWorkPort
 from grafy_core.ports.materialized_outputs import WorkbenchUnitOfWorkPort
 
@@ -91,37 +88,9 @@ class ExecutionHistoryService:
             requested_node_ids=requested_node_ids,
         )
         async with self._unit_of_work as unit_of_work:
-            collaboration = _collaboration_repository(unit_of_work)
-            existing = await collaboration.get_active_execution_slot(
-                workspace_id,
-                graph_id,
-            )
-            if existing is not None:
-                raise CollaborationActiveExecutionError(
-                    workspace_id=workspace_id,
-                    graph_id=graph_id,
-                    execution_id=existing.execution_id,
-                )
+            # graph_executions carries the one-active-execution invariant via a
+            # partial unique index; a conflicting start raises from the insert.
             await unit_of_work.execution_history.add(execution)
-            acquired = await collaboration.acquire_active_execution_slot(
-                GraphActiveExecutionSlot(
-                    workspace_id=workspace_id,
-                    graph_id=graph_id,
-                    execution_id=execution_id,
-                )
-            )
-            if not acquired:
-                existing = await collaboration.get_active_execution_slot(
-                    workspace_id,
-                    graph_id,
-                )
-                raise CollaborationActiveExecutionError(
-                    workspace_id=workspace_id,
-                    graph_id=graph_id,
-                    execution_id=(
-                        existing.execution_id if existing is not None else execution_id
-                    ),
-                )
             await unit_of_work.commit()
         return execution
 
@@ -185,11 +154,6 @@ class ExecutionHistoryService:
                             completed_at=completed_at,
                         )
                     )
-            await _collaboration_repository(unit_of_work).clear_active_execution_slot(
-                workspace_id,
-                execution.graph_id,
-                execution_id=execution.execution_id,
-            )
             await unit_of_work.commit()
 
     async def get_for_graph(
@@ -231,6 +195,8 @@ class ExecutionHistoryService:
 
     async def interrupt_all_active(self) -> int:
         async with self._unit_of_work as unit_of_work:
+            # Startup recovery transitions active executions to a terminal
+            # status; the partial unique index releases automatically.
             interrupted = await unit_of_work.execution_history.interrupt_all_active(
                 finished_at=datetime.now(UTC),
                 error=(
@@ -238,22 +204,8 @@ class ExecutionHistoryService:
                     "before reporting a terminal result"
                 ),
             )
-            await _collaboration_repository(
-                unit_of_work
-            ).clear_all_active_execution_slots()
             await unit_of_work.commit()
         return interrupted
-
-
-def _collaboration_repository(
-    unit_of_work: ExecutionHistoryUnitOfWorkPort,
-) -> CollaborationRepositoryPort:
-    collaboration = getattr(unit_of_work, "collaboration", None)
-    if collaboration is None:
-        raise RuntimeError(
-            "Active execution slots require a collaboration-capable unit of work"
-        )
-    return collaboration
 
 
 class MaterializationService:

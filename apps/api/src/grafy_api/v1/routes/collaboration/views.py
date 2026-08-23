@@ -378,7 +378,6 @@ async def _handle_command_submit(
             observed_sequence=message.observed_sequence,
             observed_room_epoch=message.room_epoch,
             command=message.command,
-            graph_room_session_id=session.graph_room_session_id,
         )
     except CapabilityDeniedError as exc:
         await _reject_command(session, hub, message, "forbidden", str(exc))

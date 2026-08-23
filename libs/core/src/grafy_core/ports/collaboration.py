@@ -5,13 +5,11 @@ from uuid import UUID
 from grafy_core.domain.collaboration import (
     CollaborativeGraphHead,
     GraphCheckpointMapping,
-    GraphCommandJournalEntry,
     GraphCommandReceipt,
-    GraphExecutionIdempotencyRecord,
-    GraphActiveExecutionSlot,
 )
 
 if TYPE_CHECKING:
+    from grafy_core.ports.execution_history import GraphExecutionHistoryRepositoryPort
     from grafy_core.ports.identity import (
         IdentityRepositoryPort,
         SecurityAuditRepositoryPort,
@@ -43,19 +41,6 @@ class CollaborationRepositoryPort(Protocol):
         """Return workspace/graph ids for saved graphs without a collaborative head."""
         ...
 
-    async def add_journal_entry(self, entry: GraphCommandJournalEntry) -> None: ...
-
-    async def clear_journal(
-        self,
-        workspace_id: UUID,
-        graph_id: UUID,
-    ) -> None:
-        """Drop journal rows so a room-epoch reset can reuse sequence numbers.
-
-        Receipt tombstones remain for obsolete-epoch command resolve.
-        """
-        ...
-
     async def get_receipt(
         self,
         workspace_id: UUID,
@@ -79,41 +64,6 @@ class CollaborationRepositoryPort(Protocol):
         mapping: GraphCheckpointMapping,
     ) -> None: ...
 
-    async def get_execution_idempotency(
-        self,
-        workspace_id: UUID,
-        graph_id: UUID,
-        client_request_id: UUID,
-    ) -> GraphExecutionIdempotencyRecord | None: ...
-
-    async def add_execution_idempotency(
-        self,
-        record: GraphExecutionIdempotencyRecord,
-    ) -> None: ...
-
-    async def get_active_execution_slot(
-        self,
-        workspace_id: UUID,
-        graph_id: UUID,
-    ) -> GraphActiveExecutionSlot | None: ...
-
-    async def acquire_active_execution_slot(
-        self,
-        slot: GraphActiveExecutionSlot,
-    ) -> bool:
-        """Insert the active slot. Returns False when the graph already has one."""
-        ...
-
-    async def clear_active_execution_slot(
-        self,
-        workspace_id: UUID,
-        graph_id: UUID,
-        *,
-        execution_id: UUID | None = None,
-    ) -> None: ...
-
-    async def clear_all_active_execution_slots(self) -> int: ...
-
 
 class CollaborationUnitOfWorkPort(Protocol):
     @property
@@ -130,6 +80,9 @@ class CollaborationUnitOfWorkPort(Protocol):
 
     @property
     def security_audit(self) -> "SecurityAuditRepositoryPort": ...
+
+    @property
+    def execution_history(self) -> "GraphExecutionHistoryRepositoryPort": ...
 
     async def __aenter__(self) -> Self: ...
 

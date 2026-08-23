@@ -38,6 +38,14 @@ class GraphExecutionHistoryRepositoryPort(Protocol):
         node_id: str | None = None,
     ) -> GraphExecutionPage: ...
 
+    async def find_active_execution_id(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> UUID | None:
+        """Return the identity of the graph's queued, running, or cancelling execution."""
+        ...
+
     async def interrupt_all_active(
         self,
         *,

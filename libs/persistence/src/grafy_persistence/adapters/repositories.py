@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from typing import cast, override
 from uuid import UUID
 
-from sqlalchemy import and_, delete, func, insert, or_, select, text, update
+from sqlalchemy import and_, case, delete, func, insert, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import CursorResult
@@ -29,6 +29,7 @@ from grafy_core.domain.identity import (
     WorkspaceRole,
 )
 from grafy_core.domain.errors import (
+    CollaborationActiveExecutionError,
     GraphFolderNameConflictError,
     NotFoundError,
     ObjectAlreadyExistsError,
@@ -51,11 +52,8 @@ from grafy_core.domain.module_library import (
 from grafy_core.domain.node_secrets import EncryptedNodeSecret
 from grafy_core.domain.collaboration import (
     CollaborativeGraphHead,
-    GraphActiveExecutionSlot,
     GraphCheckpointMapping,
-    GraphCommandJournalEntry,
     GraphCommandReceipt,
-    GraphExecutionIdempotencyRecord,
 )
 from grafy_core.domain.saved_graphs import (
     GraphBrowserCreator,
@@ -92,6 +90,8 @@ from grafy_core.ports.templates import TemplateRepositoryPort
 
 from grafy_persistence import schema
 from grafy_persistence.orm import GraphExecutionRecord, SavedGraphRevisionRecord
+
+_ACTIVE_EXECUTION_STATUSES = ("queued", "running", "cancelling")
 
 
 class SqlIdentityRepository(IdentityRepositoryPort):
@@ -1070,38 +1070,52 @@ class SqlGraphExecutionHistoryRepository(
                 f"{execution.graph_id}/r{execution.graph_revision}",
             )
         try:
-            await self._session.execute(
-                insert(table).values(
-                    execution_id=execution.execution_id,
+            async with self._session.begin_nested():
+                await self._session.execute(
+                    insert(table).values(
+                        execution_id=execution.execution_id,
+                        workspace_id=execution.workspace_id,
+                        graph_id=execution.graph_id,
+                        graph_revision=execution.graph_revision,
+                        status=execution.status,
+                        scope=execution.scope,
+                        workflow_run_id=execution.workflow_run_id,
+                        error=execution.error,
+                        created_at=execution.created_at,
+                        started_at=execution.started_at,
+                        finished_at=execution.finished_at,
+                    )
+                )
+                if execution.requested_node_ids:
+                    await self._session.execute(
+                        insert(schema.graph_execution_nodes),
+                        [
+                            {
+                                "workspace_id": execution.workspace_id,
+                                "execution_id": execution.execution_id,
+                                "node_id": node_id,
+                                "position": position,
+                            }
+                            for position, node_id in enumerate(
+                                execution.requested_node_ids
+                            )
+                        ],
+                    )
+        except IntegrityError as exc:
+            await self._session.rollback()
+            active_execution_id = await self.find_active_execution_id(
+                execution.workspace_id,
+                execution.graph_id,
+            )
+            if active_execution_id is not None:
+                raise CollaborationActiveExecutionError(
                     workspace_id=execution.workspace_id,
                     graph_id=execution.graph_id,
-                    graph_revision=execution.graph_revision,
-                    status=execution.status,
-                    scope=execution.scope,
-                    workflow_run_id=execution.workflow_run_id,
-                    error=execution.error,
-                    created_at=execution.created_at,
-                    started_at=execution.started_at,
-                    finished_at=execution.finished_at,
-                )
-            )
-        except IntegrityError as exc:
+                    execution_id=active_execution_id,
+                ) from exc
             raise ObjectAlreadyExistsError(
                 f"Graph execution already exists: {execution.execution_id}"
             ) from exc
-        if execution.requested_node_ids:
-            await self._session.execute(
-                insert(schema.graph_execution_requested_nodes),
-                [
-                    {
-                        "workspace_id": execution.workspace_id,
-                        "execution_id": execution.execution_id,
-                        "node_id": node_id,
-                        "position": position,
-                    }
-                    for position, node_id in enumerate(execution.requested_node_ids)
-                ],
-            )
 
     @override
     async def update(self, execution: GraphExecution) -> None:
@@ -1155,41 +1169,69 @@ class SqlGraphExecutionHistoryRepository(
         )
         if execution_exists is None:
             raise NotFoundError("Graph execution", str(result.execution_id))
-        requested_node_exists = await self._session.scalar(
-            select(schema.graph_execution_requested_nodes.c.execution_id).where(
-                schema.graph_execution_requested_nodes.c.workspace_id
-                == result.workspace_id,
-                schema.graph_execution_requested_nodes.c.execution_id
-                == result.execution_id,
-                schema.graph_execution_requested_nodes.c.node_id == result.node_id,
+        nodes = schema.graph_execution_nodes
+        requested = await self._session.execute(
+            select(nodes.c.result_status).where(
+                nodes.c.workspace_id == result.workspace_id,
+                nodes.c.execution_id == result.execution_id,
+                nodes.c.node_id == result.node_id,
             )
         )
-        if requested_node_exists is None:
+        requested_row = requested.one_or_none()
+        if requested_row is None:
             raise ValueError(
                 f"Graph execution {result.execution_id} did not request node "
                 f"{result.node_id!r}"
             )
-
-        table = schema.graph_execution_node_results
-        try:
-            await self._session.execute(
-                insert(table).values(
-                    workspace_id=result.workspace_id,
-                    execution_id=result.execution_id,
-                    node_id=result.node_id,
-                    position=result.position,
-                    status=result.status,
-                    outputs=result.outputs,
-                    artifact_count=result.artifact_count,
-                    error=result.error,
-                    completed_at=result.completed_at,
-                )
-            )
-        except IntegrityError as exc:
+        if requested_row.result_status is not None:
             raise ObjectAlreadyExistsError(
                 "Graph execution node result already exists: "
                 f"{result.execution_id}/{result.node_id}"
+            )
+        try:
+            async with self._session.begin_nested():
+                await self._session.execute(
+                    update(nodes)
+                    .where(
+                        nodes.c.workspace_id == result.workspace_id,
+                        nodes.c.execution_id == result.execution_id,
+                        nodes.c.node_id == result.node_id,
+                    )
+                    .values(
+                        result_status=result.status,
+                        result_position=result.position,
+                        outputs=result.outputs,
+                        artifact_count=result.artifact_count,
+                        error=result.error,
+                        completed_at=result.completed_at,
+                    )
+                )
+        except IntegrityError as exc:
+            await self._session.rollback()
+            raise ObjectAlreadyExistsError(
+                "Graph execution node result position already exists: "
+                f"{result.execution_id}/{result.position}"
             ) from exc
+
+    @override
+    async def find_active_execution_id(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+    ) -> UUID | None:
+        return await self._session.scalar(
+            select(schema.graph_executions.c.execution_id)
+            .where(
+                schema.graph_executions.c.workspace_id == workspace_id,
+                schema.graph_executions.c.graph_id == graph_id,
+                schema.graph_executions.c.status.in_(_ACTIVE_EXECUTION_STATUSES),
+            )
+            .order_by(
+                schema.graph_executions.c.created_at.asc(),
+                schema.graph_executions.c.execution_id.asc(),
+            )
+            .limit(1)
+        )
 
     @override
     async def get(
@@ -1208,18 +1250,41 @@ class SqlGraphExecutionHistoryRepository(
         execution = record.to_domain(
             await self._requested_node_ids(workspace_id, execution_id)
         )
-        results = await self._session.scalars(
-            select(GraphExecutionNodeResult)
-            .where(schema.graph_execution_node_results.c.execution_id == execution_id)
-            .where(schema.graph_execution_node_results.c.workspace_id == workspace_id)
-            .order_by(
-                schema.graph_execution_node_results.c.position.asc(),
-                schema.graph_execution_node_results.c.node_id.asc(),
+        nodes = schema.graph_execution_nodes
+        result_rows = (
+            await self._session.execute(
+                select(
+                    nodes.c.node_id,
+                    nodes.c.result_position,
+                    nodes.c.result_status,
+                    nodes.c.outputs,
+                    nodes.c.error,
+                    nodes.c.completed_at,
+                )
+                .where(
+                    nodes.c.workspace_id == workspace_id,
+                    nodes.c.execution_id == execution_id,
+                    nodes.c.result_status.is_not(None),
+                )
+                .order_by(nodes.c.result_position.asc(), nodes.c.node_id.asc())
             )
+        ).all()
+        results = tuple(
+            GraphExecutionNodeResult(
+                workspace_id=workspace_id,
+                execution_id=execution_id,
+                node_id=row.node_id,
+                position=row.result_position,
+                status=row.result_status,
+                outputs=row.outputs,
+                error=row.error,
+                completed_at=row.completed_at.replace(tzinfo=UTC),
+            )
+            for row in result_rows
         )
         return GraphExecutionDetail(
             execution=execution,
-            node_results=tuple(results),
+            node_results=results,
         )
 
     @override
@@ -1245,20 +1310,24 @@ class SqlGraphExecutionHistoryRepository(
                 raise ValueError("Graph execution node filter must not be blank")
 
         executions = schema.graph_executions
-        requested_nodes = schema.graph_execution_requested_nodes
-        node_results = schema.graph_execution_node_results
+        nodes = schema.graph_execution_nodes
         counts = (
             select(
-                node_results.c.workspace_id,
-                node_results.c.execution_id,
-                func.count(node_results.c.node_id).label("node_count"),
-                func.coalesce(func.sum(node_results.c.artifact_count), 0).label(
+                nodes.c.workspace_id,
+                nodes.c.execution_id,
+                func.sum(
+                    case(
+                        (nodes.c.result_status.is_not(None), 1),
+                        else_=0,
+                    )
+                ).label("node_count"),
+                func.coalesce(func.sum(nodes.c.artifact_count), 0).label(
                     "artifact_count"
                 ),
             )
             .group_by(
-                node_results.c.workspace_id,
-                node_results.c.execution_id,
+                nodes.c.workspace_id,
+                nodes.c.execution_id,
             )
             .subquery()
         )
@@ -1288,9 +1357,9 @@ class SqlGraphExecutionHistoryRepository(
             statement = statement.where(
                 select(1)
                 .where(
-                    requested_nodes.c.execution_id == executions.c.execution_id,
-                    requested_nodes.c.workspace_id == workspace_id,
-                    requested_nodes.c.node_id == normalized_node_id,
+                    nodes.c.execution_id == executions.c.execution_id,
+                    nodes.c.workspace_id == workspace_id,
+                    nodes.c.node_id == normalized_node_id,
                 )
                 .exists()
             )
@@ -1314,22 +1383,22 @@ class SqlGraphExecutionHistoryRepository(
         requested_by_execution: dict[UUID, list[tuple[int, str]]] = {}
         execution_ids = [row[0].execution_id for row in page_rows]
         if execution_ids:
-            requested_rows = (
+            node_rows = (
                 await self._session.execute(
                     select(
-                        requested_nodes.c.execution_id,
-                        requested_nodes.c.position,
-                        requested_nodes.c.node_id,
+                        nodes.c.execution_id,
+                        nodes.c.position,
+                        nodes.c.node_id,
                     )
-                    .where(requested_nodes.c.execution_id.in_(execution_ids))
-                    .where(requested_nodes.c.workspace_id == workspace_id)
+                    .where(nodes.c.execution_id.in_(execution_ids))
+                    .where(nodes.c.workspace_id == workspace_id)
                     .order_by(
-                        requested_nodes.c.execution_id.asc(),
-                        requested_nodes.c.position.asc(),
+                        nodes.c.execution_id.asc(),
+                        nodes.c.position.asc(),
                     )
                 )
             ).all()
-            for requested_execution_id, position, requested_node_id in requested_rows:
+            for requested_execution_id, position, requested_node_id in node_rows:
                 requested_by_execution.setdefault(requested_execution_id, []).append(
                     (position, requested_node_id)
                 )
@@ -1392,14 +1461,14 @@ class SqlGraphExecutionHistoryRepository(
         workspace_id: UUID,
         execution_id: UUID,
     ) -> tuple[str, ...]:
-        requested_nodes = schema.graph_execution_requested_nodes
+        nodes = schema.graph_execution_nodes
         result = await self._session.scalars(
-            select(requested_nodes.c.node_id)
+            select(nodes.c.node_id)
             .where(
-                requested_nodes.c.workspace_id == workspace_id,
-                requested_nodes.c.execution_id == execution_id,
+                nodes.c.workspace_id == workspace_id,
+                nodes.c.execution_id == execution_id,
             )
-            .order_by(requested_nodes.c.position.asc())
+            .order_by(nodes.c.position.asc())
         )
         return tuple(result)
 
@@ -1611,35 +1680,41 @@ class SqlCollaborationRepository:
         ).all()
         return [(workspace_id, graph_id) for workspace_id, graph_id in rows]
 
-    async def add_journal_entry(self, entry: GraphCommandJournalEntry) -> None:
-        # Core inserts must see pending ORM parents (heads) in the same unit.
+    async def add_receipt(self, receipt: GraphCommandReceipt) -> None:
         await self._session.flush()
         await self._session.execute(
-            insert(schema.graph_command_journal).values(
-                workspace_id=entry.workspace_id,
-                graph_id=entry.graph_id,
-                accepted_sequence=entry.accepted_sequence,
-                room_epoch=entry.room_epoch,
-                command_id=entry.command_id,
-                command_hmac=entry.command_hmac,
-                hmac_key_version=entry.hmac_key_version,
-                actor_kind=entry.actor_kind.value,
-                actor_user_id=entry.actor_user_id,
-                graph_room_session_id=entry.graph_room_session_id,
-                authorization_version=entry.authorization_version,
-                command_kind=entry.command_kind.value,
-                command_payload=entry.command_payload,
-                accepted_at=entry.accepted_at,
+            insert(schema.graph_command_receipts).values(
+                workspace_id=receipt.workspace_id,
+                graph_id=receipt.graph_id,
+                command_id=receipt.command_id,
+                command_hmac=receipt.command_hmac,
+                hmac_key_version=receipt.hmac_key_version,
+                actor_kind=receipt.actor_kind.value,
+                actor_user_id=receipt.actor_user_id,
+                room_epoch=receipt.room_epoch,
+                accepted_sequence=receipt.accepted_sequence,
+                outcome=receipt.outcome.value,
+                created_at=receipt.created_at,
             )
         )
 
-    async def clear_journal(self, workspace_id: UUID, graph_id: UUID) -> None:
+    async def add_checkpoint_mapping(
+        self,
+        mapping: GraphCheckpointMapping,
+    ) -> None:
+        # Mapping FKs target heads and revisions that may still be pending ORM adds.
+        await self._session.flush()
         await self._session.execute(
-            delete(schema.graph_command_journal).where(
-                schema.graph_command_journal.c.workspace_id == workspace_id,
-                schema.graph_command_journal.c.graph_id == graph_id,
+            insert(schema.graph_checkpoint_mappings).values(
+                workspace_id=mapping.workspace_id,
+                graph_id=mapping.graph_id,
+                room_epoch=mapping.room_epoch,
+                collaboration_sequence=mapping.collaboration_sequence,
+                saved_revision=mapping.saved_revision,
+                created_at=mapping.created_at,
             )
         )
+
 
     async def get_receipt(
         self,
@@ -1663,24 +1738,6 @@ class SqlCollaborationRepository:
         if row is None:
             return None
         return GraphCommandReceipt.model_validate(dict(row))
-
-    async def add_receipt(self, receipt: GraphCommandReceipt) -> None:
-        await self._session.flush()
-        await self._session.execute(
-            insert(schema.graph_command_receipts).values(
-                workspace_id=receipt.workspace_id,
-                graph_id=receipt.graph_id,
-                command_id=receipt.command_id,
-                command_hmac=receipt.command_hmac,
-                hmac_key_version=receipt.hmac_key_version,
-                actor_kind=receipt.actor_kind.value,
-                actor_user_id=receipt.actor_user_id,
-                room_epoch=receipt.room_epoch,
-                accepted_sequence=receipt.accepted_sequence,
-                outcome=receipt.outcome.value,
-                created_at=receipt.created_at,
-            )
-        )
 
     async def get_checkpoint_mapping(
         self,
@@ -1708,151 +1765,6 @@ class SqlCollaborationRepository:
         if row is None:
             return None
         return GraphCheckpointMapping.model_validate(dict(row))
-
-    async def add_checkpoint_mapping(
-        self,
-        mapping: GraphCheckpointMapping,
-    ) -> None:
-        # Mapping FKs target heads and revisions that may still be pending ORM adds.
-        await self._session.flush()
-        await self._session.execute(
-            insert(schema.graph_checkpoint_mappings).values(
-                workspace_id=mapping.workspace_id,
-                graph_id=mapping.graph_id,
-                room_epoch=mapping.room_epoch,
-                collaboration_sequence=mapping.collaboration_sequence,
-                saved_revision=mapping.saved_revision,
-                created_at=mapping.created_at,
-            )
-        )
-
-    async def get_execution_idempotency(
-        self,
-        workspace_id: UUID,
-        graph_id: UUID,
-        client_request_id: UUID,
-    ) -> GraphExecutionIdempotencyRecord | None:
-        row = (
-            (
-                await self._session.execute(
-                    select(schema.graph_execution_idempotency).where(
-                        schema.graph_execution_idempotency.c.workspace_id
-                        == workspace_id,
-                        schema.graph_execution_idempotency.c.graph_id == graph_id,
-                        schema.graph_execution_idempotency.c.client_request_id
-                        == client_request_id,
-                    )
-                )
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if row is None:
-            return None
-        return GraphExecutionIdempotencyRecord.model_validate(dict(row))
-
-    async def add_execution_idempotency(
-        self,
-        record: GraphExecutionIdempotencyRecord,
-    ) -> None:
-        await self._session.execute(
-            insert(schema.graph_execution_idempotency).values(
-                workspace_id=record.workspace_id,
-                graph_id=record.graph_id,
-                client_request_id=record.client_request_id,
-                request_hmac=record.request_hmac,
-                hmac_key_version=record.hmac_key_version,
-                actor_user_id=record.actor_user_id,
-                room_epoch=record.room_epoch,
-                head_sequence=record.head_sequence,
-                execution_id=record.execution_id,
-                created_at=record.created_at,
-            )
-        )
-
-    async def get_active_execution_slot(
-        self,
-        workspace_id: UUID,
-        graph_id: UUID,
-    ) -> GraphActiveExecutionSlot | None:
-        row = (
-            (
-                await self._session.execute(
-                    select(schema.graph_active_execution_slots).where(
-                        schema.graph_active_execution_slots.c.workspace_id
-                        == workspace_id,
-                        schema.graph_active_execution_slots.c.graph_id == graph_id,
-                    )
-                )
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if row is None:
-            return None
-        return GraphActiveExecutionSlot.model_validate(dict(row))
-
-    async def acquire_active_execution_slot(
-        self,
-        slot: GraphActiveExecutionSlot,
-    ) -> bool:
-        values = {
-            "workspace_id": slot.workspace_id,
-            "graph_id": slot.graph_id,
-            "execution_id": slot.execution_id,
-            "updated_at": slot.updated_at,
-        }
-        dialect = (
-            self._session.bind.dialect.name if self._session.bind is not None else ""
-        )
-        if dialect == "postgresql":
-            statement = (
-                postgresql_insert(schema.graph_active_execution_slots)
-                .values(**values)
-                .on_conflict_do_nothing(index_elements=["workspace_id", "graph_id"])
-            )
-        elif dialect == "sqlite":
-            statement = (
-                sqlite_insert(schema.graph_active_execution_slots)
-                .values(**values)
-                .on_conflict_do_nothing(index_elements=["workspace_id", "graph_id"])
-            )
-        else:
-            existing = await self.get_active_execution_slot(
-                slot.workspace_id,
-                slot.graph_id,
-            )
-            if existing is not None:
-                return False
-            statement = insert(schema.graph_active_execution_slots).values(**values)
-        result = await self._session.execute(statement)
-        return bool(result.rowcount)
-
-    async def clear_active_execution_slot(
-        self,
-        workspace_id: UUID,
-        graph_id: UUID,
-        *,
-        execution_id: UUID | None = None,
-    ) -> None:
-        clause = [
-            schema.graph_active_execution_slots.c.workspace_id == workspace_id,
-            schema.graph_active_execution_slots.c.graph_id == graph_id,
-        ]
-        if execution_id is not None:
-            clause.append(
-                schema.graph_active_execution_slots.c.execution_id == execution_id
-            )
-        await self._session.execute(
-            delete(schema.graph_active_execution_slots).where(*clause)
-        )
-
-    async def clear_all_active_execution_slots(self) -> int:
-        result = cast(
-            CursorResult[tuple[object, ...]],
-            await self._session.execute(delete(schema.graph_active_execution_slots)),
-        )
-        return int(result.rowcount or 0)
 
 
 class SqlModuleLibraryRepository(ModuleLibraryRepositoryPort):

@@ -1,9 +1,11 @@
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
+from sqlalchemy import create_engine, text
 
 from grafy_core.application.saved_graphs import SavedGraphService
 from grafy_core.domain.execution_history import GraphExecution
@@ -251,10 +253,7 @@ def test_duplicate_saved_node_ids_become_a_browsable_failed_execution(
 
 
 async def _seed_active_execution(database_url: str) -> tuple[UUID, UUID]:
-    from grafy_core.domain.collaboration import (
-        CollaborativeGraphHead,
-        GraphActiveExecutionSlot,
-    )
+    from grafy_core.domain.collaboration import CollaborativeGraphHead
 
     async with db(database_url) as database:
         registry = build_plugin_registry(builtin_plugins(), external_plugins=())
@@ -270,6 +269,7 @@ async def _seed_active_execution(database_url: str) -> tuple[UUID, UUID]:
             document=SavedGraphDocument(),
         )
         execution_id = uuid4()
+        started_at = datetime.now(UTC)
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
             await unit_of_work.collaboration.add_head(
                 CollaborativeGraphHead(
@@ -283,6 +283,8 @@ async def _seed_active_execution(database_url: str) -> tuple[UUID, UUID]:
                     document=graph.document,
                 )
             )
+            # An active (running) execution is its own uniqueness record; the
+            # partial unique index on graph_executions carries the invariant.
             await unit_of_work.execution_history.add(
                 GraphExecution(
                     workspace_id=WORKSPACE_ID,
@@ -291,18 +293,10 @@ async def _seed_active_execution(database_url: str) -> tuple[UUID, UUID]:
                     graph_revision=graph.revision,
                     status="running",
                     requested_node_ids=(),
+                    created_at=started_at,
+                    started_at=started_at,
                 )
             )
-            await unit_of_work.commit()
-        async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-            acquired = await unit_of_work.collaboration.acquire_active_execution_slot(
-                GraphActiveExecutionSlot(
-                    workspace_id=WORKSPACE_ID,
-                    graph_id=graph.id,
-                    execution_id=execution_id,
-                )
-            )
-            assert acquired
             await unit_of_work.commit()
         return graph.id, execution_id
 
@@ -327,3 +321,55 @@ def test_application_startup_marks_stale_active_execution_failed(
     assert detail.finished_at is not None
     assert detail.error is not None
     assert "API process stopped" in detail.error
+
+
+def test_conflicting_start_reports_existing_execution_without_leaking(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "conflict.sqlite3"
+    database_url = create_db_url(tmp_path, "conflict.sqlite3")
+    graph_id, execution_id = asyncio.run(_seed_active_execution(database_url))
+    with client_with_overrides(
+        settings=Settings(
+            workspace=tmp_path / "workbench",
+            database_url=SecretStr(database_url),
+        ),
+        overrides={browser_actor: browser_actor_override},
+    ) as client:
+        # Boot-time recovery already failed the seeded execution; restore it
+        # to running so the database-level uniqueness invariant is exercised.
+        with create_engine(f"sqlite:///{database_path}").begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE graph_executions SET status = 'running' "
+                    "WHERE execution_id = :execution_id"
+                ),
+                {"execution_id": execution_id.hex},
+            )
+        api = GrafyApi(client)
+        executions = api.workspace(WORKSPACE_ID).executions
+        response = executions.start_execution(
+            RunRequest(
+                nodes=[
+                    RunNodeRequest(
+                        id="text",
+                        operator_id="text.input",
+                        operator_version=1,
+                        config={"text": "conflict"},
+                    )
+                ],
+                edges=[],
+                scope="all",
+                graph_id=graph_id,
+                graph_revision=1,
+            )
+        )
+
+    assert response.status_code == 409
+    body = response.json()["detail"]
+    assert body["error_code"] == "active_execution"
+    # The conflict identifies the existing execution for this graph only; it
+    # must not disclose executions from other workspaces.
+    assert body["execution_id"] == str(execution_id)
+    assert body["graph_id"] == str(graph_id)
+    assert body["workspace_id"] == str(WORKSPACE_ID)

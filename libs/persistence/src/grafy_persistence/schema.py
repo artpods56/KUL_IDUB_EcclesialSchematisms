@@ -17,6 +17,7 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy import Uuid as SaUuid
 from sqlalchemy.engine import Dialect
@@ -557,49 +558,25 @@ graph_executions = Table(
         "execution_id",
     ),
     Index("ix_graph_executions_workspace_status", "workspace_id", "status"),
-)
-
-
-graph_execution_requested_nodes = Table(
-    "graph_execution_requested_nodes",
-    metadata,
-    Column(
-        "workspace_id",
-        SaUuid(as_uuid=True),
-        primary_key=True,
-    ),
-    Column(
-        "execution_id",
-        SaUuid(as_uuid=True),
-        primary_key=True,
-    ),
-    Column("node_id", String(255), primary_key=True),
-    Column("position", Integer, nullable=False),
-    ForeignKeyConstraint(
-        ("workspace_id", "execution_id"),
-        ("graph_executions.workspace_id", "graph_executions.execution_id"),
-        name="fk_exec_req_nodes_workspace_execution",
-        ondelete="CASCADE",
-    ),
-    UniqueConstraint(
-        "workspace_id",
-        "execution_id",
-        "position",
-        name="uq_graph_execution_requested_nodes_execution_position",
-    ),
     Index(
-        "ix_graph_execution_requested_nodes_node_execution",
+        "uq_graph_executions_one_active_per_graph",
         "workspace_id",
-        "node_id",
-        "execution_id",
+        "graph_id",
+        unique=True,
+        sqlite_where=text("status IN ('queued', 'running', 'cancelling')"),
+        postgresql_where=text("status IN ('queued', 'running', 'cancelling')"),
     ),
 )
 
 
-graph_execution_node_results = Table(
-    "graph_execution_node_results",
+graph_execution_nodes = Table(
+    "graph_execution_nodes",
     metadata,
-    Column("workspace_id", SaUuid(as_uuid=True), primary_key=True),
+    Column(
+        "workspace_id",
+        SaUuid(as_uuid=True),
+        primary_key=True,
+    ),
     Column(
         "execution_id",
         SaUuid(as_uuid=True),
@@ -607,25 +584,44 @@ graph_execution_node_results = Table(
     ),
     Column("node_id", String(255), primary_key=True),
     Column("position", Integer, nullable=False),
-    Column("status", String(16), nullable=False),
-    Column("outputs", ArtifactOutputsType(), nullable=False),
-    Column("artifact_count", Integer, nullable=False),
+    Column("result_status", String(16), nullable=True),
+    Column("result_position", Integer, nullable=True),
+    Column("outputs", ArtifactOutputsType(), nullable=True),
+    Column("artifact_count", Integer, nullable=True),
     Column("error", Text, nullable=True),
-    Column("completed_at", UTCDateTime(), nullable=False),
+    Column("completed_at", UTCDateTime(), nullable=True),
     ForeignKeyConstraint(
         ("workspace_id", "execution_id"),
         ("graph_executions.workspace_id", "graph_executions.execution_id"),
-        name="fk_exec_result_nodes_workspace_execution",
+        name="fk_exec_nodes_workspace_execution",
         ondelete="CASCADE",
+    ),
+    CheckConstraint(
+        "(result_status IS NULL AND result_position IS NULL AND outputs IS NULL "
+        "AND artifact_count IS NULL AND completed_at IS NULL) OR "
+        "(result_status IN ('succeeded', 'failed', 'skipped') "
+        "AND result_position IS NOT NULL AND outputs IS NOT NULL "
+        "AND artifact_count IS NOT NULL AND artifact_count >= 0 "
+        "AND completed_at IS NOT NULL)",
+        name="ck_graph_execution_nodes_result_shape",
     ),
     UniqueConstraint(
         "workspace_id",
         "execution_id",
         "position",
-        name="uq_graph_execution_node_results_execution_position",
+        name="uq_graph_execution_nodes_execution_position",
     ),
     Index(
-        "ix_graph_execution_node_results_node_execution",
+        "uq_graph_execution_nodes_execution_result_position",
+        "workspace_id",
+        "execution_id",
+        "result_position",
+        unique=True,
+        sqlite_where=text("result_position IS NOT NULL"),
+        postgresql_where=text("result_position IS NOT NULL"),
+    ),
+    Index(
+        "ix_graph_execution_nodes_node_execution",
         "workspace_id",
         "node_id",
         "execution_id",
@@ -1026,40 +1022,6 @@ collaborative_graph_heads = Table(
 )
 
 
-graph_command_journal = Table(
-    "graph_command_journal",
-    metadata,
-    Column("workspace_id", SaUuid(as_uuid=True), primary_key=True),
-    Column("graph_id", SaUuid(as_uuid=True), primary_key=True),
-    Column("accepted_sequence", Integer, primary_key=True),
-    Column("room_epoch", SaUuid(as_uuid=True), nullable=False),
-    Column("command_id", SaUuid(as_uuid=True), nullable=False),
-    Column("command_hmac", LargeBinary(64), nullable=False),
-    Column("hmac_key_version", Integer, nullable=False),
-    Column("actor_kind", String(32), nullable=False),
-    Column("actor_user_id", SaUuid(as_uuid=True), nullable=True),
-    Column("graph_room_session_id", SaUuid(as_uuid=True), nullable=True),
-    Column("authorization_version", Integer, nullable=True),
-    Column("command_kind", String(80), nullable=False),
-    Column("command_payload", JSON, nullable=False),
-    Column("accepted_at", UTCDateTime(), nullable=False),
-    ForeignKeyConstraint(
-        ("workspace_id", "graph_id"),
-        (
-            "collaborative_graph_heads.workspace_id",
-            "collaborative_graph_heads.graph_id",
-        ),
-        ondelete="CASCADE",
-    ),
-    UniqueConstraint(
-        "workspace_id",
-        "graph_id",
-        "command_id",
-        name="uq_graph_command_journal_command_id",
-    ),
-)
-
-
 graph_command_receipts = Table(
     "graph_command_receipts",
     metadata,
@@ -1110,48 +1072,6 @@ graph_checkpoint_mappings = Table(
             "saved_graph_revisions.revision",
         ),
         ondelete="RESTRICT",
-    ),
-)
-
-
-graph_execution_idempotency = Table(
-    "graph_execution_idempotency",
-    metadata,
-    Column("workspace_id", SaUuid(as_uuid=True), primary_key=True),
-    Column("graph_id", SaUuid(as_uuid=True), primary_key=True),
-    Column("client_request_id", SaUuid(as_uuid=True), primary_key=True),
-    Column("request_hmac", LargeBinary(64), nullable=False),
-    Column("hmac_key_version", Integer, nullable=False),
-    Column("actor_user_id", SaUuid(as_uuid=True), nullable=False),
-    Column("room_epoch", SaUuid(as_uuid=True), nullable=False),
-    Column("head_sequence", Integer, nullable=False),
-    Column("execution_id", SaUuid(as_uuid=True), nullable=False),
-    Column("created_at", UTCDateTime(), nullable=False),
-    ForeignKeyConstraint(
-        ("workspace_id", "graph_id"),
-        (
-            "collaborative_graph_heads.workspace_id",
-            "collaborative_graph_heads.graph_id",
-        ),
-        ondelete="CASCADE",
-    ),
-)
-
-
-graph_active_execution_slots = Table(
-    "graph_active_execution_slots",
-    metadata,
-    Column("workspace_id", SaUuid(as_uuid=True), primary_key=True),
-    Column("graph_id", SaUuid(as_uuid=True), primary_key=True),
-    Column("execution_id", SaUuid(as_uuid=True), nullable=False),
-    Column("updated_at", UTCDateTime(), nullable=False),
-    ForeignKeyConstraint(
-        ("workspace_id", "graph_id"),
-        (
-            "collaborative_graph_heads.workspace_id",
-            "collaborative_graph_heads.graph_id",
-        ),
-        ondelete="CASCADE",
     ),
 )
 
