@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 from grafy_api.settings import Settings
+from grafy_api.app_state import get_resources
 from grafy_api.v1.routes.auth.dependencies import browser_actor
 from grafy_api.v1.routes.saved_graphs.models import (
     GraphFolderWriteRequest,
@@ -23,7 +24,9 @@ from grafy_api.v1.routes.templates.models import (
 from grafy_core.artifacts import ArtifactObject
 from grafy_core.domain.collaboration import CollaborativeGraphHead
 from grafy_core.domain.execution_history import GraphExecution
+from grafy_core.domain.errors import UserDisabledError
 from grafy_core.domain.identity import (
+    ActorContext,
     User,
     Workspace,
     WorkspaceKind,
@@ -287,6 +290,27 @@ def _create_template(
     )
 
 
+def test_direct_template_mutation_requires_current_workspace_authority(
+    template_client: tuple[TestClient, ActorSwitcher],
+) -> None:
+    client, actor = template_client
+    actor.as_user(OWNER_ID)
+    template = _create_template(client)
+    service = get_resources(client.app).templates
+
+    with pytest.raises(UserDisabledError):
+        asyncio.run(
+            service.archive(
+                actor=ActorContext(user_id=UUID(int=999)),
+                workspace_id=SOURCE_WORKSPACE_ID,
+                template_id=template.id,
+            )
+        )
+
+    stored = asyncio.run(service.get(SOURCE_WORKSPACE_ID, template.id))
+    assert stored.is_available
+
+
 def test_template_snapshot_and_instantiations_remain_independent_and_safe(
     template_client: tuple[TestClient, ActorSwitcher],
 ) -> None:
@@ -329,9 +353,7 @@ def test_template_snapshot_and_instantiations_remain_independent_and_safe(
         "safe_setting": "preserved",
         "nested": {"safe": True},
     }
-    assert (
-        destination.node_secrets.list_secrets(first.graph_id).json()["secrets"] == []
-    )
+    assert destination.node_secrets.list_secrets(first.graph_id).json()["secrets"] == []
     assert (
         destination.executions.list_graph_executions(first.graph_id).json()["items"]
         == []

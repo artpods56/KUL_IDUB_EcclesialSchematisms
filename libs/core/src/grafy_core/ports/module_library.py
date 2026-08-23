@@ -4,6 +4,7 @@ from uuid import UUID
 
 from grafy_core.domain.module_library import Module, ModuleRelease
 from grafy_core.ports.collaboration import CollaborationRepositoryPort
+from grafy_core.ports.identity import IdentityRepositoryPort
 from grafy_core.ports.saved_graphs import SavedGraphRepositoryPort
 
 
@@ -47,6 +48,9 @@ class ModuleLibraryUnitOfWorkPort(Protocol):
 
     @property
     def collaboration(self) -> CollaborationRepositoryPort: ...
+
+    @property
+    def identity(self) -> IdentityRepositoryPort: ...
 
     async def __aenter__(self) -> Self: ...
 

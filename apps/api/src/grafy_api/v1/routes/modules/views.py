@@ -2,14 +2,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, status
 
-from grafy_core.domain.errors import CapabilityDeniedError, NotFoundError
+from grafy_core.domain.errors import NotFoundError
 from grafy_core.domain.identity import WorkspaceCapability
 from grafy_core.domain.module_library import ModuleLibraryError
 from grafy_core.domain.modules import GraphModuleDefinition, GraphModuleReference
 
 from grafy_api.app_state import get_resources
 from grafy_api.v1.routes.auth.dependencies import (
-    IdentityServiceDependency,
     require_workspace_capability,
 )
 from grafy_api.v1.routes.catalog.services import (
@@ -112,9 +111,9 @@ async def publish_module_release(
 ) -> ModuleResponse:
     try:
         module, _release, definition = await service.publish_release(
+            actor=access.actor,
             workspace_id=access.workspace_id,
             source_graph_id=body.source_graph_id,
-            published_by_user_id=access.actor.user_id,
             revision=body.revision,
             name=body.name,
             description=body.description,
@@ -141,6 +140,7 @@ async def deprecate_module(
     catalog = get_resources(request.app).graph_modules
     try:
         module = await service.deprecate(
+            actor=access.actor,
             workspace_id=access.workspace_id,
             module_id=module_id,
         )
@@ -170,6 +170,7 @@ async def withdraw_module(
 ) -> ModuleResponse:
     try:
         module = await service.withdraw(
+            actor=access.actor,
             workspace_id=access.workspace_id,
             module_id=module_id,
         )
@@ -190,7 +191,6 @@ async def import_module_release(
     body: ImportModuleReleaseRequest,
     service: ModuleLibraryDependency,
     access: require_workspace_capability(WorkspaceCapability.CREATE_GRAPH),
-    identity: IdentityServiceDependency,
 ) -> ImportModuleReleaseResponse:
     if body.source_workspace_id == access.workspace_id:
         raise HTTPException(
@@ -201,23 +201,12 @@ async def import_module_release(
             ),
         )
     try:
-        await identity.authorize(
-            actor=access.actor,
-            workspace_id=body.source_workspace_id,
-            capability=WorkspaceCapability.VIEW_GRAPH,
-        )
-    except CapabilityDeniedError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except NotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    try:
         graph, module, release, definition = await service.import_release(
+            actor=access.actor,
             source_workspace_id=body.source_workspace_id,
             source_module_id=body.source_module_id,
             source_revision=body.revision,
             destination_workspace_id=access.workspace_id,
-            created_by_user_id=access.actor.user_id,
             name=body.name,
         )
     except NotFoundError as exc:

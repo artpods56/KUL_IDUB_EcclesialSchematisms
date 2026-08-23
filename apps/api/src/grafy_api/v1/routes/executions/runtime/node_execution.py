@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from grafy_core.artifacts import (
     ArtifactRef,
@@ -22,11 +22,7 @@ from grafy_core.runtime.persistence import PersistedNodeOutput
 
 from .control import RunExecutionControl
 from .edge_values import EdgeValueResolver
-from .engine import (
-    ExecutionTaskRunner,
-    PreparedGraphExecution,
-)
-from .models import CompiledEdge, CompiledNode
+from .models import CompiledEdge, CompiledNode, PreparedGraphExecution
 
 
 class _MappedItemExecutionError(InvocationError):
@@ -70,7 +66,7 @@ class NodeExecutionService:
         compiled_node: CompiledNode,
         incoming_edges: Sequence[CompiledEdge],
         outputs: Mapping[str, Mapping[str, ArtifactOutputValue]],
-        task_runner: ExecutionTaskRunner,
+        workflow_run_id: UUID,
         node_run_id: UUID,
     ) -> dict[str, ArtifactOutputValue]:
         node_request = compiled_node.request
@@ -78,11 +74,11 @@ class NodeExecutionService:
             compiled_node,
             incoming_edges,
             outputs,
-            task_runner.workflow_run_id,
+            workflow_run_id,
             execution.workspace_id,
         )
         node_context = NodeExecutionContext(
-            workflow_run_id=task_runner.workflow_run_id,
+            workflow_run_id=workflow_run_id,
             node_run_id=node_run_id,
             workspace_id=execution.workspace_id,
             graph_id=execution.graph_id,
@@ -143,7 +139,6 @@ class NodeExecutionService:
                 inputs=inputs,
                 cache_policy=cache_policy,
                 opaque_secret_revisions=opaque_secret_revisions,
-                task_runner=task_runner,
                 control=execution.control,
             )
         else:
@@ -173,7 +168,6 @@ class NodeExecutionService:
         inputs: Mapping[str, object],
         cache_policy: NodeCachePolicy,
         opaque_secret_revisions: Mapping[str, str],
-        task_runner: ExecutionTaskRunner,
         control: RunExecutionControl | None,
     ) -> PersistedNodeOutput:
         node = compiled_node.node
@@ -231,7 +225,6 @@ class NodeExecutionService:
                                 ref=ref,
                                 cache_policy=cache_policy,
                                 opaque_secret_revisions=opaque_secret_revisions,
-                                task_runner=task_runner,
                                 control=control,
                                 limiter=limiter,
                             ),
@@ -301,7 +294,6 @@ class NodeExecutionService:
         ref: ArtifactRef,
         cache_policy: NodeCachePolicy,
         opaque_secret_revisions: Mapping[str, str],
-        task_runner: ExecutionTaskRunner,
         control: RunExecutionControl | None,
         limiter: asyncio.Semaphore,
     ) -> PersistedNodeOutput:
@@ -310,14 +302,14 @@ class NodeExecutionService:
                 control.check_cancelled()
             item_inputs = dict(inputs)
             item_inputs[map_input] = ref
+            item_context = replace(
+                context,
+                node_run_id=uuid4(),
+                invocation_index=index,
+                invocation_path=(*context.invocation_path, index),
+            )
 
-            async def execute_item(item_node_run_id: UUID) -> PersistedNodeOutput:
-                item_context = replace(
-                    context,
-                    node_run_id=item_node_run_id,
-                    invocation_index=index,
-                    invocation_path=(*context.invocation_path, index),
-                )
+            try:
                 return cast(
                     PersistedNodeOutput,
                     await self._runtime.run_node(
@@ -329,13 +321,6 @@ class NodeExecutionService:
                         cache_policy=cache_policy,
                         opaque_secret_revisions=opaque_secret_revisions,
                     ),
-                )
-
-            try:
-                return await task_runner.run_map_item(
-                    compiled_node,
-                    index,
-                    execute_item,
                 )
             except Exception as exc:
                 raise _MappedItemExecutionError(

@@ -878,7 +878,6 @@ def test_0013_merges_node_tables_preserves_data_and_reconstructs_on_downgrade(
 
     workspace_hex, graph_hex = _seed_execution_graph(database_path)
     execution_hex = UUID("00000000-0000-0000-0000-000000000a02").hex
-    finished_hex = UUID("00000000-0000-0000-0000-000000000a03").hex
     active_hex = UUID("00000000-0000-0000-0000-000000000a04").hex
     timestamp = "2026-08-20 09:00:00"
     with create_engine(f"sqlite:///{database_path}").begin() as connection:

@@ -49,7 +49,6 @@ from grafy_api.v1.routes.catalog.views import router as catalog_router
 from grafy_api.v1.routes.modules.views import router as modules_router
 from grafy_api.v1.routes.templates.views import router as templates_router
 from grafy_api.v1.routes.collaboration.hub import GraphRoomHub
-from grafy_api.v1.routes.collaboration.publish import ActiveExecutionRoomPublisher
 from grafy_api.v1.routes.collaboration.views import router as collaboration_router
 from grafy_api.v1.routes.executions.views import router as executions_router
 from grafy_api.v1.routes.node_secrets.services import NodeSecretService
@@ -299,6 +298,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 saved_graphs=saved_graphs,
                 module_library=module_library,
                 node_secrets=node_secrets,
+                graph_room_hub=graph_room_hub,
             )
             resources = AppResources(
                 database=database,
@@ -320,9 +320,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 graph_room_hub=graph_room_hub,
             )
             try:
-                components.execution_manager.bind_room_publisher(
-                    ActiveExecutionRoomPublisher(graph_room_hub)
-                )
                 await components.execution_history.interrupt_all_active()
                 # Migration 0009 backfills heads; refuse to serve if any graph still lacks one.
                 await collaboration.verify_every_graph_has_head()

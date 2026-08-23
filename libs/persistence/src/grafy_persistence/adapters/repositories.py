@@ -149,7 +149,8 @@ class SqlIdentityRepository(IdentityRepositoryPort):
             schema.workspaces.c.id == workspace_id,
         )
         if self._session.get_bind().dialect.name == "sqlite":
-            await self._session.execute(text("BEGIN IMMEDIATE"))
+            if not self._session.in_transaction():
+                await self._session.execute(text("BEGIN IMMEDIATE"))
         else:
             statement = statement.with_for_update()
         return await self._session.scalar(statement)
@@ -161,7 +162,8 @@ class SqlIdentityRepository(IdentityRepositoryPort):
     ) -> Workspace | None:
         statement = select(Workspace).where(schema.workspaces.c.slug == slug)
         if self._session.get_bind().dialect.name == "sqlite":
-            await self._session.execute(text("BEGIN IMMEDIATE"))
+            if not self._session.in_transaction():
+                await self._session.execute(text("BEGIN IMMEDIATE"))
         else:
             statement = statement.with_for_update()
         return await self._session.scalar(statement)
@@ -1765,7 +1767,6 @@ class SqlCollaborationRepository:
         if row is None:
             return None
         return GraphCheckpointMapping.model_validate(dict(row))
-
 
 class SqlModuleLibraryRepository(ModuleLibraryRepositoryPort):
     def __init__(self, session: AsyncSession) -> None:

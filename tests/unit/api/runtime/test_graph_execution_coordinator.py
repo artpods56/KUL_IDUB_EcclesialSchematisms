@@ -45,10 +45,9 @@ from grafy_api.v1.routes.executions.runtime.coordinator import (
     GraphExecutionCoordinator,
 )
 from grafy_api.v1.routes.executions.runtime.edge_values import EdgeValueResolver
-from grafy_api.v1.routes.executions.runtime.engine import PreparedGraphExecution
 from grafy_api.v1.routes.executions.runtime.errors import GraphExecutionError
-from grafy_api.v1.routes.executions.runtime.inline import InlineExecutionEngine
 from grafy_api.v1.routes.executions.runtime.models import (
+    PreparedGraphExecution,
     CompiledEdge,
     CompiledGraph,
     CompiledNode,
@@ -318,17 +317,15 @@ async def test_inline_map_reuses_cache_and_preserves_sequence_envelope() -> None
             }
         }
     )
-    engine = InlineExecutionEngine(
-        coordinator=GraphExecutionCoordinator(
-            node_execution=NodeExecutionService(
-                runtime=_runtime(resolver, writer, MemoryInvocationCache()),
-                edge_values=cast(EdgeValueResolver, edge_values),
-                node_secrets=UnavailableNodeSecretResolver(),
-            )
+    coordinator = GraphExecutionCoordinator(
+        node_execution=NodeExecutionService(
+            runtime=_runtime(resolver, writer, MemoryInvocationCache()),
+            edge_values=cast(EdgeValueResolver, edge_values),
+            node_secrets=UnavailableNodeSecretResolver(),
         )
     )
 
-    first = await engine.execute(
+    first = await coordinator.execute(
         PreparedGraphExecution(
             workspace_id=WORKSPACE_ID,
             plan=plan,
@@ -350,7 +347,7 @@ async def test_inline_map_reuses_cache_and_preserves_sequence_envelope() -> None
         index_key="source_position",
     )
     edge_values.inputs_by_node["mapped"]["item"] = second_source
-    second = await engine.execute(
+    second = await coordinator.execute(
         PreparedGraphExecution(
             workspace_id=WORKSPACE_ID,
             plan=plan,
@@ -416,14 +413,12 @@ async def test_map_execution_overlaps_items_and_aggregates_in_source_order() -> 
             }
         }
     )
-    engine = InlineExecutionEngine(
-        coordinator=GraphExecutionCoordinator(
-            node_execution=NodeExecutionService(
-                runtime=_runtime(resolver, writer),
-                edge_values=cast(EdgeValueResolver, edge_values),
-                node_secrets=UnavailableNodeSecretResolver(),
-                max_map_concurrency=2,
-            )
+    coordinator = GraphExecutionCoordinator(
+        node_execution=NodeExecutionService(
+            runtime=_runtime(resolver, writer),
+            edge_values=cast(EdgeValueResolver, edge_values),
+            node_secrets=UnavailableNodeSecretResolver(),
+            max_map_concurrency=2,
         )
     )
     execution = PreparedGraphExecution(
@@ -439,7 +434,7 @@ async def test_map_execution_overlaps_items_and_aggregates_in_source_order() -> 
         raise_node_errors=False,
     )
 
-    run_task = asyncio.create_task(engine.execute(execution))
+    run_task = asyncio.create_task(coordinator.execute(execution))
     try:
         async with asyncio.timeout(3):
             await node.started[0].wait()
@@ -501,14 +496,12 @@ async def test_map_execution_never_exceeds_configured_concurrency() -> None:
             }
         }
     )
-    engine = InlineExecutionEngine(
-        coordinator=GraphExecutionCoordinator(
-            node_execution=NodeExecutionService(
-                runtime=_runtime(resolver, writer),
-                edge_values=cast(EdgeValueResolver, edge_values),
-                node_secrets=UnavailableNodeSecretResolver(),
-                max_map_concurrency=3,
-            )
+    coordinator = GraphExecutionCoordinator(
+        node_execution=NodeExecutionService(
+            runtime=_runtime(resolver, writer),
+            edge_values=cast(EdgeValueResolver, edge_values),
+            node_secrets=UnavailableNodeSecretResolver(),
+            max_map_concurrency=3,
         )
     )
     execution = PreparedGraphExecution(
@@ -524,7 +517,7 @@ async def test_map_execution_never_exceeds_configured_concurrency() -> None:
         raise_node_errors=False,
     )
 
-    run_task = asyncio.create_task(engine.execute(execution))
+    run_task = asyncio.create_task(coordinator.execute(execution))
     try:
         async with asyncio.timeout(3):
             await node.started_totals[2].wait()
@@ -592,14 +585,12 @@ async def test_map_execution_failure_cancels_items_and_skips_dependents() -> Non
             },
         }
     )
-    engine = InlineExecutionEngine(
-        coordinator=GraphExecutionCoordinator(
-            node_execution=NodeExecutionService(
-                runtime=_runtime(resolver, writer),
-                edge_values=cast(EdgeValueResolver, edge_values),
-                node_secrets=UnavailableNodeSecretResolver(),
-                max_map_concurrency=3,
-            )
+    coordinator = GraphExecutionCoordinator(
+        node_execution=NodeExecutionService(
+            runtime=_runtime(resolver, writer),
+            edge_values=cast(EdgeValueResolver, edge_values),
+            node_secrets=UnavailableNodeSecretResolver(),
+            max_map_concurrency=3,
         )
     )
     execution = PreparedGraphExecution(
@@ -619,7 +610,7 @@ async def test_map_execution_failure_cancels_items_and_skips_dependents() -> Non
         raise_node_errors=False,
     )
 
-    run_task = asyncio.create_task(engine.execute(execution))
+    run_task = asyncio.create_task(coordinator.execute(execution))
     try:
         async with asyncio.timeout(3):
             await node.started_totals[2].wait()
@@ -694,17 +685,15 @@ async def test_inline_map_failure_skips_dependents_and_preserves_cause() -> None
             },
         }
     )
-    engine = InlineExecutionEngine(
-        coordinator=GraphExecutionCoordinator(
-            node_execution=NodeExecutionService(
-                runtime=_runtime(resolver, writer),
-                edge_values=cast(EdgeValueResolver, edge_values),
-                node_secrets=UnavailableNodeSecretResolver(),
-            )
+    coordinator = GraphExecutionCoordinator(
+        node_execution=NodeExecutionService(
+            runtime=_runtime(resolver, writer),
+            edge_values=cast(EdgeValueResolver, edge_values),
+            node_secrets=UnavailableNodeSecretResolver(),
         )
     )
 
-    result = await engine.execute(
+    result = await coordinator.execute(
         PreparedGraphExecution(
             workspace_id=WORKSPACE_ID,
             plan=plan,
@@ -737,7 +726,7 @@ async def test_inline_map_failure_skips_dependents_and_preserves_cause() -> None
         GraphExecutionError,
         match="nested graph node 'failed' \\(test.local_execution.add@1\\) failed",
     ) as raised:
-        await engine.execute(
+        await coordinator.execute(
             PreparedGraphExecution(
                 workspace_id=WORKSPACE_ID,
                 plan=plan,
@@ -782,19 +771,17 @@ async def test_nested_execution_does_not_replace_outer_module_progress() -> None
             }
         }
     )
-    engine = InlineExecutionEngine(
-        coordinator=GraphExecutionCoordinator(
-            node_execution=NodeExecutionService(
-                runtime=_runtime(resolver, writer),
-                edge_values=cast(EdgeValueResolver, edge_values),
-                node_secrets=UnavailableNodeSecretResolver(),
-            )
+    coordinator = GraphExecutionCoordinator(
+        node_execution=NodeExecutionService(
+            runtime=_runtime(resolver, writer),
+            edge_values=cast(EdgeValueResolver, edge_values),
+            node_secrets=UnavailableNodeSecretResolver(),
         )
     )
     control = RunExecutionControl()
     control.start_outer_node("outer-module")
 
-    result = await engine.execute(
+    result = await coordinator.execute(
         PreparedGraphExecution(
             workspace_id=WORKSPACE_ID,
             plan=CompiledGraph(

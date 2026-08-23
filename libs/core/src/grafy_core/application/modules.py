@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Protocol
 from uuid import UUID, uuid4
 
 from grafy_core.domain.collaboration import (
@@ -11,6 +12,8 @@ from grafy_core.domain.errors import (
     CollaborationCommandRejectedError,
     NotFoundError,
 )
+from grafy_core.application.identity import authorize_workspace, authorize_workspaces
+from grafy_core.domain.identity import ActorContext, WorkspaceCapability
 from grafy_core.domain.module_library import (
     Module,
     ModuleLibraryError,
@@ -27,6 +30,15 @@ from grafy_core.domain.saved_graphs import SavedGraph, SavedGraphRevision
 from grafy_core.ports.module_library import ModuleLibraryUnitOfWorkPort
 from grafy_core.ports.saved_graphs import SavedGraphRepositoryPort
 from grafy_core.plugins import PluginRegistry, UnknownOperatorError
+
+
+class _SavedGraphRevisionReader(Protocol):
+    async def get_revision(
+        self,
+        workspace_id: UUID,
+        graph_id: UUID,
+        revision: int,
+    ) -> SavedGraphRevision | None: ...
 
 
 class ModuleLibraryService:
@@ -80,14 +92,20 @@ class ModuleLibraryService:
     async def publish_release(
         self,
         *,
+        actor: ActorContext,
         workspace_id: UUID,
         source_graph_id: UUID,
-        published_by_user_id: UUID | None,
         revision: int | None = None,
         name: str | None = None,
         description: str | None = None,
     ) -> tuple[Module, ModuleRelease, GraphModuleDefinition]:
         async with self._unit_of_work_factory() as unit_of_work:
+            await authorize_workspace(
+                unit_of_work.identity,
+                actor=actor,
+                workspace_id=workspace_id,
+                capability=WorkspaceCapability.PUBLISH_MODULE,
+            )
             graph = await unit_of_work.graphs.get(workspace_id, source_graph_id)
             if graph is None:
                 raise NotFoundError("Saved graph", str(source_graph_id))
@@ -157,7 +175,7 @@ class ModuleLibraryService:
                     module_id=module.id,
                     revision=publish_revision,
                     source_graph_id=source_graph_id,
-                    published_by_user_id=published_by_user_id,
+                    published_by_user_id=actor.user_id,
                 )
                 await unit_of_work.modules.add_release(release)
             else:
@@ -168,10 +186,17 @@ class ModuleLibraryService:
     async def deprecate(
         self,
         *,
+        actor: ActorContext,
         workspace_id: UUID,
         module_id: UUID,
     ) -> Module:
         async with self._unit_of_work_factory() as unit_of_work:
+            await authorize_workspace(
+                unit_of_work.identity,
+                actor=actor,
+                workspace_id=workspace_id,
+                capability=WorkspaceCapability.MANAGE_MODULE_LIBRARY,
+            )
             module = await unit_of_work.modules.get(workspace_id, module_id)
             if module is None:
                 raise NotFoundError("Module", str(module_id))
@@ -182,10 +207,17 @@ class ModuleLibraryService:
     async def withdraw(
         self,
         *,
+        actor: ActorContext,
         workspace_id: UUID,
         module_id: UUID,
     ) -> Module:
         async with self._unit_of_work_factory() as unit_of_work:
+            await authorize_workspace(
+                unit_of_work.identity,
+                actor=actor,
+                workspace_id=workspace_id,
+                capability=WorkspaceCapability.MANAGE_MODULE_LIBRARY,
+            )
             module = await unit_of_work.modules.get(workspace_id, module_id)
             if module is None:
                 raise NotFoundError("Module", str(module_id))
@@ -196,15 +228,23 @@ class ModuleLibraryService:
     async def import_release(
         self,
         *,
+        actor: ActorContext,
         source_workspace_id: UUID,
         source_module_id: UUID,
         source_revision: int | None,
         destination_workspace_id: UUID,
-        created_by_user_id: UUID | None,
         name: str | None = None,
     ) -> tuple[SavedGraph, Module, ModuleRelease, GraphModuleDefinition]:
         """Copy a module release by value into another workspace library."""
         async with self._unit_of_work_factory() as unit_of_work:
+            await authorize_workspaces(
+                unit_of_work.identity,
+                actor=actor,
+                requirements=(
+                    (source_workspace_id, WorkspaceCapability.VIEW_GRAPH),
+                    (destination_workspace_id, WorkspaceCapability.CREATE_GRAPH),
+                ),
+            )
             source_module = await unit_of_work.modules.get(
                 source_workspace_id,
                 source_module_id,
@@ -256,7 +296,7 @@ class ModuleLibraryService:
             )
             graph = SavedGraph(
                 workspace_id=destination_workspace_id,
-                created_by_user_id=created_by_user_id,
+                created_by_user_id=actor.user_id,
                 name=copied_name,
                 document=copied_document,
                 id=uuid4(),
@@ -291,7 +331,7 @@ class ModuleLibraryService:
                 module_id=module.id,
                 revision=graph.revision,
                 source_graph_id=graph.id,
-                published_by_user_id=created_by_user_id,
+                published_by_user_id=actor.user_id,
             )
             await unit_of_work.modules.add_release(dest_release)
             await unit_of_work.commit()
@@ -380,7 +420,7 @@ class ModuleLibraryService:
 
 
 async def _resolve_revision_or_none(
-    graphs: object,
+    graphs: _SavedGraphRevisionReader,
     workspace_id: UUID,
     graph_id: UUID,
     revision: int,
@@ -389,7 +429,7 @@ async def _resolve_revision_or_none(
     ``NotFoundError`` providers (repository port vs application service)."""
 
     try:
-        snapshot = await graphs.get_revision(  # type: ignore[attr-defined]
+        snapshot = await graphs.get_revision(
             workspace_id,
             graph_id,
             revision,
@@ -403,7 +443,7 @@ async def validate_optional_input_targets(
     definition: GraphModuleDefinition,
     *,
     workspace_id: UUID,
-    graphs: object,
+    graphs: _SavedGraphRevisionReader,
     plugin_registry: PluginRegistry,
 ) -> None:
     """Validate that every optional public input's target is satisfiable.
