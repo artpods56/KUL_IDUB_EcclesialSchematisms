@@ -24,7 +24,6 @@ from grafy_core.domain.collaboration import (
 from grafy_core.domain.errors import (
     CapabilityDeniedError,
     CollaborationActiveExecutionError,
-    CollaborationCommandRejectedError,
     CollaborationHeadConflictError,
     CollaborationIdempotencyMismatchError,
     CollaborationUncheckpointedError,
@@ -148,7 +147,7 @@ class CollaborationService:
             try:
                 access.require(WorkspaceCapability.EDIT_GRAPH)
                 access.require(WorkspaceCapability.CHECKPOINT_GRAPH)
-            except CapabilityDeniedError as exc:
+            except CapabilityDeniedError:
                 await self._commit_rejection_audit(
                     unit_of_work,
                     actor=actor,
@@ -157,7 +156,7 @@ class CollaborationService:
                     error_code="capability_denied",
                     resource_id=None if graph_id is None else str(graph_id),
                 )
-                raise exc
+                raise
 
             resolved_graph_id = uuid4() if graph_id is None else graph_id
             room_epoch = uuid4()
@@ -699,7 +698,7 @@ class CollaborationService:
             try:
                 access.require(WorkspaceCapability.EDIT_GRAPH)
                 access.require(WorkspaceCapability.CHECKPOINT_GRAPH)
-            except CapabilityDeniedError as exc:
+            except CapabilityDeniedError:
                 await self._commit_rejection_audit(
                     unit_of_work,
                     actor=actor,
@@ -708,7 +707,7 @@ class CollaborationService:
                     error_code="capability_denied",
                     resource_id=str(source_graph_id),
                 )
-                raise exc
+                raise
 
             source_head = await unit_of_work.collaboration.lock_head(
                 source_workspace_id,
@@ -730,18 +729,10 @@ class CollaborationService:
                     actual_sequence=source_head.collaboration_sequence,
                     room_epoch=source_head.room_epoch,
                 )
-            try:
-                copied_document = sanitize_document_for_cross_workspace_copy(
-                    source_head.document
-                )
-            except CollaborationCommandRejectedError:
-                raise
-            copied_name = source_head.name if name is None else name.strip()
-            if copied_name == "":
-                raise CollaborationCommandRejectedError(
-                    code="invalid_name",
-                    message="Copied graph name must not be blank",
-                )
+            copied_document = sanitize_document_for_cross_workspace_copy(
+                source_head.document
+            )
+            copied_name = source_head.name if name is None else name
             command = ReplaceDocumentCommand(name=copied_name, document=copied_document)
             resolved_graph_id = uuid4() if target_graph_id is None else target_graph_id
             room_epoch = uuid4()
@@ -961,13 +952,23 @@ class CollaborationService:
         resource_id: str | None,
     ) -> WorkspaceAccess:
         try:
-            return await self._require_capability(
-                unit_of_work,
+            user = await unit_of_work.identity.get_user(actor.user_id)
+            if user is None or not user.active:
+                raise UserDisabledError()
+            membership = await unit_of_work.identity.get_membership(
+                workspace_id=workspace_id,
+                user_id=actor.user_id,
+            )
+            if membership is None or not membership.is_active:
+                raise NotFoundError("Workspace", str(workspace_id))
+            access = WorkspaceAccess(
                 actor=actor,
                 workspace_id=workspace_id,
-                capability=capability,
+                membership=membership,
             )
-        except UserDisabledError as exc:
+            access.require(capability)
+            return access
+        except UserDisabledError:
             await self._commit_rejection_audit(
                 unit_of_work,
                 actor=actor,
@@ -976,8 +977,8 @@ class CollaborationService:
                 error_code="disabled_user",
                 resource_id=resource_id,
             )
-            raise exc
-        except NotFoundError as exc:
+            raise
+        except NotFoundError:
             await self._commit_rejection_audit(
                 unit_of_work,
                 actor=actor,
@@ -986,8 +987,8 @@ class CollaborationService:
                 error_code="not_found",
                 resource_id=resource_id,
             )
-            raise exc
-        except CapabilityDeniedError as exc:
+            raise
+        except CapabilityDeniedError:
             await self._commit_rejection_audit(
                 unit_of_work,
                 actor=actor,
@@ -996,32 +997,7 @@ class CollaborationService:
                 error_code="capability_denied",
                 resource_id=resource_id,
             )
-            raise exc
-
-    async def _require_capability(
-        self,
-        unit_of_work: CollaborationUnitOfWorkPort,
-        *,
-        actor: ActorContext,
-        workspace_id: UUID,
-        capability: WorkspaceCapability,
-    ) -> WorkspaceAccess:
-        user = await unit_of_work.identity.get_user(actor.user_id)
-        if user is None or not user.active:
-            raise UserDisabledError()
-        membership = await unit_of_work.identity.get_membership(
-            workspace_id=workspace_id,
-            user_id=actor.user_id,
-        )
-        if membership is None or not membership.is_active:
-            raise NotFoundError("Workspace", str(workspace_id))
-        access = WorkspaceAccess(
-            actor=actor,
-            workspace_id=workspace_id,
-            membership=membership,
-        )
-        access.require(capability)
-        return access
+            raise
 
     async def _commit_rejection_audit(
         self,
@@ -1033,6 +1009,8 @@ class CollaborationService:
         error_code: str,
         resource_id: str | None,
     ) -> None:
+        """Commit an authorization rejection before mutation state is staged."""
+
         # Metadata-only: never claim command/config payloads or secrets.
         await unit_of_work.security_audit.add(
             SecurityAuditEvent(

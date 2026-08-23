@@ -112,13 +112,12 @@ async def test_runtime_chains_image_collect_and_ocr_writers(tmp_path: Path) -> N
         ),
     )
 
-    upload_output = await runtime.bind(
+    upload_output = await runtime.run_node(
         UploadImagesNode(uploads_dir=staging_root, unit_of_work=uow),
         NodeExecutionContext(
             workspace_id=TEST_WORKSPACE_ID,
             node_id="image_upload_1",
         ),
-    )(
         {},
         config={
             "uploads": [
@@ -142,11 +141,12 @@ async def test_runtime_chains_image_collect_and_ocr_writers(tmp_path: Path) -> N
     assert uploaded_images.artifact_type == RASTER_IMAGE.key.id
     assert len(uploaded_images.item_refs) == 2
 
-    collect_output = await runtime.bind(
+    collect_output = await runtime.run_node(
         CollectNode(),
         NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="collect_1"),
+        {"items": [uploaded_images]},
         artifact_type_bindings={"T": RASTER_IMAGE.key},
-    )({"items": [uploaded_images]})
+    )
     assert isinstance(collect_output, PersistedNodeOutput)
     collected_images = collect_output["items"]
 
@@ -161,10 +161,11 @@ async def test_runtime_chains_image_collect_and_ocr_writers(tmp_path: Path) -> N
         }
     ]
 
-    ocr_output = await runtime.bind(
+    ocr_output = await runtime.run_node(
         TesseractOcrNode(FakeOcrEngine()),
         NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="ocr_1"),
-    )({"pages": collected_images})
+        {"pages": collected_images},
+    )
     assert isinstance(ocr_output, PersistedNodeOutput)
     ocr_results = ocr_output["results"]
 

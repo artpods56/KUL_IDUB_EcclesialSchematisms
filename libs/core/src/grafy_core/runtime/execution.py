@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from dataclasses import replace
-from typing import Any, cast, final
+from typing import Any, cast
 
 from pydantic import BaseModel
 
@@ -29,10 +29,7 @@ from grafy_core.runtime.invocation_cache import (
     InvocationCachePort,
     invocation_cache_key,
 )
-from grafy_core.runtime.materialization import (
-    InputMaterializer,
-    MaterializationProvenance,
-)
+from grafy_core.runtime.materialization import InputMaterializer
 from grafy_core.runtime.persistence import OutputPersister, PersistedNodeOutput
 
 
@@ -47,28 +44,6 @@ class NodeRuntime:
         self._materializer = materializer
         self._persister = persister
         self._invocation_cache = invocation_cache or DisabledInvocationCache()
-
-    def bind[
-        ConfigT: NodeConfig,
-        InputT: NodeInput,
-        OutputT: NodeOutput,
-    ](
-        self,
-        node: Node[ConfigT, InputT, OutputT],
-        context: NodeExecutionContext,
-        *,
-        artifact_type_bindings: Mapping[str, ArtifactTypeKey] | None = None,
-        cache_policy: NodeCachePolicy = NodeCachePolicy.NEVER,
-        opaque_secret_revisions: Mapping[str, str] | None = None,
-    ) -> "BoundNode[ConfigT, InputT, OutputT]":
-        return BoundNode(
-            runtime=self,
-            node=node,
-            context=context,
-            artifact_type_bindings=artifact_type_bindings,
-            cache_policy=cache_policy,
-            opaque_secret_revisions=opaque_secret_revisions,
-        )
 
     async def run_node[
         ConfigT: NodeConfig,
@@ -126,15 +101,15 @@ class NodeRuntime:
                         cached_entry.generation,
                     )
 
-        run_output, provenance = await self._invoke(
-            node=node,
-            context=context,
+        materialized_inputs, provenance = await self._materializer.materialize(
+            contract=cast(InputContract[InputT], resolved_contracts.input_contract),
             inputs=inputs,
-            config=cast(ConfigT, validated_config),
-            input_contract=cast(
-                InputContract[InputT],
-                resolved_contracts.input_contract,
-            ),
+            workspace_id=context.workspace_id,
+        )
+        run_output = await node.run(
+            context,
+            cast(ConfigT, validated_config),
+            materialized_inputs,
         )
         persisted = await self._persister.persist(
             contract=resolved_contracts.output_contract,
@@ -158,76 +133,6 @@ class NodeRuntime:
                 )
             )
         return replace(persisted, cache_misses=cache_misses)
-
-    async def _invoke[
-        ConfigT: NodeConfig,
-        InputT: NodeInput,
-        OutputT: NodeOutput,
-    ](
-        self,
-        *,
-        node: Node[ConfigT, InputT, OutputT],
-        context: NodeExecutionContext,
-        inputs: Mapping[str, object],
-        config: ConfigT,
-        input_contract: InputContract[InputT],
-    ) -> tuple[OutputT, MaterializationProvenance]:
-        materialized_inputs, provenance = await self._materializer.materialize(
-            contract=input_contract,
-            inputs=inputs,
-            workspace_id=context.workspace_id,
-        )
-        run_output = await node.run(
-            context,
-            config,
-            materialized_inputs,
-        )
-        return run_output, provenance
-
-
-@final
-class BoundNode[
-    ConfigT: NodeConfig,
-    InputT: NodeInput,
-    OutputT: NodeOutput,
-]:
-    def __init__(
-        self,
-        *,
-        runtime: NodeRuntime,
-        node: Node[ConfigT, InputT, OutputT],
-        context: NodeExecutionContext,
-        artifact_type_bindings: Mapping[str, ArtifactTypeKey] | None,
-        cache_policy: NodeCachePolicy,
-        opaque_secret_revisions: Mapping[str, str] | None,
-    ) -> None:
-        self._runtime = runtime
-        self._node = node
-        self._context = context
-        self._artifact_type_bindings = dict(artifact_type_bindings or {})
-        self._cache_policy = cache_policy
-        self._opaque_secret_revisions = dict(opaque_secret_revisions or {})
-
-    async def __call__(
-        self,
-        inputs: Mapping[str, object],
-        config: JsonObject | None = None,
-        artifact_type_bindings: Mapping[str, ArtifactTypeKey] | None = None,
-    ) -> PersistedNodeOutput | BaseModel:
-        effective_bindings = (
-            self._artifact_type_bindings
-            if artifact_type_bindings is None
-            else artifact_type_bindings
-        )
-        return await self._runtime.run_node(
-            self._node,
-            self._context,
-            inputs,
-            config=config,
-            artifact_type_bindings=effective_bindings,
-            cache_policy=self._cache_policy,
-            opaque_secret_revisions=self._opaque_secret_revisions,
-        )
 
 
 def _contract_supports_cache(contract: OutputContract[Any]) -> bool:

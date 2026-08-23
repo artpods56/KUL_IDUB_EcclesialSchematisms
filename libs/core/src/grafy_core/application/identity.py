@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -32,7 +32,57 @@ from grafy_core.domain.security_audit import (
     SecurityAuditEvent,
     SecurityAuditOutcome,
 )
-from grafy_core.ports.identity import IdentityUnitOfWorkPort
+from grafy_core.ports.identity import IdentityRepositoryPort, IdentityUnitOfWorkPort
+
+
+async def authorize_workspace(
+    identity: IdentityRepositoryPort,
+    *,
+    actor: ActorContext,
+    workspace_id: UUID,
+    capability: WorkspaceCapability,
+) -> WorkspaceAccess:
+    """Authorize workspace access through the caller's active transaction."""
+
+    workspace = await identity.lock_workspace_for_membership_mutation(workspace_id)
+    if workspace is None:
+        raise NotFoundError("Workspace", str(workspace_id))
+    user = await identity.get_user(actor.user_id)
+    if user is None or not user.active:
+        raise UserDisabledError(f"User {actor.user_id} is disabled")
+    membership = await identity.get_membership(
+        workspace_id=workspace_id,
+        user_id=actor.user_id,
+    )
+    if membership is None or not membership.is_active:
+        raise NotFoundError("Workspace", str(workspace_id))
+    access = WorkspaceAccess(
+        actor=actor,
+        workspace_id=workspace_id,
+        membership=membership,
+    )
+    access.require(capability)
+    return access
+
+
+async def authorize_workspaces(
+    identity: IdentityRepositoryPort,
+    *,
+    actor: ActorContext,
+    requirements: Sequence[tuple[UUID, WorkspaceCapability]],
+) -> None:
+    """Authorize and lock multiple workspaces in deterministic order."""
+
+    for workspace_id, capability in sorted(
+        requirements,
+        key=lambda requirement: str(requirement[0]),
+    ):
+        await authorize_workspace(
+            identity,
+            actor=actor,
+            workspace_id=workspace_id,
+            capability=capability,
+        )
 
 
 def _utc_now() -> datetime:
@@ -415,21 +465,12 @@ class IdentityService:
         capability: WorkspaceCapability,
     ) -> WorkspaceAccess:
         async with self._unit_of_work_factory() as unit_of_work:
-            user = await self._require_active_user(unit_of_work, actor.user_id)
-            del user
-            membership = await unit_of_work.identity.get_membership(
-                workspace_id=workspace_id,
-                user_id=actor.user_id,
-            )
-            if membership is None or not membership.is_active:
-                raise NotFoundError("Workspace", str(workspace_id))
-            access = WorkspaceAccess(
+            return await authorize_workspace(
+                unit_of_work.identity,
                 actor=actor,
                 workspace_id=workspace_id,
-                membership=membership,
+                capability=capability,
             )
-            access.require(capability)
-            return access
 
     async def add_or_reactivate_member(
         self,
@@ -816,4 +857,4 @@ class IdentityService:
         return membership
 
 
-__all__ = ["IdentityService"]
+__all__ = ["IdentityService", "authorize_workspace", "authorize_workspaces"]

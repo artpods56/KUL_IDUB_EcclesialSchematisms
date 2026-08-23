@@ -176,11 +176,9 @@ async def test_collect_flattens_one_level_in_plug_order_and_preserves_refs() -> 
 
 @pytest.mark.asyncio
 async def test_collect_derives_type_from_empty_sequence_container() -> None:
-    result = await _runtime().bind(
+    result = await _runtime().run_node(
         CollectNode(),
         NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="collect"),
-        artifact_type_bindings={"T": VALUE_TYPE},
-    )(
         {
             "items": [
                 ArtifactRefSequence.from_key(
@@ -188,7 +186,8 @@ async def test_collect_derives_type_from_empty_sequence_container() -> None:
                     item_refs=[],
                 )
             ]
-        }
+        },
+        artifact_type_bindings={"T": VALUE_TYPE},
     )
 
     assert isinstance(result, PersistedNodeOutput)

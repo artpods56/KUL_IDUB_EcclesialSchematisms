@@ -149,7 +149,8 @@ class SqlIdentityRepository(IdentityRepositoryPort):
             schema.workspaces.c.id == workspace_id,
         )
         if self._session.get_bind().dialect.name == "sqlite":
-            await self._session.execute(text("BEGIN IMMEDIATE"))
+            if not self._session.in_transaction():
+                await self._session.execute(text("BEGIN IMMEDIATE"))
         else:
             statement = statement.with_for_update()
         return await self._session.scalar(statement)
@@ -161,7 +162,8 @@ class SqlIdentityRepository(IdentityRepositoryPort):
     ) -> Workspace | None:
         statement = select(Workspace).where(schema.workspaces.c.slug == slug)
         if self._session.get_bind().dialect.name == "sqlite":
-            await self._session.execute(text("BEGIN IMMEDIATE"))
+            if not self._session.in_transaction():
+                await self._session.execute(text("BEGIN IMMEDIATE"))
         else:
             statement = statement.with_for_update()
         return await self._session.scalar(statement)
@@ -1802,9 +1804,7 @@ class SqlCollaborationRepository:
             "execution_id": slot.execution_id,
             "updated_at": slot.updated_at,
         }
-        dialect = (
-            self._session.bind.dialect.name if self._session.bind is not None else ""
-        )
+        dialect = self._session.get_bind().dialect.name
         if dialect == "postgresql":
             statement = (
                 postgresql_insert(schema.graph_active_execution_slots)
@@ -1825,7 +1825,10 @@ class SqlCollaborationRepository:
             if existing is not None:
                 return False
             statement = insert(schema.graph_active_execution_slots).values(**values)
-        result = await self._session.execute(statement)
+        result = cast(
+            CursorResult[tuple[object, ...]],
+            await self._session.execute(statement),
+        )
         return bool(result.rowcount)
 
     async def clear_active_execution_slot(

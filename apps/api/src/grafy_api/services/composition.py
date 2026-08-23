@@ -32,12 +32,12 @@ from grafy_storage import LocalFileObjectStore
 
 from grafy_api.v1.routes.artifacts.services import ArtifactService
 from grafy_api.v1.routes.catalog.services import GraphModuleCatalog
+from grafy_api.v1.routes.collaboration.hub import GraphRoomHub
 from grafy_api.v1.routes.executions.runtime.compiler import GraphCompiler
 from grafy_api.v1.routes.executions.runtime.coordinator import (
     GraphExecutionCoordinator,
 )
 from grafy_api.v1.routes.executions.runtime.edge_values import EdgeValueResolver
-from grafy_api.v1.routes.executions.runtime.inline import InlineExecutionEngine
 from grafy_api.v1.routes.executions.runtime.invocation_cache import (
     PersistentInvocationCache,
 )
@@ -90,6 +90,7 @@ def build_workbench_components(
     saved_graphs: SavedGraphService | None = None,
     module_library: ModuleLibraryService | None = None,
     node_secrets: NodeSecretResolverPort | None = None,
+    graph_room_hub: GraphRoomHub | None = None,
 ) -> WorkbenchComponents:
     resolved_workspace = (
         (
@@ -181,7 +182,6 @@ def build_workbench_components(
         max_map_concurrency=map_max_concurrency,
     )
     coordinator = GraphExecutionCoordinator(node_execution=node_execution)
-    engine = InlineExecutionEngine(coordinator=coordinator)
     preflight = GraphRunPreflight(
         plugin_registry=plugin_registry,
         saved_graphs=saved_graphs,
@@ -189,7 +189,7 @@ def build_workbench_components(
     run_graph = RunGraph(
         preflight=preflight,
         compiler=compiler,
-        engine=engine,
+        coordinator=coordinator,
         materializations=materializations,
     )
     execution_history = ExecutionHistoryService(resolved_unit_of_work, saved_graphs)
@@ -198,6 +198,7 @@ def build_workbench_components(
         run_graph,
         execution_history=execution_history,
         admission_limiter=execution_admission,
+        graph_room_hub=graph_room_hub,
     )
     return WorkbenchComponents(
         plugin_registry=plugin_registry,
