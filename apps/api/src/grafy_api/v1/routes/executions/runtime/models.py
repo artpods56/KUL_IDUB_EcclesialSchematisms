@@ -12,6 +12,7 @@ from grafy_core.plugins import NodeRegistration
 from grafy_core.runtime.invocation import NodeInvocation
 
 from ..models import RunEdgeRequest, RunNodeRequest
+from .control import RunExecutionControl
 
 type OutputEndpoint = tuple[str, str]
 
@@ -55,6 +56,45 @@ class CompiledGraph:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedGraphExecution:
+    """Validated, compiled inputs required to execute one graph run."""
+
+    plan: CompiledGraph
+    initial_outputs: Mapping[str, Mapping[str, ArtifactOutputValue]]
+    workspace_id: UUID
+    graph_id: UUID | None
+    graph_revision: int | None
+    secret_graph_id: UUID | None
+    secret_graph_revision: int | None
+    secret_node_ids: frozenset[str]
+    module_path: tuple[str, ...]
+    raise_node_errors: bool
+    node_path: tuple[str, ...] = ()
+    invocation_path: tuple[int, ...] = ()
+    control: RunExecutionControl | None = None
+
+    def __post_init__(self) -> None:
+        copied_outputs = {
+            node_id: MappingProxyType(
+                {
+                    port: value.model_copy(deep=True)
+                    for port, value in node_outputs.items()
+                }
+            )
+            for node_id, node_outputs in self.initial_outputs.items()
+        }
+        object.__setattr__(
+            self,
+            "initial_outputs",
+            MappingProxyType(copied_outputs),
+        )
+        object.__setattr__(self, "secret_node_ids", frozenset(self.secret_node_ids))
+        object.__setattr__(self, "module_path", tuple(self.module_path))
+        object.__setattr__(self, "node_path", tuple(self.node_path))
+        object.__setattr__(self, "invocation_path", tuple(self.invocation_path))
+
+
+@dataclass(frozen=True, slots=True)
 class NodeExecutionResult:
     node_id: str
     status: Literal["succeeded", "failed", "skipped"]
@@ -95,4 +135,5 @@ __all__ = [
     "GraphExecutionResult",
     "NodeExecutionResult",
     "OutputEndpoint",
+    "PreparedGraphExecution",
 ]

@@ -2,12 +2,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from grafy_core.domain.errors import CapabilityDeniedError, NotFoundError
+from grafy_core.domain.errors import NotFoundError
 from grafy_core.domain.identity import WorkspaceCapability
 from grafy_core.domain.templates import TemplateLibraryError
 
 from grafy_api.v1.routes.auth.dependencies import (
-    IdentityServiceDependency,
     require_workspace_capability,
 )
 from grafy_api.v1.routes.templates.dependencies import TemplateDependency
@@ -47,10 +46,10 @@ async def create_template(
 ) -> TemplateResponse:
     try:
         template = await service.create_from_graph_revision(
+            actor=access.actor,
             workspace_id=access.workspace_id,
             source_graph_id=body.source_graph_id,
             source_revision=body.source_revision,
-            created_by_user_id=access.actor.user_id,
             name=body.name,
             description=body.description,
         )
@@ -83,6 +82,7 @@ async def update_template_metadata(
 ) -> TemplateResponse:
     try:
         template = await service.update_metadata(
+            actor=access.actor,
             workspace_id=access.workspace_id,
             template_id=template_id,
             name=body.name,
@@ -103,6 +103,7 @@ async def archive_template(
 ) -> TemplateResponse:
     try:
         template = await service.archive(
+            actor=access.actor,
             workspace_id=access.workspace_id,
             template_id=template_id,
         )
@@ -121,25 +122,13 @@ async def instantiate_template(
     body: InstantiateTemplateRequest,
     service: TemplateDependency,
     access: require_workspace_capability(WorkspaceCapability.VIEW_GRAPH),
-    identity: IdentityServiceDependency,
 ) -> TemplateInstantiationResponse:
     try:
-        destination_access = await identity.authorize(
-            actor=access.actor,
-            workspace_id=body.destination_workspace_id,
-            capability=WorkspaceCapability.CREATE_GRAPH,
-        )
-    except CapabilityDeniedError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except NotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    try:
         result = await service.instantiate(
+            actor=access.actor,
             source_workspace_id=access.workspace_id,
             template_id=template_id,
-            destination_workspace_id=destination_access.workspace_id,
-            created_by_user_id=access.actor.user_id,
+            destination_workspace_id=body.destination_workspace_id,
             name=body.name,
             folder_id=body.folder_id,
         )

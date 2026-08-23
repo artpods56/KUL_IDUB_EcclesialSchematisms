@@ -5,18 +5,20 @@ import logging
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Literal, Protocol
+from typing import Literal
 from uuid import UUID, uuid4
 
 from grafy_core.domain.execution_history import GraphExecution
 from grafy_core.domain.errors import NotFoundError
 from grafy_core.nodes import NodeExecutionContext
 
+from grafy_api.v1.routes.collaboration.hub import GraphRoomHub
 from grafy_api.v1.routes.collaboration.models import (
     ActiveExecutionLifecycleStatus,
     ActiveExecutionSummary,
     ActorPresentation,
-    TerminalExecutionStatus,
+    ExecutionActiveMessage,
+    ExecutionClearedMessage,
 )
 
 from ..models import (
@@ -43,27 +45,6 @@ logger = logging.getLogger(__name__)
 
 _TERMINAL_STATUSES = frozenset({"cancelled", "succeeded", "failed"})
 _ACTIVE_STATUSES = frozenset({"queued", "running", "cancelling"})
-
-
-class ActiveExecutionPublisher(Protocol):
-    async def publish_active(
-        self,
-        *,
-        workspace_id: UUID,
-        graph_id: UUID,
-        execution: ActiveExecutionSummary,
-    ) -> None: ...
-
-    async def publish_cleared(
-        self,
-        *,
-        workspace_id: UUID,
-        graph_id: UUID,
-        execution_id: UUID,
-        status: TerminalExecutionStatus,
-        graph_revision: int,
-        error: str | None,
-    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,6 +285,7 @@ class RunExecutionManager:
         terminal_retention: int = 100,
         event_capacity: int = 256,
         admission_limiter: ExecutionAdmissionLimiter | None = None,
+        graph_room_hub: GraphRoomHub | None = None,
     ) -> None:
         if terminal_retention < 1:
             raise ValueError("Execution terminal retention must be at least one")
@@ -318,10 +300,7 @@ class RunExecutionManager:
         self._terminal_order: deque[UUID] = deque()
         self._lock = asyncio.Lock()
         self._shutting_down = False
-        self._room_publisher: ActiveExecutionPublisher | None = None
-
-    def bind_room_publisher(self, publisher: ActiveExecutionPublisher) -> None:
-        self._room_publisher = publisher
+        self._graph_room_hub = graph_room_hub
 
     async def active_execution_summary(
         self,
@@ -668,16 +647,16 @@ class RunExecutionManager:
                 self._executions.pop(expired_id, None)
 
     async def _publish_active(self, record: _RunExecutionRecord) -> None:
-        publisher = self._room_publisher
+        hub = self._graph_room_hub
         history = record.history_execution
         summary = record.active_summary()
-        if publisher is None or history is None or summary is None:
+        if hub is None or history is None or summary is None:
             return
         try:
-            await publisher.publish_active(
+            await hub.publish_execution_active(
                 workspace_id=record.workspace_id,
                 graph_id=history.graph_id,
-                execution=summary,
+                message=ExecutionActiveMessage(execution=summary),
             )
         except Exception:
             logger.exception(
@@ -694,19 +673,23 @@ class RunExecutionManager:
         *,
         status: Literal["cancelled", "succeeded", "failed"],
     ) -> None:
-        publisher = self._room_publisher
+        hub = self._graph_room_hub
         history = record.history_execution
-        if publisher is None or history is None:
+        if hub is None or history is None:
             return
         terminal = record.terminal
+        error = terminal.error if terminal is not None else None
+        bounded_error = None if error is None else error[:2000]
         try:
-            await publisher.publish_cleared(
+            await hub.publish_execution_cleared(
                 workspace_id=record.workspace_id,
                 graph_id=history.graph_id,
-                execution_id=record.execution_id,
-                status=status,
-                graph_revision=history.graph_revision,
-                error=terminal.error if terminal is not None else None,
+                message=ExecutionClearedMessage(
+                    execution_id=record.execution_id,
+                    status=status,
+                    graph_revision=history.graph_revision,
+                    error=bounded_error,
+                ),
             )
         except Exception:
             logger.exception(

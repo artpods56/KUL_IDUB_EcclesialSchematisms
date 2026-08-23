@@ -1,18 +1,15 @@
 """Framework-neutral coordination of one prepared graph execution."""
 
-from uuid import UUID
+from uuid import uuid4
 
 from grafy_core.domain.artifact_outputs import ArtifactOutputValue
 
-from .engine import (
-    ExecutionTaskRunner,
-    PreparedGraphExecution,
-)
 from .errors import GraphExecutionError
 from .models import (
     CompiledEdge,
     GraphExecutionResult,
     NodeExecutionResult,
+    PreparedGraphExecution,
 )
 from .node_execution import NodeExecutionService
 
@@ -26,9 +23,9 @@ class GraphExecutionCoordinator:
     async def execute(
         self,
         execution: PreparedGraphExecution,
-        task_runner: ExecutionTaskRunner,
         /,
     ) -> GraphExecutionResult:
+        workflow_run_id = uuid4()
         plan = execution.plan
         outputs: dict[str, dict[str, ArtifactOutputValue]] = {
             node_id: dict(node_outputs)
@@ -46,7 +43,6 @@ class GraphExecutionCoordinator:
             for compiled_node in plan.nodes
         }
         failed: set[str] = set()
-        succeeded: set[str] = set()
         node_results: list[NodeExecutionResult] = []
 
         for compiled_node in plan.nodes:
@@ -76,30 +72,6 @@ class GraphExecutionCoordinator:
                     )
                 continue
 
-            completed_node_run_id: UUID | None = None
-
-            async def execute_node(
-                node_run_id: UUID,
-            ) -> dict[str, ArtifactOutputValue]:
-                nonlocal completed_node_run_id
-                completed_node_run_id = node_run_id
-                if execution.control is not None:
-                    execution.control.publish_node_status(
-                        status="running",
-                        node_path=node_path,
-                        node_id=node_request.id,
-                        node_run_id=node_run_id,
-                        invocation_path=execution.invocation_path,
-                    )
-                return await self._node_execution.execute(
-                    execution=execution,
-                    compiled_node=compiled_node,
-                    incoming_edges=node_edges,
-                    outputs=outputs,
-                    task_runner=task_runner,
-                    node_run_id=node_run_id,
-                )
-
             control = execution.control
             tracks_outer_progress = (
                 not execution.module_path and not execution.node_path
@@ -107,11 +79,23 @@ class GraphExecutionCoordinator:
             if control is not None and tracks_outer_progress:
                 control.start_outer_node(node_request.id)
                 control.publish_execution_status("running", node_request.id)
+            node_run_id = uuid4()
+            if control is not None:
+                control.publish_node_status(
+                    status="running",
+                    node_path=node_path,
+                    node_id=node_request.id,
+                    node_run_id=node_run_id,
+                    invocation_path=execution.invocation_path,
+                )
             try:
-                node_outputs = await task_runner.run_node(
-                    compiled_node,
-                    frozenset(upstream_node_ids & succeeded),
-                    execute_node,
+                node_outputs = await self._node_execution.execute(
+                    execution=execution,
+                    compiled_node=compiled_node,
+                    incoming_edges=node_edges,
+                    outputs=outputs,
+                    workflow_run_id=workflow_run_id,
+                    node_run_id=node_run_id,
                 )
             except Exception as exc:
                 if control is not None:
@@ -119,7 +103,7 @@ class GraphExecutionCoordinator:
                         status="failed",
                         node_path=node_path,
                         node_id=node_request.id,
-                        node_run_id=completed_node_run_id,
+                        node_run_id=node_run_id,
                         invocation_path=execution.invocation_path,
                     )
                 if execution.raise_node_errors:
@@ -151,7 +135,6 @@ class GraphExecutionCoordinator:
 
             copied_node_outputs = dict(node_outputs)
             outputs[node_request.id] = copied_node_outputs
-            succeeded.add(node_request.id)
             node_results.append(
                 NodeExecutionResult(
                     node_id=node_request.id,
@@ -165,13 +148,13 @@ class GraphExecutionCoordinator:
                     status="succeeded",
                     node_path=node_path,
                     node_id=node_request.id,
-                    node_run_id=completed_node_run_id,
+                    node_run_id=node_run_id,
                     invocation_path=execution.invocation_path,
                 )
 
         status = "failed" if failed else "succeeded"
         return GraphExecutionResult(
-            workflow_run_id=task_runner.workflow_run_id,
+            workflow_run_id=workflow_run_id,
             status=status,
             node_results=tuple(node_results),
             outputs=outputs,

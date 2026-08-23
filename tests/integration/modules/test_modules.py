@@ -12,7 +12,8 @@ from pydantic import Field, SecretStr, StrictStr
 
 from grafy_core.application.modules import ModuleLibraryService
 from grafy_core.application.saved_graphs import SavedGraphService
-from grafy_core.domain.errors import NotFoundError
+from grafy_core.domain.errors import NotFoundError, UserDisabledError
+from grafy_core.domain.identity import ActorContext
 from grafy_core.domain.modules import GraphModuleReference
 from grafy_core.artifacts import (
     InMemoryUnitOfWork,
@@ -29,6 +30,7 @@ from grafy_persistence.database import create_database
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from grafy_api.builtins import builtin_plugins
+from grafy_api.app_state import get_resources
 from grafy_api.plugin_discovery import build_plugin_registry
 from grafy_api.v1.routes.node_secrets.services import NodeSecretService
 from grafy_api.services.composition import (
@@ -56,7 +58,12 @@ from grafy_api.v1.routes.saved_graphs.models import (
 
 from tests.support.clients import GrafyApi
 from tests.support.workbench import workbench_dependency_overrides
-from tests.testkit import client_with_overrides, create_db_url, db, seed_shared_workspace
+from tests.testkit import (
+    client_with_overrides,
+    create_db_url,
+    db,
+    seed_shared_workspace,
+)
 
 WORKSPACE = "00000000-0000-0000-0000-000000000007"
 
@@ -593,6 +600,28 @@ def _module_node_run(
 ) -> dict[str, object]:
     node_runs = cast(list[dict[str, object]], result["node_runs"])
     return next(run for run in node_runs if run["node_id"] == node_id)
+
+
+def test_direct_module_mutation_requires_current_workspace_authority(
+    module_client: TestClient,
+) -> None:
+    created = module_client.post(
+        f"/v1/workspaces/{WORKSPACE}/graphs",
+        json=_text_module_payload(),
+    ).json()
+    graph_id = UUID(created["id"])
+    service = get_resources(module_client.app).module_library
+
+    with pytest.raises(UserDisabledError):
+        asyncio.run(
+            service.publish_release(
+                actor=ActorContext(user_id=UUID(int=999)),
+                workspace_id=UUID(WORKSPACE),
+                source_graph_id=graph_id,
+            )
+        )
+
+    assert asyncio.run(service.get_by_source_graph(UUID(WORKSPACE), graph_id)) is None
 
 
 def test_saved_graph_module_is_discoverable_and_executes_once(

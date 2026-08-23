@@ -24,12 +24,9 @@ from ..models import (
 from ..services import MaterializationService
 from .compiler import GraphCompiler
 from .control import RunExecutionControl
-from .engine import (
-    GraphExecutionEngine,
-    PreparedGraphExecution,
-)
+from .coordinator import GraphExecutionCoordinator
 from .errors import GraphExecutionError
-from .models import GraphExecutionResult
+from .models import GraphExecutionResult, PreparedGraphExecution
 from .preflight import GraphRunPreflight
 
 
@@ -47,12 +44,12 @@ class RunGraph:
         *,
         preflight: GraphRunPreflight,
         compiler: GraphCompiler,
-        engine: GraphExecutionEngine,
+        coordinator: GraphExecutionCoordinator,
         materializations: MaterializationService,
     ) -> None:
         self._preflight = preflight
         self._compiler = compiler
-        self._engine = engine
+        self._coordinator = coordinator
         self._materializations = materializations
 
     async def run(
@@ -258,7 +255,7 @@ class RunGraph:
         initial_outputs = await self._materializations.resolve_pinned_outputs(
             workspace_id, plan.pinned_outputs
         )
-        execution = await self._engine.execute(
+        execution = await self._coordinator.execute(
             PreparedGraphExecution(
                 plan=plan,
                 initial_outputs=initial_outputs,

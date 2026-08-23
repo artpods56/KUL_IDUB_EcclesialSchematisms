@@ -4,6 +4,7 @@ from uuid import UUID
 
 from grafy_core.domain.templates import Template
 from grafy_core.ports.collaboration import CollaborationRepositoryPort
+from grafy_core.ports.identity import IdentityRepositoryPort
 from grafy_core.ports.saved_graphs import SavedGraphRepositoryPort
 
 
@@ -31,6 +32,9 @@ class TemplateUnitOfWorkPort(Protocol):
 
     @property
     def collaboration(self) -> CollaborationRepositoryPort: ...
+
+    @property
+    def identity(self) -> IdentityRepositoryPort: ...
 
     @property
     def templates(self) -> TemplateRepositoryPort: ...
