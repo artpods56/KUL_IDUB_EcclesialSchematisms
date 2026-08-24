@@ -159,6 +159,37 @@ class SavedGraphArtifactTypeBinding(SavedGraphValue):
         }
 
 
+class SavedGraphPluginReleasePin(SavedGraphValue):
+    """Exact Workspace Plugin release identity pinned on one graph node.
+
+    The pin is independent from the operator identity: publishing revision
+    N+1 never moves a node pinned to revision N. Workspace membership comes
+    from the owning graph, so the pin records only the stable Plugin slug and
+    the exact release revision.
+    """
+
+    slug: GraphIdentifier
+    revision: int = Field(ge=1)
+
+    @field_validator("slug", mode="before")
+    @classmethod
+    def validate_slug(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        if value.strip() == "":
+            raise ValueError("Saved graph Plugin release pin slug must not be empty")
+        if value != value.strip():
+            raise ValueError(
+                "Saved graph Plugin release pin slug must not have surrounding "
+                "whitespace"
+            )
+        if len(value) > 100:
+            raise ValueError(
+                "Saved graph Plugin release pin slug must be at most 100 characters"
+            )
+        return value.strip()
+
+
 class SavedGraphNode(SavedGraphValue):
     id: GraphIdentifier
     operator_id: GraphIdentifier
@@ -168,6 +199,20 @@ class SavedGraphNode(SavedGraphValue):
     layout: SavedGraphNodeLayout | None = None
     input_plugs: tuple[SavedGraphInputPlug, ...] = ()
     artifact_type_bindings: tuple[SavedGraphArtifactTypeBinding, ...] = ()
+    plugin_release_pin: SavedGraphPluginReleasePin | None = None
+
+    @field_validator("plugin_release_pin", mode="before")
+    @classmethod
+    def validate_plugin_release_pin_shape(cls, value: object) -> object:
+        if not isinstance(value, Mapping):
+            return value
+        raw = cast(Mapping[object, object], value)
+        expected_fields = {"slug", "revision"}
+        if set(raw) != expected_fields:
+            raise ValueError(
+                "Saved graph Plugin release pin must contain exactly slug and revision"
+            )
+        return dict(raw)
 
     @field_validator("config")
     @classmethod

@@ -42,6 +42,7 @@ from grafy_core.domain.saved_graphs import (
     SavedGraphInputPlug,
     SavedGraphNode,
     SavedGraphNodeLayout,
+    SavedGraphPluginReleasePin,
     SavedGraphProjection,
     UserGraphState,
 )
@@ -50,6 +51,7 @@ from grafy_core.domain.identity import WorkspaceKind
 from grafy_api.v1.models import (
     ArtifactTypeBindingModel,
     ArtifactTypeKeyResponse,
+    PluginReleasePinModel,
 )
 
 
@@ -112,6 +114,7 @@ class SavedGraphNodeModel(SavedGraphApiModel):
     artifact_type_bindings: list[ArtifactTypeBindingModel] = Field(
         default_factory=list,
     )
+    plugin_release: PluginReleasePinModel | None = None
 
     @model_validator(mode="after")
     def validate_artifact_type_bindings(self) -> Self:
@@ -438,6 +441,14 @@ class SavedGraphWriteModel(SavedGraphApiModel):
                         )
                         for binding in node.artifact_type_bindings
                     ),
+                    plugin_release_pin=(
+                        SavedGraphPluginReleasePin(
+                            slug=node.plugin_release.slug,
+                            revision=node.plugin_release.revision,
+                        )
+                        if node.plugin_release is not None
+                        else None
+                    ),
                 )
                 for node in self.nodes
             ),
@@ -535,6 +546,14 @@ class SavedGraphResponse(SavedGraphWriteModel):
                         )
                         for binding in node.artifact_type_bindings
                     ],
+                    plugin_release=(
+                        PluginReleasePinModel(
+                            slug=node.plugin_release_pin.slug,
+                            revision=node.plugin_release_pin.revision,
+                        )
+                        if node.plugin_release_pin is not None
+                        else None
+                    ),
                 )
                 for node in graph.document.nodes
             ],

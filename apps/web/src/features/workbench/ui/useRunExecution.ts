@@ -39,6 +39,7 @@ interface VisibleRunExecution {
   executionId: string | null;
   status: "preparing" | RunExecution["status"];
   activeNodeId: string | null;
+  queuePosition: number | null;
   statusError: string | null;
 }
 
@@ -493,6 +494,7 @@ export function useRunExecution({
       executionId: null,
       status: "preparing",
       activeNodeId: null,
+      queuePosition: null,
       statusError: null,
     });
     setRunError(null);
@@ -583,6 +585,7 @@ export function useRunExecution({
                   executionId: response.execution_id,
                   status: visibleStatus,
                   activeNodeId,
+                  queuePosition: response.queue_position ?? null,
                   statusError: pollStatusError ?? streamStatusError,
                 }
               : current
@@ -784,6 +787,9 @@ export function useRunExecution({
                         ...current,
                         status: eventVisibleStatus,
                         activeNodeId: eventActiveNodeId,
+                        queuePosition: event.status === "queued"
+                          ? current.queuePosition
+                          : null,
                         statusError: pollStatusError ?? streamStatusError,
                       }
                     : current
@@ -1518,6 +1524,7 @@ export function useRunExecution({
       executionId: discoveredId,
       status: roomActiveExecution.status,
       activeNodeId: roomActiveExecution.active_node_id,
+      queuePosition: null,
       statusError: null,
     });
     setAnnouncement(
@@ -1808,6 +1815,7 @@ export function useRunExecution({
                     ...current,
                     status: visibleStatus,
                     activeNodeId,
+                    queuePosition: response.queue_position ?? null,
                     statusError: null,
                   }
                 : current

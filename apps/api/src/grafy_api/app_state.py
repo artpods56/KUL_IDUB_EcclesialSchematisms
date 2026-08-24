@@ -2,12 +2,14 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from fastapi import FastAPI
 
 from grafy_core.application.collaboration import CollaborationService
 from grafy_core.application.identity import IdentityService
 from grafy_core.application.modules import ModuleLibraryService
+from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.application.saved_graphs import SavedGraphService
 from grafy_core.application.templates import TemplateService
 from grafy_core.plugins import PluginRegistry
@@ -20,9 +22,21 @@ from grafy_api.v1.routes.auth.services import AuthService
 from grafy_api.v1.routes.catalog.services import GraphModuleCatalog
 from grafy_api.v1.routes.collaboration.hub import GraphRoomHub
 from grafy_api.v1.routes.executions.runtime.admission import (
+    ExecutionAdmissionDiagnostics,
     ExecutionAdmissionLimiter,
 )
-from grafy_api.v1.routes.executions.runtime.manager import RunExecutionManager
+from grafy_api.v1.routes.executions.runtime.manager import (
+    RunExecutionManager,
+    RunExecutionQueueDiagnostics,
+)
+from grafy_api.v1.routes.executions.runtime.plugin_artifacts import (
+    ArtifactBundlePluginInvoker,
+    PluginInvocationCapacityDiagnostics,
+)
+from grafy_api.v1.routes.executions.runtime.plugin_docker import (
+    DockerPluginRuntime,
+    PluginSandboxCapacityDiagnostics,
+)
 from grafy_api.v1.routes.executions.runtime.run_graph import RunGraph
 from grafy_api.v1.routes.executions.services import (
     ExecutionHistoryService,
@@ -42,6 +56,15 @@ class AppIdentity:
     auth_service: AuthService
 
 
+@dataclass(frozen=True, slots=True)
+class CapacityDiagnostics:
+    captured_at: datetime
+    execution_admission: ExecutionAdmissionDiagnostics
+    execution_queue: RunExecutionQueueDiagnostics
+    plugin_invocations: PluginInvocationCapacityDiagnostics | None
+    plugin_sandboxes: PluginSandboxCapacityDiagnostics | None
+
+
 @dataclass(slots=True)
 class AppResources:
     """Application resources constructed during API lifespan and torn down once."""
@@ -50,6 +73,7 @@ class AppResources:
     plugin_registry: PluginRegistry
     uploads: ImageUploadService
     graph_modules: GraphModuleCatalog
+    plugin_releases: PluginReleaseService | None
     module_library: ModuleLibraryService
     templates: TemplateService
     run_graph: RunGraph
@@ -63,10 +87,31 @@ class AppResources:
     collaboration: CollaborationService
     node_secrets: NodeSecretService
     graph_room_hub: GraphRoomHub
+    plugin_invoker: ArtifactBundlePluginInvoker | None
+    plugin_runtime: DockerPluginRuntime | None
+
+    async def capacity_diagnostics(self) -> CapacityDiagnostics:
+        return CapacityDiagnostics(
+            captured_at=datetime.now(UTC),
+            execution_admission=self.execution_admission.diagnostics(),
+            execution_queue=await self.execution_manager.diagnostics(),
+            plugin_invocations=(
+                None
+                if self.plugin_invoker is None
+                else self.plugin_invoker.diagnostics()
+            ),
+            plugin_sandboxes=(
+                None
+                if self.plugin_runtime is None
+                else await self.plugin_runtime.diagnostics()
+            ),
+        )
 
     async def cleanup(self) -> None:
         await self.graph_room_hub.shutdown()
         await self.execution_manager.shutdown()
+        if self.plugin_runtime is not None:
+            await self.plugin_runtime.shutdown()
         await self.artifacts.close()
 
 

@@ -11,6 +11,7 @@ from grafy_core.artifacts import (
 from grafy_core.domain.execution_history import (
     GraphExecution,
     GraphExecutionNodeResult,
+    GraphExecutionStatus,
 )
 from grafy_core.domain.errors import NotFoundError
 
@@ -103,6 +104,42 @@ async def test_in_memory_execution_history_obeys_commit_and_node_filter_semantic
 
 
 @pytest.mark.asyncio
+async def test_in_memory_queued_order_uses_execution_id_as_stable_time_tie_breaker() -> (
+    None
+):
+    unit_of_work = InMemoryUnitOfWork()
+    created_at = datetime(2026, 8, 24, 10, 0, tzinfo=UTC)
+    execution_ids = (
+        UUID("00000000-0000-0000-0000-000000000071"),
+        UUID("00000000-0000-0000-0000-000000000072"),
+    )
+    graph_ids = (
+        UUID("00000000-0000-0000-0000-000000000171"),
+        UUID("00000000-0000-0000-0000-000000000172"),
+    )
+    async with unit_of_work as entered:
+        for execution_id, graph_id in reversed(
+            tuple(zip(execution_ids, graph_ids, strict=True))
+        ):
+            await entered.execution_history.add(
+                GraphExecution(
+                    workspace_id=WORKSPACE_ONE,
+                    execution_id=execution_id,
+                    graph_id=graph_id,
+                    graph_revision=1,
+                    status="queued",
+                    created_at=created_at,
+                    submitted_request={"nodes": []},
+                )
+            )
+        await entered.commit()
+    async with unit_of_work as entered:
+        queued = await entered.execution_history.list_queued()
+
+    assert tuple(execution.execution_id for execution in queued) == execution_ids
+
+
+@pytest.mark.asyncio
 async def test_in_memory_execution_history_rejects_unrequested_node_results() -> None:
     unit_of_work = InMemoryUnitOfWork()
     execution = GraphExecution(
@@ -166,9 +203,15 @@ async def test_in_memory_execution_identity_is_global_but_reads_are_workspace_sc
 
 
 @pytest.mark.asyncio
-async def test_in_memory_interrupt_all_active_recovers_every_workspace() -> None:
+async def test_in_memory_restart_preserves_queued_and_interrupts_started() -> None:
     unit_of_work = InMemoryUnitOfWork()
     created_at = datetime(2026, 7, 18, 12, 0, tzinfo=UTC)
+    execution_cases: tuple[tuple[UUID, GraphExecutionStatus], ...] = (
+        (WORKSPACE_ONE, "queued"),
+        (WORKSPACE_TWO, "running"),
+        (WORKSPACE_ONE, "cancelling"),
+        (WORKSPACE_TWO, "succeeded"),
+    )
     executions = tuple(
         GraphExecution(
             workspace_id=workspace_id,
@@ -181,25 +224,23 @@ async def test_in_memory_interrupt_all_active_recovers_every_workspace() -> None
             finished_at=(created_at if status == "succeeded" else None),
         )
         for index, (workspace_id, status) in enumerate(
-            (
-                (WORKSPACE_ONE, "queued"),
-                (WORKSPACE_TWO, "running"),
-                (WORKSPACE_ONE, "cancelling"),
-                (WORKSPACE_TWO, "succeeded"),
-            ),
+            execution_cases,
             start=1,
         )
     )
     async with unit_of_work as entered:
         for execution in executions:
             await entered.execution_history.add(execution)
-        interrupted = await entered.execution_history.interrupt_all_active(
+        interrupted = await entered.execution_history.interrupt_started(
             finished_at=created_at.replace(hour=13),
             error="startup recovery",
         )
         await entered.commit()
 
-    assert interrupted == 3
+    assert [execution.status for execution in interrupted] == [
+        "running",
+        "cancelling",
+    ]
     async with unit_of_work as entered:
         details = [
             await entered.execution_history.get(
@@ -209,7 +250,7 @@ async def test_in_memory_interrupt_all_active_recovers_every_workspace() -> None
             for execution in executions
         ]
     assert [detail.execution.status for detail in details if detail is not None] == [
-        "failed",
+        "queued",
         "failed",
         "failed",
         "succeeded",

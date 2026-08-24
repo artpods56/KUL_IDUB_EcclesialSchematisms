@@ -59,6 +59,7 @@ export const VECTOR_LAYER_SPEC: NodeSpec = {
   inputs: [features],
   outputs: [LAYER_PORT],
   catalog_visible: true,
+  runnable: true,
 };
 
 export const VECTOR_LAYER_FIELDS: readonly SchemaField[] = [
@@ -95,7 +96,9 @@ export const VECTOR_LAYER_FIELDS: readonly SchemaField[] = [
 export const GEO_MAP_LAYER_SCHEMA = geoMapLayerSchema as Record<string, unknown>;
 
 export const VECTOR_LAYER_REGISTRY: NodeRegistry = {
-  plugins: [{ slug: "gis", title: "GIS", origin: "external" }],
+  plugins: [
+    { slug: "gis", title: "GIS", origin: "external", runnable: true },
+  ],
   artifact_types: [
     artifact("geo.feature_collection", "GeoJSON feature collection"),
     artifact("geo.map_layer", "Map layer", GEO_MAP_LAYER_SCHEMA),

@@ -161,6 +161,7 @@ function sourceSpec(shape: "one" | "many"): NodeSpec {
     title: "Prepare map",
     description: "Produces multiple outputs for viewer tests.",
     catalog_visible: true,
+    runnable: true,
     config_schema: {},
     input_schema: {},
     output_schema: {},

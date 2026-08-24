@@ -77,6 +77,7 @@ function node(
     inputs,
     outputs,
     catalog_visible: true,
+    runnable: true,
   };
 }
 
@@ -85,7 +86,9 @@ function registry(): NodeRegistry {
   const textOut = port("text", "output");
   const altIn = port("body", "input");
   return {
-    plugins: [{ slug: "builtin", title: "Built-in", origin: "builtin" }],
+    plugins: [
+      { slug: "builtin", title: "Built-in", origin: "builtin", runnable: true },
+    ],
     artifact_types: [
       {
         key: { id: "scalar.text", schema_version: 1 },

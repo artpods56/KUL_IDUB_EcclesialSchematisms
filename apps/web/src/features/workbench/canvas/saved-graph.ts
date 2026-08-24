@@ -174,12 +174,20 @@ function unavailableNodeSpec(savedNode: SavedGraphNode): NodeSpec {
     title: savedNode.operator_id,
     description: `Saved operator ${identity} is not available in the live registry.`,
     catalog_visible: false,
+    runnable: false,
     config_schema: {},
     input_schema: {},
     output_schema: {},
     inputs: [],
     outputs: [],
   };
+}
+
+function persistedPluginReleasePin(
+  savedNode: SavedGraphNode,
+): WorkflowNodeData["pluginReleasePin"] {
+  const pin = savedNode.plugin_release;
+  return pin ? { slug: pin.slug, revision: pin.revision } : null;
 }
 
 function incompatibleNodeData(
@@ -207,6 +215,7 @@ function incompatibleNodeData(
     persistedNode: structuredClone(savedNode),
   };
   data.artifactTypeBindings = artifactTypeBindings;
+  data.pluginReleasePin = persistedPluginReleasePin(savedNode);
   data.config = structuredClone(savedNode.config ?? {});
   data.layout = hydrateNodeLayout(savedNode.layout);
   return data;
@@ -462,6 +471,7 @@ export function hydrateSavedGraph(
           spec,
           registry,
         );
+        data.pluginReleasePin = persistedPluginReleasePin(savedNode);
         data.config = structuredClone(savedNode.config ?? {});
         data.layout =
           hydrateNodeLayout(savedNode.layout) ?? defaultNodeLayout(spec);

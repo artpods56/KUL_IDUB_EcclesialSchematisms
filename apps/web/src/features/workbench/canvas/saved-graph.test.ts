@@ -58,6 +58,7 @@ function nodeSpec(
     title: operatorId,
     description: operatorId,
     catalog_visible: true,
+    runnable: true,
     config_schema: {},
     input_schema: {},
     output_schema: {},
@@ -187,6 +188,7 @@ describe("unavailable saved operators", () => {
           ? {
               ...node,
               operator_id: "gis.map.compose",
+              plugin_release: { slug: "gis", revision: 4 },
               config: { nested: { preserved: true } },
               input_plugs: [
                 { id: "historical-plug", port: "historical-input" },
@@ -231,6 +233,10 @@ describe("unavailable saved operators", () => {
       "Operator gis.map.compose@1 is unavailable. This saved node is preserved but cannot run.",
     );
     expect(sourceNode?.data.layout).toBeNull();
+    expect(sourceNode?.data.pluginReleasePin).toEqual({
+      slug: "gis",
+      revision: 4,
+    });
     expect(edge?.sourceHandle).toContain("$compatibility::output");
     expect(decodeHandleId(edge?.sourceHandle)).toBeNull();
     expect(decodeHandleId(edge?.targetHandle)).toMatchObject({
@@ -578,6 +584,7 @@ function collectRegistry(): NodeRegistry {
     title: "Collect text",
     description: "Collect ordered text inputs.",
     catalog_visible: true,
+    runnable: true,
     config_schema: {},
     input_schema: {},
     output_schema: {},
@@ -696,6 +703,7 @@ function genericCollectRegistry(): NodeRegistry {
     title: "Collect",
     description: "Collect ordered artifacts.",
     catalog_visible: true,
+    runnable: true,
     config_schema: {},
     input_schema: {},
     output_schema: {},
@@ -927,6 +935,7 @@ describe("saved graph module nodes", () => {
       module_graph_id: moduleGraphId,
       module_graph_revision: revision,
       catalog_visible: catalogVisible,
+      runnable: true,
     };
   }
 
@@ -981,6 +990,7 @@ describe("saved graph module nodes", () => {
         slug: "saved-graph-modules",
         title: "Modules",
         origin: "module",
+        runnable: true,
       }],
       artifact_types: [
         {

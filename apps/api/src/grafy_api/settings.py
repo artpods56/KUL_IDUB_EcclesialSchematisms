@@ -70,7 +70,29 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     map_max_concurrency: int = Field(default=4, ge=1)
     max_active_executions: int = Field(default=2, ge=1, le=32)
+    max_pending_graphs: int = Field(default=20, ge=1, le=1_000)
+    max_active_plugin_invocations: int = Field(default=4, ge=1, le=128)
+    max_live_plugin_sandboxes: int = Field(default=4, ge=1, le=64)
+    max_distinct_plugin_releases_per_graph: int = Field(default=4, ge=1, le=64)
     storage_backend: Literal["local", "s3"] = "local"
+    plugin_roots: tuple[Path, ...] = (Path("examples"), Path("plugins"))
+    # Coding-agent authoring is assigned deterministically beneath this
+    # deployment-owned Plugin root. It never chooses an arbitrary host path.
+    plugin_authoring_root: Path = Path("plugins")
+    # Source used to build the versioned SDK wheel vendored into a generated
+    # working copy. The resulting Plugin has no monorepo-relative dependency.
+    plugin_sdk_project: Path = Path("libs/core")
+    # Deployment-owned default runtime profile for published Plugin releases.
+    plugin_runtime_profile: Literal["python-uv"] = "python-uv"
+    # Workspace Plugin execution is fail-closed unless the local Docker
+    # sandbox owner is explicitly enabled for this single API process.
+    plugin_runtime_enabled: bool = False
+    plugin_docker_binary: str = Field(default="docker", min_length=1, max_length=1_024)
+    plugin_runtime_seccomp_profile: Path | None = None
+    # Deployment-owned directory of versioned Grafy Plugin SDK wheels (e.g. a
+    # built grapy-core wheel) exposed to Plugin dependency resolution via
+    # UV_FIND_LINKS. Plugins never depend on monorepo paths.
+    plugin_wheelhouse: Path | None = None
     storage_bucket: str = Field(default="workbench-artifacts", min_length=1)
     staged_upload_max_bytes: int = Field(
         default=STAGED_UPLOAD_HARD_MAX_BYTES,
@@ -100,6 +122,15 @@ class Settings(BaseSettings):
     # Collaboration and shared execution assume one FastAPI process with one
     # HTTP worker. Startup acquires an exclusive lock under workspace when true.
     require_single_api_owner: bool = True
+
+    @model_validator(mode="after")
+    def validate_plugin_capacity(self) -> "Settings":
+        if self.max_distinct_plugin_releases_per_graph > self.max_live_plugin_sandboxes:
+            raise ValueError(
+                "max_distinct_plugin_releases_per_graph cannot exceed "
+                "max_live_plugin_sandboxes"
+            )
+        return self
 
     @field_validator("public_origin", "oidc_issuer")
     @classmethod
@@ -185,6 +216,30 @@ class Settings(BaseSettings):
         return tuple(
             origin.strip() for origin in self.cors_origins.split(",") if origin.strip()
         )
+
+    @property
+    def resolved_plugin_roots(self) -> tuple[Path, ...]:
+        return tuple(root.expanduser().resolve() for root in self.plugin_roots)
+
+    @property
+    def resolved_plugin_wheelhouse(self) -> Path | None:
+        if self.plugin_wheelhouse is None:
+            return None
+        return self.plugin_wheelhouse.expanduser().resolve()
+
+    @property
+    def resolved_plugin_authoring_root(self) -> Path:
+        return self.plugin_authoring_root.expanduser().resolve()
+
+    @property
+    def resolved_plugin_sdk_project(self) -> Path:
+        return self.plugin_sdk_project.expanduser().resolve()
+
+    @property
+    def resolved_plugin_seccomp_profile(self) -> Path | None:
+        if self.plugin_runtime_seccomp_profile is None:
+            return None
+        return self.plugin_runtime_seccomp_profile.expanduser().resolve()
 
     @property
     def oidc_callback_url(self) -> str:

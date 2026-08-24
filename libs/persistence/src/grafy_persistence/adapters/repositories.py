@@ -49,6 +49,7 @@ from grafy_core.domain.module_library import (
     ModulePublicationState,
     ModuleRelease,
 )
+from grafy_core.domain.plugin_releases import PluginRelease, PluginRuntimeArtifact
 from grafy_core.domain.node_secrets import EncryptedNodeSecret
 from grafy_core.domain.collaboration import (
     CollaborativeGraphHead,
@@ -83,6 +84,7 @@ from grafy_core.ports.materialized_outputs import (
     MaterializedNodeOutputsRepositoryPort,
 )
 from grafy_core.ports.module_library import ModuleLibraryRepositoryPort
+from grafy_core.ports.plugin_releases import PluginReleaseRepositoryPort
 from grafy_core.ports.node_secrets import NodeSecretRepositoryPort
 from grafy_core.ports.saved_graphs import SavedGraphRepositoryPort
 from grafy_core.ports.staged_uploads import StagedUploadRepositoryPort
@@ -1081,6 +1083,9 @@ class SqlGraphExecutionHistoryRepository(
                         graph_revision=execution.graph_revision,
                         status=execution.status,
                         scope=execution.scope,
+                        submitted_request=execution.submitted_request,
+                        idempotency_key=execution.idempotency_key,
+                        submitted_by_actor_id=execution.submitted_by_actor_id,
                         workflow_run_id=execution.workflow_run_id,
                         error=execution.error,
                         created_at=execution.created_at,
@@ -1139,6 +1144,9 @@ class SqlGraphExecutionHistoryRepository(
             or current.graph_revision != execution.graph_revision
             or current.scope != execution.scope
             or current.requested_node_ids != execution.requested_node_ids
+            or current.submitted_request != execution.submitted_request
+            or current.idempotency_key != execution.idempotency_key
+            or current.submitted_by_actor_id != execution.submitted_by_actor_id
             or current.created_at != execution.created_at
         ):
             raise ValueError(
@@ -1205,6 +1213,7 @@ class SqlGraphExecutionHistoryRepository(
                         outputs=result.outputs,
                         artifact_count=result.artifact_count,
                         error=result.error,
+                        diagnostics=result.diagnostics,
                         completed_at=result.completed_at,
                     )
                 )
@@ -1261,6 +1270,7 @@ class SqlGraphExecutionHistoryRepository(
                     nodes.c.result_status,
                     nodes.c.outputs,
                     nodes.c.error,
+                    nodes.c.diagnostics,
                     nodes.c.completed_at,
                 )
                 .where(
@@ -1280,6 +1290,7 @@ class SqlGraphExecutionHistoryRepository(
                 status=row.result_status,
                 outputs=row.outputs,
                 error=row.error,
+                diagnostics=row.diagnostics,
                 completed_at=row.completed_at.replace(tzinfo=UTC),
             )
             for row in result_rows
@@ -1430,23 +1441,102 @@ class SqlGraphExecutionHistoryRepository(
         return GraphExecutionPage(items=items, next_cursor=next_cursor)
 
     @override
-    async def interrupt_all_active(
-        self,
-        *,
-        finished_at: datetime,
-        error: str,
-    ) -> int:
-        if finished_at.tzinfo is None:
-            raise ValueError(
-                "Graph execution interruption timestamp must be timezone-aware"
+    async def list_queued(self) -> tuple[GraphExecution, ...]:
+        records = tuple(
+            await self._session.scalars(
+                select(GraphExecutionRecord)
+                .where(schema.graph_executions.c.status == "queued")
+                .order_by(
+                    schema.graph_executions.c.created_at.asc(),
+                    schema.graph_executions.c.execution_id.asc(),
+                )
             )
+        )
+        queued: list[GraphExecution] = []
+        for record in records:
+            requested_node_ids = await self._requested_node_ids(
+                record.workspace_id,
+                record.execution_id,
+            )
+            queued.append(record.to_domain(requested_node_ids))
+        return tuple(queued)
+
+    @override
+    async def get_by_idempotency_key(
+        self,
+        workspace_id: UUID,
+        idempotency_key: str,
+    ) -> GraphExecution | None:
+        record = await self._session.scalar(
+            select(GraphExecutionRecord).where(
+                schema.graph_executions.c.workspace_id == workspace_id,
+                schema.graph_executions.c.idempotency_key == idempotency_key,
+            )
+        )
+        if record is None:
+            return None
+        requested_node_ids = await self._requested_node_ids(
+            workspace_id,
+            record.execution_id,
+        )
+        return record.to_domain(requested_node_ids)
+
+    @override
+    async def claim_queued(
+        self,
+        workspace_id: UUID,
+        execution_id: UUID,
+        *,
+        started_at: datetime,
+    ) -> bool:
+        if started_at.tzinfo is None:
+            raise ValueError("Graph execution start timestamp must be timezone-aware")
         result = cast(
             CursorResult[tuple[object, ...]],
             await self._session.execute(
                 update(schema.graph_executions)
                 .where(
-                    schema.graph_executions.c.status.in_(
-                        ("queued", "running", "cancelling")
+                    schema.graph_executions.c.workspace_id == workspace_id,
+                    schema.graph_executions.c.execution_id == execution_id,
+                    schema.graph_executions.c.status == "queued",
+                )
+                .values(status="running", started_at=started_at)
+            ),
+        )
+        return result.rowcount == 1
+
+    @override
+    async def interrupt_started(
+        self,
+        *,
+        finished_at: datetime,
+        error: str,
+    ) -> tuple[GraphExecution, ...]:
+        if finished_at.tzinfo is None:
+            raise ValueError(
+                "Graph execution interruption timestamp must be timezone-aware"
+            )
+        records = tuple(
+            await self._session.scalars(
+                select(GraphExecutionRecord).where(
+                    schema.graph_executions.c.status.in_(("running", "cancelling"))
+                )
+            )
+        )
+        interrupted_values: list[GraphExecution] = []
+        for record in records:
+            requested_node_ids = await self._requested_node_ids(
+                record.workspace_id,
+                record.execution_id,
+            )
+            interrupted_values.append(record.to_domain(requested_node_ids))
+        interrupted = tuple(interrupted_values)
+        if interrupted:
+            await self._session.execute(
+                update(schema.graph_executions)
+                .where(
+                    schema.graph_executions.c.execution_id.in_(
+                        execution.execution_id for execution in interrupted
                     )
                 )
                 .values(
@@ -1454,9 +1544,8 @@ class SqlGraphExecutionHistoryRepository(
                     finished_at=finished_at,
                     error=error,
                 )
-            ),
-        )
-        return result.rowcount
+            )
+        return interrupted
 
     async def _requested_node_ids(
         self,
@@ -1717,7 +1806,6 @@ class SqlCollaborationRepository:
             )
         )
 
-
     async def get_receipt(
         self,
         workspace_id: UUID,
@@ -1767,6 +1855,7 @@ class SqlCollaborationRepository:
         if row is None:
             return None
         return GraphCheckpointMapping.model_validate(dict(row))
+
 
 class SqlModuleLibraryRepository(ModuleLibraryRepositoryPort):
     def __init__(self, session: AsyncSession) -> None:
@@ -1863,6 +1952,116 @@ class SqlModuleLibraryRepository(ModuleLibraryRepositoryPort):
             .order_by(schema.module_releases.c.revision.desc())
         )
         return list(result)
+
+
+class SqlPluginReleaseRepository(PluginReleaseRepositoryPort):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    @override
+    async def add(self, release: PluginRelease) -> None:
+        self._session.add(release)
+        await self._session.flush()
+
+    @override
+    async def get_by_source_digest(
+        self,
+        workspace_id: UUID,
+        slug: str,
+        source_digest: str,
+    ) -> PluginRelease | None:
+        return await self._session.scalar(
+            select(PluginRelease).where(
+                schema.plugin_releases.c.workspace_id == workspace_id,
+                schema.plugin_releases.c.slug == slug,
+                schema.plugin_releases.c.source_digest == source_digest,
+            )
+        )
+
+    @override
+    async def get_by_descriptor_digest(
+        self,
+        workspace_id: UUID,
+        slug: str,
+        descriptor_digest: str,
+    ) -> PluginRelease | None:
+        return await self._session.scalar(
+            select(PluginRelease).where(
+                schema.plugin_releases.c.workspace_id == workspace_id,
+                schema.plugin_releases.c.slug == slug,
+                schema.plugin_releases.c.descriptor_digest == descriptor_digest,
+            )
+        )
+
+    @override
+    async def get_by_revision(
+        self,
+        workspace_id: UUID,
+        slug: str,
+        revision: int,
+    ) -> PluginRelease | None:
+        return await self._session.scalar(
+            select(PluginRelease).where(
+                schema.plugin_releases.c.workspace_id == workspace_id,
+                schema.plugin_releases.c.slug == slug,
+                schema.plugin_releases.c.revision == revision,
+            )
+        )
+
+    @override
+    async def next_revision(self, workspace_id: UUID, slug: str) -> int:
+        await self._session.execute(
+            select(schema.workspaces.c.id)
+            .where(schema.workspaces.c.id == workspace_id)
+            .with_for_update()
+        )
+        latest = await self._session.scalar(
+            select(func.max(schema.plugin_releases.c.revision)).where(
+                schema.plugin_releases.c.workspace_id == workspace_id,
+                schema.plugin_releases.c.slug == slug,
+            )
+        )
+        return 1 if latest is None else int(latest) + 1
+
+    @override
+    async def list_current(self, workspace_id: UUID) -> list[PluginRelease]:
+        releases = schema.plugin_releases
+        latest = (
+            select(
+                releases.c.workspace_id,
+                releases.c.slug,
+                func.max(releases.c.revision).label("revision"),
+            )
+            .where(releases.c.workspace_id == workspace_id)
+            .group_by(releases.c.workspace_id, releases.c.slug)
+            .subquery()
+        )
+        result = await self._session.scalars(
+            select(PluginRelease)
+            .join(
+                latest,
+                and_(
+                    releases.c.workspace_id == latest.c.workspace_id,
+                    releases.c.slug == latest.c.slug,
+                    releases.c.revision == latest.c.revision,
+                ),
+            )
+            .order_by(releases.c.slug.asc())
+        )
+        return list(result)
+
+    @override
+    async def list_runtime_artifacts(self) -> list[PluginRuntimeArtifact]:
+        result = await self._session.scalars(
+            select(PluginRelease).where(
+                schema.plugin_releases.c.runtime_artifact.is_not(None)
+            )
+        )
+        artifacts: list[PluginRuntimeArtifact] = []
+        for release in result:
+            if release.runtime_artifact is not None:
+                artifacts.append(release.runtime_artifact)
+        return artifacts
 
 
 class SqlTemplateRepository(TemplateRepositoryPort):

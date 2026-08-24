@@ -34,7 +34,12 @@ from grafy_api.v1.routes.saved_graphs.models import (
 )
 from grafy_api.settings import Settings
 
-from tests.testkit import client_with_overrides, create_db_url, db, seed_shared_workspace
+from tests.testkit import (
+    client_with_overrides,
+    create_db_url,
+    db,
+    seed_shared_workspace,
+)
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")

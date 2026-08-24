@@ -16,6 +16,8 @@ from grafy_api.v1.routes.auth.dependencies import browser_actor
 from grafy_api.v1.routes.catalog.models import NodeRegistryResponse
 from grafy_api.v1.routes.executions.models import (
     RunExecutionCapacityErrorResponse,
+    RunExecutionIdempotencyConflictErrorResponse,
+    RunExecutionQueueFullErrorResponse,
     RunNodeRequest,
     RunRequest,
 )
@@ -25,6 +27,10 @@ from grafy_api.v1.routes.executions.dependencies import execution_admission_limi
 from grafy_api.v1.routes.executions.runtime.admission import (
     ExecutionAdmissionLimiter,
     RunExecutionCapacityError,
+    RunExecutionQueueFullError,
+)
+from grafy_api.v1.routes.executions.runtime.manager import (
+    RunExecutionIdempotencyConflictError,
 )
 from grafy_api.v1.routes.uploads.models import SampleRequest
 from grafy_api.v1.routes.uploads.services import ImageUploadService
@@ -333,6 +339,60 @@ def test_async_execution_route_returns_typed_capacity_error(
     assert error.detail.error_code == "execution_capacity_exceeded"
     assert error.detail.max_active_executions == 2
     assert "2 active executions" in error.detail.message
+
+
+def test_async_execution_route_returns_typed_queue_full_error(
+    builtin_client: TestClient,
+) -> None:
+    rejecting_manager = AsyncMock()
+    rejecting_manager.start.side_effect = RunExecutionQueueFullError(20)
+    application = cast(FastAPI, builtin_client.app)
+    api = GrafyApi(builtin_client)
+    executions = api.workspace(WORKSPACE_ID).executions
+    original_override = application.dependency_overrides[run_execution_manager]
+    application.dependency_overrides[run_execution_manager] = lambda: rejecting_manager
+    try:
+        response = executions.start_execution(RunRequest(nodes=[]))
+    finally:
+        application.dependency_overrides[run_execution_manager] = original_override
+
+    error = RunExecutionQueueFullErrorResponse.model_validate(response.json())
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "1"
+    assert error.detail.error_code == "execution_queue_full"
+    assert error.detail.max_pending_graphs == 20
+    assert "20 pending executions" in error.detail.message
+
+
+def test_async_execution_route_returns_idempotency_conflict(
+    builtin_client: TestClient,
+) -> None:
+    existing_execution_id = uuid4()
+    rejecting_manager = AsyncMock()
+    rejecting_manager.start.side_effect = RunExecutionIdempotencyConflictError(
+        "api-retry-1",
+        existing_execution_id,
+    )
+    application = cast(FastAPI, builtin_client.app)
+    api = GrafyApi(builtin_client)
+    executions = api.workspace(WORKSPACE_ID).executions
+    original_override = application.dependency_overrides[run_execution_manager]
+    application.dependency_overrides[run_execution_manager] = lambda: rejecting_manager
+    try:
+        response = executions.start_execution(
+            RunRequest(nodes=[]),
+            headers={"Idempotency-Key": "api-retry-1"},
+        )
+    finally:
+        application.dependency_overrides[run_execution_manager] = original_override
+
+    error = RunExecutionIdempotencyConflictErrorResponse.model_validate(response.json())
+    assert response.status_code == 409
+    assert error.detail.error_code == "execution_idempotency_conflict"
+    assert error.detail.idempotency_key == "api-retry-1"
+    assert error.detail.execution_id == existing_execution_id
+    rejecting_manager.start.assert_awaited_once()
+    assert rejecting_manager.start.await_args.kwargs["idempotency_key"] == "api-retry-1"
 
 
 def test_execution_event_stream_replays_ids_and_closes_after_terminal(

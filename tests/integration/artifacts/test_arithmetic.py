@@ -1596,7 +1596,7 @@ def test_unknown_operator_version_is_rejected_before_execution(
 
     assert response.status_code == 422
     assert response.json()["detail"] == (
-        "Unknown operator 'arithmetic.number' at version 99"
+        "Unknown operator 'arithmetic.number' at version 99. If this operator belongs to a Workspace Plugin, the node must pin one exact Plugin release"
     )
 
 

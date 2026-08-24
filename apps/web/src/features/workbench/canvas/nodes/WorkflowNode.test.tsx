@@ -16,13 +16,7 @@ const xyflowMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@xyflow/react", () => ({
-  Handle: ({
-    id,
-    isConnectable,
-  }: {
-    id: string;
-    isConnectable: boolean;
-  }) => (
+  Handle: ({ id, isConnectable }: { id: string; isConnectable: boolean }) => (
     <span
       data-testid="compatibility-handle"
       data-handle-id={id}
@@ -92,7 +86,9 @@ vi.mock("@base-ui/react/popover", () => ({
       </button>
     ),
     Portal: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-    Positioner: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    Positioner: ({ children }: { children: React.ReactNode }) => (
+      <>{children}</>
+    ),
     Popup: ({ children }: { children: React.ReactNode }) => (
       <div>{children}</div>
     ),
@@ -104,10 +100,7 @@ vi.mock("./type-inspector", () => ({
 }));
 
 import type { NodeSpec } from "@/lib/api";
-import {
-  compatibilityHandleId,
-  createWorkflowNodeData,
-} from "../types";
+import { compatibilityHandleId, createWorkflowNodeData } from "../types";
 import WorkflowNodeCard, {
   configFieldLabelIsRedundant,
   type ConfigBrick,
@@ -122,6 +115,7 @@ function unavailableSpec(): NodeSpec {
     title: "legacy.operator",
     description: "Unavailable operator",
     catalog_visible: false,
+    runnable: true,
     config_schema: {},
     input_schema: {},
     output_schema: {},
@@ -138,6 +132,7 @@ function boundsSpec(): NodeSpec {
     title: "Remote WMS map layer",
     description: "Adds a remote WMS layer.",
     catalog_visible: true,
+    runnable: true,
     config_schema: {
       type: "object",
       properties: {
@@ -193,6 +188,7 @@ function fuzzyMatchSpec(): NodeSpec {
     title: "Fuzzy match tables",
     description: "Ranks candidate records.",
     catalog_visible: true,
+    runnable: true,
     config_schema: {
       type: "object",
       properties: {
@@ -212,7 +208,6 @@ function fuzzyMatchSpec(): NodeSpec {
   };
 }
 
-
 function tableFileImportSpec(): NodeSpec {
   return {
     operator_id: "table.file.import",
@@ -221,6 +216,7 @@ function tableFileImportSpec(): NodeSpec {
     title: "Import table file",
     description: "Import a staged CSV or XLSX file as a table artifact.",
     catalog_visible: true,
+    runnable: true,
     config_schema: {
       type: "object",
       properties: {
@@ -232,7 +228,8 @@ function tableFileImportSpec(): NodeSpec {
         },
         sheet_name: {
           title: "Sheet Name",
-          description: "XLSX worksheet name. Leave empty to use the active sheet.",
+          description:
+            "XLSX worksheet name. Leave empty to use the active sheet.",
           default: null,
           anyOf: [
             { type: "string", minLength: 1, maxLength: 255 },
@@ -270,7 +267,6 @@ function tableFileImportSpec(): NodeSpec {
   };
 }
 
-
 function artifactQuerySpec(): NodeSpec {
   return {
     operator_id: "sql.artifacts.query",
@@ -279,6 +275,7 @@ function artifactQuerySpec(): NodeSpec {
     title: "Query artifact tables",
     description: "Runs read-only queries over table artifacts.",
     catalog_visible: true,
+    runnable: true,
     config_schema: {
       type: "object",
       properties: { relations: { type: "array" } },
@@ -326,6 +323,7 @@ function textPipeSpec(): NodeSpec {
     title: "Text pipe",
     description: "Passes text through.",
     catalog_visible: true,
+    runnable: true,
     config_schema: {},
     input_schema: {},
     output_schema: {},
@@ -383,6 +381,7 @@ function rawSqlStatementSpec(): NodeSpec {
     title: "Raw SQL statement",
     description: "Builds a parameterized SQL statement.",
     catalog_visible: true,
+    runnable: true,
     config_schema: {
       type: "object",
       properties: {
@@ -413,13 +412,15 @@ function chatCompletionSpec(): NodeSpec {
     title: "OpenAI-compatible Chat Completion",
     description: "Calls an OpenAI-compatible Chat Completions endpoint.",
     catalog_visible: true,
+    runnable: true,
     config_schema: {
       type: "object",
       properties: {
         base_url: {
           type: "string",
           title: "Base Url",
-          description: "OpenAI-compatible API base URL, including its version path.",
+          description:
+            "OpenAI-compatible API base URL, including its version path.",
         },
         model: {
           type: "string",
@@ -442,7 +443,8 @@ function chatCompletionSpec(): NodeSpec {
         strict: {
           type: "boolean",
           title: "Strict",
-          description: "Whether the provider must enforce a connected JSON Schema.",
+          description:
+            "Whether the provider must enforce a connected JSON Schema.",
         },
       },
     },
@@ -454,7 +456,8 @@ function chatCompletionSpec(): NodeSpec {
       {
         name: "api_key",
         title: "API key",
-        description: "Write-only bearer credential for the configured base URL.",
+        description:
+          "Write-only bearer credential for the configured base URL.",
         config_dependencies: ["base_url"],
       },
     ],
@@ -487,7 +490,8 @@ describe("WorkflowNode pickup", () => {
     const node = renderNode("text", data);
 
     expect(
-      node.container.querySelector('[data-node-pickup-shadow="true"]')
+      node.container
+        .querySelector('[data-node-pickup-shadow="true"]')
         ?.getAttribute("data-picked-up"),
     ).toBe("false");
     xyflowMocks.updateNodeInternals.mockClear();
@@ -505,7 +509,8 @@ describe("WorkflowNode pickup", () => {
       );
     });
     expect(
-      node.container.querySelector('[data-node-pickup-shadow="true"]')
+      node.container
+        .querySelector('[data-node-pickup-shadow="true"]')
         ?.getAttribute("data-picked-up"),
     ).toBe("true");
     // Option C rides a 200ms spring; handles remeasure per frame while it
@@ -529,7 +534,8 @@ describe("WorkflowNode pickup", () => {
       );
     });
     expect(
-      node.container.querySelector('[data-node-pickup-shadow="true"]')
+      node.container
+        .querySelector('[data-node-pickup-shadow="true"]')
         ?.getAttribute("data-dragging"),
     ).toBe("true");
     // A real drag snaps the spring and remeasures immediately for the drag loop.
@@ -607,6 +613,7 @@ describe("WorkflowNode module upgrade", () => {
       title: "Normalize text",
       description: "Module call",
       catalog_visible: true,
+      runnable: true,
       config_schema: {},
       input_schema: {},
       output_schema: {},
@@ -641,6 +648,53 @@ describe("WorkflowNode module upgrade", () => {
     expect(upgradeButton?.textContent).toContain("Upgrade to release 2");
     React.act(() => upgradeButton?.click());
     expect(onUpgradeModuleCall).toHaveBeenCalledWith("module-call");
+    React.act(() => root.unmount());
+  });
+});
+
+describe("WorkflowNode Workspace Plugin upgrade", () => {
+  it("moves an exact pin only after the user chooses the current release", () => {
+    const onUpgradePluginRelease = vi.fn();
+    const data = createWorkflowNodeData({
+      operator_id: "notes.summary.render",
+      operator_version: 1,
+      plugin_slug: "notes",
+      plugin_revision: 3,
+      title: "Render summary",
+      description: "Workspace Plugin node",
+      catalog_visible: true,
+      runnable: true,
+      config_schema: {},
+      input_schema: {},
+      output_schema: {},
+      inputs: [],
+      outputs: [],
+    });
+    data.pluginReleasePin = { slug: "notes", revision: 1 };
+    data.pluginUpgradeRelease = 3;
+    data.onUpgradePluginRelease = onUpgradePluginRelease;
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    React.act(() => {
+      root.render(
+        <WorkflowNodeCard
+          {...({
+            id: "plugin-node",
+            data,
+            selected: true,
+          } as React.ComponentProps<typeof WorkflowNodeCard>)}
+        />,
+      );
+    });
+
+    expect(data.pluginReleasePin).toEqual({ slug: "notes", revision: 1 });
+    const upgradeButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Upgrade Workspace Plugin to release 3"]',
+    );
+    expect(upgradeButton).not.toBeNull();
+    React.act(() => upgradeButton?.click());
+    expect(onUpgradePluginRelease).toHaveBeenCalledWith("plugin-node");
     React.act(() => root.unmount());
   });
 });
@@ -791,7 +845,6 @@ describe("WorkflowNode fixed numeric tuple fields", () => {
   });
 });
 
-
 describe("WorkflowNode string-list fields", () => {
   it("edits, appends, and removes string values through the node form", () => {
     const onConfigChange = vi.fn();
@@ -827,9 +880,11 @@ describe("WorkflowNode string-list fields", () => {
     );
 
     React.act(() => {
-      container.querySelector<HTMLButtonElement>(
-        'button[aria-label="Add Right Alias Columns item"]',
-      )?.click();
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Add Right Alias Columns item"]',
+        )
+        ?.click();
     });
     expect(onConfigChange).toHaveBeenLastCalledWith(
       "fuzzy-match",
@@ -838,9 +893,11 @@ describe("WorkflowNode string-list fields", () => {
     );
 
     React.act(() => {
-      container.querySelector<HTMLButtonElement>(
-        'button[aria-label="Remove Right Alias Columns item 1"]',
-      )?.click();
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Remove Right Alias Columns item 1"]',
+        )
+        ?.click();
     });
     expect(onConfigChange).toHaveBeenLastCalledWith(
       "fuzzy-match",
@@ -1027,7 +1084,9 @@ describe("configFieldLabelIsRedundant", () => {
       ]),
     ).toBe(false);
     expect(
-      configFieldLabelIsRedundant("Strict mode", [fieldBrick("Strict", "boolean")]),
+      configFieldLabelIsRedundant("Strict mode", [
+        fieldBrick("Strict", "boolean"),
+      ]),
     ).toBe(false);
   });
 });
@@ -1078,7 +1137,10 @@ describe("WorkflowNode header", () => {
 
   it("reports execution status without a badge row", () => {
     const data = createWorkflowNodeData(chatCompletionSpec());
-    data.execution = { status: "failed", error: "Provider rejected the request" };
+    data.execution = {
+      status: "failed",
+      error: "Provider rejected the request",
+    };
     const { container, root } = renderNode("chat", data);
 
     const status = container.querySelector('[aria-label="Execution failed"]');
@@ -1090,7 +1152,6 @@ describe("WorkflowNode header", () => {
 });
 
 describe("WorkflowNode multiline fields", () => {
-
   it("exposes a textarea field resize grip and hides corner resize by default", () => {
     gridSettingsMocks.allowWorkflowCornerResize = false;
     const data = createWorkflowNodeData(rawSqlStatementSpec());
@@ -1113,9 +1174,7 @@ describe("WorkflowNode multiline fields", () => {
     expect(
       container.querySelector('[data-testid="textarea-body-resize"]'),
     ).not.toBeNull();
-    expect(
-      container.querySelector('[data-testid="corner-resize"]'),
-    ).toBeNull();
+    expect(container.querySelector('[data-testid="corner-resize"]')).toBeNull();
 
     React.act(() => root.unmount());
   });
@@ -1180,7 +1239,6 @@ describe("WorkflowNode port rail", () => {
 
     React.act(() => root.unmount());
   });
-
 });
 
 describe("WorkflowNode artifact table query relations", () => {
@@ -1222,9 +1280,7 @@ describe("WorkflowNode artifact table query relations", () => {
     expect(onRelationsChange).toHaveBeenLastCalledWith(
       "artifact-query",
       [{ id: relationPlug?.id, alias: "parcels" }],
-      expect.arrayContaining([
-        { id: relationPlug?.id, portName: "relations" },
-      ]),
+      expect.arrayContaining([{ id: relationPlug?.id, portName: "relations" }]),
     );
 
     const addRelationButton = [
@@ -1265,22 +1321,26 @@ describe("WorkflowNode execution progress", () => {
       node_id: "module-1",
       status: "succeeded",
       error: null,
-      outputs: [{
-        port: "result",
-        kind: "single",
-        value: {
-          artifact_id: "artifact-1",
-          artifact_type: "json.object",
-          schema_version: 1,
+      outputs: [
+        {
+          port: "result",
+          kind: "single",
+          value: {
+            artifact_id: "artifact-1",
+            artifact_type: "json.object",
+            schema_version: 1,
+          },
+          artifacts: [
+            {
+              artifact_id: "artifact-1",
+              artifact_type: "json.object",
+              schema_version: 1,
+              content_type: "application/json",
+              text: '{"ready":true}',
+            },
+          ],
         },
-        artifacts: [{
-          artifact_id: "artifact-1",
-          artifact_type: "json.object",
-          schema_version: 1,
-          content_type: "application/json",
-          text: '{"ready":true}',
-        }],
-      }],
+      ],
     };
     const withProgress: typeof data = {
       ...data,
@@ -1341,9 +1401,7 @@ describe("WorkflowNode execution progress", () => {
       ),
     ).toEqual(["Events 4", "History 0"]);
     expect(appendix?.textContent).toContain("1 earlier update omitted");
-    expect(appendix?.textContent).toContain(
-      "branch-a › inner-1 · items 3 › 2",
-    );
+    expect(appendix?.textContent).toContain("branch-a › inner-1 · items 3 › 2");
     expect(appendix?.textContent).toContain("2 / 5");
     expect(appendix?.textContent).toContain(
       "<script>Preparing the payload</script>",

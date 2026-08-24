@@ -7,6 +7,7 @@ from typing import cast
 
 from grafy_core.artifacts import InMemoryUnitOfWork
 from grafy_core.application.modules import ModuleLibraryService
+from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.application.saved_graphs import SavedGraphService
 from grafy_core.operators.arithmetic import (
     IntegerValueOutputWriter,
@@ -27,6 +28,11 @@ from grafy_core.runtime.persistence import (
     ArtifactWriterRegistry,
     OutputPersister,
 )
+from grafy_core.runtime.plugin_invocation import (
+    PluginInvocationError,
+    PluginInvocationRequest,
+    PluginInvocationResult,
+)
 from grafy_core.runtime.resolvers import Resolver, ResolverRegistry
 from grafy_storage import LocalFileObjectStore
 
@@ -45,6 +51,10 @@ from grafy_api.v1.routes.executions.runtime.manager import RunExecutionManager
 from grafy_api.v1.routes.executions.runtime.node_execution import (
     NodeExecutionService,
 )
+from grafy_api.v1.routes.executions.runtime.plugin_artifacts import (
+    ArtifactBundlePluginInvoker,
+)
+from grafy_api.v1.routes.executions.runtime.plugin_docker import DockerPluginRuntime
 from grafy_api.v1.routes.executions.runtime.admission import (
     ExecutionAdmissionLimiter,
 )
@@ -62,11 +72,24 @@ from grafy_api.v1.routes.uploads.services import ImageUploadService
 _WORKBENCH_BUCKET = "workbench-artifacts"
 
 
+class _UnavailablePluginInvoker:
+    """Fail-closed invoker used until the executable runtime adapter exists."""
+
+    async def invoke(self, request: PluginInvocationRequest) -> PluginInvocationResult:
+        release = request.release
+        raise PluginInvocationError(
+            f"Workspace Plugin {release.slug!r} revision {release.revision} "
+            "cannot be executed yet; releases stay catalog-only until the "
+            "Plugin runtime is configured"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class WorkbenchComponents:
     plugin_registry: PluginRegistry
     uploads: ImageUploadService
     modules: GraphModuleCatalog
+    plugin_releases: PluginReleaseService | None
     run_graph: RunGraph
     execution_admission: ExecutionAdmissionLimiter
     execution_manager: RunExecutionManager
@@ -74,6 +97,8 @@ class WorkbenchComponents:
     materializations: MaterializationService
     presenter: RunResultPresenter
     artifacts: ArtifactService
+    plugin_invoker: ArtifactBundlePluginInvoker | None
+    plugin_runtime: DockerPluginRuntime | None
 
 
 def build_workbench_components(
@@ -81,6 +106,8 @@ def build_workbench_components(
     plugin_registry: PluginRegistry,
     map_max_concurrency: int = 4,
     max_active_executions: int = 2,
+    max_pending_graphs: int = 20,
+    max_active_plugin_invocations: int = 4,
     workspace: Path | None = None,
     unit_of_work: WorkbenchUnitOfWorkPort | None = None,
     storage: FileStoragePort | None = None,
@@ -89,6 +116,8 @@ def build_workbench_components(
     staged_upload_max_bytes: int = STAGED_UPLOAD_HARD_MAX_BYTES,
     saved_graphs: SavedGraphService | None = None,
     module_library: ModuleLibraryService | None = None,
+    plugin_releases: PluginReleaseService | None = None,
+    plugin_runtime: DockerPluginRuntime | None = None,
     node_secrets: NodeSecretResolverPort | None = None,
     graph_room_hub: GraphRoomHub | None = None,
 ) -> WorkbenchComponents:
@@ -157,10 +186,28 @@ def build_workbench_components(
         saved_graphs,
     )
     presenter = RunResultPresenter(artifacts)
+    plugin_invoker = None
+    artifact_plugin_invoker = None
+    if plugin_releases is not None:
+        if plugin_runtime is None:
+            plugin_invoker = _UnavailablePluginInvoker()
+        else:
+            artifact_plugin_invoker = ArtifactBundlePluginInvoker(
+                unit_of_work=resolved_unit_of_work,
+                runner=plugin_runtime,
+                scratch=plugin_runtime,
+                storage=resolved_storage,
+                bucket=bucket,
+                storage_backend=storage_backend,
+                max_concurrent_invocations=max_active_plugin_invocations,
+            )
+            plugin_invoker = artifact_plugin_invoker
     compiler = GraphCompiler(
         plugin_registry=plugin_registry,
         plugin_context=plugin_context,
         module_catalog=modules,
+        plugin_release_lookup=plugin_releases,
+        plugin_invoker=plugin_invoker,
     )
     edge_values = EdgeValueResolver(
         resolvers=resolver_registry,
@@ -191,6 +238,7 @@ def build_workbench_components(
         compiler=compiler,
         coordinator=coordinator,
         materializations=materializations,
+        plugin_sandboxes=plugin_runtime,
     )
     execution_history = ExecutionHistoryService(resolved_unit_of_work, saved_graphs)
     execution_admission = ExecutionAdmissionLimiter(max_active_executions)
@@ -198,12 +246,14 @@ def build_workbench_components(
         run_graph,
         execution_history=execution_history,
         admission_limiter=execution_admission,
+        max_pending_graphs=max_pending_graphs,
         graph_room_hub=graph_room_hub,
     )
     return WorkbenchComponents(
         plugin_registry=plugin_registry,
         uploads=uploads,
         modules=modules,
+        plugin_releases=plugin_releases,
         run_graph=run_graph,
         execution_admission=execution_admission,
         execution_manager=execution_manager,
@@ -211,6 +261,8 @@ def build_workbench_components(
         materializations=materializations,
         presenter=presenter,
         artifacts=artifacts,
+        plugin_invoker=artifact_plugin_invoker,
+        plugin_runtime=plugin_runtime,
     )
 
 

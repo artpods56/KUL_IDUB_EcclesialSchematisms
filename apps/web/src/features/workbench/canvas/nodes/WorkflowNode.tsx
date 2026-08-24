@@ -30,10 +30,7 @@ import {
 
 import type { Port } from "@/lib/api";
 import { tokens } from "@/lib/stylex/tokens.stylex";
-import {
-  CanvasNodeHeader,
-  nodeChrome,
-} from "./CanvasNodeChrome";
+import { CanvasNodeHeader, nodeChrome } from "./CanvasNodeChrome";
 import {
   schemaFields,
   type NumberTupleItem,
@@ -110,10 +107,7 @@ import {
   lengthFromSpan,
   spanFromLength,
 } from "../grid-layout";
-import {
-  CanvasNodeShell,
-  useCanvasNodeShell,
-} from "./CanvasNodeShell";
+import { CanvasNodeShell, useCanvasNodeShell } from "./CanvasNodeShell";
 import {
   configBoardColumns,
   fieldFootprint,
@@ -809,7 +803,8 @@ const s = stylex.create({
     resize: "none",
   },
   codeTextarea: {
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    fontFamily:
+      "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
     fontSize: tokens.fontSizeXs,
     tabSize: 2,
   },
@@ -1277,9 +1272,7 @@ function OptionalConnectionToggle({
       role="switch"
       aria-checked={connection.enabled}
       aria-label={`${label} connection enabled`}
-      title={
-        connection.enabled ? "Disable connection" : "Enable connection"
-      }
+      title={connection.enabled ? "Disable connection" : "Enable connection"}
       {...nodeInteractionProps(
         stylex.props(
           s.connectionToggle,
@@ -1342,7 +1335,12 @@ function PortRail({
                 />
               ) : null}
             </div>
-            <div {...stylex.props(nodeChrome.portRailSlot, nodeChrome.portRailSlotOut)}>
+            <div
+              {...stylex.props(
+                nodeChrome.portRailSlot,
+                nodeChrome.portRailSlotOut,
+              )}
+            >
               {output ? (
                 <PortTab
                   id={id}
@@ -1520,12 +1518,7 @@ function InstancePlugRow({
         type="target"
         position={Position.Left}
         id={encodeHandleId(
-          portMetaForPort(
-            port,
-            port.shape,
-            plug.id,
-            data.artifactTypeBindings,
-          ),
+          portMetaForPort(port, port.shape, plug.id, data.artifactTypeBindings),
         )}
         aria-label={accessibleLabel}
         title={`${accessibleLabel}. Connect one compatible output here.`}
@@ -1684,7 +1677,10 @@ function InstancePlugPort({
   };
 
   return (
-    <section {...stylex.props(s.plugGroup)} aria-label={`${visibleName} inputs`}>
+    <section
+      {...stylex.props(s.plugGroup)}
+      aria-label={`${visibleName} inputs`}
+    >
       <div {...stylex.props(s.plugPortHeader)}>
         <PortTypePopover
           port={port}
@@ -1699,7 +1695,9 @@ function InstancePlugPort({
           >
             <span {...stylex.props(s.dot)} style={{ backgroundColor: color }} />
             <span {...stylex.props(nodeChrome.tabLabel)}>{visibleName}</span>
-            {port.required ? <span {...stylex.props(s.required)}>*</span> : null}
+            {port.required ? (
+              <span {...stylex.props(s.required)}>*</span>
+            ) : null}
           </button>
         </PortTypePopover>
         <span {...stylex.props(s.plugPortRule)}>
@@ -1767,11 +1765,10 @@ function GenericArtifactTypeState({
               style={
                 artifactType
                   ? {
-                      backgroundColor:
-                        artifactTypeColor(
-                          artifactType.id,
-                          tokens.colorAccent,
-                        ),
+                      backgroundColor: artifactTypeColor(
+                        artifactType.id,
+                        tokens.colorAccent,
+                      ),
                     }
                   : undefined
               }
@@ -1984,14 +1981,13 @@ function StringListConfigField({
   value: unknown;
   onChange: (value: unknown) => void;
 }) {
-  const values = Array.isArray(value) && value.every(
-    (item): item is string => typeof item === "string",
-  )
-    ? value
-    : [];
+  const values =
+    Array.isArray(value) &&
+    value.every((item): item is string => typeof item === "string")
+      ? value
+      : [];
   const minimumItems = field.minItems ?? 0;
-  const canAdd =
-    field.maxItems === undefined || values.length < field.maxItems;
+  const canAdd = field.maxItems === undefined || values.length < field.maxItems;
   const canRemove = values.length > minimumItems;
 
   return (
@@ -2075,20 +2071,12 @@ function ConfigField({
     onLayoutCommit;
   if (field.type === "number-tuple") {
     return (
-      <NumberTupleConfigField
-        field={field}
-        value={value}
-        onChange={onChange}
-      />
+      <NumberTupleConfigField field={field} value={value} onChange={onChange} />
     );
   }
   if (field.type === "string-list") {
     return (
-      <StringListConfigField
-        field={field}
-        value={value}
-        onChange={onChange}
-      />
+      <StringListConfigField field={field} value={value} onChange={onChange} />
     );
   }
   if (field.type === "boolean") {
@@ -2243,15 +2231,17 @@ function SecretInputField({
   const [value, setValue] = React.useState("");
   const storedStatus = data.secretStatuses[input.name] ?? { state: "unknown" };
   const ready = data.secretInputReadiness[input.name] ?? false;
-  const status = !ready && storedStatus.state === "configured"
-    ? { state: "stale" as const }
-    : storedStatus;
+  const status =
+    !ready && storedStatus.state === "configured"
+      ? { state: "stale" as const }
+      : storedStatus;
   const busy = status.state === "applying" || status.state === "removing";
   const canApply =
-    ready && !busy && value.length > 0 &&
-    Boolean(data.onApplyNodeSecret);
+    ready && !busy && value.length > 0 && Boolean(data.onApplyNodeSecret);
   const canRemove =
-    ready && !busy && status.state === "configured" &&
+    ready &&
+    !busy &&
+    status.state === "configured" &&
     Boolean(data.onRemoveNodeSecret);
   const hint = !ready
     ? status.state === "stale"
@@ -2260,8 +2250,9 @@ function SecretInputField({
     : status.state === "stale"
       ? "Apply a key for the current endpoint."
       : status.state === "error"
-        ? status.message ?? "The secret action could not be completed."
-        : input.description ?? "Write-only · the stored value cannot be read back.";
+        ? (status.message ?? "The secret action could not be completed.")
+        : (input.description ??
+          "Write-only · the stored value cannot be read back.");
 
   return (
     <form
@@ -2302,7 +2293,9 @@ function SecretInputField({
           data-lpignore="true"
           data-bwignore
           aria-label={input.title}
-          placeholder={status.state === "configured" ? "Replace secret" : "Enter secret"}
+          placeholder={
+            status.state === "configured" ? "Replace secret" : "Enter secret"
+          }
           disabled={!ready || busy}
           {...nodeInteractionProps(stylex.props(s.input, s.secretInput))}
           onChange={(event) => setValue(event.currentTarget.value)}
@@ -2427,7 +2420,9 @@ function FileUploadBody({ id, data }: { id: string; data: WorkflowNodeData }) {
         {data.execution.status === "uploading"
           ? "Uploading…"
           : uploads.length
-            ? isSingleFile ? "Replace file" : "Replace images"
+            ? isSingleFile
+              ? "Replace file"
+              : "Replace images"
             : isGeoJson
               ? "Choose GeoJSON"
               : isGeoTiff
@@ -2473,11 +2468,7 @@ function InstanceInputConnectionToggle({
   const connection = useOptionalInputConnection(nodeId, port, plugId);
   if (!connection) return null;
   return (
-    <OptionalConnectionToggle
-      connection={connection}
-      label={label}
-      compact
-    />
+    <OptionalConnectionToggle connection={connection} label={label} compact />
   );
 }
 
@@ -2599,7 +2590,10 @@ function SchemaBuilderBody({
         </label>
       </div>
 
-      <section {...stylex.props(s.schemaFieldsSection)} aria-label="Schema fields">
+      <section
+        {...stylex.props(s.schemaFieldsSection)}
+        aria-label="Schema fields"
+      >
         <div {...stylex.props(s.schemaFieldsHeader)}>
           <span {...stylex.props(s.schemaFieldsTitle)}>Fields</span>
           <span {...stylex.props(s.schemaFieldsCount)}>
@@ -2608,9 +2602,7 @@ function SchemaBuilderBody({
         </div>
 
         {fields.length ? (
-          <div
-            {...nodeInteractionProps(stylex.props(s.schemaFieldList))}
-          >
+          <div {...nodeInteractionProps(stylex.props(s.schemaFieldList))}>
             {fields.map((field, index) => {
               const consumesInput = schemaFieldConsumesInput(field);
               const binding = data.inputPlugBindings[field.id];
@@ -2650,9 +2642,7 @@ function SchemaBuilderBody({
                       type="button"
                       aria-label={`Drag to reorder field ${index + 1}`}
                       title="Drag to reorder; arrow buttons also move this field"
-                      {...nodeInteractionProps(
-                        stylex.props(s.schemaFieldGrip),
-                      )}
+                      {...nodeInteractionProps(stylex.props(s.schemaFieldGrip))}
                       onPointerDown={(event) => {
                         if (event.button !== 0) return;
                         event.stopPropagation();
@@ -2782,9 +2772,7 @@ function SchemaBuilderBody({
                         {...nodeInteractionProps(
                           stylex.props(
                             s.schemaFieldAction,
-                            index === 0
-                              ? s.schemaFieldActionDisabled
-                              : null,
+                            index === 0 ? s.schemaFieldActionDisabled : null,
                           ),
                         )}
                         onClick={() =>
@@ -2960,19 +2948,13 @@ function ArtifactQueryTablesBody({
     ? artifactTypeColor(artifactType.id, tokens.colorAccent)
     : tokens.colorAccent;
 
-  const commitRelations = (
-    nextRelations: readonly ArtifactQueryRelation[],
-  ) => {
+  const commitRelations = (nextRelations: readonly ArtifactQueryRelation[]) => {
     const nextInputPlugs = reconcileArtifactQueryRelationInputPlugs(
       data.inputPlugs,
       nextRelations,
     );
     if (data.onArtifactQueryRelationsChange) {
-      data.onArtifactQueryRelationsChange(
-        id,
-        nextRelations,
-        nextInputPlugs,
-      );
+      data.onArtifactQueryRelationsChange(id, nextRelations, nextInputPlugs);
     } else {
       data.onConfigChange?.(id, "relations", nextRelations);
     }
@@ -3011,7 +2993,7 @@ function ArtifactQueryTablesBody({
               relations.filter(
                 (candidate) =>
                   candidate.alias.toLowerCase() ===
-                    relation.alias.toLowerCase(),
+                  relation.alias.toLowerCase(),
               ).length === 1;
             const aliasIsValid =
               ARTIFACT_QUERY_ALIAS_PATTERN.test(relation.alias) &&
@@ -3209,27 +3191,24 @@ export function configFieldLabelIsRedundant(
 ): boolean {
   const only = bricks.length === 1 ? bricks[0] : undefined;
   if (only?.kind !== "field" || only.field.type === "boolean") return false;
-  const squash = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const squash = (value: string) =>
+    value.toLowerCase().replace(/[^a-z0-9]/g, "");
   const title = squash(only.field.title);
   return title.length > 0 && squash(nodeTitle).includes(title);
 }
 
 function configBricks(data: WorkflowNodeData): ConfigBrick[] {
   return [
-    ...schemaFields(data.spec.config_schema).map(
-      (field): ConfigBrick => ({
-        kind: "field",
-        field,
-        footprint: fieldFootprint(field),
-      }),
-    ),
-    ...nodeSecretInputs(data.spec).map(
-      (input): ConfigBrick => ({
-        kind: "secret",
-        input,
-        footprint: secretFootprint(),
-      }),
-    ),
+    ...schemaFields(data.spec.config_schema).map((field): ConfigBrick => ({
+      kind: "field",
+      field,
+      footprint: fieldFootprint(field),
+    })),
+    ...nodeSecretInputs(data.spec).map((input): ConfigBrick => ({
+      kind: "secret",
+      input,
+      footprint: secretFootprint(),
+    })),
   ];
 }
 
@@ -3340,9 +3319,8 @@ function NodeHeader({
   data: WorkflowNodeData;
   selected: boolean;
 }) {
-  const executionLabel = data.execution.status === "idle"
-    ? null
-    : data.execution.status;
+  const executionLabel =
+    data.execution.status === "idle" ? null : data.execution.status;
   const executionIsBusy =
     data.execution.status === "uploading" ||
     data.execution.status === "running" ||
@@ -3355,8 +3333,7 @@ function NodeHeader({
       aboutLabel={`About ${data.spec.title}`}
       aboutTitle={data.spec.title}
       aboutDescription={
-        data.spec.description ||
-        "No description is available for this node."
+        data.spec.description || "No description is available for this node."
       }
       aboutFooter={
         <>
@@ -3408,7 +3385,9 @@ function NodeHeader({
                 data.execution.status === "succeeded"
                   ? s.executionDotSuccess
                   : null,
-                data.execution.status === "failed" ? s.executionDotDanger : null,
+                data.execution.status === "failed"
+                  ? s.executionDotDanger
+                  : null,
               )}
             />
           )
@@ -3426,6 +3405,19 @@ function NodeHeader({
         >
           <ArrowUp size={11} />
           Upgrade to release {data.moduleUpgradeRelease}
+        </button>
+      ) : null}
+      {typeof data.pluginUpgradeRelease === "number" &&
+      data.onUpgradePluginRelease ? (
+        <button
+          type="button"
+          aria-label={`Upgrade Workspace Plugin to release ${data.pluginUpgradeRelease}`}
+          title={`Upgrade Plugin to release ${data.pluginUpgradeRelease}`}
+          {...nodeInteractionProps(stylex.props(s.upgradeModuleCall))}
+          onClick={() => data.onUpgradePluginRelease?.(id)}
+        >
+          <ArrowUp size={11} />
+          Upgrade Plugin to release {data.pluginUpgradeRelease}
         </button>
       ) : null}
     </CanvasNodeHeader>
@@ -3449,7 +3441,9 @@ function CompatibilityPort({
     ? `${endpoint.portName} · ${endpoint.plugId}`
     : endpoint.portName;
   return (
-    <div {...stylex.props(nodeChrome.tabRow, input ? null : nodeChrome.tabRowOut)}>
+    <div
+      {...stylex.props(nodeChrome.tabRow, input ? null : nodeChrome.tabRowOut)}
+    >
       <div
         {...stylex.props(
           nodeChrome.tab,
@@ -3507,7 +3501,12 @@ function CompatibilityPortRail({
                 <CompatibilityPort direction="input" endpoint={input} />
               ) : null}
             </div>
-            <div {...stylex.props(nodeChrome.portRailSlot, nodeChrome.portRailSlotOut)}>
+            <div
+              {...stylex.props(
+                nodeChrome.portRailSlot,
+                nodeChrome.portRailSlotOut,
+              )}
+            >
               {output ? (
                 <CompatibilityPort direction="output" endpoint={output} />
               ) : null}
@@ -3534,11 +3533,9 @@ function IncompatibleWorkflowNodeCard({
 }) {
   const updateNodeInternals = useUpdateNodeInternals();
   const grid = useOptionalCanvasGridSettings();
-  const allowCornerResize =
-    grid?.settings.allowWorkflowCornerResize ?? false;
-  const [draftLayout, setDraftLayout] = React.useState<WorkflowNodeLayout | null>(
-    null,
-  );
+  const allowCornerResize = grid?.settings.allowWorkflowCornerResize ?? false;
+  const [draftLayout, setDraftLayout] =
+    React.useState<WorkflowNodeLayout | null>(null);
   const layout = draftLayout ?? data.layout;
   const nodeWidth = resolvedNodeWidth(layout);
   const shell = useCanvasNodeShell({
@@ -3656,9 +3653,7 @@ function IncompatibleWorkflowNodeCard({
             {issue}
           </p>
         ))}
-        <details
-          {...nodeInteractionProps(stylex.props(s.compatibilityConfig))}
-        >
+        <details {...nodeInteractionProps(stylex.props(s.compatibilityConfig))}>
           <summary {...stylex.props(s.compatibilityConfigSummary)}>
             Saved configuration
           </summary>
@@ -3680,12 +3675,9 @@ function SupportedWorkflowNodeCard({
   const fields = schemaFields(data.spec.config_schema);
   const secretInputs = nodeSecretInputs(data.spec);
   const isFileUpload = isFileUploadOperator(data.spec.operator_id);
-  const isSchemaBuilder =
-    data.spec.operator_id === SCHEMA_BUILDER_OPERATOR_ID;
-  const isArtifactQuery =
-    data.spec.operator_id === ARTIFACT_QUERY_OPERATOR_ID;
-  const isVectorLayer =
-    data.spec.operator_id === GIS_VECTOR_LAYER_OPERATOR_ID;
+  const isSchemaBuilder = data.spec.operator_id === SCHEMA_BUILDER_OPERATOR_ID;
+  const isArtifactQuery = data.spec.operator_id === ARTIFACT_QUERY_OPERATOR_ID;
+  const isVectorLayer = data.spec.operator_id === GIS_VECTOR_LAYER_OPERATOR_ID;
   const visibleInputPorts = data.spec.inputs.filter((port) => {
     if (isSchemaBuilder && port.name === SCHEMA_BUILDER_INPUT_PORT) {
       return false;
@@ -3718,13 +3710,11 @@ function SupportedWorkflowNodeCard({
   const incidentConnections = useNodeConnections({ id });
   const updateNodeInternals = useUpdateNodeInternals();
   const grid = useOptionalCanvasGridSettings();
-  const allowCornerResize =
-    grid?.settings.allowWorkflowCornerResize ?? false;
+  const allowCornerResize = grid?.settings.allowWorkflowCornerResize ?? false;
   const measuredArtifactTypeBindings = data.artifactTypeBindings;
   const onHandlesMeasured = data.onHandlesMeasured;
-  const [draftLayout, setDraftLayout] = React.useState<WorkflowNodeLayout | null>(
-    null,
-  );
+  const [draftLayout, setDraftLayout] =
+    React.useState<WorkflowNodeLayout | null>(null);
   const layout = draftLayout ?? data.layout;
   const nodeWidth = resolvedNodeWidth(layout);
   const shell = useCanvasNodeShell({
@@ -3736,10 +3726,9 @@ function SupportedWorkflowNodeCard({
   });
   const { gridWidth, paintWidth, fillMinHeight } = shell;
   const bodyHeight = resolvedBodyHeight(layout);
-  const layoutRevision = [
-    layout?.width ?? "",
-    layout?.bodyHeight ?? "",
-  ].join(":");
+  const layoutRevision = [layout?.width ?? "", layout?.bodyHeight ?? ""].join(
+    ":",
+  );
   const commitLayout = (next: WorkflowNodeLayout | null) => {
     setDraftLayout(null);
     data.onLayoutChange?.(id, next);

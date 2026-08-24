@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Literal, Self, cast
 from uuid import UUID
 
@@ -11,6 +12,14 @@ from grafy_core.artifacts import (
 )
 from grafy_core.conversions import ArtifactConversion, ArtifactConversionKey
 from grafy_core.domain.module_library import ModulePublicationState
+from grafy_core.domain.plugin_releases import (
+    PluginArtifactTypeContract,
+    PluginNodeContract,
+    PluginPortContract,
+    PluginRelease,
+    plugin_profile_digest,
+    plugin_protocol_digest,
+)
 from grafy_core.nodes import (
     ArtifactTypeVariable,
     InputPortSpec,
@@ -42,6 +51,112 @@ from .services import (
 
 
 PortDirection = Literal["input", "output"]
+PluginNonRunnableReason = Literal[
+    "missing_runtime_artifact",
+    "incompatible_protocol",
+    "unsupported_runtime_profile",
+    "unsupported_capabilities",
+    "unsupported_artifact_type",
+    "plugin_runtime_unavailable",
+]
+
+_SUPPORTED_CORE_PLUGIN_BUNDLES = frozenset(
+    {
+        ("scalar.integer", 1),
+        ("scalar.text", 1),
+        ("table.data", 1),
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class PluginCatalogExecutionSupport:
+    runtime_available: bool = False
+    runtime_profile: str | None = None
+    capabilities: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True, slots=True)
+class PluginReleaseReadiness:
+    runnable: bool
+    reason: PluginNonRunnableReason | None = None
+    detail: str | None = None
+
+
+def plugin_release_readiness(
+    release: PluginRelease,
+    support: PluginCatalogExecutionSupport,
+) -> PluginReleaseReadiness:
+    if not release.executable:
+        return PluginReleaseReadiness(
+            runnable=False,
+            reason="missing_runtime_artifact",
+            detail="This release has no immutable runtime image.",
+        )
+    if release.protocol_digest != plugin_protocol_digest():
+        return PluginReleaseReadiness(
+            runnable=False,
+            reason="incompatible_protocol",
+            detail="This release uses an incompatible invocation protocol.",
+        )
+    if (
+        support.runtime_profile is None
+        or release.runtime_profile != support.runtime_profile
+        or release.profile_digest != plugin_profile_digest(support.runtime_profile)
+    ):
+        return PluginReleaseReadiness(
+            runnable=False,
+            reason="unsupported_runtime_profile",
+            detail=(
+                f"Runtime profile {release.runtime_profile!r} is not available in "
+                "this deployment."
+            ),
+        )
+    unsupported_capabilities = sorted(
+        set(release.capabilities.capabilities) - support.capabilities
+    )
+    has_secret_inputs = any(
+        contract.secret_inputs for contract in release.catalog.nodes
+    )
+    if unsupported_capabilities or has_secret_inputs:
+        rendered = ", ".join(unsupported_capabilities)
+        if has_secret_inputs:
+            rendered = f"{rendered}, secret inputs" if rendered else "secret inputs"
+        return PluginReleaseReadiness(
+            runnable=False,
+            reason="unsupported_capabilities",
+            detail=f"Unsupported Plugin capabilities: {rendered}.",
+        )
+    release_owned_types = {
+        (artifact.key.id, artifact.key.schema_version)
+        for artifact in release.catalog.artifact_types
+    }
+    unsupported_types: set[str] = set()
+    for contract in release.catalog.nodes:
+        for port in (*contract.inputs, *contract.outputs):
+            if port.artifact_type is None:
+                unsupported_types.add(f"type variable {port.artifact_type_variable!r}")
+                continue
+            key = (port.artifact_type.id, port.artifact_type.schema_version)
+            if key not in _SUPPORTED_CORE_PLUGIN_BUNDLES | release_owned_types:
+                unsupported_types.add(f"{key[0]}@{key[1]}")
+    if unsupported_types:
+        return PluginReleaseReadiness(
+            runnable=False,
+            reason="unsupported_artifact_type",
+            detail=(
+                "No portable Plugin bundle is available for: "
+                + ", ".join(sorted(unsupported_types))
+                + "."
+            ),
+        )
+    if not support.runtime_available:
+        return PluginReleaseReadiness(
+            runnable=False,
+            reason="plugin_runtime_unavailable",
+            detail="The isolated Plugin runtime is not available.",
+        )
+    return PluginReleaseReadiness(runnable=True)
 
 
 def _model_json_schema(model: type[BaseModel]) -> dict[str, object]:
@@ -115,6 +230,36 @@ class ArtifactTypeSpecResponse(ApiResponse):
             ],
         )
 
+    @classmethod
+    def from_plugin_contract(cls, contract: PluginArtifactTypeContract) -> Self:
+        return cls(
+            key=ArtifactTypeKeyResponse(
+                id=contract.key.id,
+                schema_version=contract.key.schema_version,
+            ),
+            title=contract.title,
+            payload_schema=contract.payload_schema,
+            field_projections=[
+                FieldProjectionResponse(
+                    path=list(projection.path),
+                    target_artifact_type=ArtifactTypeKeyResponse(
+                        id=projection.target.id,
+                        schema_version=projection.target.schema_version,
+                    ),
+                    title=projection.title,
+                )
+                for projection in contract.field_projections
+            ],
+            export_formats=[
+                ArtifactExportFormatResponse(
+                    format=export_format.format,
+                    content_type=export_format.content_type,
+                    filename=export_format.filename,
+                )
+                for export_format in contract.export_formats
+            ],
+        )
+
 
 class ArtifactConversionKeyResponse(ApiResponse):
     id: str
@@ -148,6 +293,10 @@ class PluginSpecResponse(ApiResponse):
     slug: str
     title: str
     origin: PluginOrigin
+    revision: int | None = Field(default=None, ge=1)
+    runnable: bool = True
+    non_runnable_reason: PluginNonRunnableReason | None = None
+    non_runnable_detail: str | None = None
 
     @classmethod
     def from_plugin(cls, plugin: InstalledPlugin) -> Self:
@@ -155,6 +304,22 @@ class PluginSpecResponse(ApiResponse):
             slug=plugin.slug,
             title=plugin.title,
             origin=plugin.origin,
+        )
+
+    @classmethod
+    def from_plugin_release(
+        cls,
+        release: PluginRelease,
+        readiness: PluginReleaseReadiness,
+    ) -> Self:
+        return cls(
+            slug=release.slug,
+            title=release.catalog.title,
+            origin=PluginOrigin.WORKSPACE,
+            revision=release.revision,
+            runnable=readiness.runnable,
+            non_runnable_reason=readiness.reason,
+            non_runnable_detail=readiness.detail,
         )
 
 
@@ -228,6 +393,30 @@ class PortResponse(ApiResponse):
             required=port.required,
         )
 
+    @classmethod
+    def from_plugin_contract(cls, port: PluginPortContract) -> Self:
+        artifact_type = (
+            None
+            if port.artifact_type is None
+            else ArtifactTypeKeyResponse(
+                id=port.artifact_type.id,
+                schema_version=port.artifact_type.schema_version,
+            )
+        )
+        return cls(
+            name=port.name,
+            title=port.title,
+            description=port.description,
+            direction=port.direction,
+            artifact_type=artifact_type,
+            artifact_type_variable=port.artifact_type_variable,
+            shape=port.shape,
+            accepted_shapes=list(port.accepted_shapes),
+            instance_plugs=port.instance_plugs,
+            variadic=port.variadic,
+            required=port.required,
+        )
+
 
 class NodeSecretInputResponse(ApiResponse):
     name: str
@@ -263,6 +452,10 @@ class NodeSpecResponse(ApiResponse):
     publication_state: ModulePublicationState | None = None
     is_current_library_release: bool | None = None
     catalog_visible: bool = True
+    plugin_revision: int | None = Field(default=None, ge=1)
+    runnable: bool = True
+    non_runnable_reason: PluginNonRunnableReason | None = None
+    non_runnable_detail: str | None = None
 
     @model_validator(mode="after")
     def validate_module_identity(self) -> Self:
@@ -331,6 +524,43 @@ class NodeSpecResponse(ApiResponse):
             catalog_visible=entry.catalog_visible,
         )
 
+    @classmethod
+    def from_plugin_release(
+        cls,
+        release: PluginRelease,
+        contract: PluginNodeContract,
+        readiness: PluginReleaseReadiness,
+    ) -> Self:
+        return cls(
+            operator_id=contract.operator_id,
+            operator_version=contract.operator_version,
+            plugin_slug=release.slug,
+            title=contract.title,
+            description=contract.description,
+            config_schema=contract.config_schema,
+            input_schema=contract.input_schema,
+            output_schema=contract.output_schema,
+            inputs=[
+                PortResponse.from_plugin_contract(port) for port in contract.inputs
+            ],
+            outputs=[
+                PortResponse.from_plugin_contract(port) for port in contract.outputs
+            ],
+            secret_inputs=[
+                NodeSecretInputResponse(
+                    name=secret.name,
+                    config_dependencies=list(secret.config_dependencies),
+                    title=secret.title,
+                    description=secret.description,
+                )
+                for secret in contract.secret_inputs
+            ],
+            plugin_revision=release.revision,
+            runnable=readiness.runnable,
+            non_runnable_reason=readiness.reason,
+            non_runnable_detail=readiness.detail,
+        )
+
 
 class UnavailableGraphModuleResponse(ApiResponse):
     graph_id: UUID
@@ -363,7 +593,49 @@ class NodeRegistryResponse(ApiResponse):
         registry: PluginRegistry,
         module_listing: GraphModuleCatalogListing,
         module_executor: GraphModuleExecutorPort,
+        plugin_releases: list[PluginRelease],
+        plugin_execution_support: PluginCatalogExecutionSupport | None = None,
     ) -> Self:
+        execution_support = plugin_execution_support or PluginCatalogExecutionSupport()
+        release_readiness = {
+            release.slug: plugin_release_readiness(release, execution_support)
+            for release in plugin_releases
+        }
+        installed_plugin_slugs = {plugin.slug for plugin in registry.plugins}
+        release_slugs = {release.slug for release in plugin_releases}
+        duplicate_slugs = (installed_plugin_slugs | {GRAPH_MODULE_PLUGIN_SLUG}) & (
+            release_slugs
+        )
+        if duplicate_slugs:
+            rendered = ", ".join(sorted(duplicate_slugs))
+            raise ValueError(
+                "Workspace Plugin releases conflict with reserved or host Plugins: "
+                f"{rendered}"
+            )
+        installed_artifact_keys = {
+            (spec.key.id, spec.key.schema_version) for spec in registry.artifact_types
+        }
+        release_artifact_keys = [
+            (contract.key.id, contract.key.schema_version)
+            for release in plugin_releases
+            for contract in release.catalog.artifact_types
+        ]
+        duplicate_artifact_keys = installed_artifact_keys & set(release_artifact_keys)
+        seen: set[tuple[str, int]] = set()
+        for key in release_artifact_keys:
+            if key in seen:
+                duplicate_artifact_keys.add(key)
+            else:
+                seen.add(key)
+        if duplicate_artifact_keys:
+            rendered = ", ".join(
+                f"{artifact_id}@{schema_version}"
+                for artifact_id, schema_version in sorted(duplicate_artifact_keys)
+            )
+            raise ValueError(
+                "Workspace Plugin releases conflict with catalog artifact types: "
+                f"{rendered}"
+            )
         return cls(
             plugins=[
                 PluginSpecResponse.from_plugin(plugin) for plugin in registry.plugins
@@ -374,10 +646,22 @@ class NodeRegistryResponse(ApiResponse):
                     title="Workspace library",
                     origin=PluginOrigin.MODULE,
                 )
+            ]
+            + [
+                PluginSpecResponse.from_plugin_release(
+                    release,
+                    release_readiness[release.slug],
+                )
+                for release in plugin_releases
             ],
             artifact_types=[
                 ArtifactTypeSpecResponse.from_spec(spec)
                 for spec in registry.artifact_types
+            ]
+            + [
+                ArtifactTypeSpecResponse.from_plugin_contract(contract)
+                for release in plugin_releases
+                for contract in release.catalog.artifact_types
             ],
             artifact_conversions=[
                 ArtifactConversionSpecResponse.from_spec(spec)
@@ -390,6 +674,15 @@ class NodeRegistryResponse(ApiResponse):
             + [
                 NodeSpecResponse.from_graph_module(entry, module_executor)
                 for entry in module_listing.entries
+            ]
+            + [
+                NodeSpecResponse.from_plugin_release(
+                    release,
+                    contract,
+                    release_readiness[release.slug],
+                )
+                for release in plugin_releases
+                for contract in release.catalog.nodes
             ],
             unavailable_modules=[
                 UnavailableGraphModuleResponse.from_module(module)
@@ -407,8 +700,12 @@ __all__ = [
     "NodeRegistryResponse",
     "NodeSecretInputResponse",
     "NodeSpecResponse",
+    "PluginCatalogExecutionSupport",
+    "PluginNonRunnableReason",
+    "PluginReleaseReadiness",
     "PluginSpecResponse",
     "PortDirection",
     "PortResponse",
     "UnavailableGraphModuleResponse",
+    "plugin_release_readiness",
 ]

@@ -170,6 +170,19 @@ def _validate_saved_graph_fragment(
                 f"revision {graph.revision}"
             )
         active_saved_plug_ids = active_saved_plug_ids_by_node.get(node.id, set())
+        submitted_release = (
+            None
+            if node.plugin_release is None
+            else (node.plugin_release.slug, node.plugin_release.revision)
+        )
+        saved_release = (
+            None
+            if saved_node.plugin_release_pin is None
+            else (
+                saved_node.plugin_release_pin.slug,
+                saved_node.plugin_release_pin.revision,
+            )
+        )
         if (
             node.operator_id != saved_node.operator_id
             or node.operator_version != saved_node.operator_version
@@ -188,6 +201,7 @@ def _validate_saved_graph_fragment(
                 binding.variable: binding.artifact_type
                 for binding in saved_node.artifact_type_bindings
             }
+            or submitted_release != saved_release
         ):
             raise GraphExecutionError(
                 f"Run node {node.id!r} does not match saved graph {graph.id} "

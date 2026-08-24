@@ -69,6 +69,7 @@ export const CHAT_COMPLETION_SPEC: NodeSpec = {
   inputs: [messages, jsonSchema],
   outputs: [COMPLETION_PORT],
   catalog_visible: true,
+  runnable: true,
 };
 
 export const CHAT_COMPLETION_FIELDS: readonly SchemaField[] = [
@@ -103,7 +104,9 @@ export const CHAT_COMPLETION_FIELDS: readonly SchemaField[] = [
 ];
 
 export const CHAT_COMPLETION_REGISTRY: NodeRegistry = {
-  plugins: [{ slug: "external.llm", title: "LLM", origin: "external" }],
+  plugins: [
+    { slug: "external.llm", title: "LLM", origin: "external", runnable: true },
+  ],
   artifact_types: [
     artifact("prompt.message", "Prompt message"),
     artifact("json.schema", "JSON Schema"),

@@ -57,6 +57,8 @@ function node(
     inputs,
     outputs,
     catalog_visible: true,
+    plugin_revision: null,
+    runnable: true,
     ...overrides,
   };
 }
@@ -96,9 +98,27 @@ function registry(): NodeRegistry {
 
   return {
     plugins: [
-      { slug: "builtin", title: "Built-in", origin: "builtin" },
-      { slug: "graph.module", title: "Workspace library", origin: "module" },
-      { slug: "external.ocr", title: "OCR", origin: "external" },
+      {
+        slug: "builtin",
+        title: "Built-in",
+        origin: "builtin",
+        revision: null,
+        runnable: true,
+      },
+      {
+        slug: "graph.module",
+        title: "Workspace library",
+        origin: "module",
+        revision: null,
+        runnable: true,
+      },
+      {
+        slug: "external.ocr",
+        title: "OCR",
+        origin: "external",
+        revision: null,
+        runnable: true,
+      },
     ],
     artifact_types: [
       "scalar.text",
@@ -587,6 +607,47 @@ describe("NodeSelector", () => {
     expect(dialog().textContent).toContain(
       "Viewers can inspect nodes but cannot edit this graph.",
     );
+  });
+
+  it("shows catalog-only Plugin releases but prevents insertion", async () => {
+    const catalog = registry();
+    const onAddNode = vi.fn();
+    await renderSelector({
+      registry: {
+        ...catalog,
+        plugins: [
+          ...catalog.plugins,
+          {
+            slug: "notes",
+            title: "Notes",
+            origin: "workspace",
+            revision: 1,
+            runnable: false,
+          },
+        ],
+        nodes: [
+          ...catalog.nodes,
+          node("notes.summary.render", "Render summary", "notes", [], [], {
+            plugin_revision: 1,
+            runnable: false,
+            non_runnable_reason: "missing_runtime_artifact",
+            non_runnable_detail: "This release has no immutable runtime image.",
+          }),
+        ],
+      },
+      onAddNode,
+    });
+
+    await enterSearch("Render summary");
+    const add = buttonNamed("Add Render summary");
+    expect(dialog().textContent).toContain("Catalog preview only.");
+    expect(dialog().textContent).toContain(
+      "This release has no immutable runtime image.",
+    );
+    expect(add.disabled).toBe(true);
+    expect(add.title).toBe("This release has no immutable runtime image.");
+    await React.act(async () => add.click());
+    expect(onAddNode).not.toHaveBeenCalled();
   });
 
   it("closes on Escape and lets the dialog primitive restore opener focus", async () => {

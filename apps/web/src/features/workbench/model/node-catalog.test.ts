@@ -72,15 +72,21 @@ function nodeSpec(
     module_id: options.moduleId ?? null,
     is_current_library_release: options.isCurrentLibraryRelease ?? null,
     catalog_visible: catalogVisible,
+    runnable: true,
   };
 }
 
 function registry(): NodeRegistry {
   return {
     plugins: [
-      { slug: "builtin", title: "Built-in", origin: "builtin" },
-      { slug: "graph.module", title: "Workspace library", origin: "module" },
-      { slug: "external", title: "External", origin: "external" },
+      { slug: "builtin", title: "Built-in", origin: "builtin", runnable: true },
+      {
+        slug: "graph.module",
+        title: "Workspace library",
+        origin: "module",
+        runnable: true,
+      },
+      { slug: "external", title: "External", origin: "external", runnable: true },
     ],
     artifact_types: [
       {

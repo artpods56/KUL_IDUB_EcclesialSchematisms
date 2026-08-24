@@ -61,6 +61,7 @@ export const QUERY_PARCELS_SPEC: NodeSpec = {
   inputs: [],
   outputs: [ROWS_PORT],
   catalog_visible: true,
+  runnable: true,
 };
 
 export const MAP_DOCUMENT_SPEC: NodeSpec = {
@@ -75,6 +76,7 @@ export const MAP_DOCUMENT_SPEC: NodeSpec = {
   inputs: [],
   outputs: [MAP_PORT],
   catalog_visible: true,
+  runnable: true,
 };
 
 export const SURVEY_NOTES_SPEC: NodeSpec = {
@@ -89,6 +91,7 @@ export const SURVEY_NOTES_SPEC: NodeSpec = {
   inputs: [],
   outputs: [NOTES_PORT],
   catalog_visible: true,
+  runnable: true,
 };
 
 export const QUERY_PARCELS_FIELDS: readonly SchemaField[] = [
@@ -102,7 +105,9 @@ export const QUERY_PARCELS_FIELDS: readonly SchemaField[] = [
 ];
 
 export const PARCELS_REGISTRY: NodeRegistry = {
-  plugins: [{ slug: "sandbox.geo", title: "Geo", origin: "external" }],
+  plugins: [
+    { slug: "sandbox.geo", title: "Geo", origin: "external", runnable: true },
+  ],
   artifact_types: [
     artifact("table.data", "Table"),
     artifact("geo.map_document", "Map document"),

@@ -44,7 +44,12 @@ from grafy_api.v1.routes.node_secrets.dependencies import node_secret_service
 
 from tests.support.clients import GrafyApi
 from tests.support.workbench import workbench_dependency_overrides
-from tests.testkit import client_with_overrides, create_db_url, db, seed_shared_workspace
+from tests.testkit import (
+    client_with_overrides,
+    create_db_url,
+    db,
+    seed_shared_workspace,
+)
 
 
 class SecretTestConfig(NodeConfig):

@@ -15,6 +15,10 @@ from grafy_core.artifacts import (
     NodeOutput,
 )
 from grafy_core.domain.invocation_cache import InvocationCacheEntry
+from grafy_core.domain.plugin_releases import (
+    PluginReleaseIdentity,
+    plugin_contract_digest,
+)
 from grafy_core.nodes import (
     InPort,
     Node,
@@ -27,6 +31,7 @@ from grafy_core.nodes import (
 from grafy_core.plugins import NodeCachePolicy
 from grafy_core.runtime.execution import NodeRuntime
 from grafy_core.runtime.invocation_cache import (
+    INVOCATION_CACHE_FINGERPRINT_VERSION,
     InvocationCachePort,
     invocation_cache_key,
 )
@@ -700,3 +705,86 @@ async def test_exact_cache_bypasses_inputs_without_content_hashes() -> None:
     assert node.calls == [(None, [3]), (None, [3])]
     assert writer.values == [3, 3]
     assert cache.entries == {}
+
+
+def _release_identity(revision: int) -> PluginReleaseIdentity:
+    from grafy_core.domain.plugin_releases import (
+        PluginCatalogManifest,
+        PluginNodeContract,
+    )
+
+    catalog = PluginCatalogManifest(
+        slug="notes",
+        title="Notes",
+        nodes=(
+            PluginNodeContract(
+                operator_id="notes.echo",
+                operator_version=1,
+                title="Echo",
+                description="Echo text",
+                config_schema={"type": "object"},
+                input_schema={"type": "object"},
+                output_schema={"type": "object"},
+                inputs=(),
+                outputs=(),
+            ),
+        ),
+    )
+    return PluginReleaseIdentity(
+        slug=catalog.slug,
+        revision=revision,
+        source_digest=f"{revision}" * 64,
+        contract_digest=plugin_contract_digest(catalog),
+        protocol_digest="b" * 64,
+    )
+
+
+def test_invocation_cache_key_scopes_to_the_exact_plugin_release() -> None:
+    input_ref = ArtifactRef.from_key(
+        artifact_id=uuid4(),
+        key=INPUT_VALUE.key,
+        content_hash="a" * 64,
+    )
+    context = NodeExecutionContext(
+        workspace_id=TEST_WORKSPACE_ID,
+        node_id="echo",
+    )
+    node = ScalarNode()
+    inputs = {"item": input_ref}
+    config = NoConfig.model_validate({})
+    unpinned = invocation_cache_key(
+        node=node,
+        context=context,
+        inputs=inputs,
+        config=config,
+        artifact_type_bindings={},
+        opaque_secret_revisions={},
+    )
+    release_one = invocation_cache_key(
+        node=node,
+        context=context,
+        inputs=inputs,
+        config=config,
+        artifact_type_bindings={},
+        opaque_secret_revisions={},
+        plugin_release=_release_identity(1),
+    )
+    release_two = invocation_cache_key(
+        node=node,
+        context=context,
+        inputs=inputs,
+        config=config,
+        artifact_type_bindings={},
+        opaque_secret_revisions={},
+        plugin_release=_release_identity(2),
+    )
+
+    assert unpinned is not None
+    assert release_one is not None
+    assert release_two is not None
+    assert unpinned != release_one
+    assert release_one != release_two
+
+
+def test_invocation_fingerprint_version_covers_release_identity() -> None:
+    assert INVOCATION_CACHE_FINGERPRINT_VERSION >= 3

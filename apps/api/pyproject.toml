@@ -24,6 +24,7 @@ dependencies = [
 ]
 
 [project.scripts]
+grafy = "grafy_api.cli:main"
 grafy-admin = "grafy_api.admin:main"
 
 [tool.uv.sources]

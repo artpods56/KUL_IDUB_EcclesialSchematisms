@@ -35,6 +35,11 @@ from grafy_core.domain.identity import (
     WorkspaceRole,
 )
 from grafy_core.domain.module_library import ModulePublicationState
+from grafy_core.domain.plugin_releases import (
+    PluginCapabilityManifest,
+    PluginCatalogManifest,
+    PluginRuntimeArtifact,
+)
 from grafy_core.domain.templates import TemplateState
 from grafy_core.domain.security_audit import (
     SecurityAuditActorKind,
@@ -76,6 +81,81 @@ class SavedGraphDocumentType(TypeDecorator[SavedGraphDocument]):
         if value is None:
             return None
         return SavedGraphDocument.model_validate(value)
+
+
+class PluginCatalogManifestType(TypeDecorator[PluginCatalogManifest]):
+    impl = JSON
+    cache_ok = True
+
+    def process_bind_param(
+        self,
+        value: PluginCatalogManifest | None,
+        dialect: Dialect,
+    ) -> dict[str, object] | None:
+        del dialect
+        if value is None:
+            return None
+        return value.model_dump(mode="json")
+
+    def process_result_value(
+        self,
+        value: object | None,
+        dialect: Dialect,
+    ) -> PluginCatalogManifest | None:
+        del dialect
+        if value is None:
+            return None
+        return PluginCatalogManifest.model_validate(value)
+
+
+class PluginCapabilityManifestType(TypeDecorator[PluginCapabilityManifest]):
+    impl = JSON
+    cache_ok = True
+
+    def process_bind_param(
+        self,
+        value: PluginCapabilityManifest | None,
+        dialect: Dialect,
+    ) -> dict[str, object] | None:
+        del dialect
+        if value is None:
+            return None
+        return value.model_dump(mode="json")
+
+    def process_result_value(
+        self,
+        value: object | None,
+        dialect: Dialect,
+    ) -> PluginCapabilityManifest | None:
+        del dialect
+        if value is None:
+            return None
+        return PluginCapabilityManifest.model_validate(value)
+
+
+class PluginRuntimeArtifactType(TypeDecorator[PluginRuntimeArtifact]):
+    impl = JSON
+    cache_ok = True
+
+    def process_bind_param(
+        self,
+        value: PluginRuntimeArtifact | None,
+        dialect: Dialect,
+    ) -> dict[str, object] | None:
+        del dialect
+        if value is None:
+            return None
+        return value.model_dump(mode="json")
+
+    def process_result_value(
+        self,
+        value: object | None,
+        dialect: Dialect,
+    ) -> PluginRuntimeArtifact | None:
+        del dialect
+        if value is None:
+            return None
+        return PluginRuntimeArtifact.model_validate(value)
 
 
 class UTCDateTime(TypeDecorator[datetime]):
@@ -523,6 +603,9 @@ graph_executions = Table(
     Column("graph_revision", Integer, nullable=False),
     Column("status", String(24), nullable=False),
     Column("scope", String(32), nullable=False),
+    Column("submitted_request", JSON, nullable=True),
+    Column("idempotency_key", String(255), nullable=True),
+    Column("submitted_by_actor_id", SaUuid(as_uuid=True), nullable=True),
     Column("workflow_run_id", SaUuid(as_uuid=True), nullable=True),
     Column("error", Text, nullable=True),
     Column("created_at", UTCDateTime(), nullable=False),
@@ -542,6 +625,11 @@ graph_executions = Table(
         "execution_id",
         name="uq_graph_executions_workspace_id_execution_id",
     ),
+    UniqueConstraint(
+        "workspace_id",
+        "idempotency_key",
+        name="uq_graph_executions_workspace_idempotency_key",
+    ),
     Index(
         "ix_graph_executions_graph_created",
         "workspace_id",
@@ -558,6 +646,12 @@ graph_executions = Table(
         "execution_id",
     ),
     Index("ix_graph_executions_workspace_status", "workspace_id", "status"),
+    Index(
+        "ix_graph_executions_queue_order",
+        "status",
+        "created_at",
+        "execution_id",
+    ),
     Index(
         "uq_graph_executions_one_active_per_graph",
         "workspace_id",
@@ -589,6 +683,7 @@ graph_execution_nodes = Table(
     Column("outputs", ArtifactOutputsType(), nullable=True),
     Column("artifact_count", Integer, nullable=True),
     Column("error", Text, nullable=True),
+    Column("diagnostics", JSON, nullable=True),
     Column("completed_at", UTCDateTime(), nullable=True),
     ForeignKeyConstraint(
         ("workspace_id", "execution_id"),
@@ -598,7 +693,8 @@ graph_execution_nodes = Table(
     ),
     CheckConstraint(
         "(result_status IS NULL AND result_position IS NULL AND outputs IS NULL "
-        "AND artifact_count IS NULL AND completed_at IS NULL) OR "
+        "AND artifact_count IS NULL AND diagnostics IS NULL "
+        "AND completed_at IS NULL) OR "
         "(result_status IN ('succeeded', 'failed', 'skipped') "
         "AND result_position IS NOT NULL AND outputs IS NOT NULL "
         "AND artifact_count IS NOT NULL AND artifact_count >= 0 "
@@ -1150,6 +1246,85 @@ module_releases = Table(
         "ix_module_releases_workspace_module_revision",
         "workspace_id",
         "module_id",
+        "revision",
+    ),
+)
+
+
+plugin_releases = Table(
+    "plugin_releases",
+    metadata,
+    Column(
+        "workspace_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("slug", String(100), primary_key=True),
+    Column("revision", Integer, primary_key=True),
+    Column("catalog", PluginCatalogManifestType(), nullable=False),
+    Column("contract_digest", String(64), nullable=True),
+    Column("capabilities", PluginCapabilityManifestType(), nullable=False),
+    Column("capability_digest", String(64), nullable=False),
+    Column("protocol_digest", String(64), nullable=True),
+    Column("profile_digest", String(64), nullable=True),
+    Column("source_object_key", String(2048), nullable=False),
+    Column("source_digest", String(64), nullable=False),
+    Column("lock_digest", String(64), nullable=False),
+    Column("runtime_profile", String(100), nullable=False),
+    Column("runtime_image_digest", String(64), nullable=True),
+    Column("runtime_artifact", PluginRuntimeArtifactType(), nullable=True),
+    Column("descriptor_digest", String(64), nullable=True),
+    Column(
+        "published_by_user_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    ),
+    Column("published_at", UTCDateTime(), nullable=False),
+    UniqueConstraint(
+        "workspace_id",
+        "slug",
+        "descriptor_digest",
+        name="uq_plugin_releases_workspace_slug_descriptor",
+    ),
+    CheckConstraint("revision >= 1", name="plugin_release_revision"),
+    CheckConstraint(
+        "length(capability_digest) = 64",
+        name="plugin_release_capability_digest",
+    ),
+    CheckConstraint(
+        "length(source_digest) = 64",
+        name="plugin_release_source_digest",
+    ),
+    CheckConstraint(
+        "length(lock_digest) = 64",
+        name="plugin_release_lock_digest",
+    ),
+    CheckConstraint(
+        "runtime_image_digest IS NULL OR length(runtime_image_digest) = 64",
+        name="plugin_release_runtime_image_digest",
+    ),
+    CheckConstraint(
+        "descriptor_digest IS NULL OR length(descriptor_digest) = 64",
+        name="plugin_release_descriptor_digest",
+    ),
+    CheckConstraint(
+        "contract_digest IS NULL OR length(contract_digest) = 64",
+        name="plugin_release_contract_digest",
+    ),
+    CheckConstraint(
+        "protocol_digest IS NULL OR length(protocol_digest) = 64",
+        name="plugin_release_protocol_digest",
+    ),
+    CheckConstraint(
+        "profile_digest IS NULL OR length(profile_digest) = 64",
+        name="plugin_release_profile_digest",
+    ),
+    Index(
+        "ix_plugin_releases_workspace_slug_revision",
+        "workspace_id",
+        "slug",
         "revision",
     ),
 )

@@ -277,6 +277,7 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "materialized_node_outputs",
             "module_releases",
             "modules",
+            "plugin_releases",
             "node_secrets",
             "users",
             "oidc_identities",
@@ -316,6 +317,7 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "materialized_node_outputs",
             "module_releases",
             "modules",
+            "plugin_releases",
             "node_secrets",
             "users",
             "oidc_identities",
@@ -850,7 +852,12 @@ def _seed_execution_graph(database_path: Path) -> tuple[str, str]:
                 "(workspace_id, id, name, document, revision, created_at, updated_at) "
                 "VALUES (:workspace_id, :id, 'Merged', :document, 1, :ts, :ts)"
             ),
-            {"workspace_id": workspace_id.hex, "id": graph_id.hex, "document": document, "ts": timestamp},
+            {
+                "workspace_id": workspace_id.hex,
+                "id": graph_id.hex,
+                "document": document,
+                "ts": timestamp,
+            },
         )
         connection.execute(
             text(
@@ -858,7 +865,12 @@ def _seed_execution_graph(database_path: Path) -> tuple[str, str]:
                 "(workspace_id, graph_id, revision, name, document, created_at) "
                 "VALUES (:workspace_id, :id, 1, 'Merged', :document, :ts)"
             ),
-            {"workspace_id": workspace_id.hex, "id": graph_id.hex, "document": document, "ts": timestamp},
+            {
+                "workspace_id": workspace_id.hex,
+                "id": graph_id.hex,
+                "document": document,
+                "ts": timestamp,
+            },
         )
     return workspace_id.hex, graph_id.hex
 
@@ -1011,7 +1023,9 @@ def test_0013_merges_node_tables_preserves_data_and_reconstructs_on_downgrade(
             .mappings()
             .all()
         )
-        assert [(row["node_id"], row["position"], row["status"]) for row in results] == [
+        assert [
+            (row["node_id"], row["position"], row["status"]) for row in results
+        ] == [
             ("beta", 0, "succeeded"),
             ("alpha", 1, "failed"),
         ]
@@ -1021,12 +1035,18 @@ def test_0013_merges_node_tables_preserves_data_and_reconstructs_on_downgrade(
             .one()
         )
         assert slot["execution_id"] == active_hex
-        assert connection.execute(
-            text("SELECT COUNT(*) FROM graph_command_journal")
-        ).scalar_one() == 0
-        assert connection.execute(
-            text("SELECT COUNT(*) FROM graph_execution_idempotency")
-        ).scalar_one() == 0
+        assert (
+            connection.execute(
+                text("SELECT COUNT(*) FROM graph_command_journal")
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            connection.execute(
+                text("SELECT COUNT(*) FROM graph_execution_idempotency")
+            ).scalar_one()
+            == 0
+        )
 
     get_settings.cache_clear()
 

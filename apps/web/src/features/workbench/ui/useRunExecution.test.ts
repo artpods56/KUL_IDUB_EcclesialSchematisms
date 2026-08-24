@@ -95,6 +95,7 @@ function nodeSpec(): NodeSpec {
     title: "Test operator",
     description: "Test operator",
     catalog_visible: true,
+    runnable: true,
     config_schema: {},
     input_schema: {},
     output_schema: {},
@@ -310,15 +311,17 @@ describe("useRunExecution", () => {
     expect(harness.nodes()[0].data.execution.status).toBe("queued");
 
     await React.act(async () => {
-      started.resolve(execution("queued"));
+      started.resolve(execution("queued", { queue_position: 2 }));
       await Promise.resolve();
     });
     expect(hook.result.current.visibleExecution?.status).toBe("queued");
+    expect(hook.result.current.visibleExecution?.queuePosition).toBe(2);
 
     await React.act(async () => {
       await vi.advanceTimersByTimeAsync(500);
     });
     expect(hook.result.current.visibleExecution?.status).toBe("running");
+    expect(hook.result.current.visibleExecution?.queuePosition).toBeNull();
     expect(harness.nodes()[0].data.execution.status).toBe("running");
 
     await React.act(async () => {

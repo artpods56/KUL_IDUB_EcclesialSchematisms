@@ -400,9 +400,7 @@ async def test_non_member_cannot_read_or_write_other_workspace_by_uuid(
             api.authenticate(owner_a_issued)
             _assert_not_found(workspace_b.catalog.list_nodes(), context="nodes")
             _assert_not_found(workspace_b.graphs.list(), context="list graphs")
-            _assert_not_found(
-                workspace_b.graphs.get(graph_b.id), context="get graph"
-            )
+            _assert_not_found(workspace_b.graphs.get(graph_b.id), context="get graph")
             _assert_not_found(
                 workspace_b.graphs.create(
                     CreateSavedGraphRequest(name="Authz graph"),

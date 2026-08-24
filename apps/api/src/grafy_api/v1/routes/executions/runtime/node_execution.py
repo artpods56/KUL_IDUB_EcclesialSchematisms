@@ -100,11 +100,16 @@ class NodeExecutionService:
             progress_reporter=execution.control,
         )
         registration = compiled_node.registration
-        cache_policy = (
-            registration.cache_policy
-            if registration is not None
-            else NodeCachePolicy.NEVER
-        )
+        if compiled_node.plugin_release is not None:
+            # Workspace Plugin releases are fail-closed: invocation caching is
+            # never enabled on the release path, regardless of any declaration.
+            cache_policy = NodeCachePolicy.NEVER
+        else:
+            cache_policy = (
+                registration.cache_policy
+                if registration is not None
+                else NodeCachePolicy.NEVER
+            )
         opaque_secret_revisions: dict[str, str] = {}
         if (
             cache_policy is NodeCachePolicy.EXACT
@@ -150,6 +155,7 @@ class NodeExecutionService:
                 artifact_type_bindings=compiled_node.artifact_type_bindings,
                 cache_policy=cache_policy,
                 opaque_secret_revisions=opaque_secret_revisions,
+                plugin_release=compiled_node.plugin_release,
             )
 
         node_outputs: dict[str, ArtifactOutputValue] = {}
@@ -320,6 +326,7 @@ class NodeExecutionService:
                         artifact_type_bindings=compiled_node.artifact_type_bindings,
                         cache_policy=cache_policy,
                         opaque_secret_revisions=opaque_secret_revisions,
+                        plugin_release=compiled_node.plugin_release,
                     ),
                 )
             except Exception as exc:

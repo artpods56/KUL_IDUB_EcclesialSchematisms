@@ -55,6 +55,7 @@ function node(
     title: id.replaceAll("_", " "),
     description: `Test node ${id}`,
     catalog_visible: true,
+    runnable: true,
     config_schema: {},
     input_schema: {},
     output_schema: {},

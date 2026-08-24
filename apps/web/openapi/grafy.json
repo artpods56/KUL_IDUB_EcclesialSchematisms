@@ -561,13 +561,13 @@
           },
           "nodes": {
             "items": {
-              "$ref": "#/components/schemas/SavedGraphNodeModel-Output"
+              "$ref": "#/components/schemas/SavedGraphNodeModel"
             },
             "title": "Nodes",
             "type": "array"
           },
           "presentation": {
-            "$ref": "#/components/schemas/GraphPresentationDocumentModel-Output"
+            "$ref": "#/components/schemas/GraphPresentationDocumentModel"
           },
           "room_epoch": {
             "format": "uuid",
@@ -694,13 +694,13 @@
           },
           "nodes": {
             "items": {
-              "$ref": "#/components/schemas/SavedGraphNodeModel-Input"
+              "$ref": "#/components/schemas/SavedGraphNodeModel"
             },
             "title": "Nodes",
             "type": "array"
           },
           "presentation": {
-            "$ref": "#/components/schemas/GraphPresentationDocumentModel-Input"
+            "$ref": "#/components/schemas/GraphPresentationDocumentModel"
           }
         },
         "required": [
@@ -2054,6 +2054,18 @@
             "title": "Completed At",
             "type": "string"
           },
+          "diagnostics": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diagnostics"
+          },
           "error": {
             "anyOf": [
               {
@@ -2732,42 +2744,7 @@
         "title": "GraphPresentationDocument",
         "type": "object"
       },
-      "GraphPresentationDocumentModel-Input": {
-        "additionalProperties": false,
-        "properties": {
-          "annotations": {
-            "items": {
-              "$ref": "#/components/schemas/GraphPresentationAnnotationModel"
-            },
-            "title": "Annotations",
-            "type": "array"
-          },
-          "bindings": {
-            "items": {
-              "$ref": "#/components/schemas/GraphPresentationBindingModel"
-            },
-            "title": "Bindings",
-            "type": "array"
-          },
-          "links": {
-            "items": {
-              "$ref": "#/components/schemas/GraphPresentationLinkModel"
-            },
-            "title": "Links",
-            "type": "array"
-          },
-          "viewers": {
-            "items": {
-              "$ref": "#/components/schemas/GraphPresentationViewerModel"
-            },
-            "title": "Viewers",
-            "type": "array"
-          }
-        },
-        "title": "GraphPresentationDocumentModel",
-        "type": "object"
-      },
-      "GraphPresentationDocumentModel-Output": {
+      "GraphPresentationDocumentModel": {
         "additionalProperties": false,
         "properties": {
           "annotations": {
@@ -3644,6 +3621,36 @@
             ],
             "title": "Module Id"
           },
+          "non_runnable_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Non Runnable Detail"
+          },
+          "non_runnable_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "missing_runtime_artifact",
+                  "incompatible_protocol",
+                  "unsupported_runtime_profile",
+                  "unsupported_capabilities",
+                  "unsupported_artifact_type",
+                  "plugin_runtime_unavailable"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Non Runnable Reason"
+          },
           "operator_id": {
             "title": "Operator Id",
             "type": "string"
@@ -3664,6 +3671,18 @@
             "title": "Outputs",
             "type": "array"
           },
+          "plugin_revision": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plugin Revision"
+          },
           "plugin_slug": {
             "title": "Plugin Slug",
             "type": "string"
@@ -3677,6 +3696,11 @@
                 "type": "null"
               }
             ]
+          },
+          "runnable": {
+            "default": true,
+            "title": "Runnable",
+            "type": "boolean"
           },
           "secret_inputs": {
             "items": {
@@ -3948,15 +3972,85 @@
         "enum": [
           "builtin",
           "external",
-          "module"
+          "module",
+          "workspace"
         ],
         "title": "PluginOrigin",
         "type": "string"
       },
+      "PluginReleasePinModel": {
+        "additionalProperties": false,
+        "properties": {
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "slug": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "revision"
+        ],
+        "title": "PluginReleasePinModel",
+        "type": "object"
+      },
       "PluginSpecResponse": {
         "properties": {
+          "non_runnable_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Non Runnable Detail"
+          },
+          "non_runnable_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "missing_runtime_artifact",
+                  "incompatible_protocol",
+                  "unsupported_runtime_profile",
+                  "unsupported_capabilities",
+                  "unsupported_artifact_type",
+                  "plugin_runtime_unavailable"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Non Runnable Reason"
+          },
           "origin": {
             "$ref": "#/components/schemas/PluginOrigin"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "runnable": {
+            "default": true,
+            "title": "Runnable",
+            "type": "boolean"
           },
           "slug": {
             "title": "Slug",
@@ -4349,6 +4443,43 @@
         "title": "RunExecutionCapacityErrorResponse",
         "type": "object"
       },
+      "RunExecutionQueueFullErrorDetail": {
+        "properties": {
+          "error_code": {
+            "const": "execution_queue_full",
+            "title": "Error Code",
+            "type": "string"
+          },
+          "max_pending_graphs": {
+            "minimum": 1.0,
+            "title": "Max Pending Graphs",
+            "type": "integer"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error_code",
+          "message",
+          "max_pending_graphs"
+        ],
+        "title": "RunExecutionQueueFullErrorDetail",
+        "type": "object"
+      },
+      "RunExecutionQueueFullErrorResponse": {
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/RunExecutionQueueFullErrorDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "RunExecutionQueueFullErrorResponse",
+        "type": "object"
+      },
       "RunExecutionResponse": {
         "properties": {
           "active_node_id": {
@@ -4377,6 +4508,18 @@
             "format": "uuid",
             "title": "Execution Id",
             "type": "string"
+          },
+          "queue_position": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queue Position"
           },
           "result": {
             "anyOf": [
@@ -4467,6 +4610,16 @@
           "operator_version": {
             "title": "Operator Version",
             "type": "integer"
+          },
+          "plugin_release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginReleasePinModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -5138,6 +5291,16 @@
             "title": "Operator Version",
             "type": "integer"
           },
+          "plugin_release_pin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SavedGraphPluginReleasePin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "position": {
             "$ref": "#/components/schemas/GraphPoint"
           }
@@ -5244,7 +5407,7 @@
         "title": "SavedGraphNodeLayoutModel",
         "type": "object"
       },
-      "SavedGraphNodeModel-Input": {
+      "SavedGraphNodeModel": {
         "additionalProperties": false,
         "properties": {
           "artifact_type_bindings": {
@@ -5292,6 +5455,16 @@
             "minimum": 1.0,
             "title": "Operator Version",
             "type": "integer"
+          },
+          "plugin_release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginReleasePinModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "position": {
             "$ref": "#/components/schemas/GraphPointModel"
@@ -5306,66 +5479,27 @@
         "title": "SavedGraphNodeModel",
         "type": "object"
       },
-      "SavedGraphNodeModel-Output": {
+      "SavedGraphPluginReleasePin": {
         "additionalProperties": false,
+        "description": "Exact Workspace Plugin release identity pinned on one graph node.\n\nThe pin is independent from the operator identity: publishing revision\nN+1 never moves a node pinned to revision N. Workspace membership comes\nfrom the owning graph, so the pin records only the stable Plugin slug and\nthe exact release revision.",
         "properties": {
-          "artifact_type_bindings": {
-            "items": {
-              "$ref": "#/components/schemas/ArtifactTypeBindingModel"
-            },
-            "title": "Artifact Type Bindings",
-            "type": "array"
-          },
-          "config": {
-            "additionalProperties": true,
-            "title": "Config",
-            "type": "object"
-          },
-          "id": {
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Id",
-            "type": "string"
-          },
-          "input_plugs": {
-            "items": {
-              "$ref": "#/components/schemas/SavedGraphInputPlugModel"
-            },
-            "title": "Input Plugs",
-            "type": "array"
-          },
-          "layout": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SavedGraphNodeLayoutModel"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "operator_id": {
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Operator Id",
-            "type": "string"
-          },
-          "operator_version": {
+          "revision": {
             "minimum": 1.0,
-            "title": "Operator Version",
+            "title": "Revision",
             "type": "integer"
           },
-          "position": {
-            "$ref": "#/components/schemas/GraphPointModel"
+          "slug": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Slug",
+            "type": "string"
           }
         },
         "required": [
-          "id",
-          "operator_id",
-          "operator_version",
-          "position"
+          "slug",
+          "revision"
         ],
-        "title": "SavedGraphNodeModel",
+        "title": "SavedGraphPluginReleasePin",
         "type": "object"
       },
       "SavedGraphProjection": {
@@ -5436,13 +5570,13 @@
           },
           "nodes": {
             "items": {
-              "$ref": "#/components/schemas/SavedGraphNodeModel-Output"
+              "$ref": "#/components/schemas/SavedGraphNodeModel"
             },
             "title": "Nodes",
             "type": "array"
           },
           "presentation": {
-            "$ref": "#/components/schemas/GraphPresentationDocumentModel-Output"
+            "$ref": "#/components/schemas/GraphPresentationDocumentModel"
           },
           "revision": {
             "title": "Revision",
@@ -6480,13 +6614,13 @@
           },
           "nodes": {
             "items": {
-              "$ref": "#/components/schemas/SavedGraphNodeModel-Input"
+              "$ref": "#/components/schemas/SavedGraphNodeModel"
             },
             "title": "Nodes",
             "type": "array"
           },
           "presentation": {
-            "$ref": "#/components/schemas/GraphPresentationDocumentModel-Input"
+            "$ref": "#/components/schemas/GraphPresentationDocumentModel"
           }
         },
         "required": [
@@ -6660,6 +6794,7 @@
           "checkpoint_graph",
           "execute_graph",
           "cancel_execution",
+          "publish_plugin",
           "publish_module",
           "manage_module_library",
           "create_template",
@@ -8444,6 +8579,25 @@
               "title": "Workspace Id",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "minLength": 1,
+                  "pattern": ".*\\S.*",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
           }
         ],
         "requestBody": {
@@ -8481,11 +8635,19 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RunExecutionCapacityErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/RunExecutionQueueFullErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RunExecutionCapacityErrorResponse"
+                    }
+                  ],
+                  "title": "Response 429 Start Graph Execution V1 Workspaces  Workspace Id  Executions Post"
                 }
               }
             },
-            "description": "The process-wide active execution limit is exhausted",
+            "description": "The durable pending queue is full, or a non-durable draft run cannot acquire active capacity",
             "headers": {
               "Retry-After": {
                 "description": "Minimum delay before retrying, in seconds",

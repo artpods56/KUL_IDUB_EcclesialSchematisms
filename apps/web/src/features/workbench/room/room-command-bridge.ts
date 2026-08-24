@@ -18,7 +18,8 @@ export function toRoomGraphCommand(
   command: GraphCommand,
   document: AuthoredGraphDocument,
 ): RoomGraphCommand | null {
-  const asRoom = (value: unknown): RoomGraphCommand => value as RoomGraphCommand;
+  const asRoom = (value: unknown): RoomGraphCommand =>
+    value as RoomGraphCommand;
   switch (command.kind) {
     case "move_nodes":
       return asRoom({
@@ -84,6 +85,20 @@ export function toRoomGraphCommand(
         node_id: command.node_id,
         layout: command.layout ?? null,
         expected_layout: node.layout ?? null,
+      });
+    }
+    case "update_node_plugin_release": {
+      const nextDocument = applyGraphCommand(document, command);
+      const projected = createSavedGraphRequest(nextDocument);
+      return asRoom({
+        kind: "replace_document",
+        name: projected.name,
+        document: {
+          schema_version: 4,
+          nodes: projected.nodes ?? [],
+          edges: projected.edges ?? [],
+          presentation: projected.presentation ?? emptyGraphPresentation(),
+        },
       });
     }
     case "update_node_configuration_and_input_plugs": {
@@ -324,8 +339,7 @@ export function applyRoomCommandToHead(
       name: command.name,
       nodes: command.document.nodes ?? [],
       edges: command.document.edges ?? [],
-      presentation:
-        command.document.presentation ?? emptyGraphPresentation(),
+      presentation: command.document.presentation ?? emptyGraphPresentation(),
       collaboration_sequence: sequence,
     };
   }
@@ -353,9 +367,7 @@ export function applyRoomCommandToHead(
         ...presentation,
         viewers: (presentation.viewers ?? []).map((viewer) => {
           const position = positions.get(viewer.id);
-          return position
-            ? { ...viewer, position }
-            : viewer;
+          return position ? { ...viewer, position } : viewer;
         }),
       },
     };
@@ -376,9 +388,7 @@ export function applyRoomCommandToHead(
         ...presentation,
         annotations: (presentation.annotations ?? []).map((annotation) => {
           const position = positions.get(annotation.id);
-          return position
-            ? { ...annotation, position }
-            : annotation;
+          return position ? { ...annotation, position } : annotation;
         }),
       },
     };

@@ -34,6 +34,10 @@ from grafy_core.ports.module_library import (
     ModuleLibraryRepositoryPort,
     ModuleLibraryUnitOfWorkPort,
 )
+from grafy_core.ports.plugin_releases import (
+    PluginReleaseRepositoryPort,
+    PluginReleaseUnitOfWorkPort,
+)
 from grafy_core.ports.saved_graphs import (
     SavedGraphRepositoryPort,
     SavedGraphUnitOfWorkPort,
@@ -53,6 +57,7 @@ from grafy_persistence.adapters.repositories import (
     SqlMaterializedNodeOutputsRepository,
     SqlModuleLibraryRepository,
     SqlNodeSecretRepository,
+    SqlPluginReleaseRepository,
     SqlSavedGraphRepository,
     SqlSecurityAuditRepository,
     SqlStagedUploadRepository,
@@ -74,6 +79,7 @@ class _SqlAlchemyUnitOfWorkState:
     staged_uploads: StagedUploadRepositoryPort
     collaboration: CollaborationRepositoryPort
     modules: ModuleLibraryRepositoryPort
+    plugin_releases: PluginReleaseRepositoryPort
     templates: TemplateRepositoryPort
 
 
@@ -86,6 +92,7 @@ class SqlAlchemyUnitOfWork(
     StagedUploadUnitOfWorkPort,
     CollaborationUnitOfWorkPort,
     ModuleLibraryUnitOfWorkPort,
+    PluginReleaseUnitOfWorkPort,
     TemplateUnitOfWorkPort,
 ):
     """Reusable task-local SQLAlchemy transaction boundary.
@@ -162,6 +169,11 @@ class SqlAlchemyUnitOfWork(
 
     @property
     @override
+    def plugin_releases(self) -> PluginReleaseRepositoryPort:
+        return self._entered_state().plugin_releases
+
+    @property
+    @override
     def templates(self) -> TemplateRepositoryPort:
         return self._entered_state().templates
 
@@ -184,6 +196,7 @@ class SqlAlchemyUnitOfWork(
                 staged_uploads=SqlStagedUploadRepository(session),
                 collaboration=SqlCollaborationRepository(session),
                 modules=SqlModuleLibraryRepository(session),
+                plugin_releases=SqlPluginReleaseRepository(session),
                 templates=SqlTemplateRepository(session),
             )
         )

@@ -1,5 +1,5 @@
 from collections import Counter, deque
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID
 
 from grafy_core.artifacts import (
@@ -19,6 +19,7 @@ from grafy_core.domain.modules import (
     GraphModuleReference,
     GraphModuleReferenceError,
 )
+from grafy_core.domain.plugin_releases import PluginRelease, PluginReleaseIdentity
 from grafy_core.nodes import (
     Node,
     NodeContractResolutionError,
@@ -42,6 +43,10 @@ from grafy_core.runtime.invocation import (
     effective_output_shape,
     validate_invocation,
 )
+from grafy_core.runtime.plugin_invocation import (
+    PluginInvoker,
+    WorkspacePluginReleaseNode,
+)
 
 from grafy_api.v1.routes.catalog.services import (
     GraphModuleCatalog,
@@ -63,6 +68,17 @@ from .models import (
 )
 
 
+class PluginReleaseLookup(Protocol):
+    """Exact, workspace-scoped Plugin release resolution for compilation."""
+
+    async def get_by_revision(
+        self,
+        workspace_id: UUID,
+        slug: str,
+        revision: int,
+    ) -> PluginRelease | None: ...
+
+
 class GraphCompiler:
     def __init__(
         self,
@@ -70,10 +86,14 @@ class GraphCompiler:
         plugin_registry: PluginRegistry,
         plugin_context: PluginRuntimeContext,
         module_catalog: GraphModuleCatalog,
+        plugin_release_lookup: PluginReleaseLookup | None = None,
+        plugin_invoker: PluginInvoker | None = None,
     ) -> None:
         self._plugin_registry = plugin_registry
         self._plugin_context = plugin_context
         self._module_catalog = module_catalog
+        self._plugin_release_lookup = plugin_release_lookup
+        self._plugin_invoker = plugin_invoker
         self._artifact_types = {
             artifact_type.key for artifact_type in plugin_registry.artifact_types
         }
@@ -103,14 +123,16 @@ class GraphCompiler:
 
         nodes_by_id: dict[str, Node[Any, Any, Any]] = {}
         registrations_by_id: dict[str, NodeRegistration | None] = {}
+        releases_by_id: dict[str, PluginReleaseIdentity | None] = {}
         for node_request in ordered_requests:
-            node, registration = await self._build_node(
+            node, registration, release_identity = await self._build_node(
                 node_request,
                 module_executor,
                 workspace_id=workspace_id,
             )
             nodes_by_id[node_request.id] = node
             registrations_by_id[node_request.id] = registration
+            releases_by_id[node_request.id] = release_identity
 
         bindings_by_node: dict[str, dict[str, ArtifactTypeKey]] = {}
         resolved_contracts_by_node: dict[str, ResolvedNodeContracts] = {}
@@ -160,6 +182,7 @@ class GraphCompiler:
                     resolved_contracts=resolved_contracts_by_node[node_request.id],
                     invocation=invocations_by_id[node_request.id],
                     artifact_type_bindings=bindings_by_node[node_request.id],
+                    plugin_release=releases_by_id[node_request.id],
                 )
                 for node_request in ordered_requests
             ),
@@ -173,7 +196,9 @@ class GraphCompiler:
         module_executor: GraphModuleExecutorPort,
         *,
         workspace_id: UUID,
-    ) -> tuple[Node[Any, Any, Any], NodeRegistration | None]:
+    ) -> tuple[
+        Node[Any, Any, Any], NodeRegistration | None, PluginReleaseIdentity | None
+    ]:
         try:
             module_reference = GraphModuleReference.try_from_operator_identity(
                 request.operator_id,
@@ -182,6 +207,14 @@ class GraphCompiler:
         except GraphModuleReferenceError as exc:
             raise GraphExecutionError(str(exc)) from exc
         if module_reference is not None:
+            if request.plugin_release is not None:
+                raise GraphExecutionError(
+                    f"Node {request.id!r} pins Workspace Plugin release "
+                    f"{request.plugin_release.slug!r} revision "
+                    f"{request.plugin_release.revision}, but operator "
+                    f"{request.operator_id}@{request.operator_version} is a "
+                    "graph module; modules cannot carry a Plugin release pin"
+                )
             try:
                 definition = await self._module_catalog.get_definition(
                     module_reference,
@@ -189,7 +222,68 @@ class GraphCompiler:
                 )
             except GraphModuleCatalogError as exc:
                 raise GraphExecutionError(str(exc)) from exc
-            return GraphModuleNode(definition, module_executor), None
+            return GraphModuleNode(definition, module_executor), None, None
+
+        if request.plugin_release is not None:
+            if self._plugin_release_lookup is None or self._plugin_invoker is None:
+                raise GraphExecutionError(
+                    f"Node {request.id!r} pins Workspace Plugin release "
+                    f"{request.plugin_release.slug!r} revision "
+                    f"{request.plugin_release.revision}, but Workspace Plugin "
+                    "execution is not configured for this workbench"
+                )
+            try:
+                self._plugin_registry.node_registration(
+                    request.operator_id,
+                    request.operator_version,
+                )
+            except UnknownOperatorError:
+                pass
+            else:
+                raise GraphExecutionError(
+                    f"Node {request.id!r} pins a Workspace Plugin release, but "
+                    f"{request.operator_id}@{request.operator_version} is a "
+                    "host node; host nodes cannot carry a Plugin release pin"
+                )
+            release = await self._plugin_release_lookup.get_by_revision(
+                workspace_id,
+                request.plugin_release.slug,
+                request.plugin_release.revision,
+            )
+            if release is None:
+                raise GraphExecutionError(
+                    f"Node {request.id!r} pins Workspace Plugin release "
+                    f"{request.plugin_release.slug!r} revision "
+                    f"{request.plugin_release.revision}, which does not exist "
+                    f"in this workspace"
+                )
+            contract = None
+            for declared in release.catalog.nodes:
+                if (
+                    declared.operator_id == request.operator_id
+                    and declared.operator_version == request.operator_version
+                ):
+                    contract = declared
+                    break
+            if contract is None:
+                raise GraphExecutionError(
+                    f"Node {request.id!r} pins Workspace Plugin release "
+                    f"{release.slug!r} revision {release.revision}, which does "
+                    f"not declare operator {request.operator_id}@"
+                    f"{request.operator_version}"
+                )
+            proxy: WorkspacePluginReleaseNode[Any, Any, Any] = (
+                WorkspacePluginReleaseNode(
+                    release,
+                    contract,
+                    self._plugin_invoker,
+                    artifact_type_bindings={
+                        binding.variable: binding.artifact_type.to_key()
+                        for binding in request.artifact_type_bindings
+                    },
+                )
+            )
+            return proxy, None, proxy.release_identity
 
         try:
             node = self._plugin_registry.build_node(
@@ -202,8 +296,11 @@ class GraphCompiler:
                 request.operator_version,
             )
         except UnknownOperatorError as exc:
-            raise GraphExecutionError(str(exc)) from exc
-        return node, registration
+            raise GraphExecutionError(
+                f"{exc}. If this operator belongs to a Workspace Plugin, the "
+                "node must pin one exact Plugin release"
+            ) from exc
+        return node, registration, None
 
 
 def _topological_order(
@@ -692,4 +789,4 @@ def _value_key(value: ArtifactOutputValue) -> ArtifactTypeKey:
     )
 
 
-__all__ = ["GraphCompiler"]
+__all__ = ["GraphCompiler", "PluginReleaseLookup"]

@@ -46,6 +46,7 @@ describe("ordered input plugs", () => {
       title: "Schema Builder",
       description: "Build a JSON Schema.",
       catalog_visible: true,
+      runnable: true,
       config_schema: {},
       input_schema: {},
       output_schema: {},

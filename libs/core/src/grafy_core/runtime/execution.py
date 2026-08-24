@@ -15,6 +15,7 @@ from grafy_core.artifacts import (
 )
 from grafy_core.domain.artifact_outputs import ArtifactOutputValue
 from grafy_core.domain.invocation_cache import InvocationCacheEntry
+from grafy_core.domain.plugin_releases import PluginReleaseIdentity
 from grafy_core.nodes import (
     InputContract,
     Node,
@@ -58,6 +59,7 @@ class NodeRuntime:
         artifact_type_bindings: Mapping[str, ArtifactTypeKey] | None = None,
         cache_policy: NodeCachePolicy = NodeCachePolicy.NEVER,
         opaque_secret_revisions: Mapping[str, str] | None = None,
+        plugin_release: PluginReleaseIdentity | None = None,
     ) -> PersistedNodeOutput | BaseModel:
         effective_bindings = artifact_type_bindings or {}
         resolved_contracts = resolve_node_contracts(
@@ -79,6 +81,7 @@ class NodeRuntime:
                     config=validated_config,
                     artifact_type_bindings=effective_bindings,
                     opaque_secret_revisions=opaque_secret_revisions or {},
+                    plugin_release=plugin_release,
                 )
             if cache_key is not None:
                 cached_entry = await self._invocation_cache.get(

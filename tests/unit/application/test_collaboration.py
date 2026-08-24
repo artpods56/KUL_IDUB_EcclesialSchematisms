@@ -131,6 +131,7 @@ class FakeCollaborationRepository:
             )
         ] = mapping
 
+
 class FakeSavedGraphRepository:
     def __init__(self) -> None:
         self.graphs: dict[UUID, SavedGraph] = {}

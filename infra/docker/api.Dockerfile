@@ -1,3 +1,5 @@
+FROM docker:28.4.0-cli@sha256:6a73c9433f2ba4279815be1e60f5739288b939dda1e48151d8c393537802de37 AS docker-cli
+
 FROM ghcr.io/astral-sh/uv:python3.12-trixie-slim AS source
 
 WORKDIR /app
@@ -28,6 +30,8 @@ RUN uv sync --locked --no-dev --extra ocr
 
 FROM source AS api-plugins
 
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends gdal-bin \
     && rm -rf /var/lib/apt/lists/*

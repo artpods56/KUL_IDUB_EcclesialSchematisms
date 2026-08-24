@@ -149,8 +149,7 @@ def upgrade() -> None:
     ).scalar_one()
     unified_terminal = connection.execute(
         sa.text(
-            "SELECT COUNT(*) FROM graph_execution_nodes "
-            "WHERE result_status IS NOT NULL"
+            "SELECT COUNT(*) FROM graph_execution_nodes WHERE result_status IS NOT NULL"
         )
     ).scalar_one()
     if unified_terminal != result_total:

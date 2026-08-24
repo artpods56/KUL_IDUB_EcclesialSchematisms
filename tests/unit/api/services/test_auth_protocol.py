@@ -173,9 +173,9 @@ def test_oidc_transaction_return_path_is_sensitive_state() -> None:
         {"nonce": "different-nonce"},
         {"exp": None},
         {"iat": None},
-        {"exp": int((datetime.now(UTC) - timedelta(minutes=2)).timestamp())},
-        {"iat": int((datetime.now(UTC) + timedelta(minutes=2)).timestamp())},
-        {"nbf": int((datetime.now(UTC) + timedelta(minutes=2)).timestamp())},
+        {"exp": timedelta(minutes=-2)},
+        {"iat": timedelta(minutes=2)},
+        {"nbf": timedelta(minutes=2)},
         {"iss": "https://other-issuer.example.test"},
         {"aud": "other-client"},
         {"azp": "other-client"},
@@ -192,7 +192,15 @@ async def test_id_token_rejects_nonce_and_required_time_claim_failures(
     private_key, public_keys = _keys()
     auth._jwks = public_keys
     auth._jwks_expires_at = datetime.now(UTC) + timedelta(minutes=5)
-    token = _signed_token(private_key, _claims(**overrides))
+    resolved_overrides = {
+        claim: (
+            int((datetime.now(UTC) + value).timestamp())
+            if isinstance(value, timedelta)
+            else value
+        )
+        for claim, value in overrides.items()
+    }
+    token = _signed_token(private_key, _claims(**resolved_overrides))
 
     with pytest.raises(OidcProtocolError):
         await auth._validate_id_token(

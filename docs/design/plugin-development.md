@@ -3,9 +3,17 @@
 > How to structure a Grafy plugin when adding new functionality. Read this
 > before creating a new `plugins/*` package or adding operators to an existing
 > one. It describes the *current* committed structure as built — the contracts
-> and conventions the codebase already enforces. The intended replacement for
-> entry-point loading (register a directory, publish a freeze into a Workspace
+> and conventions the codebase already enforces. The implemented replacement
+> for Workspace-authored code (publish a verified freeze into a Workspace
 > catalog) is [plugin unification](plugin-unification.md).
+>
+> **Scope: this guide covers only the legacy in-process `grafy.plugins`
+> entry-point plugins** (the monorepo `plugins/*` packages that load into the
+> API process). Workspace Plugin releases use the fixed
+> `grafy_plugin.PLUGIN` project convention and the publish pipeline described
+> in [plugin unification](plugin-unification.md) and
+> [its implementation plan](../plans/workspace-plugins/README.md); they never
+> use entry points and are never imported into FastAPI.
 
 - **Audience:** contributors adding nodes, artifact types, conversions,
   resolvers, or writers to Grafy.

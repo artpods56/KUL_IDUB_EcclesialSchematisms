@@ -61,6 +61,7 @@ class PluginOrigin(StrEnum):
     BUILTIN = "builtin"
     EXTERNAL = "external"
     MODULE = "module"
+    WORKSPACE = "workspace"
 
 
 class NodeCachePolicy(StrEnum):
@@ -181,13 +182,20 @@ class UnknownOperatorError(LookupError):
 
 
 class Plugin:
-    def __init__(self, *, slug: str, title: str) -> None:
+    def __init__(
+        self,
+        *,
+        slug: str,
+        title: str,
+        capabilities: tuple[str, ...] = (),
+    ) -> None:
         if slug.strip() == "":
             raise PluginRegistrationError("Plugin slug must not be empty")
         if title.strip() == "":
             raise PluginRegistrationError(f"Plugin {slug!r} title must not be empty")
         self.slug = slug
         self.title = title
+        self.capabilities = tuple(capabilities)
         self._nodes: dict[tuple[str, int], NodeRegistration] = {}
         self._artifact_types: dict[tuple[str, int], ArtifactTypeSpec] = {}
         self._artifact_conversions: dict[

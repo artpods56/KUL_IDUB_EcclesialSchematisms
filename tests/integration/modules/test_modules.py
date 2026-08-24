@@ -651,6 +651,10 @@ def test_saved_graph_module_is_discoverable_and_executes_once(
         "slug": "graph.module",
         "title": "Workspace library",
         "origin": "module",
+        "revision": None,
+        "runnable": True,
+        "non_runnable_reason": None,
+        "non_runnable_detail": None,
     } in registry["plugins"]
     module_spec = next(
         node for node in registry["nodes"] if node["module_graph_id"] == graph_id

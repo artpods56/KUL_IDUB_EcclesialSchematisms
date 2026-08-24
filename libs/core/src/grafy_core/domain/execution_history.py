@@ -1,9 +1,10 @@
 from dataclasses import dataclass, field
+from copy import deepcopy
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID
 
-from grafy_core.artifacts import ArtifactRefSequence
+from grafy_core.artifacts import ArtifactRefSequence, JsonObject
 from grafy_core.domain.artifact_outputs import (
     ArtifactOutputValue,
     artifact_outputs_from_storage,
@@ -44,6 +45,15 @@ def _require_aware_timestamp(value: datetime | None, label: str) -> None:
         raise ValueError(f"Graph execution {label} must be timezone-aware")
 
 
+def _validated_json_object(value: object, label: str) -> JsonObject:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    mapping = cast(dict[object, object], value)
+    if any(not isinstance(key, str) for key in mapping):
+        raise ValueError(f"{label} must be a JSON object")
+    return cast(JsonObject, value)
+
+
 @dataclass
 class GraphExecution:
     workspace_id: UUID
@@ -53,6 +63,9 @@ class GraphExecution:
     status: GraphExecutionStatus
     scope: GraphExecutionScope = "all"
     requested_node_ids: tuple[str, ...] = ()
+    submitted_request: JsonObject | None = None
+    idempotency_key: str | None = None
+    submitted_by_actor_id: UUID | None = None
     created_at: datetime = field(default_factory=_utc_now)
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -84,6 +97,21 @@ class GraphExecution:
             seen_node_ids.add(node_id)
             normalized_node_ids.append(node_id)
         self.requested_node_ids = tuple(normalized_node_ids)
+        if self.submitted_request is not None:
+            self.submitted_request = deepcopy(
+                _validated_json_object(
+                    self.submitted_request,
+                    "Graph execution submitted request",
+                )
+            )
+        if self.idempotency_key is not None:
+            self.idempotency_key = self.idempotency_key.strip()
+            if self.idempotency_key == "":
+                raise ValueError("Graph execution idempotency key must not be blank")
+            if len(self.idempotency_key) > 255:
+                raise ValueError(
+                    "Graph execution idempotency key must be at most 255 characters"
+                )
 
         _require_aware_timestamp(self.created_at, "creation timestamp")
         _require_aware_timestamp(self.started_at, "start timestamp")
@@ -170,6 +198,7 @@ class GraphExecutionNodeResult:
     outputs: dict[str, ArtifactOutputValue]
     error: str | None = None
     completed_at: datetime = field(default_factory=_utc_now)
+    diagnostics: JsonObject | None = None
     artifact_count: int = field(init=False)
 
     def __post_init__(self) -> None:
@@ -185,6 +214,11 @@ class GraphExecutionNodeResult:
         if self.status not in _NODE_STATUSES:
             raise ValueError(f"Unknown graph execution node status {self.status!r}")
         _require_aware_timestamp(self.completed_at, "node completion timestamp")
+        if self.diagnostics is not None:
+            _validated_json_object(
+                self.diagnostics,
+                "Graph execution node result diagnostics",
+            )
         self.outputs = normalize_artifact_outputs(self.outputs)
         self.artifact_count = sum(
             len(output.item_refs) if isinstance(output, ArtifactRefSequence) else 1

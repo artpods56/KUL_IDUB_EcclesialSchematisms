@@ -41,11 +41,15 @@ from .models import (
     GraphMaterializationsResponse,
     RunExecutionCapacityErrorDetail,
     RunExecutionCapacityErrorResponse,
+    RunExecutionQueueFullErrorDetail,
+    RunExecutionQueueFullErrorResponse,
+    RunExecutionIdempotencyConflictErrorDetail,
     RunExecutionResponse,
     RunRequest,
     RunResponse,
 )
-from .runtime.admission import RunExecutionCapacityError
+from .runtime.admission import RunExecutionCapacityError, RunExecutionQueueFullError
+from .runtime.manager import RunExecutionIdempotencyConflictError
 
 
 router = APIRouter(prefix="/workspaces/{workspace_id}", tags=["executions"])
@@ -116,8 +120,13 @@ async def run_graph(
     status_code=202,
     responses={
         429: {
-            "description": "The process-wide active execution limit is exhausted",
-            "model": RunExecutionCapacityErrorResponse,
+            "description": (
+                "The durable pending queue is full, or a non-durable draft run "
+                "cannot acquire active capacity"
+            ),
+            "model": (
+                RunExecutionQueueFullErrorResponse | RunExecutionCapacityErrorResponse
+            ),
             "headers": {
                 "Retry-After": {
                     "description": "Minimum delay before retrying, in seconds",
@@ -133,6 +142,15 @@ async def start_graph_execution(
     presenter: RunResultPresenterDependency,
     uow_factory: IdentityUnitOfWorkFactoryDependency,
     access: require_workspace_capability(WorkspaceCapability.EXECUTE_GRAPH),
+    idempotency_key: Annotated[
+        str | None,
+        Header(
+            alias="Idempotency-Key",
+            min_length=1,
+            max_length=255,
+            pattern=r".*\S.*",
+        ),
+    ] = None,
 ) -> RunExecutionResponse:
     try:
         starter = await actor_presentation_for(uow_factory, access.actor)
@@ -140,6 +158,7 @@ async def start_graph_execution(
             access.workspace_id,
             request,
             starter=starter,
+            idempotency_key=idempotency_key,
         )
         return await presenter.execution_response(execution)
     except NotFoundError as exc:
@@ -154,6 +173,28 @@ async def start_graph_execution(
             status_code=429,
             detail=detail.model_dump(mode="json"),
             headers={"Retry-After": "1"},
+        ) from exc
+    except RunExecutionQueueFullError as exc:
+        detail = RunExecutionQueueFullErrorDetail(
+            error_code=exc.error_code,
+            message=str(exc),
+            max_pending_graphs=exc.max_pending_graphs,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=detail.model_dump(mode="json"),
+            headers={"Retry-After": "1"},
+        ) from exc
+    except RunExecutionIdempotencyConflictError as exc:
+        detail = RunExecutionIdempotencyConflictErrorDetail(
+            error_code=exc.error_code,
+            message=str(exc),
+            idempotency_key=exc.idempotency_key,
+            execution_id=exc.execution_id,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=detail.model_dump(mode="json"),
         ) from exc
     except CollaborationActiveExecutionError as exc:
         raise HTTPException(

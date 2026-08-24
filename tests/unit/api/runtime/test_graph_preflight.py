@@ -19,6 +19,7 @@ from grafy_core.domain.saved_graphs import (
     SavedGraphEdge,
     SavedGraphInputPlug,
     SavedGraphNode,
+    SavedGraphPluginReleasePin,
     SavedGraphProjection,
     SavedGraphRevision,
 )
@@ -516,3 +517,61 @@ async def test_saved_context_requires_configured_saved_graph_service() -> None:
                 nodes=[],
             ),
         )
+
+
+@pytest.mark.asyncio
+async def test_saved_fragment_requires_the_exact_plugin_release_pin() -> None:
+    graph, matching = _fragment_case()
+    pinned_document = graph.document.model_copy(
+        update={
+            "nodes": tuple(
+                node.model_copy(
+                    update={
+                        "plugin_release_pin": SavedGraphPluginReleasePin(
+                            slug="notes",
+                            revision=4,
+                        )
+                    }
+                )
+                if node.id == "target"
+                else node
+                for node in graph.document.nodes
+            )
+        }
+    )
+    pinned_graph = SavedGraphRevision(
+        workspace_id=WORKSPACE_ID,
+        graph_id=graph.graph_id,
+        revision=graph.revision,
+        name=graph.name,
+        document=pinned_document,
+        created_at=graph.created_at,
+    )
+    preflight = GraphRunPreflight(
+        plugin_registry=PLUGIN_REGISTRY,
+        saved_graphs=_RecordingSavedGraphs(pinned_graph),
+    )
+
+    from grafy_api.v1.models import PluginReleasePinModel
+
+    # The exact same pin is accepted.
+    pinned_node = matching.nodes[0].model_copy(
+        update={"plugin_release": PluginReleasePinModel(slug="notes", revision=4)}
+    )
+    await preflight.validate(
+        WORKSPACE_ID,
+        matching.model_copy(update={"nodes": [pinned_node]}),
+    )
+
+    # Any drift in slug or revision is rejected.
+    for drifted in (
+        PluginReleasePinModel(slug="notes", revision=5),
+        PluginReleasePinModel(slug="other", revision=4),
+        None,
+    ):
+        changed = matching.nodes[0].model_copy(update={"plugin_release": drifted})
+        with pytest.raises(GraphExecutionError, match="does not match saved graph"):
+            await preflight.validate(
+                WORKSPACE_ID,
+                matching.model_copy(update={"nodes": [changed]}),
+            )

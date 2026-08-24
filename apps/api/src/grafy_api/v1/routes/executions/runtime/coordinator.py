@@ -60,6 +60,7 @@ class GraphExecutionCoordinator:
                         status="skipped",
                         error=None,
                         outputs={},
+                        plugin_release=compiled_node.plugin_release,
                     )
                 )
                 if execution.control is not None:
@@ -124,6 +125,7 @@ class GraphExecutionCoordinator:
                         status="failed",
                         error=_render_exception_chain(exc),
                         outputs={},
+                        plugin_release=compiled_node.plugin_release,
                     )
                 )
                 continue
@@ -141,6 +143,7 @@ class GraphExecutionCoordinator:
                     status="succeeded",
                     error=None,
                     outputs=copied_node_outputs,
+                    plugin_release=compiled_node.plugin_release,
                 )
             )
             if control is not None:

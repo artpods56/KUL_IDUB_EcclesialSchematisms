@@ -271,10 +271,13 @@ A uv-managed project that groups nodes, artifact types, artifact conversions,
 and the resolver/writer factories those types require under one stable slug.
 The working copy is a directory; execution trusts an immutable **Plugin
 release** (a freeze in object storage), not an import into the API process.
-Intended lifecycle: **Register** a directory under a deployment **Plugin
-root**, then **Publish** to create Workspace-scoped revision N. Humans and the
-coding agent use the same verbs. Diffs compare the working copy to the last
-freeze; they do not auto-publish or retarget graph pins. See
+Every installed project exports its declaration as `grafy_plugin.PLUGIN`.
+Lifecycle: publishing a directory under a deployment **Plugin root** creates
+Workspace-scoped revision N and may establish the `(Workspace, slug)` identity
+on first successful publish. Coding-agent authoring reserves one deterministic
+working copy, verifies and reviews an exact freeze, then uses the same
+publication workflow as human publication. Diffs do not auto-publish or
+retarget graph pins. See
 [plugin unification](docs/design/plugin-unification.md).
 
 The host currently still loads monorepo plugins in-process: it assigns every
@@ -286,14 +289,19 @@ contracts and ports, never on the API host or concrete storage adapters.
 
 ### Plugin root
 
-A deployment-allowlisted directory under which `grafy plugin register` may
-point. Roots are not the node catalog and do not grant Workspace visibility.
+A deployment-allowlisted directory under which a Plugin working copy may live
+and be published from. Roots are not the node catalog and do not grant
+Workspace visibility.
 
 ### Plugin release
 
 An append-only, digest-addressed freeze of one Plugin for one Workspace
-(source, lock, profile, runtime image). Graphs pin exact node revisions from
-that release (`notes.table.summarize@1`). Same bytes do not create a new
+(source archive, inspected contract, profile, protocol, capabilities, and,
+later, runtime image). The first runtime supports an empty approved capability
+set regardless of what the Plugin declares. A graph node carries two
+independent pins: the operator identity (`notes.table.summarize@1`) and the
+exact Plugin release revision (`notes` revision 4); publishing revision 5 of
+the same operator never moves an existing pin. Same bytes do not create a new
 revision.
 
 ### Module (workspace library)
@@ -341,10 +349,10 @@ OCR table fragments remain OCR-owned because deciding how Markdown rows become
 headers, columns, and inferred values is a source-specific normalization rather
 than a shape-preserving artifact conversion. Installing optional entry-point
 plugins currently contributes remote or domain-specific nodes as external
-catalog entries. The intended third overlay is Workspace **Plugin releases**
-(register a directory, publish a freeze) rather than loading Team Python into
-the API process. The catalog exposes origin and visually separates built-in
-families from registered Plugins.
+catalog entries. The third overlay is Workspace **Plugin releases** (publish a
+verified freeze) rather than loading Team Python into the API process. The
+catalog exposes origin and visually separates built-in families from published
+Plugins.
 
 ### Port
 

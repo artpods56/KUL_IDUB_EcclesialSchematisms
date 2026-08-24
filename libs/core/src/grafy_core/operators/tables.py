@@ -3,7 +3,7 @@ import csv
 import json
 import re
 import unicodedata
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
@@ -240,6 +240,37 @@ def _matches_type(value: TableValue, value_type: TableValueType) -> bool:
 
 TABLE_CHUNK_ROW_COUNT = 100
 TABLE_CHUNK_TARGET_BYTE_SIZE = 1_024 * 1_024
+
+
+def iter_table_chunks(table: Table) -> Iterator[TableChunk]:
+    """Yield deterministic bounded chunks for Table storage and transport."""
+
+    offset = 0
+    while offset < len(table.rows):
+        chunk_end = offset
+        estimated_byte_size = 32
+        while (
+            chunk_end < len(table.rows) and chunk_end - offset < TABLE_CHUNK_ROW_COUNT
+        ):
+            row_byte_size = len(
+                json.dumps(
+                    table.rows[chunk_end],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            )
+            if (
+                chunk_end > offset
+                and estimated_byte_size + row_byte_size > TABLE_CHUNK_TARGET_BYTE_SIZE
+            ):
+                break
+            estimated_byte_size += row_byte_size + 1
+            chunk_end += 1
+        yield TableChunk(
+            offset=offset,
+            rows=table.rows[offset:chunk_end],
+        )
+        offset = chunk_end
 
 
 async def _load_stored_model[T: BaseModel](
@@ -570,33 +601,8 @@ class TableArtifactWriter(ArtifactOutputWriter):
         logical_hash = sha256(logical_content).hexdigest()
         chunks: list[TableChunkDescriptor] = []
         stored_byte_size = 0
-        offset = 0
-        while offset < len(table.rows):
-            chunk_end = offset
-            estimated_byte_size = 32
-            while (
-                chunk_end < len(table.rows)
-                and chunk_end - offset < TABLE_CHUNK_ROW_COUNT
-            ):
-                row_byte_size = len(
-                    json.dumps(
-                        table.rows[chunk_end],
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                )
-                if (
-                    chunk_end > offset
-                    and estimated_byte_size + row_byte_size
-                    > TABLE_CHUNK_TARGET_BYTE_SIZE
-                ):
-                    break
-                estimated_byte_size += row_byte_size + 1
-                chunk_end += 1
-            chunk = TableChunk(
-                offset=offset,
-                rows=table.rows[offset:chunk_end],
-            )
+        for chunk in iter_table_chunks(table):
+            offset = chunk.offset
             content = chunk.model_dump_json().encode("utf-8")
             content_hash = sha256(content).hexdigest()
             storage_path = (
@@ -638,7 +644,6 @@ class TableArtifactWriter(ArtifactOutputWriter):
                     sha256=stored.sha256,
                 )
             )
-            offset = chunk_end
 
         manifest = TableManifest(
             columns=table.columns,

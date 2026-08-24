@@ -37,9 +37,22 @@ class ArtifactTypeBindingModel(ApiResponse):
     artifact_type: ArtifactTypeKeyResponse
 
 
+class PluginReleasePinModel(ApiResponse):
+    model_config: ClassVar[ConfigDict] = ConfigDict(
+        from_attributes=True,
+        extra="forbid",
+    )
+
+    slug: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)
+    ]
+    revision: int = Field(ge=1, strict=True)
+
+
 __all__ = [
     "ApiResponse",
     "ArtifactTypeBindingModel",
     "ArtifactTypeKeyResponse",
     "ArtifactTypeVariableIdentifier",
+    "PluginReleasePinModel",
 ]

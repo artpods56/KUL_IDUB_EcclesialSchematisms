@@ -431,7 +431,7 @@ def test_run_rejects_removed_local_upload_operator(
 
     assert response.status_code == 422
     assert response.json()["detail"] == (
-        "Unknown operator 'source.local_upload.images' at version 1"
+        "Unknown operator 'source.local_upload.images' at version 1. If this operator belongs to a Workspace Plugin, the node must pin one exact Plugin release"
     )
 
 

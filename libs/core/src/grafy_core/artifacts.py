@@ -434,6 +434,15 @@ class InMemoryGraphExecutionHistoryRepository:
             raise ObjectAlreadyExistsError(
                 f"Graph execution already exists: {execution.execution_id}"
             )
+        if execution.idempotency_key is not None and any(
+            stored.workspace_id == execution.workspace_id
+            and stored.idempotency_key == execution.idempotency_key
+            for stored in self._store.graph_executions.values()
+        ):
+            raise ObjectAlreadyExistsError(
+                "Graph execution idempotency key already exists: "
+                f"{execution.idempotency_key}"
+            )
         active_execution_id = await self.find_active_execution_id(
             execution.workspace_id,
             execution.graph_id,
@@ -459,6 +468,9 @@ class InMemoryGraphExecutionHistoryRepository:
             or current.graph_revision != execution.graph_revision
             or current.scope != execution.scope
             or current.requested_node_ids != execution.requested_node_ids
+            or current.submitted_request != execution.submitted_request
+            or current.idempotency_key != execution.idempotency_key
+            or current.submitted_by_actor_id != execution.submitted_by_actor_id
             or current.created_at != execution.created_at
         ):
             raise ValueError(
@@ -629,28 +641,80 @@ class InMemoryGraphExecutionHistoryRepository:
             key=lambda execution: (execution.created_at, execution.execution_id.int),
         ).execution_id
 
-    async def interrupt_all_active(
+    async def list_queued(self) -> tuple["GraphExecution", ...]:
+        return tuple(
+            _clone(execution)
+            for execution in sorted(
+                (
+                    execution
+                    for execution in self._store.graph_executions.values()
+                    if execution.status == "queued"
+                ),
+                key=lambda execution: (
+                    execution.created_at,
+                    execution.execution_id.int,
+                ),
+            )
+        )
+
+    async def get_by_idempotency_key(
+        self,
+        workspace_id: UUID,
+        idempotency_key: str,
+    ) -> "GraphExecution | None":
+        for execution in self._store.graph_executions.values():
+            if (
+                execution.workspace_id == workspace_id
+                and execution.idempotency_key == idempotency_key
+            ):
+                return _clone(execution)
+        return None
+
+    async def claim_queued(
+        self,
+        workspace_id: UUID,
+        execution_id: UUID,
+        *,
+        started_at: datetime,
+    ) -> bool:
+        if started_at.tzinfo is None:
+            raise ValueError("Graph execution start timestamp must be timezone-aware")
+        execution = self._store.graph_executions.get(execution_id)
+        if (
+            execution is None
+            or execution.workspace_id != workspace_id
+            or execution.status != "queued"
+        ):
+            return False
+        self._store.graph_executions[execution_id] = replace(
+            execution,
+            status="running",
+            started_at=started_at,
+        )
+        return True
+
+    async def interrupt_started(
         self,
         *,
         finished_at: datetime,
         error: str,
-    ) -> int:
+    ) -> tuple["GraphExecution", ...]:
         if finished_at.tzinfo is None:
             raise ValueError(
                 "Graph execution interruption timestamp must be timezone-aware"
             )
-        interrupted = 0
+        interrupted: list[GraphExecution] = []
         for execution_key, execution in list(self._store.graph_executions.items()):
-            if execution.status not in {"queued", "running", "cancelling"}:
+            if execution.status not in {"running", "cancelling"}:
                 continue
+            interrupted.append(_clone(execution))
             self._store.graph_executions[execution_key] = replace(
                 execution,
                 status="failed",
                 finished_at=finished_at,
                 error=error,
             )
-            interrupted += 1
-        return interrupted
+        return tuple(interrupted)
 
 
 @final

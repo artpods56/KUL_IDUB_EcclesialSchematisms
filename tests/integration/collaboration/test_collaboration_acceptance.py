@@ -164,9 +164,7 @@ def test_phase7_two_session_collaboration_acceptance_journey(
                 )
 
                 command_id = str(uuid4())
-                expected_sequence = (
-                    editor_ready["head"]["collaboration_sequence"] + 1
-                )
+                expected_sequence = editor_ready["head"]["collaboration_sequence"] + 1
                 editor_ws.send_json(
                     {
                         "protocol_version": 1,

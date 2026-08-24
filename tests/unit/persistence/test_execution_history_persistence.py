@@ -122,6 +122,12 @@ async def test_execution_lifecycle_and_node_outputs_round_trip_without_replacing
         status="queued",
         scope="selected-with-dependencies",
         requested_node_ids=("upload", "extract"),
+        submitted_request={
+            "nodes": [],
+            "graph_id": str(graph_id),
+            "graph_revision": 2,
+        },
+        idempotency_key="api-retry-101",
         created_at=created_at,
     )
     image = ArtifactObject(
@@ -199,10 +205,15 @@ async def test_execution_lifecycle_and_node_outputs_round_trip_without_replacing
         materialized = await entered.materialized_outputs.list_for_graph(
             WORKSPACE_ONE, graph_id, 2
         )
+        by_idempotency_key = await entered.execution_history.get_by_idempotency_key(
+            WORKSPACE_ONE,
+            "api-retry-101",
+        )
 
     assert detail is not None
     assert detail.execution == succeeded
     assert detail.execution.requested_node_ids == ("upload", "extract")
+    assert by_idempotency_key == succeeded
     assert [result.node_id for result in detail.node_results] == ["upload", "extract"]
     assert detail.node_results[0].outputs == {"images": sequence}
     assert detail.node_results[1].error == "provider timed out"
@@ -262,6 +273,66 @@ async def test_cursor_paging_is_stable_when_execution_timestamps_tie(
     ]
     assert [item.execution.execution_id for item in second.items] == [execution_ids[0]]
     assert second.next_cursor is None
+
+
+@pytest.mark.asyncio
+async def test_durable_queue_claim_is_oldest_first_and_conditional(
+    database: Database,
+) -> None:
+    unit_of_work = SqlAlchemyUnitOfWork(database.sessions)
+    graph_ids = (
+        UUID("00000000-0000-0000-0000-000000000211"),
+        UUID("00000000-0000-0000-0000-000000000212"),
+    )
+    for graph_id in graph_ids:
+        await _persist_graph_revisions(unit_of_work, graph_id, WORKSPACE_ONE)
+    created_at = datetime(2026, 8, 24, 9, 0, tzinfo=UTC)
+    execution_ids = (
+        UUID("00000000-0000-7000-8000-000000000211"),
+        UUID("00000000-0000-7000-8000-000000000212"),
+    )
+    execution_pairs = tuple(zip(execution_ids, graph_ids, strict=True))
+    async with unit_of_work as entered:
+        for execution_id, graph_id in reversed(execution_pairs):
+            await entered.execution_history.add(
+                GraphExecution(
+                    workspace_id=WORKSPACE_ONE,
+                    execution_id=execution_id,
+                    graph_id=graph_id,
+                    graph_revision=1,
+                    status="queued",
+                    submitted_request={"nodes": []},
+                    created_at=created_at,
+                )
+            )
+        await entered.commit()
+
+    started_at = created_at + timedelta(seconds=5)
+    async with unit_of_work as entered:
+        queued = await entered.execution_history.list_queued()
+        claimed = await entered.execution_history.claim_queued(
+            WORKSPACE_ONE,
+            execution_ids[0],
+            started_at=started_at,
+        )
+        duplicate_claim = await entered.execution_history.claim_queued(
+            WORKSPACE_ONE,
+            execution_ids[0],
+            started_at=started_at,
+        )
+        await entered.commit()
+
+    assert tuple(execution.execution_id for execution in queued) == execution_ids
+    assert claimed is True
+    assert duplicate_claim is False
+    async with unit_of_work as entered:
+        detail = await entered.execution_history.get(
+            WORKSPACE_ONE,
+            execution_ids[0],
+        )
+    assert detail is not None
+    assert detail.execution.status == "running"
+    assert detail.execution.started_at == started_at
 
 
 @pytest.mark.asyncio
@@ -454,7 +525,7 @@ async def test_restart_recovery_fails_only_active_executions(
 
     recovered_at = created_at + timedelta(minutes=5)
     async with unit_of_work as entered:
-        interrupted = await entered.execution_history.interrupt_all_active(
+        interrupted = await entered.execution_history.interrupt_started(
             finished_at=recovered_at,
             error="API restarted before execution completed",
         )
@@ -470,22 +541,22 @@ async def test_restart_recovery_fails_only_active_executions(
             for execution_id in second_workspace_execution_ids
         ]
 
-    assert interrupted == 6
+    assert len(interrupted) == 4
     assert all(detail is not None for detail in details)
     assert [detail.execution.status for detail in details if detail is not None] == [
-        "failed",
+        "queued",
         "failed",
         "failed",
         "succeeded",
     ]
-    assert details[0] is not None
-    assert details[0].execution.finished_at == recovered_at
-    assert details[0].execution.error == "API restarted before execution completed"
+    assert details[1] is not None
+    assert details[1].execution.finished_at == recovered_at
+    assert details[1].execution.error == "API restarted before execution completed"
     assert [
         detail.execution.status
         for detail in second_workspace_details
         if detail is not None
-    ] == ["failed", "failed", "failed", "succeeded"]
+    ] == ["queued", "failed", "failed", "succeeded"]
 
 
 @pytest.mark.asyncio
@@ -528,9 +599,7 @@ async def test_deleting_graph_cascades_history_and_preserves_artifacts(
         assert await entered.artifacts.get(WORKSPACE_ONE, artifact.id) is not None
     async with database.sessions() as session:
         assert (
-            await session.scalar(
-                select(schema.graph_execution_nodes.c.execution_id)
-            )
+            await session.scalar(select(schema.graph_execution_nodes.c.execution_id))
             is None
         )
         assert (
@@ -546,7 +615,9 @@ async def test_one_active_execution_per_graph_is_database_enforced(
     graph_id = UUID("00000000-0000-0000-0000-000000000601")
     second_workspace_same_graph_id = UUID("00000000-0000-0000-0000-000000000602")
     await _persist_graph_revisions(unit_of_work, graph_id, WORKSPACE_ONE)
-    await _persist_graph_revisions(unit_of_work, second_workspace_same_graph_id, WORKSPACE_TWO)
+    await _persist_graph_revisions(
+        unit_of_work, second_workspace_same_graph_id, WORKSPACE_TWO
+    )
 
     async def _start(
         workspace_id: UUID,

@@ -31,6 +31,7 @@ members = [
     "plugins/sql",
     "apps/api",
 ]
+exclude = ["examples/plugin-notes"]
 
 [tool.uv.sources]
 grafy-api = { workspace = true }

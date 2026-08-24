@@ -60,6 +60,42 @@ docker compose \
   up --build --detach
 ```
 
+Workspace Plugin execution is deliberately absent from the base Compose file.
+To enable the local Docker sandbox adapter, include the opt-in override:
+
+```bash
+docker compose \
+  --env-file .env.production \
+  -f infra/docker/compose.yaml \
+  -f infra/docker/compose.plugin-runtime.yaml \
+  up --build --detach
+```
+
+The override mounts `/var/run/docker.sock` into the API container. Possession
+of that socket is effectively root-equivalent authority over the Docker host:
+an API-process compromise can create privileged containers or mount host
+paths. The socket is never mounted into a Plugin container. Plugin containers
+run with no network, a read-only root filesystem, UID/GID 65532, no Linux
+capabilities, `no-new-privileges`, seccomp, and bounded tmpfs/resource limits.
+This protects against mistakes and ordinary unsafe Plugin code; it is not a
+hostile-public-tenant kernel boundary. Keep the API private, use one API owner,
+and omit the override when Workspace Plugin execution is not required. A
+narrow same-VPS runner can replace this socket-bearing adapter later without
+changing the provider-neutral invocation contract.
+
+Tune `GRAFY_MAX_ACTIVE_EXECUTIONS`, `GRAFY_MAX_PENDING_GRAPHS`,
+`GRAFY_MAX_ACTIVE_PLUGIN_INVOCATIONS`, `GRAFY_MAX_LIVE_PLUGIN_SANDBOXES`, and
+`GRAFY_MAX_DISTINCT_PLUGIN_RELEASES_PER_GRAPH` together using representative
+CPU, memory, disk, and artifact workloads. The distinct-release limit must not
+exceed the live-sandbox limit.
+
+`GRAFY_PLUGIN_ROOTS` and `GRAFY_PLUGIN_AUTHORING_ROOT` default to
+`/data/plugins` in the production example so coding-agent working copies live
+on the durable `grafy-data` volume. Run `grafy plugin scaffold`, `review`, and
+`publish-reviewed` inside the API container with an authorized Workspace owner
+UUID. The scaffold builds the SDK wheel from the deployment-owned
+`GRAFY_PLUGIN_SDK_PROJECT`; it never writes build output into that SDK source.
+
 Check readiness and logs:
 
 ```bash
@@ -143,7 +179,6 @@ file as TLS termination or as a complete two-proxy configuration.
 Browser traffic uses the opaque Grafy session cookie after OIDC login. The
 operator-supplied public endpoint must terminate TLS for that origin before
 production login.
-for that origin before production login.
 
 ## One API owner
 

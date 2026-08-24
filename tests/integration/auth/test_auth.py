@@ -206,8 +206,7 @@ async def test_cookie_requests_require_exact_origin_and_csrf(
 
         assert events
         assert all(
-            event.actor_kind is SecurityAuditActorKind.AUTHENTICATED
-            for event in events
+            event.actor_kind is SecurityAuditActorKind.AUTHENTICATED for event in events
         )
         assert {event.error_code for event in events} == {"origin_rejected"}
 
@@ -686,13 +685,9 @@ async def test_login_validation_is_bounded_and_audited(
         sentinel = "R" * 2049
 
         with client_with_overrides(settings=app_settings) as client:
-            first = client.get(
-                "/v1/auth/oidc/login", params={"return_path": sentinel}
-            )
+            first = client.get("/v1/auth/oidc/login", params={"return_path": sentinel})
             client.cookies.clear()
-            second = client.get(
-                "/v1/auth/oidc/login", params={"return_path": sentinel}
-            )
+            second = client.get("/v1/auth/oidc/login", params={"return_path": sentinel})
 
             assert first.status_code == 422
             assert second.status_code == 429
@@ -869,7 +864,9 @@ async def test_workspace_failure_audits_preserve_route_metadata(
         await seeder.membership(
             user=viewer, workspace=workspace, role=WorkspaceRole.VIEWER
         )
-        viewer_issued = await _auth_service(app_settings, database).issue_session(viewer.id)
+        viewer_issued = await _auth_service(app_settings, database).issue_session(
+            viewer.id
+        )
         missing_workspace_id = UUID(int=999)
 
         with client_with_overrides(settings=app_settings) as client:

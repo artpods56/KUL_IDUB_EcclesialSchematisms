@@ -32,6 +32,31 @@ def test_default_workspace_prefers_grafy_when_both_exist(
     assert settings.workspace == Path(".grafy-artifacts/workbench")
 
 
+def test_plugin_roots_resolve_from_the_deployment_allowlist(tmp_path: Path) -> None:
+    settings = Settings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
+        plugin_roots=(tmp_path / "team-plugins", tmp_path / "examples"),
+    )
+
+    assert settings.resolved_plugin_roots == (
+        (tmp_path / "team-plugins").resolve(),
+        (tmp_path / "examples").resolve(),
+    )
+
+
+def test_agent_authoring_paths_are_deployment_owned(tmp_path: Path) -> None:
+    settings = Settings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
+        plugin_authoring_root=tmp_path / "team-plugins",
+        plugin_sdk_project=tmp_path / "sdk",
+    )
+
+    assert (
+        settings.resolved_plugin_authoring_root == (tmp_path / "team-plugins").resolve()
+    )
+    assert settings.resolved_plugin_sdk_project == (tmp_path / "sdk").resolve()
+
+
 def test_database_url_reuses_legacy_database(tmp_path: Path) -> None:
     legacy_database = tmp_path / "notarius.sqlite3"
     legacy_database.touch()
@@ -56,6 +81,10 @@ def test_execution_defaults_with_bounded_map_concurrency(
 
     assert settings.map_max_concurrency == 4
     assert settings.max_active_executions == 2
+    assert settings.max_pending_graphs == 20
+    assert settings.max_active_plugin_invocations == 4
+    assert settings.max_live_plugin_sandboxes == 4
+    assert settings.max_distinct_plugin_releases_per_graph == 4
 
 
 def test_map_max_concurrency_can_be_selected_from_the_environment(
@@ -83,6 +112,41 @@ def test_max_active_executions_can_be_selected_from_the_environment(
 def test_max_active_executions_is_bounded(value: int) -> None:
     with pytest.raises(ValidationError):
         Settings(max_active_executions=value)
+
+
+def test_max_pending_graphs_can_be_selected_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GRAFY_MAX_PENDING_GRAPHS", "80")
+
+    assert Settings().max_pending_graphs == 80
+
+
+@pytest.mark.parametrize("value", [0, 1_001])
+def test_max_pending_graphs_is_bounded(value: int) -> None:
+    with pytest.raises(ValidationError):
+        Settings(max_pending_graphs=value)
+
+
+def test_plugin_capacity_dimensions_can_be_selected_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GRAFY_MAX_ACTIVE_PLUGIN_INVOCATIONS", "6")
+    monkeypatch.setenv("GRAFY_MAX_LIVE_PLUGIN_SANDBOXES", "8")
+    monkeypatch.setenv("GRAFY_MAX_DISTINCT_PLUGIN_RELEASES_PER_GRAPH", "7")
+
+    settings = Settings()
+    assert settings.max_active_plugin_invocations == 6
+    assert settings.max_live_plugin_sandboxes == 8
+    assert settings.max_distinct_plugin_releases_per_graph == 7
+
+
+def test_distinct_plugin_release_limit_cannot_exceed_live_sandboxes() -> None:
+    with pytest.raises(ValidationError):
+        Settings(
+            max_live_plugin_sandboxes=4,
+            max_distinct_plugin_releases_per_graph=5,
+        )
 
 
 def test_oidc_signing_algorithms_are_strictly_allowlisted() -> None:

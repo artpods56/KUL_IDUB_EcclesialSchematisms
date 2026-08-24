@@ -23,6 +23,7 @@ function vectorLayerSpec(): NodeSpec {
     title: "Vector map layer",
     description: "Styles one feature collection.",
     catalog_visible: true,
+    runnable: true,
     config_schema: {},
     input_schema: {},
     output_schema: {},

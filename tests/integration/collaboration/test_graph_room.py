@@ -332,8 +332,7 @@ def test_join_ready_precedes_command_committed_after_head_snapshot(
 
     assert first["type"] == "room.ready"
     assert (
-        first["head"]["collaboration_sequence"]
-        == initial_head.collaboration_sequence
+        first["head"]["collaboration_sequence"] == initial_head.collaboration_sequence
     )
     assert second["type"] == "graph.command.accepted"
     assert second["command_id"] == raced_command_id
@@ -981,8 +980,12 @@ def test_two_sessions_see_execution_start_and_complete(
 
             owner_active = _receive_until(owner_ws, "execution.active")
             editor_active = _receive_until(editor_ws, "execution.active")
-            assert owner_active["execution"]["execution_id"] == str(started.execution_id)
-            assert editor_active["execution"]["execution_id"] == str(started.execution_id)
+            assert owner_active["execution"]["execution_id"] == str(
+                started.execution_id
+            )
+            assert editor_active["execution"]["execution_id"] == str(
+                started.execution_id
+            )
             assert owner_active["execution"]["status"] in {
                 "queued",
                 "running",
@@ -1037,7 +1040,9 @@ def test_viewer_discovers_active_execution_on_room_ready_and_cannot_cancel(
         with _connect_room(api, population.workspace.id, graph.id) as viewer_ws:
             ready = viewer_ws.receive_json()
             assert ready["active_execution"] is not None
-            assert ready["active_execution"]["execution_id"] == str(started.execution_id)
+            assert ready["active_execution"]["execution_id"] == str(
+                started.execution_id
+            )
             assert ready["active_execution"]["status"] in {"queued", "running"}
             assert "execute_graph" not in ready["capabilities"]["capabilities"]
             assert "cancel_execution" not in ready["capabilities"]["capabilities"]

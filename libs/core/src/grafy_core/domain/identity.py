@@ -40,6 +40,7 @@ class WorkspaceCapability(StrEnum):
     CHECKPOINT_GRAPH = "checkpoint_graph"
     EXECUTE_GRAPH = "execute_graph"
     CANCEL_EXECUTION = "cancel_execution"
+    PUBLISH_PLUGIN = "publish_plugin"
     PUBLISH_MODULE = "publish_module"
     MANAGE_MODULE_LIBRARY = "manage_module_library"
     CREATE_TEMPLATE = "create_template"
