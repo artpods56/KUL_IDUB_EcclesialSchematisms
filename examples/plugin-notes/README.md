@@ -2,8 +2,8 @@
 
 This is a standalone uv-managed Plugin project following
 [Plugin unification](../../docs/design/plugin-unification.md). It has its own
-`uv.lock` and is published as an immutable Workspace release; it is not loaded
-into FastAPI through a `grafy.plugins` entry point.
+`uv.lock` and is published as an immutable Workspace release; installing the
+project never loads its working copy into FastAPI.
 
 The project declares two typed nodes:
 

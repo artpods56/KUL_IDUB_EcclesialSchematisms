@@ -12,8 +12,8 @@ dependencies = [
 ]
 description = "Example Workspace Plugin: uv project, no host entry point"
 
-# Intentionally no [project.entry-points."grafy.plugins"]. FastAPI must not
-# import this package. Publication is a freeze of this tree, not sys.path.
+# Intentionally no generic Plugin package entry point. FastAPI must not import
+# this package. Publication is a freeze of this tree, not sys.path.
 # The versioned Grafy Plugin SDK wheel (grafy-core) is vendored under wheels/
 # so the project and its uv.lock are self-contained; deployments that host
 # their own SDK wheelhouse may instead resolve grapy-core from it through the

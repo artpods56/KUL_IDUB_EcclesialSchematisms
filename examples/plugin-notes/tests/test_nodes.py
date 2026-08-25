@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from grafy_core.artifacts import NoConfig
-from grafy_core.operators.tables import Table, TableColumn, TableValueType
+from grafy_core.table_contracts import Table, TableColumn, TableValueType
 from grafy_plugin.models import TableSummary
 from grafy_plugin.nodes import (
     RenderSummaryInput,

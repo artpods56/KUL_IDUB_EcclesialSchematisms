@@ -3,7 +3,7 @@ from grafy_core.artifacts import (
     ArtifactTypeKey,
     ArtifactTypeSpec,
 )
-from grafy_core.operators.tables import TABLE_DATA
+from grafy_core.table_contracts import TABLE_DATA
 
 from grafy_plugin_sql.models import SqlResult, SqlStatement
 

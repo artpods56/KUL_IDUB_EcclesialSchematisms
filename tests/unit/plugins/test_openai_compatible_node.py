@@ -5,14 +5,16 @@ import pytest
 from pydantic import SecretStr
 
 from grafy_core.artifacts import ArtifactRef
+from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.nodes import NodeExecutionContext, PortShape
-from grafy_core.operators.images import RASTER_IMAGE
-from grafy_core.operators.prompts import (
+from grafy_core.plugins import NodeHttpEgressInput
+from grafy_core.artifact_contracts import RASTER_IMAGE
+from grafy_core.prompt_contracts import (
     PROMPT_MESSAGE,
     PromptMessage,
     PromptMessageRole,
 )
-from grafy_core.operators.schemas import JSON_SCHEMA
+from grafy_core.schema_contracts import JSON_SCHEMA
 from grafy_core.ports.node_secrets import JsonValue
 from grafy_plugin_llm.artifacts import COMPLETION
 from grafy_plugin_llm.declaration import LLM
@@ -145,6 +147,16 @@ def test_node_declares_many_messages_optional_schema_and_write_only_key() -> Non
     assert registration.secret_inputs[0].name == "api_key"
     assert registration.secret_inputs[0].config_dependencies == ("base_url",)
     assert "api_key" not in OpenAICompatibleConfig.model_fields
+
+    assert registration.required_capabilities == (
+        PluginRuntimeCapability.NETWORK_EGRESS,
+        PluginRuntimeCapability.NODE_SECRETS,
+    )
+    assert registration.http_egress is not None
+    assert registration.http_egress.configured_inputs == (
+        NodeHttpEgressInput(config_field="base_url"),
+    )
+    assert registration.http_egress.dynamic_destinations is False
 
 
 async def test_node_resolves_bound_secret_and_builds_completion_artifact() -> None:

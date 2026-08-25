@@ -14,10 +14,16 @@ from pydantic import (
 )
 
 from grafy_core.artifacts import JsonObject, NodeConfig, NodeInput, NodeOutput
+from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.nodes import InPort, Node, NodeExecutionContext, OutPort
-from grafy_core.operators.prompts import PROMPT_MESSAGE, PromptMessage
-from grafy_core.operators.schemas import JSON_SCHEMA
-from grafy_core.plugins import NodeSecretInput, PluginRuntimeContext
+from grafy_core.prompt_contracts import PROMPT_MESSAGE, PromptMessage
+from grafy_core.schema_contracts import JSON_SCHEMA
+from grafy_core.plugins import (
+    NodeHttpEgressContract,
+    NodeHttpEgressInput,
+    NodeSecretInput,
+    PluginRuntimeContext,
+)
 from grafy_core.ports.node_secrets import NodeSecretResolverPort
 
 from grafy_plugin_llm.artifacts import COMPLETION, CompletionPayload
@@ -183,6 +189,10 @@ def build_openai_compatible_node(
     version=1,
     title="OpenAI-compatible Chat Completion",
     factory=build_openai_compatible_node,
+    required_capabilities=(
+        PluginRuntimeCapability.NETWORK_EGRESS,
+        PluginRuntimeCapability.NODE_SECRETS,
+    ),
     secret_inputs=(
         NodeSecretInput(
             name="api_key",
@@ -192,6 +202,9 @@ def build_openai_compatible_node(
             ),
             config_dependencies=("base_url",),
         ),
+    ),
+    http_egress=NodeHttpEgressContract(
+        configured_inputs=(NodeHttpEgressInput(config_field="base_url"),),
     ),
 )
 @final

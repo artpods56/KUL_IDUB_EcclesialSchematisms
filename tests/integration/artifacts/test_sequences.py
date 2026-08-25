@@ -10,8 +10,8 @@ from grafy_core.artifacts import (
     ArtifactRefSequence,
     InMemoryUnitOfWork,
 )
-from grafy_core.operators.images import RASTER_IMAGE
-from grafy_core.operators.sequences import ItemAtConfig, SliceConfig
+from grafy_core.artifact_contracts import RASTER_IMAGE
+from grafy_plugin_sequence.nodes import ItemAtConfig, SliceConfig
 
 from grafy_api.v1.models import ArtifactTypeBindingModel, ArtifactTypeKeyResponse
 from grafy_api.v1.routes.catalog.models import NodeRegistryResponse
@@ -20,10 +20,13 @@ from grafy_api.v1.routes.executions.models import (
     PinnedOutputRequest,
     RunEdgeRequest,
     RunInputPlugRequest,
-    RunNodeRequest,
     RunRequest,
     RunResponse,
 )
+from grafy_api.v1.routes.executions.models import (
+    RunNodeRequest as UnpinnedRunNodeRequest,
+)
+from tests.support.system_plugins import selected_system_run_node as RunNodeRequest
 
 from tests.support.clients import GrafyApi
 
@@ -419,7 +422,7 @@ def test_run_rejects_removed_local_upload_operator(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json=RunRequest(
             nodes=[
-                RunNodeRequest(
+                UnpinnedRunNodeRequest(
                     id="legacy-upload",
                     operator_id="source.local_upload.images",
                     operator_version=1,
@@ -431,7 +434,8 @@ def test_run_rejects_removed_local_upload_operator(
 
     assert response.status_code == 422
     assert response.json()["detail"] == (
-        "Unknown operator 'source.local_upload.images' at version 1. If this operator belongs to a Workspace Plugin, the node must pin one exact Plugin release"
+        "Node 'legacy-upload' (source.local_upload.images@1) is executable Plugin "
+        "code and must pin one exact Plugin release with scope, slug, and revision"
     )
 
 

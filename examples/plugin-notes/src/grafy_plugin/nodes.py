@@ -3,9 +3,9 @@ from typing import Annotated
 from pydantic import Field
 
 from grafy_core.artifacts import NoConfig, NodeInput, NodeOutput
+from grafy_core.artifact_contracts import TEXT_VALUE, TextValue
 from grafy_core.nodes import InPort, OutPort
-from grafy_core.operators.tables import TABLE_DATA, Table
-from grafy_core.operators.text import TEXT_VALUE, TextValue
+from grafy_core.table_contracts import TABLE_DATA, Table
 from grafy_core.plugins import NodeCachePolicy
 
 from grafy_plugin.artifacts import TABLE_SUMMARY

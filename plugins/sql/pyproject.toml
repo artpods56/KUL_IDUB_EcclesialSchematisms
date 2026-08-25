@@ -9,20 +9,22 @@ requires-python = "==3.14.*"
 dependencies = [
     "asyncpg>=0.30.0",
     "duckdb==1.5.5",
-    "grafy-core",
+    "grafy-core==0.1.0",
     "pydantic",
     "pytz>=2024.1",
     "sqlalchemy[asyncio]>=2.0.51",
 ]
 
-[project.entry-points."grafy.plugins"]
-sql = "grafy_plugin_sql.plugin:SQL"
+[dependency-groups]
+dev = ["pytest>=8.4.2"]
 
-[tool.uv.sources]
-grafy-core = { workspace = true }
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.basedpyright]
 extends = "../../pyproject.toml"
+venvPath = "."
+venv = ".venv"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

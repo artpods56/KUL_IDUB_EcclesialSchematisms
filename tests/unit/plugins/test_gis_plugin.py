@@ -20,15 +20,23 @@ from grafy_core.artifacts import (
 )
 from grafy_core.domain.staged_uploads import StagedUpload
 from grafy_core.nodes import NodeExecutionContext
-from grafy_core.operators.tables import (
-    TABLES,
+from grafy_core.table_contracts import (
     TABLE_DATA,
     Table,
     TableColumn,
     TableValueType,
 )
-from grafy_core.plugins import PluginOrigin, PluginRegistry
+from grafy_plugin_table import TABLES
+from grafy_core.plugins import (
+    NodeHttpEgressInput,
+    PluginRegistry,
+)
+from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.runtime.materialization import MaterializationProvenance
+from grafy_core.runtime.object_set_bundle import (
+    PORTABLE_BUNDLE_METADATA_KEY,
+    PortableArtifactBundleMetadata,
+)
 from grafy_core.runtime.persistence import ArtifactWriteContext
 from grafy_storage import LocalFileObjectStore
 from grafy_plugin_gis.artifacts import (
@@ -206,8 +214,8 @@ def write_geotiff(path: Path) -> bytes:
 
 def test_gis_registers_exact_sources_lightweight_layers_and_documents() -> None:
     registry = PluginRegistry()
-    registry.install(TABLES, origin=PluginOrigin.BUILTIN)
-    registry.install(GIS, origin=PluginOrigin.EXTERNAL)
+    registry.install(TABLES)
+    registry.install(GIS)
     registry.freeze()
 
     assert GIS.slug == "external.gis"
@@ -248,6 +256,22 @@ def test_gis_registers_exact_sources_lightweight_layers_and_documents() -> None:
         "gis.features.to_table", 1
     ).node_class.output_contract.ports["table"]
     assert feature_table_output.produces == TABLE_DATA.key
+
+
+def test_wfs_import_declares_its_configured_http_egress_contract() -> None:
+    registry = PluginRegistry()
+    registry.install(GIS)
+
+    registration = registry.node_registration("gis.wfs.import", 1)
+
+    assert registration.required_capabilities == (
+        PluginRuntimeCapability.NETWORK_EGRESS,
+    )
+    assert registration.http_egress is not None
+    assert registration.http_egress.configured_inputs == (
+        NodeHttpEgressInput(config_field="service_url"),
+    )
+    assert registration.http_egress.dynamic_destinations is False
 
 
 def test_bounds_config_schemas_describe_fixed_wgs84_positions() -> None:
@@ -758,6 +782,47 @@ def test_wfs_import_requires_a_bounded_total_feature_limit(
 
 
 @pytest.mark.asyncio
+async def test_wfs_import_routes_through_the_broker_without_guest_dns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested: list[httpx.URL] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url)
+        payload = json.loads(feature_collection([(13.4, 52.5)]))
+        payload["numberMatched"] = 1
+        payload["numberReturned"] = 1
+        return httpx.Response(200, json=payload)
+
+    monkeypatch.setenv("GRAFY_PLUGIN_PROXY", "http://127.0.0.1:3128")
+
+    def fail_if_resolving(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("broker mode must not resolve DNS in the guest")
+
+    monkeypatch.setattr(socket, "getaddrinfo", fail_if_resolving)
+
+    node = ImportWfsNode(WfsClient(transport=httpx.MockTransport(respond)))
+    result = await node.run(
+        NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="wfs"),
+        WfsImportConfig.model_validate(
+            {
+                "service_url": "https://example.com/geoserver/ows",
+                "type_name": "geonode:roads",
+                "source_name": "Roads",
+                "max_features": 1,
+            }
+        ),
+        WfsImportInput(),
+    )
+
+    assert len(result.features.features) == 1
+    assert len(requested) == 1
+    assert requested[0].raw_host == b"example.com"
+    assert requested[0].path == "/geoserver/ows"
+    assert requested[0].params["startIndex"] == "0"
+
+
+@pytest.mark.asyncio
 async def test_wfs_import_fetches_bounded_epsg4326_pages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1144,6 +1209,15 @@ async def test_geotiff_upload_and_raster_persistence_produce_cog_and_xyz_tiles(
     assert projection.source_crs == "EPSG:4326"
     assert projection.min_zoom <= projection.max_zoom
     assert list((object_root / "test" / projection.prefix).rglob("*.png"))
+    portable = PortableArtifactBundleMetadata.model_validate(
+        artifact.metadata[PORTABLE_BUNDLE_METADATA_KEY]
+    )
+    assert portable.files[0].object_key == artifact.object_key
+    assert {reference.path for reference in portable.references} == {
+        ("raster_projection", "bucket"),
+        ("raster_projection", "prefix"),
+    }
+    assert len(portable.files) > 1
 
     cog_path = object_root / "test" / artifact.object_key
     info = subprocess.run(
@@ -1219,6 +1293,14 @@ async def test_feature_collection_storage_keeps_exact_source_and_pmtiles_sidecar
         )
         == b"PMTiles"
     )
+    portable = PortableArtifactBundleMetadata.model_validate(
+        artifact.metadata[PORTABLE_BUNDLE_METADATA_KEY]
+    )
+    assert projection.object_key in {file.object_key for file in portable.files}
+    assert {reference.path for reference in portable.references} == {
+        ("vector_projection", "bucket"),
+        ("vector_projection", "object_key"),
+    }
 
 
 @pytest.mark.asyncio
@@ -1253,6 +1335,11 @@ async def test_empty_feature_source_is_exact_without_invalid_pmtiles(
     assert artifact is not None
     assert artifact.metadata["feature_count"] == 0
     assert "vector_projection" not in artifact.metadata
+    portable = PortableArtifactBundleMetadata.model_validate(
+        artifact.metadata[PORTABLE_BUNDLE_METADATA_KEY]
+    )
+    assert portable.references == ()
+    assert len(portable.files) == 1
 
 
 @pytest.mark.asyncio

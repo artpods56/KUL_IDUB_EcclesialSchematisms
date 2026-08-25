@@ -11,7 +11,7 @@ from uuid import UUID
 import duckdb
 from pydantic import ValidationError
 
-from grafy_core.operators.tables import (
+from grafy_core.table_contracts import (
     Table,
     TableColumn,
     TableValue,

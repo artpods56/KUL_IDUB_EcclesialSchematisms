@@ -6,10 +6,10 @@ from fastapi.testclient import TestClient
 from grafy_api.v1.routes.executions.models import (
     RunEdgeRequest,
     RunInputPlugRequest,
-    RunNodeRequest,
     RunRequest,
     RunResponse,
 )
+from tests.support.system_plugins import selected_system_run_node as RunNodeRequest
 
 from tests.support.clients import GrafyApi
 from tests.support.identity import WORKSPACE_ID

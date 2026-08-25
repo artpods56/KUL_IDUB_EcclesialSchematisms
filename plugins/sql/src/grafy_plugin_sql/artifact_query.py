@@ -15,7 +15,7 @@ from pydantic import (
     model_validator,
 )
 
-from grafy_core.operators.tables import Table
+from grafy_core.table_contracts import Table
 
 from grafy_plugin_sql.models import SqlStatement
 

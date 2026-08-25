@@ -26,7 +26,7 @@ from grafy_core.domain.saved_graphs import (
 )
 from grafy_core.nodes import ArtifactTypeVariable, NodeExecutionContext, PortShape
 from grafy_core.operators.modules import (
-    MODULES,
+    MODULE_BOUNDARY_REGISTRATIONS,
     GraphModuleExecutionError,
     GraphModuleNode,
     ModuleBoundaryExecutionError,
@@ -38,13 +38,14 @@ from grafy_core.ports.modules import (
     GraphModuleExecutionResult,
     GraphModuleExecutorPort,
 )
-from grafy_core.runtime.execution import NodeRuntime
+from grafy_core.runtime.execution import NodeRunError, NodeRuntime
 from grafy_core.runtime.materialization import InputMaterializer
 from grafy_core.runtime.persistence import (
     ArtifactWriterRegistry,
     OutputPersister,
     PersistedNodeOutput,
 )
+from grafy_core.runtime.plugin_protocol import PluginFailureCode
 from grafy_core.runtime.resolvers import ResolverRegistry
 
 
@@ -259,18 +260,19 @@ def test_module_input_has_required_config_without_changing_module_output() -> No
         )
 
 
-def test_module_plugin_registers_only_boundary_nodes() -> None:
+def test_module_boundaries_register_without_a_plugin_family() -> None:
     registry = PluginRegistry()
-    registry.install(MODULES)
+    registry.register_module_boundaries(MODULE_BOUNDARY_REGISTRATIONS)
     registry.freeze()
 
-    assert MODULES.slug == "builtin.module"
-    assert MODULES.title == "Module"
-    assert MODULES.artifact_types == ()
-    assert [registration.key for registration in MODULES.nodes] == [
+    assert registry.plugins == ()
+    assert [registration.key for registration in registry.nodes] == [
         ("module.input", 1),
         ("module.output", 1),
     ]
+    assert {registration.plugin_slug for registration in registry.nodes} == {
+        "graph.module"
+    }
 
 
 @pytest.mark.parametrize(
@@ -672,8 +674,11 @@ async def test_graph_module_node_preserves_inner_failure_as_contextual_cause() -
     source = ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE_TYPE)
 
     with pytest.raises(
-        GraphModuleExecutionError,
-        match="Example module.*parent node 'module-instance'",
+        NodeRunError,
+        match=(
+            f"Node 'module-instance' operator graph\\.module\\.{GRAPH_ID}@3 failed "
+            "\\(operator_failure\\): Graph module 'Example module'"
+        ),
     ) as raised:
         await _runtime().run_node(
             node,
@@ -681,5 +686,9 @@ async def test_graph_module_node_preserves_inner_failure_as_contextual_cause() -
             {"source": source},
         )
 
-    assert isinstance(raised.value.__cause__, RuntimeError)
-    assert str(raised.value.__cause__) == "inner graph failed"
+    assert raised.value.failure_code is PluginFailureCode.OPERATOR_FAILURE
+    module_error = raised.value.__cause__
+    assert isinstance(module_error, GraphModuleExecutionError)
+    assert "failed while executing parent node 'module-instance'" in str(module_error)
+    assert isinstance(module_error.__cause__, RuntimeError)
+    assert str(module_error.__cause__) == "inner graph failed"

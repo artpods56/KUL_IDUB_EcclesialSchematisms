@@ -3,13 +3,12 @@ from io import BytesIO
 from pathlib import Path
 
 from grafy_core.artifacts import InMemoryUnitOfWork
-from grafy_core.operators.tables import (
-    TABLES,
+from grafy_core.table_contracts import (
     TABLE_DATA,
-    TableArtifactResolver,
-    TableArtifactWriter,
 )
-from grafy_core.plugins import PluginOrigin, PluginRegistry, PluginRuntimeContext
+from grafy_plugin_table import TABLES
+from grafy_plugin_table.persistence import TableArtifactResolver, TableArtifactWriter
+from grafy_core.plugins import PluginRegistry, PluginRuntimeContext
 from grafy_core.ports.storage import SaveFileCommand, StoredFile, StoredObjectInfo
 from grafy_core.runtime.persistence import InlineModelOutputWriter
 from grafy_core.runtime.resolvers import InlineModelResolver
@@ -60,8 +59,8 @@ class EmptyStorage:
 
 def test_sql_plugin_declares_complete_runtime_contributions(tmp_path: Path) -> None:
     registry = PluginRegistry()
-    registry.install(TABLES, origin=PluginOrigin.BUILTIN)
-    registry.install(SQL, origin=PluginOrigin.EXTERNAL)
+    registry.install(TABLES)
+    registry.install(SQL)
     registry.freeze()
     context = PluginRuntimeContext(
         workspace=tmp_path,
@@ -138,7 +137,7 @@ def test_sql_execute_declares_password_bound_to_connection_config() -> None:
     )
 
 
-def test_sql_package_metadata_declares_plugin_entry_point() -> None:
+def test_sql_package_metadata_has_no_ambient_plugin_entry_point() -> None:
     project_root = Path(__file__).parents[3]
     metadata = tomllib.loads(
         (project_root / "plugins" / "sql" / "pyproject.toml").read_text()
@@ -146,6 +145,4 @@ def test_sql_package_metadata_declares_plugin_entry_point() -> None:
 
     assert metadata["project"]["name"] == "grafy-plugin-sql"
     assert "duckdb==1.5.5" in metadata["project"]["dependencies"]
-    assert metadata["project"]["entry-points"]["grafy.plugins"] == {
-        "sql": "grafy_plugin_sql.plugin:SQL"
-    }
+    assert "entry-points" not in metadata["project"]

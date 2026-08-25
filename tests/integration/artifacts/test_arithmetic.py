@@ -14,10 +14,14 @@ from grafy_api.v1.routes.executions.models import (
     FieldProjectionRequest,
     PinnedOutputRequest,
     RunEdgeRequest,
-    RunNodeRequest,
     RunPortOutputResponse,
     RunRequest,
     RunResponse,
+    RunNodeRequest as UnpinnedRunNodeRequest,
+)
+from tests.support.system_plugins import (
+    pin_selected_system_nodes,
+    selected_system_run_node as RunNodeRequest,
 )
 from grafy_core.artifacts import (
     ArtifactObject,
@@ -27,7 +31,7 @@ from grafy_core.artifacts import (
     InMemoryUnitOfWork,
 )
 from grafy_core.conversions import MAX_ARTIFACT_CONVERSION_HOPS
-from grafy_core.operators.arithmetic import (
+from grafy_plugin_arithmetic.nodes import (
     BinaryIntegerInput,
     IntegerSequenceConfig,
     IntegerSequenceOutput,
@@ -38,7 +42,7 @@ from grafy_core.operators.arithmetic import (
     SumIntegersInput,
     SumIntegersOutput,
 )
-from grafy_core.operators.text import TEXT_VALUE
+from grafy_core.artifact_contracts import TEXT_VALUE
 
 from tests.support.clients import GrafyApi
 
@@ -71,6 +75,7 @@ def _compound_run_request(
                 id="compound",
                 operator_id="test.compound_producer",
                 operator_version=1,
+                plugin_slug="test.conversion-path",
                 config={},
             ),
             RunNodeRequest(
@@ -335,6 +340,7 @@ def test_projection_runs_before_declared_integer_to_text_conversion(
                     id="compound",
                     operator_id="test.compound_producer",
                     operator_version=1,
+                    plugin_slug="test.conversion-path",
                     config={},
                 ),
                 RunNodeRequest(
@@ -468,6 +474,7 @@ def test_transitive_conversion_path_composes_in_memory_and_writes_final_only(
                     id="consumer",
                     operator_id="test.compound_result_consumer",
                     operator_version=1,
+                    plugin_slug="test.conversion-path",
                     config={},
                 ),
             ],
@@ -530,12 +537,14 @@ def test_projection_runs_before_every_step_in_a_transitive_conversion_path(
                     id="compound",
                     operator_id="test.compound_producer",
                     operator_version=1,
+                    plugin_slug="test.conversion-path",
                     config={},
                 ),
                 RunNodeRequest(
                     id="consumer",
                     operator_id="test.compound_result_consumer",
                     operator_version=1,
+                    plugin_slug="test.conversion-path",
                     config={},
                 ),
             ],
@@ -606,6 +615,7 @@ def test_sequence_items_each_traverse_the_full_conversion_path_before_mapping(
                     id="consumer",
                     operator_id="test.compound_result_consumer",
                     operator_version=1,
+                    plugin_slug="test.conversion-path",
                     config={},
                 ),
             ],
@@ -691,6 +701,7 @@ def test_invalid_conversion_paths_are_rejected_before_node_execution(
                     id="consumer",
                     operator_id="test.compound_result_consumer",
                     operator_version=1,
+                    plugin_slug="test.conversion-path",
                     config={},
                 ),
             ],
@@ -739,6 +750,7 @@ def test_conversion_path_errors_identify_the_exact_failing_step(
                     id="consumer",
                     operator_id="test.compound_result_consumer",
                     operator_version=1,
+                    plugin_slug="test.conversion-path",
                     config={},
                 ),
             ],
@@ -872,7 +884,9 @@ def test_invalid_conversion_is_422_before_node_execution(
     response = builtin_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json=RunRequest(
-            nodes=[RunNodeRequest.model_validate(node) for node in nodes],
+            nodes=pin_selected_system_nodes(
+                [UnpinnedRunNodeRequest.model_validate(node) for node in nodes]
+            ),
             edges=[RunEdgeRequest.model_validate(edge)],
         ).model_dump(mode="json"),
     )
@@ -1583,7 +1597,7 @@ def test_unknown_operator_version_is_rejected_before_execution(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
         json=RunRequest(
             nodes=[
-                RunNodeRequest(
+                UnpinnedRunNodeRequest(
                     id="number",
                     operator_id="arithmetic.number",
                     operator_version=99,
@@ -1596,7 +1610,8 @@ def test_unknown_operator_version_is_rejected_before_execution(
 
     assert response.status_code == 422
     assert response.json()["detail"] == (
-        "Unknown operator 'arithmetic.number' at version 99. If this operator belongs to a Workspace Plugin, the node must pin one exact Plugin release"
+        "Node 'number' (arithmetic.number@99) is executable Plugin code and must "
+        "pin one exact Plugin release with scope, slug, and revision"
     )
 
 

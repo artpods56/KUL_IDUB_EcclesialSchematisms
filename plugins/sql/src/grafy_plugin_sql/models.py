@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
-from grafy_core.operators.tables import Table
+from grafy_core.table_contracts import Table
 
 
 type SqlValue = str | int | float | bool | None | list[SqlValue] | dict[str, SqlValue]

@@ -29,8 +29,8 @@ from openai.types.shared_params import ResponseFormatJSONSchema
 from pydantic import SecretStr, ValidationError
 
 from grafy_core.artifacts import JsonObject, UnitOfWorkPort
-from grafy_core.operators.prompts import PromptMessage, PromptMessageRole
-from grafy_core.operators.schemas import (
+from grafy_core.prompt_contracts import PromptMessage, PromptMessageRole
+from grafy_core.schema_contracts import (
     parse_json_schema,
     validate_json_schema_value,
 )

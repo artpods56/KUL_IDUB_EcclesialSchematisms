@@ -3,23 +3,19 @@ from io import BytesIO
 from pathlib import Path
 
 from grafy_core.artifacts import InMemoryUnitOfWork
-from grafy_core.operators.arithmetic import ARITHMETIC
-from grafy_core.operators.prompts import PROMPTS
-from grafy_core.operators.schemas import SCHEMAS
-from grafy_core.operators.sequences import SEQUENCES
-from grafy_core.operators.images import IMAGES
-from grafy_core.operators.text import TEXT, TEXT_VALUE
-from grafy_core.plugins import PluginOrigin, PluginRegistry, PluginRuntimeContext
+from grafy_plugin_arithmetic import ARITHMETIC
+from grafy_plugin_prompt import PROMPTS
+from grafy_plugin_schema import SCHEMAS
+from grafy_plugin_sequence import SEQUENCES
+from grafy_plugin_image import IMAGES
+from grafy_plugin_text.nodes import TEXT, TEXT_VALUE
+from grafy_core.plugins import PluginRegistry, PluginRuntimeContext
 from grafy_core.ports.storage import SaveFileCommand, StoredFile, StoredObjectInfo
 from grafy_core.runtime.persistence import InlineModelOutputWriter
 from grafy_core.runtime.resolvers import InlineModelResolver
 from grafy_plugin_llm import LLM
-from grafy_plugin_llm.artifacts import (
-    COMPLETION,
-    STRUCTURED_RESPONSE,
-    StructuredResponsePayload,
-)
-from grafy_plugin_llm.mistral import MistralStructuredNode
+from grafy_plugin_llm.artifacts import COMPLETION, CompletionPayload
+from grafy_plugin_llm.openai_compatible import OpenAICompatibleNode
 
 
 class EmptyStorage:
@@ -60,8 +56,8 @@ class EmptyStorage:
 def test_llm_plugin_declares_complete_runtime_contributions(tmp_path: Path) -> None:
     registry = PluginRegistry()
     for builtin in (IMAGES, SEQUENCES, ARITHMETIC, TEXT, SCHEMAS, PROMPTS):
-        registry.install(builtin, origin=PluginOrigin.BUILTIN)
-    registry.install(LLM, origin=PluginOrigin.EXTERNAL)
+        registry.install(builtin)
+    registry.install(LLM)
     context = PluginRuntimeContext(
         workspace=tmp_path,
         uploads_dir=tmp_path / "uploads",
@@ -75,20 +71,7 @@ def test_llm_plugin_declares_complete_runtime_contributions(tmp_path: Path) -> N
     registry.freeze()
 
     llm_plugin = next(plugin for plugin in registry.plugins if plugin.slug == LLM.slug)
-    llm_registration = next(
-        registration
-        for registration in registry.nodes
-        if registration.key == ("llm.mistral.structured", 2)
-    )
-    assert llm_plugin.origin is PluginOrigin.EXTERNAL
-    assert llm_registration.node_class is MistralStructuredNode
-    assert llm_registration.node_class.plugin_slug == "external.llm"
-    assert STRUCTURED_RESPONSE.key in {
-        artifact_type.key for artifact_type in registry.artifact_types
-    }
-    assert STRUCTURED_RESPONSE.payload_schema == (
-        StructuredResponsePayload.model_json_schema()
-    )
+    assert llm_plugin.title == "LLM"
     completion = next(
         artifact_type
         for artifact_type in registry.artifact_types
@@ -101,31 +84,29 @@ def test_llm_plugin_declares_complete_runtime_contributions(tmp_path: Path) -> N
     )
     assert content_projection.target == TEXT_VALUE.key
     assert isinstance(
-        registry.build_node("llm.mistral.structured", 2, context),
-        MistralStructuredNode,
+        registry.build_node("llm.openai_compatible.chat_completion", 1, context),
+        OpenAICompatibleNode,
     )
 
     resolvers = registry.build_resolvers(context)
     writers = registry.build_writers(context)
 
     llm_resolver = next(
-        resolver for resolver in resolvers if resolver.source == STRUCTURED_RESPONSE.key
+        resolver for resolver in resolvers if resolver.source == COMPLETION.key
     )
     llm_writer = next(
-        writer for writer in writers if writer.artifact_type == STRUCTURED_RESPONSE.key
+        writer for writer in writers if writer.artifact_type == COMPLETION.key
     )
     assert isinstance(llm_resolver, InlineModelResolver)
-    assert llm_resolver.target is StructuredResponsePayload
+    assert llm_resolver.target is CompletionPayload
     assert isinstance(llm_writer, InlineModelOutputWriter)
 
 
-def test_llm_package_metadata_declares_plugin_entry_point() -> None:
+def test_llm_package_metadata_has_no_ambient_plugin_entry_point() -> None:
     project_root = Path(__file__).parents[3]
     metadata = tomllib.loads(
         (project_root / "plugins" / "llm" / "pyproject.toml").read_text()
     )
 
     assert metadata["project"]["name"] == "grafy-plugin-llm"
-    assert metadata["project"]["entry-points"]["grafy.plugins"] == {
-        "llm": "grafy_plugin_llm.plugin:LLM"
-    }
+    assert "entry-points" not in metadata["project"]

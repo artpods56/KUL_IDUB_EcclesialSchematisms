@@ -26,7 +26,7 @@ from grafy_core.nodes import (
     derive_input_contract,
     derive_output_contract,
 )
-from grafy_core.plugins import NodeCachePolicy, Plugin
+from grafy_core.plugins import NodeCachePolicy, NodeRegistration, Plugin
 from grafy_core.ports.modules import GraphModuleExecutorPort
 
 
@@ -47,9 +47,9 @@ _create_dynamic_model = cast(
 )
 
 
-MODULES = Plugin(
-    slug="builtin.module",
-    title="Module",
+_MODULE_BOUNDARIES = Plugin(
+    slug="graph.module",
+    title="Workspace library",
 )
 
 MODULE_ARTIFACT_TYPE = ArtifactTypeVariable(MODULE_ARTIFACT_TYPE_VARIABLE)
@@ -91,7 +91,7 @@ class GraphModuleExecutionError(RuntimeError):
     pass
 
 
-@MODULES.node(
+@_MODULE_BOUNDARIES.node(
     operator_id=MODULE_INPUT_OPERATOR_ID,
     version=MODULE_BOUNDARY_OPERATOR_VERSION,
     title="Module input",
@@ -115,7 +115,7 @@ class ModuleInputNode(Node[ModuleInputConfig, ModuleInputInput, ModuleInputOutpu
         )
 
 
-@MODULES.node(
+@_MODULE_BOUNDARIES.node(
     operator_id=MODULE_OUTPUT_OPERATOR_ID,
     version=MODULE_BOUNDARY_OPERATOR_VERSION,
     title="Module output",
@@ -136,6 +136,12 @@ class ModuleOutputNode(
         /,
     ) -> ModuleOutputOutput:
         return ModuleOutputOutput(value=inputs.value)
+
+
+MODULE_BOUNDARY_REGISTRATIONS = cast(
+    tuple[NodeRegistration, NodeRegistration],
+    _MODULE_BOUNDARIES.nodes,
+)
 
 
 class GraphModuleInput(NodeInput):
@@ -312,8 +318,8 @@ def _output_model_for(definition: GraphModuleDefinition) -> type[GraphModuleOutp
 
 
 __all__ = [
-    "MODULES",
     "MODULE_ARTIFACT_TYPE",
+    "MODULE_BOUNDARY_REGISTRATIONS",
     "GraphModuleExecutionError",
     "GraphModuleInput",
     "GraphModuleNode",
