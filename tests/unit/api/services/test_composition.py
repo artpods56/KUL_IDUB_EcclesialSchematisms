@@ -3,13 +3,31 @@ from typing import cast
 
 from pydantic import BaseModel, ConfigDict, StrictInt
 
-from grafy_core.artifacts import ArtifactTypeKey, ArtifactTypeSpec, JsonObject
+from grafy_core.artifacts import (
+    ArtifactTypeKey,
+    ArtifactTypeSpec,
+    InMemoryUnitOfWork,
+    JsonObject,
+)
+from grafy_plugin_arithmetic.nodes import (
+    INTEGER_VALUE,
+    IntegerValueOutputWriter,
+    IntegerValueResolver,
+)
+from grafy_plugin_text.nodes import (
+    TEXT_VALUE,
+    TextValueOutputWriter,
+    TextValueResolver,
+)
 from grafy_core.plugins import Plugin, PluginRuntimeContext
 from grafy_core.runtime.resolvers import InlineModelResolver
+from grafy_storage import LocalFileObjectStore
 
-from grafy_api.builtins import builtin_plugins
-from grafy_api.plugin_discovery import build_plugin_registry
 from grafy_api.services.composition import build_workbench_components
+from tests.support.system_plugins import (
+    TEST_SYSTEM_PLUGINS,
+    build_explicit_plugin_registry,
+)
 
 
 class CompositionPayload(BaseModel):
@@ -23,6 +41,31 @@ COMPOSITION_ARTIFACT = ArtifactTypeSpec(
     title="Composition test",
     payload_schema=cast(JsonObject, CompositionPayload.model_json_schema()),
 )
+
+
+def test_builtin_scalar_runtime_contributions_come_from_plugin_registry(
+    tmp_path: Path,
+) -> None:
+    registry = build_explicit_plugin_registry()
+    context = PluginRuntimeContext(
+        workspace=tmp_path,
+        uploads_dir=tmp_path / "uploads",
+        storage=LocalFileObjectStore(tmp_path / "objects"),
+        uow=InMemoryUnitOfWork(),
+        bucket="artifacts",
+    )
+
+    resolvers = {
+        resolver.source: resolver for resolver in registry.build_resolvers(context)
+    }
+    writers = {
+        writer.artifact_type: writer for writer in registry.build_writers(context)
+    }
+
+    assert isinstance(resolvers[INTEGER_VALUE.key], IntegerValueResolver)
+    assert isinstance(writers[INTEGER_VALUE.key], IntegerValueOutputWriter)
+    assert isinstance(resolvers[TEXT_VALUE.key], TextValueResolver)
+    assert isinstance(writers[TEXT_VALUE.key], TextValueOutputWriter)
 
 
 def test_plugin_factories_receive_an_existing_upload_directory(tmp_path: Path) -> None:
@@ -42,9 +85,8 @@ def test_plugin_factories_receive_an_existing_upload_directory(tmp_path: Path) -
         )
 
     plugin.register_resolver(resolver_factory)
-    registry = build_plugin_registry(
-        (*builtin_plugins(), plugin),
-        external_plugins=(),
+    registry = build_explicit_plugin_registry(
+        (*TEST_SYSTEM_PLUGINS, plugin),
     )
 
     build_workbench_components(

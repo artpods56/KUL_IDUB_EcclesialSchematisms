@@ -20,27 +20,30 @@ from grafy_core.artifacts import (
     NodeOutput,
 )
 from grafy_core.domain.plugin_releases import (
-    PluginCapabilityManifest,
     PluginRelease,
+    PluginReleaseNamespace,
+    PluginReleaseScope,
     PluginRuntimeArtifact,
     plugin_contract_digest,
     plugin_profile_digest,
     plugin_protocol_digest,
 )
+from grafy_core.domain.plugin_revocations import PluginReleaseRevocation
 from grafy_core.nodes import NodeExecutionContext
-from grafy_core.operators.tables import (
+from grafy_core.table_contracts import (
     Table,
-    TableArtifactWriter,
     TableColumn,
     TableValueType,
 )
+from grafy_plugin_table.persistence import TableArtifactWriter
 from grafy_core.runtime.materialization import MaterializationProvenance
 from grafy_core.runtime.persistence import ArtifactWriteContext
 from grafy_core.runtime.plugin_invocation import (
     PluginInvocationError,
-    WorkspacePluginNodeConfig,
-    WorkspacePluginReleaseNode,
+    PluginReleaseNodeConfig,
+    PluginReleaseNode,
 )
+from grafy_core.runtime.plugin_loader import WORKSPACE_PLUGIN_LOADER_TARGET
 from grafy_core.runtime.plugin_protocol import PluginInvocationLimits
 from grafy_storage import LocalFileObjectStore
 
@@ -69,14 +72,36 @@ class ReleaseLookup:
         workspace_id: UUID,
         slug: str,
         revision: int,
+        *,
+        scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE,
     ) -> PluginRelease | None:
         for release in self.releases:
             if (
-                workspace_id == release.workspace_id
+                scope is release.scope
+                and workspace_id == release.workspace_id
                 and slug == release.slug
                 and revision == release.revision
             ):
                 return release
+        return None
+
+    async def get_revocation(
+        self,
+        *,
+        workspace_id: UUID,
+        slug: str,
+        revision: int,
+    ) -> PluginReleaseRevocation | None:
+        del workspace_id, slug, revision
+        return None
+
+    async def get_system_revocation(
+        self,
+        *,
+        slug: str,
+        revision: int,
+    ) -> PluginReleaseRevocation | None:
+        del slug, revision
         return None
 
     async def list_runtime_artifacts(self) -> list[PluginRuntimeArtifact]:
@@ -236,16 +261,24 @@ async def test_docker_runtime_restores_reuses_hardens_and_cleans_sandbox(
         profile=profile,
     )
     artifact = await builder.build_and_store(
-        workspace_id=WORKSPACE_ID,
+        namespace=PluginReleaseNamespace(
+            scope=PluginReleaseScope.WORKSPACE,
+            workspace_id=WORKSPACE_ID,
+        ),
         catalog=verified.catalog,
+        loader_target=WORKSPACE_PLUGIN_LOADER_TARGET,
         source_archive=verified.source_archive,
         source_digest=source_digest,
         contract_digest=contract_digest,
         profile_digest=profile_digest,
     )
     repeated_artifact = await builder.build_and_store(
-        workspace_id=WORKSPACE_ID,
+        namespace=PluginReleaseNamespace(
+            scope=PluginReleaseScope.WORKSPACE,
+            workspace_id=WORKSPACE_ID,
+        ),
         catalog=verified.catalog,
+        loader_target=WORKSPACE_PLUGIN_LOADER_TARGET,
         source_archive=verified.source_archive,
         source_digest=source_digest,
         contract_digest=contract_digest,
@@ -270,14 +303,9 @@ async def test_docker_runtime_restores_reuses_hardens_and_cleans_sandbox(
         runtime_image_digest=artifact.manifest_digest,
         runtime_artifact=artifact,
     )
-    second_capabilities = PluginCapabilityManifest(
-        capabilities=("runtime.test",),
-    )
     second_release = replace(
         release,
         revision=2,
-        capabilities=second_capabilities,
-        capability_digest=second_capabilities.digest,
         descriptor_digest=None,
     )
     subprocess.run(
@@ -355,36 +383,36 @@ async def test_docker_runtime_restores_reuses_hardens_and_cleans_sandbox(
         for node in release.catalog.nodes
         if node.operator_id == "notes.summary.render"
     )
-    node: WorkspacePluginReleaseNode[
-        WorkspacePluginNodeConfig,
+    node: PluginReleaseNode[
+        PluginReleaseNodeConfig,
         NodeInput,
         NodeOutput,
-    ] = WorkspacePluginReleaseNode(release, contract, invoker)
-    second_release_node: WorkspacePluginReleaseNode[
-        WorkspacePluginNodeConfig,
+    ] = PluginReleaseNode(release, contract, invoker)
+    second_release_node: PluginReleaseNode[
+        PluginReleaseNodeConfig,
         NodeInput,
         NodeOutput,
-    ] = WorkspacePluginReleaseNode(second_release, contract, invoker)
+    ] = PluginReleaseNode(second_release, contract, invoker)
     summarize_contract = next(
         catalog_node
         for catalog_node in release.catalog.nodes
         if catalog_node.operator_id == "notes.table.summarize"
     )
-    summarize_node: WorkspacePluginReleaseNode[
-        WorkspacePluginNodeConfig,
+    summarize_node: PluginReleaseNode[
+        PluginReleaseNodeConfig,
         NodeInput,
         NodeOutput,
-    ] = WorkspacePluginReleaseNode(release, summarize_contract, invoker)
+    ] = PluginReleaseNode(release, summarize_contract, invoker)
     probe_contract = next(
         catalog_node
         for catalog_node in release.catalog.nodes
         if catalog_node.operator_id == "notes.runtime.probe"
     )
-    probe_node: WorkspacePluginReleaseNode[
-        WorkspacePluginNodeConfig,
+    probe_node: PluginReleaseNode[
+        PluginReleaseNodeConfig,
         NodeInput,
         NodeOutput,
-    ] = WorkspacePluginReleaseNode(release, probe_contract, invoker)
+    ] = PluginReleaseNode(release, probe_contract, invoker)
     config = node.config_contract.model.model_validate({})
     inputs = node.input_contract.model.model_validate(
         {"summary": source_artifact.ref()}
@@ -616,11 +644,11 @@ async def test_docker_runtime_restores_reuses_hardens_and_cleans_sandbox(
             bucket="runtime-test",
             storage_backend="local",
         )
-        pid_probe: WorkspacePluginReleaseNode[
-            WorkspacePluginNodeConfig,
+        pid_probe: PluginReleaseNode[
+            PluginReleaseNodeConfig,
             NodeInput,
             NodeOutput,
-        ] = WorkspacePluginReleaseNode(release, probe_contract, pid_limited_invoker)
+        ] = PluginReleaseNode(release, probe_contract, pid_limited_invoker)
         with pytest.raises(PluginInvocationError, match="operator_failure"):
             await pid_probe.run(
                 NodeExecutionContext(
@@ -642,11 +670,11 @@ async def test_docker_runtime_restores_reuses_hardens_and_cleans_sandbox(
             bucket="runtime-test",
             storage_backend="local",
         )
-        output_probe: WorkspacePluginReleaseNode[
-            WorkspacePluginNodeConfig,
+        output_probe: PluginReleaseNode[
+            PluginReleaseNodeConfig,
             NodeInput,
             NodeOutput,
-        ] = WorkspacePluginReleaseNode(
+        ] = PluginReleaseNode(
             release,
             probe_contract,
             output_limited_invoker,
@@ -672,11 +700,11 @@ async def test_docker_runtime_restores_reuses_hardens_and_cleans_sandbox(
             bucket="runtime-test",
             storage_backend="local",
         )
-        timeout_probe: WorkspacePluginReleaseNode[
-            WorkspacePluginNodeConfig,
+        timeout_probe: PluginReleaseNode[
+            PluginReleaseNodeConfig,
             NodeInput,
             NodeOutput,
-        ] = WorkspacePluginReleaseNode(release, probe_contract, timeout_invoker)
+        ] = PluginReleaseNode(release, probe_contract, timeout_invoker)
         with pytest.raises(PluginInvocationError, match="timeout"):
             await timeout_probe.run(
                 NodeExecutionContext(
@@ -772,11 +800,11 @@ async def test_docker_runtime_restores_reuses_hardens_and_cleans_sandbox(
             bucket="runtime-test",
             storage_backend="local",
         )
-        log_probe: WorkspacePluginReleaseNode[
-            WorkspacePluginNodeConfig,
+        log_probe: PluginReleaseNode[
+            PluginReleaseNodeConfig,
             NodeInput,
             NodeOutput,
-        ] = WorkspacePluginReleaseNode(release, probe_contract, log_limited_invoker)
+        ] = PluginReleaseNode(release, probe_contract, log_limited_invoker)
         with pytest.raises(PluginInvocationError, match="internal_adapter_failure"):
             await log_probe.run(
                 NodeExecutionContext(
@@ -789,11 +817,11 @@ async def test_docker_runtime_restores_reuses_hardens_and_cleans_sandbox(
                 log_probe.input_contract.model.model_validate({}),
             )
 
-        memory_probe: WorkspacePluginReleaseNode[
-            WorkspacePluginNodeConfig,
+        memory_probe: PluginReleaseNode[
+            PluginReleaseNodeConfig,
             NodeInput,
             NodeOutput,
-        ] = WorkspacePluginReleaseNode(release, probe_contract, invoker)
+        ] = PluginReleaseNode(release, probe_contract, invoker)
         with pytest.raises(PluginInvocationError, match="internal_adapter_failure"):
             await memory_probe.run(
                 NodeExecutionContext(

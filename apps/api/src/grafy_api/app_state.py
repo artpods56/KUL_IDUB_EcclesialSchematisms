@@ -16,6 +16,7 @@ from grafy_core.plugins import PluginRegistry
 from grafy_persistence.database import Database
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
+from grafy_api.plugin_admission import ReleaseExecutionAdmission
 from grafy_api.settings import Settings
 from grafy_api.v1.routes.artifacts.services import ArtifactService
 from grafy_api.v1.routes.auth.services import AuthService
@@ -89,6 +90,7 @@ class AppResources:
     graph_room_hub: GraphRoomHub
     plugin_invoker: ArtifactBundlePluginInvoker | None
     plugin_runtime: DockerPluginRuntime | None
+    release_admission: ReleaseExecutionAdmission | None
 
     async def capacity_diagnostics(self) -> CapacityDiagnostics:
         return CapacityDiagnostics(

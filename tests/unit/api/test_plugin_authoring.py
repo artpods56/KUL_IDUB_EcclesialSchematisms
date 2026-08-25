@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+import shutil
 from uuid import UUID
 
 import pytest
@@ -15,12 +16,18 @@ from grafy_api.plugin_publication import (
     PluginPublicationWorkflow,
 )
 from grafy_api.plugin_publishing import PluginDirectoryPublisher
+from grafy_api.system_plugin_inventory import (
+    CHECKED_IN_SYSTEM_PLUGIN_INVENTORY_PATH,
+    load_system_plugin_inventory,
+)
 from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.domain.errors import UserDisabledError
 from grafy_core.domain.plugin_releases import (
     PluginCatalogManifest,
+    PluginReleaseNamespace,
     PluginRuntimeArtifact,
 )
+from grafy_core.runtime.plugin_loader import WORKSPACE_PLUGIN_LOADER_TARGET
 from grafy_persistence.database import create_database
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 from grafy_storage import LocalFileObjectStore
@@ -39,13 +46,15 @@ ACTOR_ID = TEST_USER_ID
 class RecordingImageBuilder(PluginOciImageBuilder):
     def __init__(self) -> None:
         self.build_count = 0
+        self.loader_targets: list[str] = []
 
     @override
     async def build_and_store(
         self,
         *,
-        workspace_id: UUID,
+        namespace: PluginReleaseNamespace,
         catalog: PluginCatalogManifest,
+        loader_target: str,
         source_archive: bytes,
         source_digest: str,
         contract_digest: str,
@@ -53,9 +62,10 @@ class RecordingImageBuilder(PluginOciImageBuilder):
     ) -> PluginRuntimeArtifact:
         del source_archive
         self.build_count += 1
+        self.loader_targets.append(loader_target)
         return PluginRuntimeArtifact(
             object_key=(
-                f"plugin-releases/{workspace_id}/{catalog.slug}/runtime/"
+                f"plugin-releases/{namespace.storage_path}/{catalog.slug}/runtime/"
                 f"{source_digest}.oci.tar"
             ),
             archive_digest=source_digest,
@@ -85,6 +95,7 @@ def test_agent_authoring_scaffolds_reviews_fences_and_uses_shared_publisher(
         ),
         image_builder,
         releases,
+        load_system_plugin_inventory(CHECKED_IN_SYSTEM_PLUGIN_INVENTORY_PATH),
     )
     authoring = PluginAuthoringService(
         authoring_root=plugin_root,
@@ -115,6 +126,7 @@ def test_agent_authoring_scaffolds_reviews_fences_and_uses_shared_publisher(
         actor_user_id=ACTOR_ID,
     )
     project = reservation.project_directory
+    assert project == plugin_root / str(WORKSPACE_ID) / "generated-notes"
     assert (project / "pyproject.toml").is_file()
     assert (project / "uv.lock").is_file()
     assert (project / "src" / "grafy_plugin" / "__init__.py").is_file()
@@ -123,6 +135,27 @@ def test_agent_authoring_scaffolds_reviews_fences_and_uses_shared_publisher(
     assert "generated.node" not in (
         project / "src" / "grafy_plugin" / "nodes.py"
     ).read_text(encoding="utf-8")
+
+    other_workspace_id = UUID(int=2)
+    other_project = plugin_root / str(other_workspace_id) / "generated-notes"
+    shutil.copytree(
+        project,
+        other_project,
+        ignore=shutil.ignore_patterns(".grafy", ".venv"),
+    )
+    other_reservation = authoring.reserve(
+        workspace_id=other_workspace_id,
+        slug="generated-notes",
+        actor_user_id=ACTOR_ID,
+    )
+    assert other_reservation.project_directory == other_project
+    assert other_reservation.project_directory != project
+    authoring.release(
+        workspace_id=other_workspace_id,
+        slug="generated-notes",
+        actor_user_id=ACTOR_ID,
+        session_id=other_reservation.session_id,
+    )
 
     with pytest.raises(PluginAuthoringConflictError, match="active authoring"):
         authoring.reserve(
@@ -198,4 +231,8 @@ def test_agent_authoring_scaffolds_reviews_fences_and_uses_shared_publisher(
     )
     assert human_release == agent_release
     assert image_builder.build_count == 2
+    assert image_builder.loader_targets == [
+        WORKSPACE_PLUGIN_LOADER_TARGET,
+        WORKSPACE_PLUGIN_LOADER_TARGET,
+    ]
     asyncio.run(database.dispose())

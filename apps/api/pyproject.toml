@@ -13,6 +13,13 @@ dependencies = [
     "httpx>=0.28.0",
     "grafy-core",
     "grafy-persistence",
+    "grafy-plugin-arithmetic",
+    "grafy-plugin-image",
+    "grafy-plugin-prompt",
+    "grafy-plugin-schema",
+    "grafy-plugin-sequence",
+    "grafy-plugin-table",
+    "grafy-plugin-text",
     "grafy-storage",
     "pillow",
     "pydantic",
@@ -20,7 +27,7 @@ dependencies = [
     "python-multipart>=0.0.20",
     "starlette<1.0.0",
     "truststore>=0.10.4",
-    "uvicorn>=0.38.0",
+    "uvicorn[standard]>=0.38.0",
 ]
 
 [project.scripts]
@@ -30,6 +37,13 @@ grafy-admin = "grafy_api.admin:main"
 [tool.uv.sources]
 grafy-core = { workspace = true }
 grafy-persistence = { workspace = true }
+grafy-plugin-arithmetic = { path = "../../plugins/arithmetic" }
+grafy-plugin-image = { path = "../../plugins/image" }
+grafy-plugin-prompt = { path = "../../plugins/prompt" }
+grafy-plugin-schema = { path = "../../plugins/schema" }
+grafy-plugin-sequence = { path = "../../plugins/sequence" }
+grafy-plugin-table = { path = "../../plugins/table" }
+grafy-plugin-text = { path = "../../plugins/text" }
 grafy-storage = { workspace = true }
 
 [tool.basedpyright]

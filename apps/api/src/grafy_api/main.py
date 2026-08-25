@@ -26,6 +26,8 @@ from grafy_core.domain.errors import (
     NotFoundError,
     UserDisabledError,
 )
+from grafy_core.operators.modules import MODULE_BOUNDARY_REGISTRATIONS
+from grafy_core.plugins import PluginRegistry
 
 from grafy_persistence.database import create_database
 from grafy_persistence.unit_of_work import (
@@ -33,13 +35,15 @@ from grafy_persistence.unit_of_work import (
     SqlAlchemyUnitOfWork,
 )
 from grafy_api.app_state import AppIdentity, AppResources, get_identity
-from grafy_api.builtins import builtin_plugins
-from grafy_api.plugin_discovery import build_plugin_registry
 from grafy_api.plugin_oci import runtime_profile
 from grafy_api.services.composition import build_workbench_components
 from grafy_api.settings import Settings, get_settings
 from grafy_api.single_owner import ApiOwnerLease
 from grafy_api.storage import configured_file_storage
+from grafy_api.system_plugin_loader import (
+    LoadedSystemPluginDeployment,
+    load_system_plugin_deployment_file,
+)
 from grafy_api.v1.routes.auth.services import (
     OIDC_TRANSACTION_COOKIE,
     AuthService,
@@ -239,7 +243,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     resolved_settings.workspace / ".grafy-api-owner.lock"
                 )
                 owner_lease.acquire()
-            registry = build_plugin_registry(builtin_plugins())
+            loaded_deployment = LoadedSystemPluginDeployment(
+                plugins=(),
+                loaded_plugins=(),
+                bindings=(),
+            )
+            deployment_manifest = (
+                resolved_settings.resolved_system_plugin_deployment_manifest
+            )
+            if deployment_manifest is not None:
+                loaded_deployment = load_system_plugin_deployment_file(
+                    deployment_manifest
+                )
+
+            registry = PluginRegistry()
+            registry.register_module_boundaries(MODULE_BOUNDARY_REGISTRATIONS)
+            for plugin in loaded_deployment.plugins:
+                registry.install(plugin)
+            registry.freeze()
             storage = configured_file_storage(resolved_settings)
             saved_graphs = SavedGraphService(
                 lambda: SqlAlchemySavedGraphUnitOfWork(database.sessions),
@@ -255,6 +276,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 bucket=resolved_settings.storage_bucket,
             )
             plugin_runtime: DockerPluginRuntime | None = None
+            network_policy = resolved_settings.resolved_network_policy
             if resolved_settings.plugin_runtime_enabled:
                 seccomp_profile = resolved_settings.resolved_plugin_seccomp_profile
                 if seccomp_profile is not None and not seccomp_profile.is_file():
@@ -265,7 +287,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     releases=plugin_releases,
                     storage=storage,
                     bucket=resolved_settings.storage_bucket,
-                    profile=runtime_profile(resolved_settings.plugin_runtime_profile),
+                    profile=runtime_profile(
+                        resolved_settings.plugin_runtime_profile,
+                        native_base_image=(
+                            resolved_settings.plugin_runtime_native_base_image
+                        ),
+                        native_base_image_digest=(
+                            resolved_settings.plugin_runtime_native_base_image_digest
+                        ),
+                    ),
                     scratch_root=(
                         resolved_settings.workspace / "plugin-runtime" / "scratch"
                     ),
@@ -275,8 +305,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     max_distinct_releases_per_scope=(
                         resolved_settings.max_distinct_plugin_releases_per_graph
                     ),
+                    max_sandbox_variants_per_scope=(
+                        resolved_settings.max_plugin_sandbox_variants_per_execution
+                    ),
+                    egress_policy=(
+                        resolved_settings.resolved_plugin_egress_policy
+                    ),
+                    network_policy=network_policy,
                 )
                 await plugin_runtime.recover_orphans()
+                for profile in network_policy.profiles:
+                    logger.info(
+                        "network_profile plane=%s name=%s mode=%s digest=%s",
+                        profile.plane.value,
+                        profile.name,
+                        profile.mode.value,
+                        profile.policy_digest,
+                    )
             templates = TemplateService(lambda: SqlAlchemyUnitOfWork(database.sessions))
             collaboration = CollaborationService(
                 lambda: SqlAlchemyUnitOfWork(database.sessions),
@@ -308,8 +353,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 module_library=module_library,
                 plugin_releases=plugin_releases,
                 plugin_runtime=plugin_runtime,
+                system_host_bindings=loaded_deployment.bindings,
+                loaded_system_plugins=loaded_deployment.loaded_plugins,
                 node_secrets=node_secrets,
                 graph_room_hub=graph_room_hub,
+                network_policy=network_policy,
             )
             resources = AppResources(
                 database=database,
@@ -332,6 +380,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 graph_room_hub=graph_room_hub,
                 plugin_invoker=components.plugin_invoker,
                 plugin_runtime=components.plugin_runtime,
+                release_admission=components.release_admission,
             )
             try:
                 await components.execution_history.interrupt_started()

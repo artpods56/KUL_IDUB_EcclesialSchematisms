@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import Iterator
 from pathlib import Path
+from typing import cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,12 +11,12 @@ from pydantic import SecretStr
 
 from grafy_core.artifacts import InMemoryUnitOfWork
 from grafy_core.application.saved_graphs import SavedGraphService
-from grafy_core.operators.tables import TableArtifactWriter
+from grafy_core.application.plugin_releases import PluginReleaseService
+from grafy_core.canonical_conversions import CANONICAL_ARTIFACT_CONVERSIONS_BY_KEY
+from grafy_plugin_table.persistence import TableArtifactWriter
 from grafy_persistence.database import create_database
 from grafy_persistence.unit_of_work import SqlAlchemySavedGraphUnitOfWork
 
-from grafy_api.builtins import builtin_plugins
-from grafy_api.plugin_discovery import build_plugin_registry
 from grafy_api.services.composition import (
     WorkbenchComponents,
     build_workbench_components,
@@ -28,6 +29,10 @@ from tests.support.scenarios.conversion_path import CONVERSION_PATH_PLUGIN
 from tests.support.scenarios.structural_projection import (
     STRUCTURAL_PROJECTION_PLUGIN,
 )
+from tests.support.system_plugins import (
+    TEST_SYSTEM_PLUGINS,
+    build_selected_system_plugin_deployment,
+)
 from tests.support.workbench import workbench_dependency_overrides
 from tests.testkit import client_with_overrides
 
@@ -36,10 +41,8 @@ from tests.testkit import client_with_overrides
 def builtin_client(tmp_path: Path) -> Iterator[TestClient]:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'api.sqlite3'}"
     asyncio.run(create_schema(database_url))
-    registry = build_plugin_registry(
-        builtin_plugins(),
-        external_plugins=(),
-    )
+    deployment = build_selected_system_plugin_deployment()
+    registry = deployment.registry
     saved_graph_database = create_database(database_url)
     saved_graphs = SavedGraphService(
         lambda: SqlAlchemySavedGraphUnitOfWork(saved_graph_database.sessions),
@@ -49,6 +52,9 @@ def builtin_client(tmp_path: Path) -> Iterator[TestClient]:
         plugin_registry=registry,
         workspace=tmp_path / "workbench",
         saved_graphs=saved_graphs,
+        plugin_releases=cast(PluginReleaseService, deployment.release_lookup),
+        system_host_bindings=deployment.host_bindings,
+        loaded_system_plugins=deployment.loaded_plugins,
     )
     try:
         with client_with_overrides(
@@ -69,10 +75,8 @@ def table_artifact_client(
 ) -> Iterator[tuple[TestClient, TableArtifactWriter, WorkbenchComponents]]:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'api.sqlite3'}"
     asyncio.run(create_schema(database_url))
-    registry = build_plugin_registry(
-        builtin_plugins(),
-        external_plugins=(),
-    )
+    deployment = build_selected_system_plugin_deployment()
+    registry = deployment.registry
     unit_of_work = InMemoryUnitOfWork()
     storage = LocalFileObjectStore(tmp_path / "workbench" / "objects")
     components = build_workbench_components(
@@ -80,6 +84,9 @@ def table_artifact_client(
         workspace=tmp_path / "workbench",
         unit_of_work=unit_of_work,
         storage=storage,
+        plugin_releases=cast(PluginReleaseService, deployment.release_lookup),
+        system_host_bindings=deployment.host_bindings,
+        loaded_system_plugins=deployment.loaded_plugins,
     )
     writer = TableArtifactWriter(
         storage=storage,
@@ -103,15 +110,22 @@ def conversion_path_client(
 ) -> Iterator[tuple[TestClient, InMemoryUnitOfWork]]:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'api.sqlite3'}"
     asyncio.run(create_schema(database_url))
-    registry = build_plugin_registry(
-        (*builtin_plugins(), CONVERSION_PATH_PLUGIN),
-        external_plugins=(),
+    deployment = build_selected_system_plugin_deployment(
+        (*TEST_SYSTEM_PLUGINS, CONVERSION_PATH_PLUGIN),
     )
+    registry = deployment.registry
+    canonical_conversions = dict(CANONICAL_ARTIFACT_CONVERSIONS_BY_KEY)
+    for conversion in CONVERSION_PATH_PLUGIN.artifact_conversions:
+        canonical_conversions[conversion.key] = conversion
     uow = InMemoryUnitOfWork()
     components = build_workbench_components(
         plugin_registry=registry,
         workspace=tmp_path / "workbench",
         unit_of_work=uow,
+        canonical_artifact_conversions=canonical_conversions,
+        plugin_releases=cast(PluginReleaseService, deployment.release_lookup),
+        system_host_bindings=deployment.host_bindings,
+        loaded_system_plugins=deployment.loaded_plugins,
     )
     with client_with_overrides(
         settings=Settings(
@@ -127,13 +141,16 @@ def conversion_path_client(
 def structural_projection_client(tmp_path: Path) -> Iterator[TestClient]:
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'api.sqlite3'}"
     asyncio.run(create_schema(database_url))
-    registry = build_plugin_registry(
-        (*builtin_plugins(), STRUCTURAL_PROJECTION_PLUGIN),
-        external_plugins=(),
+    deployment = build_selected_system_plugin_deployment(
+        (*TEST_SYSTEM_PLUGINS, STRUCTURAL_PROJECTION_PLUGIN),
     )
+    registry = deployment.registry
     components = build_workbench_components(
         plugin_registry=registry,
         workspace=tmp_path / "workbench",
+        plugin_releases=cast(PluginReleaseService, deployment.release_lookup),
+        system_host_bindings=deployment.host_bindings,
+        loaded_system_plugins=deployment.loaded_plugins,
     )
     with client_with_overrides(
         settings=Settings(

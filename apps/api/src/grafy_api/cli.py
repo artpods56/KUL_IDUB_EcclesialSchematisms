@@ -6,18 +6,144 @@ from pathlib import Path
 from uuid import UUID
 
 from grafy_core.application.plugin_releases import PluginReleaseService
+from grafy_core.domain.plugin_releases import (
+    PlatformPluginActor,
+    PluginDistribution,
+    PluginExecutionPolicy,
+)
+from grafy_core.domain.plugin_revocations import PluginReleaseRevocationReason
 from grafy_persistence.database import create_database
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
+from grafy_api.plugin_admission import ReleaseExecutionAdmission
 from grafy_api.plugin_authoring import PluginAuthoringService
-from grafy_api.plugin_publication import PluginPublicationWorkflow
+from grafy_api.plugin_publication import (
+    PluginPublicationWorkflow,
+    SystemPluginPublicationWorkflow,
+    SystemPluginRevocationWorkflow,
+)
+from grafy_api.plugin_publisher_sandbox import DockerPluginDirectoryPublisher
 from grafy_api.plugin_publishing import PluginDirectoryPublisher
 from grafy_api.plugin_oci import PluginOciImageBuilder, runtime_profile
+from grafy_api.network_policy import load_network_policy_manifest
 from grafy_api.settings import get_settings
 from grafy_api.storage import configured_file_storage
+from grafy_api.system_cutover import (
+    SystemBaselineCutoverService,
+    SystemCutoverCommand,
+)
+from grafy_api.system_cutover_operations import (
+    create_rollback_unit_manifest,
+    generate_system_baseline_file,
+    load_rollback_unit,
+    load_system_baseline_manifest,
+    verify_rollback_unit_manifest,
+)
+from grafy_api.system_host_bindings import SystemHostPluginBinding
+from grafy_api.system_plugin_deployment import SystemPluginDeploymentManifestBuilder
+from grafy_api.system_plugin_inventory import (
+    CHECKED_IN_SYSTEM_PLUGIN_INVENTORY_PATH,
+    SystemBaselineManifestGenerator,
+    load_system_plugin_inventory,
+)
+from grafy_api.system_plugin_loader import load_system_plugin_deployment_file
+
+
+async def _run_system_cutover(args: argparse.Namespace) -> None:
+    if args.command == "create-rollback-unit":
+        result = create_rollback_unit_manifest(
+            rollback_unit_id=args.rollback_unit_id,
+            database_backup=args.database_backup,
+            release_objects=args.release_objects,
+            artifact_storage=args.artifact_storage,
+            migration_manifest=args.migration_manifest,
+            output=args.output,
+        )
+        print(result.model_dump_json(indent=2))
+        return
+    if args.command == "verify-rollback-unit":
+        result = verify_rollback_unit_manifest(
+            manifest=args.manifest,
+            database_backup=args.database_backup,
+            release_objects=args.release_objects,
+            artifact_storage=args.artifact_storage,
+            migration_manifest=args.migration_manifest,
+        )
+        print(result.model_dump_json(indent=2))
+        return
+
+    settings = get_settings()
+    database = create_database(settings.resolved_database_url)
+    try:
+        if args.command == "generate-baseline":
+            result = await generate_system_baseline_file(
+                SystemBaselineManifestGenerator(database.sessions),
+                inventory_path=args.inventory,
+                output=args.output,
+                deployment_manifest_path=args.deployment_manifest,
+            )
+            print(result.model_dump_json(indent=2))
+            return
+
+        baseline = load_system_baseline_manifest(args.baseline)
+        rollback_unit = load_rollback_unit(args.rollback_unit)
+        command = SystemCutoverCommand(
+            mode="dry-run" if args.command == "audit" else "apply",
+            baseline=baseline,
+            rollback_unit=rollback_unit,
+            expected_precondition_token=(
+                None if args.command == "audit" else args.precondition_token
+            ),
+        )
+        report = await SystemBaselineCutoverService(database.sessions).execute(command)
+        print(report.model_dump_json(indent=2))
+    finally:
+        await database.dispose()
+
+
+async def _run_network_policy(args: argparse.Namespace) -> None:
+    """Validate the deployment network policy without mutating anything."""
+
+    settings = get_settings()
+    manifest = args.manifest or settings.resolved_network_policy_manifest
+    if manifest is None:
+        policy = settings.resolved_network_policy
+        source = "legacy GRAFY_PLUGIN_*_EGRESS_DESTINATIONS translation"
+    else:
+        policy = load_network_policy_manifest(manifest)
+        source = str(manifest)
+    print(f"network policy source: {source}")
+    for profile in policy.profiles:
+        print(
+            "profile plane="
+            f"{profile.plane.value} name={profile.name} "
+            f"mode={profile.mode.value} origins={len(profile.allowed_origins)} "
+            f"digest={profile.policy_digest}"
+        )
+    for assignment in policy.assignments:
+        target = "plane-default"
+        if assignment.scope is not None:
+            target = f"scope={assignment.scope.value}"
+            if assignment.workspace_id is not None:
+                target += f" workspace={assignment.workspace_id}"
+        if assignment.slug is not None:
+            target += f" slug={assignment.slug}"
+        if assignment.revision is not None:
+            target += f" revision={assignment.revision}"
+        print(
+            f"assignment plane={assignment.plane.value} {target} -> "
+            f"{assignment.profile}"
+        )
+    print("network policy OK")
 
 
 async def _run(args: argparse.Namespace) -> None:
+    if args.group == "network-policy":
+        await _run_network_policy(args)
+        return
+    if args.group == "system-cutover":
+        await _run_system_cutover(args)
+        return
     if args.group != "plugin":
         raise ValueError("Unsupported Grafy command")
     settings = get_settings()
@@ -29,19 +155,139 @@ async def _run(args: argparse.Namespace) -> None:
             storage,
             bucket=settings.storage_bucket,
         )
-        publication = PluginPublicationWorkflow(
-            PluginDirectoryPublisher(
+        if args.command == "revoke-system":
+            revocation = await SystemPluginRevocationWorkflow(
+                database.sessions,
+                releases,
+            ).revoke(
+                slug=args.slug,
+                revision=args.revision,
+                reason=PluginReleaseRevocationReason(args.reason),
+                platform_actor=PlatformPluginActor(args.platform_actor),
+            )
+            print(
+                f"Revoked System Plugin {revocation.slug} release "
+                f"{revocation.revision} for {revocation.reason.value}"
+            )
+            return
+        image_builder = PluginOciImageBuilder(
+            storage,
+            bucket=settings.storage_bucket,
+            profile=runtime_profile(
+                settings.plugin_runtime_profile,
+                native_base_image=settings.plugin_runtime_native_base_image,
+                native_base_image_digest=(
+                    settings.plugin_runtime_native_base_image_digest
+                ),
+            ),
+            docker_binary=settings.plugin_docker_binary,
+        )
+        system_inventory = load_system_plugin_inventory(
+            CHECKED_IN_SYSTEM_PLUGIN_INVENTORY_PATH
+        )
+        if args.command == "build-system-deployment":
+            manifest = await SystemPluginDeploymentManifestBuilder(
+                database.sessions
+            ).build(
+                system_inventory,
+                repository_root=CHECKED_IN_SYSTEM_PLUGIN_INVENTORY_PATH.parents[1],
+                output=args.output,
+                slug=args.slug,
+                revision=args.revision,
+            )
+            print(manifest.model_dump_json(indent=2))
+            return
+        if args.command in {"stage-system", "promote-system"}:
+            host_bindings: tuple[SystemHostPluginBinding, ...] = ()
+            if args.command == "promote-system":
+                deployment = load_system_plugin_deployment_file(
+                    args.deployment_manifest
+                )
+                host_bindings = deployment.bindings
+            system_publication = SystemPluginPublicationWorkflow(
+                image_builder,
+                releases,
+                ReleaseExecutionAdmission(
+                    isolated_adapter_available=True,
+                    runtime_profile=settings.plugin_runtime_profile,
+                    system_host_bindings=host_bindings,
+                ),
+                system_inventory,
+            )
+            platform_actor = PlatformPluginActor(args.platform_actor)
+            if args.command == "stage-system":
+                inventory_entry = system_inventory.entry_for(args.slug)
+                if settings.resolved_plugin_wheelhouse is not None:
+                    raise SystemExit(
+                        "System sandbox publication requires dependencies to be "
+                        "present in the frozen source or fetched from configured "
+                        "package indexes; host wheelhouse mounts are not supported"
+                    )
+                publisher = DockerPluginDirectoryPublisher(
+                    settings.resolved_plugin_roots,
+                    runtime_profile=settings.plugin_runtime_profile,
+                    image=args.sandbox_image,
+                    docker_binary=settings.plugin_docker_binary,
+                    scratch_root=(
+                        None
+                        if args.sandbox_scratch_root is None
+                        else Path(args.sandbox_scratch_root)
+                    ),
+                )
+                verified = await asyncio.to_thread(
+                    publisher.verify,
+                    Path(args.directory),
+                    expected_slug=args.slug,
+                    loader_target=inventory_entry.loader_target,
+                )
+                release = await system_publication.stage_verified(
+                    verified,
+                    execution_policy=PluginExecutionPolicy(args.execution_policy),
+                    distribution=PluginDistribution(args.distribution),
+                    platform_actor=platform_actor,
+                )
+                print(f"Staged System Plugin {release.slug} release {release.revision}")
+                return
+            selection = await system_publication.promote(
+                slug=args.slug,
+                revision=args.revision,
+                platform_actor=platform_actor,
+                expected_generation=args.expected_generation,
+            )
+            print(
+                f"Promoted System Plugin {selection.slug} release "
+                f"{selection.selected_revision} at generation {selection.generation}"
+            )
+            return
+        if args.command == "publish" and args.publisher_sandbox:
+            if args.sandbox_image is None:
+                raise SystemExit("--sandbox-image is required with --publisher-sandbox")
+            if settings.resolved_plugin_wheelhouse is not None:
+                raise SystemExit(
+                    "Docker publisher mode does not support host wheelhouse mounts"
+                )
+            publisher: PluginDirectoryPublisher = DockerPluginDirectoryPublisher(
+                settings.resolved_plugin_roots,
+                runtime_profile=settings.plugin_runtime_profile,
+                image=args.sandbox_image,
+                docker_binary=settings.plugin_docker_binary,
+                scratch_root=(
+                    None
+                    if args.sandbox_scratch_root is None
+                    else Path(args.sandbox_scratch_root)
+                ),
+            )
+        else:
+            publisher = PluginDirectoryPublisher(
                 settings.resolved_plugin_roots,
                 runtime_profile=settings.plugin_runtime_profile,
                 wheelhouse=settings.resolved_plugin_wheelhouse,
-            ),
-            PluginOciImageBuilder(
-                storage,
-                bucket=settings.storage_bucket,
-                profile=runtime_profile(settings.plugin_runtime_profile),
-                docker_binary=settings.plugin_docker_binary,
-            ),
+            )
+        publication = PluginPublicationWorkflow(
+            publisher,
+            image_builder,
             releases,
+            system_inventory,
         )
         workspace_id = UUID(args.workspace)
         if args.command == "publish":
@@ -144,6 +390,56 @@ def main() -> None:
         "declaration and the established Workspace Plugin identity",
     )
     publish.add_argument("--published-by", required=True)
+    publish.add_argument(
+        "--publisher-sandbox",
+        action="store_true",
+        help="verify in the Docker publisher boundary instead of host subprocesses",
+    )
+    publish.add_argument("--sandbox-image")
+    publish.add_argument("--sandbox-scratch-root")
+
+    stage_system = commands.add_parser("stage-system")
+    stage_system.add_argument("directory")
+    stage_system.add_argument("--slug", required=True)
+    stage_system.add_argument(
+        "--execution-policy",
+        required=True,
+        choices=tuple(policy.value for policy in PluginExecutionPolicy),
+    )
+    stage_system.add_argument(
+        "--distribution",
+        required=True,
+        choices=tuple(distribution.value for distribution in PluginDistribution),
+    )
+    stage_system.add_argument("--platform-actor", required=True)
+    stage_system.add_argument("--sandbox-image", required=True)
+    stage_system.add_argument("--sandbox-scratch-root")
+
+    build_system_deployment = commands.add_parser("build-system-deployment")
+    build_system_deployment.add_argument("--output", required=True, type=Path)
+    build_system_deployment.add_argument("--slug")
+    build_system_deployment.add_argument("--revision", type=int)
+
+    promote_system = commands.add_parser("promote-system")
+    promote_system.add_argument("--slug", required=True)
+    promote_system.add_argument("--revision", required=True, type=int)
+    promote_system.add_argument("--platform-actor", required=True)
+    promote_system.add_argument("--expected-generation", type=int)
+    promote_system.add_argument(
+        "--deployment-manifest",
+        required=True,
+        type=Path,
+    )
+
+    revoke_system = commands.add_parser("revoke-system")
+    revoke_system.add_argument("--slug", required=True)
+    revoke_system.add_argument("--revision", required=True, type=int)
+    revoke_system.add_argument(
+        "--reason",
+        required=True,
+        choices=tuple(reason.value for reason in PluginReleaseRevocationReason),
+    )
+    revoke_system.add_argument("--platform-actor", required=True)
     for name in (
         "scaffold",
         "reserve",
@@ -160,6 +456,55 @@ def main() -> None:
         if name == "scaffold":
             command.add_argument("--operator", required=True)
             command.add_argument("--title", required=True)
+
+    network_policy_group = groups.add_parser("network-policy")
+    network_policy_commands = network_policy_group.add_subparsers(
+        dest="command",
+        required=True,
+    )
+    validate_policy = network_policy_commands.add_parser(
+        "validate",
+        help="Validate the deployment network policy (non-mutating)",
+    )
+    validate_policy.add_argument(
+        "--manifest",
+        type=Path,
+        help="Manifest to validate; defaults to GRAFY_NETWORK_POLICY_MANIFEST",
+    )
+
+    system_cutover = groups.add_parser("system-cutover")
+    cutover_commands = system_cutover.add_subparsers(
+        dest="command",
+        required=True,
+    )
+    generate_baseline = cutover_commands.add_parser("generate-baseline")
+    generate_baseline.add_argument("--inventory", required=True, type=Path)
+    generate_baseline.add_argument("--output", required=True, type=Path)
+    generate_baseline.add_argument("--deployment-manifest", type=Path)
+
+    create_rollback = cutover_commands.add_parser("create-rollback-unit")
+    create_rollback.add_argument("--rollback-unit-id", required=True)
+    create_rollback.add_argument("--database-backup", required=True, type=Path)
+    create_rollback.add_argument("--release-objects", required=True, type=Path)
+    create_rollback.add_argument("--artifact-storage", required=True, type=Path)
+    create_rollback.add_argument("--migration-manifest", required=True, type=Path)
+    create_rollback.add_argument("--output", required=True, type=Path)
+
+    verify_rollback = cutover_commands.add_parser("verify-rollback-unit")
+    verify_rollback.add_argument("--manifest", required=True, type=Path)
+    verify_rollback.add_argument("--database-backup", required=True, type=Path)
+    verify_rollback.add_argument("--release-objects", required=True, type=Path)
+    verify_rollback.add_argument("--artifact-storage", required=True, type=Path)
+    verify_rollback.add_argument("--migration-manifest", required=True, type=Path)
+
+    audit_cutover = cutover_commands.add_parser("audit")
+    audit_cutover.add_argument("--baseline", required=True, type=Path)
+    audit_cutover.add_argument("--rollback-unit", required=True, type=Path)
+
+    apply_cutover = cutover_commands.add_parser("apply")
+    apply_cutover.add_argument("--baseline", required=True, type=Path)
+    apply_cutover.add_argument("--rollback-unit", required=True, type=Path)
+    apply_cutover.add_argument("--precondition-token", required=True)
     asyncio.run(_run(parser.parse_args()))
 
 

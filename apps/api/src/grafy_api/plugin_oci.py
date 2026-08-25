@@ -1,4 +1,4 @@
-"""Deployment-owned OCI profile and immutable Workspace Plugin image builder."""
+"""Deployment-owned OCI profile and immutable Plugin image builder."""
 
 import asyncio
 from dataclasses import dataclass
@@ -12,16 +12,20 @@ from tempfile import TemporaryDirectory
 import tomllib
 from typing import cast
 from urllib.parse import urlsplit
-from uuid import UUID
+
+from pydantic import ValidationError
 
 from grafy_core.domain.errors import ObjectAlreadyExistsError
 from grafy_core.domain.plugin_releases import (
     PLUGIN_INVOCATION_PROTOCOL,
     PluginCatalogManifest,
+    PluginReleaseNamespace,
     PluginRuntimeArtifact,
     plugin_protocol_digest,
 )
+from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.ports.storage import FileStoragePort, SaveFileCommand
+from grafy_core.runtime.plugin_loader import PluginGuestLoaderManifest
 
 from grafy_api.plugin_publishing import unpack_source_snapshot
 
@@ -46,16 +50,58 @@ class PluginRuntimeProfile:
     pid_limit: int = 128
     open_file_limit: int = 1_024
     scratch_bytes: int = 128 * 1_024 * 1_024
+    native_capabilities: frozenset[PluginRuntimeCapability] = frozenset()
 
     @property
     def pinned_base_image(self) -> str:
         return f"{self.base_image}@sha256:{self.base_image_digest}"
 
 
-def runtime_profile(name: str) -> PluginRuntimeProfile:
-    if name != "python-uv":
+def runtime_profile(
+    name: str,
+    *,
+    native_base_image: str | None = None,
+    native_base_image_digest: str | None = None,
+) -> PluginRuntimeProfile:
+    if name == "python-uv":
+        if native_base_image is not None or native_base_image_digest is not None:
+            raise ValueError(
+                "The python-uv profile cannot override its pinned base image"
+            )
+        return PluginRuntimeProfile()
+    native_profiles = {
+        "python-uv-gdal": frozenset({PluginRuntimeCapability.NATIVE_GDAL}),
+        "python-uv-tesseract": frozenset(
+            {PluginRuntimeCapability.NATIVE_TESSERACT}
+        ),
+        "python-uv-gdal-tesseract": frozenset(
+            {
+                PluginRuntimeCapability.NATIVE_GDAL,
+                PluginRuntimeCapability.NATIVE_TESSERACT,
+            }
+        ),
+    }
+    capabilities = native_profiles.get(name)
+    if capabilities is None:
         raise ValueError(f"Unknown Plugin runtime profile {name!r}")
-    return PluginRuntimeProfile()
+    if native_base_image is None or native_base_image_digest is None:
+        raise ValueError(
+            f"Native Plugin runtime profile {name!r} requires an exact "
+            "deployment-owned base image and sha256 digest"
+        )
+    if (
+        native_base_image.strip() == ""
+        or "@" in native_base_image
+        or len(native_base_image_digest) != 64
+        or any(character not in "0123456789abcdef" for character in native_base_image_digest)
+    ):
+        raise ValueError("Native Plugin runtime base image configuration is invalid")
+    return PluginRuntimeProfile(
+        name=name,
+        base_image=native_base_image,
+        base_image_digest=native_base_image_digest,
+        native_capabilities=capabilities,
+    )
 
 
 class PluginOciBuildError(RuntimeError):
@@ -89,8 +135,9 @@ class PluginOciImageBuilder:
     async def build_and_store(
         self,
         *,
-        workspace_id: UUID,
+        namespace: PluginReleaseNamespace,
         catalog: PluginCatalogManifest,
+        loader_target: str,
         source_archive: bytes,
         source_digest: str,
         contract_digest: str,
@@ -100,16 +147,28 @@ class PluginOciImageBuilder:
             raise PluginOciBuildError(
                 "Plugin source archive does not match its publication digest"
             )
+        try:
+            loader_manifest = PluginGuestLoaderManifest(
+                scope=namespace.scope,
+                slug=catalog.slug,
+                loader_target=loader_target,
+            )
+        except ValidationError as exc:
+            raise PluginOciBuildError(
+                f"Plugin {catalog.slug!r} has an invalid guest loader target"
+            ) from exc
         built = await asyncio.to_thread(
             self._build,
+            namespace,
             catalog.slug,
+            loader_manifest,
             source_archive,
             source_digest,
             contract_digest,
             profile_digest,
         )
         object_key = (
-            f"plugin-releases/{workspace_id}/{catalog.slug}/runtime/"
+            f"plugin-releases/{namespace.storage_path}/{catalog.slug}/runtime/"
             f"{built.archive_digest}.oci.tar"
         )
         artifact = PluginRuntimeArtifact(
@@ -123,7 +182,9 @@ class PluginOciImageBuilder:
 
     def _build(
         self,
+        namespace: PluginReleaseNamespace,
         slug: str,
+        loader_manifest: PluginGuestLoaderManifest,
         source_archive: bytes,
         source_digest: str,
         contract_digest: str,
@@ -135,20 +196,26 @@ class PluginOciImageBuilder:
             source.mkdir()
             unpack_source_snapshot(source_archive, source)
             _validate_locked_package_sources(source)
+            (context / "plugin-loader.json").write_bytes(
+                loader_manifest.canonical_json_bytes()
+            )
             build_identity = sha256(
                 (
+                    f"{namespace.scope.value}:{namespace.storage_path}:"
                     f"{source_digest}:{contract_digest}:{profile_digest}:"
                     f"{self._profile.base_image_digest}:"
-                    f"{plugin_protocol_digest()}"
+                    f"{plugin_protocol_digest()}:{loader_manifest.digest}"
                 ).encode("ascii")
             ).hexdigest()
             dockerfile = context / "Dockerfile"
             dockerfile.write_text(
                 _dockerfile(
                     self._profile,
+                    release_namespace=namespace.storage_path,
                     source_digest=source_digest,
                     contract_digest=contract_digest,
                     profile_digest=profile_digest,
+                    loader_manifest_digest=loader_manifest.digest,
                 ),
                 encoding="utf-8",
             )
@@ -231,9 +298,11 @@ class PluginOciImageBuilder:
 def _dockerfile(
     profile: PluginRuntimeProfile,
     *,
+    release_namespace: str,
     source_digest: str,
     contract_digest: str,
     profile_digest: str,
+    loader_manifest_digest: str,
 ) -> str:
     return f"""FROM {profile.pinned_base_image}
 ARG SOURCE_DATE_EPOCH=0
@@ -246,15 +315,20 @@ ENV HOME=/tmp/home \\
     UV_NO_PROGRESS=1
 WORKDIR /opt/grafy/plugin
 COPY source/ /opt/grafy/plugin/
+COPY --chmod=0444 plugin-loader.json /opt/grafy/plugin/plugin-loader.json
 RUN uv sync --locked --no-dev --no-editable \\
+    --find-links /opt/grafy/plugin/wheels \\
     && test -x /opt/grafy/plugin/.venv/bin/python \\
+    && test -r /opt/grafy/plugin/plugin-loader.json \\
     && rm -rf /tmp/uv-cache
 LABEL org.opencontainers.image.source.digest="sha256:{source_digest}" \\
       io.grafy.plugin.runtime="1" \\
+      io.grafy.plugin.release.namespace="{release_namespace}" \\
       io.grafy.plugin.contract.digest="sha256:{contract_digest}" \\
       io.grafy.plugin.profile.digest="sha256:{profile_digest}" \\
       io.grafy.plugin.base.digest="sha256:{profile.base_image_digest}" \\
-      io.grafy.plugin.protocol.digest="sha256:{plugin_protocol_digest()}"
+      io.grafy.plugin.protocol.digest="sha256:{plugin_protocol_digest()}" \\
+      io.grafy.plugin.loader.digest="sha256:{loader_manifest_digest}"
 USER 65532:65532
 ENTRYPOINT ["/opt/grafy/plugin/.venv/bin/python", "-I"]
 """

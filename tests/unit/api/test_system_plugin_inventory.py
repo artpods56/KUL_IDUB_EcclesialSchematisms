@@ -1,0 +1,458 @@
+from collections.abc import AsyncIterator
+from hashlib import sha256
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+from sqlalchemy import delete
+
+from grafy_api.system_host_bindings import SystemHostPluginBinding
+from grafy_api.system_cutover_operations import (
+    canonical_model_json_bytes,
+    generate_system_baseline_file,
+    load_system_baseline_manifest,
+)
+from grafy_api.system_plugin_inventory import (
+    SYSTEM_PLUGIN_SLUGS,
+    SystemBaselineManifestGenerator,
+    SystemPluginInventory,
+    SystemPluginInventoryEntry,
+    SystemPluginInventoryError,
+    load_system_plugin_inventory,
+)
+from grafy_api.system_plugin_loader import (
+    SystemPluginDeploymentEntry,
+    SystemPluginDeploymentManifest,
+)
+from grafy_core.artifact_contracts import INTEGER_VALUE, TEXT_VALUE
+from grafy_core.canonical_conversions import INTEGER_TO_TEXT
+from grafy_core.domain.plugin_releases import (
+    PluginArtifactConversionContract,
+    PluginArtifactTypeContract,
+    PluginArtifactTypeKey,
+    PluginCapabilityManifest,
+    PluginCatalogManifest,
+    PluginNodeContract,
+    PluginRelease,
+    PluginReleaseScope,
+    PluginRuntimeArtifact,
+    plugin_contract_digest,
+    plugin_profile_digest,
+    plugin_protocol_digest,
+)
+from grafy_core.domain.plugin_selection import PluginReleaseSelection
+from grafy_core.plugins import Plugin
+from grafy_persistence import schema
+from grafy_persistence.database import Database, create_database
+from grafy_persistence.orm import metadata
+from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
+from grafy_plugin_gis import GIS
+from grafy_plugin_llm import LLM
+from grafy_plugin_ocr import OCR
+from grafy_plugin_sql import SQL
+
+
+INVENTORY_PATH = Path(__file__).parents[3] / "plugins" / "system-plugins.toml"
+
+
+def _release(entry: SystemPluginInventoryEntry, position: int) -> PluginRelease:
+    operator_prefix = entry.operator_prefixes[0]
+    catalog = PluginCatalogManifest(
+        slug=entry.slug,
+        title=entry.slug,
+        nodes=(
+            PluginNodeContract(
+                operator_id=f"{operator_prefix}.node",
+                operator_version=1,
+                title="Node",
+                description="Inventory generator fixture.",
+                config_schema={"type": "object"},
+                input_schema={"type": "object"},
+                output_schema={"type": "object"},
+                inputs=(),
+                outputs=(),
+                required_capabilities=entry.capabilities,
+            ),
+        ),
+    )
+    capabilities = PluginCapabilityManifest(capabilities=entry.capabilities)
+    archive_digest = sha256(f"archive:{entry.slug}".encode()).hexdigest()
+    manifest_digest = sha256(f"manifest:{entry.slug}".encode()).hexdigest()
+    runtime = PluginRuntimeArtifact(
+        object_key=f"plugin-releases/system/{entry.slug}/runtime.oci.tar",
+        archive_digest=archive_digest,
+        manifest_digest=manifest_digest,
+        config_digest=sha256(f"config:{entry.slug}".encode()).hexdigest(),
+    )
+    return PluginRelease(
+        workspace_id=None,
+        slug=entry.slug,
+        revision=position + 1,
+        catalog=catalog,
+        contract_digest=plugin_contract_digest(catalog),
+        capabilities=capabilities,
+        capability_digest=capabilities.digest,
+        protocol_digest=plugin_protocol_digest(),
+        profile_digest=plugin_profile_digest("python-uv"),
+        source_object_key=f"plugin-releases/system/{entry.slug}/source.tar.gz",
+        source_digest=sha256(f"source:{entry.slug}".encode()).hexdigest(),
+        lock_digest=sha256(f"lock:{entry.slug}".encode()).hexdigest(),
+        runtime_profile="python-uv",
+        runtime_image_digest=manifest_digest,
+        runtime_artifact=runtime,
+        published_by_platform_actor="test:inventory",
+        scope=PluginReleaseScope.SYSTEM,
+        execution_policy=entry.execution_policy,
+        distribution=entry.distribution,
+    )
+
+
+@pytest.fixture
+async def inventory_database(
+    tmp_path: Path,
+) -> AsyncIterator[tuple[Database, SystemPluginInventory, dict[str, PluginRelease]]]:
+    inventory = load_system_plugin_inventory(INVENTORY_PATH)
+    database = create_database(
+        f"sqlite+aiosqlite:///{tmp_path / 'system-inventory.sqlite3'}"
+    )
+    async with database.engine.begin() as connection:
+        await connection.run_sync(metadata.create_all)
+    releases = {
+        entry.slug: _release(entry, position)
+        for position, entry in enumerate(inventory.plugins)
+    }
+    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        for entry in inventory.plugins:
+            release = releases[entry.slug]
+            await unit_of_work.plugin_releases.add(release)
+            await unit_of_work.plugin_releases.add_selection(
+                PluginReleaseSelection.from_release(
+                    release,
+                    actor_reference="test:inventory",
+                )
+            )
+        await unit_of_work.commit()
+    try:
+        yield database, inventory, releases
+    finally:
+        await database.dispose()
+
+
+def test_checked_in_system_inventory_is_complete_finite_and_excludes_modules() -> None:
+    inventory = load_system_plugin_inventory(INVENTORY_PATH)
+
+    assert {plugin.slug for plugin in inventory.plugins} == SYSTEM_PLUGIN_SLUGS
+    assert "builtin.module" not in SYSTEM_PLUGIN_SLUGS
+    assert len(inventory.plugins) == 11
+    assert next(
+        plugin for plugin in inventory.plugins if plugin.slug == "external.sql"
+    ).capabilities == (
+        "node.secrets",
+        "postgresql.egress",
+        "sql.untrusted",
+    )
+    assert {
+        entry.slug: (
+            entry.operator_prefixes,
+            entry.artifact_type_prefixes,
+        )
+        for entry in inventory.plugins
+    } == {
+        "builtin.arithmetic": (("arithmetic",), ("scalar.integer",)),
+        "builtin.image": (("image",), ("image.raster",)),
+        "builtin.prompt": (("prompt",), ("prompt.message",)),
+        "builtin.schema": (("schema",), ("json.schema",)),
+        "builtin.sequence": (("sequence",), ()),
+        "builtin.table": (("table",), ("table.data",)),
+        "builtin.text": (
+            ("text",),
+            ("scalar.text", "text.markdown"),
+        ),
+        "external.gis": (("gis",), ("geo",)),
+        "external.llm": (("llm",), ("llm",)),
+        "external.ocr": (("ocr",), ("ocr",)),
+        "external.sql": (("sql",), ("sql",)),
+    }
+
+
+def _node_contract(operator_id: str, title: str) -> PluginNodeContract:
+    return PluginNodeContract(
+        operator_id=operator_id,
+        operator_version=1,
+        title=title,
+        description=f"{title}.",
+        config_schema={"type": "object"},
+        input_schema={"type": "object"},
+        output_schema={"type": "object"},
+        inputs=(),
+        outputs=(),
+    )
+
+
+def test_inventory_enforces_explicit_system_identity_authority() -> None:
+    inventory = load_system_plugin_inventory(INVENTORY_PATH)
+    ocr_catalog = PluginCatalogManifest(
+        slug="external.ocr",
+        title="OCR",
+        artifact_types=(
+            PluginArtifactTypeContract(
+                key=PluginArtifactTypeKey(id="ocr.page_result", schema_version=1),
+                title="OCR page",
+            ),
+        ),
+        nodes=(
+            _node_contract("ocr.tesseract.pages", "OCR pages"),
+        ),
+    )
+
+    inventory.require_catalog_authority(ocr_catalog)
+
+    entries = list(inventory.plugins)
+    ocr_position = next(
+        position
+        for position, entry in enumerate(entries)
+        if entry.slug == "external.ocr"
+    )
+    entries[ocr_position] = entries[ocr_position].model_copy(
+        update={"operator_prefixes": ("ocr", "table.markdown")}
+    )
+    delegating_inventory = inventory.model_copy(
+        update={"plugins": tuple(entries)}
+    )
+
+    delegated = PluginCatalogManifest(
+        slug="builtin.table",
+        title="Table",
+        nodes=(
+            _node_contract("table.markdown.extract", "Markdown tables"),
+        ),
+    )
+    with pytest.raises(SystemPluginInventoryError, match="delegated.*external.ocr"):
+        delegating_inventory.require_catalog_authority(delegated)
+
+    unauthorized = PluginCatalogManifest(
+        slug="external.sql",
+        title="SQL",
+        nodes=(
+            _node_contract("sqlalchemy.query", "SQL query"),
+        ),
+    )
+    with pytest.raises(SystemPluginInventoryError, match="allowlisted prefixes"):
+        inventory.require_catalog_authority(unauthorized)
+
+
+@pytest.mark.parametrize("plugin", (GIS, LLM, OCR, SQL))
+def test_inventory_accepts_each_preserved_external_catalog(plugin: Plugin) -> None:
+    inventory = load_system_plugin_inventory(INVENTORY_PATH)
+
+    inventory.require_catalog_authority(PluginCatalogManifest.from_plugin(plugin))
+
+
+def test_inventory_requires_exact_canonical_conversion_contracts() -> None:
+    inventory = load_system_plugin_inventory(INVENTORY_PATH)
+    canonical = PluginArtifactConversionContract.from_conversion(INTEGER_TO_TEXT)
+    catalog = PluginCatalogManifest(
+        slug="builtin.text",
+        title="Text",
+        artifact_types=(PluginArtifactTypeContract.from_spec(TEXT_VALUE),),
+        artifact_type_dependencies=(
+            PluginArtifactTypeContract.from_spec(INTEGER_VALUE),
+        ),
+        artifact_conversions=(canonical,),
+        nodes=(
+            PluginNodeContract(
+                operator_id="text.input",
+                operator_version=1,
+                title="Text",
+                description="Text input.",
+                config_schema={"type": "object"},
+                input_schema={"type": "object"},
+                output_schema={"type": "object"},
+                inputs=(),
+                outputs=(),
+            ),
+        ),
+    )
+
+    inventory.require_catalog_authority(catalog)
+
+    changed = catalog.model_copy(
+        update={
+            "artifact_conversions": (
+                canonical.model_copy(update={"title": "Different code contract"}),
+            )
+        }
+    )
+    with pytest.raises(SystemPluginInventoryError, match="exact.*canonical"):
+        inventory.require_catalog_authority(changed)
+
+
+def test_inventory_reserves_system_prefixes_from_workspace_catalogs() -> None:
+    inventory = load_system_plugin_inventory(INVENTORY_PATH)
+    reserved = PluginCatalogManifest(
+        slug="sql",
+        title="Workspace SQL",
+        nodes=(
+            PluginNodeContract(
+                operator_id="sql.query",
+                operator_version=1,
+                title="Query",
+                description="Query.",
+                config_schema={"type": "object"},
+                input_schema={"type": "object"},
+                output_schema={"type": "object"},
+                inputs=(),
+                outputs=(),
+            ),
+        ),
+    )
+    unreserved = reserved.model_copy(
+        update={
+            "slug": "sqlalchemy",
+            "nodes": (
+                reserved.nodes[0].model_copy(
+                    update={"operator_id": "sqlalchemy.query"}
+                ),
+            ),
+        }
+    )
+
+    with pytest.raises(SystemPluginInventoryError, match="platform-reserved"):
+        inventory.require_workspace_catalog_authority(reserved)
+    inventory.require_workspace_catalog_authority(unreserved)
+
+
+@pytest.mark.asyncio
+async def test_generator_resolves_exact_releases_and_host_bindings_idempotently(
+    inventory_database: tuple[
+        Database,
+        SystemPluginInventory,
+        dict[str, PluginRelease],
+    ],
+    tmp_path: Path,
+) -> None:
+    database, inventory, releases = inventory_database
+    bindings = tuple(
+        SystemHostPluginBinding.from_release(
+            releases[entry.slug],
+            selection_generation=1,
+            loader_target=entry.loader_target,
+            host_build_digest=sha256(f"host:{entry.slug}".encode()).hexdigest(),
+        )
+        for entry in inventory.plugins
+        if entry.execution_policy == "host-eligible"
+    )
+    generator = SystemBaselineManifestGenerator(database.sessions)
+
+    first = await generator.generate(inventory, host_bindings=bindings)
+    second = await generator.generate(inventory, host_bindings=bindings)
+
+    assert first == second
+    assert [release.slug for release in first.releases] == sorted(SYSTEM_PLUGIN_SLUGS)
+    entries_by_slug = {entry.slug: entry for entry in inventory.plugins}
+    for generated in first.releases:
+        selected = releases[generated.slug]
+        assert generated.release_id == selected.id
+        assert generated.descriptor_digest == selected.descriptor.digest
+        assert generated.operators[0].operator_id == (
+            f"{entries_by_slug[generated.slug].operator_prefixes[0]}.node"
+        )
+
+    deployment = SystemPluginDeploymentManifest(
+        plugins=tuple(
+            SystemPluginDeploymentEntry(
+                binding=binding,
+                distribution_name=entries_by_slug[binding.slug].distribution_name,
+                loader_target=binding.loader_target,
+                host_build_digest=binding.host_build_digest,
+            )
+            for binding in bindings
+        )
+    )
+    deployment_path = tmp_path / "deployment.json"
+    deployment_path.write_bytes(deployment.canonical_json_bytes())
+    output = tmp_path / "baseline.json"
+    written = await generate_system_baseline_file(
+        generator,
+        inventory_path=INVENTORY_PATH,
+        deployment_manifest_path=deployment_path,
+        output=output,
+    )
+    assert written.release_count == 11
+    assert output.read_bytes() == canonical_model_json_bytes(first)
+    assert load_system_baseline_manifest(output) == first
+
+    with pytest.raises(SystemPluginInventoryError, match="unique slugs"):
+        await generator.generate(
+            inventory,
+            host_bindings=(*bindings, bindings[0]),
+        )
+    mismatched_binding = bindings[0].model_copy(
+        update={"loader_target": "wrong.deployment:PLUGIN"}
+    )
+    with pytest.raises(SystemPluginInventoryError, match="loader target"):
+        await generator.generate(
+            inventory,
+            host_bindings=(mismatched_binding, *bindings[1:]),
+        )
+
+
+@pytest.mark.asyncio
+async def test_generator_refuses_missing_selection_and_inventory_release_mismatch(
+    inventory_database: tuple[
+        Database,
+        SystemPluginInventory,
+        dict[str, PluginRelease],
+    ],
+) -> None:
+    database, inventory, _releases = inventory_database
+    generator = SystemBaselineManifestGenerator(database.sessions)
+    async with database.engine.begin() as connection:
+        await connection.execute(
+            delete(schema.plugin_release_selections).where(
+                schema.plugin_release_selections.c.slug == "external.sql"
+            )
+        )
+    with pytest.raises(SystemPluginInventoryError, match="missing=.*external.sql"):
+        await generator.generate(inventory)
+
+    database_two = create_database("sqlite+aiosqlite:///:memory:")
+    try:
+        async with database_two.engine.begin() as connection:
+            await connection.run_sync(metadata.create_all)
+        entries = list(inventory.plugins)
+        first = entries[0]
+        mismatched_entry = first.model_copy(
+            update={
+                "distribution": (
+                    "optional" if first.distribution == "bundled" else "bundled"
+                )
+            }
+        )
+        entries[0] = mismatched_entry
+        mismatched_inventory = inventory.model_copy(update={"plugins": tuple(entries)})
+        async with SqlAlchemyUnitOfWork(database_two.sessions) as unit_of_work:
+            for position, entry in enumerate(inventory.plugins):
+                release = _release(entry, position)
+                await unit_of_work.plugin_releases.add(release)
+                await unit_of_work.plugin_releases.add_selection(
+                    PluginReleaseSelection.from_release(release)
+                )
+            await unit_of_work.commit()
+        with pytest.raises(SystemPluginInventoryError, match="distribution"):
+            await SystemBaselineManifestGenerator(database_two.sessions).generate(
+                mismatched_inventory
+            )
+    finally:
+        await database_two.dispose()
+
+
+def test_inventory_and_exact_binding_collisions_are_rejected() -> None:
+    inventory = load_system_plugin_inventory(INVENTORY_PATH)
+    entries = list(inventory.plugins)
+    entries[1] = entries[1].model_copy(
+        update={"loader_target": entries[0].loader_target}
+    )
+
+    with pytest.raises(ValidationError, match="loader targets must be unique"):
+        SystemPluginInventory(plugins=tuple(entries))

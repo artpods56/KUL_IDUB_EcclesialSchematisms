@@ -3,17 +3,16 @@
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
 
 from grafy_core.artifacts import InMemoryUnitOfWork
 from grafy_core.application.modules import ModuleLibraryService
 from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.application.saved_graphs import SavedGraphService
-from grafy_core.operators.arithmetic import (
-    IntegerValueOutputWriter,
-    IntegerValueResolver,
+from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
+from grafy_core.canonical_conversions import (
+    CANONICAL_ARTIFACT_CONVERSIONS_BY_KEY,
+    CanonicalArtifactConversionMap,
 )
-from grafy_core.operators.text import TextValueOutputWriter, TextValueResolver
 from grafy_core.plugins import PluginRegistry, PluginRuntimeContext
 from grafy_core.ports.materialized_outputs import WorkbenchUnitOfWorkPort
 from grafy_core.ports.node_secrets import (
@@ -24,18 +23,19 @@ from grafy_core.ports.storage import FileStoragePort
 from grafy_core.runtime.execution import NodeRuntime
 from grafy_core.runtime.materialization import InputMaterializer
 from grafy_core.runtime.persistence import (
-    ArtifactOutputWriter,
     ArtifactWriterRegistry,
     OutputPersister,
 )
-from grafy_core.runtime.plugin_invocation import (
-    PluginInvocationError,
-    PluginInvocationRequest,
-    PluginInvocationResult,
-)
-from grafy_core.runtime.resolvers import Resolver, ResolverRegistry
+from grafy_core.runtime.resolvers import ResolverRegistry
 from grafy_storage import LocalFileObjectStore
 
+from grafy_api.plugin_admission import ReleaseExecutionAdmission
+from grafy_api.network_policy import NetworkPolicy
+from grafy_api.system_host_bindings import (
+    LoadedSystemPlugin,
+    SystemHostPluginBinding,
+    validate_system_host_bindings,
+)
 from grafy_api.v1.routes.artifacts.services import ArtifactService
 from grafy_api.v1.routes.catalog.services import GraphModuleCatalog
 from grafy_api.v1.routes.collaboration.hub import GraphRoomHub
@@ -72,18 +72,6 @@ from grafy_api.v1.routes.uploads.services import ImageUploadService
 _WORKBENCH_BUCKET = "workbench-artifacts"
 
 
-class _UnavailablePluginInvoker:
-    """Fail-closed invoker used until the executable runtime adapter exists."""
-
-    async def invoke(self, request: PluginInvocationRequest) -> PluginInvocationResult:
-        release = request.release
-        raise PluginInvocationError(
-            f"Workspace Plugin {release.slug!r} revision {release.revision} "
-            "cannot be executed yet; releases stay catalog-only until the "
-            "Plugin runtime is configured"
-        )
-
-
 @dataclass(frozen=True, slots=True)
 class WorkbenchComponents:
     plugin_registry: PluginRegistry
@@ -99,6 +87,7 @@ class WorkbenchComponents:
     artifacts: ArtifactService
     plugin_invoker: ArtifactBundlePluginInvoker | None
     plugin_runtime: DockerPluginRuntime | None
+    release_admission: ReleaseExecutionAdmission | None
 
 
 def build_workbench_components(
@@ -118,9 +107,22 @@ def build_workbench_components(
     module_library: ModuleLibraryService | None = None,
     plugin_releases: PluginReleaseService | None = None,
     plugin_runtime: DockerPluginRuntime | None = None,
+    system_host_bindings: tuple[SystemHostPluginBinding, ...] = (),
+    loaded_system_plugins: tuple[LoadedSystemPlugin, ...] = (),
     node_secrets: NodeSecretResolverPort | None = None,
     graph_room_hub: GraphRoomHub | None = None,
+    network_policy: NetworkPolicy | None = None,
+    canonical_artifact_conversions: CanonicalArtifactConversionMap = (
+        CANONICAL_ARTIFACT_CONVERSIONS_BY_KEY
+    ),
 ) -> WorkbenchComponents:
+    validate_system_host_bindings(
+        system_host_bindings,
+        loaded_system_plugins,
+        plugin_registry,
+    )
+    if system_host_bindings and plugin_releases is None:
+        raise RuntimeError("System host bindings require Plugin release persistence")
     resolved_workspace = (
         (
             workspace
@@ -153,19 +155,12 @@ def build_workbench_components(
         node_secrets=resolved_node_secrets,
     )
 
-    resolvers = [
-        cast(Resolver[object], IntegerValueResolver(uow=resolved_unit_of_work)),
-        cast(Resolver[object], TextValueResolver(uow=resolved_unit_of_work)),
-    ]
-    resolvers.extend(plugin_registry.build_resolvers(plugin_context))
-    resolver_registry = ResolverRegistry(resolvers)
-
-    writers: list[ArtifactOutputWriter] = [
-        IntegerValueOutputWriter(uow=resolved_unit_of_work),
-        TextValueOutputWriter(uow=resolved_unit_of_work),
-    ]
-    writers.extend(plugin_registry.build_writers(plugin_context))
-    writer_registry = ArtifactWriterRegistry(writers)
+    resolver_registry = ResolverRegistry(
+        list(plugin_registry.build_resolvers(plugin_context))
+    )
+    writer_registry = ArtifactWriterRegistry(
+        list(plugin_registry.build_writers(plugin_context))
+    )
 
     artifacts = ArtifactService(
         resolved_unit_of_work,
@@ -188,9 +183,20 @@ def build_workbench_components(
     presenter = RunResultPresenter(artifacts)
     plugin_invoker = None
     artifact_plugin_invoker = None
+    release_admission: ReleaseExecutionAdmission | None = None
     if plugin_releases is not None:
         if plugin_runtime is None:
-            plugin_invoker = _UnavailablePluginInvoker()
+            release_admission = ReleaseExecutionAdmission(
+                isolated_adapter_available=False,
+                runtime_profile=None,
+                system_host_bindings=system_host_bindings,
+                host_supported_capabilities=frozenset(
+                    {
+                        PluginRuntimeCapability.NODE_SECRETS,
+                        PluginRuntimeCapability.STAGED_UPLOADS,
+                    }
+                ),
+            )
         else:
             artifact_plugin_invoker = ArtifactBundlePluginInvoker(
                 unit_of_work=resolved_unit_of_work,
@@ -200,14 +206,40 @@ def build_workbench_components(
                 bucket=bucket,
                 storage_backend=storage_backend,
                 max_concurrent_invocations=max_active_plugin_invocations,
+                node_secrets=resolved_node_secrets,
+                uploads_dir=uploads_dir,
             )
             plugin_invoker = artifact_plugin_invoker
+            runtime_admission = plugin_runtime.release_admission
+            release_admission = ReleaseExecutionAdmission(
+                isolated_adapter_available=(
+                    runtime_admission.isolated_adapter_available
+                ),
+                runtime_profile=runtime_admission.runtime_profile,
+                supported_capabilities=runtime_admission.supported_capabilities,
+                network_egress=runtime_admission.network_egress,
+                postgresql_egress=runtime_admission.postgresql_egress,
+                network_policy=runtime_admission.network_policy,
+                supported_bundle_adapters=(runtime_admission.supported_bundle_adapters),
+                platform_artifact_contracts=(
+                    runtime_admission.platform_artifact_contracts
+                ),
+                system_host_bindings=system_host_bindings,
+                host_supported_capabilities=frozenset(
+                    {
+                        PluginRuntimeCapability.NODE_SECRETS,
+                        PluginRuntimeCapability.STAGED_UPLOADS,
+                    }
+                ),
+            )
     compiler = GraphCompiler(
         plugin_registry=plugin_registry,
         plugin_context=plugin_context,
         module_catalog=modules,
+        canonical_artifact_conversions=canonical_artifact_conversions,
         plugin_release_lookup=plugin_releases,
         plugin_invoker=plugin_invoker,
+        release_admission=release_admission,
     )
     edge_values = EdgeValueResolver(
         resolvers=resolver_registry,
@@ -229,9 +261,17 @@ def build_workbench_components(
         max_map_concurrency=map_max_concurrency,
     )
     coordinator = GraphExecutionCoordinator(node_execution=node_execution)
+    if network_policy is not None:
+        resolved_network_policy = network_policy
+    elif plugin_runtime is not None:
+        resolved_network_policy = plugin_runtime.network_policy
+    else:
+        resolved_network_policy = NetworkPolicy()
     preflight = GraphRunPreflight(
         plugin_registry=plugin_registry,
         saved_graphs=saved_graphs,
+        plugin_release_lookup=plugin_releases,
+        network_policy=resolved_network_policy,
     )
     run_graph = RunGraph(
         preflight=preflight,
@@ -263,6 +303,7 @@ def build_workbench_components(
         artifacts=artifacts,
         plugin_invoker=artifact_plugin_invoker,
         plugin_runtime=plugin_runtime,
+        release_admission=release_admission,
     )
 
 

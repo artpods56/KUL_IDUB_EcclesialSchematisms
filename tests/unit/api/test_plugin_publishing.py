@@ -9,6 +9,7 @@ import uuid
 
 import pytest
 
+from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_api.plugin_publishing import (
     PluginDirectoryPublisher,
     PluginPublishingError,
@@ -47,7 +48,9 @@ def _copy_example_plugin(destination_root: Path) -> Path:
     return project
 
 
-def _minimal_catalog() -> PluginCatalogManifest:
+def _minimal_catalog(
+    required_capabilities: tuple[PluginRuntimeCapability, ...] = (),
+) -> PluginCatalogManifest:
     return PluginCatalogManifest(
         slug="notes",
         title="Notes",
@@ -62,6 +65,7 @@ def _minimal_catalog() -> PluginCatalogManifest:
                 output_schema={"type": "object"},
                 inputs=(),
                 outputs=(),
+                required_capabilities=required_capabilities,
             ),
         ),
     )
@@ -167,8 +171,8 @@ def test_generated_release_metadata_does_not_change_the_source_digest() -> None:
             workspace_id=uuid.uuid4(),
             slug="notes",
             revision=revision,
-            catalog=_minimal_catalog(),
-            contract_digest=plugin_contract_digest(_minimal_catalog()),
+            catalog=_minimal_catalog(capabilities),
+            contract_digest=plugin_contract_digest(_minimal_catalog(capabilities)),
             capabilities=PluginCapabilityManifest(capabilities=capabilities),
             capability_digest=PluginCapabilityManifest(
                 capabilities=capabilities
@@ -183,7 +187,7 @@ def test_generated_release_metadata_does_not_change_the_source_digest() -> None:
         )
         for revision, capabilities, runtime_profile in (
             (1, (), "python-uv"),
-            (2, ("network.egress",), "python-uv-gdal"),
+            (2, (PluginRuntimeCapability.NETWORK_EGRESS,), "python-uv-gdal"),
         )
     ]
 

@@ -18,7 +18,10 @@ from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.domain.plugin_releases import PluginRelease
 from grafy_core.ports.storage import FileStoragePort
 
-from grafy_api.plugin_publication import PluginPublicationWorkflow
+from grafy_api.plugin_publication import (
+    PluginPublicationWorkflow,
+    render_plugin_capability_diff,
+)
 from grafy_api.plugin_publishing import (
     build_deterministic_archive,
     scan_source_tree,
@@ -72,6 +75,7 @@ class PluginAuthoringReview(BaseModel):
     artifact_contract_changed: bool
     capabilities_changed: bool
     runtime_profile_changed: bool
+    network_authority_changes: tuple[str, ...] = ()
 
 
 class PluginAuthoringService:
@@ -113,7 +117,7 @@ class PluginAuthoringService:
         slug: str,
         actor_user_id: UUID,
     ) -> PluginAuthoringReservation:
-        project = self._project(slug, must_exist=True)
+        project = self._project(workspace_id, slug, must_exist=True)
         source_digest = self._source_digest(project)
         reservation = PluginAuthoringReservation(
             session_id=uuid7(),
@@ -150,7 +154,9 @@ class PluginAuthoringService:
         actor_user_id: UUID,
     ) -> PluginAuthoringReservation:
         self._validate_identity(slug, operator_slug, title)
-        project = self._project(slug, must_exist=False)
+        workspace_root = self._workspace_root(workspace_id)
+        workspace_root.mkdir(mode=0o700, exist_ok=True)
+        project = self._project(workspace_id, slug, must_exist=False)
         try:
             project.mkdir(mode=0o700)
         except FileExistsError as exc:
@@ -242,6 +248,10 @@ class PluginAuthoringService:
             runtime_profile_changed=(
                 latest is None or latest.runtime_profile != verified.runtime_profile
             ),
+            network_authority_changes=render_plugin_capability_diff(
+                None if latest is None else latest.catalog,
+                verified.catalog,
+            ),
         )
         self._write_reservation(
             reservation.model_copy(
@@ -304,11 +314,26 @@ class PluginAuthoringService:
         )
         self._reservation_path(reservation.project_directory).unlink()
 
-    def _project(self, slug: str, *, must_exist: bool) -> Path:
+    def _workspace_root(self, workspace_id: UUID) -> Path:
+        workspace_root = (self._authoring_root / str(workspace_id)).resolve()
+        if workspace_root.parent != self._authoring_root:
+            raise PluginAuthoringError(
+                "Plugin Workspace path escapes the configured authoring root"
+            )
+        return workspace_root
+
+    def _project(
+        self,
+        workspace_id: UUID,
+        slug: str,
+        *,
+        must_exist: bool,
+    ) -> Path:
         self._validate_slug(slug)
-        candidate = self._authoring_root / slug
+        workspace_root = self._workspace_root(workspace_id)
+        candidate = workspace_root / slug
         project = candidate.resolve(strict=must_exist)
-        if project.parent != self._authoring_root:
+        if project.parent != workspace_root:
             raise PluginAuthoringError(
                 "Plugin working-copy path escapes the configured authoring root"
             )
@@ -326,7 +351,7 @@ class PluginAuthoringService:
         actor_user_id: UUID,
         session_id: UUID,
     ) -> PluginAuthoringReservation:
-        project = self._project(slug, must_exist=True)
+        project = self._project(workspace_id, slug, must_exist=True)
         path = self._reservation_path(project)
         try:
             reservation = PluginAuthoringReservation.model_validate_json(
@@ -459,8 +484,10 @@ class PluginAuthoringService:
             encoding="utf-8",
         )
         (package / "declaration.py").write_text(
+            "from grafy_core.artifact_contracts import TEXT_VALUE\n"
             "from grafy_core.plugins import Plugin\n\n\n"
-            f"PLUGIN = Plugin(slug={slug!r}, title={title!r})\n",
+            f"PLUGIN = Plugin(slug={slug!r}, title={title!r})\n"
+            "PLUGIN.register_artifact_type_dependency(TEXT_VALUE)\n",
             encoding="utf-8",
         )
         operator_id = f"{slug}.{operator_slug}"
@@ -592,7 +619,7 @@ def _node_module(operator_id: str, title: str) -> str:
 
 from grafy_core.artifacts import NoConfig, NodeInput, NodeOutput
 from grafy_core.nodes import OutPort
-from grafy_core.operators.text import TEXT_VALUE, TextValue
+from grafy_core.artifact_contracts import TEXT_VALUE, TextValue
 
 from grafy_plugin.declaration import PLUGIN
 

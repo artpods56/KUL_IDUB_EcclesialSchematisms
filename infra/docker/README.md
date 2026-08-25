@@ -3,9 +3,10 @@
 This Compose project runs four processes:
 
 1. `migrate` applies Alembic migrations and exits.
-2. `api` runs one FastAPI process with the GIS, LLM, and OCR plugins installed.
-   The SQL plugin is deliberately excluded: user-authored SQL must move to a
-   separate networkless, least-privileged worker before production use.
+2. `api` runs one FastAPI process. It imports no System Plugin package unless
+   an exact deployment manifest binds the installed bytes to a selected
+   release. Isolated-only GIS, LLM, OCR, and SQL implementations live in their
+   retained Plugin images rather than the online API image.
 3. `web` runs the minimal Next.js standalone server.
 4. `gateway` is the only Grafy application listener (`127.0.0.1:8080` by
    default). It serves plain HTTP and does not terminate TLS.
@@ -60,8 +61,9 @@ docker compose \
   up --build --detach
 ```
 
-Workspace Plugin execution is deliberately absent from the base Compose file.
-To enable the local Docker sandbox adapter, include the opt-in override:
+Isolated Plugin execution is deliberately absent from the base Compose file.
+To execute a Workspace release or an isolated System release, include the
+opt-in Docker sandbox override:
 
 ```bash
 docker compose \
@@ -75,13 +77,50 @@ The override mounts `/var/run/docker.sock` into the API container. Possession
 of that socket is effectively root-equivalent authority over the Docker host:
 an API-process compromise can create privileged containers or mount host
 paths. The socket is never mounted into a Plugin container. Plugin containers
-run with no network, a read-only root filesystem, UID/GID 65532, no Linux
-capabilities, `no-new-privileges`, seccomp, and bounded tmpfs/resource limits.
+run with a read-only root filesystem, UID/GID 65532, no Linux capabilities,
+`no-new-privileges`, seccomp, and bounded tmpfs/resource limits. Nodes without
+an exact egress capability, including `sql.artifacts.query`, retain
+`--network=none`.
 This protects against mistakes and ordinary unsafe Plugin code; it is not a
 hostile-public-tenant kernel boundary. Keep the API private, use one API owner,
-and omit the override when Workspace Plugin execution is not required. A
+and omit the override when isolated Plugin execution is not required. A
 narrow same-VPS runner can replace this socket-bearing adapter later without
 changing the provider-neutral invocation contract.
+
+### Build and pin the first-party egress broker
+
+`network.egress` and `postgresql.egress` stay unavailable until the deployment
+provides the repository-owned broker image by immutable registry digest and at
+least one exact destination. Build the broker image, publish it, and record the
+registry-reported manifest digest:
+
+```bash
+docker build \
+  -f infra/docker/plugin-egress-broker.Dockerfile \
+  -t registry.example/grafy/plugin-egress-broker:<version> \
+  .
+docker push registry.example/grafy/plugin-egress-broker:<version>
+docker buildx imagetools inspect \
+  registry.example/grafy/plugin-egress-broker:<version>
+```
+
+Configure the resulting immutable reference and JSON arrays of exact
+`scheme://dns-name:port` destinations:
+
+```dotenv
+GRAFY_PLUGIN_EGRESS_BROKER_IMAGE=registry.example/grafy/plugin-egress-broker@sha256:<digest>
+GRAFY_PLUGIN_HTTP_EGRESS_DESTINATIONS=["https://api.example.com:443"]
+GRAFY_PLUGIN_POSTGRESQL_EGRESS_DESTINATIONS=["postgresql://database.example.com:5432"]
+```
+
+For each admitted sandbox, the runtime creates a dedicated internal network
+and a dedicated outbound network. The Plugin joins only the internal network;
+the pinned broker is the only container on the outbound network. The API
+resolves every destination once, rejects the complete answer if any address is
+non-public, and gives the broker numeric connect targets. HTTPS remains an
+end-to-end CONNECT tunnel. PostgreSQL uses a destination-specific raw TCP relay
+under the original DNS alias and port so TLS SNI and `verify-full` identity are
+preserved. The non-secret policy contains no database or proxy credentials.
 
 Tune `GRAFY_MAX_ACTIVE_EXECUTIONS`, `GRAFY_MAX_PENDING_GRAPHS`,
 `GRAFY_MAX_ACTIVE_PLUGIN_INVOCATIONS`, `GRAFY_MAX_LIVE_PLUGIN_SANDBOXES`, and
@@ -95,6 +134,84 @@ on the durable `grafy-data` volume. Run `grafy plugin scaffold`, `review`, and
 `publish-reviewed` inside the API container with an authorized Workspace owner
 UUID. The scaffold builds the SDK wheel from the deployment-owned
 `GRAFY_PLUGIN_SDK_PROJECT`; it never writes build output into that SDK source.
+
+The existing Workspace commands use sanitized host subprocesses by default for
+local compatibility. That mode is not a filesystem or network isolation
+boundary. Operators may add `--publisher-sandbox --sandbox-image <image>` to a
+direct `grafy plugin publish` invocation, but reviewed publication from the
+online API remains a trusted-workspace feature rather than a hostile-code
+boundary.
+
+## One-shot System Plugin publisher
+
+System candidates must be staged by the opt-in `publisher` profile. The job is
+separate from the online API and is the only service in the base Compose file
+that mounts the Docker socket. It receives storage/database configuration but
+none of the OIDC, credential-encryption, command-HMAC, LLM, or other online API
+secrets.
+
+Set `GRAFY_PUBLISHER_SOURCE_ROOT` to an absolute, deployment-owned host
+directory containing System Plugin projects. `GRAFY_PUBLISHER_SCRATCH_ROOT`
+must also be an absolute host path and is mounted at the identical path in the
+job so sibling sandbox containers can bind the exact frozen snapshot. The
+default scratch path is `/tmp/grafy-plugin-publisher`.
+
+Build the publisher image, then stage one candidate:
+
+```bash
+docker compose \
+  --env-file .env.production \
+  -f infra/docker/compose.yaml \
+  --profile publisher \
+  build publisher
+
+docker compose \
+  --env-file .env.production \
+  -f infra/docker/compose.yaml \
+  --profile publisher \
+  run --rm publisher \
+  plugin stage-system /publisher-input/<plugin-directory> \
+  --slug <plugin-slug> \
+  --execution-policy isolated-only \
+  --distribution published \
+  --platform-actor "ci:<release-job-id>" \
+  --sandbox-image "${GRAFY_PUBLISHER_IMAGE:-grafy-publisher:local}" \
+  --sandbox-scratch-root "${GRAFY_PUBLISHER_SCRATCH_ROOT:-/tmp/grafy-plugin-publisher}"
+```
+
+`stage-system` has no host-verification option. Dependency lock checking and
+locked sync run in resource-bounded containers with package-network access.
+Candidate tests and catalog inspection then run in fresh containers with no
+network, a read-only root filesystem, a read-only frozen source mount, a
+read-only environment mount, no Linux capabilities, `no-new-privileges`, and
+explicit CPU, memory, PID, timeout, temporary-disk, and captured-output limits.
+Only an explicit non-secret environment is passed to those containers.
+
+Staging does not select the release. Promote its exact revision separately:
+
+```bash
+docker compose \
+  --env-file .env.production \
+  -f infra/docker/compose.yaml \
+  --profile publisher \
+  run --rm publisher \
+  plugin promote-system \
+  --slug <plugin-slug> \
+  --revision <revision> \
+  --expected-generation <current-generation> \
+  --platform-actor "ci:<release-job-id>"
+```
+
+Docker-socket possession remains root-equivalent host authority. Restrict this
+job to platform operators/CI, pin `GRAFY_PUBLISHER_IMAGE` by digest in
+production, and never run it as a long-lived service. Dependency fetch still
+trusts the configured package indexes and image supply chain; this repository
+does not provide package provenance verification, a remote Docker authorization
+proxy, or a stronger VM/microVM tenant boundary. Every checked-in System project
+is a self-contained publisher input with its own tests, lock, and exact vendored
+SDK wheel; additional candidates must meet the same non-escaping dependency
+contract. Authenticated private package indexes are unsupported because the
+sandbox deliberately has no credential injection contract.
 
 Check readiness and logs:
 

@@ -258,15 +258,9 @@ def test_openapi_contains_exact_public_routes(settings: Settings) -> None:
     assert "map_inputs" not in node_schema["properties"]
 
     plugin_schema = schema["components"]["schemas"]["PluginSpecResponse"]
-    assert plugin_schema["properties"]["origin"] == {
-        "$ref": "#/components/schemas/PluginOrigin"
-    }
-    assert set(plugin_schema["required"]) == {"slug", "title", "origin"}
-    assert schema["components"]["schemas"]["PluginOrigin"] == {
-        "enum": ["builtin", "external", "module", "workspace"],
-        "title": "PluginOrigin",
-        "type": "string",
-    }
+    assert "origin" not in plugin_schema["properties"]
+    assert set(plugin_schema["required"]) == {"slug", "title"}
+    assert "Plugin" + "Origin" not in schema["components"]["schemas"]
     assert plugin_schema["properties"]["runnable"] == {
         "default": True,
         "title": "Runnable",
@@ -286,6 +280,30 @@ def test_openapi_contains_exact_public_routes(settings: Settings) -> None:
         "type": "boolean",
     }
     assert "plugin_revision" in node_schema["properties"]
+    plugin_release_update_schema = schema["components"]["schemas"][
+        "UpdateNodePluginReleaseCommand"
+    ]
+    assert set(plugin_release_update_schema["required"]) == {
+        "node_id",
+        "plugin_release_pin",
+        "expected_plugin_release_pin",
+    }
+    assert plugin_release_update_schema["properties"]["kind"]["const"] == (
+        "update_node_plugin_release"
+    )
+    assert plugin_release_update_schema["properties"]["plugin_release_pin"] == {
+        "$ref": "#/components/schemas/SavedGraphPluginReleasePin"
+    }
+    command_schema = schema["components"]["schemas"]["SubmitGraphCommandRequest"][
+        "properties"
+    ]["command"]
+    assert (
+        command_schema["discriminator"]["mapping"]["update_node_plugin_release"]
+        == "#/components/schemas/UpdateNodePluginReleaseCommand"
+    )
+    assert {
+        "$ref": "#/components/schemas/UpdateNodePluginReleaseCommand"
+    } in command_schema["oneOf"]
     assert schema["components"]["schemas"]["ImageUploadItemResponse"] == {
         "properties": {
             "upload_key": {

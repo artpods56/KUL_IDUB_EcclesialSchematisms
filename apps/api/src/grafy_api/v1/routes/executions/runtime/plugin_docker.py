@@ -1,6 +1,7 @@
-"""Hardened local Docker owner for Workspace Plugin guest invocations."""
+"""Hardened local Docker owner for isolated Plugin guest invocations."""
 
 import asyncio
+import base64
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -15,7 +16,14 @@ from tempfile import TemporaryDirectory
 from typing import Protocol, cast, final, override
 from uuid import UUID
 
-from grafy_core.domain.plugin_releases import PluginRelease, PluginRuntimeArtifact
+from grafy_core.domain.plugin_releases import (
+    PluginRelease,
+    PluginReleaseIdentity,
+    PluginReleaseScope,
+    PluginRuntimeArtifact,
+)
+from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
+from grafy_core.domain.plugin_revocations import PluginReleaseRevocation
 from grafy_core.ports.storage import FileStoragePort
 from grafy_core.runtime.plugin_invocation import (
     PluginInvocationError,
@@ -27,6 +35,26 @@ from grafy_core.runtime.plugin_protocol import (
     PluginInvocationLimits,
 )
 
+from grafy_api.plugin_admission import (
+    PluginNetworkEgressPolicy,
+    PluginPostgresqlEgressPolicy,
+    ReleaseExecutionAdmission,
+    ReleaseExecutionRejection,
+    ReleaseExecutionRoute,
+)
+from grafy_api.plugin_egress import (
+    PLUGIN_HTTP_PROXY_PORT,
+    PluginEgressBrokerPlan,
+    PluginEgressBrokerPolicy,
+    PluginEgressDestination,
+    PluginEgressLimits,
+    PluginEgressProtocol,
+    resolve_public_destination,
+)
+from grafy_api.network_policy import (
+    NetworkPolicy,
+    resolve_http_egress_authority,
+)
 from grafy_api.plugin_oci import PluginRuntimeProfile
 
 from .plugin_artifacts import (
@@ -42,8 +70,17 @@ from .plugin_sandbox import (
 
 
 _SANDBOX_LABEL = "io.grafy.plugin.sandbox=1"
+_EGRESS_RESOURCE_LABEL = "io.grafy.plugin.egress=1"
+_EGRESS_BROKER_ALIAS = "grafy-egress-broker"
 _CONTAINER_INVOCATIONS = PurePosixPath("/run/grafy/invocations")
 _RESULT_TAR_LIMIT = 2 * 1_024 * 1_024
+_ISOLATED_BASE_CAPABILITIES = frozenset(
+    {
+        PluginRuntimeCapability.NODE_SECRETS,
+        PluginRuntimeCapability.STAGED_UPLOADS,
+        PluginRuntimeCapability.UNTRUSTED_SQL,
+    }
+)
 
 
 class DockerPluginRuntimeError(RuntimeError):
@@ -64,7 +101,24 @@ class PluginRuntimeReleaseLookup(Protocol):
         workspace_id: UUID,
         slug: str,
         revision: int,
+        *,
+        scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE,
     ) -> PluginRelease | None: ...
+
+    async def get_revocation(
+        self,
+        *,
+        workspace_id: UUID,
+        slug: str,
+        revision: int,
+    ) -> PluginReleaseRevocation | None: ...
+
+    async def get_system_revocation(
+        self,
+        *,
+        slug: str,
+        revision: int,
+    ) -> PluginReleaseRevocation | None: ...
 
     async def list_runtime_artifacts(self) -> list[PluginRuntimeArtifact]: ...
 
@@ -73,9 +127,28 @@ class PluginRuntimeReleaseLookup(Protocol):
 class _SandboxKey:
     scope_id: PluginSandboxScopeId
     workspace_id: UUID
+    release_scope: PluginReleaseScope
+    release_workspace_id: UUID | None
     release_slug: str
     release_revision: int
     source_digest: str
+    descriptor_digest: str
+    required_capabilities: tuple[PluginRuntimeCapability, ...]
+    postgresql_destination: PluginEgressDestination | None = None
+    # The effective HTTP authority and its profile digest make origin variants
+    # of one release distinct sandboxes; a profile change cannot reuse a
+    # sandbox created under older authority.
+    network_profile_digest: str | None = None
+    http_destinations: tuple[PluginEgressDestination, ...] = ()
+
+    def release_identity(self) -> tuple[object, ...]:
+        return (
+            self.release_scope,
+            self.release_workspace_id,
+            self.release_slug,
+            self.release_revision,
+            self.source_digest,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +156,10 @@ class _Sandbox:
     key: _SandboxKey
     container_id: str
     scratch_root: Path
+    egress_broker_id: str | None = None
+    guest_network: str | None = None
+    egress_network: str | None = None
+    egress_plan: PluginEgressBrokerPlan | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +167,7 @@ class PluginSandboxCapacityDiagnostics:
     max_live_sandboxes: int
     live_sandboxes: int
     waiting_sandbox_requests: int
+    max_sandbox_variants_per_execution: int
 
 
 async def _read_bounded(
@@ -142,6 +220,12 @@ class DockerPluginRuntime(
         seccomp_profile: Path | None = None,
         max_live_sandboxes: int = 4,
         max_distinct_releases_per_scope: int = 4,
+        max_sandbox_variants_per_scope: int | None = None,
+        supported_capabilities: frozenset[PluginRuntimeCapability] = (
+            _ISOLATED_BASE_CAPABILITIES
+        ),
+        egress_policy: PluginEgressBrokerPolicy = PluginEgressBrokerPolicy(),
+        network_policy: NetworkPolicy | None = None,
     ) -> None:
         if max_live_sandboxes < 1:
             raise ValueError("Maximum live Plugin sandboxes must be positive")
@@ -153,32 +237,91 @@ class DockerPluginRuntime(
             raise ValueError(
                 "Distinct Plugin releases per execution cannot exceed live sandboxes"
             )
+        resolved_variant_limit = (
+            max_live_sandboxes
+            if max_sandbox_variants_per_scope is None
+            else max_sandbox_variants_per_scope
+        )
+        if not 1 <= resolved_variant_limit <= max_live_sandboxes:
+            raise ValueError(
+                "Sandbox variants per execution must be positive and cannot "
+                "exceed live sandboxes"
+            )
         self._releases = releases
         self._storage = storage
         self._bucket = bucket
         self._profile = profile
+        effective_supported_capabilities = set(supported_capabilities)
+        effective_supported_capabilities.update(profile.native_capabilities)
+        for native_capability in (
+            PluginRuntimeCapability.NATIVE_GDAL,
+            PluginRuntimeCapability.NATIVE_TESSERACT,
+        ):
+            if native_capability not in profile.native_capabilities:
+                effective_supported_capabilities.discard(native_capability)
+        network_egress = PluginNetworkEgressPolicy(
+            proxy_adapter_available=egress_policy.broker_image is not None,
+            broker=egress_policy,
+        )
+        postgresql_egress = PluginPostgresqlEgressPolicy(
+            tcp_adapter_available=bool(
+                egress_policy.destinations_for(PluginEgressProtocol.POSTGRESQL)
+            ),
+            broker=egress_policy,
+        )
+        # A pinned broker image plus a valid profile makes HTTP egress
+        # potentially available; invocation destinations decide whether a
+        # concrete broker plan can be created.
+        if egress_policy.broker_image is not None:
+            effective_supported_capabilities.add(
+                PluginRuntimeCapability.NETWORK_EGRESS
+            )
+        if postgresql_egress.available:
+            effective_supported_capabilities.add(
+                PluginRuntimeCapability.POSTGRESQL_EGRESS
+            )
+        self._release_admission = ReleaseExecutionAdmission(
+            isolated_adapter_available=True,
+            runtime_profile=profile.name,
+            supported_capabilities=frozenset(effective_supported_capabilities),
+            network_egress=network_egress,
+            postgresql_egress=postgresql_egress,
+            network_policy=network_policy or NetworkPolicy(),
+        )
+        self._network_policy = network_policy or NetworkPolicy()
+        self._egress_policy = egress_policy
         self._scratch_root = scratch_root.resolve()
         self._docker_binary = docker_binary
         self._seccomp_profile = seccomp_profile
         self._max_distinct_releases_per_scope = max_distinct_releases_per_scope
+        self._max_sandbox_variants_per_scope = resolved_variant_limit
         self._max_live_sandboxes = max_live_sandboxes
         self._live_sandbox_capacity = asyncio.BoundedSemaphore(max_live_sandboxes)
         self._waiting_sandbox_requests = 0
         self._sandboxes: dict[_SandboxKey, _Sandbox] = {}
         self._lock = asyncio.Lock()
 
+    @property
+    def release_admission(self) -> ReleaseExecutionAdmission:
+        return self._release_admission
+
+    @property
+    def network_policy(self) -> NetworkPolicy:
+        return self._network_policy
+
     @override
     def root_for(self, request: PluginInvocationRequest, /) -> Path:
         scope = current_plugin_sandbox_scope()
         if scope is None:
             raise PluginInvocationError(
-                "Workspace Plugin invocation has no top-level sandbox scope"
+                "Plugin invocation has no top-level sandbox scope"
             )
         release_root = (
             self._scratch_root
             / str(scope.value)
             / (
-                f"{request.release.slug}-r{request.release.revision}-"
+                f"{request.release.scope.value}-{request.release.slug}-"
+                f"r{request.release.revision}-"
                 f"{request.release.source_digest[:16]}"
             )
         )
@@ -205,6 +348,28 @@ class DockerPluginRuntime(
                 max_stdout=1 * 1_024 * 1_024,
                 check=True,
             )
+        egress_containers = await self._docker(
+            ("ps", "-aq", "--filter", f"label={_EGRESS_RESOURCE_LABEL}"),
+            timeout=30,
+            max_stdout=1 * 1_024 * 1_024,
+            check=True,
+        )
+        egress_container_ids = egress_containers.stdout.decode("utf-8").split()
+        if egress_container_ids:
+            await self._docker(
+                ("rm", "-f", *egress_container_ids),
+                timeout=60,
+                max_stdout=1 * 1_024 * 1_024,
+                check=True,
+            )
+        egress_networks = await self._docker(
+            ("network", "ls", "-q", "--filter", f"label={_EGRESS_RESOURCE_LABEL}"),
+            timeout=30,
+            max_stdout=1 * 1_024 * 1_024,
+            check=True,
+        )
+        for network in egress_networks.stdout.decode("utf-8").split():
+            await self._remove_network(network)
         self._scratch_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         for child in self._scratch_root.iterdir():
             if child.is_symlink() or not child.is_dir():
@@ -228,6 +393,7 @@ class DockerPluginRuntime(
                 max_live_sandboxes=self._max_live_sandboxes,
                 live_sandboxes=len(self._sandboxes),
                 waiting_sandbox_requests=self._waiting_sandbox_requests,
+                max_sandbox_variants_per_execution=self._max_sandbox_variants_per_scope,
             )
 
     @override
@@ -235,10 +401,16 @@ class DockerPluginRuntime(
         self,
         invocation_root: Path,
         limits: PluginInvocationLimits,
+        request: PluginInvocationRequest,
     ) -> None:
-        request = PluginInvocationEnvelope.from_json_bytes(
+        envelope = PluginInvocationEnvelope.from_json_bytes(
             (invocation_root / "invocation.json").read_bytes()
         )
+        if not _envelope_matches_invocation_request(envelope, request):
+            raise PluginGuestRunError(
+                PluginFailureCode.CONTRACT_FAILURE,
+                "Plugin invocation envelope does not match its exact host request",
+            )
         scope = current_plugin_sandbox_scope()
         if scope is None:
             raise PluginGuestRunError(
@@ -246,14 +418,45 @@ class DockerPluginRuntime(
                 "Plugin guest has no top-level sandbox scope",
             )
         release = await self._releases.get_by_revision(
-            request.workspace_id,
+            envelope.workspace_id,
             request.release.slug,
             request.release.revision,
+            scope=request.release.scope,
         )
-        if release is None or not _release_matches_request(release, request):
+        if release is None or not _release_matches_identity(
+            release,
+            request.release,
+        ):
             raise PluginGuestRunError(
                 PluginFailureCode.CONTRACT_FAILURE,
                 "Exact Plugin runtime release is unavailable",
+            )
+        if release.scope is PluginReleaseScope.WORKSPACE:
+            revocation = await self._releases.get_revocation(
+                workspace_id=envelope.workspace_id,
+                slug=release.slug,
+                revision=release.revision,
+            )
+        else:
+            revocation = await self._releases.get_system_revocation(
+                slug=release.slug,
+                revision=release.revision,
+            )
+        decision = self._release_admission.decide(
+            release,
+            node_contract=request.contract,
+            revocation=revocation,
+        )
+        if isinstance(decision, ReleaseExecutionRejection):
+            raise PluginGuestRunError(
+                PluginFailureCode.CONTRACT_FAILURE,
+                f"Plugin release is not runnable ({decision.reason}): "
+                f"{decision.detail}",
+            )
+        if decision is not ReleaseExecutionRoute.ISOLATED:
+            raise PluginGuestRunError(
+                PluginFailureCode.INTERNAL_ADAPTER_FAILURE,
+                f"Docker cannot satisfy Plugin execution route {decision.value!r}",
             )
         artifact = release.runtime_artifact
         if artifact is None:
@@ -261,12 +464,77 @@ class DockerPluginRuntime(
                 PluginFailureCode.CONTRACT_FAILURE,
                 "Plugin release is catalog-only and has no runtime artifact",
             )
+        postgresql_destination: PluginEgressDestination | None = None
+        if (
+            PluginRuntimeCapability.POSTGRESQL_EGRESS
+            in request.required_capabilities
+        ):
+            host = request.config.get("host")
+            port = request.config.get("port")
+            if (
+                not isinstance(host, str)
+                or not isinstance(port, int)
+                or isinstance(port, bool)
+            ):
+                raise PluginGuestRunError(
+                    PluginFailureCode.CONTRACT_FAILURE,
+                    "PostgreSQL egress requires exact string host and integer port config",
+                )
+            try:
+                postgresql_destination = PluginEgressDestination(
+                    protocol=PluginEgressProtocol.POSTGRESQL,
+                    host=host,
+                    port=port,
+                )
+            except ValueError as exc:
+                raise PluginGuestRunError(
+                    PluginFailureCode.CONTRACT_FAILURE,
+                    str(exc),
+                ) from exc
+            if postgresql_destination not in self._egress_policy.destinations:
+                raise PluginGuestRunError(
+                    PluginFailureCode.CONTRACT_FAILURE,
+                    "PostgreSQL destination is not in the deployment egress allowlist",
+                )
+        http_destinations: tuple[PluginEgressDestination, ...] = ()
+        network_profile_digest: str | None = None
+        egress_limits: PluginEgressLimits | None = None
+        requires_http_egress = (
+            PluginRuntimeCapability.NETWORK_EGRESS in request.required_capabilities
+        )
+        if requires_http_egress:
+            egress_resolution = resolve_http_egress_authority(
+                self._network_policy,
+                scope=release.scope,
+                workspace_id=release.workspace_id,
+                slug=release.slug,
+                revision=release.revision,
+                contract=request.contract,
+                config=request.config,
+            )
+            if not egress_resolution.allowed:
+                raise PluginGuestRunError(
+                    PluginFailureCode.CONTRACT_FAILURE,
+                    f"Network egress denied ({egress_resolution.reason.value}): "
+                    f"{egress_resolution.detail}",
+                )
+            assert egress_resolution.profile is not None
+            http_destinations = egress_resolution.origins
+            network_profile_digest = egress_resolution.profile.policy_digest
+            egress_limits = egress_resolution.profile.limits.broker_limits()
         key = _SandboxKey(
             scope_id=scope,
-            workspace_id=request.workspace_id,
+            workspace_id=envelope.workspace_id,
+            release_scope=release.scope,
+            release_workspace_id=release.workspace_id,
             release_slug=release.slug,
             release_revision=release.revision,
             source_digest=release.source_digest,
+            descriptor_digest=release.descriptor.digest,
+            required_capabilities=request.required_capabilities,
+            postgresql_destination=postgresql_destination,
+            network_profile_digest=network_profile_digest,
+            http_destinations=http_destinations,
         )
         try:
             sandbox = await self._sandbox_for(
@@ -274,16 +542,18 @@ class DockerPluginRuntime(
                 release,
                 artifact,
                 invocation_root.parent,
+                egress_limits=egress_limits,
             )
         except DockerPluginRuntimeError as exc:
             raise PluginGuestRunError(
                 PluginFailureCode.INTERNAL_ADAPTER_FAILURE,
                 str(exc),
             ) from exc
-        container_root = _CONTAINER_INVOCATIONS / str(request.invocation_id)
+        container_root = _CONTAINER_INVOCATIONS / str(envelope.invocation_id)
+        guest_environment = self._guest_egress_environment(sandbox, request)
         uncertain_cleanup = False
         try:
-            archive = _invocation_tar(invocation_root, str(request.invocation_id))
+            archive = _invocation_tar(invocation_root, str(envelope.invocation_id))
             await self._docker(
                 (
                     "exec",
@@ -309,6 +579,7 @@ class DockerPluginRuntime(
                         "exec",
                         "--workdir",
                         "/opt/grafy/plugin",
+                        *guest_environment,
                         "--env",
                         f"TMPDIR={container_root / 'tmp'}",
                         sandbox.container_id,
@@ -418,7 +689,7 @@ class DockerPluginRuntime(
         failures: list[Exception] = []
         for sandbox in sandboxes:
             try:
-                await self._remove_container(sandbox.container_id)
+                await self._remove_sandbox_resources(sandbox)
             except Exception as exc:
                 failures.append(exc)
             finally:
@@ -437,7 +708,7 @@ class DockerPluginRuntime(
             self._sandboxes.clear()
         for sandbox in sandboxes:
             try:
-                await self._remove_container(sandbox.container_id)
+                await self._remove_sandbox_resources(sandbox)
             finally:
                 self._live_sandbox_capacity.release()
 
@@ -447,19 +718,14 @@ class DockerPluginRuntime(
         release: PluginRelease,
         artifact: PluginRuntimeArtifact,
         scratch_root: Path,
+        *,
+        egress_limits: PluginEgressLimits | None = None,
     ) -> _Sandbox:
         async with self._lock:
             existing = self._sandboxes.get(key)
             if existing is not None:
                 return existing
-            scope_release_count = sum(
-                existing_key.scope_id == key.scope_id
-                for existing_key in self._sandboxes
-            )
-            if scope_release_count >= self._max_distinct_releases_per_scope:
-                raise DockerPluginRuntimeError(
-                    "Graph execution exceeds its distinct Plugin release limit"
-                )
+            self._require_scope_capacity(key)
         self._waiting_sandbox_requests += 1
         try:
             await self._live_sandbox_capacity.acquire()
@@ -471,30 +737,43 @@ class DockerPluginRuntime(
                 if existing is not None:
                     self._live_sandbox_capacity.release()
                     return existing
-                scope_release_count = sum(
-                    existing_key.scope_id == key.scope_id
-                    for existing_key in self._sandboxes
-                )
-                if scope_release_count >= self._max_distinct_releases_per_scope:
-                    raise DockerPluginRuntimeError(
-                        "Graph execution exceeds its distinct Plugin release limit"
-                    )
+                self._require_scope_capacity(key)
                 await self._ensure_image(release, artifact)
-                container_id = await self._create_container(
+                sandbox = await self._create_container(
                     key,
                     artifact,
                     scratch_root,
-                )
-                sandbox = _Sandbox(
-                    key=key,
-                    container_id=container_id,
-                    scratch_root=scratch_root,
+                    egress_limits=egress_limits,
                 )
                 self._sandboxes[key] = sandbox
                 return sandbox
         except BaseException:
             self._live_sandbox_capacity.release()
             raise
+
+    def _require_scope_capacity(self, key: _SandboxKey) -> None:
+        """Enforce per-scope release and sandbox-variant ceilings.
+
+        Origin variants of one release count against the variant limit, never
+        against the distinct-release limit.
+        """
+
+        scope_keys = [
+            existing_key
+            for existing_key in self._sandboxes
+            if existing_key.scope_id == key.scope_id
+        ]
+        distinct_release_count = len(
+            {existing_key.release_identity() for existing_key in scope_keys}
+        )
+        if distinct_release_count >= self._max_distinct_releases_per_scope:
+            raise DockerPluginRuntimeError(
+                "Graph execution exceeds its distinct Plugin release limit"
+            )
+        if len(scope_keys) >= self._max_sandbox_variants_per_scope:
+            raise DockerPluginRuntimeError(
+                "Graph execution exceeds its Plugin sandbox variant limit"
+            )
 
     async def _ensure_image(
         self,
@@ -549,6 +828,7 @@ class DockerPluginRuntime(
         expected = {
             "org.opencontainers.image.source.digest": f"sha256:{release.source_digest}",
             "io.grafy.plugin.runtime": "1",
+            "io.grafy.plugin.release.namespace": release.namespace.storage_path,
             "io.grafy.plugin.contract.digest": f"sha256:{release.contract_digest}",
             "io.grafy.plugin.profile.digest": f"sha256:{release.profile_digest}",
             "io.grafy.plugin.base.digest": (
@@ -592,25 +872,219 @@ class DockerPluginRuntime(
         key: _SandboxKey,
         artifact: PluginRuntimeArtifact,
         scratch_root: Path,
-    ) -> str:
-        del scratch_root
+        *,
+        egress_limits: PluginEgressLimits | None = None,
+    ) -> _Sandbox:
         name = (
             f"grafy-plugin-{str(key.scope_id.value)[:8]}-"
+            f"{key.release_scope.value[:3]}-"
             f"{key.release_slug[:24]}-r{key.release_revision}-"
             f"{key.source_digest[:8]}"
         )
+        capability_profile = ",".join(
+            capability.value for capability in key.required_capabilities
+        )
+        capability_profile_digest = sha256(
+            capability_profile.encode("utf-8")
+        ).hexdigest()
         seccomp = (
             "seccomp=builtin"
             if self._seccomp_profile is None
             else f"seccomp={self._seccomp_profile}"
         )
         created_at = datetime.now(UTC).isoformat()
-        command = (
+        requires_http_egress = (
+            PluginRuntimeCapability.NETWORK_EGRESS in key.required_capabilities
+        )
+        requires_postgresql_egress = (
+            PluginRuntimeCapability.POSTGRESQL_EGRESS in key.required_capabilities
+        )
+        egress_plan: PluginEgressBrokerPlan | None = None
+        guest_network: str | None = None
+        egress_network: str | None = None
+        broker_container_id: str | None = None
+        sandbox_container_id: str | None = None
+        network_arguments: tuple[str, ...] = ("--network=none",)
+        if requires_http_egress or requires_postgresql_egress:
+            broker_image = self._egress_policy.broker_image
+            if broker_image is None:
+                raise DockerPluginRuntimeError(
+                    "Plugin egress broker image is not configured"
+                )
+            sandbox_key_sha256 = _sandbox_key_sha256(key)
+            try:
+                resolved_http = tuple(
+                    await asyncio.wait_for(
+                        asyncio.gather(
+                            *(
+                                resolve_public_destination(destination)
+                                for destination in key.http_destinations
+                            )
+                        ),
+                        timeout=10,
+                    )
+                )
+                if key.postgresql_destination is not None:
+                    resolved_postgresql = (
+                        await resolve_public_destination(
+                            key.postgresql_destination
+                        ),
+                    )
+                else:
+                    resolved_postgresql = ()
+            except (OSError, PermissionError, ValueError) as exc:
+                raise DockerPluginRuntimeError(
+                    "Plugin egress destinations could not be resolved safely"
+                ) from exc
+            egress_plan = PluginEgressBrokerPlan.from_resolved(
+                broker_image=broker_image,
+                sandbox_key_sha256=sandbox_key_sha256,
+                destinations=(*resolved_http, *resolved_postgresql),
+                limits=egress_limits or PluginEgressLimits(),
+            )
+            if not egress_plan.destinations:
+                raise DockerPluginRuntimeError(
+                    "Plugin egress plan has no destinations for the requested "
+                    "capabilities"
+                )
+            resource_suffix = sandbox_key_sha256[:16]
+            guest_network = f"grafy-plugin-internal-{resource_suffix}"
+            egress_network = f"grafy-plugin-egress-{resource_suffix}"
+            network_arguments = ("--network", guest_network)
+        try:
+            if egress_plan is not None:
+                assert guest_network is not None
+                assert egress_network is not None
+                await self._docker(
+                    (
+                        "network",
+                        "create",
+                        "--driver",
+                        "bridge",
+                        "--internal",
+                        "--label",
+                        _EGRESS_RESOURCE_LABEL,
+                        "--label",
+                        f"io.grafy.plugin.sandbox_key={egress_plan.sandbox_key_sha256}",
+                        guest_network,
+                    ),
+                    timeout=30,
+                    max_stdout=1 * 1_024 * 1_024,
+                    check=True,
+                )
+                await self._docker(
+                    (
+                        "network",
+                        "create",
+                        "--driver",
+                        "bridge",
+                        "--label",
+                        _EGRESS_RESOURCE_LABEL,
+                        "--label",
+                        f"io.grafy.plugin.sandbox_key={egress_plan.sandbox_key_sha256}",
+                        egress_network,
+                    ),
+                    timeout=30,
+                    max_stdout=1 * 1_024 * 1_024,
+                    check=True,
+                )
+                broker_created = await self._docker(
+                    (
+                        "create",
+                        "--name",
+                        f"grafy-plugin-broker-{egress_plan.sandbox_key_sha256[:16]}",
+                        "--pull=never",
+                        "--network",
+                        egress_network,
+                        "--read-only",
+                        "--user",
+                        "65532:65532",
+                        "--cap-drop=ALL",
+                        "--security-opt",
+                        "no-new-privileges=true",
+                        "--security-opt",
+                        seccomp,
+                        "--pids-limit",
+                        "64",
+                        "--memory",
+                        "134217728",
+                        "--tmpfs",
+                        "/tmp:rw,noexec,nosuid,nodev,size=8388608,mode=1777",
+                        "--env",
+                        (
+                            "GRAFY_PLUGIN_EGRESS_POLICY_B64="
+                            + base64.b64encode(
+                                egress_plan.canonical_json_bytes()
+                            ).decode("ascii")
+                        ),
+                        "--label",
+                        _EGRESS_RESOURCE_LABEL,
+                        "--label",
+                        f"io.grafy.plugin.scope={key.scope_id.value}",
+                        "--label",
+                        f"io.grafy.plugin.sandbox_key={egress_plan.sandbox_key_sha256}",
+                        "--label",
+                        f"io.grafy.plugin.egress_policy={egress_plan.policy_sha256}",
+                        egress_plan.broker_image,
+                        "/opt/grafy/bin/grafy-plugin-egress-broker",
+                        "serve",
+                        "--policy-env",
+                        "GRAFY_PLUGIN_EGRESS_POLICY_B64",
+                    ),
+                    timeout=60,
+                    max_stdout=1 * 1_024 * 1_024,
+                    check=True,
+                )
+                broker_container_id = broker_created.stdout.decode("utf-8").strip()
+                if not broker_container_id:
+                    raise DockerPluginRuntimeError(
+                        "Docker returned no Plugin egress broker container ID"
+                    )
+                await self._docker(
+                    (
+                        "network",
+                        "connect",
+                        "--alias",
+                        _EGRESS_BROKER_ALIAS,
+                        *tuple(
+                            value
+                            for relay in egress_plan.postgresql_relays
+                            for value in ("--alias", relay.destination.host)
+                        ),
+                        guest_network,
+                        broker_container_id,
+                    ),
+                    timeout=30,
+                    max_stdout=1 * 1_024 * 1_024,
+                    check=True,
+                )
+                await self._docker(
+                    ("start", broker_container_id),
+                    timeout=60,
+                    max_stdout=1 * 1_024 * 1_024,
+                    check=True,
+                )
+                await self._docker(
+                    (
+                        "exec",
+                        broker_container_id,
+                        "/opt/grafy/bin/grafy-plugin-egress-broker",
+                        "ready",
+                        "--policy-sha256",
+                        egress_plan.policy_sha256,
+                        "--timeout-seconds",
+                        "5",
+                    ),
+                    timeout=10,
+                    max_stdout=64 * 1_024,
+                    check=True,
+                )
+            command = (
             "create",
             "--name",
             name,
             "--pull=never",
-            "--network=none",
+            *network_arguments,
             "--read-only",
             "--user",
             "65532:65532",
@@ -641,31 +1115,55 @@ class DockerPluginRuntime(
             "--label",
             f"io.grafy.plugin.release={key.release_slug}@{key.release_revision}",
             "--label",
+            f"io.grafy.plugin.release_scope={key.release_scope.value}",
+            "--label",
+            f"io.grafy.plugin.capability_profile={capability_profile_digest}",
+            "--label",
             f"io.grafy.plugin.created_at={created_at}",
             f"sha256:{artifact.manifest_digest}",
             "-c",
             "import pathlib,time; pathlib.Path('/tmp/home').mkdir(); time.sleep(10**9)",
         )
-        created = await self._docker(
-            command,
-            timeout=60,
-            max_stdout=1 * 1_024 * 1_024,
-            check=True,
-        )
-        container_id = created.stdout.decode("utf-8").strip()
-        if not container_id:
-            raise DockerPluginRuntimeError("Docker returned no Plugin container ID")
-        try:
-            await self._docker(
-                ("start", container_id),
+            created = await self._docker(
+                command,
                 timeout=60,
                 max_stdout=1 * 1_024 * 1_024,
                 check=True,
             )
-        except Exception:
-            await self._remove_container(container_id)
+            sandbox_container_id = created.stdout.decode("utf-8").strip()
+            if not sandbox_container_id:
+                raise DockerPluginRuntimeError("Docker returned no Plugin container ID")
+            await self._docker(
+                ("start", sandbox_container_id),
+                timeout=60,
+                max_stdout=1 * 1_024 * 1_024,
+                check=True,
+            )
+            return _Sandbox(
+                key=key,
+                container_id=sandbox_container_id,
+                scratch_root=scratch_root,
+                egress_broker_id=broker_container_id,
+                guest_network=guest_network,
+                egress_network=egress_network,
+                egress_plan=egress_plan,
+            )
+        except BaseException:
+            for container_id in (sandbox_container_id, broker_container_id):
+                if container_id is None:
+                    continue
+                try:
+                    await self._remove_container(container_id)
+                except Exception:
+                    pass
+            for network in (guest_network, egress_network):
+                if network is None:
+                    continue
+                try:
+                    await self._remove_network(network)
+                except Exception:
+                    pass
             raise
-        return container_id
 
     async def _destroy_sandbox(self, sandbox: _Sandbox) -> None:
         async with self._lock:
@@ -673,9 +1171,60 @@ class DockerPluginRuntime(
         if owned is None:
             return
         try:
-            await self._remove_container(sandbox.container_id)
+            await self._remove_sandbox_resources(sandbox)
         finally:
             self._live_sandbox_capacity.release()
+
+    def _guest_egress_environment(
+        self,
+        sandbox: _Sandbox,
+        request: PluginInvocationRequest,
+    ) -> tuple[str, ...]:
+        environment: tuple[str, ...] = ()
+        capabilities = sandbox.key.required_capabilities
+        if PluginRuntimeCapability.NETWORK_EGRESS in capabilities:
+            if sandbox.egress_plan is None or not sandbox.egress_plan.http_proxy_enabled:
+                raise PluginGuestRunError(
+                    PluginFailureCode.INTERNAL_ADAPTER_FAILURE,
+                    "Plugin HTTP egress broker is unavailable",
+                )
+            proxy_url = f"http://{_EGRESS_BROKER_ALIAS}:{PLUGIN_HTTP_PROXY_PORT}"
+            environment += (
+                "--env",
+                f"HTTP_PROXY={proxy_url}",
+                "--env",
+                f"HTTPS_PROXY={proxy_url}",
+                "--env",
+                f"http_proxy={proxy_url}",
+                "--env",
+                f"https_proxy={proxy_url}",
+                "--env",
+                "NO_PROXY=",
+                "--env",
+                "no_proxy=",
+            )
+        return environment
+
+    async def _remove_sandbox_resources(self, sandbox: _Sandbox) -> None:
+        failures: list[Exception] = []
+        for container_id in (sandbox.container_id, sandbox.egress_broker_id):
+            if container_id is None:
+                continue
+            try:
+                await self._remove_container(container_id)
+            except Exception as exc:
+                failures.append(exc)
+        for network in (sandbox.guest_network, sandbox.egress_network):
+            if network is None:
+                continue
+            try:
+                await self._remove_network(network)
+            except Exception as exc:
+                failures.append(exc)
+        if failures:
+            raise DockerPluginRuntimeError(
+                "Could not remove all Plugin sandbox resources"
+            ) from failures[0]
 
     async def _cleanup_invocation(
         self,
@@ -718,6 +1267,22 @@ class DockerPluginRuntime(
         if "No such container" not in detail:
             raise _DockerCommandError(
                 f"Docker container removal failed with status "
+                f"{completed.returncode}: {detail[-2_000:]}"
+            )
+
+    async def _remove_network(self, network: str) -> None:
+        completed = await self._docker(
+            ("network", "rm", network),
+            timeout=30,
+            max_stdout=1 * 1_024 * 1_024,
+            check=False,
+        )
+        if completed.returncode == 0:
+            return
+        detail = completed.stderr.decode("utf-8", errors="replace").strip()
+        if "No such network" not in detail:
+            raise _DockerCommandError(
+                f"Docker network removal failed with status "
                 f"{completed.returncode}: {detail[-2_000:]}"
             )
 
@@ -783,16 +1348,79 @@ class DockerPluginRuntime(
         return completed
 
 
-def _release_matches_request(
+def _sandbox_key_sha256(key: _SandboxKey) -> str:
+    identity = {
+        "scope_id": str(key.scope_id.value),
+        "workspace_id": str(key.workspace_id),
+        "release_scope": key.release_scope.value,
+        "release_workspace_id": (
+            None
+            if key.release_workspace_id is None
+            else str(key.release_workspace_id)
+        ),
+        "release_slug": key.release_slug,
+        "release_revision": key.release_revision,
+        "source_digest": key.source_digest,
+        "descriptor_digest": key.descriptor_digest,
+        "required_capabilities": [
+            capability.value for capability in key.required_capabilities
+        ],
+        "postgresql_destination": (
+            None
+            if key.postgresql_destination is None
+            else {
+                "host": key.postgresql_destination.host,
+                "port": key.postgresql_destination.port,
+            }
+        ),
+        "network_profile_digest": key.network_profile_digest,
+        "http_destinations": [
+            {
+                "protocol": destination.protocol.value,
+                "host": destination.host,
+                "port": destination.port,
+            }
+            for destination in key.http_destinations
+        ],
+    }
+    canonical = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return sha256(canonical).hexdigest()
+
+
+def _release_matches_identity(
     release: PluginRelease,
-    request: PluginInvocationEnvelope,
+    identity: PluginReleaseIdentity,
 ) -> bool:
     return (
-        release.slug == request.release.slug
-        and release.revision == request.release.revision
-        and release.source_digest == request.release.source_digest
-        and release.contract_digest == request.release.contract_digest
-        and release.protocol_digest == request.release.protocol_digest
+        release.scope is identity.scope
+        and release.workspace_id == identity.workspace_id
+        and release.slug == identity.slug
+        and release.revision == identity.revision
+        and release.source_digest == identity.source_digest
+        and release.contract_digest == identity.contract_digest
+        and release.protocol_digest == identity.protocol_digest
+        and release.descriptor.digest == identity.descriptor_digest
+    )
+
+
+def _envelope_matches_invocation_request(
+    envelope: PluginInvocationEnvelope,
+    request: PluginInvocationRequest,
+) -> bool:
+    return (
+        envelope.workspace_id == request.workspace_id
+        and envelope.release.slug == request.release.slug
+        and envelope.release.revision == request.release.revision
+        and envelope.release.source_digest == request.release.source_digest
+        and envelope.release.contract_digest == request.release.contract_digest
+        and envelope.release.protocol_digest == request.release.protocol_digest
+        and envelope.operator_id == request.contract.operator_id
+        and envelope.operator_version == request.contract.operator_version
+        and envelope.required_capabilities == request.required_capabilities
+        and envelope.secret_graph_id == request.secret_graph_id
+        and envelope.secret_graph_revision == request.secret_graph_revision
     )
 
 
@@ -831,7 +1459,11 @@ def _invocation_tar(invocation_root: Path, directory_name: str) -> bytes:
                 )
             content = path.read_bytes()
             info.size = len(content)
-            info.mode = 0o400 if relative.startswith("inputs/") else 0o600
+            info.mode = (
+                0o400
+                if relative.startswith(("inputs/", "secrets/"))
+                else 0o600
+            )
             archive.addfile(info, BytesIO(content))
     return destination.getvalue()
 

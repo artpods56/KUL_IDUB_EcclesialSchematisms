@@ -21,6 +21,7 @@ from grafy_core.domain.plugin_releases import (
     PluginCatalogManifest,
 )
 from grafy_core.plugin_inspector import InspectionResult
+from grafy_core.runtime.plugin_loader import WORKSPACE_PLUGIN_LOADER_TARGET
 
 
 MAX_PLUGIN_SOURCE_FILES = 2_000
@@ -81,13 +82,15 @@ class VerifiedPluginDirectory:
 
 
 class PluginDirectoryPublisher:
-    """Snapshot, verify, inspect, and freeze one Plugin working copy.
+    """Host-compatible verification for a trusted Plugin working copy.
 
     The working copy is scanned and staged before any Plugin code runs; the
     deterministic source archive and its digest are computed from those staged
     bytes. Tests and inspection consume an unpacked copy of that exact archive
     inside the snapshot's own locked environment, never the mutable working
-    directory.
+    directory. The subprocess environment excludes host secrets, but this
+    adapter does not isolate the host filesystem or network. System candidates
+    must use ``DockerPluginDirectoryPublisher`` from the one-shot publisher.
     """
 
     def __init__(
@@ -112,6 +115,7 @@ class PluginDirectoryPublisher:
         directory: Path,
         *,
         expected_slug: str | None = None,
+        loader_target: str = WORKSPACE_PLUGIN_LOADER_TARGET,
     ) -> VerifiedPluginDirectory:
         project = self._require_allowed_project(directory)
         entries = scan_source_tree(project)
@@ -154,6 +158,7 @@ class PluginDirectoryPublisher:
                     "-I",
                     "-m",
                     "grafy_core.plugin_inspector",
+                    loader_target,
                 ),
                 environment,
                 snapshot,
@@ -484,11 +489,12 @@ def _included_source_path(value: str) -> bool:
 
 
 def constrained_environment(venv_python: Path, home: Path) -> dict[str, str]:
-    """A clean environment for network-disabled Plugin tests and inspection.
+    """A secret-free environment for trusted host tests and inspection.
 
     Only the snapshot's locked interpreter and a private HOME/TMPDIR are
     exposed. Host environment variables — including credentials and secrets —
-    are deliberately not inherited.
+    are deliberately not inherited. This does not disable filesystem or network
+    access; it is not a sandbox.
     """
 
     return {
