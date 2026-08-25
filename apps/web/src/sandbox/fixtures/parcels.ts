@@ -29,6 +29,7 @@ function artifact(
   return {
     key: { id, schema_version: 1 },
     title,
+    bundle: { format: "inline-json", version: 1 },
     payload_schema: {},
     field_projections: [],
   };
@@ -106,7 +107,16 @@ export const QUERY_PARCELS_FIELDS: readonly SchemaField[] = [
 
 export const PARCELS_REGISTRY: NodeRegistry = {
   plugins: [
-    { slug: "sandbox.geo", title: "Geo", origin: "external", runnable: true },
+    {
+      slug: "sandbox.geo",
+      title: "Geo",
+      entry_kind: "plugin",
+      scope: "system",
+      distribution: "optional",
+      revision: 1,
+      plugin_release: { scope: "system", slug: "sandbox.geo", revision: 1 },
+      runnable: true,
+    },
   ],
   artifact_types: [
     artifact("table.data", "Table"),

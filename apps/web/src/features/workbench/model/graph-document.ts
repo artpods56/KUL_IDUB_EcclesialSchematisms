@@ -177,6 +177,7 @@ function projectSavedGraphNode(
       node.plugin_release === null || node.plugin_release === undefined
         ? null
         : {
+            scope: node.plugin_release.scope,
             slug: node.plugin_release.slug,
             revision: node.plugin_release.revision,
           },
@@ -462,6 +463,7 @@ export function applyGraphCommandNormalized(
       return updateNode(document, command.node_id, (node) => ({
         ...node,
         plugin_release: {
+          scope: command.plugin_release.scope,
           slug: command.plugin_release.slug,
           revision: command.plugin_release.revision,
         },

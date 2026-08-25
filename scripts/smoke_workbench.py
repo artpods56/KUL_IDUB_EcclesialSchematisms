@@ -11,19 +11,20 @@ from grafy_core.artifacts import (
     InMemoryUnitOfWork,
 )
 from grafy_core.nodes import NodeExecutionContext
-from grafy_core.operators.arithmetic import (
+from grafy_plugin_arithmetic.nodes import (
     INTEGER_VALUE,
     IntegerValueOutputWriter,
     IntegerValuePayload,
 )
-from grafy_core.operators.images import IMAGES, RASTER_IMAGE
-from grafy_core.operators.sequences import (
+from grafy_core.artifact_contracts import RASTER_IMAGE
+from grafy_plugin_image import IMAGES
+from grafy_plugin_sequence.nodes import (
     CollectNode,
     CountNode,
     ItemAtNode,
     SliceNode,
 )
-from grafy_core.plugins import PluginOrigin, PluginRegistry, PluginRuntimeContext
+from grafy_core.plugins import PluginRegistry, PluginRuntimeContext
 from grafy_core.runtime.execution import NodeRuntime, PersistedNodeOutput
 from grafy_core.runtime.materialization import InputMaterializer
 from grafy_core.runtime.persistence import (
@@ -49,8 +50,8 @@ async def main() -> None:
     uow = InMemoryUnitOfWork()
     storage = LocalFileObjectStore(OBJECT_STORE)
     plugin_registry = PluginRegistry()
-    plugin_registry.install(IMAGES, origin=PluginOrigin.BUILTIN)
-    plugin_registry.install(OCR, origin=PluginOrigin.EXTERNAL)
+    plugin_registry.install(IMAGES)
+    plugin_registry.install(OCR)
     plugin_registry.freeze()
     plugin_context = PluginRuntimeContext(
         workspace=WORKSPACE,

@@ -530,11 +530,19 @@ describe("authored graph document", () => {
       nodes: [
         {
           ...node("source"),
-          plugin_release: { slug: "notes", revision: 1 },
+          plugin_release: {
+            scope: "system",
+            slug: "notes",
+            revision: 1,
+          },
         },
         {
           ...node("target"),
-          plugin_release: { slug: "tables", revision: 4 },
+          plugin_release: {
+            scope: "workspace",
+            slug: "notes",
+            revision: 4,
+          },
         },
       ],
       edges: [edge],
@@ -543,14 +551,16 @@ describe("authored graph document", () => {
     const upgraded = applyGraphCommand(original, {
       kind: "update_node_plugin_release",
       node_id: "source",
-      plugin_release: { slug: "notes", revision: 3 },
+      plugin_release: { scope: "system", slug: "notes", revision: 3 },
     });
 
     expect(original.nodes[0]?.plugin_release).toEqual({
+      scope: "system",
       slug: "notes",
       revision: 1,
     });
     expect(upgraded.nodes[0]?.plugin_release).toEqual({
+      scope: "system",
       slug: "notes",
       revision: 3,
     });
@@ -559,7 +569,7 @@ describe("authored graph document", () => {
       executionInvalidatedNodeIds(original, {
         kind: "update_node_plugin_release",
         node_id: "source",
-        plugin_release: { slug: "notes", revision: 3 },
+        plugin_release: { scope: "system", slug: "notes", revision: 3 },
       }),
     ).toEqual(new Set(["source", "target"]));
   });

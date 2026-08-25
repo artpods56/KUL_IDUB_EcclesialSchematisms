@@ -6,12 +6,14 @@ import { portMetaForPort } from "../canvas/types";
 import {
   artifactFilterId,
   buildCatalogFilters,
+  catalogNodeKey,
   catalogNodePortSummary,
   catalogNodeSpecs,
   catalogNodesForFilter,
   downstreamCandidatesFromOutput,
   filterAndSearchCatalogNodes,
   moduleCallUpgradeTarget,
+  pluginReleaseUpgradeTarget,
   sortCatalogNodes,
   upstreamCandidatesFromInput,
 } from "./node-catalog";
@@ -79,14 +81,32 @@ function nodeSpec(
 function registry(): NodeRegistry {
   return {
     plugins: [
-      { slug: "builtin", title: "Built-in", origin: "builtin", runnable: true },
+      {
+        slug: "builtin",
+        title: "Built-in",
+        entry_kind: "plugin",
+        scope: "system",
+        distribution: "bundled",
+        revision: 1,
+        plugin_release: { scope: "system", slug: "builtin", revision: 1 },
+        runnable: true,
+      },
       {
         slug: "graph.module",
         title: "Workspace library",
-        origin: "module",
+        entry_kind: "module",
         runnable: true,
       },
-      { slug: "external", title: "External", origin: "external", runnable: true },
+      {
+        slug: "external",
+        title: "External",
+        entry_kind: "plugin",
+        scope: "system",
+        distribution: "optional",
+        revision: 1,
+        plugin_release: { scope: "system", slug: "external", revision: 1 },
+        runnable: true,
+      },
     ],
     artifact_types: [
       {
@@ -94,18 +114,21 @@ function registry(): NodeRegistry {
         title: "Text",
         payload_schema: {},
         field_projections: [],
+        bundle: { format: "inline-json", version: 1 },
       },
       {
         key: { id: "scalar.text", schema_version: 2 },
         title: "Text",
         payload_schema: {},
         field_projections: [],
+        bundle: { format: "inline-json", version: 1 },
       },
       {
         key: { id: "table.data", schema_version: 1 },
         title: "Table",
         payload_schema: {},
         field_projections: [],
+        bundle: { format: "table-bundle", version: 1 },
       },
     ],
     artifact_conversions: [],
@@ -242,6 +265,81 @@ describe("node catalog modules", () => {
     const target = moduleCallUpgradeTarget(registry(), pinned!);
     expect(target?.operator_version).toBe(2);
     expect(moduleCallUpgradeTarget(registry(), target!)).toBeNull();
+  });
+});
+
+describe("scoped Plugin release upgrades", () => {
+  const current = {
+    ...nodeSpec("reports.render", "reports"),
+    plugin_revision: 3,
+    plugin_release: { scope: "system", slug: "reports", revision: 3 },
+  } satisfies NodeSpec;
+
+  it("offers a newer release only within the same scope and slug", () => {
+    expect(
+      pluginReleaseUpgradeTarget(current, {
+        scope: "system",
+        slug: "reports",
+        revision: 1,
+      }),
+    ).toEqual({ scope: "system", slug: "reports", revision: 3 });
+    expect(
+      pluginReleaseUpgradeTarget(current, {
+        scope: "workspace",
+        slug: "reports",
+        revision: 1,
+      }),
+    ).toBeNull();
+    expect(
+      pluginReleaseUpgradeTarget(current, {
+        scope: "system",
+        slug: "other",
+        revision: 1,
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps same-operator releases distinct by scope without keying revisions", () => {
+    expect(catalogNodeKey(current)).toBe(
+      "plugin-release:system:reports:reports.render@1",
+    );
+    expect(
+      catalogNodeKey({
+        ...current,
+        plugin_release: {
+          scope: "workspace",
+          slug: "reports",
+          revision: 8,
+        },
+      }),
+    ).toBe("plugin-release:workspace:reports:reports.render@1");
+    expect(
+      catalogNodeKey({
+        ...current,
+        plugin_release: {
+          scope: "system",
+          slug: "reports",
+          revision: 4,
+        },
+      }),
+    ).toBe("plugin-release:system:reports:reports.render@1");
+  });
+
+  it("does not offer the pinned or an older catalog release", () => {
+    expect(
+      pluginReleaseUpgradeTarget(current, {
+        scope: "system",
+        slug: "reports",
+        revision: 3,
+      }),
+    ).toBeNull();
+    expect(
+      pluginReleaseUpgradeTarget(current, {
+        scope: "system",
+        slug: "reports",
+        revision: 4,
+      }),
+    ).toBeNull();
   });
 });
 

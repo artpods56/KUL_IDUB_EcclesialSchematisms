@@ -87,6 +87,11 @@ import {
 } from "./useSavedGraphLifecycle";
 import { useRunExecution } from "./useRunExecution";
 import {
+  shouldBlockAuthoringCommand,
+  type AuthoringCommandOptions,
+} from "./authoring-command-guard";
+import { useNodeFileUploads } from "./useNodeFileUploads";
+import {
   GraphRoomCommandError,
   PRESENCE_CLIENT_MIN_INTERVAL_MS,
   PresenceOverlay,
@@ -110,6 +115,7 @@ import {
   applyNodeChanges,
 } from "../canvas/WorkflowCanvas";
 import {
+  addNodeCommand,
   addEdgeCommand,
   graphCommandsFromEdgeChanges,
   graphCommandsFromNodeChanges,
@@ -175,7 +181,6 @@ import {
 import { artifactTypeColor } from "../canvas/nodes.css";
 import type { ArtifactQueryRelation } from "../canvas/query-artifact-tables";
 import type { SchemaBuilderField } from "../canvas/schema-builder";
-import { serializeNodeLayout } from "../canvas/node-layout";
 import {
   isFileUploadOperator,
   WORKFLOW_EDGE_TYPE,
@@ -205,7 +210,6 @@ import {
   inputPlugBindingsForNode,
   isConnectionAccepted,
   mappedInputPortForNode,
-  nodeAndDescendantIds,
   workflowEdgeRouteOption,
 } from "../model/graph-authoring";
 import {
@@ -221,13 +225,13 @@ import {
   catalogNodeSpecs,
   downstreamCandidatesFromOutput,
   moduleCallUpgradeTarget,
+  pluginReleaseUpgradeTarget,
   upstreamCandidatesFromInput,
 } from "../model/node-catalog";
 import { workbenchGraphPath } from "../routes";
 import { useNodeRegistry } from "@/hooks/use-api";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import {
-  uploadFile,
   type ArtifactTypeKey,
   type NodeSpec,
   type RunEdgeCollectionMode,
@@ -633,9 +637,9 @@ function WorkbenchBody({
   }>({ submitLocal: () => undefined });
 
   const applyAuthoringCommands = React.useCallback(
-    (commands: readonly GraphCommand[], options?: { syncRoom?: boolean }) => {
+    (commands: readonly GraphCommand[], options?: AuthoringCommandOptions) => {
       if (!commands.length) return;
-      if (options?.syncRoom !== false && !localAuthoringEnabledRef.current) {
+      if (shouldBlockAuthoringCommand(localAuthoringEnabledRef.current, options)) {
         setRunError(localAuthoringBlockedMessageRef.current);
         return;
       }
@@ -1112,61 +1116,14 @@ function WorkbenchBody({
     [applyAuthoringCommands, nodes],
   );
 
-  const handleImagesSelected = React.useCallback(
-    async (nodeId: string, files: File[]) => {
-      const invalidatedNodeIds = nodeAndDescendantIds(nodeId, edges);
-      setNodes((current) =>
-        current.map((node) => {
-          if (!invalidatedNodeIds.has(node.id)) return node;
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              run: null,
-              progress: null,
-              execution:
-                node.id === nodeId
-                  ? { status: "uploading" }
-                  : { status: "idle" },
-            },
-          };
-        }),
-      );
-      setRunError(null);
-      try {
-        const uploads = await Promise.all(
-          files.map((file) => uploadFile(workspaceId, file)),
-        );
-        applyAuthoringCommands([
-          {
-            kind: "update_node_configuration",
-            node_id: nodeId,
-            field: "uploads",
-            value: uploads,
-          },
-        ]);
-      } catch (uploadError) {
-        const message =
-          uploadError instanceof Error
-            ? uploadError.message
-            : "File upload failed";
-        setNodes((current) =>
-          current.map((node) =>
-            node.id === nodeId
-              ? {
-                  ...node,
-                  data: {
-                    ...node.data,
-                    execution: { status: "failed", error: message },
-                  },
-                }
-              : node,
-          ),
-        );
-      }
-    },
-    [applyAuthoringCommands, edges, setNodes, workspaceId],
-  );
+  const { uploading, handleImagesSelected } = useNodeFileUploads({
+    workspaceId,
+    nodes,
+    edges,
+    setNodes,
+    setRunError,
+    applyAuthoringCommands,
+  });
 
   const resetNodeArtifactTypeBinding = React.useCallback(
     (nodeId: string, variable: string) => {
@@ -1252,20 +1209,20 @@ function WorkbenchBody({
         (candidate) => candidate.id === nodeId,
       );
       if (!node || !workflowNodeIsSupported(node.data)) return;
-      const currentRevision = node.data.spec.plugin_revision;
-      const pin = node.data.pluginReleasePin;
-      if (
-        typeof currentRevision !== "number" ||
-        !pin ||
-        node.data.spec.plugin_slug !== pin.slug ||
-        currentRevision <= pin.revision
-      )
-        return;
+      const currentPin = pluginReleaseUpgradeTarget(
+        node.data.spec,
+        node.data.pluginReleasePin,
+      );
+      if (!currentPin) return;
       applyAuthoringCommands([
         {
           kind: "update_node_plugin_release",
           node_id: nodeId,
-          plugin_release: { slug: pin.slug, revision: currentRevision },
+          plugin_release: {
+            scope: currentPin.scope,
+            slug: currentPin.slug,
+            revision: currentPin.revision,
+          },
         },
       ]);
       setSelectedNodeIdSet(new Set([nodeId]));
@@ -1281,13 +1238,10 @@ function WorkbenchBody({
         registry && workflowNodeIsSupported(data)
           ? moduleCallUpgradeTarget(registry, data.spec)
           : null;
-      const pluginUpgradeRelease =
-        data.pluginReleasePin &&
-        data.spec.plugin_slug === data.pluginReleasePin.slug &&
-        typeof data.spec.plugin_revision === "number" &&
-        data.spec.plugin_revision > data.pluginReleasePin.revision
-          ? data.spec.plugin_revision
-          : null;
+      const pluginUpgradeTarget = pluginReleaseUpgradeTarget(
+        data.spec,
+        data.pluginReleasePin,
+      );
       if (!workflowNodeIsSupported(data)) {
         return {
           ...data,
@@ -1332,8 +1286,8 @@ function WorkbenchBody({
           : undefined,
         moduleUpgradeRelease: upgradeTarget?.module_graph_revision ?? null,
         onUpgradeModuleCall: upgradeTarget ? upgradeModuleCall : undefined,
-        pluginUpgradeRelease,
-        onUpgradePluginRelease: pluginUpgradeRelease
+        pluginUpgradeRelease: pluginUpgradeTarget?.revision ?? null,
+        onUpgradePluginRelease: pluginUpgradeTarget
           ? upgradePluginRelease
           : undefined,
         onOpenExecutionHistory: openNodeExecutionHistory,
@@ -1433,9 +1387,6 @@ function WorkbenchBody({
   const requestNodeRegistryRefresh = React.useCallback(() => {
     void refreshNodeRegistry();
   }, [refreshNodeRegistry]);
-  const uploading = nodes.some(
-    (node) => node.data.execution.status === "uploading",
-  );
   const roomPersistenceRef = React.useRef<GraphRoomPersistenceAdapter>({
     canPersist: false,
     persistDocument: async () => {
@@ -1801,7 +1752,7 @@ function WorkbenchBody({
           kind: "replace_document",
           name: draft.name,
           document: {
-            schema_version: 4,
+            schema_version: 5,
             nodes: draft.nodes ?? [],
             edges: draft.edges ?? [],
             presentation: draft.presentation ?? emptyGraphPresentation(),
@@ -2822,33 +2773,13 @@ function WorkbenchBody({
         y: window.innerHeight / 2,
       }) ?? { x: 600, y: 280 };
       const data = attachNodeCallbacks(createWorkflowNodeData(spec));
-      const authoredNode = {
-        id,
-        operator_id: data.spec.operator_id,
-        operator_version: data.spec.operator_version,
-        config: structuredClone(data.config),
-        input_plugs: data.inputPlugs.map((plug) => ({
-          id: plug.id,
-          port: plug.portName,
-        })),
-        artifact_type_bindings: Object.entries(data.artifactTypeBindings).map(
-          ([variable, artifactType]) => ({
-            variable,
-            artifact_type: artifactType,
-          }),
+      applyAuthoringCommands([
+        addNodeCommand(
+          id,
+          data,
+          { x: center.x - 140, y: center.y - 110 },
         ),
-        ...(data.pluginReleasePin
-          ? {
-              plugin_release: {
-                slug: data.pluginReleasePin.slug,
-                revision: data.pluginReleasePin.revision,
-              },
-            }
-          : {}),
-        position: { x: center.x - 140, y: center.y - 110 },
-        layout: serializeNodeLayout(data.layout),
-      };
-      applyAuthoringCommands([{ kind: "add_node", node: authoredNode }]);
+      ]);
       setSelectedNodeIdSet(new Set([id]));
       setSelectedEdgeIdSet(new Set());
       setLibraryOpen(false);
@@ -3004,29 +2935,16 @@ function WorkbenchBody({
           };
       const edgeId = `edge-${crypto.randomUUID()}`;
       const selection = connectionRouteSelection(choice.route);
-      const authoredNode = {
+      const nodeCommand = addNodeCommand(
         id,
-        operator_id: data.spec.operator_id,
-        operator_version: data.spec.operator_version,
-        config: structuredClone(data.config),
-        input_plugs: data.inputPlugs.map((plug) => ({
-          id: plug.id,
-          port: plug.portName,
-        })),
-        artifact_type_bindings: Object.entries(data.artifactTypeBindings).map(
-          ([variable, artifactType]) => ({
-            variable,
-            artifact_type: artifactType,
-          }),
-        ),
-        position: {
+        data,
+        {
           x: contextualDiscovery.flowPosition.x,
           y:
             contextualDiscovery.flowPosition.y -
             DEFAULT_NODE_PLACEMENT_HEIGHT / 2,
         },
-        layout: serializeNodeLayout(data.layout),
-      };
+      );
 
       const edgeCommand = addEdgeCommand(
         edgeConnection,
@@ -3045,7 +2963,7 @@ function WorkbenchBody({
       );
 
       applyAuthoringCommands([
-        { kind: "add_node", node: authoredNode },
+        nodeCommand,
         edgeCommand,
       ]);
       setSelectedNodeIdSet(new Set([id]));

@@ -19,6 +19,7 @@ from pydantic import (
 
 from grafy_core.domain.errors import CollaborationCommandRejectedError
 from grafy_core.domain.modules import GRAPH_MODULE_OPERATOR_PREFIX
+from grafy_core.domain.plugin_identity import PluginReleaseScope
 from grafy_core.domain.saved_graphs import (
     GraphPoint,
     GraphPresentationAnnotation,
@@ -30,6 +31,7 @@ from grafy_core.domain.saved_graphs import (
     SavedGraphInputPlug,
     SavedGraphNode,
     SavedGraphNodeLayout,
+    SavedGraphPluginReleasePin,
 )
 
 
@@ -55,6 +57,7 @@ class GraphCommandKind(StrEnum):
     MOVE_NODES = "move_nodes"
     UPDATE_NODE_CONFIGURATION = "update_node_configuration"
     UPDATE_NODE_LAYOUT = "update_node_layout"
+    UPDATE_NODE_PLUGIN_RELEASE = "update_node_plugin_release"
     SET_NODE_INPUT_PLUGS = "set_node_input_plugs"
     # Schema Builder field edits must use this one accept_command transaction
     # (config fields + owned input plugs). Do not split into separate primitive
@@ -145,6 +148,15 @@ class UpdateNodeLayoutCommand(CollaborationValue):
     node_id: str
     layout: SavedGraphNodeLayout | None
     expected_layout: SavedGraphNodeLayout | None = None
+
+
+class UpdateNodePluginReleaseCommand(CollaborationValue):
+    kind: Literal[GraphCommandKind.UPDATE_NODE_PLUGIN_RELEASE] = (
+        GraphCommandKind.UPDATE_NODE_PLUGIN_RELEASE
+    )
+    node_id: str
+    plugin_release_pin: SavedGraphPluginReleasePin
+    expected_plugin_release_pin: SavedGraphPluginReleasePin
 
 
 class SetNodeInputPlugsCommand(CollaborationValue):
@@ -253,6 +265,7 @@ GraphCommand = Annotated[
     | MoveNodesCommand
     | UpdateNodeConfigurationCommand
     | UpdateNodeLayoutCommand
+    | UpdateNodePluginReleaseCommand
     | SetNodeInputPlugsCommand
     | UpdateNodeConfigurationAndInputPlugsCommand
     | SetNodeArtifactTypeBindingCommand
@@ -382,6 +395,19 @@ def sanitize_document_for_cross_workspace_copy(
                 message=(
                     f"Cross-workspace copy cannot include module operator "
                     f"{node.operator_id}"
+                ),
+            )
+        release_pin = node.plugin_release_pin
+        if (
+            release_pin is not None
+            and release_pin.scope is PluginReleaseScope.WORKSPACE
+        ):
+            raise CollaborationCommandRejectedError(
+                code="foreign_workspace_plugin_release",
+                message=(
+                    "Cross-workspace copy cannot include Workspace Plugin "
+                    f"release {release_pin.slug!r} revision "
+                    f"{release_pin.revision}"
                 ),
             )
     sanitized_nodes = tuple(
@@ -526,6 +552,49 @@ def apply_graph_command(
                 if node.id == command.node_id
                 else node
                 for node in document.nodes
+            ),
+        )
+
+    if isinstance(command, UpdateNodePluginReleaseCommand):
+        node = _node_or_raise(document, command.node_id)
+        current_pin = node.plugin_release_pin
+        expected_pin = command.expected_plugin_release_pin
+        if current_pin != expected_pin:
+            current_identity = (
+                "none"
+                if current_pin is None
+                else (
+                    f"{current_pin.scope.value}:{current_pin.slug}"
+                    f"@{current_pin.revision}"
+                )
+            )
+            expected_identity = (
+                f"{expected_pin.scope.value}:{expected_pin.slug}"
+                f"@{expected_pin.revision}"
+            )
+            raise _field_conflict(
+                f"Plugin release pin on node {command.node_id} changed: "
+                f"expected {expected_identity}, actual {current_identity}"
+            )
+        next_pin = command.plugin_release_pin
+        if (
+            next_pin.scope is not expected_pin.scope
+            or next_pin.slug != expected_pin.slug
+        ):
+            raise CollaborationCommandRejectedError(
+                code="invalid_plugin_release_update",
+                message=(
+                    f"Plugin release update on node {command.node_id} cannot change "
+                    f"release family from {expected_pin.scope.value}:"
+                    f"{expected_pin.slug} to {next_pin.scope.value}:{next_pin.slug}"
+                ),
+            )
+        return name, document.with_topology(
+            nodes=tuple(
+                candidate.model_copy(update={"plugin_release_pin": next_pin})
+                if candidate.id == command.node_id
+                else candidate
+                for candidate in document.nodes
             ),
         )
 
@@ -881,6 +950,7 @@ __all__ = [
     "UpdateNodeConfigurationAndInputPlugsCommand",
     "UpdateNodeConfigurationCommand",
     "UpdateNodeLayoutCommand",
+    "UpdateNodePluginReleaseCommand",
     "apply_graph_command",
     "canonical_command_payload",
     "command_hmac_digest",

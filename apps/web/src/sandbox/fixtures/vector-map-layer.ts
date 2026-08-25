@@ -32,6 +32,7 @@ function artifact(
   return {
     key: { id, schema_version: 1 },
     title,
+    bundle: { format: "inline-json", version: 1 },
     payload_schema,
     field_projections: [],
   };
@@ -97,7 +98,16 @@ export const GEO_MAP_LAYER_SCHEMA = geoMapLayerSchema as Record<string, unknown>
 
 export const VECTOR_LAYER_REGISTRY: NodeRegistry = {
   plugins: [
-    { slug: "gis", title: "GIS", origin: "external", runnable: true },
+    {
+      slug: "gis",
+      title: "GIS",
+      entry_kind: "plugin",
+      scope: "system",
+      distribution: "optional",
+      revision: 1,
+      plugin_release: { scope: "system", slug: "gis", revision: 1 },
+      runnable: true,
+    },
   ],
   artifact_types: [
     artifact("geo.feature_collection", "GeoJSON feature collection"),

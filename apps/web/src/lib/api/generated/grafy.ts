@@ -1011,6 +1011,16 @@ export interface components {
             readonly kind: "add_node";
             readonly node: components["schemas"]["SavedGraphNode"];
         };
+        /** ArtifactBundleContractResponse */
+        readonly ArtifactBundleContractResponse: {
+            /**
+             * Format
+             * @enum {string}
+             */
+            readonly format: "inline-json" | "table-bundle" | "binary-file";
+            /** Version */
+            readonly version: number;
+        };
         /** ArtifactConversionKeyResponse */
         readonly ArtifactConversionKeyResponse: {
             /** Id */
@@ -1142,11 +1152,14 @@ export interface components {
         };
         /** ArtifactTypeSpecResponse */
         readonly ArtifactTypeSpecResponse: {
+            readonly bundle: components["schemas"]["ArtifactBundleContractResponse"];
             /** Export Formats */
             readonly export_formats?: readonly components["schemas"]["ArtifactExportFormatResponse"][];
             /** Field Projections */
             readonly field_projections: readonly components["schemas"]["FieldProjectionResponse"][];
             readonly key: components["schemas"]["ArtifactTypeKeyResponse"];
+            /** Materialized Json Type */
+            readonly materialized_json_type?: ("string" | "integer") | null;
             /** Payload Schema */
             readonly payload_schema: {
                 readonly [key: string]: unknown;
@@ -2302,7 +2315,7 @@ export interface components {
             /** Non Runnable Detail */
             readonly non_runnable_detail?: string | null;
             /** Non Runnable Reason */
-            readonly non_runnable_reason?: ("missing_runtime_artifact" | "incompatible_protocol" | "unsupported_runtime_profile" | "unsupported_capabilities" | "unsupported_artifact_type" | "plugin_runtime_unavailable") | null;
+            readonly non_runnable_reason?: ("revoked" | "missing_runtime_artifact" | "incompatible_protocol" | "unsupported_runtime_profile" | "unsupported_capabilities" | "unsupported_artifact_type" | "plugin_runtime_unavailable" | "host_binding_mismatch") | ("deprecated" | "withdrawn") | null;
             /** Operator Id */
             readonly operator_id: string;
             /** Operator Version */
@@ -2313,6 +2326,7 @@ export interface components {
             };
             /** Outputs */
             readonly outputs: readonly components["schemas"]["PortResponse"][];
+            readonly plugin_release?: components["schemas"]["PluginReleasePinModel"] | null;
             /** Plugin Revision */
             readonly plugin_revision?: number | null;
             /** Plugin Slug */
@@ -2427,24 +2441,37 @@ export interface components {
             readonly value: components["schemas"]["ArtifactRef"] | components["schemas"]["ArtifactRefSequence"];
         };
         /**
-         * PluginOrigin
+         * PluginDistribution
          * @enum {string}
          */
-        readonly PluginOrigin: "builtin" | "external" | "module" | "workspace";
+        readonly PluginDistribution: "bundled" | "optional" | "published";
         /** PluginReleasePinModel */
         readonly PluginReleasePinModel: {
             /** Revision */
             readonly revision: number;
+            readonly scope: components["schemas"]["PluginReleaseScope"];
             /** Slug */
             readonly slug: string;
         };
+        /**
+         * PluginReleaseScope
+         * @enum {string}
+         */
+        readonly PluginReleaseScope: "system" | "workspace";
         /** PluginSpecResponse */
         readonly PluginSpecResponse: {
+            readonly distribution?: components["schemas"]["PluginDistribution"] | null;
+            /**
+             * Entry Kind
+             * @default plugin
+             * @enum {string}
+             */
+            readonly entry_kind: "plugin" | "module";
             /** Non Runnable Detail */
             readonly non_runnable_detail?: string | null;
             /** Non Runnable Reason */
-            readonly non_runnable_reason?: ("missing_runtime_artifact" | "incompatible_protocol" | "unsupported_runtime_profile" | "unsupported_capabilities" | "unsupported_artifact_type" | "plugin_runtime_unavailable") | null;
-            readonly origin: components["schemas"]["PluginOrigin"];
+            readonly non_runnable_reason?: ("revoked" | "missing_runtime_artifact" | "incompatible_protocol" | "unsupported_runtime_profile" | "unsupported_capabilities" | "unsupported_artifact_type" | "plugin_runtime_unavailable" | "host_binding_mismatch") | ("deprecated" | "withdrawn") | null;
+            readonly plugin_release?: components["schemas"]["PluginReleasePinModel"] | null;
             /** Revision */
             readonly revision?: number | null;
             /**
@@ -2452,6 +2479,7 @@ export interface components {
              * @default true
              */
             readonly runnable: boolean;
+            readonly scope?: components["schemas"]["PluginReleaseScope"] | null;
             /** Slug */
             readonly slug: string;
             /** Title */
@@ -2779,10 +2807,10 @@ export interface components {
             readonly presentation?: components["schemas"]["GraphPresentationDocument"];
             /**
              * Schema Version
-             * @default 4
+             * @default 5
              * @constant
              */
-            readonly schema_version: 4;
+            readonly schema_version: 5;
         };
         /** SavedGraphEdge */
         readonly SavedGraphEdge: {
@@ -2935,16 +2963,16 @@ export interface components {
         };
         /**
          * SavedGraphPluginReleasePin
-         * @description Exact Workspace Plugin release identity pinned on one graph node.
+         * @description Exact scoped Plugin release identity pinned on one graph node.
          *
          *     The pin is independent from the operator identity: publishing revision
-         *     N+1 never moves a node pinned to revision N. Workspace membership comes
-         *     from the owning graph, so the pin records only the stable Plugin slug and
-         *     the exact release revision.
+         *     N+1 never moves a node pinned to revision N. Workspace membership for a
+         *     Workspace release comes from the owning graph.
          */
         readonly SavedGraphPluginReleasePin: {
             /** Revision */
             readonly revision: number;
+            readonly scope: components["schemas"]["PluginReleaseScope"];
             /** Slug */
             readonly slug: string;
         };
@@ -3068,7 +3096,7 @@ export interface components {
         /** SubmitGraphCommandRequest */
         readonly SubmitGraphCommandRequest: {
             /** Command */
-            readonly command: components["schemas"]["RenameGraphCommand"] | components["schemas"]["AddNodeCommand"] | components["schemas"]["DuplicateNodeCommand"] | components["schemas"]["RemoveNodesCommand"] | components["schemas"]["MoveNodesCommand"] | components["schemas"]["UpdateNodeConfigurationCommand"] | components["schemas"]["UpdateNodeLayoutCommand"] | components["schemas"]["SetNodeInputPlugsCommand"] | components["schemas"]["UpdateNodeConfigurationAndInputPlugsCommand"] | components["schemas"]["SetNodeArtifactTypeBindingCommand"] | components["schemas"]["ClearNodeArtifactTypeBindingCommand"] | components["schemas"]["AddEdgeCommand"] | components["schemas"]["UpdateEdgeCommand"] | components["schemas"]["RemoveEdgesCommand"] | components["schemas"]["ReplaceDocumentCommand"] | components["schemas"]["ReplacePresentationCommand"] | components["schemas"]["MoveArtifactViewersCommand"] | components["schemas"]["MoveAnnotationsCommand"];
+            readonly command: components["schemas"]["RenameGraphCommand"] | components["schemas"]["AddNodeCommand"] | components["schemas"]["DuplicateNodeCommand"] | components["schemas"]["RemoveNodesCommand"] | components["schemas"]["MoveNodesCommand"] | components["schemas"]["UpdateNodeConfigurationCommand"] | components["schemas"]["UpdateNodeLayoutCommand"] | components["schemas"]["UpdateNodePluginReleaseCommand"] | components["schemas"]["SetNodeInputPlugsCommand"] | components["schemas"]["UpdateNodeConfigurationAndInputPlugsCommand"] | components["schemas"]["SetNodeArtifactTypeBindingCommand"] | components["schemas"]["ClearNodeArtifactTypeBindingCommand"] | components["schemas"]["AddEdgeCommand"] | components["schemas"]["UpdateEdgeCommand"] | components["schemas"]["RemoveEdgesCommand"] | components["schemas"]["ReplaceDocumentCommand"] | components["schemas"]["ReplacePresentationCommand"] | components["schemas"]["MoveArtifactViewersCommand"] | components["schemas"]["MoveAnnotationsCommand"];
             /**
              * Command Id
              * Format: uuid
@@ -3351,6 +3379,18 @@ export interface components {
             readonly layout: components["schemas"]["SavedGraphNodeLayout"] | null;
             /** Node Id */
             readonly node_id: string;
+        };
+        /** UpdateNodePluginReleaseCommand */
+        readonly UpdateNodePluginReleaseCommand: {
+            readonly expected_plugin_release_pin: components["schemas"]["SavedGraphPluginReleasePin"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "update_node_plugin_release";
+            /** Node Id */
+            readonly node_id: string;
+            readonly plugin_release_pin: components["schemas"]["SavedGraphPluginReleasePin"];
         };
         /** UpdateSavedGraphRequest */
         readonly UpdateSavedGraphRequest: {

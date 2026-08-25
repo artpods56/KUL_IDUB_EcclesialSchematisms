@@ -15,6 +15,7 @@ import {
 import type { WorkflowNode } from "../model/execution-plan";
 import type { WorkflowEdge, WorkflowNodeData } from "./types";
 import { decodeHandleId } from "./handles";
+import { serializeNodeLayout } from "./node-layout";
 
 export type NodeOverlays = Record<
   string,
@@ -133,6 +134,45 @@ export function graphCommandsFromEdgeChanges(
     change.type === "remove" ? [change.id] : [],
   );
   return edge_ids.length ? [{ kind: "remove_edges", edge_ids }] : [];
+}
+
+/** Project one hydrated catalog node into the durable authoring command shape. */
+export function addNodeCommand(
+  nodeId: string,
+  data: WorkflowNodeData,
+  position: WorkflowNode["position"],
+): Extract<GraphCommand, { readonly kind: "add_node" }> {
+  return {
+    kind: "add_node",
+    node: {
+      artifact_type_bindings: Object.entries(data.artifactTypeBindings).map(
+        ([variable, artifactType]) => ({
+          variable,
+          artifact_type: {
+            id: artifactType.id,
+            schema_version: artifactType.schema_version,
+          },
+        }),
+      ),
+      config: structuredClone(data.config),
+      id: nodeId,
+      input_plugs: data.inputPlugs.map((plug) => ({
+        id: plug.id,
+        port: plug.portName,
+      })),
+      layout: serializeNodeLayout(data.layout),
+      operator_id: data.spec.operator_id,
+      operator_version: data.spec.operator_version,
+      plugin_release: data.pluginReleasePin
+        ? {
+            scope: data.pluginReleasePin.scope,
+            slug: data.pluginReleasePin.slug,
+            revision: data.pluginReleasePin.revision,
+          }
+        : null,
+      position: { x: position.x, y: position.y },
+    },
+  };
 }
 
 export function addEdgeCommand(

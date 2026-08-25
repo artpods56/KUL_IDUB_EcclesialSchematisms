@@ -39,6 +39,30 @@
         "title": "AddNodeCommand",
         "type": "object"
       },
+      "ArtifactBundleContractResponse": {
+        "properties": {
+          "format": {
+            "enum": [
+              "inline-json",
+              "table-bundle",
+              "binary-file"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "format",
+          "version"
+        ],
+        "title": "ArtifactBundleContractResponse",
+        "type": "object"
+      },
       "ArtifactConversionKeyResponse": {
         "properties": {
           "id": {
@@ -388,6 +412,9 @@
       },
       "ArtifactTypeSpecResponse": {
         "properties": {
+          "bundle": {
+            "$ref": "#/components/schemas/ArtifactBundleContractResponse"
+          },
           "export_formats": {
             "items": {
               "$ref": "#/components/schemas/ArtifactExportFormatResponse"
@@ -405,6 +432,21 @@
           "key": {
             "$ref": "#/components/schemas/ArtifactTypeKeyResponse"
           },
+          "materialized_json_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "string",
+                  "integer"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Materialized Json Type"
+          },
           "payload_schema": {
             "additionalProperties": true,
             "title": "Payload Schema",
@@ -419,7 +461,8 @@
           "key",
           "title",
           "payload_schema",
-          "field_projections"
+          "field_projections",
+          "bundle"
         ],
         "title": "ArtifactTypeSpecResponse",
         "type": "object"
@@ -3636,12 +3679,21 @@
             "anyOf": [
               {
                 "enum": [
+                  "revoked",
                   "missing_runtime_artifact",
                   "incompatible_protocol",
                   "unsupported_runtime_profile",
                   "unsupported_capabilities",
                   "unsupported_artifact_type",
-                  "plugin_runtime_unavailable"
+                  "plugin_runtime_unavailable",
+                  "host_binding_mismatch"
+                ],
+                "type": "string"
+              },
+              {
+                "enum": [
+                  "deprecated",
+                  "withdrawn"
                 ],
                 "type": "string"
               },
@@ -3670,6 +3722,16 @@
             },
             "title": "Outputs",
             "type": "array"
+          },
+          "plugin_release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginReleasePinModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "plugin_revision": {
             "anyOf": [
@@ -3968,14 +4030,13 @@
         "title": "PinnedOutputRequest",
         "type": "object"
       },
-      "PluginOrigin": {
+      "PluginDistribution": {
         "enum": [
-          "builtin",
-          "external",
-          "module",
-          "workspace"
+          "bundled",
+          "optional",
+          "published"
         ],
-        "title": "PluginOrigin",
+        "title": "PluginDistribution",
         "type": "string"
       },
       "PluginReleasePinModel": {
@@ -3986,6 +4047,9 @@
             "title": "Revision",
             "type": "integer"
           },
+          "scope": {
+            "$ref": "#/components/schemas/PluginReleaseScope"
+          },
           "slug": {
             "maxLength": 100,
             "minLength": 1,
@@ -3994,14 +4058,42 @@
           }
         },
         "required": [
+          "scope",
           "slug",
           "revision"
         ],
         "title": "PluginReleasePinModel",
         "type": "object"
       },
+      "PluginReleaseScope": {
+        "enum": [
+          "system",
+          "workspace"
+        ],
+        "title": "PluginReleaseScope",
+        "type": "string"
+      },
       "PluginSpecResponse": {
         "properties": {
+          "distribution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginDistribution"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entry_kind": {
+            "default": "plugin",
+            "enum": [
+              "plugin",
+              "module"
+            ],
+            "title": "Entry Kind",
+            "type": "string"
+          },
           "non_runnable_detail": {
             "anyOf": [
               {
@@ -4017,12 +4109,21 @@
             "anyOf": [
               {
                 "enum": [
+                  "revoked",
                   "missing_runtime_artifact",
                   "incompatible_protocol",
                   "unsupported_runtime_profile",
                   "unsupported_capabilities",
                   "unsupported_artifact_type",
-                  "plugin_runtime_unavailable"
+                  "plugin_runtime_unavailable",
+                  "host_binding_mismatch"
+                ],
+                "type": "string"
+              },
+              {
+                "enum": [
+                  "deprecated",
+                  "withdrawn"
                 ],
                 "type": "string"
               },
@@ -4032,8 +4133,15 @@
             ],
             "title": "Non Runnable Reason"
           },
-          "origin": {
-            "$ref": "#/components/schemas/PluginOrigin"
+          "plugin_release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginReleasePinModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "revision": {
             "anyOf": [
@@ -4052,6 +4160,16 @@
             "title": "Runnable",
             "type": "boolean"
           },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginReleaseScope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "slug": {
             "title": "Slug",
             "type": "string"
@@ -4063,8 +4181,7 @@
         },
         "required": [
           "slug",
-          "title",
-          "origin"
+          "title"
         ],
         "title": "PluginSpecResponse",
         "type": "object"
@@ -4969,8 +5086,8 @@
             "$ref": "#/components/schemas/GraphPresentationDocument"
           },
           "schema_version": {
-            "const": 4,
-            "default": 4,
+            "const": 5,
+            "default": 5,
             "title": "Schema Version",
             "type": "integer"
           }
@@ -5481,12 +5598,15 @@
       },
       "SavedGraphPluginReleasePin": {
         "additionalProperties": false,
-        "description": "Exact Workspace Plugin release identity pinned on one graph node.\n\nThe pin is independent from the operator identity: publishing revision\nN+1 never moves a node pinned to revision N. Workspace membership comes\nfrom the owning graph, so the pin records only the stable Plugin slug and\nthe exact release revision.",
+        "description": "Exact scoped Plugin release identity pinned on one graph node.\n\nThe pin is independent from the operator identity: publishing revision\nN+1 never moves a node pinned to revision N. Workspace membership for a\nWorkspace release comes from the owning graph.",
         "properties": {
           "revision": {
             "minimum": 1.0,
             "title": "Revision",
             "type": "integer"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PluginReleaseScope"
           },
           "slug": {
             "maxLength": 255,
@@ -5496,6 +5616,7 @@
           }
         },
         "required": [
+          "scope",
           "slug",
           "revision"
         ],
@@ -5819,7 +5940,8 @@
                 "update_edge": "#/components/schemas/UpdateEdgeCommand",
                 "update_node_configuration": "#/components/schemas/UpdateNodeConfigurationCommand",
                 "update_node_configuration_and_input_plugs": "#/components/schemas/UpdateNodeConfigurationAndInputPlugsCommand",
-                "update_node_layout": "#/components/schemas/UpdateNodeLayoutCommand"
+                "update_node_layout": "#/components/schemas/UpdateNodeLayoutCommand",
+                "update_node_plugin_release": "#/components/schemas/UpdateNodePluginReleaseCommand"
               },
               "propertyName": "kind"
             },
@@ -5844,6 +5966,9 @@
               },
               {
                 "$ref": "#/components/schemas/UpdateNodeLayoutCommand"
+              },
+              {
+                "$ref": "#/components/schemas/UpdateNodePluginReleaseCommand"
               },
               {
                 "$ref": "#/components/schemas/SetNodeInputPlugsCommand"
@@ -6589,6 +6714,34 @@
           "layout"
         ],
         "title": "UpdateNodeLayoutCommand",
+        "type": "object"
+      },
+      "UpdateNodePluginReleaseCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_plugin_release_pin": {
+            "$ref": "#/components/schemas/SavedGraphPluginReleasePin"
+          },
+          "kind": {
+            "const": "update_node_plugin_release",
+            "default": "update_node_plugin_release",
+            "title": "Kind",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "plugin_release_pin": {
+            "$ref": "#/components/schemas/SavedGraphPluginReleasePin"
+          }
+        },
+        "required": [
+          "node_id",
+          "plugin_release_pin",
+          "expected_plugin_release_pin"
+        ],
+        "title": "UpdateNodePluginReleaseCommand",
         "type": "object"
       },
       "UpdateSavedGraphRequest": {

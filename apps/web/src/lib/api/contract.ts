@@ -25,6 +25,8 @@ export type FieldProjection =
   Schemas["FieldProjectionResponse"];
 export type Port = Schemas["PortResponse"];
 export type NodeSpec = Schemas["NodeSpecResponse"];
+export type PluginReleasePin = Schemas["PluginReleasePinModel"];
+export type PluginReleaseScope = Schemas["PluginReleaseScope"];
 export type ImageUploadItem =
   Schemas["ImageUploadItemResponse"];
 export type InputPlugInput = Schemas["RunInputPlugRequest"];

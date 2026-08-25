@@ -3411,7 +3411,7 @@ function NodeHeader({
       data.onUpgradePluginRelease ? (
         <button
           type="button"
-          aria-label={`Upgrade Workspace Plugin to release ${data.pluginUpgradeRelease}`}
+          aria-label={`Upgrade Plugin to release ${data.pluginUpgradeRelease}`}
           title={`Upgrade Plugin to release ${data.pluginUpgradeRelease}`}
           {...nodeInteractionProps(stylex.props(s.upgradeModuleCall))}
           onClick={() => data.onUpgradePluginRelease?.(id)}

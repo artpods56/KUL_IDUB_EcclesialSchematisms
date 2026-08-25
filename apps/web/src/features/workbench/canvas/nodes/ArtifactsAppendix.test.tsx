@@ -215,6 +215,7 @@ describe("artifact payload loading policy", () => {
       {
         key: { id: "sql.result", schema_version: 1 },
         title: "SQL result",
+        bundle: { format: "inline-json", version: 1 },
         payload_schema: {
           type: "object",
           properties: { statement_index: { type: "integer" } },

@@ -652,7 +652,7 @@ describe("WorkflowNode module upgrade", () => {
   });
 });
 
-describe("WorkflowNode Workspace Plugin upgrade", () => {
+describe("WorkflowNode scoped Plugin upgrade", () => {
   it("moves an exact pin only after the user chooses the current release", () => {
     const onUpgradePluginRelease = vi.fn();
     const data = createWorkflowNodeData({
@@ -660,6 +660,7 @@ describe("WorkflowNode Workspace Plugin upgrade", () => {
       operator_version: 1,
       plugin_slug: "notes",
       plugin_revision: 3,
+      plugin_release: { scope: "workspace", slug: "notes", revision: 3 },
       title: "Render summary",
       description: "Workspace Plugin node",
       catalog_visible: true,
@@ -670,7 +671,11 @@ describe("WorkflowNode Workspace Plugin upgrade", () => {
       inputs: [],
       outputs: [],
     });
-    data.pluginReleasePin = { slug: "notes", revision: 1 };
+    data.pluginReleasePin = {
+      scope: "workspace",
+      slug: "notes",
+      revision: 1,
+    };
     data.pluginUpgradeRelease = 3;
     data.onUpgradePluginRelease = onUpgradePluginRelease;
 
@@ -688,9 +693,13 @@ describe("WorkflowNode Workspace Plugin upgrade", () => {
       );
     });
 
-    expect(data.pluginReleasePin).toEqual({ slug: "notes", revision: 1 });
+    expect(data.pluginReleasePin).toEqual({
+      scope: "workspace",
+      slug: "notes",
+      revision: 1,
+    });
     const upgradeButton = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Upgrade Workspace Plugin to release 3"]',
+      'button[aria-label="Upgrade Plugin to release 3"]',
     );
     expect(upgradeButton).not.toBeNull();
     React.act(() => upgradeButton?.click());

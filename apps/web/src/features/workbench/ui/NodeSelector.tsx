@@ -1524,7 +1524,7 @@ export function NodeSelector({
     ? portArtifactType(selectedPrimaryOutput)
     : null;
   const activeFilterTitle = activeFilter.title;
-  const isModuleSelection = selectedPlugin?.origin === "module";
+  const isModuleSelection = selectedPlugin?.entry_kind === "module";
   const isDeprecatedModule = selectedSpec?.publication_state === "deprecated";
   const selectionCanInsert = canInsert && selectedSpec?.runnable !== false;
   const pluginUnavailableReason =

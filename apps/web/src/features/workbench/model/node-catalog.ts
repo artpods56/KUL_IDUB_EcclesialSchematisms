@@ -3,6 +3,7 @@ import type {
   ArtifactTypeSpec,
   NodeRegistry,
   NodeSpec,
+  PluginReleasePin,
   Port,
 } from "@/lib/api";
 
@@ -62,7 +63,10 @@ export interface ContextualCandidate {
 const MODULE_PLUGIN_SLUG = "graph.module";
 
 export function catalogNodeKey(spec: NodeSpec): string {
-  return `${spec.operator_id}@${spec.operator_version}`;
+  const operator = `${spec.operator_id}@${spec.operator_version}`;
+  return spec.plugin_release
+    ? `plugin-release:${spec.plugin_release.scope}:${spec.plugin_release.slug}:${operator}`
+    : operator;
 }
 
 export function artifactTypeKeyId(key: ArtifactTypeKey): string {
@@ -222,7 +226,9 @@ export function nodeCatalogSearchText(
     spec.description,
     spec.plugin_slug,
     plugin.title,
-    plugin.origin,
+    plugin.entry_kind,
+    plugin.scope ?? "",
+    plugin.distribution ?? "",
     ...spec.inputs.flatMap((port) => portSearchTerms(port, registry)),
     ...spec.outputs.flatMap((port) => portSearchTerms(port, registry)),
     ...fields.flatMap((field) => [
@@ -319,12 +325,13 @@ export function catalogNodeProviderLabel(
   registry: NodeRegistry,
 ): string {
   const plugin = pluginFor(registry, spec.plugin_slug);
-  if (plugin.origin === "module") {
+  if (plugin.entry_kind === "module") {
     const state = spec.publication_state ?? "published";
     return `Module · release ${spec.module_graph_revision} · ${state}`;
   }
-  if (plugin.origin === "external") return plugin.title || "External";
-  return plugin.title || "Built-in";
+  if (plugin.scope === "workspace") return `${plugin.title} · Workspace`;
+  if (plugin.distribution === "optional") return plugin.title || "Optional";
+  return plugin.title || "System";
 }
 
 /** All published releases for a module (including non-current). */
@@ -367,6 +374,28 @@ export function moduleCallUpgradeTarget(
     return null;
   }
   return current;
+}
+
+/** Current exact release when it advances the same scoped Plugin identity. */
+export function pluginReleaseUpgradeTarget(
+  current: NodeSpec,
+  pinned: PluginReleasePin | null,
+): PluginReleasePin | null {
+  const release = current.plugin_release;
+  if (
+    !release ||
+    !pinned ||
+    release.scope !== pinned.scope ||
+    release.slug !== pinned.slug ||
+    release.revision <= pinned.revision
+  ) {
+    return null;
+  }
+  return {
+    scope: release.scope,
+    slug: release.slug,
+    revision: release.revision,
+  };
 }
 
 function shapesAreCompatible(source: Port, target: Port): boolean {
