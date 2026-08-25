@@ -23,7 +23,7 @@ selection.
 
 ```mermaid
 flowchart LR
-    Registry["Plugin registry"] --> Node["Node: operation, config, metadata"]
+    Catalog["Effective catalog\nSystem + Workspace releases + Modules"] --> Node["Node: operation, config, metadata"]
     Node --> Edge["Edge: projection, conversion path, collection mode"]
     Edge --> Runtime["Runtime: validate and execute"]
     Runtime --> Artifact["Produced artifact"]
@@ -58,10 +58,15 @@ rewrite:
 | Produced-artifact appendix after execution | Done | Results remain associated with the operation that produced them and can expose their content links. |
 | Nominal artifact types, schema versions, and declared projections | Done | Compatibility is deterministic and can be validated before execution. |
 | Declared, versioned artifact conversions | Done | Canonical representation changes such as integer to text remain explicit without requiring boilerplate nodes. |
-| Plugin discovery through `grafy.plugins` entry points | Done | External plugins can depend on their own optional packages without adding those dependencies to the Grafy host. |
-| Host-assigned catalog origin | Done | The registry and node catalog expose and visually separate built-in families from registered external plugins; plugins cannot self-label their origin. |
-| Generic Image, Sequence, Arithmetic, Text, Schema, and Prompt built-ins | Done | The base catalog admits only producer-neutral artifacts and broadly reusable, deterministic, dependency-light nodes; Schema is one recursive builder rather than a canvas-level algebra of schema tokens. |
-| OCR and table extraction as an external plugin package | Done | Current table semantics are OCR-specific, so the optional entry-point plugin owns OCR and table artifacts, nodes, and dependencies. |
+| Scoped immutable Plugin releases | Done | The effective catalog combines selected global System releases, selected releases owned by the requested Workspace, and published Modules as a separate entry kind. Every newly inserted Plugin node carries an exact scoped release pin. |
+| Explicit catalog and execution policy | Done | Scope, System distribution, and execution policy are separate facts. One shared admission selects an exact bound System host adapter or retained OCI and reports stable disabled reasons. |
+| Generic Image, Sequence, Arithmetic, Text, Schema, and Prompt System families | Done | Bundled System catalog families admit only producer-neutral artifacts and broadly reusable, deterministic, dependency-light nodes; Schema is one recursive builder rather than a canvas-level algebra of schema tokens. |
+| Optional provider-backed families | Done | Provider dependencies remain package-owned. Their remaining entry-point loading and origin-shaped grouping are compatibility behavior pending immutable System baselines and saved-pin backfill in Slice 12. |
+
+The retained Plugin model follows
+[ADR 0004](adr/0004-unify-system-and-workspace-plugin-releases.md). Compatibility
+origin fields and generic host entry-point discovery are not product concepts
+and remain removable only through the guarded Slice 12 cutover.
 
 ## Current implementation tasks
 
@@ -169,20 +174,20 @@ faithful to what the user highlighted.
 ### T5. Derive useful metadata from node definitions — Done
 
 **Description.** Keep plugin slug and title on `Plugin`, expose node title,
-description, and plugin slug on decorated node classes and registrations, derive
-the description from the class docstring, and expose port titles/descriptions
-from `Annotated`/Pydantic metadata through the registry API.
+description, and plugin slug on Plugin declarations, derive the description
+from the class docstring, and serialize port titles/descriptions from
+`Annotated`/Pydantic metadata into the release catalog contract.
 
 **Justification.** A node definition should be the source of truth. Duplicating
-display metadata in FastAPI or the web app makes external plugins incomplete and
-causes descriptions to drift from implementation.
+display metadata in FastAPI or the web app makes release-backed Plugins
+incomplete and causes descriptions to drift from implementation.
 
 **Acceptance criteria.**
 
 - The API does not hand-author node descriptions or port labels.
 - Decorated classes expose the same identity and descriptive metadata as their
-  registry entries.
-- Port metadata reaches the node UI through the registry response.
+  serialized release contracts.
+- Port metadata reaches the node UI through the effective catalog response.
 
 ### T6. Remove superseded state and update vocabulary — Done
 
@@ -423,15 +428,18 @@ to remain the one representation-change boundary. [R01: Direct Ownership]
   basedpyright, TypeScript, OpenAPI contract drift, and the Next.js production
   build.
 
-**Extended built-in and Image-contract verification (2026-07-16).**
+**Historical pre-release-cutover catalog and Image-contract verification
+(2026-07-16).**
 
 - Runtime and API tests cover Count on empty and populated sequences, Slice
   reference and index-key preservation, Pick item identity, strict configuration
   validation, and contextual unordered/out-of-range errors.
-- The live catalog exposed 21 nodes: 17 built-ins grouped as Image 1, Sequence 4,
-  Arithmetic 6, Text 4, Schema 1, and Prompt 1, plus one registered LLM node and three OCR
-  nodes in the separate External group. External nodes were marked explicitly in
-  both the group navigation and node list.
+- The then-current compatibility catalog exposed 21 nodes: 17 host-loaded nodes
+  grouped as Image 1, Sequence 4, Arithmetic 6, Text 4, Schema 1, and Prompt 1,
+  plus one registered LLM node and three OCR nodes in a separate origin-based
+  group. That grouping records a historical
+  smoke result; it is not the System/Workspace release taxonomy or target
+  catalog architecture.
 - A saved Image upload retained exactly two ordered
   `{upload_key, filename, byte_size}` records, with no connector identity,
   absolute URI, selection wrapper, or duplicate order index. Reload restored the
@@ -466,14 +474,14 @@ continuing.
 **Justification.** Materialized bindings answer “what did this saved graph node
 last produce?” They cannot safely answer “has this exact computation already
 been performed?” A separate digest-keyed record permits reuse across restarts
-and unrelated graph revisions without weakening graph output identity. External
-and provider nodes remain fail-closed until their declaration can account for
+and unrelated graph revisions without weakening graph output identity. Provider
+nodes remain fail-closed until their declaration can account for
 every mutable dependency and credential revision. [R01: Direct Ownership]
 [R44: Sensitive Serializable State]
 
 **Acceptance criteria.**
 
-- Pure Arithmetic, Text, Sequence, Schema, Prompt, and module-output built-ins
+- Pure Arithmetic, Text, Sequence, Schema, Prompt, and module-output operations
   explicitly use exact caching; uploads, module wrappers, OCR, and LLM nodes do
   not cache by default.
 - A config, operator version, stable node/module identity, mapped index, type
