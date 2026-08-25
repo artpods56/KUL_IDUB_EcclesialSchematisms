@@ -24,6 +24,7 @@ from grafy_api.v1.routes.auth.services import (
     OIDC_TRANSACTION_COOKIE,
     AuthService,
     IssuedSession,
+    OidcProtocolError,
 )
 from grafy_core.application.identity import IdentityService
 from grafy_core.domain.identity import (
@@ -710,6 +711,7 @@ async def test_login_validation_is_bounded_and_audited(
 
 
 async def test_oidc_query_sentinels_are_absent_from_request_logs(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     settings: Settings,
     caplog: pytest.LogCaptureFixture,
@@ -726,7 +728,20 @@ async def test_oidc_query_sentinels_are_absent_from_request_logs(
         provider_error = "provider-error-sentinel"
         caplog.set_level(logging.INFO)
 
-        with client_with_overrides(settings=app_settings) as client:
+        application = app_with_overrides(settings=app_settings)
+        # The login start reaches the provider discovery fetch. Without this
+        # stub it performs real socket I/O against GRAFY_OIDC_ISSUER from
+        # .env in the pytest process, which on macOS + CPython 3.14 poisons
+        # fork() and segfaults later docker subprocess spawns (e.g. the
+        # plugin egress test) for the remainder of the suite.
+        auth = application.state.identity.auth_service
+
+        async def unavailable_provider(**_kwargs: object) -> dict[str, object]:
+            raise OidcProtocolError("provider_discovery_unavailable")
+
+        monkeypatch.setattr(auth, "_provider", unavailable_provider)
+
+        with TestClient(application) as client:
             client.get("/v1/auth/oidc/login", params={"return_path": return_path})
             client.get(
                 "/v1/auth/oidc/callback",
