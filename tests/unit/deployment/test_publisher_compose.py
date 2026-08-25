@@ -1,0 +1,40 @@
+from pathlib import Path
+from typing import cast
+
+import yaml
+
+
+def test_publisher_is_one_shot_profile_and_only_base_service_with_docker_socket() -> None:
+    repository = Path(__file__).resolve().parents[3]
+    document = cast(
+        dict[str, object],
+        yaml.safe_load((repository / "infra/docker/compose.yaml").read_text()),
+    )
+    services = cast(dict[str, dict[str, object]], document["services"])
+    publisher = services["publisher"]
+    publisher_volumes = cast(list[str], publisher["volumes"])
+
+    assert publisher["profiles"] == ["publisher"]
+    assert publisher["restart"] == "no"
+    assert publisher["entrypoint"] == [".venv/bin/grafy"]
+    assert "/var/run/docker.sock:/var/run/docker.sock" in publisher_volumes
+    assert all(
+        "/var/run/docker.sock" not in str(service.get("volumes", []))
+        for name, service in services.items()
+        if name != "publisher"
+    )
+
+
+def test_publisher_does_not_receive_online_api_secrets() -> None:
+    repository = Path(__file__).resolve().parents[3]
+    document = cast(
+        dict[str, object],
+        yaml.safe_load((repository / "infra/docker/compose.yaml").read_text()),
+    )
+    services = cast(dict[str, dict[str, object]], document["services"])
+    environment = cast(dict[str, object], services["publisher"]["environment"])
+
+    assert "GRAFY_OIDC_CLIENT_SECRET" not in environment
+    assert "GRAFY_OIDC_AUTH_WRAPPING_KEY" not in environment
+    assert "GRAFY_CREDENTIAL_ENCRYPTION_KEY" not in environment
+    assert "GRAFY_COMMAND_HMAC_KEY" not in environment

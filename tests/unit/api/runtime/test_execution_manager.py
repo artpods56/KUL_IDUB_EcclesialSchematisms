@@ -1,13 +1,15 @@
 import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, final, override
+from typing import Annotated, cast, final, override
 from uuid import UUID, uuid4
 
 import pytest
 from pydantic import StrictInt, ValidationError
 
 from grafy_core.artifacts import InMemoryUnitOfWork, NoConfig, NodeInput, NodeOutput
+from grafy_core.artifacts import JsonObject
+from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.domain.execution_history import (
     GraphExecution,
     GraphExecutionScope,
@@ -21,11 +23,9 @@ from grafy_core.nodes import (
     NodeExecutionContext,
     OutPort,
 )
-from grafy_core.operators.arithmetic import INTEGER_VALUE
+from grafy_core.artifact_contracts import INTEGER_VALUE
 from grafy_core.plugins import Plugin
 
-from grafy_api.builtins import builtin_plugins
-from grafy_api.plugin_discovery import build_plugin_registry
 from grafy_api.v1.routes.executions.models import (
     ExecutionStatusEvent,
     NodeProgressEvent,
@@ -34,13 +34,19 @@ from grafy_api.v1.routes.executions.models import (
     RunNodeRequest,
     RunRequest,
 )
+from tests.support.system_plugins import (
+    TEST_SYSTEM_PLUGINS,
+    build_selected_system_plugin_deployment,
+)
 from grafy_api.services.composition import build_workbench_components
 from grafy_api.v1.routes.executions.runtime.control import RunExecutionControl
 from grafy_api.v1.routes.executions.runtime.admission import (
     ExecutionAdmissionLimiter,
     RunExecutionCapacityError,
+    RunExecutionQueueFullError,
 )
 from grafy_api.v1.routes.executions.runtime.manager import (
+    RunExecutionIdempotencyConflictError,
     RunExecutionManager,
     RunExecutionSnapshot,
 )
@@ -53,6 +59,7 @@ EXECUTION_TEST_PLUGIN = Plugin(
     slug="test.execution-control",
     title="Execution control test plugin",
 )
+EXECUTION_TEST_PLUGIN.register_artifact_type_dependency(INTEGER_VALUE)
 _started: dict[str, asyncio.Event] = {}
 _release: dict[str, asyncio.Event] = {}
 _downstream_calls: list[str] = []
@@ -203,6 +210,17 @@ class FailingNode(Node[NoConfig, FailingInput, FailingOutput]):
         raise RuntimeError("controlled node failure")
 
 
+SYSTEM_DEPLOYMENT = build_selected_system_plugin_deployment(
+    (*TEST_SYSTEM_PLUGINS, EXECUTION_TEST_PLUGIN),
+)
+
+
+def _pin_system_plugins(request: RunRequest) -> RunRequest:
+    return request.model_copy(
+        update={"nodes": [SYSTEM_DEPLOYMENT.pin_node(node) for node in request.nodes]}
+    )
+
+
 class CancellationWrappingRunGraph(RunGraph):
     def __init__(self) -> None:
         self.started = asyncio.Event()
@@ -246,6 +264,37 @@ class ControlledRunGraph(RunGraph):
         )
 
 
+class SequencedRunGraph(RunGraph):
+    def __init__(self) -> None:
+        self.started_order: list[UUID] = []
+        self.started: dict[UUID, asyncio.Event] = {}
+        self.release: dict[UUID, asyncio.Event] = {}
+
+    def add(self, graph_id: UUID) -> None:
+        self.started[graph_id] = asyncio.Event()
+        self.release[graph_id] = asyncio.Event()
+
+    @override
+    async def run(
+        self,
+        workspace_id: UUID,
+        request: RunRequest,
+        control: RunExecutionControl | None = None,
+    ) -> GraphExecutionResult:
+        del workspace_id, control
+        graph_id = request.graph_id
+        assert graph_id is not None
+        self.started_order.append(graph_id)
+        self.started[graph_id].set()
+        await self.release[graph_id].wait()
+        return GraphExecutionResult(
+            workflow_run_id=uuid4(),
+            status="succeeded",
+            node_results=(),
+            outputs={},
+        )
+
+
 class ControlledExecutionHistory(ExecutionHistoryService):
     def __init__(self) -> None:
         super().__init__(InMemoryUnitOfWork(), None)
@@ -258,6 +307,8 @@ class ControlledExecutionHistory(ExecutionHistoryService):
         self.allow_complete.set()
         self.complete_failures_remaining = 0
         self.complete_calls = 0
+        self.executions_by_idempotency_key: dict[str, GraphExecution] = {}
+        self.recovered_authorized = True
 
     @override
     async def create_queued(
@@ -269,9 +320,12 @@ class ControlledExecutionHistory(ExecutionHistoryService):
         graph_revision: int,
         scope: GraphExecutionScope,
         requested_node_ids: tuple[str, ...],
+        submitted_request: JsonObject,
+        idempotency_key: str | None,
+        submitted_by_actor_id: UUID | None,
     ) -> GraphExecution:
         self.transitions.append("queued")
-        return GraphExecution(
+        execution = GraphExecution(
             workspace_id=workspace_id,
             execution_id=execution_id,
             graph_id=graph_id,
@@ -279,18 +333,36 @@ class ControlledExecutionHistory(ExecutionHistoryService):
             scope=scope,
             status="queued",
             requested_node_ids=requested_node_ids,
+            submitted_request=submitted_request,
+            idempotency_key=idempotency_key,
+            submitted_by_actor_id=submitted_by_actor_id,
         )
+        if idempotency_key is not None:
+            self.executions_by_idempotency_key[idempotency_key] = execution
+        return execution
+
+    @override
+    async def get_by_idempotency_key(
+        self,
+        workspace_id: UUID,
+        idempotency_key: str,
+    ) -> GraphExecution | None:
+        execution = self.executions_by_idempotency_key.get(idempotency_key)
+        if execution is None or execution.workspace_id != workspace_id:
+            return None
+        return execution
 
     @override
     async def mark_running(
         self,
         workspace_id: UUID,
         execution: GraphExecution,
-    ) -> None:
+    ) -> bool:
         del workspace_id
         execution.status = "running"
         execution.started_at = datetime.now(UTC)
         self.transitions.append("running")
+        return True
 
     @override
     async def mark_cancelling(
@@ -326,6 +398,25 @@ class ControlledExecutionHistory(ExecutionHistoryService):
         execution.error = error
         self.transitions.append(status)
 
+    @override
+    async def list_queued(self) -> tuple[GraphExecution, ...]:
+        return ()
+
+    @override
+    async def can_dispatch_recovered(self, execution: GraphExecution) -> bool:
+        del execution
+        return self.recovered_authorized
+
+
+class RecoveringExecutionHistory(ControlledExecutionHistory):
+    def __init__(self, queued: tuple[GraphExecution, ...]) -> None:
+        super().__init__()
+        self.queued = queued
+
+    @override
+    async def list_queued(self) -> tuple[GraphExecution, ...]:
+        return self.queued
+
 
 def _manager(
     workspace: Path,
@@ -334,13 +425,15 @@ def _manager(
     event_capacity: int = 256,
     max_active_executions: int = 2,
 ) -> RunExecutionManager:
-    registry = build_plugin_registry(
-        (*builtin_plugins(), EXECUTION_TEST_PLUGIN),
-        external_plugins=(),
-    )
     components = build_workbench_components(
-        plugin_registry=registry,
+        plugin_registry=SYSTEM_DEPLOYMENT.registry,
         workspace=workspace,
+        plugin_releases=cast(
+            PluginReleaseService,
+            SYSTEM_DEPLOYMENT.release_lookup,
+        ),
+        system_host_bindings=SYSTEM_DEPLOYMENT.host_bindings,
+        loaded_system_plugins=SYSTEM_DEPLOYMENT.loaded_plugins,
     )
     return RunExecutionManager(
         components.run_graph,
@@ -367,6 +460,10 @@ async def _terminal(
             await asyncio.sleep(0)
 
 
+def _saved_request(graph_id: UUID) -> RunRequest:
+    return RunRequest(nodes=[], graph_id=graph_id, graph_revision=1)
+
+
 @pytest.fixture(autouse=True)
 def reset_execution_test_state() -> None:
     _started.clear()
@@ -382,38 +479,40 @@ async def test_manager_reports_exact_node_and_cancellation_stops_downstream(
     manager = _manager(tmp_path / "workbench")
     _gate("first")
     _gate("second")
-    request = RunRequest(
-        nodes=[
-            RunNodeRequest(
-                id="first",
-                operator_id="test.execution.first_gate",
-                operator_version=1,
-            ),
-            RunNodeRequest(
-                id="second",
-                operator_id="test.execution.second_gate",
-                operator_version=1,
-            ),
-            RunNodeRequest(
-                id="third",
-                operator_id="test.execution.recording",
-                operator_version=1,
-            ),
-        ],
-        edges=[
-            RunEdgeRequest(
-                from_node="first",
-                from_port="value",
-                to_node="second",
-                to_port="value",
-            ),
-            RunEdgeRequest(
-                from_node="second",
-                from_port="value",
-                to_node="third",
-                to_port="value",
-            ),
-        ],
+    request = _pin_system_plugins(
+        RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="first",
+                    operator_id="test.execution.first_gate",
+                    operator_version=1,
+                ),
+                RunNodeRequest(
+                    id="second",
+                    operator_id="test.execution.second_gate",
+                    operator_version=1,
+                ),
+                RunNodeRequest(
+                    id="third",
+                    operator_id="test.execution.recording",
+                    operator_version=1,
+                ),
+            ],
+            edges=[
+                RunEdgeRequest(
+                    from_node="first",
+                    from_port="value",
+                    to_node="second",
+                    to_port="value",
+                ),
+                RunEdgeRequest(
+                    from_node="second",
+                    from_port="value",
+                    to_node="third",
+                    to_port="value",
+                ),
+            ],
+        )
     )
 
     execution = await manager.start(WORKSPACE_ID, request)
@@ -501,26 +600,30 @@ async def test_manager_isolates_concurrent_execution_progress(tmp_path: Path) ->
     _gate("run-b")
     first = await manager.start(
         WORKSPACE_ID,
-        RunRequest(
-            nodes=[
-                RunNodeRequest(
-                    id="run-a",
-                    operator_id="test.execution.first_gate",
-                    operator_version=1,
-                )
-            ]
+        _pin_system_plugins(
+            RunRequest(
+                nodes=[
+                    RunNodeRequest(
+                        id="run-a",
+                        operator_id="test.execution.first_gate",
+                        operator_version=1,
+                    )
+                ]
+            )
         ),
     )
     second = await manager.start(
         WORKSPACE_ID,
-        RunRequest(
-            nodes=[
-                RunNodeRequest(
-                    id="run-b",
-                    operator_id="test.execution.first_gate",
-                    operator_version=1,
-                )
-            ]
+        _pin_system_plugins(
+            RunRequest(
+                nodes=[
+                    RunNodeRequest(
+                        id="run-b",
+                        operator_id="test.execution.first_gate",
+                        operator_version=1,
+                    )
+                ]
+            )
         ),
     )
 
@@ -549,26 +652,30 @@ async def test_manager_shutdown_cancels_and_awaits_active_tasks(tmp_path: Path) 
     _gate("run-b")
     first = await manager.start(
         WORKSPACE_ID,
-        RunRequest(
-            nodes=[
-                RunNodeRequest(
-                    id="run-a",
-                    operator_id="test.execution.first_gate",
-                    operator_version=1,
-                )
-            ]
+        _pin_system_plugins(
+            RunRequest(
+                nodes=[
+                    RunNodeRequest(
+                        id="run-a",
+                        operator_id="test.execution.first_gate",
+                        operator_version=1,
+                    )
+                ]
+            )
         ),
     )
     second = await manager.start(
         WORKSPACE_ID,
-        RunRequest(
-            nodes=[
-                RunNodeRequest(
-                    id="run-b",
-                    operator_id="test.execution.first_gate",
-                    operator_version=1,
-                )
-            ]
+        _pin_system_plugins(
+            RunRequest(
+                nodes=[
+                    RunNodeRequest(
+                        id="run-b",
+                        operator_id="test.execution.first_gate",
+                        operator_version=1,
+                    )
+                ]
+            )
         ),
     )
     await asyncio.gather(_started["run-a"].wait(), _started["run-b"].wait())
@@ -586,27 +693,29 @@ async def test_manager_preserves_failed_graph_result(tmp_path: Path) -> None:
     manager = _manager(tmp_path / "workbench")
     execution = await manager.start(
         WORKSPACE_ID,
-        RunRequest(
-            nodes=[
-                RunNodeRequest(
-                    id="failure",
-                    operator_id="test.execution.failure",
-                    operator_version=1,
-                ),
-                RunNodeRequest(
-                    id="skipped",
-                    operator_id="test.execution.recording",
-                    operator_version=1,
-                ),
-            ],
-            edges=[
-                RunEdgeRequest(
-                    from_node="failure",
-                    from_port="value",
-                    to_node="skipped",
-                    to_port="value",
-                )
-            ],
+        _pin_system_plugins(
+            RunRequest(
+                nodes=[
+                    RunNodeRequest(
+                        id="failure",
+                        operator_id="test.execution.failure",
+                        operator_version=1,
+                    ),
+                    RunNodeRequest(
+                        id="skipped",
+                        operator_id="test.execution.recording",
+                        operator_version=1,
+                    ),
+                ],
+                edges=[
+                    RunEdgeRequest(
+                        from_node="failure",
+                        from_port="value",
+                        to_node="skipped",
+                        to_port="value",
+                    )
+                ],
+            )
         ),
     )
 
@@ -642,29 +751,31 @@ async def test_manager_replays_lifecycle_and_mapped_progress_events(
     manager = _manager(tmp_path / "workbench")
     execution = await manager.start(
         WORKSPACE_ID,
-        RunRequest(
-            nodes=[
-                RunNodeRequest(
-                    id="sequence",
-                    operator_id="arithmetic.integer_sequence",
-                    operator_version=1,
-                    config={"start": 1, "count": 3, "step": 1},
-                ),
-                RunNodeRequest(
-                    id="progress",
-                    operator_id="test.execution.progress",
-                    operator_version=1,
-                ),
-            ],
-            edges=[
-                RunEdgeRequest(
-                    from_node="sequence",
-                    from_port="values",
-                    to_node="progress",
-                    to_port="value",
-                    collection_mode="map",
-                )
-            ],
+        _pin_system_plugins(
+            RunRequest(
+                nodes=[
+                    RunNodeRequest(
+                        id="sequence",
+                        operator_id="arithmetic.integer_sequence",
+                        operator_version=1,
+                        config={"start": 1, "count": 3, "step": 1},
+                    ),
+                    RunNodeRequest(
+                        id="progress",
+                        operator_id="test.execution.progress",
+                        operator_version=1,
+                    ),
+                ],
+                edges=[
+                    RunEdgeRequest(
+                        from_node="sequence",
+                        from_port="values",
+                        to_node="progress",
+                        to_port="value",
+                        collection_mode="map",
+                    )
+                ],
+            )
         ),
     )
     assert (await _terminal(manager, execution.execution_id)).status == "succeeded"
@@ -758,9 +869,10 @@ async def test_cancellation_intent_wins_when_executor_wraps_cancelled_error() ->
 @pytest.mark.asyncio
 async def test_manager_atomically_rejects_execution_above_process_capacity() -> None:
     run_graph = ControlledRunGraph()
+    admission_limiter = ExecutionAdmissionLimiter(1)
     manager = RunExecutionManager(
         run_graph,
-        admission_limiter=ExecutionAdmissionLimiter(1),
+        admission_limiter=admission_limiter,
     )
 
     starts = await asyncio.gather(
@@ -777,11 +889,323 @@ async def test_manager_atomically_rejects_execution_above_process_capacity() -> 
     assert isinstance(capacity_error, RunExecutionCapacityError)
     assert capacity_error.error_code == "execution_capacity_exceeded"
     assert capacity_error.max_active_executions == 1
+    assert admission_limiter.diagnostics().active_executions == 1
+    assert admission_limiter.diagnostics().rejected_acquisitions == 1
 
     run_graph.release.set()
     assert (await _terminal(manager, accepted[0].execution_id)).status == "succeeded"
     replacement = await manager.start(WORKSPACE_ID, RunRequest(nodes=[]))
     assert (await _terminal(manager, replacement.execution_id)).status == "succeeded"
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_saved_graph_executions_wait_in_bounded_fifo() -> None:
+    run_graph = SequencedRunGraph()
+    history = ControlledExecutionHistory()
+    graph_ids = tuple(uuid4() for _ in range(4))
+    for graph_id in graph_ids:
+        run_graph.add(graph_id)
+    manager = RunExecutionManager(
+        run_graph,
+        execution_history=history,
+        admission_limiter=ExecutionAdmissionLimiter(1),
+        max_pending_graphs=2,
+    )
+
+    first = await manager.start(WORKSPACE_ID, _saved_request(graph_ids[0]))
+    await run_graph.started[graph_ids[0]].wait()
+    second = await manager.start(WORKSPACE_ID, _saved_request(graph_ids[1]))
+    third = await manager.start(WORKSPACE_ID, _saved_request(graph_ids[2]))
+
+    assert (await manager.get(WORKSPACE_ID, first.execution_id)).status == "running"
+    assert second.status == "queued"
+    assert second.queue_position == 1
+    assert third.status == "queued"
+    assert third.queue_position == 2
+    with pytest.raises(RunExecutionQueueFullError) as exc_info:
+        await manager.start(WORKSPACE_ID, _saved_request(graph_ids[3]))
+    assert exc_info.value.max_pending_graphs == 2
+    assert history.transitions.count("queued") == 3
+    queue_diagnostics = await manager.diagnostics()
+    assert queue_diagnostics.pending_graphs == 2
+    assert queue_diagnostics.max_pending_graphs == 2
+    assert queue_diagnostics.queue_full_outcomes == 1
+    assert queue_diagnostics.oldest_pending_wait_seconds >= 0
+
+    run_graph.release[graph_ids[0]].set()
+    await run_graph.started[graph_ids[1]].wait()
+    assert (await manager.get(WORKSPACE_ID, third.execution_id)).queue_position == 1
+    run_graph.release[graph_ids[1]].set()
+    await run_graph.started[graph_ids[2]].wait()
+    run_graph.release[graph_ids[2]].set()
+
+    assert (await _terminal(manager, first.execution_id)).status == "succeeded"
+    assert (await _terminal(manager, second.execution_id)).status == "succeeded"
+    assert (await _terminal(manager, third.execution_id)).status == "succeeded"
+    assert run_graph.started_order == list(graph_ids[:3])
+    terminal_diagnostics = await manager.diagnostics()
+    assert terminal_diagnostics.pending_graphs == 0
+    assert terminal_diagnostics.dispatched_graphs == 3
+    assert terminal_diagnostics.average_dispatch_wait_seconds >= 0
+    assert terminal_diagnostics.maximum_dispatch_wait_seconds >= 0
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_third_saved_graph_waits_while_two_graph_slots_are_occupied() -> None:
+    run_graph = SequencedRunGraph()
+    history = ControlledExecutionHistory()
+    graph_ids = tuple(uuid4() for _ in range(3))
+    for graph_id in graph_ids:
+        run_graph.add(graph_id)
+    manager = RunExecutionManager(
+        run_graph,
+        execution_history=history,
+        admission_limiter=ExecutionAdmissionLimiter(2),
+    )
+
+    first = await manager.start(WORKSPACE_ID, _saved_request(graph_ids[0]))
+    second = await manager.start(WORKSPACE_ID, _saved_request(graph_ids[1]))
+    await asyncio.gather(
+        run_graph.started[graph_ids[0]].wait(),
+        run_graph.started[graph_ids[1]].wait(),
+    )
+    third = await manager.start(WORKSPACE_ID, _saved_request(graph_ids[2]))
+
+    assert third.status == "queued"
+    assert third.queue_position == 1
+    run_graph.release[graph_ids[0]].set()
+    await run_graph.started[graph_ids[2]].wait()
+
+    run_graph.release[graph_ids[1]].set()
+    run_graph.release[graph_ids[2]].set()
+    assert (await _terminal(manager, first.execution_id)).status == "succeeded"
+    assert (await _terminal(manager, second.execution_id)).status == "succeeded"
+    assert (await _terminal(manager, third.execution_id)).status == "succeeded"
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_queued_cancellation_never_invokes_graph_code() -> None:
+    run_graph = SequencedRunGraph()
+    history = ControlledExecutionHistory()
+    first_graph_id = uuid4()
+    queued_graph_id = uuid4()
+    run_graph.add(first_graph_id)
+    run_graph.add(queued_graph_id)
+    manager = RunExecutionManager(
+        run_graph,
+        execution_history=history,
+        admission_limiter=ExecutionAdmissionLimiter(1),
+    )
+
+    first = await manager.start(WORKSPACE_ID, _saved_request(first_graph_id))
+    await run_graph.started[first_graph_id].wait()
+    queued = await manager.start(WORKSPACE_ID, _saved_request(queued_graph_id))
+
+    cancelled = await manager.cancel(WORKSPACE_ID, queued.execution_id)
+
+    assert cancelled.status == "cancelled"
+    assert cancelled.queue_position is None
+    assert queued_graph_id not in run_graph.started_order
+    run_graph.release[first_graph_id].set()
+    assert (await _terminal(manager, first.execution_id)).status == "succeeded"
+    await asyncio.sleep(0)
+    assert queued_graph_id not in run_graph.started_order
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_recovery_reloads_durable_queue_before_dispatch() -> None:
+    run_graph = SequencedRunGraph()
+    graph_ids = (uuid4(), uuid4())
+    for graph_id in graph_ids:
+        run_graph.add(graph_id)
+    created_at = datetime(2026, 8, 24, 10, 0, tzinfo=UTC)
+    execution_ids = (
+        UUID("00000000-0000-7000-8000-000000000001"),
+        UUID("00000000-0000-7000-8000-000000000002"),
+    )
+    queued = tuple(
+        GraphExecution(
+            workspace_id=WORKSPACE_ID,
+            execution_id=execution_id,
+            graph_id=graph_id,
+            graph_revision=1,
+            status="queued",
+            created_at=created_at,
+            submitted_request=_saved_request(graph_id).model_dump(mode="json"),
+        )
+        for execution_id, graph_id in zip(execution_ids, graph_ids, strict=True)
+    )
+    history = RecoveringExecutionHistory(queued)
+    admission_limiter = ExecutionAdmissionLimiter(1)
+    occupied_lease = admission_limiter.acquire()
+    manager = RunExecutionManager(
+        run_graph,
+        execution_history=history,
+        admission_limiter=admission_limiter,
+    )
+
+    assert await manager.recover_queued() == 2
+    assert (await manager.get(WORKSPACE_ID, execution_ids[0])).queue_position == 1
+    assert (await manager.get(WORKSPACE_ID, execution_ids[1])).queue_position == 2
+
+    occupied_lease.release()
+    await run_graph.started[graph_ids[0]].wait()
+    run_graph.release[graph_ids[0]].set()
+    await run_graph.started[graph_ids[1]].wait()
+    run_graph.release[graph_ids[1]].set()
+
+    assert (await _terminal(manager, execution_ids[0])).status == "succeeded"
+    assert (await _terminal(manager, execution_ids[1])).status == "succeeded"
+    assert run_graph.started_order == list(graph_ids)
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_recovered_queue_revalidates_submitter_access_before_graph_code() -> None:
+    run_graph = SequencedRunGraph()
+    graph_id = uuid4()
+    run_graph.add(graph_id)
+    execution_id = UUID("00000000-0000-7000-8000-000000000010")
+    queued = GraphExecution(
+        workspace_id=WORKSPACE_ID,
+        execution_id=execution_id,
+        graph_id=graph_id,
+        graph_revision=1,
+        status="queued",
+        submitted_request=_saved_request(graph_id).model_dump(mode="json"),
+        submitted_by_actor_id=uuid4(),
+    )
+    history = RecoveringExecutionHistory((queued,))
+    history.recovered_authorized = False
+    manager = RunExecutionManager(
+        run_graph,
+        execution_history=history,
+        admission_limiter=ExecutionAdmissionLimiter(1),
+    )
+
+    assert await manager.recover_queued() == 1
+    failed = await _terminal(manager, execution_id)
+
+    assert failed.status == "failed"
+    assert "no longer has execute access" in (failed.error or "")
+    assert run_graph.started_order == []
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_exact_idempotent_retry_returns_original_before_queue_full_check() -> (
+    None
+):
+    run_graph = SequencedRunGraph()
+    graph_id = uuid4()
+    run_graph.add(graph_id)
+    history = ControlledExecutionHistory()
+    admission_limiter = ExecutionAdmissionLimiter(1)
+    occupied_lease = admission_limiter.acquire()
+    manager = RunExecutionManager(
+        run_graph,
+        execution_history=history,
+        admission_limiter=admission_limiter,
+        max_pending_graphs=1,
+    )
+    request = _saved_request(graph_id)
+
+    original = await manager.start(
+        WORKSPACE_ID,
+        request,
+        idempotency_key="schedule:weekly:2026-08-24T10:00:00Z",
+    )
+    retry = await manager.start(
+        WORKSPACE_ID,
+        request.model_copy(deep=True),
+        idempotency_key="schedule:weekly:2026-08-24T10:00:00Z",
+    )
+
+    assert retry.execution_id == original.execution_id
+    assert retry.queue_position == 1
+    assert history.transitions.count("queued") == 1
+
+    occupied_lease.release()
+    await run_graph.started[graph_id].wait()
+    run_graph.release[graph_id].set()
+    assert (await _terminal(manager, original.execution_id)).status == "succeeded"
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_exact_idempotent_retry_after_manager_restart_returns_original() -> None:
+    graph_id = uuid4()
+    request = _saved_request(graph_id)
+    history = ControlledExecutionHistory()
+    first_admission = ExecutionAdmissionLimiter(1)
+    occupied_lease = first_admission.acquire()
+    first_manager = RunExecutionManager(
+        SequencedRunGraph(),
+        execution_history=history,
+        admission_limiter=first_admission,
+    )
+    original = await first_manager.start(
+        WORKSPACE_ID,
+        request,
+        idempotency_key="api-retry-across-restart",
+    )
+    assert original.status == "queued"
+    await first_manager.shutdown()
+
+    restarted_manager = RunExecutionManager(
+        SequencedRunGraph(),
+        execution_history=history,
+        admission_limiter=ExecutionAdmissionLimiter(1),
+    )
+    retry = await restarted_manager.start(
+        WORKSPACE_ID,
+        request.model_copy(deep=True),
+        idempotency_key="api-retry-across-restart",
+    )
+
+    assert retry.execution_id == original.execution_id
+    assert retry.status == "queued"
+    assert history.transitions.count("queued") == 1
+    occupied_lease.release()
+    await restarted_manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_idempotency_key_rejects_a_different_submitted_request() -> None:
+    run_graph = SequencedRunGraph()
+    graph_id = uuid4()
+    run_graph.add(graph_id)
+    history = ControlledExecutionHistory()
+    admission_limiter = ExecutionAdmissionLimiter(1)
+    occupied_lease = admission_limiter.acquire()
+    manager = RunExecutionManager(
+        run_graph,
+        execution_history=history,
+        admission_limiter=admission_limiter,
+    )
+    original = _saved_request(graph_id)
+    await manager.start(
+        WORKSPACE_ID,
+        original,
+        idempotency_key="api-retry-1",
+    )
+
+    with pytest.raises(RunExecutionIdempotencyConflictError) as exc_info:
+        await manager.start(
+            WORKSPACE_ID,
+            original.model_copy(update={"scope": "selected"}),
+            idempotency_key="api-retry-1",
+        )
+
+    assert exc_info.value.idempotency_key == "api-retry-1"
+    assert history.transitions.count("queued") == 1
+    cancelled = next(iter(history.executions_by_idempotency_key.values()))
+    await manager.cancel(WORKSPACE_ID, cancelled.execution_id)
+    occupied_lease.release()
     await manager.shutdown()
 
 
@@ -862,14 +1286,16 @@ async def test_failed_execution_releases_process_capacity(tmp_path: Path) -> Non
         tmp_path / "workbench",
         max_active_executions=1,
     )
-    failing_request = RunRequest(
-        nodes=[
-            RunNodeRequest(
-                id="failure",
-                operator_id="test.execution.failure",
-                operator_version=1,
-            )
-        ]
+    failing_request = _pin_system_plugins(
+        RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="failure",
+                    operator_id="test.execution.failure",
+                    operator_version=1,
+                )
+            ]
+        )
     )
     first = await manager.start(WORKSPACE_ID, failing_request)
     assert (await _terminal(manager, first.execution_id)).status == "failed"

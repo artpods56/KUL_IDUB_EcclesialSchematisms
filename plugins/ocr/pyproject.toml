@@ -7,20 +7,21 @@ name = "grafy-plugin-ocr"
 version = "0.1.0"
 requires-python = "==3.14.*"
 dependencies = [
-    "mistralai>=2.5.0",
-    "grafy-core",
+    "grafy-core==0.1.0",
     "pillow",
     "pydantic",
 ]
 
-[project.entry-points."grafy.plugins"]
-ocr = "grafy_plugin_ocr.plugin:OCR"
+[dependency-groups]
+dev = ["pytest>=8.4.2"]
 
-[tool.uv.sources]
-grafy-core = { workspace = true }
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.basedpyright]
 extends = "../../pyproject.toml"
+venvPath = "."
+venv = ".venv"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -20,6 +20,7 @@ from grafy_core.artifacts import ArtifactTypeKey
 from grafy_core.conversions import MAX_ARTIFACT_CONVERSION_HOPS
 from grafy_core.domain.errors import SavedGraphRevisionConflictError
 from grafy_core.domain.identity import WorkspaceKind
+from grafy_core.domain.plugin_identity import PluginReleaseScope
 
 
 GraphIdentifier = Annotated[
@@ -159,6 +160,37 @@ class SavedGraphArtifactTypeBinding(SavedGraphValue):
         }
 
 
+class SavedGraphPluginReleasePin(SavedGraphValue):
+    """Exact scoped Plugin release identity pinned on one graph node.
+
+    The pin is independent from the operator identity: publishing revision
+    N+1 never moves a node pinned to revision N. Workspace membership for a
+    Workspace release comes from the owning graph.
+    """
+
+    scope: PluginReleaseScope
+    slug: GraphIdentifier
+    revision: int = Field(ge=1)
+
+    @field_validator("slug", mode="before")
+    @classmethod
+    def validate_slug(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        if value.strip() == "":
+            raise ValueError("Saved graph Plugin release pin slug must not be empty")
+        if value != value.strip():
+            raise ValueError(
+                "Saved graph Plugin release pin slug must not have surrounding "
+                "whitespace"
+            )
+        if len(value) > 100:
+            raise ValueError(
+                "Saved graph Plugin release pin slug must be at most 100 characters"
+            )
+        return value.strip()
+
+
 class SavedGraphNode(SavedGraphValue):
     id: GraphIdentifier
     operator_id: GraphIdentifier
@@ -168,6 +200,21 @@ class SavedGraphNode(SavedGraphValue):
     layout: SavedGraphNodeLayout | None = None
     input_plugs: tuple[SavedGraphInputPlug, ...] = ()
     artifact_type_bindings: tuple[SavedGraphArtifactTypeBinding, ...] = ()
+    plugin_release_pin: SavedGraphPluginReleasePin | None = None
+
+    @field_validator("plugin_release_pin", mode="before")
+    @classmethod
+    def validate_plugin_release_pin_shape(cls, value: object) -> object:
+        if not isinstance(value, Mapping):
+            return value
+        raw = cast(Mapping[object, object], value)
+        expected_fields = {"scope", "slug", "revision"}
+        if set(raw) != expected_fields:
+            raise ValueError(
+                "Saved graph Plugin release pin must contain exactly scope, slug, "
+                "and revision"
+            )
+        return dict(raw)
 
     @field_validator("config")
     @classmethod
@@ -486,7 +533,7 @@ def empty_presentation() -> GraphPresentationDocument:
 
 
 class SavedGraphDocument(SavedGraphValue):
-    schema_version: Literal[4] = 4
+    schema_version: Literal[5] = 5
     nodes: tuple[SavedGraphNode, ...] = ()
     edges: tuple[SavedGraphEdge, ...] = ()
     presentation: GraphPresentationDocument = Field(default_factory=empty_presentation)
@@ -499,8 +546,8 @@ class SavedGraphDocument(SavedGraphValue):
         raw = cast(Mapping[object, object], value)
         migrated = dict(raw)
         version = migrated.get("schema_version", 1)
-        if version in (1, 2, 3):
-            migrated["schema_version"] = 4
+        if version in (1, 2, 3, 4):
+            migrated["schema_version"] = 5
         if "presentation" not in migrated:
             migrated["presentation"] = {
                 "viewers": [],

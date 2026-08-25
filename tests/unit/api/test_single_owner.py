@@ -53,6 +53,7 @@ async def test_create_app_startup_acquires_owner_lease(tmp_path: Path) -> None:
     await database.dispose()
 
     settings = Settings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
         workspace=workspace,
         database_url=SecretStr(database_url),
         command_hmac_key=SecretStr("test-single-owner-hmac-key"),

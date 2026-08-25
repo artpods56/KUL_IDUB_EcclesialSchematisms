@@ -1,5 +1,6 @@
 """Application use case for top-level and nested graph execution."""
 
+import asyncio
 from collections.abc import Mapping
 from contextvars import ContextVar
 from uuid import UUID
@@ -9,7 +10,11 @@ from grafy_core.domain.modules import MODULE_BOUNDARY_PORT, GraphModuleDefinitio
 from grafy_core.nodes import NodeExecutionContext
 from grafy_core.ports.modules import GraphModuleExecutionResult
 
-from grafy_api.v1.models import ArtifactTypeBindingModel, ArtifactTypeKeyResponse
+from grafy_api.v1.models import (
+    ArtifactTypeBindingModel,
+    ArtifactTypeKeyResponse,
+    PluginReleasePinModel,
+)
 
 from ..models import (
     ArtifactConversionRequest,
@@ -28,6 +33,12 @@ from .coordinator import GraphExecutionCoordinator
 from .errors import GraphExecutionError
 from .models import GraphExecutionResult, PreparedGraphExecution
 from .preflight import GraphRunPreflight
+from .plugin_sandbox import (
+    PluginSandboxLifecycle,
+    PluginSandboxScopeId,
+    activate_plugin_sandbox_scope,
+    reset_plugin_sandbox_scope,
+)
 
 
 _current_execution_control: ContextVar[RunExecutionControl | None] = ContextVar(
@@ -46,11 +57,13 @@ class RunGraph:
         compiler: GraphCompiler,
         coordinator: GraphExecutionCoordinator,
         materializations: MaterializationService,
+        plugin_sandboxes: PluginSandboxLifecycle | None = None,
     ) -> None:
         self._preflight = preflight
         self._compiler = compiler
         self._coordinator = coordinator
         self._materializations = materializations
+        self._plugin_sandboxes = plugin_sandboxes
 
     async def run(
         self,
@@ -58,7 +71,9 @@ class RunGraph:
         request: RunRequest,
         control: RunExecutionControl | None = None,
     ) -> GraphExecutionResult:
-        token = _current_execution_control.set(control)
+        control_token = _current_execution_control.set(control)
+        sandbox_scope = PluginSandboxScopeId.new()
+        sandbox_token = activate_plugin_sandbox_scope(sandbox_scope)
         try:
             return await self._execute(
                 request,
@@ -72,7 +87,19 @@ class RunGraph:
                 control=control,
             )
         finally:
-            _current_execution_control.reset(token)
+            try:
+                if self._plugin_sandboxes is not None:
+                    cleanup_task = asyncio.create_task(
+                        self._plugin_sandboxes.close_scope(sandbox_scope)
+                    )
+                    try:
+                        await asyncio.shield(cleanup_task)
+                    except asyncio.CancelledError:
+                        await cleanup_task
+                        raise
+            finally:
+                reset_plugin_sandbox_scope(sandbox_token)
+                _current_execution_control.reset(control_token)
 
     async def execute_module(
         self,
@@ -145,6 +172,13 @@ class RunGraph:
                         )
                         for binding in node.artifact_type_bindings
                     ],
+                    plugin_release=(
+                        PluginReleasePinModel.from_saved_pin(
+                            node.plugin_release_pin
+                        )
+                        if node.plugin_release_pin is not None
+                        else None
+                    ),
                 )
                 for node in executed_nodes
             ],

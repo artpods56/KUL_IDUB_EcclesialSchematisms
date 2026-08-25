@@ -10,7 +10,7 @@ from pydantic import SecretStr
 from sqlalchemy import URL, TextClause, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from grafy_core.operators.tables import (
+from grafy_core.table_contracts import (
     Table,
     TableColumn,
     TableValue,

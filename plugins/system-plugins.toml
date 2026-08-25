@@ -1,0 +1,122 @@
+schema_version = 1
+
+[[plugins]]
+slug = "builtin.arithmetic"
+project = "plugins/arithmetic"
+distribution_name = "grafy-plugin-arithmetic"
+loader_target = "grafy_plugin_arithmetic.plugin:ARITHMETIC"
+distribution = "bundled"
+execution_policy = "host-eligible"
+capabilities = []
+operator_prefixes = ["arithmetic"]
+artifact_type_prefixes = ["scalar.integer"]
+
+[[plugins]]
+slug = "builtin.image"
+project = "plugins/image"
+distribution_name = "grafy-plugin-image"
+loader_target = "grafy_plugin_image.plugin:IMAGES"
+distribution = "bundled"
+execution_policy = "host-eligible"
+capabilities = ["staged.uploads"]
+operator_prefixes = ["image"]
+artifact_type_prefixes = ["image.raster"]
+
+[[plugins]]
+slug = "builtin.sequence"
+project = "plugins/sequence"
+distribution_name = "grafy-plugin-sequence"
+loader_target = "grafy_plugin_sequence.plugin:SEQUENCES"
+distribution = "bundled"
+execution_policy = "host-eligible"
+capabilities = []
+operator_prefixes = ["sequence"]
+artifact_type_prefixes = []
+
+[[plugins]]
+slug = "builtin.text"
+project = "plugins/text"
+distribution_name = "grafy-plugin-text"
+loader_target = "grafy_plugin_text.plugin:TEXT"
+distribution = "bundled"
+execution_policy = "host-eligible"
+capabilities = []
+operator_prefixes = ["text"]
+artifact_type_prefixes = ["scalar.text", "text.markdown"]
+
+[[plugins]]
+slug = "builtin.schema"
+project = "plugins/schema"
+distribution_name = "grafy-plugin-schema"
+loader_target = "grafy_plugin_schema.plugin:SCHEMAS"
+distribution = "bundled"
+execution_policy = "host-eligible"
+capabilities = []
+operator_prefixes = ["schema"]
+artifact_type_prefixes = ["json.schema"]
+
+[[plugins]]
+slug = "builtin.prompt"
+project = "plugins/prompt"
+distribution_name = "grafy-plugin-prompt"
+loader_target = "grafy_plugin_prompt.plugin:PROMPTS"
+distribution = "bundled"
+execution_policy = "host-eligible"
+capabilities = []
+operator_prefixes = ["prompt"]
+artifact_type_prefixes = ["prompt.message"]
+
+[[plugins]]
+slug = "builtin.table"
+project = "plugins/table"
+distribution_name = "grafy-plugin-table"
+loader_target = "grafy_plugin_table.plugin:TABLES"
+distribution = "bundled"
+execution_policy = "host-eligible"
+capabilities = ["staged.uploads"]
+operator_prefixes = ["table"]
+artifact_type_prefixes = ["table.data"]
+
+[[plugins]]
+slug = "external.gis"
+project = "plugins/gis"
+distribution_name = "grafy-plugin-gis"
+loader_target = "grafy_plugin_gis.plugin:GIS"
+distribution = "optional"
+execution_policy = "isolated-only"
+capabilities = ["native.gdal", "network.egress", "staged.uploads"]
+operator_prefixes = ["gis"]
+artifact_type_prefixes = ["geo"]
+
+[[plugins]]
+slug = "external.llm"
+project = "plugins/llm"
+distribution_name = "grafy-plugin-llm"
+loader_target = "grafy_plugin_llm.plugin:LLM"
+distribution = "optional"
+execution_policy = "isolated-only"
+capabilities = ["network.egress", "node.secrets"]
+operator_prefixes = ["llm"]
+artifact_type_prefixes = ["llm"]
+
+[[plugins]]
+slug = "external.ocr"
+project = "plugins/ocr"
+distribution_name = "grafy-plugin-ocr"
+loader_target = "grafy_plugin_ocr.plugin:OCR"
+distribution = "optional"
+execution_policy = "isolated-only"
+capabilities = ["native.tesseract"]
+operator_prefixes = ["ocr"]
+artifact_type_prefixes = ["ocr"]
+
+[[plugins]]
+slug = "external.sql"
+project = "plugins/sql"
+distribution_name = "grafy-plugin-sql"
+loader_target = "grafy_plugin_sql.plugin:SQL"
+distribution = "optional"
+execution_policy = "isolated-only"
+capabilities = ["node.secrets", "postgresql.egress", "sql.untrusted"]
+operator_prefixes = ["sql"]
+artifact_type_prefixes = ["sql"]

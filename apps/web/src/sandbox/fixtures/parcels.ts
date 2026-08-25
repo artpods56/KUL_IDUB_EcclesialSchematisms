@@ -29,6 +29,7 @@ function artifact(
   return {
     key: { id, schema_version: 1 },
     title,
+    bundle: { format: "inline-json", version: 1 },
     payload_schema: {},
     field_projections: [],
   };
@@ -61,6 +62,7 @@ export const QUERY_PARCELS_SPEC: NodeSpec = {
   inputs: [],
   outputs: [ROWS_PORT],
   catalog_visible: true,
+  runnable: true,
 };
 
 export const MAP_DOCUMENT_SPEC: NodeSpec = {
@@ -75,6 +77,7 @@ export const MAP_DOCUMENT_SPEC: NodeSpec = {
   inputs: [],
   outputs: [MAP_PORT],
   catalog_visible: true,
+  runnable: true,
 };
 
 export const SURVEY_NOTES_SPEC: NodeSpec = {
@@ -89,6 +92,7 @@ export const SURVEY_NOTES_SPEC: NodeSpec = {
   inputs: [],
   outputs: [NOTES_PORT],
   catalog_visible: true,
+  runnable: true,
 };
 
 export const QUERY_PARCELS_FIELDS: readonly SchemaField[] = [
@@ -102,7 +106,18 @@ export const QUERY_PARCELS_FIELDS: readonly SchemaField[] = [
 ];
 
 export const PARCELS_REGISTRY: NodeRegistry = {
-  plugins: [{ slug: "sandbox.geo", title: "Geo", origin: "external" }],
+  plugins: [
+    {
+      slug: "sandbox.geo",
+      title: "Geo",
+      entry_kind: "plugin",
+      scope: "system",
+      distribution: "optional",
+      revision: 1,
+      plugin_release: { scope: "system", slug: "sandbox.geo", revision: 1 },
+      runnable: true,
+    },
+  ],
   artifact_types: [
     artifact("table.data", "Table"),
     artifact("geo.map_document", "Map document"),

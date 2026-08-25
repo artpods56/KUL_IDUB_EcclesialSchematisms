@@ -8,57 +8,9 @@ from grafy_core.artifacts import (
     ArtifactTypeSpec,
     JsonObject,
 )
-from grafy_core.operators.schemas import (
+from grafy_core.schema_contracts import (
     parse_json_schema,
     validate_json_schema_value,
-)
-
-
-class StructuredResponsePayload(BaseModel):
-    """Portable structured completion plus provider audit information."""
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    value: JsonObject
-    model: str = Field(min_length=1)
-    provider: Literal["mistral"] = "mistral"
-    json_schema: StrictStr = Field(
-        alias="schema",
-        description="JSON Schema text requested from the provider.",
-    )
-    schema_name: StrictStr = Field(
-        min_length=1,
-        description="Provider-facing name used for the schema request.",
-    )
-    schema_description: StrictStr = Field(
-        default="",
-        description="Provider-facing description used for the schema request.",
-    )
-    schema_strict: bool = Field(
-        default=True,
-        description="Whether the provider was asked to enforce the schema strictly.",
-    )
-    message_count: int = Field(ge=1)
-    source_image_artifact_ids: list[UUID] = Field(default_factory=list)
-    usage: JsonObject = Field(default_factory=dict)
-    raw_response: JsonObject
-
-    @model_validator(mode="after")
-    def validate_json_schema(self) -> Self:
-        parse_json_schema(
-            self.json_schema,
-            context=f"structured response schema {self.schema_name!r}",
-        )
-        return self
-
-
-STRUCTURED_RESPONSE = ArtifactTypeSpec(
-    key=ArtifactTypeKey("llm.structured_response", 1),
-    title="Structured LLM response",
-    payload_schema=cast(
-        JsonObject,
-        StructuredResponsePayload.model_json_schema(),
-    ),
 )
 
 

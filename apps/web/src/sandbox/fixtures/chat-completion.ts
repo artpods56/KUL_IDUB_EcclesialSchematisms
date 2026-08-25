@@ -30,6 +30,7 @@ function artifact(
   return {
     key: { id, schema_version: 1 },
     title,
+    bundle: { format: "inline-json", version: 1 },
     payload_schema: {},
     field_projections,
   };
@@ -69,6 +70,7 @@ export const CHAT_COMPLETION_SPEC: NodeSpec = {
   inputs: [messages, jsonSchema],
   outputs: [COMPLETION_PORT],
   catalog_visible: true,
+  runnable: true,
 };
 
 export const CHAT_COMPLETION_FIELDS: readonly SchemaField[] = [
@@ -103,7 +105,18 @@ export const CHAT_COMPLETION_FIELDS: readonly SchemaField[] = [
 ];
 
 export const CHAT_COMPLETION_REGISTRY: NodeRegistry = {
-  plugins: [{ slug: "external.llm", title: "LLM", origin: "external" }],
+  plugins: [
+    {
+      slug: "external.llm",
+      title: "LLM",
+      entry_kind: "plugin",
+      scope: "system",
+      distribution: "optional",
+      revision: 1,
+      plugin_release: { scope: "system", slug: "external.llm", revision: 1 },
+      runnable: true,
+    },
+  ],
   artifact_types: [
     artifact("prompt.message", "Prompt message"),
     artifact("json.schema", "JSON Schema"),

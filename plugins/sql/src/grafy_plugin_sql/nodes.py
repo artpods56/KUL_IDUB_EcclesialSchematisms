@@ -13,8 +13,9 @@ from pydantic import (
 )
 
 from grafy_core.artifacts import NodeConfig, NodeInput, NodeOutput
+from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.nodes import InPort, Node, NodeExecutionContext, OutPort
-from grafy_core.operators.tables import TABLE_DATA, Table
+from grafy_core.table_contracts import TABLE_DATA, Table
 from grafy_core.plugins import (
     NodeCachePolicy,
     NodeSecretInput,
@@ -196,6 +197,7 @@ def build_query_artifact_tables_node(
     version=1,
     title="Query artifact tables",
     factory=build_query_artifact_tables_node,
+    required_capabilities=(PluginRuntimeCapability.UNTRUSTED_SQL,),
     cache_policy=NodeCachePolicy.NEVER,
 )
 @final
@@ -319,6 +321,11 @@ def build_execute_sql_node(context: PluginRuntimeContext) -> "ExecuteSqlNode":
     version=1,
     title="Execute PostgreSQL",
     factory=build_execute_sql_node,
+    required_capabilities=(
+        PluginRuntimeCapability.NODE_SECRETS,
+        PluginRuntimeCapability.POSTGRESQL_EGRESS,
+        PluginRuntimeCapability.UNTRUSTED_SQL,
+    ),
     secret_inputs=(
         NodeSecretInput(
             name="password",

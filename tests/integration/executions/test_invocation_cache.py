@@ -1,5 +1,6 @@
 from io import BytesIO
 from pathlib import Path
+from typing import cast
 from uuid import UUID
 
 import pytest
@@ -18,14 +19,15 @@ from grafy_core.artifacts import (
     InMemoryUnitOfWork,
 )
 from grafy_core.domain.invocation_cache import InvocationCacheEntry
+from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.nodes import NodeExecutionContext
-from grafy_core.operators.tables import (
+from grafy_core.table_contracts import (
     Table,
-    TableArtifactWriter,
     TableColumn,
     TableValueType,
-    load_table_manifest,
 )
+from grafy_core.runtime.table_storage import load_table_manifest
+from grafy_plugin_table.persistence import TableArtifactWriter
 from grafy_core.runtime.materialization import MaterializationProvenance
 from grafy_core.runtime.persistence import ArtifactWriteContext
 from grafy_core.ports.storage import SaveFileCommand, StoredObjectInfo
@@ -33,10 +35,12 @@ from grafy_core.domain.identity import Workspace
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 from grafy_storage import LocalFileObjectStore
 
-from grafy_api.builtins import builtin_plugins
-from grafy_api.plugin_discovery import build_plugin_registry
-from grafy_api.v1.routes.executions.models import RunNodeRequest, RunRequest
+from grafy_api.v1.routes.executions.models import RunRequest
 from tests.support.clients import GrafyApi
+from tests.support.system_plugins import (
+    build_selected_system_plugin_deployment,
+    selected_system_run_node as RunNodeRequest,
+)
 from grafy_api.v1.routes.executions.runtime.invocation_cache import (
     InvocationCacheAccessError,
     PersistentInvocationCache,
@@ -59,6 +63,7 @@ def _run_output_artifact_id(
     node_id: str,
     operator_id: str,
     config: dict[str, object],
+    plugin_slug: str | None = None,
 ) -> str:
     api = GrafyApi(client)
     executions = api.workspace(UUID("00000000-0000-0000-0000-000000000007")).executions
@@ -70,6 +75,7 @@ def _run_output_artifact_id(
                     operator_id=operator_id,
                     operator_version=1,
                     config=config,
+                    plugin_slug=plugin_slug,
                 )
             ]
         )
@@ -121,12 +127,14 @@ def test_external_node_default_policy_does_not_reuse_results(
         node_id="external",
         operator_id="test.api_response",
         config={},
+        plugin_slug="test.structural-projection",
     )
     repeated = _run_output_artifact_id(
         structural_projection_client,
         node_id="external",
         operator_id="test.api_response",
         config={},
+        plugin_slug="test.structural-projection",
     )
 
     assert repeated != first
@@ -340,7 +348,8 @@ async def test_sql_cache_survives_fresh_workbench_components(tmp_path: Path) -> 
                 )
             )
             await unit_of_work.commit()
-        registry = build_plugin_registry(builtin_plugins(), external_plugins=())
+        deployment = build_selected_system_plugin_deployment()
+        registry = deployment.registry
         request = RunRequest(
             nodes=[
                 RunNodeRequest(
@@ -356,6 +365,9 @@ async def test_sql_cache_survives_fresh_workbench_components(tmp_path: Path) -> 
             plugin_registry=registry,
             workspace=tmp_path / "workbench",
             unit_of_work=SqlAlchemyUnitOfWork(database.sessions),
+            plugin_releases=cast(PluginReleaseService, deployment.release_lookup),
+            system_host_bindings=deployment.host_bindings,
+            loaded_system_plugins=deployment.loaded_plugins,
         )
         first_response = await first_components.presenter.run_response(
             WORKSPACE_ID,
@@ -368,6 +380,9 @@ async def test_sql_cache_survives_fresh_workbench_components(tmp_path: Path) -> 
             plugin_registry=registry,
             workspace=tmp_path / "workbench",
             unit_of_work=SqlAlchemyUnitOfWork(database.sessions),
+            plugin_releases=cast(PluginReleaseService, deployment.release_lookup),
+            system_host_bindings=deployment.host_bindings,
+            loaded_system_plugins=deployment.loaded_plugins,
         )
         repeated_response = await fresh_components.presenter.run_response(
             WORKSPACE_ID,

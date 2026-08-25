@@ -4,6 +4,7 @@ import {
   type CreateSavedGraphRequest,
   type NodeRegistry,
   type NodeSpec,
+  type PluginReleasePin,
   type RunNodeResult,
   type SavedGraph,
   type SavedGraphEdge,
@@ -129,6 +130,17 @@ function operatorKey(operatorId: string, operatorVersion: number): string {
   return `${operatorId}@${operatorVersion}`;
 }
 
+function scopedOperatorKey(
+  operatorId: string,
+  operatorVersion: number,
+  pluginRelease: Pick<PluginReleasePin, "scope" | "slug"> | null | undefined,
+): string {
+  const operator = operatorKey(operatorId, operatorVersion);
+  return pluginRelease
+    ? `${operator}::${pluginRelease.scope}:${pluginRelease.slug}`
+    : operator;
+}
+
 function compatibilityEndpoints(
   savedNode: SavedGraphNode,
   savedEdges: readonly SavedGraphEdge[],
@@ -174,12 +186,22 @@ function unavailableNodeSpec(savedNode: SavedGraphNode): NodeSpec {
     title: savedNode.operator_id,
     description: `Saved operator ${identity} is not available in the live registry.`,
     catalog_visible: false,
+    runnable: false,
     config_schema: {},
     input_schema: {},
     output_schema: {},
     inputs: [],
     outputs: [],
   };
+}
+
+function persistedPluginReleasePin(
+  savedNode: SavedGraphNode,
+): WorkflowNodeData["pluginReleasePin"] {
+  const pin = savedNode.plugin_release;
+  return pin
+    ? { scope: pin.scope, slug: pin.slug, revision: pin.revision }
+    : null;
 }
 
 function incompatibleNodeData(
@@ -207,6 +229,7 @@ function incompatibleNodeData(
     persistedNode: structuredClone(savedNode),
   };
   data.artifactTypeBindings = artifactTypeBindings;
+  data.pluginReleasePin = persistedPluginReleasePin(savedNode);
   data.config = structuredClone(savedNode.config ?? {});
   data.layout = hydrateNodeLayout(savedNode.layout);
   return data;
@@ -425,7 +448,11 @@ export function hydrateSavedGraph(
   const savedEdges = savedGraph.edges ?? [];
   const specs = new Map(
     registry.nodes.map((spec) => [
-      operatorKey(spec.operator_id, spec.operator_version),
+      scopedOperatorKey(
+        spec.operator_id,
+        spec.operator_version,
+        spec.plugin_release,
+      ),
       spec,
     ]),
   );
@@ -437,11 +464,17 @@ export function hydrateSavedGraph(
       );
     }
     nodeIds.add(savedNode.id);
-    const key = operatorKey(
+    const operatorIdentity = operatorKey(
       savedNode.operator_id,
       savedNode.operator_version,
     );
-    const spec = specs.get(key);
+    const spec = specs.get(
+      scopedOperatorKey(
+        savedNode.operator_id,
+        savedNode.operator_version,
+        savedNode.plugin_release,
+      ),
+    );
     let data: WorkflowNodeData;
     if (!spec) {
       data = incompatibleNodeData(
@@ -449,7 +482,7 @@ export function hydrateSavedGraph(
         savedEdges,
         "unsupported",
         [
-          `Operator ${key} is unavailable. This saved node is preserved but cannot run.`,
+          `Operator ${operatorIdentity} is unavailable. This saved node is preserved but cannot run.`,
         ],
       );
     } else {
@@ -462,6 +495,7 @@ export function hydrateSavedGraph(
           spec,
           registry,
         );
+        data.pluginReleasePin = persistedPluginReleasePin(savedNode);
         data.config = structuredClone(savedNode.config ?? {});
         data.layout =
           hydrateNodeLayout(savedNode.layout) ?? defaultNodeLayout(spec);

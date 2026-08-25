@@ -7,15 +7,19 @@ import pytest
 
 from grafy_core.application.saved_graphs import SavedGraphService
 from grafy_core.artifacts import ArtifactRef, ArtifactTypeKey, InMemoryUnitOfWork
+from grafy_core.artifact_contracts import INTEGER_VALUE, TEXT_VALUE
+from grafy_core.canonical_conversions import (
+    CANONICAL_ARTIFACT_CONVERSIONS_BY_KEY,
+    CanonicalArtifactConversionMap,
+)
+from grafy_core.conversions import ArtifactConversion, ArtifactConversionKey
 from grafy_core.domain.modules import GraphModuleDefinition
 from grafy_core.nodes import NodeExecutionContext
-from grafy_core.plugins import PluginRuntimeContext
+from grafy_core.plugins import Plugin, PluginRegistry, PluginRuntimeContext
 from grafy_core.ports.modules import GraphModuleExecutionResult
 from grafy_core.runtime.invocation import InvocationMode
 from grafy_storage import LocalFileObjectStore
 
-from grafy_api.builtins import builtin_plugins
-from grafy_api.plugin_discovery import build_plugin_registry
 from grafy_api.v1.routes.executions.models import (
     ArtifactConversionRequest,
     PinnedOutputRequest,
@@ -23,7 +27,13 @@ from grafy_api.v1.routes.executions.models import (
     RunNodeRequest,
     RunRequest,
 )
+from tests.support.system_plugins import (
+    TEST_SYSTEM_PLUGINS,
+    build_explicit_plugin_registry,
+    build_selected_system_plugin_deployment,
+)
 from grafy_api.v1.routes.catalog.services import GraphModuleCatalog
+from grafy_api.plugin_admission import ReleaseExecutionAdmission
 from grafy_api.v1.routes.executions.runtime.compiler import (
     GraphCompiler,
     _topological_order,
@@ -32,6 +42,22 @@ from grafy_api.v1.routes.executions.runtime.errors import GraphExecutionError
 
 
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
+SYSTEM_DEPLOYMENT = build_selected_system_plugin_deployment()
+
+
+def _ambient_integer_to_text(value: int) -> str:
+    return str(value)
+
+
+AMBIENT_INTEGER_TO_TEXT = ArtifactConversion(
+    key=ArtifactConversionKey("test.ambient.integer_to_text", 1),
+    source=INTEGER_VALUE.key,
+    target=TEXT_VALUE.key,
+    source_type=int,
+    target_type=str,
+    title="Ambient integer as text",
+    convert=_ambient_integer_to_text,
+)
 
 
 class _UnusedModuleExecutor:
@@ -49,8 +75,15 @@ def _unused_saved_graph_uow() -> Never:
     raise AssertionError("Compiler test unexpectedly queried saved graphs")
 
 
-def _compiler(tmp_path: Path) -> GraphCompiler:
-    registry = build_plugin_registry(builtin_plugins(), external_plugins=())
+def _compiler(
+    tmp_path: Path,
+    *,
+    registry: PluginRegistry | None = None,
+    canonical_artifact_conversions: CanonicalArtifactConversionMap = (
+        CANONICAL_ARTIFACT_CONVERSIONS_BY_KEY
+    ),
+) -> GraphCompiler:
+    resolved_registry = registry or build_explicit_plugin_registry()
     unit_of_work = InMemoryUnitOfWork()
     workspace = tmp_path / "workbench"
     uploads_dir = workspace / "uploads"
@@ -62,11 +95,24 @@ def _compiler(tmp_path: Path) -> GraphCompiler:
         uow=unit_of_work,
         bucket="test-artifacts",
     )
-    saved_graphs = SavedGraphService(_unused_saved_graph_uow, registry)
+    saved_graphs = SavedGraphService(_unused_saved_graph_uow, resolved_registry)
     return GraphCompiler(
-        plugin_registry=registry,
+        plugin_registry=resolved_registry,
         plugin_context=plugin_context,
-        module_catalog=GraphModuleCatalog(saved_graphs, registry),
+        module_catalog=GraphModuleCatalog(saved_graphs, resolved_registry),
+        canonical_artifact_conversions=canonical_artifact_conversions,
+        plugin_release_lookup=SYSTEM_DEPLOYMENT.release_lookup,
+        release_admission=ReleaseExecutionAdmission(
+            isolated_adapter_available=False,
+            runtime_profile=None,
+            system_host_bindings=SYSTEM_DEPLOYMENT.host_bindings,
+        ),
+    )
+
+
+def _pin_system_plugins(request: RunRequest) -> RunRequest:
+    return request.model_copy(
+        update={"nodes": [SYSTEM_DEPLOYMENT.pin_node(node) for node in request.nodes]}
     )
 
 
@@ -106,7 +152,7 @@ async def test_compiler_orders_nodes_and_resolves_declared_conversions(
     )
 
     compiled = await _compiler(tmp_path).compile(
-        request,
+        _pin_system_plugins(request),
         _UnusedModuleExecutor(),
         workspace_id=WORKSPACE_ID,
     )
@@ -121,6 +167,54 @@ async def test_compiler_orders_nodes_and_resolves_declared_conversions(
     assert [conversion.key.id for conversion in compiled.edges[0].conversion_path] == [
         "builtin.scalar.integer_to_text"
     ]
+
+
+@pytest.mark.asyncio
+async def test_compiler_does_not_resolve_mutable_plugin_registry_conversions(
+    tmp_path: Path,
+) -> None:
+    ambient_plugin = Plugin(slug="test.ambient", title="Ambient conversion")
+    ambient_plugin.register_artifact_type_dependency(INTEGER_VALUE)
+    ambient_plugin.register_artifact_type_dependency(TEXT_VALUE)
+    ambient_plugin.register_artifact_conversion(AMBIENT_INTEGER_TO_TEXT)
+    registry = build_explicit_plugin_registry((*TEST_SYSTEM_PLUGINS, ambient_plugin))
+    request = RunRequest(
+        nodes=[
+            RunNodeRequest(
+                id="number",
+                operator_id="arithmetic.number",
+                operator_version=1,
+                config={"value": 12},
+            ),
+            RunNodeRequest(
+                id="replace",
+                operator_id="text.replace",
+                operator_version=1,
+                config={"search": "1", "replacement": "one"},
+            ),
+        ],
+        edges=[
+            RunEdgeRequest(
+                from_node="number",
+                from_port="value",
+                to_node="replace",
+                to_port="text",
+                conversion_path=[
+                    ArtifactConversionRequest(
+                        id=AMBIENT_INTEGER_TO_TEXT.key.id,
+                        version=AMBIENT_INTEGER_TO_TEXT.key.version,
+                    )
+                ],
+            )
+        ],
+    )
+
+    with pytest.raises(GraphExecutionError, match="requests undeclared conversion"):
+        await _compiler(tmp_path, registry=registry).compile(
+            _pin_system_plugins(request),
+            _UnusedModuleExecutor(),
+            workspace_id=WORKSPACE_ID,
+        )
 
 
 @pytest.mark.asyncio
@@ -166,7 +260,7 @@ async def test_compiler_derives_map_invocation_from_the_incoming_edge(
     )
 
     compiled = await _compiler(tmp_path).compile(
-        request,
+        _pin_system_plugins(request),
         _UnusedModuleExecutor(),
         workspace_id=WORKSPACE_ID,
     )
@@ -212,7 +306,7 @@ async def test_compiler_accepts_an_external_edge_only_with_its_exact_pin(
     )
 
     compiled = await _compiler(tmp_path).compile(
-        request,
+        _pin_system_plugins(request),
         _UnusedModuleExecutor(),
         workspace_id=WORKSPACE_ID,
     )

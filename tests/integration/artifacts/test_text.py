@@ -7,15 +7,15 @@ from grafy_api.v1.routes.catalog.models import NodeRegistryResponse
 from grafy_api.v1.routes.executions.models import (
     RunEdgeRequest,
     RunInputPlugRequest,
-    RunNodeRequest,
     RunRequest,
     RunResponse,
 )
+from tests.support.system_plugins import selected_system_run_node as RunNodeRequest
 from grafy_core.artifacts import ArtifactRefSequence
-from grafy_core.operators.text import (
+from grafy_core.artifact_contracts import TextValuePayload
+from grafy_plugin_text.nodes import (
     MarkdownValue,
     TextInputConfig,
-    TextValuePayload,
 )
 
 from tests.support.clients import GrafyApi

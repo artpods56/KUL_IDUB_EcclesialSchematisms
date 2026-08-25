@@ -1524,8 +1524,15 @@ export function NodeSelector({
     ? portArtifactType(selectedPrimaryOutput)
     : null;
   const activeFilterTitle = activeFilter.title;
-  const isModuleSelection = selectedPlugin?.origin === "module";
+  const isModuleSelection = selectedPlugin?.entry_kind === "module";
   const isDeprecatedModule = selectedSpec?.publication_state === "deprecated";
+  const selectionCanInsert = canInsert && selectedSpec?.runnable !== false;
+  const pluginUnavailableReason =
+    selectedSpec?.non_runnable_detail ??
+    "This Plugin release is catalog-only until its isolated runtime is available.";
+  const selectionDisabledReason = !canInsert
+    ? insertDisabledReason
+    : pluginUnavailableReason;
   const activeResultId = listedSpec
     ? `node-selector-result-${nodeKey(listedSpec)}`
     : undefined;
@@ -1569,7 +1576,7 @@ export function NodeSelector({
   };
 
   const insertNode = (spec: NodeSpec) => {
-    if (!canInsert) return;
+    if (!canInsert || spec.runnable === false) return;
     if (
       spec.publication_state === "deprecated" &&
       !window.confirm(
@@ -1994,6 +2001,11 @@ export function NodeSelector({
                       <p {...stylex.props(s.inspectorDescription)}>
                         {selectedSpec.description || "No description is available for this node."}
                       </p>
+                      {selectedSpec.runnable === false ? (
+                        <p {...stylex.props(s.moduleDiagnosticsNote)}>
+                          Catalog preview only. {pluginUnavailableReason}
+                        </p>
+                      ) : null}
                     </header>
                   ) : (
                     <header {...stylex.props(s.inspectorHeader)}>
@@ -2003,6 +2015,11 @@ export function NodeSelector({
                       <p {...stylex.props(s.inspectorDescription)}>
                         {selectedSpec.description || "No description is available for this node."}
                       </p>
+                      {selectedSpec.runnable === false ? (
+                        <p {...stylex.props(s.moduleDiagnosticsNote)}>
+                          Catalog preview only. {pluginUnavailableReason}
+                        </p>
+                      ) : null}
                       <div {...stylex.props(s.inspectorSummary)}>
                         <p {...stylex.props(s.inspectorStatement)}>
                           {selectedPrimaryInput ? (
@@ -2163,30 +2180,30 @@ export function NodeSelector({
                 </div>
 
                 <footer {...stylex.props(s.inspectorFooter)}>
-                  {!canInsert ? (
+                  {!selectionCanInsert ? (
                     <span
                       id="node-selector-insert-disabled-reason"
                       {...stylex.props(s.visuallyHidden)}
                     >
-                      {insertDisabledReason}
+                      {selectionDisabledReason}
                     </span>
                   ) : null}
                   <button
                     type="button"
-                    disabled={!canInsert}
-                    aria-describedby={!canInsert
+                    disabled={!selectionCanInsert}
+                    aria-describedby={!selectionCanInsert
                       ? "node-selector-insert-disabled-reason"
                       : undefined}
                     title={
-                      !canInsert
-                        ? insertDisabledReason
+                      !selectionCanInsert
+                        ? selectionDisabledReason
                         : isModuleSelection
                         ? `Insert module call for ${selectedSpec.title}`
                         : `Add ${selectedSpec.title} to the workflow`
                     }
                     {...stylex.props(
                       s.addButton,
-                      !canInsert ? s.addButtonDisabled : null,
+                      !selectionCanInsert ? s.addButtonDisabled : null,
                     )}
                     onClick={() => insertNode(selectedSpec)}
                   >

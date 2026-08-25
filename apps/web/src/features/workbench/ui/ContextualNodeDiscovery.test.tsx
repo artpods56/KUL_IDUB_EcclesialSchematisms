@@ -77,6 +77,7 @@ function node(
     inputs,
     outputs,
     catalog_visible: true,
+    runnable: true,
   };
 }
 
@@ -85,11 +86,23 @@ function registry(): NodeRegistry {
   const textOut = port("text", "output");
   const altIn = port("body", "input");
   return {
-    plugins: [{ slug: "builtin", title: "Built-in", origin: "builtin" }],
+    plugins: [
+      {
+        slug: "builtin",
+        title: "Built-in",
+        entry_kind: "plugin",
+        scope: "system",
+        distribution: "bundled",
+        revision: 1,
+        plugin_release: { scope: "system", slug: "builtin", revision: 1 },
+        runnable: true,
+      },
+    ],
     artifact_types: [
       {
         key: { id: "scalar.text", schema_version: 1 },
         title: "Text",
+        bundle: { format: "inline-json", version: 1 },
         payload_schema: {},
         field_projections: [],
       },

@@ -6,6 +6,7 @@ from grafy_api.v1.routes.auth.dependencies import browser_actor
 from grafy_api.v1.routes.catalog.dependencies import (
     graph_module_catalog,
     graph_module_executor,
+    plugin_release_service,
     plugin_registry,
 )
 from grafy_api.v1.routes.executions.dependencies import (
@@ -38,6 +39,7 @@ def workbench_dependency_overrides(
         run_result_presenter: lambda: components.presenter,
         artifact_service: lambda: components.artifacts,
         graph_module_catalog: lambda: components.modules,
+        plugin_release_service: lambda: components.plugin_releases,
         graph_module_executor: lambda: components.run_graph,
         browser_actor: browser_actor_override,
     }

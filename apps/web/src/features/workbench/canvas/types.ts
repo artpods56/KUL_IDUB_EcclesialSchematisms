@@ -7,6 +7,7 @@ import type {
   ImageUploadItem,
   InputPlugInput,
   NodeSpec,
+  PluginReleasePin,
   Port,
   RunEdgeCollectionMode,
   RunEdgeProjectionInput,
@@ -209,6 +210,11 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   compatibility: WorkflowNodeCompatibility;
   /** Persisted concrete choices for artifact type variables declared by ports. */
   artifactTypeBindings: WorkflowArtifactTypeBindings;
+  /**
+   * Exact scoped Plugin release pin persisted with the node; independent
+   * from the operator identity and never derived from it.
+   */
+  pluginReleasePin: PluginReleasePin | null;
   /** Ordered, serializable input instances. Their ids remain stable on reorder. */
   inputPlugs: readonly WorkflowInputPlug[];
   /** Edge- and result-derived display data; never persisted. */
@@ -273,6 +279,9 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   /** When set, the pinned Module call can upgrade to this library release. */
   moduleUpgradeRelease?: number | null;
   onUpgradeModuleCall?: (nodeId: string) => void;
+  /** When set, the pinned Plugin can move to this current scoped release. */
+  pluginUpgradeRelease?: number | null;
+  onUpgradePluginRelease?: (nodeId: string) => void;
   onOpenExecutionHistory?: (nodeId: string, executionId?: string) => void;
 }
 
@@ -377,6 +386,13 @@ export function createWorkflowNodeData(
     spec,
     compatibility: { status: "supported" },
     artifactTypeBindings: {},
+    pluginReleasePin: spec.plugin_release
+      ? {
+          scope: spec.plugin_release.scope,
+          slug: spec.plugin_release.slug,
+          revision: spec.plugin_release.revision,
+        }
+      : null,
     inputPlugs,
     inputPlugBindings: {},
     mappedInputPort: null,
@@ -412,6 +428,15 @@ export function serializeRunNode(
       ? inputPlugs.filter((plug) => activeInputPlugIds.has(plug.id))
       : inputPlugs,
     artifact_type_bindings: serializeArtifactTypeBindings(data),
+    ...(data.pluginReleasePin
+      ? {
+          plugin_release: {
+            scope: data.pluginReleasePin.scope,
+            slug: data.pluginReleasePin.slug,
+            revision: data.pluginReleasePin.revision,
+          },
+        }
+      : {}),
   };
 }
 

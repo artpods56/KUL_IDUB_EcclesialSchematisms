@@ -7,20 +7,21 @@ name = "grafy-plugin-llm"
 version = "0.1.0"
 requires-python = "==3.14.*"
 dependencies = [
-    "mistralai>=2.6.0",
-    "grafy-core",
+    "grafy-core==0.1.0",
     "openai>=2.0.0",
     "pydantic",
 ]
 
-[project.entry-points."grafy.plugins"]
-llm = "grafy_plugin_llm.plugin:LLM"
+[dependency-groups]
+dev = ["pytest>=8.4.2"]
 
-[tool.uv.sources]
-grafy-core = { workspace = true }
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.basedpyright]
 extends = "../../pyproject.toml"
+venvPath = "."
+venv = ".venv"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

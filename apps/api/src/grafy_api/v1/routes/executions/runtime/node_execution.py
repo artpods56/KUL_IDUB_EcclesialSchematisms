@@ -18,6 +18,7 @@ from grafy_core.plugins import NodeCachePolicy
 from grafy_core.ports.node_secrets import NodeSecretResolverPort
 from grafy_core.runtime.execution import NodeRuntime
 from grafy_core.runtime.invocation import InvocationError, InvocationMode
+from grafy_core.runtime.plugin_invocation import PluginReleaseNode
 from grafy_core.runtime.persistence import PersistedNodeOutput
 
 from .control import RunExecutionControl
@@ -100,37 +101,60 @@ class NodeExecutionService:
             progress_reporter=execution.control,
         )
         registration = compiled_node.registration
-        cache_policy = (
-            registration.cache_policy
-            if registration is not None
-            else NodeCachePolicy.NEVER
-        )
+        # Both routes retain the exact release contract's cache semantics. The
+        # in-process route has additionally matched the loaded registration.
+        if registration is not None:
+            cache_policy = registration.cache_policy
+        elif isinstance(compiled_node.node, PluginReleaseNode):
+            cache_policy = compiled_node.node.cache_policy
+        else:
+            cache_policy = NodeCachePolicy.NEVER
         opaque_secret_revisions: dict[str, str] = {}
         if (
             cache_policy is NodeCachePolicy.EXACT
             and registration is not None
             and registration.secret_inputs
         ):
-            validated_config = (
+            secret_inputs = registration.secret_inputs
+            effective_config = (
                 registration.node_class.config_contract.model.model_validate(
                     node_request.config
                 ).model_dump(mode="json")
             )
-            for secret_input in registration.secret_inputs:
-                secret_dependencies = {
-                    dependency: cast(JsonValue, validated_config[dependency])
-                    for dependency in secret_input.config_dependencies
-                }
-                opaque_secret_revisions[
-                    secret_input.name
-                ] = await self._node_secrets.cache_revision(
-                    workspace_id=node_context.workspace_id,
-                    graph_id=node_context.secret_graph_id,
-                    graph_revision=node_context.secret_graph_revision,
-                    node_id=node_context.node_id,
-                    name=secret_input.name,
-                    dependencies=secret_dependencies,
+        elif (
+            cache_policy is NodeCachePolicy.EXACT
+            and isinstance(compiled_node.node, PluginReleaseNode)
+            and compiled_node.node.contract.secret_inputs
+        ):
+            secret_inputs = compiled_node.node.contract.secret_inputs
+            effective_config = node_request.config
+        else:
+            secret_inputs = ()
+            effective_config = {}
+        for secret_input in secret_inputs:
+            missing_dependencies = sorted(
+                set(secret_input.config_dependencies) - set(effective_config)
+            )
+            if missing_dependencies:
+                raise InvocationError(
+                    f"Node {node_request.id!r} cache identity cannot resolve "
+                    f"secret {secret_input.name!r} dependencies: "
+                    + ", ".join(missing_dependencies)
                 )
+            secret_dependencies = {
+                dependency: cast(JsonValue, effective_config[dependency])
+                for dependency in secret_input.config_dependencies
+            }
+            opaque_secret_revisions[
+                secret_input.name
+            ] = await self._node_secrets.cache_revision(
+                workspace_id=node_context.workspace_id,
+                graph_id=node_context.secret_graph_id,
+                graph_revision=node_context.secret_graph_revision,
+                node_id=node_context.node_id,
+                name=secret_input.name,
+                dependencies=secret_dependencies,
+            )
 
         if compiled_node.invocation.mode is InvocationMode.MAP:
             result = await self._run_mapped(
@@ -150,6 +174,7 @@ class NodeExecutionService:
                 artifact_type_bindings=compiled_node.artifact_type_bindings,
                 cache_policy=cache_policy,
                 opaque_secret_revisions=opaque_secret_revisions,
+                plugin_release=compiled_node.plugin_release,
             )
 
         node_outputs: dict[str, ArtifactOutputValue] = {}
@@ -320,6 +345,7 @@ class NodeExecutionService:
                         artifact_type_bindings=compiled_node.artifact_type_bindings,
                         cache_policy=cache_policy,
                         opaque_secret_revisions=opaque_secret_revisions,
+                        plugin_release=compiled_node.plugin_release,
                     ),
                 )
             except Exception as exc:

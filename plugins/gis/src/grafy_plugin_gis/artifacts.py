@@ -1,6 +1,11 @@
 from typing import cast
 
-from grafy_core.artifacts import ArtifactTypeKey, ArtifactTypeSpec, JsonObject
+from grafy_core.artifacts import (
+    ArtifactBundleContract,
+    ArtifactTypeKey,
+    ArtifactTypeSpec,
+    JsonObject,
+)
 
 from grafy_plugin_gis.models import (
     GeoMapDocument,
@@ -11,11 +16,13 @@ from grafy_plugin_gis.models import (
 GEO_FEATURE_COLLECTION = ArtifactTypeSpec(
     key=ArtifactTypeKey("geo.feature_collection", 1),
     title="GeoJSON feature collection",
+    bundle=ArtifactBundleContract(format="object-set", version=1),
 )
 
 GEO_RASTER_SCAN = ArtifactTypeSpec(
     key=ArtifactTypeKey("geo.raster_scan", 1),
     title="Georeferenced raster scan",
+    bundle=ArtifactBundleContract(format="object-set", version=1),
 )
 
 GEO_MAP_LAYER = ArtifactTypeSpec(

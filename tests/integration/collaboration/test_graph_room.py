@@ -18,6 +18,7 @@ from starlette.testclient import WebSocketDenialResponse
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from grafy_api.settings import Settings
+from grafy_api.v1.models import PluginReleasePinModel
 from grafy_api.v1.routes.auth.dependencies import browser_actor
 from grafy_api.v1.routes.auth.models import WorkspaceMemberRoleRequest
 from grafy_api.v1.routes.collaboration.hub import (
@@ -36,11 +37,18 @@ from grafy_api.v1.routes.collaboration.views import websocket_browser_actor
 from grafy_api.v1.routes.executions.models import RunRequest
 from grafy_api.v1.routes.saved_graphs.models import (
     CreateSavedGraphRequest,
+    GraphPointModel,
+    SavedGraphNodeModel,
     SubmitGraphCommandRequest,
     UpdateSavedGraphRequest,
 )
-from grafy_core.domain.collaboration import RenameGraphCommand
+from grafy_core.domain.collaboration import (
+    RenameGraphCommand,
+    UpdateNodePluginReleaseCommand,
+)
 from grafy_core.domain.identity import ActorContext, User, Workspace, WorkspaceRole
+from grafy_core.domain.plugin_identity import PluginReleaseScope
+from grafy_core.domain.saved_graphs import SavedGraphPluginReleasePin
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from tests.support.clients import GrafyApi
@@ -332,8 +340,7 @@ def test_join_ready_precedes_command_committed_after_head_snapshot(
 
     assert first["type"] == "room.ready"
     assert (
-        first["head"]["collaboration_sequence"]
-        == initial_head.collaboration_sequence
+        first["head"]["collaboration_sequence"] == initial_head.collaboration_sequence
     )
     assert second["type"] == "graph.command.accepted"
     assert second["command_id"] == raced_command_id
@@ -605,6 +612,72 @@ def test_http_command_publishes_to_room(room_client: RoomClient) -> None:
         accepted = _receive_until(websocket, "graph.command.accepted")
         assert accepted["command_id"] == command_id
         assert accepted["command"]["name"] == "HTTP rename"
+
+
+def test_http_plugin_release_update_publishes_semantic_command(
+    room_client: RoomClient,
+) -> None:
+    api, _switcher, population = room_client
+    workspace_api = api.workspace(population.workspace.id)
+    current_pin = SavedGraphPluginReleasePin(
+        scope=PluginReleaseScope.SYSTEM,
+        slug="notes",
+        revision=1,
+    )
+    next_pin = current_pin.model_copy(update={"revision": 2})
+    graph = workspace_api.graphs.create_ok(
+        CreateSavedGraphRequest(
+            name="Room graph",
+            nodes=[
+                SavedGraphNodeModel(
+                    id="n1",
+                    operator_id="notes.write",
+                    operator_version=1,
+                    position=GraphPointModel(x=10, y=20),
+                    config={"text": "preserve"},
+                    plugin_release=PluginReleasePinModel.from_saved_pin(current_pin),
+                )
+            ],
+        )
+    )
+    command_id = uuid4()
+
+    with _connect_room(api, population.workspace.id, graph.id) as websocket:
+        ready = websocket.receive_json()
+        response = workspace_api.graphs.submit_command_ok(
+            graph.id,
+            SubmitGraphCommandRequest(
+                command_id=command_id,
+                room_epoch=ready["head"]["room_epoch"],
+                observed_sequence=ready["head"]["collaboration_sequence"],
+                command=UpdateNodePluginReleaseCommand(
+                    node_id="n1",
+                    plugin_release_pin=next_pin,
+                    expected_plugin_release_pin=current_pin,
+                ),
+            ),
+        )
+        accepted = _receive_until(websocket, "graph.command.accepted")
+
+    assert response.head.nodes[0].config == {"text": "preserve"}
+    assert response.head.nodes[
+        0
+    ].plugin_release == PluginReleasePinModel.from_saved_pin(next_pin)
+    assert accepted["command_id"] == str(command_id)
+    assert accepted["command"] == {
+        "kind": "update_node_plugin_release",
+        "node_id": "n1",
+        "plugin_release_pin": {
+            "scope": "system",
+            "slug": "notes",
+            "revision": 2,
+        },
+        "expected_plugin_release_pin": {
+            "scope": "system",
+            "slug": "notes",
+            "revision": 1,
+        },
+    }
 
 
 def test_room_sends_application_heartbeat(heartbeat_room_client: RoomClient) -> None:
@@ -981,8 +1054,12 @@ def test_two_sessions_see_execution_start_and_complete(
 
             owner_active = _receive_until(owner_ws, "execution.active")
             editor_active = _receive_until(editor_ws, "execution.active")
-            assert owner_active["execution"]["execution_id"] == str(started.execution_id)
-            assert editor_active["execution"]["execution_id"] == str(started.execution_id)
+            assert owner_active["execution"]["execution_id"] == str(
+                started.execution_id
+            )
+            assert editor_active["execution"]["execution_id"] == str(
+                started.execution_id
+            )
             assert owner_active["execution"]["status"] in {
                 "queued",
                 "running",
@@ -1037,7 +1114,9 @@ def test_viewer_discovers_active_execution_on_room_ready_and_cannot_cancel(
         with _connect_room(api, population.workspace.id, graph.id) as viewer_ws:
             ready = viewer_ws.receive_json()
             assert ready["active_execution"] is not None
-            assert ready["active_execution"]["execution_id"] == str(started.execution_id)
+            assert ready["active_execution"]["execution_id"] == str(
+                started.execution_id
+            )
             assert ready["active_execution"]["status"] in {"queued", "running"}
             assert "execute_graph" not in ready["capabilities"]["capabilities"]
             assert "cancel_execution" not in ready["capabilities"]["capabilities"]

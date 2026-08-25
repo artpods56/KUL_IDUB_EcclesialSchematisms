@@ -7,10 +7,10 @@ from grafy_api.v1.routes.executions.models import (
     FieldProjectionRequest,
     RunEdgeRequest,
     RunInputPlugRequest,
-    RunNodeRequest,
     RunRequest,
     RunResponse,
 )
+from tests.support.system_plugins import selected_system_run_node as RunNodeRequest
 
 from tests.support.clients import GrafyApi
 from tests.support.identity import WORKSPACE_ID
@@ -65,6 +65,7 @@ def test_nested_json_string_projects_directly_and_integer_converts_to_text(
                     id="api",
                     operator_id="test.api_response",
                     operator_version=1,
+                    plugin_slug="test.structural-projection",
                     config={},
                 ),
                 RunNodeRequest(
@@ -136,6 +137,7 @@ def test_projected_values_feed_generic_collect_with_optional_conversion(
                     id="api",
                     operator_id="test.api_response",
                     operator_version=1,
+                    plugin_slug="test.structural-projection",
                     config={},
                 ),
                 RunNodeRequest(

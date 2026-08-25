@@ -6,7 +6,7 @@ from pydantic import SecretStr, ValidationError
 
 from grafy_core.domain.node_secrets import JsonValue
 from grafy_core.nodes import NodeExecutionContext, PortShape
-from grafy_core.operators.tables import (
+from grafy_core.table_contracts import (
     TABLE_DATA,
     Table,
     TableColumn,

@@ -16,6 +16,7 @@ const node = (id: string) => ({
   config: { label: id },
   input_plugs: [],
   artifact_type_bindings: [],
+  plugin_release: null,
   position: { x: 0, y: 0 },
   layout: null,
 });
@@ -67,98 +68,107 @@ describe("authored graph document", () => {
   it("round-trips the complete normalized durable graph payload", () => {
     const input: CreateSavedGraphRequest = {
       name: "Operator-agnostic graph",
-      nodes: [{
-        id: "legacy-node",
-        operator_id: "unavailable.operator",
-        operator_version: 7,
-        config: {
-          nested: {
-            ordered: ["first", { value: 2 }],
-            arbitrary: true,
+      nodes: [
+        {
+          id: "legacy-node",
+          operator_id: "unavailable.operator",
+          operator_version: 7,
+          config: {
+            nested: {
+              ordered: ["first", { value: 2 }],
+              arbitrary: true,
+            },
           },
+          input_plugs: [
+            { id: "plug-first", port: "items" },
+            { id: "plug-second", port: "items" },
+          ],
+          artifact_type_bindings: [
+            {
+              variable: "Z",
+              artifact_type: { id: "artifact.z", schema_version: 3 },
+            },
+            {
+              variable: "A",
+              artifact_type: { id: "artifact.a", schema_version: 1 },
+            },
+          ],
+          position: { x: 120, y: 240 },
+          layout: { width: 420, body_height: 180, appendix_height: 320 },
         },
-        input_plugs: [
-          { id: "plug-first", port: "items" },
-          { id: "plug-second", port: "items" },
-        ],
-        artifact_type_bindings: [
-          {
-            variable: "Z",
-            artifact_type: { id: "artifact.z", schema_version: 3 },
-          },
-          {
-            variable: "A",
-            artifact_type: { id: "artifact.a", schema_version: 1 },
-          },
-        ],
-        position: { x: 120, y: 240 },
-        layout: { width: 420, body_height: 180, appendix_height: 320 },
-      }],
-      edges: [{
-        id: "legacy-edge",
-        from_node: "legacy-node",
-        from_port: "output",
-        to_node: "target-node",
-        to_port: "items",
-        to_plug: "plug-second",
-        enabled: false,
-        collection_mode: "map",
-        projection: { path: ["properties", "value"] },
-        conversion_path: [
-          { id: "convert-a", version: 1 },
-          { id: "convert-b", version: 2 },
-        ],
-        route_offset: { x: 18, y: -6 },
-      }],
+      ],
+      edges: [
+        {
+          id: "legacy-edge",
+          from_node: "legacy-node",
+          from_port: "output",
+          to_node: "target-node",
+          to_port: "items",
+          to_plug: "plug-second",
+          enabled: false,
+          collection_mode: "map",
+          projection: { path: ["properties", "value"] },
+          conversion_path: [
+            { id: "convert-a", version: 1 },
+            { id: "convert-b", version: 2 },
+          ],
+          route_offset: { x: 18, y: -6 },
+        },
+      ],
     };
 
     const canonical = authoredGraphDocument(input);
 
     expect(createSavedGraphRequest(canonical)).toEqual({
       name: "Operator-agnostic graph",
-      nodes: [{
-        id: "legacy-node",
-        operator_id: "unavailable.operator",
-        operator_version: 7,
-        config: {
-          nested: {
-            ordered: ["first", { value: 2 }],
-            arbitrary: true,
+      nodes: [
+        {
+          id: "legacy-node",
+          operator_id: "unavailable.operator",
+          operator_version: 7,
+          config: {
+            nested: {
+              ordered: ["first", { value: 2 }],
+              arbitrary: true,
+            },
           },
+          input_plugs: [
+            { id: "plug-first", port: "items" },
+            { id: "plug-second", port: "items" },
+          ],
+          artifact_type_bindings: [
+            {
+              variable: "Z",
+              artifact_type: { id: "artifact.z", schema_version: 3 },
+            },
+            {
+              variable: "A",
+              artifact_type: { id: "artifact.a", schema_version: 1 },
+            },
+          ],
+          plugin_release: null,
+          position: { x: 120, y: 240 },
+          layout: { width: 420, body_height: 180, appendix_height: 320 },
         },
-        input_plugs: [
-          { id: "plug-first", port: "items" },
-          { id: "plug-second", port: "items" },
-        ],
-        artifact_type_bindings: [
-          {
-            variable: "Z",
-            artifact_type: { id: "artifact.z", schema_version: 3 },
-          },
-          {
-            variable: "A",
-            artifact_type: { id: "artifact.a", schema_version: 1 },
-          },
-        ],
-        position: { x: 120, y: 240 },
-        layout: { width: 420, body_height: 180, appendix_height: 320 },
-      }],
-      edges: [{
-        id: "legacy-edge",
-        from_node: "legacy-node",
-        from_port: "output",
-        to_node: "target-node",
-        to_port: "items",
-        to_plug: "plug-second",
-        enabled: false,
-        collection_mode: "map",
-        projection: { path: ["properties", "value"] },
-        conversion_path: [
-          { id: "convert-a", version: 1 },
-          { id: "convert-b", version: 2 },
-        ],
-        route_offset: { x: 18, y: -6 },
-      }],
+      ],
+      edges: [
+        {
+          id: "legacy-edge",
+          from_node: "legacy-node",
+          from_port: "output",
+          to_node: "target-node",
+          to_port: "items",
+          to_plug: "plug-second",
+          enabled: false,
+          collection_mode: "map",
+          projection: { path: ["properties", "value"] },
+          conversion_path: [
+            { id: "convert-a", version: 1 },
+            { id: "convert-b", version: 2 },
+          ],
+          route_offset: { x: 18, y: -6 },
+        },
+      ],
       presentation: {
         viewers: [],
         links: [],
@@ -200,8 +210,16 @@ describe("authored graph document", () => {
     };
     const input: CreateSavedGraphRequest = {
       name: "Adversarial graph",
-      nodes: [runtimeNode as unknown as NonNullable<CreateSavedGraphRequest["nodes"]>[number]],
-      edges: [runtimeEdge as unknown as NonNullable<CreateSavedGraphRequest["edges"]>[number]],
+      nodes: [
+        runtimeNode as unknown as NonNullable<
+          CreateSavedGraphRequest["nodes"]
+        >[number],
+      ],
+      edges: [
+        runtimeEdge as unknown as NonNullable<
+          CreateSavedGraphRequest["edges"]
+        >[number],
+      ],
     };
 
     const canonical = authoredGraphDocument(input);
@@ -260,21 +278,25 @@ describe("authored graph document", () => {
         selected: true,
         internals: { measured: true },
       },
-      input_plugs: [{
-        id: "added-plug",
-        port: "items",
-        selected: true,
-        callbackLike: { name: "onPlugChange" },
-      }],
-      artifact_type_bindings: [{
-        variable: "T",
-        artifact_type: {
-          id: "artifact.t",
-          schema_version: 2,
+      input_plugs: [
+        {
+          id: "added-plug",
+          port: "items",
           selected: true,
-          execution: { status: "failed" },
+          callbackLike: { name: "onPlugChange" },
         },
-      }],
+      ],
+      artifact_type_bindings: [
+        {
+          variable: "T",
+          artifact_type: {
+            id: "artifact.t",
+            schema_version: 2,
+            selected: true,
+            execution: { status: "failed" },
+          },
+        },
+      ],
     };
     const runtimeEdge = {
       ...edge,
@@ -298,7 +320,9 @@ describe("authored graph document", () => {
       kind: "add_node",
       node: runtimeNode as never,
     });
-    const addedNode = result.nodes.find((candidate) => candidate.id === "added-node");
+    const addedNode = result.nodes.find(
+      (candidate) => candidate.id === "added-node",
+    );
     expect(addedNode).toBeDefined();
     expectNoRuntimeFields(addedNode as object);
     expect(addedNode?.layout).toEqual({
@@ -306,21 +330,29 @@ describe("authored graph document", () => {
       body_height: 220,
       appendix_height: 80,
     });
-    expect(addedNode?.input_plugs).toEqual([{ id: "added-plug", port: "items" }]);
-    expect(addedNode?.artifact_type_bindings).toEqual([{
-      variable: "T",
-      artifact_type: { id: "artifact.t", schema_version: 2 },
-    }]);
+    expect(addedNode?.input_plugs).toEqual([
+      { id: "added-plug", port: "items" },
+    ]);
+    expect(addedNode?.artifact_type_bindings).toEqual([
+      {
+        variable: "T",
+        artifact_type: { id: "artifact.t", schema_version: 2 },
+      },
+    ]);
     expectNoRuntimeFields(addedNode?.layout as object);
     expectNoRuntimeFields(addedNode?.input_plugs?.[0] as object);
     expectNoRuntimeFields(addedNode?.artifact_type_bindings?.[0] as object);
-    expectNoRuntimeFields(addedNode?.artifact_type_bindings?.[0]?.artifact_type as object);
+    expectNoRuntimeFields(
+      addedNode?.artifact_type_bindings?.[0]?.artifact_type as object,
+    );
 
     result = applyGraphCommand(result, {
       kind: "add_edge",
       edge: runtimeEdge as never,
     });
-    const addedEdge = result.edges.find((candidate) => candidate.id === "added-edge");
+    const addedEdge = result.edges.find(
+      (candidate) => candidate.id === "added-edge",
+    );
     expect(addedEdge).toBeDefined();
     expectNoRuntimeFields(addedEdge as object);
     expect(addedEdge?.projection).toEqual({ path: ["value"] });
@@ -335,14 +367,20 @@ describe("authored graph document", () => {
       edge_id: "edge-1",
       update: {
         projection: { path: ["updated"], selected: true } as never,
-        conversion_path: [{ id: "updated", version: 2, execution: { status: "failed" } }] as never,
+        conversion_path: [
+          { id: "updated", version: 2, execution: { status: "failed" } },
+        ] as never,
         route_offset: { x: 12, y: 14, dimensions: { width: 2 } } as never,
         enabled: false,
       },
     });
-    const updatedEdge = result.edges.find((candidate) => candidate.id === "edge-1");
+    const updatedEdge = result.edges.find(
+      (candidate) => candidate.id === "edge-1",
+    );
     expect(updatedEdge?.projection).toEqual({ path: ["updated"] });
-    expect(updatedEdge?.conversion_path).toEqual([{ id: "updated", version: 2 }]);
+    expect(updatedEdge?.conversion_path).toEqual([
+      { id: "updated", version: 2 },
+    ]);
     expect(updatedEdge?.route_offset).toEqual({ x: 12, y: 14 });
     expectNoRuntimeFields(updatedEdge as object);
     expectNoRuntimeFields(updatedEdge?.projection as object);
@@ -385,23 +423,35 @@ describe("authored graph document", () => {
       kind: "update_node_configuration_and_input_plugs",
       node_id: "source",
       config: { nested: { arbitrary: "content" } },
-      input_plugs: [{
-        id: "compound-plug",
-        port: "items",
-        selected: true,
-        execution: { status: "failed" },
-      }] as never,
+      input_plugs: [
+        {
+          id: "compound-plug",
+          port: "items",
+          selected: true,
+          execution: { status: "failed" },
+        },
+      ] as never,
     });
     const source = result.nodes.find((candidate) => candidate.id === "source");
-    expect(source?.layout).toEqual({ width: 500, body_height: 240, appendix_height: 90 });
-    expect(source?.input_plugs).toEqual([{ id: "compound-plug", port: "items" }]);
+    expect(source?.layout).toEqual({
+      width: 500,
+      body_height: 240,
+      appendix_height: 90,
+    });
+    expect(source?.input_plugs).toEqual([
+      { id: "compound-plug", port: "items" },
+    ]);
     expect(source?.artifact_type_bindings).toContainEqual({
       variable: "Bound",
       artifact_type: { id: "artifact.bound", schema_version: 4 },
     });
     expectNoRuntimeFields(source?.layout as object);
     expectNoRuntimeFields(source?.input_plugs?.[0] as object);
-    expectNoRuntimeFields(source?.artifact_type_bindings?.find((binding) => binding.variable === "Bound") as object);
+    expectNoRuntimeFields(
+      source?.artifact_type_bindings?.find(
+        (binding) => binding.variable === "Bound",
+      ) as object,
+    );
 
     const replacement = {
       name: "Replacement",
@@ -415,8 +465,12 @@ describe("authored graph document", () => {
     expectNoRuntimeFields(result.nodes[0] as object);
     expectNoRuntimeFields(result.nodes[0]?.layout as object);
     expectNoRuntimeFields(result.nodes[0]?.input_plugs?.[0] as object);
-    expectNoRuntimeFields(result.nodes[0]?.artifact_type_bindings?.[0] as object);
-    expectNoRuntimeFields(result.nodes[0]?.artifact_type_bindings?.[0]?.artifact_type as object);
+    expectNoRuntimeFields(
+      result.nodes[0]?.artifact_type_bindings?.[0] as object,
+    );
+    expectNoRuntimeFields(
+      result.nodes[0]?.artifact_type_bindings?.[0]?.artifact_type as object,
+    );
     expectNoRuntimeFields(result.edges[0] as object);
     expectNoRuntimeFields(result.edges[0]?.projection as object);
     expectNoRuntimeFields(result.edges[0]?.conversion_path?.[0] as object);
@@ -470,12 +524,64 @@ describe("authored graph document", () => {
     });
   });
 
+  it("moves only the selected exact Plugin release pin", () => {
+    const original = authoredGraphDocument({
+      name: "Pinned Plugins",
+      nodes: [
+        {
+          ...node("source"),
+          plugin_release: {
+            scope: "system",
+            slug: "notes",
+            revision: 1,
+          },
+        },
+        {
+          ...node("target"),
+          plugin_release: {
+            scope: "workspace",
+            slug: "notes",
+            revision: 4,
+          },
+        },
+      ],
+      edges: [edge],
+    });
+
+    const upgraded = applyGraphCommand(original, {
+      kind: "update_node_plugin_release",
+      node_id: "source",
+      plugin_release: { scope: "system", slug: "notes", revision: 3 },
+    });
+
+    expect(original.nodes[0]?.plugin_release).toEqual({
+      scope: "system",
+      slug: "notes",
+      revision: 1,
+    });
+    expect(upgraded.nodes[0]?.plugin_release).toEqual({
+      scope: "system",
+      slug: "notes",
+      revision: 3,
+    });
+    expect(upgraded.nodes[1]).toEqual(original.nodes[1]);
+    expect(
+      executionInvalidatedNodeIds(original, {
+        kind: "update_node_plugin_release",
+        node_id: "source",
+        plugin_release: { scope: "system", slug: "notes", revision: 3 },
+      }),
+    ).toEqual(new Set(["source", "target"]));
+  });
+
   it("rejects an edge update for a missing edge", () => {
-    expect(() => applyGraphCommand(document(), {
-      kind: "update_edge",
-      edge_id: "missing-edge",
-      update: { enabled: false },
-    })).toThrow("missing edge missing-edge");
+    expect(() =>
+      applyGraphCommand(document(), {
+        kind: "update_edge",
+        edge_id: "missing-edge",
+        update: { enabled: false },
+      }),
+    ).toThrow("missing edge missing-edge");
   });
 
   it("does not invalidate execution for a move, but scopes configuration invalidation", () => {

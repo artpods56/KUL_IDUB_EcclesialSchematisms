@@ -43,6 +43,7 @@ function secretNodeSpec(): NodeSpec {
     title: "OpenAI-compatible completion",
     description: "Completes a prompt through an OpenAI-compatible API.",
     catalog_visible: true,
+    runnable: true,
     config_schema: {},
     input_schema: {},
     output_schema: {},

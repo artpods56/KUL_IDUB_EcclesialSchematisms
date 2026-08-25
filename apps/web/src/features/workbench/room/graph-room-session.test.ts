@@ -817,7 +817,7 @@ describe("GraphRoomSession", () => {
       kind: "replace_document" as const,
       name: "Checkpointed in E1",
       document: {
-        schema_version: 4 as const,
+        schema_version: 5 as const,
         nodes: [],
         edges: [],
         presentation: {

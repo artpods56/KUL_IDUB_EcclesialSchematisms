@@ -13,8 +13,8 @@ from grafy_core.artifacts import (
     InMemoryUnitOfWork,
     JsonObject,
 )
-from grafy_core.operators.images import RASTER_IMAGE
-from grafy_core.operators.prompts import PromptMessage, PromptMessageRole
+from grafy_core.artifact_contracts import RASTER_IMAGE
+from grafy_core.prompt_contracts import PromptMessage, PromptMessageRole
 from grafy_core.ports.storage import SaveFileCommand, StoredFile, StoredObjectInfo
 from grafy_plugin_llm.openai_compatible import (
     OpenAICompatibleConfig,

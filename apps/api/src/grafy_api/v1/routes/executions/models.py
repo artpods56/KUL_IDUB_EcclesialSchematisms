@@ -29,7 +29,11 @@ from grafy_core.nodes import (
     MAX_NODE_PROGRESS_MESSAGE_LENGTH,
 )
 
-from grafy_api.v1.models import ApiResponse, ArtifactTypeBindingModel
+from grafy_api.v1.models import (
+    ApiResponse,
+    ArtifactTypeBindingModel,
+    PluginReleasePinModel,
+)
 from grafy_api.v1.routes.artifacts.models import ArtifactSummaryResponse
 
 
@@ -57,6 +61,7 @@ class RunNodeRequest(BaseModel):
     artifact_type_bindings: list[ArtifactTypeBindingModel] = Field(
         default_factory=list,
     )
+    plugin_release: PluginReleasePinModel | None = None
 
     @model_validator(mode="after")
     def validate_artifact_type_bindings(self) -> "RunNodeRequest":
@@ -190,6 +195,7 @@ class RunExecutionResponse(ApiResponse):
     active_node_id: str | None
     result: RunResponse | None
     error: str | None
+    queue_position: int | None = Field(default=None, ge=1)
 
 
 class RunExecutionCapacityErrorDetail(ApiResponse):
@@ -200,6 +206,27 @@ class RunExecutionCapacityErrorDetail(ApiResponse):
 
 class RunExecutionCapacityErrorResponse(ApiResponse):
     detail: RunExecutionCapacityErrorDetail
+
+
+class RunExecutionQueueFullErrorDetail(ApiResponse):
+    error_code: Literal["execution_queue_full"]
+    message: str
+    max_pending_graphs: int = Field(ge=1)
+
+
+class RunExecutionQueueFullErrorResponse(ApiResponse):
+    detail: RunExecutionQueueFullErrorDetail
+
+
+class RunExecutionIdempotencyConflictErrorDetail(ApiResponse):
+    error_code: Literal["execution_idempotency_conflict"]
+    message: str
+    idempotency_key: str
+    execution_id: UUID
+
+
+class RunExecutionIdempotencyConflictErrorResponse(ApiResponse):
+    detail: RunExecutionIdempotencyConflictErrorDetail
 
 
 class RunExecutionEventBase(ApiResponse):
@@ -385,6 +412,7 @@ class GraphExecutionNodeResultResponse(ApiResponse):
     error: str | None
     completed_at: datetime
     outputs: list[RunPortOutputResponse]
+    diagnostics: dict[str, object] | None = None
 
     @classmethod
     def from_result(
@@ -400,6 +428,7 @@ class GraphExecutionNodeResultResponse(ApiResponse):
             error=result.error,
             completed_at=result.completed_at,
             outputs=outputs,
+            diagnostics=result.diagnostics,
         )
 
 
@@ -456,6 +485,10 @@ __all__ = [
     "RunExecutionEventBase",
     "RunExecutionCapacityErrorDetail",
     "RunExecutionCapacityErrorResponse",
+    "RunExecutionQueueFullErrorDetail",
+    "RunExecutionQueueFullErrorResponse",
+    "RunExecutionIdempotencyConflictErrorDetail",
+    "RunExecutionIdempotencyConflictErrorResponse",
     "RunExecutionResponse",
     "RunExecutionStatus",
     "RunInputPlugRequest",

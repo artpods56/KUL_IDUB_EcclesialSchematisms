@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from grafy_core.application.saved_graphs import SavedGraphService
-from grafy_core.artifacts import ArtifactRef, ArtifactRefSequence
+from grafy_core.artifacts import ArtifactRef, ArtifactRefSequence, JsonObject
 from grafy_core.domain.artifact_outputs import ArtifactOutputValue
 from grafy_core.domain.execution_history import (
     GraphExecution,
@@ -20,8 +20,9 @@ from grafy_core.domain.errors import (
     NotFoundError,
 )
 from grafy_core.domain.materialized_outputs import MaterializedNodeOutputs
+from grafy_core.domain.identity import WorkspaceCapability
 from grafy_core.domain.saved_graphs import SavedGraphRevision
-from grafy_core.operators.tables import TABLE_DATA
+from grafy_core.table_contracts import TABLE_DATA
 from grafy_core.ports.execution_history import ExecutionHistoryUnitOfWorkPort
 from grafy_core.ports.materialized_outputs import WorkbenchUnitOfWorkPort
 
@@ -68,6 +69,9 @@ class ExecutionHistoryService:
         graph_revision: int,
         scope: GraphExecutionScope,
         requested_node_ids: tuple[str, ...],
+        submitted_request: JsonObject,
+        idempotency_key: str | None,
+        submitted_by_actor_id: UUID | None,
     ) -> GraphExecution:
         if self._saved_graphs is None:
             raise RuntimeError(
@@ -86,6 +90,9 @@ class ExecutionHistoryService:
             scope=scope,
             status="queued",
             requested_node_ids=requested_node_ids,
+            submitted_request=submitted_request,
+            idempotency_key=idempotency_key,
+            submitted_by_actor_id=submitted_by_actor_id,
         )
         async with self._unit_of_work as unit_of_work:
             # graph_executions carries the one-active-execution invariant via a
@@ -94,17 +101,56 @@ class ExecutionHistoryService:
             await unit_of_work.commit()
         return execution
 
+    async def get_by_idempotency_key(
+        self,
+        workspace_id: UUID,
+        idempotency_key: str,
+    ) -> GraphExecution | None:
+        async with self._unit_of_work as unit_of_work:
+            return await unit_of_work.execution_history.get_by_idempotency_key(
+                workspace_id,
+                idempotency_key,
+            )
+
+    async def can_dispatch_recovered(self, execution: GraphExecution) -> bool:
+        actor_id = execution.submitted_by_actor_id
+        if actor_id is None:
+            return False
+        async with self._unit_of_work as unit_of_work:
+            identity = getattr(unit_of_work, "identity", None)
+            if identity is None:
+                raise RuntimeError(
+                    "Recovered execution authorization requires an identity-capable "
+                    "unit of work"
+                )
+            membership = await identity.get_membership(
+                workspace_id=execution.workspace_id,
+                user_id=actor_id,
+            )
+        return membership is not None and membership.grants(
+            WorkspaceCapability.EXECUTE_GRAPH
+        )
+
     async def mark_running(
         self,
         workspace_id: UUID,
         execution: GraphExecution,
-    ) -> None:
+    ) -> bool:
         if execution.workspace_id != workspace_id:
             raise NotFoundError("Graph execution", str(execution.execution_id))
-        execution.transition_to_running()
+        started_at = datetime.now(UTC)
         async with self._unit_of_work as unit_of_work:
-            await unit_of_work.execution_history.update(execution)
+            claimed = await unit_of_work.execution_history.claim_queued(
+                workspace_id,
+                execution.execution_id,
+                started_at=started_at,
+            )
             await unit_of_work.commit()
+        if not claimed:
+            return False
+        execution.status = "running"
+        execution.started_at = started_at
+        return True
 
     async def mark_cancelling(
         self,
@@ -142,6 +188,25 @@ class ExecutionHistoryService:
             await unit_of_work.execution_history.update(execution)
             if result is not None:
                 for position, node_result in enumerate(result.node_results):
+                    diagnostics: JsonObject | None = None
+                    release = node_result.plugin_release
+                    if release is not None:
+                        diagnostics = {
+                            "plugin_release": {
+                                "scope": release.scope.value,
+                                "workspace_id": (
+                                    None
+                                    if release.workspace_id is None
+                                    else str(release.workspace_id)
+                                ),
+                                "slug": release.slug,
+                                "revision": release.revision,
+                                "source_digest": release.source_digest,
+                                "contract_digest": release.contract_digest,
+                                "protocol_digest": release.protocol_digest,
+                                "descriptor_digest": release.descriptor_digest,
+                            },
+                        }
                     await unit_of_work.execution_history.add_node_result(
                         GraphExecutionNodeResult(
                             workspace_id=workspace_id,
@@ -152,6 +217,7 @@ class ExecutionHistoryService:
                             outputs=dict(node_result.outputs),
                             error=node_result.error,
                             completed_at=completed_at,
+                            diagnostics=diagnostics,
                         )
                     )
             await unit_of_work.commit()
@@ -193,11 +259,13 @@ class ExecutionHistoryService:
                 node_id=node_id,
             )
 
-    async def interrupt_all_active(self) -> int:
+    async def list_queued(self) -> tuple[GraphExecution, ...]:
         async with self._unit_of_work as unit_of_work:
-            # Startup recovery transitions active executions to a terminal
-            # status; the partial unique index releases automatically.
-            interrupted = await unit_of_work.execution_history.interrupt_all_active(
+            return await unit_of_work.execution_history.list_queued()
+
+    async def interrupt_started(self) -> int:
+        async with self._unit_of_work as unit_of_work:
+            interrupted = await unit_of_work.execution_history.interrupt_started(
                 finished_at=datetime.now(UTC),
                 error=(
                     "Execution was interrupted because the API process stopped "
@@ -205,7 +273,7 @@ class ExecutionHistoryService:
                 ),
             )
             await unit_of_work.commit()
-        return interrupted
+        return len(interrupted)
 
 
 class MaterializationService:
@@ -393,6 +461,7 @@ class RunResultPresenter:
             active_node_id=execution.active_node_id,
             result=result,
             error=execution.error,
+            queue_position=execution.queue_position,
         )
 
     async def materializations_response(

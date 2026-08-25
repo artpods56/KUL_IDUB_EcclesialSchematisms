@@ -1,26 +1,25 @@
-from grafy_core.operators.arithmetic import ARITHMETIC
-from grafy_core.operators.images import IMAGES
-from grafy_core.operators.modules import MODULES
-from grafy_core.operators.prompts import PROMPTS
-from grafy_core.operators.schemas import SCHEMAS
-from grafy_core.operators.sequences import SEQUENCES
-from grafy_core.operators.text import TEXT
+from grafy_plugin_arithmetic import ARITHMETIC
+from grafy_plugin_image import IMAGES
+from grafy_core.operators.modules import MODULE_BOUNDARY_REGISTRATIONS
+from grafy_plugin_prompt import PROMPTS
+from grafy_plugin_schema import SCHEMAS
+from grafy_plugin_sequence import SEQUENCES
+from grafy_plugin_text import TEXT
 from grafy_core.plugins import NodeCachePolicy
 
 
 def test_builtin_node_cache_policy_inventory_is_fail_closed() -> None:
     policies = {
         registration.key: registration.cache_policy
-        for plugin in (
-            IMAGES,
-            MODULES,
-            SEQUENCES,
-            ARITHMETIC,
-            TEXT,
-            SCHEMAS,
-            PROMPTS,
+        for registration in (
+            *IMAGES.nodes,
+            *MODULE_BOUNDARY_REGISTRATIONS,
+            *SEQUENCES.nodes,
+            *ARITHMETIC.nodes,
+            *TEXT.nodes,
+            *SCHEMAS.nodes,
+            *PROMPTS.nodes,
         )
-        for registration in plugin.nodes
     }
 
     assert policies == {

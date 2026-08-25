@@ -1,10 +1,23 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar, Literal
+import warnings
 from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from grafy_api.plugin_egress import (
+    PluginEgressBrokerPolicy,
+    PluginEgressDestination,
+    PluginEgressProtocol,
+)
+from grafy_api.network_policy import (
+    NetworkPolicy,
+    NetworkPolicyError,
+    legacy_network_policy,
+    load_network_policy_manifest,
+)
 
 
 _OIDC_ALLOWED_ALGORITHMS = frozenset(
@@ -70,7 +83,58 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     map_max_concurrency: int = Field(default=4, ge=1)
     max_active_executions: int = Field(default=2, ge=1, le=32)
+    max_pending_graphs: int = Field(default=20, ge=1, le=1_000)
+    max_active_plugin_invocations: int = Field(default=4, ge=1, le=128)
+    max_live_plugin_sandboxes: int = Field(default=4, ge=1, le=64)
+    max_distinct_plugin_releases_per_graph: int = Field(default=4, ge=1, le=64)
+    # Origin-keyed sandboxes turn one release into multiple variants. This
+    # bound must never exceed global live-sandbox capacity.
+    max_plugin_sandbox_variants_per_execution: int = Field(default=4, ge=1, le=64)
     storage_backend: Literal["local", "s3"] = "local"
+    plugin_roots: tuple[Path, ...] = (
+        Path("examples"),
+        Path("plugins"),
+        Path(".grafy-artifacts/workspace-plugins"),
+    )
+    # Coding-agent authoring is assigned deterministically beneath this
+    # deployment-owned Plugin root. It never chooses an arbitrary host path.
+    plugin_authoring_root: Path = Path(".grafy-artifacts/workspace-plugins")
+    # Source used to build the versioned SDK wheel vendored into a generated
+    # working copy. The resulting Plugin has no monorepo-relative dependency.
+    plugin_sdk_project: Path = Path("libs/core")
+    # Deployment-owned default runtime profile for published Plugin releases.
+    plugin_runtime_profile: Literal[
+        "python-uv",
+        "python-uv-gdal",
+        "python-uv-tesseract",
+        "python-uv-gdal-tesseract",
+    ] = "python-uv"
+    plugin_runtime_native_base_image: str | None = None
+    plugin_runtime_native_base_image_digest: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    # Exact System Plugin host bindings are loaded only from this deployment
+    # manifest. When omitted, startup registers Module boundaries only.
+    system_plugin_deployment_manifest: Path | None = None
+    # Workspace Plugin execution is fail-closed unless the local Docker
+    # sandbox owner is explicitly enabled for this single API process.
+    plugin_runtime_enabled: bool = False
+    plugin_docker_binary: str = Field(default="docker", min_length=1, max_length=1_024)
+    plugin_runtime_seccomp_profile: Path | None = None
+    plugin_egress_broker_image: str | None = None
+    # Legacy translation inputs. When GRAFY_NETWORK_POLICY_MANIFEST is set it
+    # owns plugin-execution HTTP authority and these values are ignored for
+    # that plane (they remain the source for postgresql.egress only).
+    plugin_http_egress_destinations: tuple[str, ...] = ()
+    plugin_postgresql_egress_destinations: tuple[str, ...] = ()
+    # Versioned deployment manifest of network access profiles and their
+    # assignments. Its absence translates the legacy egress variables.
+    network_policy_manifest: Path | None = None
+    # Deployment-owned directory of versioned Grafy Plugin SDK wheels (e.g. a
+    # built grapy-core wheel) exposed to Plugin dependency resolution via
+    # UV_FIND_LINKS. Plugins never depend on monorepo paths.
+    plugin_wheelhouse: Path | None = None
     storage_bucket: str = Field(default="workbench-artifacts", min_length=1)
     staged_upload_max_bytes: int = Field(
         default=STAGED_UPLOAD_HARD_MAX_BYTES,
@@ -100,6 +164,72 @@ class Settings(BaseSettings):
     # Collaboration and shared execution assume one FastAPI process with one
     # HTTP worker. Startup acquires an exclusive lock under workspace when true.
     require_single_api_owner: bool = True
+
+    @model_validator(mode="after")
+    def validate_plugin_capacity(self) -> "Settings":
+        if self.max_distinct_plugin_releases_per_graph > self.max_live_plugin_sandboxes:
+            raise ValueError(
+                "max_distinct_plugin_releases_per_graph cannot exceed "
+                "max_live_plugin_sandboxes"
+            )
+        if (
+            self.max_plugin_sandbox_variants_per_execution
+            > self.max_live_plugin_sandboxes
+        ):
+            raise ValueError(
+                "max_plugin_sandbox_variants_per_execution cannot exceed "
+                "max_live_plugin_sandboxes"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_plugin_egress(self) -> "Settings":
+        destinations = (
+            *self.plugin_http_egress_destinations,
+            *self.plugin_postgresql_egress_destinations,
+        )
+        if self.network_policy_manifest is None and (
+            bool(self.plugin_egress_broker_image) != bool(destinations)
+        ):
+            raise ValueError(
+                "plugin_egress_broker_image and at least one exact egress "
+                "destination must be configured together"
+            )
+        parsed_http = tuple(
+            PluginEgressDestination.parse(value)
+            for value in self.plugin_http_egress_destinations
+        )
+        if any(
+            destination.protocol is PluginEgressProtocol.POSTGRESQL
+            for destination in parsed_http
+        ):
+            raise ValueError(
+                "plugin_http_egress_destinations accepts only HTTP or HTTPS"
+            )
+        parsed_postgresql = tuple(
+            PluginEgressDestination.parse(value)
+            for value in self.plugin_postgresql_egress_destinations
+        )
+        if any(
+            destination.protocol is not PluginEgressProtocol.POSTGRESQL
+            for destination in parsed_postgresql
+        ):
+            raise ValueError(
+                "plugin_postgresql_egress_destinations accepts only PostgreSQL"
+            )
+        PluginEgressBrokerPolicy(
+            broker_image=self.plugin_egress_broker_image,
+            destinations=(*parsed_http, *parsed_postgresql),
+        )
+        return self
+
+    @field_validator("plugin_egress_broker_image", mode="before")
+    @classmethod
+    def empty_plugin_egress_broker_image_is_unset(
+        cls,
+        value: object,
+    ) -> object:
+        return None if value == "" else value
 
     @field_validator("public_origin", "oidc_issuer")
     @classmethod
@@ -184,6 +314,104 @@ class Settings(BaseSettings):
     def allowed_cors_origins(self) -> tuple[str, ...]:
         return tuple(
             origin.strip() for origin in self.cors_origins.split(",") if origin.strip()
+        )
+
+    @property
+    def resolved_plugin_roots(self) -> tuple[Path, ...]:
+        return tuple(root.expanduser().resolve() for root in self.plugin_roots)
+
+    @property
+    def resolved_plugin_wheelhouse(self) -> Path | None:
+        if self.plugin_wheelhouse is None:
+            return None
+        return self.plugin_wheelhouse.expanduser().resolve()
+
+    @property
+    def resolved_plugin_authoring_root(self) -> Path:
+        return self.plugin_authoring_root.expanduser().resolve()
+
+    @property
+    def resolved_plugin_sdk_project(self) -> Path:
+        return self.plugin_sdk_project.expanduser().resolve()
+
+    @property
+    def resolved_system_plugin_deployment_manifest(self) -> Path | None:
+        if self.system_plugin_deployment_manifest is None:
+            return None
+        return self.system_plugin_deployment_manifest.expanduser().resolve()
+
+    @property
+    def resolved_network_policy_manifest(self) -> Path | None:
+        if self.network_policy_manifest is None:
+            return None
+        return self.network_policy_manifest.expanduser().resolve()
+
+    @property
+    def resolved_network_policy(self) -> NetworkPolicy:
+        """The deployment-owned network policy, manifest-first.
+
+        Without a manifest the legacy egress environment variables translate
+        into an in-memory curated execution profile so historical
+        ``network.egress`` releases keep their exact previous authority.
+        """
+
+        manifest = self.resolved_network_policy_manifest
+        if manifest is not None:
+            try:
+                return load_network_policy_manifest(manifest)
+            except NetworkPolicyError as exc:
+                raise NetworkPolicyError(
+                    f"GRAFY_NETWORK_POLICY_MANIFEST {manifest} is invalid: {exc}"
+                ) from exc
+        legacy_destinations = tuple(
+            PluginEgressDestination.parse(value)
+            for value in self.plugin_http_egress_destinations
+        )
+        if legacy_destinations:
+            warnings.warn(
+                "GRAFY_PLUGIN_HTTP_EGRESS_DESTINATIONS is deprecated and "
+                "translates into the legacy-curated execution profile; set "
+                "GRAFY_NETWORK_POLICY_MANIFEST to assign named network access "
+                "profiles.",
+                category=DeprecationWarning,
+                stacklevel=2,
+            )
+        return legacy_network_policy(http_destinations=legacy_destinations)
+
+    @property
+    def resolved_plugin_seccomp_profile(self) -> Path | None:
+        if self.plugin_runtime_seccomp_profile is None:
+            return None
+        return self.plugin_runtime_seccomp_profile.expanduser().resolve()
+
+    @property
+    def resolved_plugin_egress_policy(self) -> PluginEgressBrokerPolicy:
+        """Broker infrastructure policy for the isolated runtime.
+
+        With a network policy manifest, plugin-execution HTTP authority comes
+        from the manifest and legacy HTTP destinations are excluded here;
+        PostgreSQL keeps its separate destination-scoped allowlist either way.
+        """
+
+        legacy_http = (
+            ()
+            if self.network_policy_manifest is not None
+            else (
+                PluginEgressDestination.parse(value)
+                for value in self.plugin_http_egress_destinations
+            )
+        )
+        return PluginEgressBrokerPolicy(
+            broker_image=self.plugin_egress_broker_image,
+            destinations=tuple(
+                [
+                    *legacy_http,
+                    *(
+                        PluginEgressDestination.parse(value)
+                        for value in self.plugin_postgresql_egress_destinations
+                    ),
+                ]
+            ),
         )
 
     @property

@@ -13,6 +13,7 @@ from grafy_core.artifact_collections import (
     JSON_COLLECTIONS_STORAGE_FORMAT,
     SUPPORTED_JSON_COLLECTIONS_STORAGE_FORMATS,
     JsonCollection,
+    JsonCollectionsManifest,
     load_json_collections_page,
     save_json_collections,
 )
@@ -28,6 +29,12 @@ from grafy_core.ports.storage import (
     SaveFileCommand,
 )
 from grafy_core.runtime.persistence import ArtifactOutputWriter, ArtifactWriteContext
+from grafy_core.runtime.object_set_bundle import (
+    PORTABLE_BUNDLE_METADATA_KEY,
+    PortableArtifactBundleMetadata,
+    PortableArtifactFile,
+    PortableMetadataReference,
+)
 from grafy_core.runtime.resolvers import (
     ArtifactContractError,
     ResolutionError,
@@ -192,6 +199,38 @@ class FeatureCollectionOutputWriter(ArtifactOutputWriter):
             node_id=context.node_context.node_id,
             workspace_id=context.node_context.workspace_id,
         )
+        manifest_stream = await self._storage.load(
+            stored.bucket,
+            stored.manifest_path,
+        )
+        try:
+            manifest_content = manifest_stream.read(stored.manifest_byte_size + 1)
+        finally:
+            manifest_stream.close()
+        if (
+            len(manifest_content) != stored.manifest_byte_size
+            or sha256(manifest_content).hexdigest() != stored.manifest_sha256
+        ):
+            raise RuntimeError("Stored feature manifest identity changed")
+        stored_manifest = JsonCollectionsManifest.model_validate_json(manifest_content)
+        portable_files = [
+            PortableArtifactFile(
+                object_key=stored.manifest_path,
+                byte_size=stored.manifest_byte_size,
+                sha256=stored.manifest_sha256,
+                content_type="application/json",
+            ),
+            *(
+                PortableArtifactFile(
+                    object_key=chunk.object_key,
+                    byte_size=chunk.byte_size,
+                    sha256=chunk.sha256,
+                    content_type="application/json",
+                )
+                for collection in stored_manifest.collections
+                for chunk in collection.chunks
+            ),
+        ]
 
         vector_projection: VectorProjectionMetadata | None = None
         if payload.bounds is not None:
@@ -263,6 +302,14 @@ class FeatureCollectionOutputWriter(ArtifactOutputWriter):
                     bounds=payload.bounds,
                     compiler=(f"{compilation.compiler} {compilation.compiler_version}"),
                 )
+                portable_files.append(
+                    PortableArtifactFile(
+                        object_key=stored_projection.path,
+                        byte_size=stored_projection.byte_size,
+                        sha256=stored_projection.sha256,
+                        content_type="application/vnd.pmtiles",
+                    )
+                )
 
         artifact_metadata: JsonObject = dict(context.metadata)
         artifact_metadata.update(
@@ -284,6 +331,24 @@ class FeatureCollectionOutputWriter(ArtifactOutputWriter):
             artifact_metadata["bounds"] = list(payload.bounds)
         if vector_projection is not None:
             artifact_metadata["vector_projection"] = _json_metadata(vector_projection)
+            portable_references = (
+                PortableMetadataReference(
+                    path=("vector_projection", "bucket"),
+                    kind="bucket",
+                ),
+                PortableMetadataReference(
+                    path=("vector_projection", "object_key"),
+                    kind="object",
+                ),
+            )
+        else:
+            portable_references = ()
+        artifact_metadata[PORTABLE_BUNDLE_METADATA_KEY] = (
+            PortableArtifactBundleMetadata(
+                files=tuple(portable_files),
+                references=portable_references,
+            ).as_metadata_value()
+        )
         provenance = _provenance(context)
         if provenance:
             artifact_metadata["provenance"] = provenance
@@ -514,13 +579,14 @@ class RasterScanOutputWriter(ArtifactOutputWriter):
                 f"{self.artifact_type.id}/v{self.artifact_type.schema_version}/"
                 f"projections/{cog_hash}/xyz"
             )
+            stored_tiles: list[PortableArtifactFile] = []
             for tile_path in tile_paths:
                 relative_tile = tile_path.relative_to(tiles_dir).as_posix()
                 tile_key = f"{tile_prefix}/{relative_tile}"
                 tile_content = tile_path.read_bytes()
                 tile_hash = sha256(tile_content).hexdigest()
                 try:
-                    await self._storage.save(
+                    stored_tile = await self._storage.save(
                         SaveFileCommand(
                             bucket=self._bucket,
                             path=tile_key,
@@ -539,6 +605,14 @@ class RasterScanOutputWriter(ArtifactOutputWriter):
                         f"Failed to persist XYZ tile for raster "
                         f"{payload.source_name!r} at {self._bucket}/{tile_key}"
                     ) from exc
+                stored_tiles.append(
+                    PortableArtifactFile(
+                        object_key=stored_tile.path,
+                        byte_size=stored_tile.byte_size,
+                        sha256=stored_tile.sha256,
+                        content_type="image/png",
+                    )
+                )
 
         raster_projection = RasterProjectionMetadata(
             bucket=stored_cog.bucket,
@@ -563,6 +637,31 @@ class RasterScanOutputWriter(ArtifactOutputWriter):
                 "source_crs": cog.native_crs,
                 "raster_projection": _json_metadata(raster_projection),
             }
+        )
+        artifact_metadata[PORTABLE_BUNDLE_METADATA_KEY] = (
+            PortableArtifactBundleMetadata(
+                files=(
+                    PortableArtifactFile(
+                        object_key=stored_cog.path,
+                        byte_size=stored_cog.byte_size,
+                        sha256=stored_cog.sha256,
+                        content_type=(
+                            "image/tiff; application=geotiff; profile=cloud-optimized"
+                        ),
+                    ),
+                    *stored_tiles,
+                ),
+                references=(
+                    PortableMetadataReference(
+                        path=("raster_projection", "bucket"),
+                        kind="bucket",
+                    ),
+                    PortableMetadataReference(
+                        path=("raster_projection", "prefix"),
+                        kind="prefix",
+                    ),
+                ),
+            ).as_metadata_value()
         )
         provenance = _provenance(context)
         if provenance:

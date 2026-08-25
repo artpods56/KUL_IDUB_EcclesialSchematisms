@@ -14,16 +14,17 @@ from grafy_api.v1.routes.artifacts.models import (
     TableQueryRequest,
 )
 from grafy_api.v1.routes.artifacts.services import ArtifactService
-from grafy_api.v1.routes.executions.models import RunNodeRequest, RunRequest
+from grafy_api.v1.routes.executions.models import RunRequest
+from tests.support.system_plugins import selected_system_run_node as RunNodeRequest
 from grafy_api.v1.routes.executions.services import RunResultPresenter
 from grafy_core.artifacts import ArtifactObject, InMemoryUnitOfWork
 from grafy_core.nodes import NodeExecutionContext
-from grafy_core.operators.tables import (
+from grafy_core.table_contracts import (
     Table,
-    TableArtifactWriter,
     TableColumn,
     TableValueType,
 )
+from grafy_plugin_table.persistence import TableArtifactWriter
 from grafy_core.runtime.materialization import MaterializationProvenance
 from grafy_core.runtime.persistence import ArtifactWriteContext
 from grafy_storage import LocalFileObjectStore
@@ -628,7 +629,7 @@ async def test_iter_table_csv_encodes_utf8_bom_crlf_and_quoting(
     tmp_path: Path,
 ) -> None:
     """CSV export uses a UTF-8 BOM, CRLF terminators, and RFC 4180 quoting."""
-    from grafy_core.operators.tables import iter_table_csv
+    from grafy_core.runtime.table_storage import iter_table_csv
 
     storage = LocalFileObjectStore(tmp_path / "objects")
     table = Table(

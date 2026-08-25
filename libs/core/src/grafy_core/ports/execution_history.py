@@ -46,12 +46,28 @@ class GraphExecutionHistoryRepositoryPort(Protocol):
         """Return the identity of the graph's queued, running, or cancelling execution."""
         ...
 
-    async def interrupt_all_active(
+    async def list_queued(self) -> tuple[GraphExecution, ...]: ...
+
+    async def get_by_idempotency_key(
+        self,
+        workspace_id: UUID,
+        idempotency_key: str,
+    ) -> GraphExecution | None: ...
+
+    async def claim_queued(
+        self,
+        workspace_id: UUID,
+        execution_id: UUID,
+        *,
+        started_at: datetime,
+    ) -> bool: ...
+
+    async def interrupt_started(
         self,
         *,
         finished_at: datetime,
         error: str,
-    ) -> int: ...
+    ) -> tuple[GraphExecution, ...]: ...
 
 
 class ExecutionHistoryUnitOfWorkPort(UnitOfWorkPort, Protocol):

@@ -108,9 +108,12 @@ def test_openapi_contains_exact_public_routes(settings: Settings) -> None:
     execution_start_responses = schema["paths"][
         "/v1/workspaces/{workspace_id}/executions"
     ]["post"]["responses"]
-    assert execution_start_responses["429"]["content"]["application/json"][
-        "schema"
-    ] == {"$ref": "#/components/schemas/RunExecutionCapacityErrorResponse"}
+    assert execution_start_responses["429"]["content"]["application/json"]["schema"][
+        "anyOf"
+    ] == [
+        {"$ref": "#/components/schemas/RunExecutionQueueFullErrorResponse"},
+        {"$ref": "#/components/schemas/RunExecutionCapacityErrorResponse"},
+    ]
     assert "Retry-After" in execution_start_responses["429"]["headers"]
     security_schemes = schema["components"]["securitySchemes"]
     session_scheme_name = next(
@@ -197,6 +200,7 @@ def test_openapi_contains_exact_public_routes(settings: Settings) -> None:
         "active_node_id",
         "result",
         "error",
+        "queue_position",
     }
     assert execution_schema["properties"]["status"]["enum"] == [
         "queued",
@@ -254,15 +258,15 @@ def test_openapi_contains_exact_public_routes(settings: Settings) -> None:
     assert "map_inputs" not in node_schema["properties"]
 
     plugin_schema = schema["components"]["schemas"]["PluginSpecResponse"]
-    assert plugin_schema["properties"]["origin"] == {
-        "$ref": "#/components/schemas/PluginOrigin"
+    assert "origin" not in plugin_schema["properties"]
+    assert set(plugin_schema["required"]) == {"slug", "title"}
+    assert "Plugin" + "Origin" not in schema["components"]["schemas"]
+    assert plugin_schema["properties"]["runnable"] == {
+        "default": True,
+        "title": "Runnable",
+        "type": "boolean",
     }
-    assert set(plugin_schema["required"]) == {"slug", "title", "origin"}
-    assert schema["components"]["schemas"]["PluginOrigin"] == {
-        "enum": ["builtin", "external", "module"],
-        "title": "PluginOrigin",
-        "type": "string",
-    }
+    assert "revision" in plugin_schema["properties"]
     assert "module_graph_id" in node_schema["properties"]
     assert "module_graph_revision" in node_schema["properties"]
     assert node_schema["properties"]["catalog_visible"] == {
@@ -270,6 +274,36 @@ def test_openapi_contains_exact_public_routes(settings: Settings) -> None:
         "title": "Catalog Visible",
         "type": "boolean",
     }
+    assert node_schema["properties"]["runnable"] == {
+        "default": True,
+        "title": "Runnable",
+        "type": "boolean",
+    }
+    assert "plugin_revision" in node_schema["properties"]
+    plugin_release_update_schema = schema["components"]["schemas"][
+        "UpdateNodePluginReleaseCommand"
+    ]
+    assert set(plugin_release_update_schema["required"]) == {
+        "node_id",
+        "plugin_release_pin",
+        "expected_plugin_release_pin",
+    }
+    assert plugin_release_update_schema["properties"]["kind"]["const"] == (
+        "update_node_plugin_release"
+    )
+    assert plugin_release_update_schema["properties"]["plugin_release_pin"] == {
+        "$ref": "#/components/schemas/SavedGraphPluginReleasePin"
+    }
+    command_schema = schema["components"]["schemas"]["SubmitGraphCommandRequest"][
+        "properties"
+    ]["command"]
+    assert (
+        command_schema["discriminator"]["mapping"]["update_node_plugin_release"]
+        == "#/components/schemas/UpdateNodePluginReleaseCommand"
+    )
+    assert {
+        "$ref": "#/components/schemas/UpdateNodePluginReleaseCommand"
+    } in command_schema["oneOf"]
     assert schema["components"]["schemas"]["ImageUploadItemResponse"] == {
         "properties": {
             "upload_key": {
@@ -335,14 +369,13 @@ def test_openapi_contains_exact_public_routes(settings: Settings) -> None:
         {"type": "null"},
     ]
 
-    for schema_name in ("SavedGraphNodeModel-Input", "SavedGraphNodeModel-Output"):
-        saved_node_schema = schema["components"]["schemas"][schema_name]
-        assert saved_node_schema["properties"]["input_plugs"]["items"] == {
-            "$ref": "#/components/schemas/SavedGraphInputPlugModel"
-        }
-        assert saved_node_schema["properties"]["artifact_type_bindings"]["items"] == {
-            "$ref": "#/components/schemas/ArtifactTypeBindingModel"
-        }
+    saved_node_schema = schema["components"]["schemas"]["SavedGraphNodeModel"]
+    assert saved_node_schema["properties"]["input_plugs"]["items"] == {
+        "$ref": "#/components/schemas/SavedGraphInputPlugModel"
+    }
+    assert saved_node_schema["properties"]["artifact_type_bindings"]["items"] == {
+        "$ref": "#/components/schemas/ArtifactTypeBindingModel"
+    }
     saved_edge_schema = schema["components"]["schemas"]["SavedGraphEdgeModel"]
     assert "to_plug" in saved_edge_schema["properties"]
     assert saved_edge_schema["properties"]["enabled"]["default"] is True

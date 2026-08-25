@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, SecretStr, TypeAdapter
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select
 
 from grafy_api.settings import Settings
 from grafy_api.v1.routes.auth.abuse import (
@@ -24,6 +24,7 @@ from grafy_api.v1.routes.auth.services import (
     OIDC_TRANSACTION_COOKIE,
     AuthService,
     IssuedSession,
+    OidcProtocolError,
 )
 from grafy_core.application.identity import IdentityService
 from grafy_core.domain.identity import (
@@ -31,6 +32,12 @@ from grafy_core.domain.identity import (
     WorkspaceCapability,
     WorkspaceRole,
 )
+from grafy_core.domain.security_audit import (
+    SecurityAuditActorKind,
+    SecurityAuditEvent,
+    SecurityAuditOutcome,
+)
+from grafy_persistence import schema
 from grafy_persistence.database import Database
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 from tests.support.clients import GrafyApi
@@ -72,7 +79,12 @@ async def _seed_oidc_transaction(
         id=transaction_id,
         state_digest=auth.digest_secret(state),
         nonce_digest=auth.digest_secret("callback-nonce"),
-        encrypted_pkce_verifier=auth._encrypt_verifier("verifier", transaction_id),
+        # Pre-seeding a transaction with a known verifier requires the
+        # private wrapper; start_login would need a live provider round-trip.
+        encrypted_pkce_verifier=auth._encrypt_verifier(  # pyright: ignore[reportPrivateUsage]
+            "verifier",
+            transaction_id,
+        ),
         pkce_key_version=settings.oidc_auth_wrapping_key_version,
         return_path="/",
         expires_at=expires_at,
@@ -108,26 +120,30 @@ async def test_unauthenticated_workspace_failure_is_audited_once(
         app_settings = settings.model_copy(
             update={"database_url": SecretStr(database_url)}
         )
-        _, workspace, _ = await seed(database.sessions)
+        _, _, _ = await seed(database.sessions)
 
         with client_with_overrides(settings=app_settings) as client:
             api = GrafyApi(client)
 
             assert api.workspaces.list().status_code == 401
 
-        async with database.engine.connect() as connection:
-            rows = (
-                await connection.execute(
-                    text(
-                        "SELECT operation, error_code, actor_kind "
-                        "FROM security_audit_events "
-                        "WHERE operation IN ('auth.session.verify', 'workspace.list')"
+        async with database.sessions() as session:
+            events = list(
+                await session.scalars(
+                    select(SecurityAuditEvent).where(
+                        schema.security_audit_events.c.operation.in_(
+                            ["auth.session.verify", "workspace.list"]
+                        )
                     )
                 )
-            ).all()
+            )
 
-        assert [(row[0], row[1], row[2]) for row in rows] == [
-            ("auth.session.verify", "authentication_required", "unauthenticated")
+        assert [(e.operation, e.error_code, e.actor_kind) for e in events] == [
+            (
+                "auth.session.verify",
+                "authentication_required",
+                SecurityAuditActorKind.UNAUTHENTICATED,
+            )
         ]
 
 
@@ -142,7 +158,7 @@ async def test_session_verification_failures_are_rate_limited(
                 "auth_session_failure_rate_limit": 1,
             }
         )
-        user, _, _ = await seed(database.sessions)
+        _, _, _ = await seed(database.sessions)
 
         with client_with_overrides(settings=app_settings) as client:
             api = GrafyApi(client)
@@ -179,21 +195,21 @@ async def test_cookie_requests_require_exact_origin_and_csrf(
                 == 403
             )
 
-        async with database.engine.connect() as connection:
-            rows = (
-                await connection.execute(
-                    text(
-                        "SELECT actor_kind, operation, error_code "
-                        "FROM security_audit_events "
-                        "WHERE operation = 'auth.session.verify'"
+        async with database.sessions() as session:
+            events = list(
+                await session.scalars(
+                    select(SecurityAuditEvent).where(
+                        schema.security_audit_events.c.operation
+                        == "auth.session.verify"
                     )
                 )
-            ).all()
+            )
 
-        events = [(row[0], row[1], row[2]) for row in rows]
         assert events
-        assert all(event[0] == "authenticated" for event in events)
-        assert {event[2] for event in events} == {"origin_rejected"}
+        assert all(
+            event.actor_kind is SecurityAuditActorKind.AUTHENTICATED for event in events
+        )
+        assert {event.error_code for event in events} == {"origin_rejected"}
 
 
 async def test_authenticated_csrf_failure_is_audited_once_at_auth_boundary(
@@ -221,18 +237,18 @@ async def test_authenticated_csrf_failure_is_audited_once_at_auth_boundary(
 
             assert response.status_code == 403
 
-        async with database.engine.connect() as connection:
-            rows = (
-                await connection.execute(
-                    text(
-                        "SELECT operation, error_code "
-                        "FROM security_audit_events "
-                        "WHERE operation IN ('auth.session.verify', 'workspace.create')"
+        async with database.sessions() as session:
+            events = list(
+                await session.scalars(
+                    select(SecurityAuditEvent).where(
+                        schema.security_audit_events.c.operation.in_(
+                            ["auth.session.verify", "workspace.create"]
+                        )
                     )
                 )
-            ).all()
+            )
 
-        assert [(row[0], row[1]) for row in rows] == [
+        assert [(e.operation, e.error_code) for e in events] == [
             ("auth.session.verify", "csrf_rejected")
         ]
 
@@ -342,9 +358,9 @@ async def test_expired_callback_consumes_transaction_and_releases_reservation(
         await auth.reserve_login("expired-browser", transaction_id)
 
         with TestClient(application) as client:
-            wrapping_key = app_settings.oidc_auth_wrapping_key.get_secret_value().encode(
-                "utf-8"
-            )
+            configured_key = app_settings.oidc_auth_wrapping_key
+            assert configured_key is not None
+            wrapping_key = configured_key.get_secret_value().encode("utf-8")
             client.cookies.set(
                 BROWSER_ABUSE_COOKIE,
                 make_browser_abuse_cookie("expired-browser", secret=wrapping_key),
@@ -408,9 +424,9 @@ async def test_callback_failure_before_consumption_preserves_transaction_and_slo
         monkeypatch.setattr(auth, "_consume_transaction", fail_before_consumption)
 
         with TestClient(application, raise_server_exceptions=False) as client:
-            wrapping_key = app_settings.oidc_auth_wrapping_key.get_secret_value().encode(
-                "utf-8"
-            )
+            configured_key = app_settings.oidc_auth_wrapping_key
+            assert configured_key is not None
+            wrapping_key = configured_key.get_secret_value().encode("utf-8")
             client.cookies.set(
                 BROWSER_ABUSE_COOKIE,
                 make_browser_abuse_cookie("before-browser", secret=wrapping_key),
@@ -475,9 +491,9 @@ async def test_callback_failure_after_consumption_clears_transaction_and_release
         monkeypatch.setattr(auth, "_exchange_code", fail_after_consumption)
 
         with TestClient(application, raise_server_exceptions=False) as client:
-            wrapping_key = app_settings.oidc_auth_wrapping_key.get_secret_value().encode(
-                "utf-8"
-            )
+            configured_key = app_settings.oidc_auth_wrapping_key
+            assert configured_key is not None
+            wrapping_key = configured_key.get_secret_value().encode("utf-8")
             client.cookies.set(
                 BROWSER_ABUSE_COOKIE,
                 make_browser_abuse_cookie("after-browser", secret=wrapping_key),
@@ -522,7 +538,7 @@ async def test_pat_create_shows_secret_once_and_revoke_is_audited(
             created = tokens.create_token_ok(
                 PersonalAccessTokenCreateRequest(
                     label="read-only",
-                    scopes=[PersonalAccessTokenScope.VIEW_GRAPH],
+                    scopes=(PersonalAccessTokenScope.VIEW_GRAPH,),
                     expires_at=datetime.now(UTC) + timedelta(hours=1),
                 ),
                 headers=_csrf_headers(issued),
@@ -609,9 +625,9 @@ async def test_callback_validation_is_bounded_and_consumes_transaction(
         state_sentinel = "S" * 513
 
         with TestClient(application) as client:
-            wrapping_key = app_settings.oidc_auth_wrapping_key.get_secret_value().encode(
-                "utf-8"
-            )
+            configured_key = app_settings.oidc_auth_wrapping_key
+            assert configured_key is not None
+            wrapping_key = configured_key.get_secret_value().encode("utf-8")
             client.cookies.set(
                 BROWSER_ABUSE_COOKIE,
                 make_browser_abuse_cookie("testclient", secret=wrapping_key),
@@ -635,19 +651,20 @@ async def test_callback_validation_is_bounded_and_consumes_transaction(
 
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
             stored = await unit_of_work.identity.lock_login_transaction(transaction_id)
-            async with database.engine.connect() as connection:
-                rows = (
-                    await connection.execute(
-                        text(
-                            "SELECT operation, error_code FROM security_audit_events "
-                            "WHERE operation = 'oidc.login.callback'"
-                        )
-                    )
-                ).all()
-
         assert stored is not None
         assert stored.is_consumed
-        assert {(row[0], row[1]) for row in rows} == {
+
+        async with database.sessions() as session:
+            callback_events = list(
+                await session.scalars(
+                    select(SecurityAuditEvent).where(
+                        schema.security_audit_events.c.operation
+                        == "oidc.login.callback"
+                    )
+                )
+            )
+
+        assert {(e.operation, e.error_code) for e in callback_events} == {
             ("oidc.login.callback", "rate_limited"),
             ("oidc.login.callback", "validation_failed"),
         }
@@ -669,36 +686,32 @@ async def test_login_validation_is_bounded_and_audited(
         sentinel = "R" * 2049
 
         with client_with_overrides(settings=app_settings) as client:
-            first = client.get(
-                "/v1/auth/oidc/login", params={"return_path": sentinel}
-            )
+            first = client.get("/v1/auth/oidc/login", params={"return_path": sentinel})
             client.cookies.clear()
-            second = client.get(
-                "/v1/auth/oidc/login", params={"return_path": sentinel}
-            )
+            second = client.get("/v1/auth/oidc/login", params={"return_path": sentinel})
 
             assert first.status_code == 422
             assert second.status_code == 429
             assert sentinel not in first.text
             assert sentinel not in second.text
 
-        async with database.engine.connect() as connection:
-            rows = (
-                await connection.execute(
-                    text(
-                        "SELECT error_code FROM security_audit_events "
-                        "WHERE operation = 'oidc.login.start'"
+        async with database.sessions() as session:
+            events = list(
+                await session.scalars(
+                    select(SecurityAuditEvent).where(
+                        schema.security_audit_events.c.operation == "oidc.login.start"
                     )
                 )
-            ).all()
+            )
 
-        assert {row[0] for row in rows} == {
+        assert {e.error_code for e in events} == {
             "validation_failed",
             "rate_limited",
         }
 
 
 async def test_oidc_query_sentinels_are_absent_from_request_logs(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     settings: Settings,
     caplog: pytest.LogCaptureFixture,
@@ -715,7 +728,20 @@ async def test_oidc_query_sentinels_are_absent_from_request_logs(
         provider_error = "provider-error-sentinel"
         caplog.set_level(logging.INFO)
 
-        with client_with_overrides(settings=app_settings) as client:
+        application = app_with_overrides(settings=app_settings)
+        # The login start reaches the provider discovery fetch. Without this
+        # stub it performs real socket I/O against GRAFY_OIDC_ISSUER from
+        # .env in the pytest process, which on macOS + CPython 3.14 poisons
+        # fork() and segfaults later docker subprocess spawns (e.g. the
+        # plugin egress test) for the remainder of the suite.
+        auth = application.state.identity.auth_service
+
+        async def unavailable_provider(**_kwargs: object) -> dict[str, object]:
+            raise OidcProtocolError("provider_discovery_unavailable")
+
+        monkeypatch.setattr(auth, "_provider", unavailable_provider)
+
+        with TestClient(application) as client:
             client.get("/v1/auth/oidc/login", params={"return_path": return_path})
             client.get(
                 "/v1/auth/oidc/callback",
@@ -758,19 +784,22 @@ async def test_auth_http_exception_is_audited_as_authenticated_failure(
 
             assert response.status_code == 404
 
-        async with database.engine.connect() as connection:
-            rows = (
-                await connection.execute(
-                    text(
-                        "SELECT actor_kind, operation, error_code "
-                        "FROM security_audit_events "
-                        "WHERE operation = 'auth.session.request'"
+        async with database.sessions() as session:
+            events = list(
+                await session.scalars(
+                    select(SecurityAuditEvent).where(
+                        schema.security_audit_events.c.operation
+                        == "auth.session.request"
                     )
                 )
-            ).all()
+            )
 
-        assert [(row[0], row[1], row[2]) for row in rows] == [
-            ("authenticated", "auth.session.request", "not_found")
+        assert [(e.actor_kind, e.operation, e.error_code) for e in events] == [
+            (
+                SecurityAuditActorKind.AUTHENTICATED,
+                "auth.session.request",
+                "not_found",
+            )
         ]
 
 
@@ -850,7 +879,9 @@ async def test_workspace_failure_audits_preserve_route_metadata(
         await seeder.membership(
             user=viewer, workspace=workspace, role=WorkspaceRole.VIEWER
         )
-        viewer_issued = await _auth_service(app_settings, database).issue_session(viewer.id)
+        viewer_issued = await _auth_service(app_settings, database).issue_session(
+            viewer.id
+        )
         missing_workspace_id = UUID(int=999)
 
         with client_with_overrides(settings=app_settings) as client:
@@ -876,37 +907,48 @@ async def test_workspace_failure_audits_preserve_route_metadata(
             assert not_found.status_code == 404
             assert validation.status_code == 422
 
-        async with database.engine.connect() as connection:
-            rows = (
-                await connection.execute(
-                    text(
-                        "SELECT actor_kind, operation, workspace_id, resource_type, "
-                        "resource_id, error_code FROM security_audit_events "
-                        "WHERE outcome = 'failure' AND operation LIKE 'workspace.%' "
-                        "ORDER BY occurred_at"
+        async with database.sessions() as session:
+            failures = list(
+                await session.scalars(
+                    select(SecurityAuditEvent)
+                    .where(
+                        schema.security_audit_events.c.outcome
+                        == SecurityAuditOutcome.FAILURE,
+                        schema.security_audit_events.c.operation.like("workspace.%"),
                     )
+                    .order_by(schema.security_audit_events.c.occurred_at)
                 )
-            ).all()
+            )
 
-        assert [tuple(row) for row in rows] == [
+        assert [
             (
-                "authenticated",
+                e.actor_kind,
+                e.operation,
+                e.workspace_id,
+                e.resource_type,
+                e.resource_id,
+                e.error_code,
+            )
+            for e in failures
+        ] == [
+            (
+                SecurityAuditActorKind.AUTHENTICATED,
                 "workspace.membership.upsert",
-                workspace.id.hex,
+                workspace.id,
                 "user",
                 None,
                 "capability_denied",
             ),
             (
-                "authenticated",
+                SecurityAuditActorKind.AUTHENTICATED,
                 "workspace.membership.list",
-                missing_workspace_id.hex,
+                missing_workspace_id,
                 "workspace_membership",
                 None,
                 "not_found",
             ),
             (
-                "authenticated",
+                SecurityAuditActorKind.AUTHENTICATED,
                 "workspace.create",
                 None,
                 "workspace",

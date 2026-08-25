@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse, Response
 from grafy_api.health import HealthResponse, health, readiness
 from grafy_core.application.collaboration import CollaborationService
 from grafy_core.application.modules import ModuleLibraryService
+from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.application.saved_graphs import SavedGraphService
 from grafy_core.application.templates import TemplateService
 from grafy_core.application.identity import IdentityService
@@ -25,20 +26,24 @@ from grafy_core.domain.errors import (
     NotFoundError,
     UserDisabledError,
 )
+from grafy_core.operators.modules import MODULE_BOUNDARY_REGISTRATIONS
+from grafy_core.plugins import PluginRegistry
 
 from grafy_persistence.database import create_database
 from grafy_persistence.unit_of_work import (
     SqlAlchemySavedGraphUnitOfWork,
     SqlAlchemyUnitOfWork,
 )
-from grafy_storage import create_file_storage
-
 from grafy_api.app_state import AppIdentity, AppResources, get_identity
-from grafy_api.builtins import builtin_plugins
-from grafy_api.plugin_discovery import build_plugin_registry
+from grafy_api.plugin_oci import runtime_profile
 from grafy_api.services.composition import build_workbench_components
 from grafy_api.settings import Settings, get_settings
 from grafy_api.single_owner import ApiOwnerLease
+from grafy_api.storage import configured_file_storage
+from grafy_api.system_plugin_loader import (
+    LoadedSystemPluginDeployment,
+    load_system_plugin_deployment_file,
+)
 from grafy_api.v1.routes.auth.services import (
     OIDC_TRANSACTION_COOKIE,
     AuthService,
@@ -51,6 +56,7 @@ from grafy_api.v1.routes.templates.views import router as templates_router
 from grafy_api.v1.routes.collaboration.hub import GraphRoomHub
 from grafy_api.v1.routes.collaboration.views import router as collaboration_router
 from grafy_api.v1.routes.executions.views import router as executions_router
+from grafy_api.v1.routes.executions.runtime.plugin_docker import DockerPluginRuntime
 from grafy_api.v1.routes.node_secrets.services import NodeSecretService
 from grafy_api.v1.routes.node_secrets.views import router as node_secrets_router
 from grafy_api.v1.routes.saved_graphs.views import (
@@ -237,33 +243,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     resolved_settings.workspace / ".grafy-api-owner.lock"
                 )
                 owner_lease.acquire()
-            registry = build_plugin_registry(builtin_plugins())
-            s3_access_key_id: str | None = None
-            if resolved_settings.s3_access_key_id is not None:
-                configured_access_key_id = (
-                    resolved_settings.s3_access_key_id.get_secret_value().strip()
-                )
-                if configured_access_key_id != "":
-                    s3_access_key_id = configured_access_key_id
-            s3_secret_access_key: str | None = None
-            if resolved_settings.s3_secret_access_key is not None:
-                configured_secret_access_key = (
-                    resolved_settings.s3_secret_access_key.get_secret_value()
-                )
-                if configured_secret_access_key != "":
-                    s3_secret_access_key = configured_secret_access_key
-            s3_endpoint_url = resolved_settings.s3_endpoint_url
-            if s3_endpoint_url == "":
-                s3_endpoint_url = None
-            storage = create_file_storage(
-                backend=resolved_settings.storage_backend,
-                local_root=resolved_settings.workspace / "objects",
-                s3_endpoint_url=s3_endpoint_url,
-                s3_region=resolved_settings.s3_region,
-                s3_access_key_id=s3_access_key_id,
-                s3_secret_access_key=s3_secret_access_key,
-                s3_force_path_style=resolved_settings.s3_force_path_style,
+            loaded_deployment = LoadedSystemPluginDeployment(
+                plugins=(),
+                loaded_plugins=(),
+                bindings=(),
             )
+            deployment_manifest = (
+                resolved_settings.resolved_system_plugin_deployment_manifest
+            )
+            if deployment_manifest is not None:
+                loaded_deployment = load_system_plugin_deployment_file(
+                    deployment_manifest
+                )
+
+            registry = PluginRegistry()
+            registry.register_module_boundaries(MODULE_BOUNDARY_REGISTRATIONS)
+            for plugin in loaded_deployment.plugins:
+                registry.install(plugin)
+            registry.freeze()
+            storage = configured_file_storage(resolved_settings)
             saved_graphs = SavedGraphService(
                 lambda: SqlAlchemySavedGraphUnitOfWork(database.sessions),
                 registry,
@@ -272,6 +270,58 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 lambda: SqlAlchemyUnitOfWork(database.sessions),
                 registry,
             )
+            plugin_releases = PluginReleaseService(
+                lambda: SqlAlchemyUnitOfWork(database.sessions),
+                storage,
+                bucket=resolved_settings.storage_bucket,
+            )
+            plugin_runtime: DockerPluginRuntime | None = None
+            network_policy = resolved_settings.resolved_network_policy
+            if resolved_settings.plugin_runtime_enabled:
+                seccomp_profile = resolved_settings.resolved_plugin_seccomp_profile
+                if seccomp_profile is not None and not seccomp_profile.is_file():
+                    raise RuntimeError(
+                        "Configured Plugin seccomp profile is not a regular file"
+                    )
+                plugin_runtime = DockerPluginRuntime(
+                    releases=plugin_releases,
+                    storage=storage,
+                    bucket=resolved_settings.storage_bucket,
+                    profile=runtime_profile(
+                        resolved_settings.plugin_runtime_profile,
+                        native_base_image=(
+                            resolved_settings.plugin_runtime_native_base_image
+                        ),
+                        native_base_image_digest=(
+                            resolved_settings.plugin_runtime_native_base_image_digest
+                        ),
+                    ),
+                    scratch_root=(
+                        resolved_settings.workspace / "plugin-runtime" / "scratch"
+                    ),
+                    docker_binary=resolved_settings.plugin_docker_binary,
+                    seccomp_profile=seccomp_profile,
+                    max_live_sandboxes=(resolved_settings.max_live_plugin_sandboxes),
+                    max_distinct_releases_per_scope=(
+                        resolved_settings.max_distinct_plugin_releases_per_graph
+                    ),
+                    max_sandbox_variants_per_scope=(
+                        resolved_settings.max_plugin_sandbox_variants_per_execution
+                    ),
+                    egress_policy=(
+                        resolved_settings.resolved_plugin_egress_policy
+                    ),
+                    network_policy=network_policy,
+                )
+                await plugin_runtime.recover_orphans()
+                for profile in network_policy.profiles:
+                    logger.info(
+                        "network_profile plane=%s name=%s mode=%s digest=%s",
+                        profile.plane.value,
+                        profile.name,
+                        profile.mode.value,
+                        profile.policy_digest,
+                    )
             templates = TemplateService(lambda: SqlAlchemyUnitOfWork(database.sessions))
             collaboration = CollaborationService(
                 lambda: SqlAlchemyUnitOfWork(database.sessions),
@@ -292,19 +342,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 storage=storage,
                 map_max_concurrency=resolved_settings.map_max_concurrency,
                 max_active_executions=resolved_settings.max_active_executions,
+                max_pending_graphs=resolved_settings.max_pending_graphs,
+                max_active_plugin_invocations=(
+                    resolved_settings.max_active_plugin_invocations
+                ),
                 storage_backend=resolved_settings.storage_backend,
                 bucket=resolved_settings.storage_bucket,
                 staged_upload_max_bytes=resolved_settings.staged_upload_max_bytes,
                 saved_graphs=saved_graphs,
                 module_library=module_library,
+                plugin_releases=plugin_releases,
+                plugin_runtime=plugin_runtime,
+                system_host_bindings=loaded_deployment.bindings,
+                loaded_system_plugins=loaded_deployment.loaded_plugins,
                 node_secrets=node_secrets,
                 graph_room_hub=graph_room_hub,
+                network_policy=network_policy,
             )
             resources = AppResources(
                 database=database,
                 plugin_registry=components.plugin_registry,
                 uploads=components.uploads,
                 graph_modules=components.modules,
+                plugin_releases=components.plugin_releases,
                 module_library=module_library,
                 templates=templates,
                 run_graph=components.run_graph,
@@ -318,9 +378,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 collaboration=collaboration,
                 node_secrets=node_secrets,
                 graph_room_hub=graph_room_hub,
+                plugin_invoker=components.plugin_invoker,
+                plugin_runtime=components.plugin_runtime,
+                release_admission=components.release_admission,
             )
             try:
-                await components.execution_history.interrupt_all_active()
+                await components.execution_history.interrupt_started()
+                await components.execution_manager.recover_queued()
+                capacity = await resources.capacity_diagnostics()
+                logger.info(
+                    "capacity_diagnostics active_executions=%s "
+                    "max_active_executions=%s pending_graphs=%s "
+                    "max_pending_graphs=%s active_plugin_invocations=%s "
+                    "max_active_plugin_invocations=%s live_plugin_sandboxes=%s "
+                    "max_live_plugin_sandboxes=%s",
+                    capacity.execution_admission.active_executions,
+                    capacity.execution_admission.max_active_executions,
+                    capacity.execution_queue.pending_graphs,
+                    capacity.execution_queue.max_pending_graphs,
+                    (
+                        None
+                        if capacity.plugin_invocations is None
+                        else capacity.plugin_invocations.active_invocations
+                    ),
+                    (
+                        None
+                        if capacity.plugin_invocations is None
+                        else capacity.plugin_invocations.max_active_invocations
+                    ),
+                    (
+                        None
+                        if capacity.plugin_sandboxes is None
+                        else capacity.plugin_sandboxes.live_sandboxes
+                    ),
+                    (
+                        None
+                        if capacity.plugin_sandboxes is None
+                        else capacity.plugin_sandboxes.max_live_sandboxes
+                    ),
+                )
                 # Migration 0009 backfills heads; refuse to serve if any graph still lacks one.
                 await collaboration.verify_every_graph_has_head()
                 app.state.resources = resources

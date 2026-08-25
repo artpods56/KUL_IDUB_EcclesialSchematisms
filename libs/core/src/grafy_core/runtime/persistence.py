@@ -160,6 +160,7 @@ class OutputPersister:
         context: NodeExecutionContext,
         output: object,
         provenance: MaterializationProvenance,
+        metadata: JsonObject | None = None,
     ) -> PersistedNodeOutput | BaseModel:
         validated_output = contract.model.model_validate(output)
         values = _model_values(validated_output)
@@ -177,6 +178,7 @@ class OutputPersister:
                     node_context=context,
                     provenance=provenance,
                     item_index=context.invocation_index,
+                    metadata={} if metadata is None else metadata,
                 ),
             )
 

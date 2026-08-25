@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy.orm import registry
 
 from grafy_core.artifacts import ArtifactObject
+from grafy_core.artifacts import JsonObject
 from grafy_core.domain.invocation_cache import InvocationCacheEntry
 from grafy_core.domain.identity import (
     AuthSession,
@@ -23,6 +24,9 @@ from grafy_core.domain.execution_history import (
 )
 from grafy_core.domain.materialized_outputs import MaterializedNodeOutputs
 from grafy_core.domain.module_library import Module, ModuleRelease
+from grafy_core.domain.plugin_releases import PluginRelease
+from grafy_core.domain.plugin_revocations import PluginReleaseRevocation
+from grafy_core.domain.plugin_selection import PluginReleaseSelection
 from grafy_core.domain.node_secrets import EncryptedNodeSecret
 from grafy_core.domain.collaboration import CollaborativeGraphHead
 from grafy_core.domain.saved_graphs import (
@@ -61,6 +65,9 @@ class GraphExecutionRecord:
     graph_revision: int
     status: GraphExecutionStatus
     scope: GraphExecutionScope
+    submitted_request: JsonObject | None
+    idempotency_key: str | None
+    submitted_by_actor_id: UUID | None
     workflow_run_id: UUID | None
     error: str | None
     created_at: datetime
@@ -76,6 +83,9 @@ class GraphExecutionRecord:
             status=self.status,
             scope=self.scope,
             requested_node_ids=requested_node_ids,
+            submitted_request=self.submitted_request,
+            idempotency_key=self.idempotency_key,
+            submitted_by_actor_id=self.submitted_by_actor_id,
             workflow_run_id=self.workflow_run_id,
             error=self.error,
             created_at=self.created_at,
@@ -155,4 +165,13 @@ def start_mappers() -> None:
     )
     mapper_registry.map_imperatively(Module, schema.modules)
     mapper_registry.map_imperatively(ModuleRelease, schema.module_releases)
+    mapper_registry.map_imperatively(PluginRelease, schema.plugin_releases)
+    mapper_registry.map_imperatively(
+        PluginReleaseRevocation,
+        schema.plugin_release_revocations,
+    )
+    mapper_registry.map_imperatively(
+        PluginReleaseSelection,
+        schema.plugin_release_selections,
+    )
     mapper_registry.map_imperatively(Template, schema.templates)

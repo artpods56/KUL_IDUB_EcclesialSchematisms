@@ -10,8 +10,9 @@ from grafy_core.artifacts import (
     NodeInput,
     NodeOutput,
 )
+from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.nodes import InPort, Node, NodeExecutionContext, OutPort
-from grafy_core.operators.images import RASTER_IMAGE
+from grafy_core.artifact_contracts import RASTER_IMAGE
 
 from grafy_plugin_ocr.artifacts import OCR_PAGE_RESULT
 from grafy_plugin_ocr.declaration import OCR
@@ -69,6 +70,7 @@ class TesseractOcrOutput(NodeOutput):
     version=2,
     title="Tesseract OCR",
     factory=lambda _context: TesseractOcrNode(FakeOcrEngine()),
+    required_capabilities=(PluginRuntimeCapability.NATIVE_TESSERACT,),
 )
 class TesseractOcrNode(Node[NoConfig, TesseractOcrInput, TesseractOcrOutput]):
     """Recognizes plain text from an ordered raster image sequence."""

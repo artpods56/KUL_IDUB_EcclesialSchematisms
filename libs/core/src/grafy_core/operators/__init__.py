@@ -1,7 +1,7 @@
 """Built-in typed artifact-graph operators."""
 
 from grafy_core.operators.modules import (
-    MODULES,
+    MODULE_BOUNDARY_REGISTRATIONS,
     GraphModuleExecutionError,
     GraphModuleNode,
     ModuleBoundaryExecutionError,
@@ -10,7 +10,7 @@ from grafy_core.operators.modules import (
 )
 
 __all__ = [
-    "MODULES",
+    "MODULE_BOUNDARY_REGISTRATIONS",
     "GraphModuleExecutionError",
     "GraphModuleNode",
     "ModuleBoundaryExecutionError",

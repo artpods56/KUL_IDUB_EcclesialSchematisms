@@ -46,9 +46,22 @@ always explicit.
 ### Artifact type
 
 The contract for an artifact payload. It owns the stable type id, schema
-version, payload schema, display title, and any declared field projections.
-Installed plugins may also declare versioned conversions between artifact
-types. Together those declarations form the artifact conversion graph.
+version, payload schema, display title, materialized JSON shape, declared field
+projections and exports, and an exact portable bundle format/version. Another
+Plugin may reference the type only by carrying the same complete serialized
+contract as a release dependency; a matching id/version with different
+contract bytes is a collision. Versioned conversions between artifact types
+are deployment-owned canonical behavior, not an asset of either endpoint's
+Plugin release.
+
+### Artifact bundle contract
+
+The provider-neutral wire and storage shape used to move one artifact value
+across a release runtime boundary. Canonical JSON values use
+`inline-json@1`; structured tables use `table-bundle@1`. A bundle format is
+independent from the artifact type id, and runtime support is selected by the
+exact format/version rather than a hard-coded list of type names. A release is
+not runnable when any required bundle adapter is unavailable.
 
 ### Artifact reference
 
@@ -149,9 +162,10 @@ bindings, exact ordered input containers and artifact SHA-256 values, and opaque
 secret revisions. The digest preimage and secret material are never persisted.
 
 Node registrations are fail-closed: the default policy is `never`, while a
-deterministic node may declare `exact`. Current pure built-ins use `exact`;
-uploads, graph-module wrappers, and external OCR/LLM/provider nodes remain
-uncached. Mapping caches scalar item invocations independently and builds the
+deterministic node may declare `exact`. Pure deterministic System nodes use
+`exact`; uploads, graph-module wrappers, and provider-backed nodes remain
+uncached unless their exact declaration supplies every stable dependency.
+Mapping caches scalar item invocations independently and builds the
 current aggregate sequence from those item outputs. A hit is valid only while
 every referenced artifact row and stored object remains accessible; stale cache
 entries are removed generation-safely. Cache entries are artifact-retention
@@ -179,22 +193,24 @@ conversion callables.
 
 ### Artifact conversion
 
-A declared, versioned, shape-preserving conversion from one artifact type to
-another, such as `scalar.integer@1` to `scalar.text@1`. A conversion changes the
-artifact representation; unlike a field projection, it does not select a nested
-value. Configurable, lossy, or domain-significant transformations remain visible
-nodes.
+A deployment-owned, versioned, shape-preserving conversion from one artifact
+type to another, such as `scalar.integer@1` to `scalar.text@1`. The exact key and
+version identify one immutable contract and implementation; changing either
+requires a version bump. A conversion changes the artifact representation;
+unlike a field projection, it does not select a nested value. Configurable,
+lossy, or domain-significant transformations remain visible nodes.
 
 ### Artifact conversion path
 
 A bounded, ordered sequence of exact conversion keys stored on one edge. The
-installed conversions form a directed graph, so declarations `X -> Y` and
+canonical conversions form a directed graph, so declarations `X -> Y` and
 `Y -> Z` make `X -> Z` authorable without an adapter node. Each selected path is
-simple: it cannot revisit an artifact type, even though the global registry may
-contain conversions in both directions. Registry construction rejects adjacent
+simple: it cannot revisit an artifact type, even though the canonical map may
+contain conversions in both directions. Deployment construction rejects adjacent
 declarations whose runtime target and source types cannot compose. Authoring may
 automatically select one unambiguous shortest path, but execution never searches
-the registry again. It validates and replays the stored keys in order, composes
+Plugin registry state. It validates and replays the stored keys against the
+immutable deployment map, composes
 their pure callables in memory, and materializes only the final target-typed
 artifact.
 
@@ -267,34 +283,57 @@ to own its projection and artifact conversion path.
 
 ### Plugin
 
-A uv-managed project that groups nodes, artifact types, artifact conversions,
-and the resolver/writer factories those types require under one stable slug.
+A uv-managed project that groups nodes, artifact types, and the resolver/writer
+factories those types require under one stable slug.
 The working copy is a directory; execution trusts an immutable **Plugin
-release** (a freeze in object storage), not an import into the API process.
-Intended lifecycle: **Register** a directory under a deployment **Plugin
-root**, then **Publish** to create Workspace-scoped revision N. Humans and the
-coding agent use the same verbs. Diffs compare the working copy to the last
-freeze; they do not auto-publish or retarget graph pins. See
+release** (a freeze in object storage), not an ambient import into the API
+process. A Plugin is either globally visible **System** scope or owned by one
+**Workspace**; Module is a separate catalog entry kind, not a Plugin scope.
+
+Workspace projects export `grafy_plugin.PLUGIN`. Co-installed System projects
+use a family-specific import package named by platform-owned distribution
+metadata. The import name is never catalog identity. Publishing a Workspace
+directory under a deployment **Plugin root** creates revision N and may
+establish the `(Workspace, slug)` family on first successful publish.
+Coding-agent authoring reserves the deterministic
+`<authoring-root>/<workspace-id>/<slug>` working copy, verifies and reviews an
+exact freeze, then uses the same publication workflow as human publication.
+Diffs do not auto-publish or retarget graph pins. See
 [plugin unification](docs/design/plugin-unification.md).
 
-The host currently still loads monorepo plugins in-process: it assigns every
-installed plugin a catalog origin; built-in plugins are installed explicitly
-with `builtin` origin; external plugins are discovered from the
-`grafy.plugins` Python entry-point group and installed with `external` origin.
-A plugin does not declare its own origin. Plugins depend inward on core
-contracts and ports, never on the API host or concrete storage adapters.
+System publication is a separate platform/CI authority and always retains an
+OCI artifact. A current System release may additionally match an exact baked
+host binding and run in-process. Historical System releases and all Workspace
+releases use the retained isolated adapter. Host implementations are imported
+only through an exact deployment manifest whose release binding and installed
+distribution digest match; absent configuration registers Module boundaries
+only. Plugins depend inward on core contracts and ports, never on the API host
+or concrete storage adapters.
 
 ### Plugin root
 
-A deployment-allowlisted directory under which `grafy plugin register` may
-point. Roots are not the node catalog and do not grant Workspace visibility.
+A deployment-allowlisted directory under which a Plugin working copy may live
+and be published from. Roots are not the node catalog and do not grant
+Workspace visibility. Repository-owned `plugins/<family>/` System projects and
+mutable Workspace authoring state use separate roots; Workspace working copies
+are additionally namespaced by Workspace id.
 
 ### Plugin release
 
-An append-only, digest-addressed freeze of one Plugin for one Workspace
-(source, lock, profile, runtime image). Graphs pin exact node revisions from
-that release (`notes.table.summarize@1`). Same bytes do not create a new
-revision.
+An append-only, digest-addressed freeze of one System or Workspace Plugin:
+source archive, lock, inspected node/artifact/canonical-conversion references, runtime
+profile, invocation protocol, capabilities, execution policy, distribution,
+publisher attribution, and immutable OCI artifact. Its public identity is
+`{scope, slug, revision}`; the database's surrogate release UUID is not a graph
+pin. Same descriptor bytes do not create a new revision.
+
+A graph node carries two independent exact identities: the operator
+(`notes.table.summarize@1`) and Plugin release
+(`{scope: workspace, slug: notes, revision: 4}`). Publishing revision 5 never
+moves that pin. Current is an explicit mutable family selection with a
+generation, never `max(revision)`. Deprecation and withdrawal prevent new
+insertion while retained exact pins may run. Exact revocation retains source
+and OCI identity but denies execution.
 
 ### Module (workspace library)
 
@@ -321,10 +360,17 @@ nodes.
 
 ### Node catalog / Add node
 
-The host's built-in catalog contains only broadly reusable operation families:
-Image, Sequence, Arithmetic, Text, Schema, Prompt, and Table. A built-in artifact type
+The effective Workspace catalog contains selected global System Plugin
+releases, selected Plugin releases owned by that Workspace, and published
+Modules as a separate entry kind. System distribution (`bundled`, `optional`,
+or `published`) is independent from scope and execution policy. Every insertable
+Plugin node supplies an exact scoped release pin and a derived runnable or
+disabled reason from the same admission policy used by compilation.
+
+Grafy's bundled System families contain broadly reusable operations: Image,
+Sequence, Arithmetic, Text, Schema, Prompt, and Table. A bundled artifact type
 must have precise, producer-neutral meaning and be independently reusable. A
-built-in node must be broadly reusable, deterministic, dependency-light, and
+bundled node must be broadly reusable, deterministic, dependency-light, and
 must not duplicate projection, conversion, mapping, or other edge/runtime behavior.
 Image owns the producer-neutral `image.raster@1` artifact, its storage writer,
 and deterministic import of staged image uploads. Table owns the producer-neutral
@@ -334,17 +380,15 @@ embed this table and expose it through an explicit field projection; source-spec
 table interpretation remains with its producer.
 
 Sequence provides `Collect<T>`, Count, Slice, and Pick item; image- and
-text-specific collectors are not separate built-ins. Schema provides one
+text-specific collectors are not separate System nodes. Schema provides one
 recursive JSON Schema Builder, and Prompt provides deterministic prompt-message
-construction; provider-backed execution remains an optional external plugin.
+construction; provider-backed execution remains an optional System Plugin.
 OCR table fragments remain OCR-owned because deciding how Markdown rows become
 headers, columns, and inferred values is a source-specific normalization rather
-than a shape-preserving artifact conversion. Installing optional entry-point
-plugins currently contributes remote or domain-specific nodes as external
-catalog entries. The intended third overlay is Workspace **Plugin releases**
-(register a directory, publish a freeze) rather than loading Team Python into
-the API process. The catalog exposes origin and visually separates built-in
-families from registered Plugins.
+than a shape-preserving artifact conversion. Optional System families provide
+remote or domain-specific nodes through the same release schema. SQL remains
+isolated-only because user-authored queries are executable code and validation
+is not a sandbox. [R45: Untrusted Query Isolation]
 
 ### Port
 

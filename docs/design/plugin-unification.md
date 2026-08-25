@@ -1,42 +1,111 @@
-# Plugin unification (isolated, register and publish)
+# Plugin unification (System and Workspace releases)
 
-- **Status:** Direction — not implemented. Current host plugins still load
-  through `grafy.plugins` entry points into the API process.
-- **Date:** 2026-08-18
+- **Status:** Scoped release identity implemented; unified System catalog,
+  runtime policy, package convergence, and compatibility cutover in progress.
+- **Date:** 2026-08-24
 - **Audience:** Engineers changing plugin discovery, catalog identity, CLI,
   agent authoring, or isolated execution
 - **Document type:** Explanation — intended architecture and boundaries
-- **Related:** [plugin development](plugin-development.md) (current in-process
-  host adapter), [modules conceptual model](modules-conceptual-model.md),
+- **Related:** [plugin development](plugin-development.md) (first-party System
+  authoring and transitional host adapter),
+  [unified releases ADR](../adr/0004-unify-system-and-workspace-plugin-releases.md),
+  [modules conceptual model](modules-conceptual-model.md),
   [backend architecture](backend-architecture.md),
   [product vocabulary](../../CONTEXT.md)
+- **Implementation plan:**
+  [Workspace Plugin feature slices](../plans/workspace-plugins/README.md)
 
 ## Summary
 
-A **Plugin** is a uv-managed project on disk (`pyproject.toml`, `uv.lock`,
-typed nodes, tests, owned artifact types). Grafy does not import that tree.
-An admin or the coding agent **registers** the directory; **publish** freezes
-exact bytes into object storage and inserts a Workspace **Plugin release**.
-The catalog lists that release. Graphs pin `notes.table.summarize@1`. Graph
-run starts a fresh container from the freeze.
+A **Plugin** is a uv-managed project (`pyproject.toml`, `uv.lock`, typed nodes,
+tests, artifact contracts, and runtime registrations). Execution trusts an
+immutable release, never a mutable working tree. Workspace projects export
+`grafy_plugin.PLUGIN`; co-installed System distributions use a family-specific
+package named by platform-owned loader metadata. The Python import name is not
+catalog identity.
 
-That replaces `grafy.plugins` entry points as the way Team-authored (and,
-eventually, first-party) operators reach the catalog. Entry-point loading
-remains the host adapter for monorepo plugins (GIS, SQL, OCR, LLM) until each
-moves onto the same freeze path.
+One release module serves two publication authorities. A Workspace owner or
+coding agent publishes an owner-scoped, isolated-only release. A one-shot
+platform/CI publisher stages a global System release with explicit distribution
+and execution policy. Both retain exact source, contract, lock, protocol,
+profile, capability, and OCI identities. Graphs pin the operator and
+`{scope, slug, revision}` independently.
+
+The current exact System release may use a deployment-bound in-process fast
+path only when loaded bytes match its baked host binding. Historical System
+releases and every Workspace release use retained OCI. Catalog, compiler, and
+the defensive Docker boundary share one deployment-owned release admission;
+an exact revocation is always denied as `revoked`. Host code is imported only
+from an exact deployment manifest; absent configuration is Module-only.
 
 A **Module** stays a published subgraph. It is not a Plugin.
 
+## Shared release lifecycle
+
+`grafy plugin publish <directory> --workspace <uuid> --slug <slug>
+--published-by <user-uuid>` now:
+
+1. Requires the directory to be below a configured Plugin root and to contain
+   its own `pyproject.toml`, `uv.lock`, source, and tests.
+2. Resolves the directory canonically, rejects symlinks, special files,
+   traversal, escaping paths, and oversized trees before snapshotting, and
+   stages the accepted files into a private directory.
+3. Builds a deterministic source archive from the staged bytes (stable
+   ordering independent of filesystem enumeration) **before any Plugin code
+   runs**, then unpacks that exact archive for verification. Tests and
+   inspection therefore consume an unpacked copy of the frozen bytes, never
+   the mutable working copy.
+4. Runs `uv lock --check` and a locked sync against the frozen snapshot,
+   rejecting `[tool.uv.sources]` path dependencies that resolve outside the
+   snapshot; then runs the Plugin's locked tests and catalog inspection. The
+   existing Workspace command sanitizes the subprocess environment but is not
+   a filesystem or network sandbox. System candidates run these steps in the
+   Docker-isolated one-shot publisher before promotion; the online API never
+   imports a working copy or receives platform publication authority.
+5. Stores the digest-addressed source archive under the garbage-collectable
+   `plugin-releases/` namespace, builds and stores the immutable OCI runtime
+   artifact, and appends an append-only `plugin_releases` row whose descriptor
+   references independent digests: source, inspected contract, runtime profile,
+   invocation protocol, capabilities, lock, and runtime image.
+   The source archive itself contains no generated release metadata, so image
+   digests can never feed back into source digests. Publishing identical
+   inputs is idempotent; changed inputs advance the Plugin release revision.
+
+The immutable objects form a one-way chain: working copy → source archive +
+source digest → inspected contract + contract digest → OCI image + image digest
+→ release descriptor referencing those digests.
+
+6. Overlays the current release in `GET /v1/workspaces/{id}/nodes`, including
+   Plugin-owned artifact types and function-node contracts.
+
+Catalog nodes carry an exact `{scope, slug, revision}` pin and derived
+readiness. A release is
+runnable only when its immutable image, invocation protocol, runtime profile,
+capabilities, and complete artifact contract are supported by the deployment.
+The selector disables unsupported or revoked releases with a stable reason;
+deprecated and withdrawn families stay visible but cannot be newly inserted,
+while their retained exact pins may continue to run. Insertion of a runnable
+Plugin writes its exact scoped release pin into the graph.
+`examples/plugin-notes` is the executable authoring, publication, Table-bundle,
+and offline Docker fixture.
+
+The coding-agent commands `scaffold`, `reserve`, `review`, `publish-reviewed`,
+and `release-reservation` add a fenced pre-publish workflow without adding a
+second release path. A standalone database registration aggregate remains
+unnecessary: first publish establishes `(Workspace, slug)`, while the local
+reservation owns only exclusive access to one Workspace-namespaced working
+copy. System selection is deliberately separate: stage never means promote,
+and current is an exact pointer rather than the highest revision.
+
 ```mermaid
 flowchart LR
-    Roots["Plugin roots in deploy config"] --> Register["grafy plugin register"]
-    Generate["Canvas Generate"] --> Register
-    Register --> Copy["Working copy on disk"]
-    Copy --> Diff["Digest vs last freeze"]
-    Diff --> Publish["grafy plugin publish"]
-    Publish --> Store["Object storage freeze"]
-    Store --> Catalog["Workspace catalog revision"]
-    Catalog --> Run["Isolated runtime container"]
+    Workspace["Workspace owner / agent"] --> Freeze["Immutable release contract"]
+    Platform["Platform CI publisher"] --> Freeze
+    Freeze --> Store["Source + retained OCI"]
+    Store --> Selection["Explicit scoped selection"]
+    Selection --> Catalog["Effective Workspace catalog"]
+    Catalog --> Host["Exact System host binding"]
+    Catalog --> OCI["Isolated runtime adapter"]
 ```
 
 ## What closed this
@@ -44,9 +113,11 @@ flowchart LR
 The missing piece was not “how the agent writes Python.” It was **how a
 directory becomes a revisioned catalog entry without loading it into FastAPI**.
 
-Register and publish are that seam. Humans and the coding agent use the same
-two verbs. Diffs only answer “is the working copy different from revision N?”
-They never invent revision N+1 or retarget graph pins.
+Review and publication are that seam. Human publication and reviewed-agent
+publication converge before tests, inspection, image construction, policy, and
+the append-only release transaction. Diffs answer only “how does this verified
+freeze differ from revision N?” They never invent revision N+1 or retarget
+graph pins.
 
 ## Working copy vs freeze
 
@@ -68,122 +139,149 @@ It is not the catalog.
 [[plugin_roots]]
 path = "./examples"
 path = "./plugins"
+path = "./.grafy-artifacts/workspace-plugins"
 ```
 
-Paths are relative to the data root / workspace the process already uses, not
-arbitrary host paths. The coding agent inside Docker does not read this file
-to discover work; it is assigned a project directory. Roots exist so register
-cannot point at `/` or a secrets volume.
+Relative paths resolve from the process working directory (normally the
+deployment or project root), not from the target Workspace's data directory.
+The coding agent does not discover arbitrary host paths; it receives the
+deterministic `<authoring-root>/<workspace-id>/<slug>` project directory. Roots prevent
+scaffold, reserve, review, or publish from pointing at `/` or a secrets volume.
 
-Catalog membership is Workspace-scoped in the database. A root on the API
-host must not make a Plugin visible to every Workspace.
+Catalog membership comes from persisted selections. A root on the API host
+does not make a Plugin visible. Only System scope is global; Workspace scope is
+limited to its exact owner.
 
-## Register
+## Reservation, not registration
 
-`grafy plugin register <dir>` (and Generate doing the same write) records:
+The first successful publish establishes `(Workspace, slug)`. Before agent
+publication, an exclusive mode-`0600` reservation file fences Workspace, actor,
+session, path, current source digest, reviewed source digest, and reviewed base
+revision. It is deployment-local control state excluded from the source freeze;
+it neither imports Python nor creates a catalog identity or graph pin.
 
-- Plugin slug (`notes`)
-- Workspace
-- runtime profile (`python-uv`, later a pinned `python-uv-gdal` digest)
-- working-copy location under an allowed root
+The runtime profile remains deployment policy (`python-uv` today), never
+Plugin source or agent-selected metadata.
 
-Register does **not** import Python, freeze, bump a revision, or change
-graphs. It only makes Grafy aware of the project.
+## Publish lifecycle
 
-## Publish
+Human `grafy plugin publish` and agent `grafy plugin publish-reviewed` use the
+same verification pipeline:
 
-`grafy plugin publish notes` (or publish of the assigned tree) is the
-generated-node verification pipeline applied to a Plugin:
-
-1. Confirm the tree is under a registered Plugin in this Workspace.
-2. Lock-check, locked sync, required tests.
-3. Freeze source + runtime image; store in the object bucket (S3 or local).
+1. Confirm the tree is under an allowlisted Plugin root for this Workspace
+   and that the inspected `grafy_plugin.PLUGIN` slug matches the publish
+   target and any established `(Workspace, slug)` identity.
+2. Snapshot the source, lock-check, locked sync, required tests, inspection —
+   all against the frozen snapshot, never the working copy.
+3. Freeze the source archive, build the deployment-owned runtime profile, and
+   store both digest-addressed artifacts in the object bucket (S3 or local).
 4. Insert append-only **revision N** (monotonic). Same digest as revision N
    → no new row.
-5. Human review / capability approval remains required for the first
-   executable revision (and for capability changes). The agent has no side
-   door.
+5. Require an active owner with `publish_plugin` before untrusted tests/builds
+   and again at the release transaction. Reviewed-agent publication also
+   requires exact source and release-head fences. The first executable runtime
+   approves only an empty capability set, so the agent has no policy side door.
 
 After publish, `GET /v1/workspaces/{id}/nodes` lists Plugin `notes` and its
-nodes (`notes.table.summarize@1`, …) from that release row, not from
-`PluginRegistry` entry points. The compiler resolves those operator ids from
+nodes (`notes.table.summarize@1`, …) from that release row, not from the host
+registry. The compiler resolves those operator ids from
 the Workspace release and executes the freeze offline.
 
-`runnable` is false until the freeze can actually materialize the declared
-ports (today’s generated runner is JSON scalars; `table.data` needs
-ref-in / persist-out inside the sandbox).
+`runnable` is derived from the complete release. The current runtime supports
+canonical inline scalar JSON, release-owned inline JSON contracts, and the
+portable `table.data@1` bundle. Missing images, old invocation protocols,
+unsupported profiles/capabilities, and unknown artifact formats remain visible
+but disabled with a stable reason.
 
 ## Diffs
 
-Compare the working copy to the last freeze (file digests / review diff).
-That is status: dirty vs published.
+`grafy plugin review` verifies the frozen candidate and compares its archive to
+the last retained freeze. It returns a bounded unified diff plus lock, node,
+artifact, capability, and profile change flags.
 
 Do **not** watch the folder and auto-publish. That is “track latest”: dirty
-agent sessions, leftover files, and silent pin movement. Graphs stay on `@1`
-until someone upgrades the pin to `@2`.
+agent sessions, leftover files, and silent pin movement. Graphs stay on exact
+Plugin release N until someone explicitly selects retained release N+1.
 
 ## Typing, types, and dependencies
 
-Nodes use the same `function_node` surface as host plugins: Pydantic models,
+Nodes use the same `function_node` surface in every Plugin project: Pydantic models,
 `InPort` / `OutPort`. Catalog **NodeSpec** is derived from those contracts in
 the freeze, without importing the package into FastAPI.
 
-Dependencies on Table or GIS are **artifact type ids** (`table.data@1`,
-`geo.map_layer@1`), not `grafy-plugin-gis` in `pyproject.toml`.
+Dependencies on Table or GIS are complete exact artifact contracts
+(`table.data@1` plus schema, materialized shape, projections, exports, and
+`table-bundle@1`), not `grafy-plugin-gis` in `pyproject.toml`. A key/version
+alone cannot prove compatibility.
 
 Python wheels live in the Plugin’s `uv.lock` and are installed only at freeze.
 Native tools (GDAL) are **named profiles**: ops-pinned image digests, never
 `apt` in the sandbox, never a user Dockerfile. Graph run stays
 `--network none`. `uv` talks only to the deployment’s package index.
 
-A Plugin may declare new artifact types. A Pillow `Image` (or any
-host-unknown Python object) is not a catalog type until the Plugin ships a
-writer and resolver. Those adapters run in the isolated runtime, not in
-FastAPI. Inline JSON models can use the existing inline writer shape.
+The versioned Grafy Plugin SDK (`grafy-core`) is supplied as a wheel, never a
+monorepo-relative path dependency: examples vendor it under `wheels/` and pin
+it through `[tool.uv.sources]`, and deployments that build their own SDK
+wheel expose it to the publisher through `UV_FIND_LINKS`. Publication rejects
+any path dependency resolving outside the frozen snapshot.
 
-Every generated node lands in a Plugin, even if the family has one node. One
-uv project is simpler than `generated.node.<uuid>` plus a wrapper.
+A Plugin may declare new artifact types. Release-owned canonical inline JSON
+models can use the existing inline writer shape inside the isolated runtime.
+A Pillow `Image` (or any host-unknown Python object) is not executable until a
+portable bundle contract exists and the host explicitly supports it. Another
+Plugin cannot consume a custom type by importing its owner; it must
+independently support the same stable wire contract.
 
-## Catalog overlays (target)
+Every coding-agent-authored node lands in an ordinary Plugin, even if the
+family has one node. The scaffold uses a stable caller-selected slug; it never
+mints a synthetic generated-node namespace.
 
-| Overlay | Identity | Revision |
+## Catalog overlays
+
+| Entry | Visibility | Exact identity |
 | --- | --- | --- |
-| Builtin host plugins (until migrated) | `table.file.import@1` | node `operator_version` |
-| Workspace Plugin releases | `notes.table.summarize@1` | Plugin release N |
-| Workspace Module releases | `graph.module.{id}@{revision}` | Module release |
+| System Plugin release | Every Workspace | `{system, slug, revision}` |
+| Workspace Plugin release | Owning Workspace | `{workspace, slug, revision}` |
+| Module release | Owning Workspace library | `graph.module.{id}@{revision}` |
 
-The synthetic catalog plugin `generated.agent` is a prototype stand-in. It
-should not remain once Plugin releases exist.
+No synthetic agent overlay exists. Scope and System distribution replace
+origin as authoritative facts; Module uses a separate entry kind. Unknown
+saved operators use generic inert compatibility rendering and remain
+non-runnable until explicitly mapped to a verified release.
 
 Cross-Workspace reuse is later and copy-by-value (like Module import): freeze
 bytes into the destination Workspace as its own release, no live link.
 
 ## Execution
 
-Graph execution stays the API process's own in-process scheduler. That is
-where in-process GIS still runs. Team Plugin `src/` does not.
-
-Publish freeze → fresh `--network none` container per invocation →
-`.venv/bin/python -I` → destroy. No `uv` at graph run.
+Graph execution stays the API process's scheduler, but the release adapter is
+chosen only after exact resolution and shared admission. A current,
+host-eligible System release with an exact deployment binding may use the
+loaded implementation. Every other admitted release follows: retained OCI →
+one hardened `--network none` sandbox per `(top-level execution scope, exact
+Plugin release)` → fresh `.venv/bin/python -I` child and invocation scratch per
+scalar call → destroy at scope exit. No `uv`, image pull, or package
+installation occurs at graph run.
 
 ## What not to do
 
-- `[project.entry-points."grafy.plugins"]` for new Plugins.
-- Import the working copy into `build_plugin_registry`.
+- Generic Python package entry points for Plugins.
+- Import a working copy into the API host registry.
 - Auto-create revisions from filesystem watchers.
 - Put teammate writer/resolver code on the API `sys.path`.
 - Treat `docker-trusted-development` as a production isolation boundary.
-  Profiles and register/publish do not replace a later hardened runtime.
+  Profiles and verified publication do not replace a later hardened runtime.
 
-## Migration
+## Current migration boundary
 
 ```text
-now:    grafy.plugins entry points → in-process PluginRegistry
-        + generated.node uv projects (isolated, not a Plugin family)
-
-target: register directory → publish freeze → Workspace Plugin release
-        host entry points only until GIS/SQL/OCR/LLM freeze on a profile
+transitional host package → staged System release + OCI → exact host binding
+Workspace project         → verified freeze             → Workspace release
+coding agent              → reserve/review              → same Workspace publish
+saved graph               → verified baseline map       → exact scoped pins
 ```
 
-The coding agent’s `propose_release` becomes publish of the assigned Plugin
-tree. CLI register/publish is the human path for the same rows.
+Host packages are inert until an exact deployment manifest names their loader
+target and installed-byte digest. A future Canvas authoring surface must call
+the existing reservation, review, publication, and exact-pin boundaries rather
+than introduce synthetic catalog nodes or a mutable execution path.

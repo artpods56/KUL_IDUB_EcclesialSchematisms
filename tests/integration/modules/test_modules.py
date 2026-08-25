@@ -7,11 +7,15 @@ from typing import Annotated, cast, final, override
 from uuid import UUID
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import Field, SecretStr, StrictStr
 
 from grafy_core.application.modules import ModuleLibraryService
+from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.application.saved_graphs import SavedGraphService
+from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
+from grafy_core.domain.plugin_releases import PluginReleaseScope
 from grafy_core.domain.errors import NotFoundError, UserDisabledError
 from grafy_core.domain.identity import ActorContext
 from grafy_core.domain.modules import GraphModuleReference
@@ -23,21 +27,28 @@ from grafy_core.artifacts import (
     NodeOutput,
 )
 from grafy_core.nodes import InPort, Node, NodeExecutionContext, OutPort
-from grafy_core.operators.text import TEXT_VALUE
+from grafy_core.artifact_contracts import TEXT_VALUE
 from grafy_core.plugins import NodeSecretInput, Plugin
 from grafy_core.ports.node_secrets import NodeSecretResolverPort
 from grafy_persistence.database import create_database
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
-from grafy_api.builtins import builtin_plugins
 from grafy_api.app_state import get_resources
-from grafy_api.plugin_discovery import build_plugin_registry
 from grafy_api.v1.routes.node_secrets.services import NodeSecretService
 from grafy_api.services.composition import (
     build_workbench_components,
 )
+from tests.support.system_plugins import (
+    TEST_SYSTEM_PLUGINS,
+    build_selected_system_plugin_deployment,
+    pin_selected_system_nodes,
+)
 from grafy_api.settings import Settings
-from grafy_api.v1.models import ArtifactTypeBindingModel, ArtifactTypeKeyResponse
+from grafy_api.v1.models import (
+    ArtifactTypeBindingModel,
+    ArtifactTypeKeyResponse,
+    PluginReleasePinModel,
+)
 from grafy_api.v1.routes.executions.models import (
     RunEdgeRequest,
     RunNodeRequest,
@@ -72,6 +83,7 @@ SECRET_MODULE_PLUGIN = Plugin(
     slug="test.module-secret",
     title="Module secret test",
 )
+SECRET_MODULE_PLUGIN.register_artifact_type_dependency(TEXT_VALUE)
 
 
 class SecretGateConfig(NodeConfig):
@@ -98,6 +110,7 @@ class SecretGateOutput(NodeOutput):
             config_dependencies=("base_url",),
         ),
     ),
+    required_capabilities=(PluginRuntimeCapability.NODE_SECRETS,),
 )
 @final
 class SecretGateNode(Node[SecretGateConfig, SecretGateInput, SecretGateOutput]):
@@ -185,10 +198,10 @@ def module_client(tmp_path: Path) -> Iterator[TestClient]:
 
     asyncio.run(prepare())
     database = create_database(database_url)
-    registry = build_plugin_registry(
-        builtin_plugins(),
-        external_plugins=(SECRET_MODULE_PLUGIN,),
+    deployment = build_selected_system_plugin_deployment(
+        (*TEST_SYSTEM_PLUGINS, SECRET_MODULE_PLUGIN),
     )
+    registry = deployment.registry
     saved_graphs = SavedGraphService(
         lambda: SqlAlchemyUnitOfWork(database.sessions),
         registry,
@@ -209,6 +222,9 @@ def module_client(tmp_path: Path) -> Iterator[TestClient]:
         saved_graphs=saved_graphs,
         module_library=module_library,
         node_secrets=node_secrets,
+        plugin_releases=cast(PluginReleaseService, deployment.release_lookup),
+        system_host_bindings=deployment.host_bindings,
+        loaded_system_plugins=deployment.loaded_plugins,
     )
     overrides = {
         **workbench_dependency_overrides(components),
@@ -242,16 +258,51 @@ def _module_graph_payload(
     edges: list[SavedGraphEdgeModel],
     expected_revision: int | None = None,
 ) -> dict[str, object]:
-    if expected_revision is None:
-        return CreateSavedGraphRequest(name=name, nodes=nodes, edges=edges).model_dump(
-            mode="json"
+    slugs_by_operator = {
+        registration.key: plugin.slug
+        for plugin in (*TEST_SYSTEM_PLUGINS, SECRET_MODULE_PLUGIN)
+        for registration in plugin.nodes
+    }
+    pinned_nodes: list[SavedGraphNodeModel] = []
+    for node in nodes:
+        slug = slugs_by_operator.get((node.operator_id, node.operator_version))
+        if slug is None:
+            pinned_nodes.append(node)
+            continue
+        pinned_nodes.append(
+            node.model_copy(
+                update={
+                    "plugin_release": PluginReleasePinModel(
+                        scope=PluginReleaseScope.SYSTEM,
+                        slug=slug,
+                        revision=1,
+                    )
+                }
+            )
         )
+    if expected_revision is None:
+        return CreateSavedGraphRequest(
+            name=name,
+            nodes=pinned_nodes,
+            edges=edges,
+        ).model_dump(mode="json")
     return UpdateSavedGraphRequest(
         name=name,
         expected_revision=expected_revision,
-        nodes=nodes,
+        nodes=pinned_nodes,
         edges=edges,
     ).model_dump(mode="json")
+
+
+def _system_run_request(
+    *,
+    nodes: list[RunNodeRequest],
+    edges: list[RunEdgeRequest] | None = None,
+) -> RunRequest:
+    return RunRequest(
+        nodes=pin_selected_system_nodes(nodes),
+        edges=[] if edges is None else edges,
+    )
 
 
 def _text_module_payload(
@@ -610,7 +661,7 @@ def test_direct_module_mutation_requires_current_workspace_authority(
         json=_text_module_payload(),
     ).json()
     graph_id = UUID(created["id"])
-    service = get_resources(module_client.app).module_library
+    service = get_resources(cast(FastAPI, module_client.app)).module_library
 
     with pytest.raises(UserDisabledError):
         asyncio.run(
@@ -650,7 +701,14 @@ def test_saved_graph_module_is_discoverable_and_executes_once(
     assert {
         "slug": "graph.module",
         "title": "Workspace library",
-        "origin": "module",
+        "entry_kind": "module",
+        "scope": None,
+        "distribution": None,
+        "plugin_release": None,
+        "revision": None,
+        "runnable": True,
+        "non_runnable_reason": None,
+        "non_runnable_detail": None,
     } in registry["plugins"]
     module_spec = next(
         node for node in registry["nodes"] if node["module_graph_id"] == graph_id
@@ -665,7 +723,7 @@ def test_saved_graph_module_is_discoverable_and_executes_once(
 
     response = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json=RunRequest(
+        json=_system_run_request(
             nodes=[
                 RunNodeRequest(
                     id="source",
@@ -713,7 +771,7 @@ def test_execution_events_route_nested_nodes_to_each_module_instance(
     operator_id = f"graph.module.{created['id']}"
     started = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
-        json=RunRequest(
+        json=_system_run_request(
             nodes=[
                 RunNodeRequest(
                     id="source",
@@ -793,7 +851,7 @@ def test_mapped_module_events_keep_the_outer_invocation_identity(
     operator_id = f"graph.module.{created['id']}"
     started = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
-        json=RunRequest(
+        json=_system_run_request(
             nodes=[
                 RunNodeRequest(
                     id="source",
@@ -865,7 +923,7 @@ def test_nested_map_events_append_each_local_invocation_index(
     ).json()
     started = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/executions",
-        json=RunRequest(
+        json=_system_run_request(
             nodes=[
                 RunNodeRequest(
                     id="source",
@@ -949,7 +1007,7 @@ def test_module_uses_existing_map_semantics_and_keeps_revision_pinned(
 
     mapped_response = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json=RunRequest(
+        json=_system_run_request(
             nodes=[
                 RunNodeRequest(
                     id="source",
@@ -1026,7 +1084,7 @@ def test_module_uses_existing_map_semantics_and_keeps_revision_pinned(
 
     pinned_response = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json=RunRequest(
+        json=_system_run_request(
             nodes=[
                 RunNodeRequest(
                     id="source",
@@ -1087,7 +1145,7 @@ def test_nested_module_omits_absent_optional_input_and_disabled_edges(
 
     response = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json=RunRequest(
+        json=_system_run_request(
             nodes=[
                 RunNodeRequest(
                     id="source",
@@ -1122,7 +1180,7 @@ def test_nested_module_omits_absent_optional_input_and_disabled_edges(
 
     supplied_response = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json=RunRequest(
+        json=_system_run_request(
             nodes=[
                 RunNodeRequest(
                     id="text-source",
@@ -1203,7 +1261,7 @@ def test_module_catalog_rejects_optional_input_targeting_required_input(
 
     response = module_client.post(
         f"/v1/workspaces/{WORKSPACE}/runs",
-        json=RunRequest(
+        json=_system_run_request(
             nodes=[
                 RunNodeRequest(
                     id="module",
@@ -1274,6 +1332,11 @@ def test_module_catalog_ignores_graphs_without_module_boundaries(
                     operator_version=1,
                     config={"text": "hello"},
                     position=GraphPointModel(x=0, y=0),
+                    plugin_release=PluginReleasePinModel(
+                        scope=PluginReleaseScope.SYSTEM,
+                        slug="builtin.text",
+                        revision=1,
+                    ),
                 )
             ],
             edges=[],
@@ -1304,7 +1367,7 @@ def test_graph_module_required_input_is_rejected_by_compiler(
 
     response = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json=RunRequest(
+        json=_system_run_request(
             nodes=[
                 RunNodeRequest(
                     id="module",
@@ -1358,7 +1421,7 @@ def test_nested_module_resolves_secret_from_its_own_pinned_graph(
 
     response = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json=RunRequest(
+        json=_system_run_request(
             nodes=[
                 RunNodeRequest(
                     id="source",
@@ -1438,7 +1501,7 @@ def test_exact_module_revision_cycle_reports_the_nested_path(
 
     response = module_client.post(
         "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
-        json=RunRequest(
+        json=_system_run_request(
             nodes=[
                 RunNodeRequest(
                     id="source",
@@ -1497,7 +1560,7 @@ def test_withdrawn_module_stays_executable_for_pinned_calls(
 
     response = module_client.post(
         f"/v1/workspaces/{WORKSPACE}/runs",
-        json=RunRequest(
+        json=_system_run_request(
             nodes=[
                 RunNodeRequest(
                     id="source",
@@ -1545,7 +1608,8 @@ def test_module_library_resolve_definition_is_the_core_contract(
     modules = api.workspace(UUID(WORKSPACE)).modules
     modules.publish(PublishModuleReleaseRequest(source_graph_id=graph_id))
 
-    module_library = module_client.app.dependency_overrides[module_library_service]()
+    app = cast(FastAPI, module_client.app)
+    module_library = app.dependency_overrides[module_library_service]()
 
     reference = GraphModuleReference(graph_id=graph_id, revision=1)
     definition = asyncio.run(

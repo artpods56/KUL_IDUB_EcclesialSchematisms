@@ -2,7 +2,7 @@ import asyncio
 import base64
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import ClassVar, override
+from typing import ClassVar, cast, override
 from uuid import UUID
 
 import pytest
@@ -10,14 +10,18 @@ from pydantic import SecretStr
 from sqlalchemy import text
 
 from grafy_core.application.collaboration import CollaborationService
+from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.application.saved_graphs import SavedGraphService
 from grafy_core.artifacts import NodeConfig, NodeInput, NodeOutput
 from grafy_core.domain.saved_graphs import (
     GraphPoint,
     SavedGraphDocument,
     SavedGraphNode,
+    SavedGraphPluginReleasePin,
 )
 from grafy_core.domain.errors import SavedGraphRevisionConflictError
+from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
+from grafy_core.domain.plugin_releases import PluginReleaseScope
 from grafy_core.nodes import Node, NodeExecutionContext
 from grafy_core.plugins import NodeSecretInput, Plugin, PluginRegistry
 from grafy_core.ports.node_secrets import NodeSecretUnavailableError
@@ -26,6 +30,7 @@ from grafy_persistence.database import Database, create_database
 from grafy_persistence.orm import metadata
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
+from grafy_api.v1.models import PluginReleasePinModel
 from grafy_api.v1.routes.executions.models import RunNodeRequest, RunRequest
 from grafy_api.services.composition import (
     WorkbenchComponents,
@@ -43,8 +48,14 @@ from grafy_api.settings import Settings
 from grafy_api.v1.routes.node_secrets.dependencies import node_secret_service
 
 from tests.support.clients import GrafyApi
+from tests.support.system_plugins import build_selected_system_plugin_deployment
 from tests.support.workbench import workbench_dependency_overrides
-from tests.testkit import client_with_overrides, create_db_url, db, seed_shared_workspace
+from tests.testkit import (
+    client_with_overrides,
+    create_db_url,
+    db,
+    seed_shared_workspace,
+)
 
 
 class SecretTestConfig(NodeConfig):
@@ -63,6 +74,16 @@ class EmptyOutput(NodeOutput):
 
 SECRET_TEST_PLUGIN = Plugin(slug="test.node-secrets", title="Node secrets test")
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
+PLUGIN_RELEASE_PIN = PluginReleasePinModel(
+    scope=PluginReleaseScope.SYSTEM,
+    slug=SECRET_TEST_PLUGIN.slug,
+    revision=1,
+)
+SAVED_PLUGIN_RELEASE_PIN = SavedGraphPluginReleasePin(
+    scope=PluginReleaseScope.SYSTEM,
+    slug=SECRET_TEST_PLUGIN.slug,
+    revision=1,
+)
 
 
 @SECRET_TEST_PLUGIN.node(
@@ -76,6 +97,7 @@ WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
             title="API key",
         ),
     ),
+    required_capabilities=(PluginRuntimeCapability.NODE_SECRETS,),
 )
 class SecretTestNode(Node[SecretTestConfig, EmptyInput, EmptyOutput]):
     captured_contexts: ClassVar[list[NodeExecutionContext]] = []
@@ -114,6 +136,25 @@ class PlainTestNode(Node[NodeConfig, EmptyInput, EmptyOutput]):
 
 def _encryption_key(fill: bytes = b"k") -> SecretStr:
     return SecretStr(base64.b64encode(fill * 32).decode("ascii"))
+
+
+def _build_secret_components(
+    *,
+    registry: PluginRegistry,
+    workspace: Path,
+    saved_graphs: SavedGraphService | None = None,
+    node_secrets: NodeSecretService | None = None,
+) -> WorkbenchComponents:
+    deployment = build_selected_system_plugin_deployment((SECRET_TEST_PLUGIN,))
+    return build_workbench_components(
+        plugin_registry=registry,
+        workspace=workspace,
+        saved_graphs=saved_graphs,
+        node_secrets=node_secrets,
+        plugin_releases=cast(PluginReleaseService, deployment.release_lookup),
+        system_host_bindings=deployment.host_bindings,
+        loaded_system_plugins=deployment.loaded_plugins,
+    )
 
 
 @pytest.fixture
@@ -168,6 +209,7 @@ def _secret_document(
                     "temperature": temperature,
                 },
                 position=position or GraphPoint(x=0, y=0),
+                plugin_release_pin=SAVED_PLUGIN_RELEASE_PIN,
             ),
         )
     )
@@ -759,8 +801,8 @@ async def test_saved_run_passes_validated_graph_context_to_node(
 ) -> None:
     _, _, saved_graphs, registry = node_secret_setup
     graph = await _saved_secret_graph(saved_graphs)
-    components = build_workbench_components(
-        plugin_registry=registry,
+    components = _build_secret_components(
+        registry=registry,
         workspace=tmp_path / "context-workbench",
         saved_graphs=saved_graphs,
     )
@@ -778,6 +820,7 @@ async def test_saved_run_passes_validated_graph_context_to_node(
                     id="llm",
                     operator_id="test.secret-node",
                     operator_version=1,
+                    plugin_release=PLUGIN_RELEASE_PIN,
                     config={
                         "base_url": "https://llm.example/v1",
                         "model": "default-model",
@@ -809,8 +852,8 @@ async def test_dirty_run_uses_saved_secret_binding_without_materialization_conte
 ) -> None:
     _, _, saved_graphs, registry = node_secret_setup
     graph = await _saved_secret_graph(saved_graphs)
-    components = build_workbench_components(
-        plugin_registry=registry,
+    components = _build_secret_components(
+        registry=registry,
         workspace=tmp_path / "dirty-context-workbench",
         saved_graphs=saved_graphs,
     )
@@ -827,6 +870,7 @@ async def test_dirty_run_uses_saved_secret_binding_without_materialization_conte
                     id="llm",
                     operator_id="test.secret-node",
                     operator_version=1,
+                    plugin_release=PLUGIN_RELEASE_PIN,
                     config={
                         "base_url": "https://llm.example/v1",
                         "model": "unsaved-model",
@@ -837,6 +881,7 @@ async def test_dirty_run_uses_saved_secret_binding_without_materialization_conte
                     id="unsaved-plain",
                     operator_id="test.plain-node",
                     operator_version=1,
+                    plugin_release=PLUGIN_RELEASE_PIN,
                 ),
             ],
         ),
@@ -876,8 +921,8 @@ async def test_secret_bearing_run_requires_explicit_secret_graph_context(
     tmp_path: Path,
 ) -> None:
     _, _, _, registry = node_secret_setup
-    components = build_workbench_components(
-        plugin_registry=registry,
+    components = _build_secret_components(
+        registry=registry,
         workspace=tmp_path / "missing-secret-context-workbench",
     )
 
@@ -893,6 +938,7 @@ async def test_secret_bearing_run_requires_explicit_secret_graph_context(
                         id="llm",
                         operator_id="test.secret-node",
                         operator_version=1,
+                        plugin_release=PLUGIN_RELEASE_PIN,
                         config={"base_url": "https://llm.example/v1"},
                     )
                 ]
@@ -933,6 +979,7 @@ async def test_dirty_run_rejects_invalid_saved_secret_binding(
                         operator_version=1,
                         config={},
                         position=GraphPoint(x=0, y=0),
+                        plugin_release_pin=SAVED_PLUGIN_RELEASE_PIN,
                     ),
                 )
             ),
@@ -945,8 +992,8 @@ async def test_dirty_run_rejects_invalid_saved_secret_binding(
         if binding_case == "dependency"
         else "https://llm.example/v1"
     )
-    components = build_workbench_components(
-        plugin_registry=registry,
+    components = _build_secret_components(
+        registry=registry,
         workspace=tmp_path / f"invalid-binding-{binding_case}",
         saved_graphs=saved_graphs,
     )
@@ -962,6 +1009,7 @@ async def test_dirty_run_rejects_invalid_saved_secret_binding(
                         id=submitted_node_id,
                         operator_id="test.secret-node",
                         operator_version=1,
+                        plugin_release=PLUGIN_RELEASE_PIN,
                         config={"base_url": base_url},
                     )
                 ],
@@ -1001,8 +1049,8 @@ def test_node_secret_routes_never_return_secret_value(tmp_path: Path) -> None:
             plugin_registry=registry,
             encryption_key=_encryption_key(),
         )
-        components = build_workbench_components(
-            plugin_registry=registry,
+        components = _build_secret_components(
+            registry=registry,
             workspace=tmp_path / "route-workbench",
             saved_graphs=saved_graphs,
             node_secrets=service,

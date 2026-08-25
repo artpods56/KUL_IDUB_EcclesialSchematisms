@@ -23,6 +23,7 @@ from grafy_core.conversions import (
     ArtifactConversionKey,
     conversion_runtime_types_are_compatible,
 )
+from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.nodes import (
     MAX_NODE_PROGRESS_COUNTER,
     InPort,
@@ -31,6 +32,8 @@ from grafy_core.nodes import (
 )
 from grafy_core.plugins import (
     NodeCachePolicy,
+    NodeHttpEgressContract,
+    NodeHttpEgressInput,
     NodeSecretInput,
     Plugin,
     PluginRegistrationError,
@@ -389,6 +392,7 @@ def test_node_decorator_records_declared_secret_config_dependencies() -> None:
         version=1,
         title="Secret example",
         secret_inputs=(declared,),
+        required_capabilities=(PluginRuntimeCapability.NODE_SECRETS,),
     )(SecretNode)
 
     assert plugin.nodes[0].secret_inputs == (declared,)
@@ -425,6 +429,90 @@ def test_node_decorator_rejects_missing_secret_config_dependency() -> None:
                     title="API key",
                     config_dependencies=("model",),
                 ),
+            ),
+        )(SecretNode)
+
+
+def test_http_egress_contract_requires_network_egress_capability() -> None:
+    plugin = Plugin(slug="example.egress", title="Example egress")
+
+    with pytest.raises(PluginRegistrationError, match="without requiring network.egress"):
+        plugin.node(
+            operator_id="example.egress",
+            version=1,
+            title="Egress example",
+            http_egress=NodeHttpEgressContract(
+                configured_inputs=(NodeHttpEgressInput(config_field="base_url"),)
+            ),
+        )(SecretNode)
+
+
+def test_http_egress_registration_records_the_contract() -> None:
+    plugin = Plugin(slug="example.egress", title="Example egress")
+
+    plugin.node(
+        operator_id="example.egress",
+        version=1,
+        title="Egress example",
+        required_capabilities=(PluginRuntimeCapability.NETWORK_EGRESS,),
+        http_egress=NodeHttpEgressContract(
+            configured_inputs=(NodeHttpEgressInput(config_field="base_url"),),
+            dynamic_destinations=False,
+        ),
+    )(SecretNode)
+
+    registration = plugin.nodes[0]
+    assert registration.http_egress is not None
+    assert registration.http_egress.configured_inputs == (
+        NodeHttpEgressInput(config_field="base_url"),
+    )
+
+
+def test_http_egress_rejects_duplicate_or_missing_config_fields() -> None:
+    plugin = Plugin(slug="example.egress", title="Example egress")
+    capabilities = (PluginRuntimeCapability.NETWORK_EGRESS,)
+
+    with pytest.raises(PluginRegistrationError, match="duplicate HTTP egress"):
+        plugin.node(
+            operator_id="example.dup",
+            version=1,
+            title="Duplicate",
+            required_capabilities=capabilities,
+            http_egress=NodeHttpEgressContract(
+                configured_inputs=(
+                    NodeHttpEgressInput(config_field="base_url"),
+                    NodeHttpEgressInput(config_field="base_url"),
+                )
+            ),
+        )(SecretNode)
+
+    with pytest.raises(PluginRegistrationError, match="missing config fields: other"):
+        plugin.node(
+            operator_id="example.missing",
+            version=1,
+            title="Missing",
+            required_capabilities=capabilities,
+            http_egress=NodeHttpEgressContract(
+                configured_inputs=(NodeHttpEgressInput(config_field="other"),)
+            ),
+        )(SecretNode)
+
+
+def test_http_egress_rejects_more_than_eight_configured_fields() -> None:
+    plugin = Plugin(slug="example.egress", title="Example egress")
+    capabilities = (PluginRuntimeCapability.NETWORK_EGRESS,)
+
+    with pytest.raises(PluginRegistrationError, match="more than 8"):
+        plugin.node(
+            operator_id="example.too-many",
+            version=1,
+            title="Too many",
+            required_capabilities=capabilities,
+            http_egress=NodeHttpEgressContract(
+                configured_inputs=tuple(
+                    NodeHttpEgressInput(config_field=f"url_{index}")
+                    for index in range(9)
+                )
             ),
         )(SecretNode)
 
@@ -486,6 +574,12 @@ def test_registry_reports_operator_and_artifact_collisions() -> None:
 
 
 def test_registry_freeze_requires_concrete_node_port_artifact_registration() -> None:
+    artifact = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.unregistered", 1),
+        title="Globally installed only",
+    )
+    owner = Plugin(slug="example.owner", title="Owner")
+    owner.register_artifact_type(artifact)
     plugin = Plugin(slug="example.concrete-port", title="Concrete port")
     plugin.node(
         operator_id="example.concrete-port",
@@ -493,13 +587,15 @@ def test_registry_freeze_requires_concrete_node_port_artifact_registration() -> 
         title="Concrete port",
     )(ConcretePortNode)
     registry = PluginRegistry()
+    registry.install(owner)
     registry.install(plugin)
 
     with pytest.raises(
         PluginRegistrationError,
         match=(
             "operator example.concrete-port@1 input port 'value' references "
-            "artifact type example.unregistered@1, which is not installed"
+            "artifact type example.unregistered@1, which is neither owned nor "
+            "declared as an exact dependency"
         ),
     ):
         registry.freeze()
@@ -527,6 +623,7 @@ def test_registry_registers_artifact_conversions_across_plugin_boundaries() -> N
     source_plugin.register_artifact_type(source)
     target_plugin = Plugin(slug="example.target", title="Target")
     target_plugin.register_artifact_type(target)
+    target_plugin.register_artifact_type_dependency(source)
     target_plugin.register_artifact_conversion(conversion)
     registry = PluginRegistry()
 
@@ -635,9 +732,78 @@ def test_registry_freeze_rejects_conversion_with_missing_artifact_endpoint(
     with pytest.raises(
         PluginRegistrationError,
         match=(
-            f"Artifact conversion example.incomplete@1 references {missing_endpoint} "
+            f"artifact conversion example.incomplete@1 references {missing_endpoint} "
             f"artifact type {missing_type.id}@{missing_type.schema_version}, which "
-            "is not installed"
+            "is neither owned nor declared as an exact dependency"
+        ),
+    ):
+        registry.freeze()
+
+
+def test_plugin_artifact_dependencies_are_exact_and_disjoint_from_owned_types() -> None:
+    artifact = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.shared", 1),
+        title="Shared",
+        payload_schema={"type": "string"},
+    )
+    plugin = Plugin(slug="example.consumer", title="Consumer")
+
+    plugin.register_artifact_type_dependency(artifact)
+    plugin.register_artifact_type_dependency(artifact)
+
+    assert plugin.artifact_type_dependencies == (artifact,)
+
+    with pytest.raises(
+        PluginRegistrationError,
+        match="declares different exact contracts for artifact type dependency",
+    ):
+        plugin.register_artifact_type_dependency(replace(artifact, title="Changed"))
+    with pytest.raises(
+        PluginRegistrationError,
+        match="cannot both own and depend on artifact type example.shared@1",
+    ):
+        plugin.register_artifact_type(artifact)
+
+
+def test_registry_freeze_accepts_exact_foreign_artifact_contract() -> None:
+    artifact = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.shared", 1),
+        title="Shared",
+        payload_schema={"type": "string"},
+    )
+    owner = Plugin(slug="example.owner", title="Owner")
+    owner.register_artifact_type(artifact)
+    consumer = Plugin(slug="example.consumer", title="Consumer")
+    consumer.register_artifact_type_dependency(artifact)
+    registry = PluginRegistry()
+    registry.install(owner)
+    registry.install(consumer)
+
+    registry.freeze()
+
+    assert registry.artifact_types == (artifact,)
+    assert registry.artifact_type_dependencies == (artifact,)
+
+
+def test_registry_freeze_rejects_same_key_with_different_dependency_contracts() -> None:
+    artifact = ArtifactTypeSpec(
+        key=ArtifactTypeKey("example.shared", 1),
+        title="Shared",
+        payload_schema={"type": "string"},
+    )
+    first = Plugin(slug="example.first", title="First")
+    first.register_artifact_type_dependency(artifact)
+    second = Plugin(slug="example.second", title="Second")
+    second.register_artifact_type_dependency(replace(artifact, title="Changed"))
+    registry = PluginRegistry()
+    registry.install(first)
+    registry.install(second)
+
+    with pytest.raises(
+        PluginRegistrationError,
+        match=(
+            "Plugins 'example.first' and 'example.second' declare different exact "
+            "contracts for artifact type example.shared@1"
         ),
     ):
         registry.freeze()
@@ -1021,8 +1187,9 @@ def test_registry_freeze_rejects_explicit_projection_to_missing_target() -> None
     with pytest.raises(
         PluginRegistrationError,
         match=(
-            "Artifact type example.missing-projection-target@1 field projection "
-            "'value' targets artifact type example.missing@1, which is not installed"
+            "artifact type example.missing-projection-target@1 field projection "
+            "'value' targets artifact type example.missing@1, which is neither "
+            "owned nor declared as an exact dependency"
         ),
     ):
         registry.freeze()

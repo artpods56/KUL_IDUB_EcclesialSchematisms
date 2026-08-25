@@ -168,14 +168,18 @@ def test_compose_publishes_loopback_gateway_and_keeps_api_web_internal() -> None
     assert "grafy_api.main:app" in dockerfile
 
 
-def test_production_api_does_not_install_untrusted_sql_in_process() -> None:
+def test_production_api_does_not_install_isolated_only_plugins_in_process() -> None:
     repository = Path(__file__).parents[3]
     dockerfile = (repository / "infra/docker/api.Dockerfile").read_text()
 
     production_target = dockerfile.split("FROM source AS api-plugins", maxsplit=1)[1]
     production_target = production_target.split("FROM source AS api", maxsplit=1)[0]
-    assert "--extra gis --extra llm --extra ocr" in production_target
+    assert "--package grafy-api" in production_target
+    assert "--extra gis" not in production_target
+    assert "--extra llm" not in production_target
+    assert "--extra ocr" not in production_target
     assert "--extra sql" not in production_target
+    assert "gdal-bin" not in production_target
 
 
 def test_compose_api_healthcheck_uses_dependency_readiness() -> None:

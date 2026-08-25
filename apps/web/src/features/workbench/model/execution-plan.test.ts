@@ -57,6 +57,7 @@ function nodeSpec(
     title,
     description: title,
     catalog_visible: true,
+    runnable: true,
     config_schema: {},
     input_schema: {},
     output_schema: {},

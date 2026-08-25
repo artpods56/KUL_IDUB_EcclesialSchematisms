@@ -27,9 +27,10 @@ from grafy_core.nodes import (
 )
 from grafy_core.plugins import NodeCachePolicy, NodeRegistration
 from grafy_core.ports.node_secrets import UnavailableNodeSecretResolver
-from grafy_core.runtime.execution import NodeRuntime
+from grafy_core.runtime.execution import NodeRunError, NodeRuntime
 from grafy_core.runtime.invocation import InvocationMode, NodeInvocation
 from grafy_core.runtime.invocation_cache import InvocationCachePort
+from grafy_core.runtime.plugin_protocol import PluginFailureCode
 from grafy_core.runtime.materialization import InputMaterializer
 from grafy_core.runtime.persistence import (
     ArtifactOutputWriter,
@@ -37,6 +38,7 @@ from grafy_core.runtime.persistence import (
     ArtifactWriterRegistry,
     OutputPersister,
 )
+from grafy_core.runtime.plugin_invocation import PluginInvocationError
 from grafy_core.runtime.resolvers import Resolver, ResolverRegistry
 
 from grafy_api.v1.routes.executions.models import RunEdgeRequest, RunNodeRequest
@@ -178,6 +180,23 @@ class SynchronizedAddNode(AddNode):
             raise
         finally:
             self.active_count -= 1
+
+
+class FailingNode(AddNode):
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self._error = error
+
+    @override
+    async def run(
+        self,
+        context: NodeExecutionContext,
+        _config: NoConfig,
+        inputs: AddInput,
+        /,
+    ) -> AddOutput:
+        del context, inputs
+        raise self._error
 
 
 class MemoryInvocationCache(InvocationCachePort):
@@ -803,3 +822,176 @@ async def test_nested_execution_does_not_replace_outer_module_progress() -> None
 
     assert result.status == "succeeded"
     assert control.active_node_id == "outer-module"
+
+
+@pytest.mark.asyncio
+async def test_failed_nodes_expose_typed_failure_codes_in_graph_results() -> None:
+    writer = RecordingWriter()
+    operator_node = _compiled_add(
+        node_id="operator-failure",
+        node=FailingNode(RuntimeError("host operator failure")),
+        invocation=NodeInvocation(),
+    )
+    oci_node = _compiled_add(
+        node_id="oci-failure",
+        node=FailingNode(
+            PluginInvocationError(
+                "guest output rejected",
+                failure_code=PluginFailureCode.OUTPUT_VALIDATION,
+            )
+        ),
+        invocation=NodeInvocation(),
+    )
+    adapter_node = _compiled_add(
+        node_id="adapter-failure",
+        node=FailingNode(RuntimeError("never reached")),
+        invocation=NodeInvocation(),
+    )
+    downstream_node = _compiled_add(
+        node_id="downstream",
+        node=AddNode(),
+        invocation=NodeInvocation(),
+    )
+    edges = (
+        CompiledEdge(
+            request=RunEdgeRequest(
+                from_node="operator-failure",
+                from_port="value",
+                to_node="downstream",
+                to_port="item",
+            ),
+            projection=None,
+            conversion_path=(),
+        ),
+    )
+    operator_item = ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE.key)
+    operator_broadcast = ArtifactRef.from_key(
+        artifact_id=uuid4(),
+        key=VALUE.key,
+    )
+    oci_item = ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE.key)
+    oci_broadcast = ArtifactRef.from_key(
+        artifact_id=uuid4(),
+        key=VALUE.key,
+    )
+    edge_values = StubEdgeValueResolver(
+        {
+            "operator-failure": {
+                "item": operator_item,
+                "broadcast": operator_broadcast,
+            },
+            "oci-failure": {
+                "item": oci_item,
+                "broadcast": oci_broadcast,
+            },
+            "adapter-failure": {},
+        }
+    )
+    resolver = IntegerResolver(
+        {
+            ref.artifact_id: index
+            for index, ref in enumerate(
+                (operator_item, operator_broadcast, oci_item, oci_broadcast),
+                start=1,
+            )
+        }
+    )
+    coordinator = GraphExecutionCoordinator(
+        node_execution=NodeExecutionService(
+            runtime=_runtime(resolver, writer),
+            edge_values=cast(EdgeValueResolver, edge_values),
+            node_secrets=UnavailableNodeSecretResolver(),
+        )
+    )
+
+    result = await coordinator.execute(
+        PreparedGraphExecution(
+            workspace_id=WORKSPACE_ID,
+            plan=CompiledGraph(
+                nodes=(operator_node, oci_node, adapter_node, downstream_node),
+                edges=edges,
+                pinned_outputs={},
+            ),
+            initial_outputs={},
+            graph_id=None,
+            graph_revision=None,
+            secret_graph_id=None,
+            secret_graph_revision=None,
+            secret_node_ids=frozenset(),
+            module_path=(),
+            raise_node_errors=False,
+        )
+    )
+
+    assert result.status == "failed"
+    codes = [
+        (node_result.node_id, node_result.failure_code)
+        for node_result in result.node_results
+    ]
+    assert codes == [
+        ("operator-failure", PluginFailureCode.OPERATOR_FAILURE),
+        ("oci-failure", PluginFailureCode.OUTPUT_VALIDATION),
+        ("adapter-failure", PluginFailureCode.INTERNAL_ADAPTER_FAILURE),
+        ("downstream", None),
+    ]
+    adapter_error = result.node_results[2].error
+    assert adapter_error is not None
+    assert "is required" in adapter_error
+
+
+@pytest.mark.asyncio
+async def test_raise_mode_keeps_the_typed_failure_in_the_cause_chain() -> None:
+    native_error = RuntimeError("controlled operator failure")
+    item_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE.key)
+    broadcast_ref = ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE.key)
+    resolver = IntegerResolver(
+        {item_ref.artifact_id: 1, broadcast_ref.artifact_id: 2},
+    )
+    writer = RecordingWriter()
+    failing_node = _compiled_add(
+        node_id="typed-failure",
+        node=FailingNode(native_error),
+        invocation=NodeInvocation(),
+    )
+    coordinator = GraphExecutionCoordinator(
+        node_execution=NodeExecutionService(
+            runtime=_runtime(resolver, writer),
+            edge_values=cast(
+                EdgeValueResolver,
+                StubEdgeValueResolver(
+                    {
+                        "typed-failure": {
+                            "item": item_ref,
+                            "broadcast": broadcast_ref,
+                        },
+                    }
+                ),
+            ),
+            node_secrets=UnavailableNodeSecretResolver(),
+        )
+    )
+
+    with pytest.raises(GraphExecutionError) as raised:
+        await coordinator.execute(
+            PreparedGraphExecution(
+                workspace_id=WORKSPACE_ID,
+                plan=CompiledGraph(
+                    nodes=(failing_node,),
+                    edges=(),
+                    pinned_outputs={},
+                ),
+                initial_outputs={},
+                graph_id=None,
+                graph_revision=None,
+                secret_graph_id=None,
+                secret_graph_revision=None,
+                secret_node_ids=frozenset(),
+                module_path=(),
+                raise_node_errors=True,
+            )
+        )
+
+    run_error = raised.value.__cause__
+    assert isinstance(run_error, NodeRunError)
+    assert run_error.failure_code is PluginFailureCode.OPERATOR_FAILURE
+    assert run_error.__cause__ is native_error

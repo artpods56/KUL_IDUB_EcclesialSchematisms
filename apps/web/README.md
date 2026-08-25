@@ -86,8 +86,6 @@ Requirements:
    server proxies browser `/api` requests to it).
 4. `just install-ocr` and `just api-ocr` used from the repository root when OCR
    operators should be available.
-5. `MISTRAL_API_KEY` configured in the API process environment only when using
-   the Mistral OCR operator.
 
 ```bash
 cd apps/web

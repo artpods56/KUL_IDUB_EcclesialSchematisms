@@ -1,5 +1,6 @@
 from collections import Counter, deque
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Protocol
 from uuid import UUID
 
 from grafy_core.artifacts import (
@@ -8,6 +9,7 @@ from grafy_core.artifacts import (
     ArtifactTypeKey,
     ArtifactTypeSpec,
 )
+from grafy_core.canonical_conversions import CanonicalArtifactConversionMap
 from grafy_core.conversions import (
     MAX_ARTIFACT_CONVERSION_HOPS,
     ArtifactConversion,
@@ -16,9 +18,20 @@ from grafy_core.conversions import (
 )
 from grafy_core.domain.artifact_outputs import ArtifactOutputValue
 from grafy_core.domain.modules import (
+    MODULE_INPUT_OPERATOR_ID,
+    MODULE_OUTPUT_OPERATOR_ID,
     GraphModuleReference,
     GraphModuleReferenceError,
 )
+from grafy_core.domain.plugin_releases import (
+    PluginArtifactTypeContract,
+    PluginNodeContract,
+    PluginRelease,
+    PluginReleaseIdentity,
+    PluginReleaseScope,
+)
+from grafy_core.domain.plugin_selection import PluginReleaseSelection
+from grafy_core.domain.plugin_revocations import PluginReleaseRevocation
 from grafy_core.nodes import (
     Node,
     NodeContractResolutionError,
@@ -29,6 +42,7 @@ from grafy_core.nodes import (
 from grafy_core.operators.modules import GraphModuleNode
 from grafy_core.plugins import (
     NodeRegistration,
+    PluginRegistrationError,
     PluginRegistry,
     PluginRuntimeContext,
     UnknownOperatorError,
@@ -42,7 +56,16 @@ from grafy_core.runtime.invocation import (
     effective_output_shape,
     validate_invocation,
 )
+from grafy_core.runtime.plugin_invocation import (
+    PluginInvoker,
+    PluginReleaseNode,
+)
 
+from grafy_api.plugin_admission import (
+    ReleaseExecutionAdmission,
+    ReleaseExecutionRejection,
+    ReleaseExecutionRoute,
+)
 from grafy_api.v1.routes.catalog.services import (
     GraphModuleCatalog,
     GraphModuleCatalogError,
@@ -63,6 +86,49 @@ from .models import (
 )
 
 
+class PluginReleaseLookup(Protocol):
+    """Exact, workspace-scoped Plugin release resolution for compilation."""
+
+    async def get_by_revision(
+        self,
+        workspace_id: UUID,
+        slug: str,
+        revision: int,
+        *,
+        scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE,
+    ) -> PluginRelease | None: ...
+
+    async def get_selection(
+        self,
+        workspace_id: UUID,
+        slug: str,
+        *,
+        scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE,
+    ) -> PluginReleaseSelection | None: ...
+
+    async def get_revocation(
+        self,
+        *,
+        workspace_id: UUID,
+        slug: str,
+        revision: int,
+    ) -> PluginReleaseRevocation | None: ...
+
+    async def get_system_revocation(
+        self,
+        *,
+        slug: str,
+        revision: int,
+    ) -> PluginReleaseRevocation | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _ReleaseExecutionSnapshot:
+    release: PluginRelease
+    selection: PluginReleaseSelection | None
+    revocation: PluginReleaseRevocation | None
+
+
 class GraphCompiler:
     def __init__(
         self,
@@ -70,22 +136,37 @@ class GraphCompiler:
         plugin_registry: PluginRegistry,
         plugin_context: PluginRuntimeContext,
         module_catalog: GraphModuleCatalog,
+        canonical_artifact_conversions: CanonicalArtifactConversionMap,
+        plugin_release_lookup: PluginReleaseLookup | None = None,
+        plugin_invoker: PluginInvoker | None = None,
+        release_admission: ReleaseExecutionAdmission | None = None,
     ) -> None:
         self._plugin_registry = plugin_registry
         self._plugin_context = plugin_context
         self._module_catalog = module_catalog
+        self._plugin_release_lookup = plugin_release_lookup
+        self._plugin_invoker = plugin_invoker
+        self._release_admission = release_admission
         self._artifact_types = {
             artifact_type.key for artifact_type in plugin_registry.artifact_types
+        }
+        self._artifact_contracts = {
+            artifact_type.key: PluginArtifactTypeContract.from_spec(artifact_type)
+            for artifact_type in plugin_registry.artifact_types
         }
         self._projectable_artifact_types = {
             artifact_type.key: artifact_type
             for artifact_type in plugin_registry.artifact_types
             if artifact_type.field_projections
         }
-        self._artifact_conversions = {
-            conversion.key: conversion
-            for conversion in plugin_registry.artifact_conversions
-        }
+        self._artifact_conversions = dict(canonical_artifact_conversions)
+        for key, conversion in self._artifact_conversions.items():
+            if key != conversion.key:
+                raise ValueError(
+                    f"Canonical artifact conversion map key {key.id}@{key.version} "
+                    f"does not match declaration {conversion.key.id}@"
+                    f"{conversion.key.version}"
+                )
 
     async def compile(
         self,
@@ -103,14 +184,60 @@ class GraphCompiler:
 
         nodes_by_id: dict[str, Node[Any, Any, Any]] = {}
         registrations_by_id: dict[str, NodeRegistration | None] = {}
+        releases_by_id: dict[str, PluginReleaseIdentity | None] = {}
+        release_snapshots: dict[
+            tuple[PluginReleaseScope, str, int],
+            _ReleaseExecutionSnapshot,
+        ] = {}
         for node_request in ordered_requests:
-            node, registration = await self._build_node(
+            node, registration, release_identity = await self._build_node(
                 node_request,
                 module_executor,
                 workspace_id=workspace_id,
+                release_snapshots=release_snapshots,
             )
             nodes_by_id[node_request.id] = node
             registrations_by_id[node_request.id] = registration
+            releases_by_id[node_request.id] = release_identity
+
+        artifact_types = set(self._artifact_types)
+        artifact_contracts = dict(self._artifact_contracts)
+        projectable_artifact_types = dict(self._projectable_artifact_types)
+        for snapshot in release_snapshots.values():
+            release = snapshot.release
+            for contract in (
+                *release.catalog.artifact_types,
+                *release.catalog.artifact_type_dependencies,
+            ):
+                key = ArtifactTypeKey(contract.key.id, contract.key.schema_version)
+                existing = artifact_contracts.get(key)
+                if existing is not None and existing != contract:
+                    raise GraphExecutionError(
+                        f"Exact {release.scope.value.title()} Plugin release "
+                        f"{release.slug!r} revision {release.revision} artifact "
+                        f"contract {key.id}@{key.schema_version} conflicts with "
+                        "another available exact artifact contract"
+                    )
+                if existing is not None:
+                    continue
+                artifact_contracts[key] = contract
+                artifact_types.add(key)
+                if contract.field_projections:
+                    projectable_artifact_types[key] = ArtifactTypeSpec(
+                        key=key,
+                        title=contract.title,
+                        field_projections=tuple(
+                            ArtifactFieldProjection(
+                                path=projection.path,
+                                target=ArtifactTypeKey(
+                                    projection.target.id,
+                                    projection.target.schema_version,
+                                ),
+                                title=projection.title,
+                            )
+                            for projection in contract.field_projections
+                        ),
+                    )
 
         bindings_by_node: dict[str, dict[str, ArtifactTypeKey]] = {}
         resolved_contracts_by_node: dict[str, ResolvedNodeContracts] = {}
@@ -129,7 +256,7 @@ class GraphCompiler:
                     f"bindings: {exc}"
                 ) from exc
             for variable, artifact_type in bindings.items():
-                if artifact_type in self._artifact_types:
+                if artifact_type in artifact_types:
                     continue
                 raise GraphExecutionError(
                     f"Node {node_request.id!r} artifact type variable "
@@ -146,7 +273,7 @@ class GraphCompiler:
             resolved_contracts_by_node=resolved_contracts_by_node,
             invocations_by_id=invocations_by_id,
             edges=request.edges,
-            projectable_artifact_types=self._projectable_artifact_types,
+            projectable_artifact_types=projectable_artifact_types,
             artifact_conversions=self._artifact_conversions,
             pinned_outputs=pinned_outputs,
         )
@@ -160,6 +287,7 @@ class GraphCompiler:
                     resolved_contracts=resolved_contracts_by_node[node_request.id],
                     invocation=invocations_by_id[node_request.id],
                     artifact_type_bindings=bindings_by_node[node_request.id],
+                    plugin_release=releases_by_id[node_request.id],
                 )
                 for node_request in ordered_requests
             ),
@@ -173,7 +301,13 @@ class GraphCompiler:
         module_executor: GraphModuleExecutorPort,
         *,
         workspace_id: UUID,
-    ) -> tuple[Node[Any, Any, Any], NodeRegistration | None]:
+        release_snapshots: dict[
+            tuple[PluginReleaseScope, str, int],
+            _ReleaseExecutionSnapshot,
+        ],
+    ) -> tuple[
+        Node[Any, Any, Any], NodeRegistration | None, PluginReleaseIdentity | None
+    ]:
         try:
             module_reference = GraphModuleReference.try_from_operator_identity(
                 request.operator_id,
@@ -182,6 +316,14 @@ class GraphCompiler:
         except GraphModuleReferenceError as exc:
             raise GraphExecutionError(str(exc)) from exc
         if module_reference is not None:
+            if request.plugin_release is not None:
+                raise GraphExecutionError(
+                    f"Node {request.id!r} pins Plugin release "
+                    f"{request.plugin_release.slug!r} revision "
+                    f"{request.plugin_release.revision}, but operator "
+                    f"{request.operator_id}@{request.operator_version} is a "
+                    "graph module; modules cannot carry a Plugin release pin"
+                )
             try:
                 definition = await self._module_catalog.get_definition(
                     module_reference,
@@ -189,7 +331,196 @@ class GraphCompiler:
                 )
             except GraphModuleCatalogError as exc:
                 raise GraphExecutionError(str(exc)) from exc
-            return GraphModuleNode(definition, module_executor), None
+            return GraphModuleNode(definition, module_executor), None, None
+
+        is_module_boundary = request.operator_id in {
+            MODULE_INPUT_OPERATOR_ID,
+            MODULE_OUTPUT_OPERATOR_ID,
+        }
+        if is_module_boundary and request.plugin_release is not None:
+            raise GraphExecutionError(
+                f"Node {request.id!r} pins Plugin release "
+                f"{request.plugin_release.slug!r} revision "
+                f"{request.plugin_release.revision}, but operator "
+                f"{request.operator_id}@{request.operator_version} is a module "
+                "boundary; module boundaries cannot carry a Plugin release pin"
+            )
+
+        if request.plugin_release is not None:
+            if self._plugin_release_lookup is None or self._release_admission is None:
+                raise GraphExecutionError(
+                    f"Node {request.id!r} pins "
+                    f"{request.plugin_release.scope.value.title()} Plugin release "
+                    f"{request.plugin_release.slug!r} revision "
+                    f"{request.plugin_release.revision}, but exact Plugin release "
+                    "execution is not configured for this workbench"
+                )
+            if request.plugin_release.scope is PluginReleaseScope.WORKSPACE:
+                try:
+                    self._plugin_registry.node_registration(
+                        request.operator_id,
+                        request.operator_version,
+                    )
+                except UnknownOperatorError:
+                    pass
+                else:
+                    raise GraphExecutionError(
+                        f"Node {request.id!r} pins a Workspace Plugin release, but "
+                        f"{request.operator_id}@{request.operator_version} is a "
+                        "host node; host nodes cannot carry a Plugin release pin"
+                    )
+            snapshot_key = (
+                request.plugin_release.scope,
+                request.plugin_release.slug,
+                request.plugin_release.revision,
+            )
+            snapshot = release_snapshots.get(snapshot_key)
+            if snapshot is None:
+                release = await self._plugin_release_lookup.get_by_revision(
+                    workspace_id,
+                    request.plugin_release.slug,
+                    request.plugin_release.revision,
+                    scope=request.plugin_release.scope,
+                )
+                if release is None:
+                    if request.plugin_release.scope is PluginReleaseScope.WORKSPACE:
+                        owner_context = "in this workspace"
+                    else:
+                        owner_context = "in the System Plugin catalog"
+                    raise GraphExecutionError(
+                        f"Node {request.id!r} pins "
+                        f"{request.plugin_release.scope.value.title()} Plugin release "
+                        f"{request.plugin_release.slug!r} revision "
+                        f"{request.plugin_release.revision}, which does not exist "
+                        f"{owner_context}"
+                    )
+                selection = await self._plugin_release_lookup.get_selection(
+                    workspace_id,
+                    release.slug,
+                    scope=release.scope,
+                )
+                if release.scope is PluginReleaseScope.WORKSPACE:
+                    revocation = await self._plugin_release_lookup.get_revocation(
+                        workspace_id=workspace_id,
+                        slug=release.slug,
+                        revision=release.revision,
+                    )
+                else:
+                    revocation = (
+                        await self._plugin_release_lookup.get_system_revocation(
+                            slug=release.slug,
+                            revision=release.revision,
+                        )
+                    )
+                snapshot = _ReleaseExecutionSnapshot(
+                    release=release,
+                    selection=selection,
+                    revocation=revocation,
+                )
+                release_snapshots[snapshot_key] = snapshot
+            release = snapshot.release
+            contract = None
+            for declared in release.catalog.nodes:
+                if (
+                    declared.operator_id == request.operator_id
+                    and declared.operator_version == request.operator_version
+                ):
+                    contract = declared
+                    break
+            if contract is None:
+                raise GraphExecutionError(
+                    f"Node {request.id!r} pins "
+                    f"{release.scope.value.title()} Plugin release "
+                    f"{release.slug!r} revision {release.revision}, which does "
+                    f"not declare operator {request.operator_id}@"
+                    f"{request.operator_version}"
+                )
+            decision = self._release_admission.decide(
+                release,
+                node_contract=contract,
+                selection=snapshot.selection,
+                revocation=snapshot.revocation,
+            )
+            if isinstance(decision, ReleaseExecutionRejection):
+                raise GraphExecutionError(
+                    f"Node {request.id!r} pins Plugin release "
+                    f"{release.slug!r} revision {release.revision}, but that "
+                    f"node is not runnable ({decision.reason}): "
+                    f"{decision.detail}"
+                )
+            if decision is ReleaseExecutionRoute.IN_PROCESS:
+                try:
+                    registration = self._plugin_registry.node_registration(
+                        request.operator_id,
+                        request.operator_version,
+                    )
+                except UnknownOperatorError as exc:
+                    raise GraphExecutionError(
+                        f"Node {request.id!r} selected in-process System Plugin "
+                        f"release {release.slug!r} revision {release.revision}, but "
+                        f"operator {request.operator_id}@{request.operator_version} "
+                        "is not loaded in the host registry"
+                    ) from exc
+                if registration.plugin_slug != release.slug:
+                    raise GraphExecutionError(
+                        f"Node {request.id!r} selected in-process System Plugin "
+                        f"release {release.slug!r}, but operator "
+                        f"{request.operator_id}@{request.operator_version} is owned "
+                        f"by host Plugin {registration.plugin_slug!r}"
+                    )
+                if PluginNodeContract.from_registration(registration) != contract:
+                    raise GraphExecutionError(
+                        f"Node {request.id!r} selected in-process System Plugin "
+                        f"release {release.slug!r}, but operator "
+                        f"{request.operator_id}@{request.operator_version} does not "
+                        "match the exact release contract"
+                    )
+                try:
+                    node = self._plugin_registry.build_node(
+                        request.operator_id,
+                        request.operator_version,
+                        self._plugin_context,
+                    )
+                except PluginRegistrationError as exc:
+                    raise GraphExecutionError(
+                        f"Could not build in-process System Plugin "
+                        f"{release.slug!r} operator {request.operator_id}@"
+                        f"{request.operator_version}"
+                    ) from exc
+                return (
+                    node,
+                    registration,
+                    PluginReleaseIdentity.from_release(release),
+                )
+            if decision is not ReleaseExecutionRoute.ISOLATED:
+                raise GraphExecutionError(
+                    f"Node {request.id!r} selected an unsupported Plugin "
+                    f"execution route {decision.value!r}"
+                )
+            if self._plugin_invoker is None:
+                raise GraphExecutionError(
+                    f"Node {request.id!r} selected isolated Plugin execution, "
+                    "but its invoker is not configured for this workbench"
+                )
+            proxy: PluginReleaseNode[Any, Any, Any] = (
+                PluginReleaseNode(
+                    release,
+                    contract,
+                    self._plugin_invoker,
+                    artifact_type_bindings={
+                        binding.variable: binding.artifact_type.to_key()
+                        for binding in request.artifact_type_bindings
+                    },
+                )
+            )
+            return proxy, None, proxy.release_identity
+
+        if not is_module_boundary:
+            raise GraphExecutionError(
+                f"Node {request.id!r} ({request.operator_id}@"
+                f"{request.operator_version}) is executable Plugin code and must "
+                "pin one exact Plugin release with scope, slug, and revision"
+            )
 
         try:
             node = self._plugin_registry.build_node(
@@ -202,8 +533,11 @@ class GraphCompiler:
                 request.operator_version,
             )
         except UnknownOperatorError as exc:
-            raise GraphExecutionError(str(exc)) from exc
-        return node, registration
+            raise GraphExecutionError(
+                f"Node {request.id!r} references unavailable module boundary "
+                f"{request.operator_id}@{request.operator_version}: {exc}"
+            ) from exc
+        return node, registration, None
 
 
 def _topological_order(
@@ -692,4 +1026,4 @@ def _value_key(value: ArtifactOutputValue) -> ArtifactTypeKey:
     )
 
 
-__all__ = ["GraphCompiler"]
+__all__ = ["GraphCompiler", "PluginReleaseLookup"]

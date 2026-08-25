@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from grafy_core.artifacts import ArtifactTypeKey
 from grafy_core.domain.errors import SavedGraphRevisionConflictError
+from grafy_core.domain.plugin_releases import PluginReleaseScope
 from grafy_core.domain.saved_graphs import (
     GraphPoint,
     GraphPresentationAnnotation,
@@ -20,6 +21,7 @@ from grafy_core.domain.saved_graphs import (
     SavedGraphInputPlug,
     SavedGraphNode,
     SavedGraphNodeLayout,
+    SavedGraphPluginReleasePin,
 )
 
 
@@ -31,6 +33,7 @@ def _node(
     *,
     input_plugs: tuple[SavedGraphInputPlug, ...] = (),
     artifact_type_bindings: tuple[SavedGraphArtifactTypeBinding, ...] = (),
+    plugin_release_pin: SavedGraphPluginReleasePin | None = None,
 ) -> SavedGraphNode:
     return SavedGraphNode(
         id=node_id,
@@ -40,6 +43,7 @@ def _node(
         position=GraphPoint(x=10.0, y=20.0),
         input_plugs=input_plugs,
         artifact_type_bindings=artifact_type_bindings,
+        plugin_release_pin=plugin_release_pin,
     )
 
 
@@ -93,7 +97,7 @@ def test_saved_graph_document_migrates_v1_singular_conversion_in_memory() -> Non
         }
     )
 
-    assert document.schema_version == 4
+    assert document.schema_version == 5
     assert document.edges[0].conversion_path == (
         SavedGraphConversion(id="example.convert", version=3),
     )
@@ -134,7 +138,7 @@ def test_saved_graph_document_migrates_v2_bindings_to_v3() -> None:
         }
     )
 
-    assert document.schema_version == 4
+    assert document.schema_version == 5
     assert document.nodes[0].artifact_type_binding_map() == {
         "T": ArtifactTypeKey("example.value", 2)
     }
@@ -539,4 +543,51 @@ def test_saved_graph_replace_preserves_timezone_aware_timestamp_invariant() -> N
             document=SavedGraphDocument(),
             expected_revision=1,
             updated_at=datetime(2026, 7, 14, 10, 0),
+        )
+
+
+def test_saved_graph_node_serializes_the_plugin_release_pin() -> None:
+    pin = SavedGraphPluginReleasePin(
+        scope=PluginReleaseScope.WORKSPACE,
+        slug="notes",
+        revision=4,
+    )
+    node = _node("echo", plugin_release_pin=pin)
+
+    payload = node.model_dump(mode="json")
+
+    assert payload["plugin_release_pin"] == {
+        "scope": "workspace",
+        "slug": "notes",
+        "revision": 4,
+    }
+    assert SavedGraphNode.model_validate(payload) == node
+    unpinned = _node("host")
+    assert unpinned.plugin_release_pin is None
+
+
+def test_saved_graph_plugin_release_pin_rejects_extra_or_missing_fields() -> None:
+    base = _node("echo").model_dump(mode="json")
+    # The saved node model is fail-closed about unknown fields.
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        SavedGraphNode.model_validate({**base, "plugin_release": {"slug": "notes"}})
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        SavedGraphPluginReleasePin.model_validate(
+            {"slug": "notes", "revision": 4, "x": 1}
+        )
+    with pytest.raises(ValidationError):
+        SavedGraphPluginReleasePin.model_validate({"slug": "notes"})
+    with pytest.raises(ValidationError):
+        SavedGraphPluginReleasePin(
+            scope=PluginReleaseScope.WORKSPACE,
+            slug="notes",
+            revision=0,
+        )
+
+
+def test_saved_graph_plugin_release_pin_rejects_legacy_workspace_shape() -> None:
+    with pytest.raises(ValidationError, match="scope"):
+        SavedGraphPluginReleasePin.model_validate(
+            {"slug": "notes", "revision": 4}
         )

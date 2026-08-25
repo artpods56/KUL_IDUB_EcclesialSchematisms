@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  addNodeCommand,
   graphCommandsFromNodeChanges,
   reduceWorkbenchAuthoringState,
   type WorkbenchAuthoringState,
 } from "./graph-document-adapter";
 import { authoredGraphDocument } from "../model/graph-document";
+import { createWorkflowNodeData } from "./types";
 
 const source = {
   id: "source",
@@ -67,6 +69,54 @@ function state(): WorkbenchAuthoringState {
 }
 
 describe("Workbench authored document adapter", () => {
+  it("authors the exact scoped catalog pin at the requested insertion position", () => {
+    const data = createWorkflowNodeData({
+      operator_id: "reports.render",
+      operator_version: 7,
+      plugin_slug: "reports",
+      plugin_revision: 11,
+      plugin_release: { scope: "system", slug: "reports", revision: 11 },
+      title: "Render report",
+      description: "Render a report.",
+      catalog_visible: true,
+      runnable: true,
+      config_schema: {},
+      input_schema: {},
+      output_schema: {},
+      inputs: [],
+      outputs: [],
+    });
+    data.config = { nested: { threshold: 3 } };
+    data.artifactTypeBindings = {
+      T: { id: "table.data", schema_version: 2 },
+    };
+    data.layout = { width: 420, bodyHeight: 180, appendixHeight: 260 };
+
+    expect(addNodeCommand("plugin-node", data, { x: 80, y: 120 })).toEqual({
+      kind: "add_node",
+      node: {
+        artifact_type_bindings: [
+          {
+            variable: "T",
+            artifact_type: { id: "table.data", schema_version: 2 },
+          },
+        ],
+        config: { nested: { threshold: 3 } },
+        id: "plugin-node",
+        input_plugs: [],
+        layout: { width: 420, body_height: 180, appendix_height: 260 },
+        operator_id: "reports.render",
+        operator_version: 7,
+        plugin_release: {
+          scope: "system",
+          slug: "reports",
+          revision: 11,
+        },
+        position: { x: 80, y: 120 },
+      },
+    });
+  });
+
   it("does not author a move while dragging", () => {
     expect(graphCommandsFromNodeChanges([{
       id: "source",

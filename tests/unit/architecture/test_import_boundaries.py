@@ -5,28 +5,40 @@ from typing import cast
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
+SYSTEM_PLUGIN_FAMILIES = (
+    "arithmetic",
+    "image",
+    "sequence",
+    "text",
+    "schema",
+    "prompt",
+    "table",
+    "gis",
+    "llm",
+    "ocr",
+    "sql",
+)
+SYSTEM_PLUGIN_IMPORTS = tuple(
+    f"grafy_plugin_{family}" for family in SYSTEM_PLUGIN_FAMILIES
+)
 FORBIDDEN_CORE_IMPORTS = (
     "aiosqlite",
     "alembic",
     "asyncpg",
     "fastapi",
-    "mistralai",
     "grafy_api",
     "grafy_persistence",
-    "grafy_plugin_gis",
-    "grafy_plugin_llm",
-    "grafy_plugin_ocr",
-    "grafy_plugin_sql",
+    *SYSTEM_PLUGIN_IMPORTS,
     "grafy_storage",
     "sqlalchemy",
 )
-FORBIDDEN_OCR_PLUGIN_IMPORTS = (
+FORBIDDEN_PLUGIN_OUTER_LAYER_IMPORTS = (
     "grafy_api",
+    "grafy_mcp",
+    "grafy_persistence",
     "grafy_storage",
 )
-FORBIDDEN_LLM_PLUGIN_IMPORTS = FORBIDDEN_OCR_PLUGIN_IMPORTS
 FORBIDDEN_API_PLUGIN_IMPORTS = (
-    "mistralai",
     "grafy_plugin_gis",
     "grafy_plugin_llm",
     "grafy_plugin_ocr",
@@ -92,29 +104,19 @@ def test_api_routes_are_organized_as_capability_slices() -> None:
         assert (routes_root / area / "services.py").is_file()
 
 
-def test_mistral_sdk_dependency_is_owned_by_optional_plugins() -> None:
+def test_optional_plugin_dependencies_are_not_owned_by_host_projects() -> None:
     root_document = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
     api_document = tomllib.loads((REPO_ROOT / "apps/api/pyproject.toml").read_text())
     core_document = tomllib.loads((REPO_ROOT / "libs/core/pyproject.toml").read_text())
-    plugin_document = tomllib.loads(
-        (REPO_ROOT / "plugins/ocr/pyproject.toml").read_text()
-    )
-    llm_plugin_document = tomllib.loads(
-        (REPO_ROOT / "plugins/llm/pyproject.toml").read_text()
-    )
 
     root_project = cast(dict[str, object], root_document["project"])
     api_project = cast(dict[str, object], api_document["project"])
     core_project = cast(dict[str, object], core_document["project"])
-    plugin_project = cast(dict[str, object], plugin_document["project"])
-    llm_plugin_project = cast(dict[str, object], llm_plugin_document["project"])
 
     root_dependencies = cast(list[str], root_project["dependencies"])
     root_extras = cast(dict[str, list[str]], root_project["optional-dependencies"])
     api_dependencies = cast(list[str], api_project["dependencies"])
     core_dependencies = cast(list[str], core_project["dependencies"])
-    plugin_dependencies = cast(list[str], plugin_project["dependencies"])
-    llm_plugin_dependencies = cast(list[str], llm_plugin_project["dependencies"])
 
     assert not any(
         requirement.startswith("grafy-plugin-ocr") for requirement in root_dependencies
@@ -124,9 +126,6 @@ def test_mistral_sdk_dependency_is_owned_by_optional_plugins() -> None:
     )
     assert not any(
         requirement.startswith("grafy-plugin-sql") for requirement in root_dependencies
-    )
-    assert not any(
-        requirement.startswith("mistralai") for requirement in root_dependencies
     )
     assert root_extras["ocr"] == ["grafy-plugin-ocr"]
     assert root_extras["llm"] == ["grafy-plugin-llm"]
@@ -139,16 +138,6 @@ def test_mistral_sdk_dependency_is_owned_by_optional_plugins() -> None:
             )
             for requirement in dependencies
         )
-        assert not any(
-            requirement.startswith("mistralai") for requirement in dependencies
-        )
-
-    assert any(
-        requirement.startswith("mistralai") for requirement in plugin_dependencies
-    )
-    assert any(
-        requirement.startswith("mistralai") for requirement in llm_plugin_dependencies
-    )
 
 
 def test_relational_dependencies_are_owned_by_persistence() -> None:
@@ -197,13 +186,7 @@ def test_persistence_does_not_import_api_or_plugins() -> None:
 
     for path in persistence_root.rglob("*.py"):
         text = path.read_text()
-        for forbidden in (
-            "grafy_api",
-            "grafy_plugin_gis",
-            "grafy_plugin_llm",
-            "grafy_plugin_ocr",
-            "grafy_plugin_sql",
-        ):
+        for forbidden in ("grafy_api", *SYSTEM_PLUGIN_IMPORTS):
             if f"import {forbidden}" in text or f"from {forbidden}" in text:
                 offenders.append(f"{path.relative_to(REPO_ROOT)}: {forbidden}")
 
@@ -223,41 +206,31 @@ def test_api_host_does_not_import_optional_plugin_implementations() -> None:
     assert offenders == []
 
 
-def test_ocr_plugin_depends_on_core_ports_not_outer_layers() -> None:
-    plugin_root = REPO_ROOT / "plugins/ocr/src/grafy_plugin_ocr"
+def test_system_plugins_depend_on_core_not_outer_layers() -> None:
     offenders: list[str] = []
 
-    for path in plugin_root.rglob("*.py"):
-        text = path.read_text()
-        for forbidden in FORBIDDEN_OCR_PLUGIN_IMPORTS:
-            if f"import {forbidden}" in text or f"from {forbidden}" in text:
-                offenders.append(f"{path.relative_to(REPO_ROOT)}: {forbidden}")
+    for family in SYSTEM_PLUGIN_FAMILIES:
+        plugin_root = REPO_ROOT / "plugins" / family / "src" / f"grafy_plugin_{family}"
+        for path in plugin_root.rglob("*.py"):
+            text = path.read_text()
+            for forbidden in FORBIDDEN_PLUGIN_OUTER_LAYER_IMPORTS:
+                if f"import {forbidden}" in text or f"from {forbidden}" in text:
+                    offenders.append(f"{path.relative_to(REPO_ROOT)}: {forbidden}")
 
     assert offenders == []
 
 
-def test_llm_plugin_depends_on_core_ports_not_outer_layers() -> None:
-    plugin_root = REPO_ROOT / "plugins/llm/src/grafy_plugin_llm"
+def test_system_plugins_do_not_import_other_plugin_implementations() -> None:
     offenders: list[str] = []
 
-    for path in plugin_root.rglob("*.py"):
-        text = path.read_text()
-        for forbidden in FORBIDDEN_LLM_PLUGIN_IMPORTS:
-            if f"import {forbidden}" in text or f"from {forbidden}" in text:
-                offenders.append(f"{path.relative_to(REPO_ROOT)}: {forbidden}")
-
-    assert offenders == []
-
-
-def test_sql_plugin_depends_on_core_ports_not_outer_layers() -> None:
-    plugin_root = REPO_ROOT / "plugins/sql/src/grafy_plugin_sql"
-    offenders: list[str] = []
-
-    for path in plugin_root.rglob("*.py"):
-        text = path.read_text()
-        for forbidden in FORBIDDEN_LLM_PLUGIN_IMPORTS:
-            if f"import {forbidden}" in text or f"from {forbidden}" in text:
-                offenders.append(f"{path.relative_to(REPO_ROOT)}: {forbidden}")
+    for family in SYSTEM_PLUGIN_FAMILIES:
+        plugin_root = REPO_ROOT / "plugins" / family / "src" / f"grafy_plugin_{family}"
+        forbidden_imports = set(SYSTEM_PLUGIN_IMPORTS) - {f"grafy_plugin_{family}"}
+        for path in plugin_root.rglob("*.py"):
+            text = path.read_text()
+            for forbidden in sorted(forbidden_imports):
+                if f"import {forbidden}" in text or f"from {forbidden}" in text:
+                    offenders.append(f"{path.relative_to(REPO_ROOT)}: {forbidden}")
 
     assert offenders == []
 
@@ -265,9 +238,10 @@ def test_sql_plugin_depends_on_core_ports_not_outer_layers() -> None:
 def test_retained_python_sources_do_not_use_legacy_namespace() -> None:
     source_roots = (
         REPO_ROOT / "libs/core/src/grafy_core",
-        REPO_ROOT / "plugins/llm/src/grafy_plugin_llm",
-        REPO_ROOT / "plugins/ocr/src/grafy_plugin_ocr",
-        REPO_ROOT / "plugins/sql/src/grafy_plugin_sql",
+        *(
+            REPO_ROOT / "plugins" / family / "src" / f"grafy_plugin_{family}"
+            for family in SYSTEM_PLUGIN_FAMILIES
+        ),
         REPO_ROOT / "apps/api/src/grafy_api",
     )
     offenders: list[str] = []
@@ -282,3 +256,26 @@ def test_retained_python_sources_do_not_use_legacy_namespace() -> None:
                 offenders.append(str(relative_path))
 
     assert offenders == []
+
+
+def test_converged_operator_implementations_are_owned_by_plugin_projects() -> None:
+    for module in (
+        "arithmetic.py",
+        "images.py",
+        "prompts.py",
+        "schemas.py",
+        "sequences.py",
+        "tables.py",
+        "text.py",
+    ):
+        assert not (REPO_ROOT / "libs/core/src/grafy_core/operators" / module).exists()
+
+    for family in SYSTEM_PLUGIN_FAMILIES:
+        project_root = REPO_ROOT / "plugins" / family
+        document = tomllib.loads((project_root / "pyproject.toml").read_text())
+        project = cast(dict[str, object], document["project"])
+
+        assert (project_root / "uv.lock").is_file()
+        assert "grafy-core==0.1.0" in cast(list[str], project["dependencies"])
+        assert (project_root / "wheels/grafy_core-0.1.0-py3-none-any.whl").is_file()
+        assert "workspace = true" not in (project_root / "pyproject.toml").read_text()

@@ -55,6 +55,7 @@ function node(
     title: id.replaceAll("_", " "),
     description: `Test node ${id}`,
     catalog_visible: true,
+    runnable: true,
     config_schema: {},
     input_schema: {},
     output_schema: {},
@@ -721,6 +722,7 @@ describe("input-plug binding presentation", () => {
           {
             key: { id: "scalar.text", schema_version: 1 },
             title: "Text",
+            bundle: { format: "inline-json", version: 1 },
             payload_schema: {},
             field_projections: [
               {

@@ -25,6 +25,8 @@ export type FieldProjection =
   Schemas["FieldProjectionResponse"];
 export type Port = Schemas["PortResponse"];
 export type NodeSpec = Schemas["NodeSpecResponse"];
+export type PluginReleasePin = Schemas["PluginReleasePinModel"];
+export type PluginReleaseScope = Schemas["PluginReleaseScope"];
 export type ImageUploadItem =
   Schemas["ImageUploadItemResponse"];
 export type InputPlugInput = Schemas["RunInputPlugRequest"];
@@ -122,7 +124,7 @@ export type GraphExecutionList =
   paths["/v1/workspaces/{workspace_id}/graphs/{graph_id}/executions"]["get"]["responses"][200]["content"]["application/json"];
 export type GraphMaterializations =
   Schemas["GraphMaterializationsResponse"];
-export type SavedGraphNode = Schemas["SavedGraphNodeModel-Output"];
+export type SavedGraphNode = Schemas["SavedGraphNodeModel"];
 export type SavedGraphEdge = Schemas["SavedGraphEdgeModel"];
 export type SavedGraphSummary =
   Schemas["SavedGraphSummaryResponse"];

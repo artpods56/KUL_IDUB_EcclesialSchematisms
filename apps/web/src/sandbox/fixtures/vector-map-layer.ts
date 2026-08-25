@@ -32,6 +32,7 @@ function artifact(
   return {
     key: { id, schema_version: 1 },
     title,
+    bundle: { format: "inline-json", version: 1 },
     payload_schema,
     field_projections: [],
   };
@@ -59,6 +60,7 @@ export const VECTOR_LAYER_SPEC: NodeSpec = {
   inputs: [features],
   outputs: [LAYER_PORT],
   catalog_visible: true,
+  runnable: true,
 };
 
 export const VECTOR_LAYER_FIELDS: readonly SchemaField[] = [
@@ -95,7 +97,18 @@ export const VECTOR_LAYER_FIELDS: readonly SchemaField[] = [
 export const GEO_MAP_LAYER_SCHEMA = geoMapLayerSchema as Record<string, unknown>;
 
 export const VECTOR_LAYER_REGISTRY: NodeRegistry = {
-  plugins: [{ slug: "gis", title: "GIS", origin: "external" }],
+  plugins: [
+    {
+      slug: "gis",
+      title: "GIS",
+      entry_kind: "plugin",
+      scope: "system",
+      distribution: "optional",
+      revision: 1,
+      plugin_release: { scope: "system", slug: "gis", revision: 1 },
+      runnable: true,
+    },
+  ],
   artifact_types: [
     artifact("geo.feature_collection", "GeoJSON feature collection"),
     artifact("geo.map_layer", "Map layer", GEO_MAP_LAYER_SCHEMA),

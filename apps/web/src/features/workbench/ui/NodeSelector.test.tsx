@@ -57,6 +57,8 @@ function node(
     inputs,
     outputs,
     catalog_visible: true,
+    plugin_revision: null,
+    runnable: true,
     ...overrides,
   };
 }
@@ -96,9 +98,37 @@ function registry(): NodeRegistry {
 
   return {
     plugins: [
-      { slug: "builtin", title: "Built-in", origin: "builtin" },
-      { slug: "graph.module", title: "Workspace library", origin: "module" },
-      { slug: "external.ocr", title: "OCR", origin: "external" },
+      {
+        slug: "builtin",
+        title: "Built-in",
+        entry_kind: "plugin",
+        scope: "system",
+        distribution: "bundled",
+        revision: 1,
+        plugin_release: { scope: "system", slug: "builtin", revision: 1 },
+        runnable: true,
+      },
+      {
+        slug: "graph.module",
+        title: "Workspace library",
+        entry_kind: "module",
+        revision: null,
+        runnable: true,
+      },
+      {
+        slug: "external.ocr",
+        title: "OCR",
+        entry_kind: "plugin",
+        scope: "system",
+        distribution: "optional",
+        revision: 1,
+        plugin_release: {
+          scope: "system",
+          slug: "external.ocr",
+          revision: 1,
+        },
+        runnable: true,
+      },
     ],
     artifact_types: [
       "scalar.text",
@@ -109,6 +139,7 @@ function registry(): NodeRegistry {
     ].map((id) => ({
       key: { id, schema_version: 1 },
       title: id,
+      bundle: { format: "inline-json" as const, version: 1 },
       payload_schema: {},
       field_projections: [],
     })),
@@ -587,6 +618,58 @@ describe("NodeSelector", () => {
     expect(dialog().textContent).toContain(
       "Viewers can inspect nodes but cannot edit this graph.",
     );
+  });
+
+  it("shows catalog-only Plugin releases but prevents insertion", async () => {
+    const catalog = registry();
+    const onAddNode = vi.fn();
+    await renderSelector({
+      registry: {
+        ...catalog,
+        plugins: [
+          ...catalog.plugins,
+          {
+            slug: "notes",
+            title: "Notes",
+            entry_kind: "plugin",
+            scope: "workspace",
+            revision: 1,
+            plugin_release: {
+              scope: "workspace",
+              slug: "notes",
+              revision: 1,
+            },
+            runnable: false,
+          },
+        ],
+        nodes: [
+          ...catalog.nodes,
+          node("notes.summary.render", "Render summary", "notes", [], [], {
+            plugin_revision: 1,
+            plugin_release: {
+              scope: "workspace",
+              slug: "notes",
+              revision: 1,
+            },
+            runnable: false,
+            non_runnable_reason: "missing_runtime_artifact",
+            non_runnable_detail: "This release has no immutable runtime image.",
+          }),
+        ],
+      },
+      onAddNode,
+    });
+
+    await enterSearch("Render summary");
+    const add = buttonNamed("Add Render summary");
+    expect(dialog().textContent).toContain("Catalog preview only.");
+    expect(dialog().textContent).toContain(
+      "This release has no immutable runtime image.",
+    );
+    expect(add.disabled).toBe(true);
+    expect(add.title).toBe("This release has no immutable runtime image.");
+    await React.act(async () => add.click());
+    expect(onAddNode).not.toHaveBeenCalled();
   });
 
   it("closes on Escape and lets the dialog primitive restore opener focus", async () => {

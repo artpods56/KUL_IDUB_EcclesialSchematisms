@@ -15,52 +15,13 @@ install:
 
 # Install all optional plugins and the web workspace.
 install-all:
-    uv sync --extra gis --extra llm --extra ocr --extra sql
+    uv sync --all-extras
     npm --prefix apps/web ci
 
-# Install the OCR plugin and the web workspace.
-install-ocr:
-    uv sync --extra ocr
-    npm --prefix apps/web ci
-
-# Install the GIS plugin and the web workspace.
-install-gis:
-    uv sync --extra gis
-    npm --prefix apps/web ci
-
-# Install the LLM plugin and the web workspace.
-install-llm:
-    uv sync --extra llm
-    npm --prefix apps/web ci
-
-# Install the SQL plugin and the web workspace.
-install-sql:
-    uv sync --extra sql
-    npm --prefix apps/web ci
-
-# Start the API with the default plugin set.
+# Start the API. System host Plugins are loaded only from the configured exact
+# deployment manifest; installed packages are never discovered ambiently.
 api: db-upgrade
     uv run --exact --no-dev --package grafy-api uvicorn grafy_api.main:app --reload --host 0.0.0.0 --port 8000
-
-# Start the API with the OCR plugin.
-api-ocr: db-upgrade
-    uv run --exact --no-dev --extra ocr uvicorn grafy_api.main:app --reload --host 0.0.0.0 --port 8000
-
-# Start the API with the GIS plugin.
-api-gis: db-upgrade
-    uv run --exact --no-dev --extra gis uvicorn grafy_api.main:app --reload --host 0.0.0.0 --port 8000
-
-# Start the API with the LLM plugin.
-api-llm: db-upgrade
-    uv run --exact --no-dev --extra llm uvicorn grafy_api.main:app --reload --host 0.0.0.0 --port 8000
-
-# Start the API with the SQL plugin.
-api-sql: db-upgrade
-    uv run --exact --no-dev --extra sql uvicorn grafy_api.main:app --reload --host 0.0.0.0 --port 8000
-
-# Start the API with every optional plugin.
-api-all: db-upgrade
-    uv run --exact --no-dev --extra llm --extra gis --extra ocr --extra sql uvicorn grafy_api.main:app --reload --host 0.0.0.0 --port 8000
 
 # Start the web development server.
 web:
@@ -68,17 +29,17 @@ web:
 
 # Run backend and web tests.
 test:
-    uv run --extra gis --extra llm --extra ocr --extra sql pytest
+    uv run --all-extras pytest
     npm --prefix apps/web test
 
 # Run Python and web linters.
 lint:
-    uv run ruff check apps/api/src libs/core/src libs/persistence/src libs/storage/src plugins/gis/src plugins/llm/src plugins/ocr/src plugins/sql/src infra/db/migrations scripts tests
+    uv run ruff check apps/api/src libs/core/src libs/persistence/src libs/storage/src plugins/*/src infra/db/migrations scripts tests
     npm --prefix apps/web run lint
 
 # Run Python and TypeScript type checks.
 typecheck:
-    uv run --extra gis --extra llm --extra ocr --extra sql basedpyright
+    uv run --all-extras basedpyright
     npm --prefix apps/web run typecheck
 
 # Verify the generated API client contract.

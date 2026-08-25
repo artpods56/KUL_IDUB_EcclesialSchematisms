@@ -1011,6 +1011,16 @@ export interface components {
             readonly kind: "add_node";
             readonly node: components["schemas"]["SavedGraphNode"];
         };
+        /** ArtifactBundleContractResponse */
+        readonly ArtifactBundleContractResponse: {
+            /**
+             * Format
+             * @enum {string}
+             */
+            readonly format: "inline-json" | "table-bundle" | "binary-file";
+            /** Version */
+            readonly version: number;
+        };
         /** ArtifactConversionKeyResponse */
         readonly ArtifactConversionKeyResponse: {
             /** Id */
@@ -1142,11 +1152,14 @@ export interface components {
         };
         /** ArtifactTypeSpecResponse */
         readonly ArtifactTypeSpecResponse: {
+            readonly bundle: components["schemas"]["ArtifactBundleContractResponse"];
             /** Export Formats */
             readonly export_formats?: readonly components["schemas"]["ArtifactExportFormatResponse"][];
             /** Field Projections */
             readonly field_projections: readonly components["schemas"]["FieldProjectionResponse"][];
             readonly key: components["schemas"]["ArtifactTypeKeyResponse"];
+            /** Materialized Json Type */
+            readonly materialized_json_type?: ("string" | "integer") | null;
             /** Payload Schema */
             readonly payload_schema: {
                 readonly [key: string]: unknown;
@@ -1211,8 +1224,8 @@ export interface components {
             /** Name */
             readonly name: string;
             /** Nodes */
-            readonly nodes: readonly components["schemas"]["SavedGraphNodeModel-Output"][];
-            readonly presentation?: components["schemas"]["GraphPresentationDocumentModel-Output"];
+            readonly nodes: readonly components["schemas"]["SavedGraphNodeModel"][];
+            readonly presentation?: components["schemas"]["GraphPresentationDocumentModel"];
             /**
              * Room Epoch
              * Format: uuid
@@ -1273,8 +1286,8 @@ export interface components {
             /** Name */
             readonly name: string;
             /** Nodes */
-            readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel-Input"][];
-            readonly presentation?: components["schemas"]["GraphPresentationDocumentModel-Input"];
+            readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel"][];
+            readonly presentation?: components["schemas"]["GraphPresentationDocumentModel"];
         };
         /** CreateTemplateRequest */
         readonly CreateTemplateRequest: {
@@ -1732,6 +1745,10 @@ export interface components {
              * Format: date-time
              */
             readonly completed_at: string;
+            /** Diagnostics */
+            readonly diagnostics?: {
+                readonly [key: string]: unknown;
+            } | null;
             /** Error */
             readonly error: string | null;
             /** Node Id */
@@ -1989,18 +2006,7 @@ export interface components {
             readonly viewers: readonly components["schemas"]["GraphPresentationViewer"][];
         };
         /** GraphPresentationDocumentModel */
-        readonly "GraphPresentationDocumentModel-Input": {
-            /** Annotations */
-            readonly annotations?: readonly components["schemas"]["GraphPresentationAnnotationModel"][];
-            /** Bindings */
-            readonly bindings?: readonly components["schemas"]["GraphPresentationBindingModel"][];
-            /** Links */
-            readonly links?: readonly components["schemas"]["GraphPresentationLinkModel"][];
-            /** Viewers */
-            readonly viewers?: readonly components["schemas"]["GraphPresentationViewerModel"][];
-        };
-        /** GraphPresentationDocumentModel */
-        readonly "GraphPresentationDocumentModel-Output": {
+        readonly GraphPresentationDocumentModel: {
             /** Annotations */
             readonly annotations?: readonly components["schemas"]["GraphPresentationAnnotationModel"][];
             /** Bindings */
@@ -2306,6 +2312,10 @@ export interface components {
             readonly module_graph_revision?: number | null;
             /** Module Id */
             readonly module_id?: string | null;
+            /** Non Runnable Detail */
+            readonly non_runnable_detail?: string | null;
+            /** Non Runnable Reason */
+            readonly non_runnable_reason?: ("revoked" | "missing_runtime_artifact" | "incompatible_protocol" | "unsupported_runtime_profile" | "unsupported_capabilities" | "unsupported_artifact_type" | "plugin_runtime_unavailable" | "host_binding_mismatch") | ("deprecated" | "withdrawn") | null;
             /** Operator Id */
             readonly operator_id: string;
             /** Operator Version */
@@ -2316,9 +2326,17 @@ export interface components {
             };
             /** Outputs */
             readonly outputs: readonly components["schemas"]["PortResponse"][];
+            readonly plugin_release?: components["schemas"]["PluginReleasePinModel"] | null;
+            /** Plugin Revision */
+            readonly plugin_revision?: number | null;
             /** Plugin Slug */
             readonly plugin_slug: string;
             readonly publication_state?: components["schemas"]["ModulePublicationState"] | null;
+            /**
+             * Runnable
+             * @default true
+             */
+            readonly runnable: boolean;
             /** Secret Inputs */
             readonly secret_inputs?: readonly components["schemas"]["NodeSecretInputResponse"][];
             /** Title */
@@ -2423,13 +2441,45 @@ export interface components {
             readonly value: components["schemas"]["ArtifactRef"] | components["schemas"]["ArtifactRefSequence"];
         };
         /**
-         * PluginOrigin
+         * PluginDistribution
          * @enum {string}
          */
-        readonly PluginOrigin: "builtin" | "external" | "module";
+        readonly PluginDistribution: "bundled" | "optional" | "published";
+        /** PluginReleasePinModel */
+        readonly PluginReleasePinModel: {
+            /** Revision */
+            readonly revision: number;
+            readonly scope: components["schemas"]["PluginReleaseScope"];
+            /** Slug */
+            readonly slug: string;
+        };
+        /**
+         * PluginReleaseScope
+         * @enum {string}
+         */
+        readonly PluginReleaseScope: "system" | "workspace";
         /** PluginSpecResponse */
         readonly PluginSpecResponse: {
-            readonly origin: components["schemas"]["PluginOrigin"];
+            readonly distribution?: components["schemas"]["PluginDistribution"] | null;
+            /**
+             * Entry Kind
+             * @default plugin
+             * @enum {string}
+             */
+            readonly entry_kind: "plugin" | "module";
+            /** Non Runnable Detail */
+            readonly non_runnable_detail?: string | null;
+            /** Non Runnable Reason */
+            readonly non_runnable_reason?: ("revoked" | "missing_runtime_artifact" | "incompatible_protocol" | "unsupported_runtime_profile" | "unsupported_capabilities" | "unsupported_artifact_type" | "plugin_runtime_unavailable" | "host_binding_mismatch") | ("deprecated" | "withdrawn") | null;
+            readonly plugin_release?: components["schemas"]["PluginReleasePinModel"] | null;
+            /** Revision */
+            readonly revision?: number | null;
+            /**
+             * Runnable
+             * @default true
+             */
+            readonly runnable: boolean;
+            readonly scope?: components["schemas"]["PluginReleaseScope"] | null;
             /** Slug */
             readonly slug: string;
             /** Title */
@@ -2579,6 +2629,22 @@ export interface components {
         readonly RunExecutionCapacityErrorResponse: {
             readonly detail: components["schemas"]["RunExecutionCapacityErrorDetail"];
         };
+        /** RunExecutionQueueFullErrorDetail */
+        readonly RunExecutionQueueFullErrorDetail: {
+            /**
+             * Error Code
+             * @constant
+             */
+            readonly error_code: "execution_queue_full";
+            /** Max Pending Graphs */
+            readonly max_pending_graphs: number;
+            /** Message */
+            readonly message: string;
+        };
+        /** RunExecutionQueueFullErrorResponse */
+        readonly RunExecutionQueueFullErrorResponse: {
+            readonly detail: components["schemas"]["RunExecutionQueueFullErrorDetail"];
+        };
         /** RunExecutionResponse */
         readonly RunExecutionResponse: {
             /** Active Node Id */
@@ -2590,6 +2656,8 @@ export interface components {
              * Format: uuid
              */
             readonly execution_id: string;
+            /** Queue Position */
+            readonly queue_position?: number | null;
             readonly result: components["schemas"]["RunResponse"] | null;
             /**
              * Status
@@ -2620,6 +2688,7 @@ export interface components {
             readonly operator_id: string;
             /** Operator Version */
             readonly operator_version: number;
+            readonly plugin_release?: components["schemas"]["PluginReleasePinModel"] | null;
         };
         /** RunNodeResponse */
         readonly RunNodeResponse: {
@@ -2738,10 +2807,10 @@ export interface components {
             readonly presentation?: components["schemas"]["GraphPresentationDocument"];
             /**
              * Schema Version
-             * @default 4
+             * @default 5
              * @constant
              */
-            readonly schema_version: 4;
+            readonly schema_version: 5;
         };
         /** SavedGraphEdge */
         readonly SavedGraphEdge: {
@@ -2848,6 +2917,7 @@ export interface components {
             readonly operator_id: string;
             /** Operator Version */
             readonly operator_version: number;
+            readonly plugin_release_pin?: components["schemas"]["SavedGraphPluginReleasePin"] | null;
             readonly position: components["schemas"]["GraphPoint"];
         };
         /**
@@ -2872,7 +2942,7 @@ export interface components {
             readonly width?: number | null;
         };
         /** SavedGraphNodeModel */
-        readonly "SavedGraphNodeModel-Input": {
+        readonly SavedGraphNodeModel: {
             /** Artifact Type Bindings */
             readonly artifact_type_bindings?: readonly components["schemas"]["ArtifactTypeBindingModel"][];
             /** Config */
@@ -2888,26 +2958,23 @@ export interface components {
             readonly operator_id: string;
             /** Operator Version */
             readonly operator_version: number;
+            readonly plugin_release?: components["schemas"]["PluginReleasePinModel"] | null;
             readonly position: components["schemas"]["GraphPointModel"];
         };
-        /** SavedGraphNodeModel */
-        readonly "SavedGraphNodeModel-Output": {
-            /** Artifact Type Bindings */
-            readonly artifact_type_bindings?: readonly components["schemas"]["ArtifactTypeBindingModel"][];
-            /** Config */
-            readonly config?: {
-                readonly [key: string]: unknown;
-            };
-            /** Id */
-            readonly id: string;
-            /** Input Plugs */
-            readonly input_plugs?: readonly components["schemas"]["SavedGraphInputPlugModel"][];
-            readonly layout?: components["schemas"]["SavedGraphNodeLayoutModel"] | null;
-            /** Operator Id */
-            readonly operator_id: string;
-            /** Operator Version */
-            readonly operator_version: number;
-            readonly position: components["schemas"]["GraphPointModel"];
+        /**
+         * SavedGraphPluginReleasePin
+         * @description Exact scoped Plugin release identity pinned on one graph node.
+         *
+         *     The pin is independent from the operator identity: publishing revision
+         *     N+1 never moves a node pinned to revision N. Workspace membership for a
+         *     Workspace release comes from the owning graph.
+         */
+        readonly SavedGraphPluginReleasePin: {
+            /** Revision */
+            readonly revision: number;
+            readonly scope: components["schemas"]["PluginReleaseScope"];
+            /** Slug */
+            readonly slug: string;
         };
         /** SavedGraphProjection */
         readonly SavedGraphProjection: {
@@ -2936,8 +3003,8 @@ export interface components {
             /** Name */
             readonly name: string;
             /** Nodes */
-            readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel-Output"][];
-            readonly presentation?: components["schemas"]["GraphPresentationDocumentModel-Output"];
+            readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel"][];
+            readonly presentation?: components["schemas"]["GraphPresentationDocumentModel"];
             /** Revision */
             readonly revision: number;
             /**
@@ -3029,7 +3096,7 @@ export interface components {
         /** SubmitGraphCommandRequest */
         readonly SubmitGraphCommandRequest: {
             /** Command */
-            readonly command: components["schemas"]["RenameGraphCommand"] | components["schemas"]["AddNodeCommand"] | components["schemas"]["DuplicateNodeCommand"] | components["schemas"]["RemoveNodesCommand"] | components["schemas"]["MoveNodesCommand"] | components["schemas"]["UpdateNodeConfigurationCommand"] | components["schemas"]["UpdateNodeLayoutCommand"] | components["schemas"]["SetNodeInputPlugsCommand"] | components["schemas"]["UpdateNodeConfigurationAndInputPlugsCommand"] | components["schemas"]["SetNodeArtifactTypeBindingCommand"] | components["schemas"]["ClearNodeArtifactTypeBindingCommand"] | components["schemas"]["AddEdgeCommand"] | components["schemas"]["UpdateEdgeCommand"] | components["schemas"]["RemoveEdgesCommand"] | components["schemas"]["ReplaceDocumentCommand"] | components["schemas"]["ReplacePresentationCommand"] | components["schemas"]["MoveArtifactViewersCommand"] | components["schemas"]["MoveAnnotationsCommand"];
+            readonly command: components["schemas"]["RenameGraphCommand"] | components["schemas"]["AddNodeCommand"] | components["schemas"]["DuplicateNodeCommand"] | components["schemas"]["RemoveNodesCommand"] | components["schemas"]["MoveNodesCommand"] | components["schemas"]["UpdateNodeConfigurationCommand"] | components["schemas"]["UpdateNodeLayoutCommand"] | components["schemas"]["UpdateNodePluginReleaseCommand"] | components["schemas"]["SetNodeInputPlugsCommand"] | components["schemas"]["UpdateNodeConfigurationAndInputPlugsCommand"] | components["schemas"]["SetNodeArtifactTypeBindingCommand"] | components["schemas"]["ClearNodeArtifactTypeBindingCommand"] | components["schemas"]["AddEdgeCommand"] | components["schemas"]["UpdateEdgeCommand"] | components["schemas"]["RemoveEdgesCommand"] | components["schemas"]["ReplaceDocumentCommand"] | components["schemas"]["ReplacePresentationCommand"] | components["schemas"]["MoveArtifactViewersCommand"] | components["schemas"]["MoveAnnotationsCommand"];
             /**
              * Command Id
              * Format: uuid
@@ -3313,6 +3380,18 @@ export interface components {
             /** Node Id */
             readonly node_id: string;
         };
+        /** UpdateNodePluginReleaseCommand */
+        readonly UpdateNodePluginReleaseCommand: {
+            readonly expected_plugin_release_pin: components["schemas"]["SavedGraphPluginReleasePin"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            readonly kind: "update_node_plugin_release";
+            /** Node Id */
+            readonly node_id: string;
+            readonly plugin_release_pin: components["schemas"]["SavedGraphPluginReleasePin"];
+        };
         /** UpdateSavedGraphRequest */
         readonly UpdateSavedGraphRequest: {
             /** Edges */
@@ -3322,8 +3401,8 @@ export interface components {
             /** Name */
             readonly name: string;
             /** Nodes */
-            readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel-Input"][];
-            readonly presentation?: components["schemas"]["GraphPresentationDocumentModel-Input"];
+            readonly nodes?: readonly components["schemas"]["SavedGraphNodeModel"][];
+            readonly presentation?: components["schemas"]["GraphPresentationDocumentModel"];
         };
         /** UpdateTemplateMetadataRequest */
         readonly UpdateTemplateMetadataRequest: {
@@ -3375,7 +3454,7 @@ export interface components {
          * WorkspaceCapability
          * @enum {string}
          */
-        readonly WorkspaceCapability: "view_graph" | "view_artifacts" | "view_materializations" | "view_history" | "view_execution" | "join_graph_room" | "publish_presence" | "create_graph" | "edit_graph" | "checkpoint_graph" | "execute_graph" | "cancel_execution" | "publish_module" | "manage_module_library" | "create_template" | "manage_template_library" | "manage_secrets" | "delete_graph" | "manage_members" | "rename_workspace";
+        readonly WorkspaceCapability: "view_graph" | "view_artifacts" | "view_materializations" | "view_history" | "view_execution" | "join_graph_room" | "publish_presence" | "create_graph" | "edit_graph" | "checkpoint_graph" | "execute_graph" | "cancel_execution" | "publish_plugin" | "publish_module" | "manage_module_library" | "create_template" | "manage_template_library" | "manage_secrets" | "delete_graph" | "manage_members" | "rename_workspace";
         /** WorkspaceCreateRequest */
         readonly WorkspaceCreateRequest: {
             /** Name */
@@ -4426,7 +4505,9 @@ export interface operations {
     readonly start_graph_execution_v1_workspaces__workspace_id__executions_post: {
         readonly parameters: {
             readonly query?: never;
-            readonly header?: never;
+            readonly header?: {
+                readonly "Idempotency-Key"?: string | null;
+            };
             readonly path: {
                 readonly workspace_id: string;
             };
@@ -4456,7 +4537,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description The process-wide active execution limit is exhausted */
+            /** @description The durable pending queue is full, or a non-durable draft run cannot acquire active capacity */
             readonly 429: {
                 headers: {
                     /** @description Minimum delay before retrying, in seconds */
@@ -4464,7 +4545,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["RunExecutionCapacityErrorResponse"];
+                    readonly "application/json": components["schemas"]["RunExecutionQueueFullErrorResponse"] | components["schemas"]["RunExecutionCapacityErrorResponse"];
                 };
             };
         };

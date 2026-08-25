@@ -58,6 +58,7 @@ function nodeSpec(
     title: operatorId,
     description: operatorId,
     catalog_visible: true,
+    runnable: true,
     config_schema: {},
     input_schema: {},
     output_schema: {},
@@ -83,6 +84,7 @@ function registry(
       title: id,
       payload_schema: {},
       field_projections: [],
+      bundle: { format: "inline-json", version: 1 },
     })),
     artifact_conversions: [
       conversion("x-to-z", "x", "z"),
@@ -177,6 +179,61 @@ describe("saved conversion paths", () => {
   });
 });
 
+describe("scoped Plugin node hydration", () => {
+  it("selects the matching scope and slug when operator identities overlap", () => {
+    const base = graphWithEdge({ conversion_path: conversionPath });
+    const graph: SavedGraph = {
+      ...base,
+      nodes: (base.nodes ?? []).map((node) =>
+        node.id === "source-node"
+          ? {
+              ...node,
+              plugin_release: {
+                scope: "system",
+                slug: "reports",
+                revision: 1,
+              },
+            }
+          : node,
+      ),
+    };
+    const liveRegistry = registry();
+    const systemSpec: NodeSpec = {
+      ...nodeSpec("source", "output", "x"),
+      plugin_slug: "reports",
+      plugin_revision: 3,
+      plugin_release: { scope: "system", slug: "reports", revision: 3 },
+      title: "System report source",
+    };
+    const workspaceSpec: NodeSpec = {
+      ...nodeSpec("source", "output", "x"),
+      plugin_slug: "reports",
+      plugin_revision: 5,
+      plugin_release: {
+        scope: "workspace",
+        slug: "reports",
+        revision: 5,
+      },
+      title: "Workspace report source",
+    };
+    const hydrated = hydrateSavedGraph(graph, {
+      ...liveRegistry,
+      nodes: [
+        systemSpec,
+        workspaceSpec,
+        ...liveRegistry.nodes.filter((spec) => spec.operator_id !== "source"),
+      ],
+    });
+
+    expect(hydrated.nodes[0]?.data.spec.title).toBe("System report source");
+    expect(hydrated.nodes[0]?.data.pluginReleasePin).toEqual({
+      scope: "system",
+      slug: "reports",
+      revision: 1,
+    });
+  });
+});
+
 describe("unavailable saved operators", () => {
   it("hydrates a placeholder and preserves its incident connection", () => {
     const base = graphWithEdge({ conversion_path: conversionPath });
@@ -187,6 +244,11 @@ describe("unavailable saved operators", () => {
           ? {
               ...node,
               operator_id: "gis.map.compose",
+              plugin_release: {
+                scope: "system",
+                slug: "gis",
+                revision: 4,
+              },
               config: { nested: { preserved: true } },
               input_plugs: [
                 { id: "historical-plug", port: "historical-input" },
@@ -231,6 +293,11 @@ describe("unavailable saved operators", () => {
       "Operator gis.map.compose@1 is unavailable. This saved node is preserved but cannot run.",
     );
     expect(sourceNode?.data.layout).toBeNull();
+    expect(sourceNode?.data.pluginReleasePin).toEqual({
+      scope: "system",
+      slug: "gis",
+      revision: 4,
+    });
     expect(edge?.sourceHandle).toContain("$compatibility::output");
     expect(decodeHandleId(edge?.sourceHandle)).toBeNull();
     expect(decodeHandleId(edge?.targetHandle)).toMatchObject({
@@ -578,6 +645,7 @@ function collectRegistry(): NodeRegistry {
     title: "Collect text",
     description: "Collect ordered text inputs.",
     catalog_visible: true,
+    runnable: true,
     config_schema: {},
     input_schema: {},
     output_schema: {},
@@ -605,6 +673,7 @@ function collectRegistry(): NodeRegistry {
         title: "Text",
         payload_schema: {},
         field_projections: [],
+        bundle: { format: "inline-json", version: 1 },
       },
     ],
     artifact_conversions: [],
@@ -696,6 +765,7 @@ function genericCollectRegistry(): NodeRegistry {
     title: "Collect",
     description: "Collect ordered artifacts.",
     catalog_visible: true,
+    runnable: true,
     config_schema: {},
     input_schema: {},
     output_schema: {},
@@ -738,6 +808,7 @@ function genericCollectRegistry(): NodeRegistry {
         title: "Integer",
         payload_schema: {},
         field_projections: [],
+        bundle: { format: "inline-json", version: 1 },
       },
     ],
     artifact_conversions: [],
@@ -927,6 +998,7 @@ describe("saved graph module nodes", () => {
       module_graph_id: moduleGraphId,
       module_graph_revision: revision,
       catalog_visible: catalogVisible,
+      runnable: true,
     };
   }
 
@@ -980,7 +1052,8 @@ describe("saved graph module nodes", () => {
       plugins: [{
         slug: "saved-graph-modules",
         title: "Modules",
-        origin: "module",
+        entry_kind: "module",
+        runnable: true,
       }],
       artifact_types: [
         {
@@ -988,12 +1061,14 @@ describe("saved graph module nodes", () => {
           title: "Image",
           payload_schema: {},
           field_projections: [],
+          bundle: { format: "inline-json", version: 1 },
         },
         {
           key: completionType,
           title: "Completion",
           payload_schema: {},
           field_projections: [],
+          bundle: { format: "inline-json", version: 1 },
         },
       ],
       artifact_conversions: [],

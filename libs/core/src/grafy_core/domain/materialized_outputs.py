@@ -32,11 +32,13 @@ def _utc_now() -> datetime:
 
 
 def _node_execution_signature(node: "SavedGraphNode") -> tuple[object, ...]:
+    pin = node.plugin_release_pin
     return (
         node.operator_id,
         node.operator_version,
         node.config_dict(),
         tuple((plug.id, plug.port) for plug in node.input_plugs),
+        None if pin is None else (pin.scope, pin.slug, pin.revision),
         tuple(
             (
                 binding.variable,

@@ -13,12 +13,102 @@ import {
 } from "../model/graph-document";
 import type { RoomGraphCommand } from "./protocol";
 
+type RoomSavedGraphNode = Extract<
+  RoomGraphCommand,
+  { readonly kind: "add_node" }
+>["node"];
+
+function toRoomSavedGraphNode(node: AuthoredGraphDocument["nodes"][number]): RoomSavedGraphNode {
+  return {
+    artifact_type_bindings: (node.artifact_type_bindings ?? []).map(
+      (binding) => ({
+        variable: binding.variable,
+        artifact_type: {
+          id: binding.artifact_type.id,
+          schema_version: binding.artifact_type.schema_version,
+        },
+      }),
+    ),
+    config: structuredClone(node.config ?? {}),
+    id: node.id,
+    input_plugs: (node.input_plugs ?? []).map((plug) => ({
+      id: plug.id,
+      port: plug.port,
+    })),
+    layout:
+      node.layout === null || node.layout === undefined
+        ? null
+        : {
+            appendix_height: node.layout.appendix_height ?? null,
+            body_height: node.layout.body_height ?? null,
+            width: node.layout.width ?? null,
+          },
+    operator_id: node.operator_id,
+    operator_version: node.operator_version,
+    plugin_release_pin:
+      node.plugin_release === null || node.plugin_release === undefined
+        ? null
+        : {
+            scope: node.plugin_release.scope,
+            slug: node.plugin_release.slug,
+            revision: node.plugin_release.revision,
+          },
+    position: {
+      x: node.position.x,
+      y: node.position.y,
+    },
+  };
+}
+
+function toRestSavedGraphNode(node: RoomSavedGraphNode): AuthoredGraphDocument["nodes"][number] {
+  return {
+    artifact_type_bindings: (node.artifact_type_bindings ?? []).map(
+      (binding) => ({
+        variable: binding.variable,
+        artifact_type: {
+          id: binding.artifact_type.id,
+          schema_version: binding.artifact_type.schema_version,
+        },
+      }),
+    ),
+    config: structuredClone(node.config ?? {}),
+    id: node.id,
+    input_plugs: (node.input_plugs ?? []).map((plug) => ({
+      id: plug.id,
+      port: plug.port,
+    })),
+    layout:
+      node.layout === null || node.layout === undefined
+        ? null
+        : {
+            appendix_height: node.layout.appendix_height ?? null,
+            body_height: node.layout.body_height ?? null,
+            width: node.layout.width ?? null,
+          },
+    operator_id: node.operator_id,
+    operator_version: node.operator_version,
+    plugin_release:
+      node.plugin_release_pin === null || node.plugin_release_pin === undefined
+        ? null
+        : {
+            scope: node.plugin_release_pin.scope,
+            slug: node.plugin_release_pin.slug,
+            revision: node.plugin_release_pin.revision,
+          },
+    position: {
+      x: node.position.x,
+      y: node.position.y,
+    },
+  };
+}
+
 /** Map a local authoring command to a room submit payload when the shapes align. */
 export function toRoomGraphCommand(
   command: GraphCommand,
   document: AuthoredGraphDocument,
 ): RoomGraphCommand | null {
-  const asRoom = (value: unknown): RoomGraphCommand => value as RoomGraphCommand;
+  const asRoom = (value: unknown): RoomGraphCommand =>
+    value as RoomGraphCommand;
   switch (command.kind) {
     case "move_nodes":
       return asRoom({
@@ -35,7 +125,10 @@ export function toRoomGraphCommand(
         nodes: [command.node],
         edges: [],
       });
-      return asRoom({ kind: "add_node", node: projected.nodes?.[0] });
+      const node = projected.nodes?.[0];
+      return node
+        ? { kind: "add_node", node: toRoomSavedGraphNode(node) }
+        : null;
     }
     case "remove_nodes":
       return asRoom({
@@ -85,6 +178,27 @@ export function toRoomGraphCommand(
         layout: command.layout ?? null,
         expected_layout: node.layout ?? null,
       });
+    }
+    case "update_node_plugin_release": {
+      const node = document.nodes.find(
+        (candidate) => candidate.id === command.node_id,
+      );
+      const expectedPin = node?.plugin_release;
+      if (!expectedPin) return null;
+      return {
+        kind: "update_node_plugin_release",
+        node_id: command.node_id,
+        plugin_release_pin: {
+          scope: command.plugin_release.scope,
+          slug: command.plugin_release.slug,
+          revision: command.plugin_release.revision,
+        },
+        expected_plugin_release_pin: {
+          scope: expectedPin.scope,
+          slug: expectedPin.slug,
+          revision: expectedPin.revision,
+        },
+      };
     }
     case "update_node_configuration_and_input_plugs": {
       const node = document.nodes.find(
@@ -160,8 +274,8 @@ export function toRoomGraphCommand(
         kind: "replace_document",
         name: projected.name,
         document: {
-          schema_version: 4,
-          nodes: projected.nodes ?? [],
+          schema_version: 5,
+          nodes: (projected.nodes ?? []).map(toRoomSavedGraphNode),
           edges: projected.edges ?? [],
           presentation: projected.presentation ?? emptyGraphPresentation(),
         },
@@ -205,7 +319,7 @@ export function toLocalGraphCommand(
         })),
       };
     case "add_node":
-      return { kind: "add_node", node: command.node };
+      return { kind: "add_node", node: toRestSavedGraphNode(command.node) };
     case "remove_nodes":
       return { kind: "remove_nodes", node_ids: command.node_ids };
     case "add_edge":
@@ -226,6 +340,16 @@ export function toLocalGraphCommand(
         kind: "update_node_layout",
         node_id: command.node_id,
         layout: command.layout,
+      };
+    case "update_node_plugin_release":
+      return {
+        kind: "update_node_plugin_release",
+        node_id: command.node_id,
+        plugin_release: {
+          scope: command.plugin_release_pin.scope,
+          slug: command.plugin_release_pin.slug,
+          revision: command.plugin_release_pin.revision,
+        },
       };
     case "update_node_configuration_and_input_plugs":
       return {
@@ -276,12 +400,12 @@ export function toLocalGraphCommand(
         kind: "replace_document",
         document: authoredGraphDocument({
           name: command.name,
-          nodes: command.document.nodes,
+          nodes: command.document.nodes.map(toRestSavedGraphNode),
           edges: command.document.edges,
         }),
       };
     case "duplicate_node":
-      return { kind: "add_node", node: command.node };
+      return { kind: "add_node", node: toRestSavedGraphNode(command.node) };
     case "replace_presentation":
     case "move_artifact_viewers":
     case "move_annotations":
@@ -322,10 +446,9 @@ export function applyRoomCommandToHead(
     return {
       ...head,
       name: command.name,
-      nodes: command.document.nodes ?? [],
+      nodes: (command.document.nodes ?? []).map(toRestSavedGraphNode),
       edges: command.document.edges ?? [],
-      presentation:
-        command.document.presentation ?? emptyGraphPresentation(),
+      presentation: command.document.presentation ?? emptyGraphPresentation(),
       collaboration_sequence: sequence,
     };
   }
@@ -353,9 +476,7 @@ export function applyRoomCommandToHead(
         ...presentation,
         viewers: (presentation.viewers ?? []).map((viewer) => {
           const position = positions.get(viewer.id);
-          return position
-            ? { ...viewer, position }
-            : viewer;
+          return position ? { ...viewer, position } : viewer;
         }),
       },
     };
@@ -376,9 +497,7 @@ export function applyRoomCommandToHead(
         ...presentation,
         annotations: (presentation.annotations ?? []).map((annotation) => {
           const position = positions.get(annotation.id);
-          return position
-            ? { ...annotation, position }
-            : annotation;
+          return position ? { ...annotation, position } : annotation;
         }),
       },
     };

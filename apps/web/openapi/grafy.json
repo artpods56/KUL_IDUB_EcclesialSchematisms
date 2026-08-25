@@ -39,6 +39,30 @@
         "title": "AddNodeCommand",
         "type": "object"
       },
+      "ArtifactBundleContractResponse": {
+        "properties": {
+          "format": {
+            "enum": [
+              "inline-json",
+              "table-bundle",
+              "binary-file"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "format",
+          "version"
+        ],
+        "title": "ArtifactBundleContractResponse",
+        "type": "object"
+      },
       "ArtifactConversionKeyResponse": {
         "properties": {
           "id": {
@@ -388,6 +412,9 @@
       },
       "ArtifactTypeSpecResponse": {
         "properties": {
+          "bundle": {
+            "$ref": "#/components/schemas/ArtifactBundleContractResponse"
+          },
           "export_formats": {
             "items": {
               "$ref": "#/components/schemas/ArtifactExportFormatResponse"
@@ -405,6 +432,21 @@
           "key": {
             "$ref": "#/components/schemas/ArtifactTypeKeyResponse"
           },
+          "materialized_json_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "string",
+                  "integer"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Materialized Json Type"
+          },
           "payload_schema": {
             "additionalProperties": true,
             "title": "Payload Schema",
@@ -419,7 +461,8 @@
           "key",
           "title",
           "payload_schema",
-          "field_projections"
+          "field_projections",
+          "bundle"
         ],
         "title": "ArtifactTypeSpecResponse",
         "type": "object"
@@ -561,13 +604,13 @@
           },
           "nodes": {
             "items": {
-              "$ref": "#/components/schemas/SavedGraphNodeModel-Output"
+              "$ref": "#/components/schemas/SavedGraphNodeModel"
             },
             "title": "Nodes",
             "type": "array"
           },
           "presentation": {
-            "$ref": "#/components/schemas/GraphPresentationDocumentModel-Output"
+            "$ref": "#/components/schemas/GraphPresentationDocumentModel"
           },
           "room_epoch": {
             "format": "uuid",
@@ -694,13 +737,13 @@
           },
           "nodes": {
             "items": {
-              "$ref": "#/components/schemas/SavedGraphNodeModel-Input"
+              "$ref": "#/components/schemas/SavedGraphNodeModel"
             },
             "title": "Nodes",
             "type": "array"
           },
           "presentation": {
-            "$ref": "#/components/schemas/GraphPresentationDocumentModel-Input"
+            "$ref": "#/components/schemas/GraphPresentationDocumentModel"
           }
         },
         "required": [
@@ -2054,6 +2097,18 @@
             "title": "Completed At",
             "type": "string"
           },
+          "diagnostics": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diagnostics"
+          },
           "error": {
             "anyOf": [
               {
@@ -2732,42 +2787,7 @@
         "title": "GraphPresentationDocument",
         "type": "object"
       },
-      "GraphPresentationDocumentModel-Input": {
-        "additionalProperties": false,
-        "properties": {
-          "annotations": {
-            "items": {
-              "$ref": "#/components/schemas/GraphPresentationAnnotationModel"
-            },
-            "title": "Annotations",
-            "type": "array"
-          },
-          "bindings": {
-            "items": {
-              "$ref": "#/components/schemas/GraphPresentationBindingModel"
-            },
-            "title": "Bindings",
-            "type": "array"
-          },
-          "links": {
-            "items": {
-              "$ref": "#/components/schemas/GraphPresentationLinkModel"
-            },
-            "title": "Links",
-            "type": "array"
-          },
-          "viewers": {
-            "items": {
-              "$ref": "#/components/schemas/GraphPresentationViewerModel"
-            },
-            "title": "Viewers",
-            "type": "array"
-          }
-        },
-        "title": "GraphPresentationDocumentModel",
-        "type": "object"
-      },
-      "GraphPresentationDocumentModel-Output": {
+      "GraphPresentationDocumentModel": {
         "additionalProperties": false,
         "properties": {
           "annotations": {
@@ -3644,6 +3664,45 @@
             ],
             "title": "Module Id"
           },
+          "non_runnable_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Non Runnable Detail"
+          },
+          "non_runnable_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "revoked",
+                  "missing_runtime_artifact",
+                  "incompatible_protocol",
+                  "unsupported_runtime_profile",
+                  "unsupported_capabilities",
+                  "unsupported_artifact_type",
+                  "plugin_runtime_unavailable",
+                  "host_binding_mismatch"
+                ],
+                "type": "string"
+              },
+              {
+                "enum": [
+                  "deprecated",
+                  "withdrawn"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Non Runnable Reason"
+          },
           "operator_id": {
             "title": "Operator Id",
             "type": "string"
@@ -3664,6 +3723,28 @@
             "title": "Outputs",
             "type": "array"
           },
+          "plugin_release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginReleasePinModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "plugin_revision": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plugin Revision"
+          },
           "plugin_slug": {
             "title": "Plugin Slug",
             "type": "string"
@@ -3677,6 +3758,11 @@
                 "type": "null"
               }
             ]
+          },
+          "runnable": {
+            "default": true,
+            "title": "Runnable",
+            "type": "boolean"
           },
           "secret_inputs": {
             "items": {
@@ -3944,19 +4030,145 @@
         "title": "PinnedOutputRequest",
         "type": "object"
       },
-      "PluginOrigin": {
+      "PluginDistribution": {
         "enum": [
-          "builtin",
-          "external",
-          "module"
+          "bundled",
+          "optional",
+          "published"
         ],
-        "title": "PluginOrigin",
+        "title": "PluginDistribution",
+        "type": "string"
+      },
+      "PluginReleasePinModel": {
+        "additionalProperties": false,
+        "properties": {
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PluginReleaseScope"
+          },
+          "slug": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "slug",
+          "revision"
+        ],
+        "title": "PluginReleasePinModel",
+        "type": "object"
+      },
+      "PluginReleaseScope": {
+        "enum": [
+          "system",
+          "workspace"
+        ],
+        "title": "PluginReleaseScope",
         "type": "string"
       },
       "PluginSpecResponse": {
         "properties": {
-          "origin": {
-            "$ref": "#/components/schemas/PluginOrigin"
+          "distribution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginDistribution"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entry_kind": {
+            "default": "plugin",
+            "enum": [
+              "plugin",
+              "module"
+            ],
+            "title": "Entry Kind",
+            "type": "string"
+          },
+          "non_runnable_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Non Runnable Detail"
+          },
+          "non_runnable_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "revoked",
+                  "missing_runtime_artifact",
+                  "incompatible_protocol",
+                  "unsupported_runtime_profile",
+                  "unsupported_capabilities",
+                  "unsupported_artifact_type",
+                  "plugin_runtime_unavailable",
+                  "host_binding_mismatch"
+                ],
+                "type": "string"
+              },
+              {
+                "enum": [
+                  "deprecated",
+                  "withdrawn"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Non Runnable Reason"
+          },
+          "plugin_release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginReleasePinModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "runnable": {
+            "default": true,
+            "title": "Runnable",
+            "type": "boolean"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginReleaseScope"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "slug": {
             "title": "Slug",
@@ -3969,8 +4181,7 @@
         },
         "required": [
           "slug",
-          "title",
-          "origin"
+          "title"
         ],
         "title": "PluginSpecResponse",
         "type": "object"
@@ -4349,6 +4560,43 @@
         "title": "RunExecutionCapacityErrorResponse",
         "type": "object"
       },
+      "RunExecutionQueueFullErrorDetail": {
+        "properties": {
+          "error_code": {
+            "const": "execution_queue_full",
+            "title": "Error Code",
+            "type": "string"
+          },
+          "max_pending_graphs": {
+            "minimum": 1.0,
+            "title": "Max Pending Graphs",
+            "type": "integer"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error_code",
+          "message",
+          "max_pending_graphs"
+        ],
+        "title": "RunExecutionQueueFullErrorDetail",
+        "type": "object"
+      },
+      "RunExecutionQueueFullErrorResponse": {
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/RunExecutionQueueFullErrorDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "RunExecutionQueueFullErrorResponse",
+        "type": "object"
+      },
       "RunExecutionResponse": {
         "properties": {
           "active_node_id": {
@@ -4377,6 +4625,18 @@
             "format": "uuid",
             "title": "Execution Id",
             "type": "string"
+          },
+          "queue_position": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queue Position"
           },
           "result": {
             "anyOf": [
@@ -4467,6 +4727,16 @@
           "operator_version": {
             "title": "Operator Version",
             "type": "integer"
+          },
+          "plugin_release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginReleasePinModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -4816,8 +5086,8 @@
             "$ref": "#/components/schemas/GraphPresentationDocument"
           },
           "schema_version": {
-            "const": 4,
-            "default": 4,
+            "const": 5,
+            "default": 5,
             "title": "Schema Version",
             "type": "integer"
           }
@@ -5138,6 +5408,16 @@
             "title": "Operator Version",
             "type": "integer"
           },
+          "plugin_release_pin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SavedGraphPluginReleasePin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "position": {
             "$ref": "#/components/schemas/GraphPoint"
           }
@@ -5244,7 +5524,7 @@
         "title": "SavedGraphNodeLayoutModel",
         "type": "object"
       },
-      "SavedGraphNodeModel-Input": {
+      "SavedGraphNodeModel": {
         "additionalProperties": false,
         "properties": {
           "artifact_type_bindings": {
@@ -5292,6 +5572,16 @@
             "minimum": 1.0,
             "title": "Operator Version",
             "type": "integer"
+          },
+          "plugin_release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginReleasePinModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "position": {
             "$ref": "#/components/schemas/GraphPointModel"
@@ -5306,66 +5596,31 @@
         "title": "SavedGraphNodeModel",
         "type": "object"
       },
-      "SavedGraphNodeModel-Output": {
+      "SavedGraphPluginReleasePin": {
         "additionalProperties": false,
+        "description": "Exact scoped Plugin release identity pinned on one graph node.\n\nThe pin is independent from the operator identity: publishing revision\nN+1 never moves a node pinned to revision N. Workspace membership for a\nWorkspace release comes from the owning graph.",
         "properties": {
-          "artifact_type_bindings": {
-            "items": {
-              "$ref": "#/components/schemas/ArtifactTypeBindingModel"
-            },
-            "title": "Artifact Type Bindings",
-            "type": "array"
-          },
-          "config": {
-            "additionalProperties": true,
-            "title": "Config",
-            "type": "object"
-          },
-          "id": {
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Id",
-            "type": "string"
-          },
-          "input_plugs": {
-            "items": {
-              "$ref": "#/components/schemas/SavedGraphInputPlugModel"
-            },
-            "title": "Input Plugs",
-            "type": "array"
-          },
-          "layout": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SavedGraphNodeLayoutModel"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "operator_id": {
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Operator Id",
-            "type": "string"
-          },
-          "operator_version": {
+          "revision": {
             "minimum": 1.0,
-            "title": "Operator Version",
+            "title": "Revision",
             "type": "integer"
           },
-          "position": {
-            "$ref": "#/components/schemas/GraphPointModel"
+          "scope": {
+            "$ref": "#/components/schemas/PluginReleaseScope"
+          },
+          "slug": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Slug",
+            "type": "string"
           }
         },
         "required": [
-          "id",
-          "operator_id",
-          "operator_version",
-          "position"
+          "scope",
+          "slug",
+          "revision"
         ],
-        "title": "SavedGraphNodeModel",
+        "title": "SavedGraphPluginReleasePin",
         "type": "object"
       },
       "SavedGraphProjection": {
@@ -5436,13 +5691,13 @@
           },
           "nodes": {
             "items": {
-              "$ref": "#/components/schemas/SavedGraphNodeModel-Output"
+              "$ref": "#/components/schemas/SavedGraphNodeModel"
             },
             "title": "Nodes",
             "type": "array"
           },
           "presentation": {
-            "$ref": "#/components/schemas/GraphPresentationDocumentModel-Output"
+            "$ref": "#/components/schemas/GraphPresentationDocumentModel"
           },
           "revision": {
             "title": "Revision",
@@ -5685,7 +5940,8 @@
                 "update_edge": "#/components/schemas/UpdateEdgeCommand",
                 "update_node_configuration": "#/components/schemas/UpdateNodeConfigurationCommand",
                 "update_node_configuration_and_input_plugs": "#/components/schemas/UpdateNodeConfigurationAndInputPlugsCommand",
-                "update_node_layout": "#/components/schemas/UpdateNodeLayoutCommand"
+                "update_node_layout": "#/components/schemas/UpdateNodeLayoutCommand",
+                "update_node_plugin_release": "#/components/schemas/UpdateNodePluginReleaseCommand"
               },
               "propertyName": "kind"
             },
@@ -5710,6 +5966,9 @@
               },
               {
                 "$ref": "#/components/schemas/UpdateNodeLayoutCommand"
+              },
+              {
+                "$ref": "#/components/schemas/UpdateNodePluginReleaseCommand"
               },
               {
                 "$ref": "#/components/schemas/SetNodeInputPlugsCommand"
@@ -6457,6 +6716,34 @@
         "title": "UpdateNodeLayoutCommand",
         "type": "object"
       },
+      "UpdateNodePluginReleaseCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_plugin_release_pin": {
+            "$ref": "#/components/schemas/SavedGraphPluginReleasePin"
+          },
+          "kind": {
+            "const": "update_node_plugin_release",
+            "default": "update_node_plugin_release",
+            "title": "Kind",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "plugin_release_pin": {
+            "$ref": "#/components/schemas/SavedGraphPluginReleasePin"
+          }
+        },
+        "required": [
+          "node_id",
+          "plugin_release_pin",
+          "expected_plugin_release_pin"
+        ],
+        "title": "UpdateNodePluginReleaseCommand",
+        "type": "object"
+      },
       "UpdateSavedGraphRequest": {
         "additionalProperties": false,
         "properties": {
@@ -6480,13 +6767,13 @@
           },
           "nodes": {
             "items": {
-              "$ref": "#/components/schemas/SavedGraphNodeModel-Input"
+              "$ref": "#/components/schemas/SavedGraphNodeModel"
             },
             "title": "Nodes",
             "type": "array"
           },
           "presentation": {
-            "$ref": "#/components/schemas/GraphPresentationDocumentModel-Input"
+            "$ref": "#/components/schemas/GraphPresentationDocumentModel"
           }
         },
         "required": [
@@ -6660,6 +6947,7 @@
           "checkpoint_graph",
           "execute_graph",
           "cancel_execution",
+          "publish_plugin",
           "publish_module",
           "manage_module_library",
           "create_template",
@@ -8444,6 +8732,25 @@
               "title": "Workspace Id",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "minLength": 1,
+                  "pattern": ".*\\S.*",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
           }
         ],
         "requestBody": {
@@ -8481,11 +8788,19 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RunExecutionCapacityErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/RunExecutionQueueFullErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RunExecutionCapacityErrorResponse"
+                    }
+                  ],
+                  "title": "Response 429 Start Graph Execution V1 Workspaces  Workspace Id  Executions Post"
                 }
               }
             },
-            "description": "The process-wide active execution limit is exhausted",
+            "description": "The durable pending queue is full, or a non-durable draft run cannot acquire active capacity",
             "headers": {
               "Retry-After": {
                 "description": "Minimum delay before retrying, in seconds",

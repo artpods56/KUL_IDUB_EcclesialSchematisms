@@ -17,6 +17,7 @@ const genericNodeSpec: NodeSpec = {
   title: "Collect",
   description: "Collect ordered artifacts.",
   catalog_visible: true,
+  runnable: true,
   config_schema: {},
   input_schema: {},
   output_schema: {},
@@ -59,6 +60,7 @@ const artifactQueryNodeSpec: NodeSpec = {
   title: "Query artifact tables",
   description: "Runs read-only queries over table artifacts.",
   catalog_visible: true,
+  runnable: true,
   config_schema: {
     type: "object",
     properties: { relations: { type: "array" } },
@@ -125,6 +127,32 @@ describe("artifact query initialization", () => {
     expect(data.config.relations).toEqual([
       { id: relationPlug?.id, alias: "relation_1" },
     ]);
+  });
+});
+
+describe("scoped Plugin release pins", () => {
+  it("pins a newly authored catalog node to its advertised immutable release", () => {
+    const data = createWorkflowNodeData({
+      ...genericNodeSpec,
+      plugin_slug: "notes",
+      plugin_revision: 4,
+      plugin_release: { scope: "system", slug: "notes", revision: 4 },
+    });
+
+    expect(data.pluginReleasePin).toEqual({
+      scope: "system",
+      slug: "notes",
+      revision: 4,
+    });
+    expect(serializeRunNode("notes-1", data).plugin_release).toEqual({
+      scope: "system",
+      slug: "notes",
+      revision: 4,
+    });
+  });
+
+  it("keeps host Plugin nodes unpinned", () => {
+    expect(createWorkflowNodeData(genericNodeSpec).pluginReleasePin).toBeNull();
   });
 });
 

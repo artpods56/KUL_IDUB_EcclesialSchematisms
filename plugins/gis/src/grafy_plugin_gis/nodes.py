@@ -29,15 +29,21 @@ from grafy_core.artifacts import (
     NodeInput,
     NodeOutput,
 )
+from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.nodes import InPort, Node, NodeExecutionContext, OutPort
-from grafy_core.operators.tables import (
+from grafy_core.table_contracts import (
     TABLE_DATA,
     Table,
     TableColumn,
     TableValue,
     TableValueType,
 )
-from grafy_core.plugins import NodeCachePolicy
+from grafy_core.plugins import (
+    NodeCachePolicy,
+    NodeHttpEgressContract,
+    NodeHttpEgressInput,
+    NodeStagedUploadInput,
+)
 from grafy_core.ports.staged_uploads import StagedUploadUnitOfWorkPort
 from grafy_core.staged_upload_paths import resolve_persisted_staged_upload_path
 
@@ -460,6 +466,8 @@ class GeoJsonUploadOutput(NodeOutput):
         uploads_dir=context.uploads_dir,
         unit_of_work=context.uow,
     ),
+    staged_upload_inputs=(NodeStagedUploadInput(config_field="uploads"),),
+    required_capabilities=(PluginRuntimeCapability.STAGED_UPLOADS,),
 )
 @final
 class ImportGeoJsonNode(
@@ -539,6 +547,11 @@ class GeoTiffUploadOutput(NodeOutput):
     factory=lambda context: ImportGeoTiffNode(
         uploads_dir=context.uploads_dir,
         unit_of_work=context.uow,
+    ),
+    staged_upload_inputs=(NodeStagedUploadInput(config_field="uploads"),),
+    required_capabilities=(
+        PluginRuntimeCapability.NATIVE_GDAL,
+        PluginRuntimeCapability.STAGED_UPLOADS,
     ),
 )
 @final
@@ -676,6 +689,10 @@ class WfsImportOutput(NodeOutput):
     version=1,
     title="Import OGC WFS features",
     factory=lambda _context: ImportWfsNode(WfsClient()),
+    required_capabilities=(PluginRuntimeCapability.NETWORK_EGRESS,),
+    http_egress=NodeHttpEgressContract(
+        configured_inputs=(NodeHttpEgressInput(config_field="service_url"),),
+    ),
     cache_policy=NodeCachePolicy.NEVER,
 )
 @final

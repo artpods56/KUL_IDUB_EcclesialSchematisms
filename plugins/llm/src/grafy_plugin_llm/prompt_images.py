@@ -4,7 +4,7 @@ from typing import final
 from uuid import UUID
 
 from grafy_core.artifacts import ArtifactRef, UnitOfWorkPort
-from grafy_core.operators.images import RASTER_IMAGE
+from grafy_core.artifact_contracts import RASTER_IMAGE
 from grafy_core.ports.storage import FileStoragePort
 
 

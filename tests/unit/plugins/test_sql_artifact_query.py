@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from grafy_core.operators.tables import (
+from grafy_core.table_contracts import (
     Table,
     TableColumn,
     TableValue,
