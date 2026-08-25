@@ -1,13 +1,15 @@
-# Plugin unification (isolated authoring and publication)
+# Plugin unification (System and Workspace releases)
 
-- **Status:** Workspace Plugin lifecycle implemented; current monorepo host
-  plugins still load through `grafy.plugins` entry points into the API process.
+- **Status:** Scoped release identity implemented; unified System catalog,
+  runtime policy, package convergence, and compatibility cutover in progress.
 - **Date:** 2026-08-24
 - **Audience:** Engineers changing plugin discovery, catalog identity, CLI,
   agent authoring, or isolated execution
 - **Document type:** Explanation — intended architecture and boundaries
-- **Related:** [plugin development](plugin-development.md) (current in-process
-  host adapter), [modules conceptual model](modules-conceptual-model.md),
+- **Related:** [plugin development](plugin-development.md) (first-party System
+  authoring and transitional host adapter),
+  [unified releases ADR](../adr/0004-unify-system-and-workspace-plugin-releases.md),
+  [modules conceptual model](modules-conceptual-model.md),
   [backend architecture](backend-architecture.md),
   [product vocabulary](../../CONTEXT.md)
 - **Implementation plan:**
@@ -15,26 +17,30 @@
 
 ## Summary
 
-A **Plugin** is a uv-managed project on disk (`pyproject.toml`, `uv.lock`,
-typed nodes, tests, owned artifact types). Grafy does not import that tree.
-Every project exports its declaration as `grafy_plugin.PLUGIN` from a fixed
-`src/grafy_plugin/` package; no module or object names are configured
-anywhere. A human can publish the directory directly. A coding agent reserves
-the deployment-owned working copy, reviews an exact freeze/diff, and publishes
-only those reviewed bytes. Both paths call one publication workflow, which
-freezes exact bytes into object storage and appends a Workspace **Plugin
-release**. Graphs independently pin `notes.table.summarize@1` and an exact
-Plugin release revision. Graph run starts a fresh child in the release's
-scope-owned container.
+A **Plugin** is a uv-managed project (`pyproject.toml`, `uv.lock`, typed nodes,
+tests, artifact contracts, and runtime registrations). Execution trusts an
+immutable release, never a mutable working tree. Workspace projects export
+`grafy_plugin.PLUGIN`; co-installed System distributions use a family-specific
+package named by platform-owned loader metadata. The Python import name is not
+catalog identity.
 
-That replaces `grafy.plugins` entry points as the way Team-authored (and,
-eventually, first-party) operators reach the catalog. Entry-point loading
-remains the host adapter for monorepo plugins (GIS, SQL, OCR, LLM) until each
-moves onto the same freeze path.
+One release module serves two publication authorities. A Workspace owner or
+coding agent publishes an owner-scoped, isolated-only release. A one-shot
+platform/CI publisher stages a global System release with explicit distribution
+and execution policy. Both retain exact source, contract, lock, protocol,
+profile, capability, and OCI identities. Graphs pin the operator and
+`{scope, slug, revision}` independently.
+
+The current exact System release may use a deployment-bound in-process fast
+path only when loaded bytes match its baked host binding. Historical System
+releases and every Workspace release use retained OCI. Catalog, compiler, and
+the defensive Docker boundary share one deployment-owned release admission;
+an exact revocation is always denied as `revoked`. Host code is imported only
+from an exact deployment manifest; absent configuration is Module-only.
 
 A **Module** stays a published subgraph. It is not a Plugin.
 
-## Implemented Workspace Plugin lifecycle
+## Shared release lifecycle
 
 `grafy plugin publish <directory> --workspace <uuid> --slug <slug>
 --published-by <user-uuid>` now:
@@ -49,11 +55,13 @@ A **Module** stays a published subgraph. It is not a Plugin.
    runs**, then unpacks that exact archive for verification. Tests and
    inspection therefore consume an unpacked copy of the frozen bytes, never
    the mutable working copy.
-4. Runs `uv lock --check` and a locked sync against the frozen snapshot
-   (network-enabled), rejecting `[tool.uv.sources]` path dependencies that
-   resolve outside the snapshot; then runs the Plugin's locked tests and
-   catalog inspection in a constrained, sanitized environment with no
-   inherited host secrets. The API process never imports the working copy.
+4. Runs `uv lock --check` and a locked sync against the frozen snapshot,
+   rejecting `[tool.uv.sources]` path dependencies that resolve outside the
+   snapshot; then runs the Plugin's locked tests and catalog inspection. The
+   existing Workspace command sanitizes the subprocess environment but is not
+   a filesystem or network sandbox. System candidates run these steps in the
+   Docker-isolated one-shot publisher before promotion; the online API never
+   imports a working copy or receives platform publication authority.
 5. Stores the digest-addressed source archive under the garbage-collectable
    `plugin-releases/` namespace, builds and stores the immutable OCI runtime
    artifact, and appends an append-only `plugin_releases` row whose descriptor
@@ -70,11 +78,14 @@ source digest → inspected contract + contract digest → OCI image + image dig
 6. Overlays the current release in `GET /v1/workspaces/{id}/nodes`, including
    Plugin-owned artifact types and function-node contracts.
 
-Catalog nodes carry `plugin_revision` and derived readiness. A release is
+Catalog nodes carry an exact `{scope, slug, revision}` pin and derived
+readiness. A release is
 runnable only when its immutable image, invocation protocol, runtime profile,
 capabilities, and complete artifact contract are supported by the deployment.
-The selector disables unsupported releases with a stable reason; insertion of
-a runnable Workspace Plugin writes its exact release pin into the graph.
+The selector disables unsupported or revoked releases with a stable reason;
+deprecated and withdrawn families stay visible but cannot be newly inserted,
+while their retained exact pins may continue to run. Insertion of a runnable
+Plugin writes its exact scoped release pin into the graph.
 `examples/plugin-notes` is the executable authoring, publication, Table-bundle,
 and offline Docker fixture.
 
@@ -82,20 +93,19 @@ The coding-agent commands `scaffold`, `reserve`, `review`, `publish-reviewed`,
 and `release-reservation` add a fenced pre-publish workflow without adding a
 second release path. A standalone database registration aggregate remains
 unnecessary: first publish establishes `(Workspace, slug)`, while the local
-reservation owns only exclusive access to one working copy. Migration of host
-entry-point Plugins, additional runtime profiles/capabilities, and cross-Plugin
-custom artifact contracts remain deferred and fail-closed.
+reservation owns only exclusive access to one Workspace-namespaced working
+copy. System selection is deliberately separate: stage never means promote,
+and current is an exact pointer rather than the highest revision.
 
 ```mermaid
 flowchart LR
-    Roots["Plugin roots in deploy config"] --> Copy["Working copy on disk"]
-    Agent["Coding-agent scaffold/reserve"] --> Copy
-    Copy --> Diff["Verified freeze + exact review diff"]
-    Human["Human publish"] --> Publish["Shared publication workflow"]
-    Diff --> Publish
-    Publish --> Store["Source + OCI objects"]
-    Store --> Catalog["Workspace catalog revision"]
-    Catalog --> Run["Isolated runtime container"]
+    Workspace["Workspace owner / agent"] --> Freeze["Immutable release contract"]
+    Platform["Platform CI publisher"] --> Freeze
+    Freeze --> Store["Source + retained OCI"]
+    Store --> Selection["Explicit scoped selection"]
+    Selection --> Catalog["Effective Workspace catalog"]
+    Catalog --> Host["Exact System host binding"]
+    Catalog --> OCI["Isolated runtime adapter"]
 ```
 
 ## What closed this
@@ -129,16 +139,18 @@ It is not the catalog.
 [[plugin_roots]]
 path = "./examples"
 path = "./plugins"
+path = "./.grafy-artifacts/workspace-plugins"
 ```
 
 Relative paths resolve from the process working directory (normally the
 deployment or project root), not from the target Workspace's data directory.
 The coding agent does not discover arbitrary host paths; it receives the
-deterministic `<authoring-root>/<slug>` project directory. Roots prevent
+deterministic `<authoring-root>/<workspace-id>/<slug>` project directory. Roots prevent
 scaffold, reserve, review, or publish from pointing at `/` or a secrets volume.
 
-Catalog membership is Workspace-scoped in the database. A root on the API
-host must not make a Plugin visible to every Workspace.
+Catalog membership comes from persisted selections. A root on the API host
+does not make a Plugin visible. Only System scope is global; Workspace scope is
+limited to its exact owner.
 
 ## Reservation, not registration
 
@@ -171,8 +183,8 @@ same verification pipeline:
    approves only an empty capability set, so the agent has no policy side door.
 
 After publish, `GET /v1/workspaces/{id}/nodes` lists Plugin `notes` and its
-nodes (`notes.table.summarize@1`, …) from that release row, not from
-`PluginRegistry` entry points. The compiler resolves those operator ids from
+nodes (`notes.table.summarize@1`, …) from that release row, not from the host
+registry. The compiler resolves those operator ids from
 the Workspace release and executes the freeze offline.
 
 `runnable` is derived from the complete release. The current runtime supports
@@ -193,12 +205,14 @@ Plugin release N until someone explicitly selects retained release N+1.
 
 ## Typing, types, and dependencies
 
-Nodes use the same `function_node` surface as host plugins: Pydantic models,
+Nodes use the same `function_node` surface in every Plugin project: Pydantic models,
 `InPort` / `OutPort`. Catalog **NodeSpec** is derived from those contracts in
 the freeze, without importing the package into FastAPI.
 
-Dependencies on Table or GIS are **artifact type ids** (`table.data@1`,
-`geo.map_layer@1`), not `grafy-plugin-gis` in `pyproject.toml`.
+Dependencies on Table or GIS are complete exact artifact contracts
+(`table.data@1` plus schema, materialized shape, projections, exports, and
+`table-bundle@1`), not `grafy-plugin-gis` in `pyproject.toml`. A key/version
+alone cannot prove compatibility.
 
 Python wheels live in the Plugin’s `uv.lock` and are installed only at freeze.
 Native tools (GDAL) are **named profiles**: ops-pinned image digests, never
@@ -224,34 +238,35 @@ mints a synthetic generated-node namespace.
 
 ## Catalog overlays
 
-| Overlay | Identity | Revision |
+| Entry | Visibility | Exact identity |
 | --- | --- | --- |
-| Builtin host plugins (until migrated) | `table.file.import@1` | node `operator_version` |
-| Workspace Plugin releases | `notes.table.summarize@1` | Plugin release N |
-| Workspace Module releases | `graph.module.{id}@{revision}` | Module release |
+| System Plugin release | Every Workspace | `{system, slug, revision}` |
+| Workspace Plugin release | Owning Workspace | `{workspace, slug, revision}` |
+| Module release | Owning Workspace library | `graph.module.{id}@{revision}` |
 
-No synthetic agent overlay exists. The unused `agent` origin was removed from
-the public catalog contract. Unknown saved operators use generic inert
-compatibility rendering and remain non-runnable until explicitly copied into a
-published Plugin.
+No synthetic agent overlay exists. Scope and System distribution replace
+origin as authoritative facts; Module uses a separate entry kind. Unknown
+saved operators use generic inert compatibility rendering and remain
+non-runnable until explicitly mapped to a verified release.
 
 Cross-Workspace reuse is later and copy-by-value (like Module import): freeze
 bytes into the destination Workspace as its own release, no live link.
 
 ## Execution
 
-Graph execution stays the API process's own in-process scheduler. That is
-where in-process GIS still runs. Team Plugin `src/` does not.
-
-Publish freeze → immutable OCI image → one hardened `--network none` sandbox
-per `(top-level execution scope, exact Plugin release)` → fresh
-`.venv/bin/python -I` child and invocation scratch per scalar call → destroy at
-scope exit. No `uv`, image pull, or package installation occurs at graph run.
+Graph execution stays the API process's scheduler, but the release adapter is
+chosen only after exact resolution and shared admission. A current,
+host-eligible System release with an exact deployment binding may use the
+loaded implementation. Every other admitted release follows: retained OCI →
+one hardened `--network none` sandbox per `(top-level execution scope, exact
+Plugin release)` → fresh `.venv/bin/python -I` child and invocation scratch per
+scalar call → destroy at scope exit. No `uv`, image pull, or package
+installation occurs at graph run.
 
 ## What not to do
 
-- `[project.entry-points."grafy.plugins"]` for new Plugins.
-- Import the working copy into `build_plugin_registry`.
+- Generic Python package entry points for Plugins.
+- Import a working copy into the API host registry.
 - Auto-create revisions from filesystem watchers.
 - Put teammate writer/resolver code on the API `sys.path`.
 - Treat `docker-trusted-development` as a production isolation boundary.
@@ -260,12 +275,13 @@ scope exit. No `uv`, image pull, or package installation occurs at graph run.
 ## Current migration boundary
 
 ```text
-host:   grafy.plugins entry points → in-process PluginRegistry
-team:   fixed grafy_plugin project → verified freeze → Workspace Plugin release
-agent:  scaffold/reserve → review → the same verified publication workflow
+transitional host package → staged System release + OCI → exact host binding
+Workspace project         → verified freeze             → Workspace release
+coding agent              → reserve/review              → same Workspace publish
+saved graph               → verified baseline map       → exact scoped pins
 ```
 
-Host entry points remain only until GIS/SQL/OCR/LLM are migrated onto approved
-profiles. A future Canvas authoring surface must call the existing reservation,
-review, publication, and exact-pin boundaries rather than introduce synthetic
-catalog nodes or a mutable execution path.
+Host packages are inert until an exact deployment manifest names their loader
+target and installed-byte digest. A future Canvas authoring surface must call
+the existing reservation, review, publication, and exact-pin boundaries rather
+than introduce synthetic catalog nodes or a mutable execution path.

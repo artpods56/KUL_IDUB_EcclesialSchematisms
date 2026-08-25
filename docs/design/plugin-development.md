@@ -7,26 +7,25 @@
 > for Workspace-authored code (publish a verified freeze into a Workspace
 > catalog) is [plugin unification](plugin-unification.md).
 >
-> **Scope: this guide covers only the legacy in-process `grafy.plugins`
-> entry-point plugins** (the monorepo `plugins/*` packages that load into the
-> API process). Workspace Plugin releases use the fixed
-> `grafy_plugin.PLUGIN` project convention and the publish pipeline described
-> in [plugin unification](plugin-unification.md) and
-> [its implementation plan](../plans/workspace-plugins/README.md); they never
-> use entry points and are never imported into FastAPI.
+> This guide describes the shared declaration surface for System and Workspace
+> Plugin projects. The accepted architecture is the immutable release model in
+> [ADR 0004](../adr/0004-unify-system-and-workspace-plugin-releases.md).
+> System host packages load only through an exact deployment manifest. Package
+> installation alone never makes a Plugin executable in the API process.
 
 - **Audience:** contributors adding nodes, artifact types, conversions,
   resolvers, or writers to Grafy.
-- **Scope:** `libs/core` plugin contracts, `plugins/*` packages, and how the API
-  discovers and installs them. Frontend work is out of scope.
+- **Scope:** `libs/core` Plugin contracts, System projects under `plugins/*`,
+  Workspace projects under configured authoring roots, and their publication
+  boundaries. Frontend work is out of scope.
 
 ---
 
 ## 1. Overview
 
-Grafy is a **typed artifact-graph workbench**. A plugin is an independently
-packaged Python distribution that contributes one or more of these runtime
-capabilities into a shared catalog:
+Grafy is a **typed artifact-graph workbench**. A Plugin is an independently
+locked project whose immutable release contributes one or more of these
+capabilities to an effective Workspace catalog:
 
 - **Nodes** — executable operators that consume artifact inputs and produce
   artifact outputs.
@@ -37,34 +36,52 @@ capabilities into a shared catalog:
 - **Resolvers** — read-side adapters that materialize an artifact from storage.
 - **Writers** — write-side adapters that persist an artifact to storage.
 
-The host (the API process) discovers plugins by scanning a single entry-point
-group, validates collisions, freezes the catalog, and exposes everything through
-`/v1/nodes`. Plugins never talk to the host directly — they only depend on the
-core contracts in `libs/core`.
+Workspace owners and reviewed coding agents publish isolated-only Workspace
+releases. A separate one-shot platform/CI publisher stages System releases,
+including retained OCI artifacts and explicit distribution/execution policy;
+stage and promotion are distinct operations. `/v1/nodes` combines selected
+System releases, selected releases owned by the requested Workspace, and
+published Modules (`entry_kind=module`).
+
+After the API image installs immutable System project paths, run
+`grafy plugin build-system-deployment --output <path>` inside that image (or
+add `--slug <slug> --revision <revision>` for one candidate). The producer
+rebuilds each inventory project's deterministic source archive, verifies its
+SHA-256 and `uv.lock` digest against the staged release, then fingerprints the
+installed distribution and verifies its loader catalog. The resulting host
+binding therefore proves both the staged source identity and the exact bytes
+loaded by that image; the retained-OCI guest loader manifest remains a separate
+artifact.
 
 ```mermaid
 flowchart LR
-    Plugins["plugins/*\nPython distributions"] --> EP["grafy.plugins\nentry-point group"]
-    EP --> Discovery["apps/api\nplugin_discovery.py"]
-    Discovery --> Registry["PluginRegistry\nlibs/core"]
-    Registry --> Catalog["/v1/nodes catalog"]
-    Registry --> Runtime["Graph runtime\napps/api"]
+    Workspace["Workspace project\ngrafy_plugin.PLUGIN"] --> WorkspacePublish["Workspace publication"]
+    System["System project\nfamily-specific package"] --> PlatformPublish["One-shot platform publisher"]
+    WorkspacePublish --> Releases["Immutable serialized releases"]
+    PlatformPublish --> Releases
+    Releases --> Catalog["Effective /v1/nodes catalog"]
+    Catalog --> Admission["Shared release admission"]
+    Admission --> Host["Exact bound System host adapter"]
+    Admission --> OCI["Retained OCI adapter"]
 ```
 
 ---
 
 ## 2. Package layout
 
-Every plugin follows the same shape. The `plugins/ocr` package is the smallest
-working example; `plugins/gis` is the richest.
+System and Workspace projects share the same conceptual files. System projects
+use a family-specific import package because an exact current release may be
+loaded by the deployment; Workspace projects use the fixed `grafy_plugin`
+package because they execute only through the isolated adapter.
 
 ```
 plugins/<name>/
-  pyproject.toml                     # distribution metadata + entry point
+  pyproject.toml                     # distribution metadata
+  uv.lock                            # exact dependency lock
   src/grafy_plugin_<name>/
     __init__.py                      # re-export the Plugin singleton
     declaration.py                   # Plugin(slug=..., title=...) singleton
-    plugin.py                        # registration: nodes, artifacts, conversions
+    plugin.py                        # registration: nodes, artifacts, adapters
     artifacts.py                     # ArtifactTypeSpec constants
     models.py                        # pydantic payload models
     nodes.py                         # Node classes + function_node implementations
@@ -75,21 +92,15 @@ plugins/<name>/
 
 ### 2.1 `pyproject.toml`
 
-The distribution must declare its dependency on `grafy-core` and expose the
-`Plugin` singleton through the `grafy.plugins` entry-point group:
+The project declares `grafy-core`, owns an exact lock, and exports one Plugin
+singleton from its package. Projects do not declare generic Plugin entry points:
 
 ```toml
 [project]
 name = "grafy-plugin-my-plugin"
 version = "0.1.0"
-requires-python = "==3.12.9"
-dependencies = ["grafy-core", "pydantic"]
-
-[project.entry-points."grafy.plugins"]
-my_plugin = "grafy_plugin_my_plugin.plugin:MY_PLUGIN"
-
-[tool.uv.sources]
-grafy-core = { workspace = true }
+requires-python = "==3.14.*"
+dependencies = ["grafy-core==0.1.0", "pydantic"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -98,21 +109,29 @@ package-dir = {"" = "src"}
 where = ["src"]
 ```
 
-The entry-point name (`my_plugin`) must be unique across installed plugins; the
-host rejects duplicates at install time. Add the plugin to the workspace
-members, `[tool.uv.sources]`, and an optional dependency group in the root
-`pyproject.toml` so it ships with the monorepo.
+Repository System projects are excluded from the root uv workspace. Each owns
+its lock and a vendored exact SDK wheel, and must construct without local source
+overrides:
+
+```bash
+cd plugins/my-plugin
+uv lock --no-sources --find-links wheels
+uv sync --locked --no-sources --find-links wheels
+```
+
+Path dependencies may not escape a publishable snapshot. The root development
+environment may depend on System project paths for integration tests, but that
+does not participate in the project's independent lock. Python package and
+distribution names are loader metadata, never catalog identity.
 
 ### 2.2 `declaration.py`
 
-Declare exactly one `Plugin` singleton per package. The **slug is
-namespaced** — external plugins use `external.<name>` (the host marks
-entry-point plugins `external`; plugins cannot self-assign origin):
+Declare exactly one `Plugin` singleton per package with a stable family slug:
 
 ```python
 from grafy_core.plugins import Plugin
 
-MY_PLUGIN = Plugin(slug="external.my_plugin", title="My Plugin")
+MY_PLUGIN = Plugin(slug="my-plugin", title="My Plugin")
 ```
 
 The slug must be stable — it is the identity used across the catalog and in
@@ -333,32 +352,24 @@ RESULT = ArtifactTypeSpec(
 
 ---
 
-## 6. Registering conversions
+## 6. Using canonical conversions
 
-A conversion is a deterministic transform between two installed artifact types:
+Artifact conversions are deployment-owned canonical behavior. A Plugin does
+not own a conversion merely because it produces or consumes one endpoint, and
+the compiler never resolves conversion callables from `PluginRegistry`.
 
-```python
-from grafy_core.conversions import ArtifactConversion, ArtifactConversionKey
+The effective catalog exposes the immutable entries from
+`grafy_core.canonical_conversions`. Graph edges store only the exact conversion
+key and version. Adding a new canonical conversion is therefore a core and
+deployment change: declare its producer-neutral endpoints and callable in that
+module, update the versioned compatibility snapshot test, and use a new version
+whenever its contract or implementation changes.
 
-def _to_upper(value: LowerPayload) -> UpperPayload:
-    return UpperPayload(text=value.text.upper())
-
-LOWER_TO_UPPER = ArtifactConversion(
-    key=ArtifactConversionKey("my_plugin.lower_to_upper", 1),
-    source=LOWER.key,
-    target=UPPER.key,
-    source_type=LowerPayload,
-    target_type=UpperPayload,
-    title="Uppercase",
-    convert=_to_upper,
-)
-
-MY_PLUGIN.register_artifact_conversion(LOWER_TO_UPPER)
-```
-
-Conversions participate in the host's runtime-type compatibility check during
-`freeze()`. Keep `source_type`/`target_type` precise so the host can prove that
-conversion chains compose.
+Plugin release manifests may carry a canonical conversion reference for
+inspection compatibility, but publication accepts it only when key, version,
+source, target, and title exactly match the deployment-owned entry. Prefer no
+release declaration when the Plugin merely uses the conversion. Configurable,
+lossy, or domain-significant transforms remain ordinary visible nodes.
 
 ---
 
@@ -438,7 +449,7 @@ Every node declares a `NodeCachePolicy`:
 
 - `NEVER` (default) — provider, upload, secret, and wrapper nodes. Use when the
   node cannot supply a stable identity for its side effects.
-- `EXACT` — deterministic built-ins that can prove a stable key (same config,
+- `EXACT` — deterministic System nodes that can prove a stable key (same config,
   inputs, bindings).
 
 Choose `EXACT` only when the node is provably deterministic and side-effect
@@ -452,52 +463,59 @@ material.
 The dependency flow is strict and one-directional:
 
 ```
-plugins/*  ──►  libs/core   ──►  (host: apps/api)
+Plugin project  ──►  libs/core contracts
+publisher/API  ──►  serialized release + core ports
 ```
 
-- Plugins depend on **`grafy-core` only**. Never import from `apps/api`,
-  `apps/mcp`, `libs/persistence`, or `libs/storage` — those are host concerns.
-- The host (`apps/api`) must have **no hard dependency** on any plugin package
-  (OCR/LLM/GIS/SQL are optional). It discovers plugins via entry points at
-  runtime and installs them as `external`.
-- Reuse generic artifact types from core operators (`TABLE_DATA`, `PROMPT_MESSAGE`,
-  `JSON_SCHEMA`, scalar types) instead of re-declaring equivalents. Artifact
-  types are shared vocabulary across the catalog.
+- For Grafy-internal imports, Plugins depend on **`grafy-core` only**. Never
+  import from `apps/api`, `apps/mcp`, `libs/persistence`, or `libs/storage` —
+  those are host concerns.
+- Serialized contracts, not imports or registry membership, determine catalog
+  visibility. The API may load a deployment-declared System implementation only
+  for an exact host binding; every System release still retains OCI.
+- Reuse producer-neutral artifact types from core contract modules such as
+  `grafy_core.artifact_contracts`, `grafy_core.image_contracts`,
+  `grafy_core.prompt_contracts`, `grafy_core.schema_contracts`, and
+  `grafy_core.table_contracts` instead of importing another Plugin's
+  implementation package or re-declaring equivalents.
 - Keep adapters (providers, executors, GDAL clients) in their own submodules
-  (`mistral.py`, `gdal.py`, `sqlalchemy.py`) so `plugin.py` stays declarative and
-  third-party imports are isolated.
+  (`openai_compatible_sdk.py`, `gdal.py`, `sqlalchemy.py`) so `plugin.py` stays
+  declarative and third-party imports are isolated.
 
 ---
 
 ## 11. Validation and tests
 
-Each plugin ships a `tests/unit/plugins/` suite that installs its singleton into
-a fresh `PluginRegistry`, freezes it, and asserts the declared contributions:
+Each Plugin ships owning tests that construct its singleton, validate the
+declaration, and verify the serialized release contract without relying on
+ambient host discovery. Transitional host packages separately verify their
+exact deployment binding:
 
 ```python
-registry = PluginRegistry()
-registry.install(TABLES, origin=PluginOrigin.BUILTIN)
-registry.install(SQL, origin=PluginOrigin.EXTERNAL)
-registry.freeze()
-context = PluginRuntimeContext(workspace=..., uploads_dir=..., storage=..., uow=..., bucket=...)
+from grafy_core.domain.plugin_releases import PluginCatalogManifest
+
+catalog = PluginCatalogManifest.from_plugin(MY_PLUGIN)
+assert catalog.slug == MY_PLUGIN.slug
 ```
 
-Every plugin must pass a registration test that verifies:
+Every Plugin must pass declaration and freeze tests that verify:
 
 - `slug` / `title` are correct.
 - The declared node keys match `plugin.nodes`.
-- The artifact types and conversions are installed and the registry freezes
-  without `PluginRegistrationError`.
-- A `pyproject.toml` metadata test asserts the entry-point group matches.
+- Artifact types, dependencies, canonical conversion references, ports, and
+  portable bundle contracts serialize without identity or collision errors.
+- Publication inspection reproduces the same exact serialized contract from the
+  frozen source and lock.
 
 ---
 
 ## 12. Checklist for adding a plugin
 
-- [ ] New `plugins/<name>/` package with the layout in §2.
-- [ ] `pyproject.toml` declares `grafy-core` dependency and a unique
-      `grafy.plugins` entry point.
-- [ ] One `Plugin` singleton with a stable `external.<name>` slug.
+- [ ] New System `plugins/<name>/` project or Workspace authoring-root project
+      with the shared layout in §2.
+- [ ] `pyproject.toml` declares `grafy-core`; `uv.lock` and the exact SDK-wheel
+      supply rule are committed.
+- [ ] One `Plugin` singleton with a stable family slug.
 - [ ] Node models subclass `NodeConfig`/`NodeInput`/`NodeOutput` with
       `extra="forbid"`; ports use `InPort`/`OutPort` with installed artifact types.
 - [ ] Artifact types are namespaced, versioned, and declared in `artifacts.py`.
@@ -506,7 +524,18 @@ Every plugin must pass a registration test that verifies:
 - [ ] Secrets use `NodeSecretInput` + `NodeSecretResolverPort`; cache policy
       is explicit (`NEVER` unless provably `EXACT`).
 - [ ] Plugin imports only `grafy-core`; host has no hard dependency on it.
-- [ ] Workspace members, `[tool.uv.sources]`, and optional-dependency group
-      updated in root `pyproject.toml`.
-- [ ] Registration + entry-point tests pass in `tests/unit/plugins/`.
-- [ ] Registry freezes cleanly: no slug/operator/artifact/conversion collisions.
+- [ ] Repository System projects remain excluded from the root uv workspace and
+      construct from their own exact lock and vendored SDK wheel; Workspace
+      projects remain self-contained under their configured authoring root.
+- [ ] Declaration, frozen inspection, and owning runtime tests pass.
+- [ ] Serialized inspection is clean: no slug/operator/artifact collisions,
+      non-canonical conversion references, or incomplete dependency contracts.
+
+## System host-loader boundary
+
+The checked-in System inventory owns the stable distribution name and loader
+target. Deployment tooling binds that target to one exact release and installed
+distribution digest. API startup imports only targets named by that exact
+manifest; it never scans installed packages. Plugin scope, distribution,
+execution policy, and capabilities remain platform-owned release metadata, not
+attributes inferred from Python packaging.

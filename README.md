@@ -35,35 +35,37 @@ flowchart LR
     SQL --> Cache["Content-addressed invocation cache"]
     SQL --> Secrets["Encrypted graph/node secrets"]
     API --> Storage["Local or S3 artifact object storage"]
-    API -. "discovers entry points" .-> Plugins["Installed node plugins"]
-    Plugins --> Core
+    Releases["Selected immutable Plugin releases"] --> API
+    API --> Adapters["Exact host or retained OCI adapter"]
+    Adapters --> Core
 ```
 
 - `apps/web` owns the canvas, node rendering, schema-driven controls, and edge
   projection/conversion/mapping editor.
-- `apps/api` owns plugin discovery, runtime composition, and the HTTP adapters
-  for execution and saved-graph CRUD under `/v1`.
+- `apps/api` owns exact release admission, runtime composition, and the HTTP
+  adapters for execution and saved-graph CRUD under `/v1`.
 - `libs/core/src/grafy_core` owns artifacts, nodes, ports, projections,
   conversions, runtime execution, saved-graph aggregates and use cases, the
-  plugin contract, and the generic Image, Sequence, Arithmetic, Text, Schema,
-  Prompt, and Table built-in operator families.
+  Plugin contract, producer-neutral artifact contracts, portable runtime
+  primitives, and graph-Module boundaries.
 - `libs/persistence` owns the async SQLAlchemy repository and unit-of-work
   adapters for saved graphs and graph materialization bindings. Alembic is the
   only schema authority.
 - `libs/storage` owns the local and S3-compatible object stores.
-- `plugins/ocr` is an independently packaged example plugin. It owns OCR and
-  table-extraction nodes, their artifacts and persistence/resolution, the
-  server-side Mistral adapter, and its Mistral SDK dependency.
+- `plugins/arithmetic`, `plugins/image`, `plugins/prompt`, `plugins/schema`,
+  `plugins/sequence`, `plugins/table`, and `plugins/text` own the first-party
+  bundled System Plugin implementations and their release declarations.
+- `plugins/ocr` is an independently packaged System Plugin. It owns the OCR
+  page node, its artifacts and persistence/resolution, and the Tesseract OCR
+  adapter.
 - `plugins/gis` owns exact WGS84 vector sources, georeferenced raster scans,
   OGC WFS/WMS integration, lightweight map-layer recipes, and ordered map
   composition. MapLibre renders derived PMTiles and XYZ projections without
   downloading complete source artifacts into the browser.
 - `plugins/llm` owns provider-backed generation. Its generic OpenAI-compatible
-  Chat Completions node wraps the official OpenAI Python SDK, consumes built-in
+  Chat Completions node wraps the official OpenAI Python SDK, consumes exact
   prompt messages and an optional runtime JSON Schema, and keeps credentials
   outside core.
-  The older Mistral-specific structured node remains available for existing
-  graphs.
 - `plugins/sql` owns engine-neutral parameterized statement artifacts, the
   existing atomic PostgreSQL batch executor, and an isolated DuckDB executor
   for joining materialized `table.data@1` artifacts. PostgreSQL connection
@@ -87,8 +89,8 @@ node or **Run with dependencies**; that separate action executes the selection's
 full upstream closure.
 
 Execution reuse is a separate concern from those revision-scoped bindings.
-Nodes default to `never` caching; deterministic built-ins opt into the `exact`
-policy explicitly. An exact invocation key covers the operator version,
+Nodes default to `never` caching; deterministic System nodes opt into the
+`exact` policy explicitly. An exact invocation key covers the operator version,
 validated configuration (including defaults), stable node/module identity,
 invocation mode and mapped item index, resolved artifact-type bindings, exact
 ordered input refs and SHA-256 values, and opaque secret revisions. Mapped nodes
@@ -100,30 +102,19 @@ refs; stale or inaccessible refs are evicted lazily.
 
 ## Register a plugin
 
-Plugins are ordinary Python distributions that export one
-`grafy_core.plugins.Plugin` declaration through the `grafy.plugins`
-entry-point group:
+Each Plugin project exports one `grafy_core.plugins.Plugin` declaration from a
+stable loader target. Workspace projects are published as immutable,
+workspace-scoped releases and execute through the retained isolated runtime;
+the API never imports their working copies.
 
-```toml
-[project.entry-points."grafy.plugins"]
-my_plugin = "my_package.plugin:PLUGIN"
-```
-
-Install the distribution in the API environment and restart the API. FastAPI's
-lifespan discovers installed entries, validates collisions, freezes the catalog,
-and exposes the contributed nodes, artifact types, and active conversions
-  through `/v1/nodes`. The host marks explicitly installed Image, Sequence,
-  Arithmetic, Text, Schema, Prompt, and Table families as `builtin`, and marks
-  entry-point plugins as `external`; plugins cannot self-assign that origin. The
-  node catalog exposes and visually separates those origins. Sequence provides
-  generic Collect, Count, Slice, and Pick item operations; Arithmetic works
-  directly with canonical integer scalars. Table owns the producer-neutral table
-  artifact and conversion nodes used by SQL and OCR outputs. Schema provides one
-  recursive, interactive JSON Schema Builder; Prompt provides the deterministic
-  message constructor used by provider plugins. The OCR and LLM packages
-contribute optional external nodes, while the API package has no OCR, LLM, or
-Mistral dependency. Installing a plugin also installs the third-party
-dependencies declared by that plugin.
+System packages are enumerated by the platform-owned inventory. A deployment
+may bind an exact current System release to installed host code by supplying
+`GRAFY_SYSTEM_PLUGIN_DEPLOYMENT_MANIFEST`. Startup verifies the installed
+distribution bytes and exact release contract before importing only the named
+loader targets. Merely installing a package does nothing, and an API with no
+manifest starts with host-owned Module boundaries only. See
+[Plugin development](docs/design/plugin-development.md) for project shape and
+publication workflows.
 
 ### Query artifact tables
 
@@ -188,12 +179,13 @@ the terminal result.
 
 Requirements:
 
-- Python 3.12.9
+- Python 3.14
 - [uv](https://docs.astral.sh/uv/)
 - [just](https://github.com/casey/just)
 - Node.js 20+ and npm
-- For the optional GIS plugin: GDAL 3.8+ with writable PMTiles, COG, and PNG
-  drivers, plus `gdal2tiles.py`. The API plugins container includes these tools.
+- For local GIS project tests: GDAL 3.8+ with writable PMTiles, COG, and PNG
+  drivers, plus `gdal2tiles.py`. Isolated Plugin runtime images own their native
+  tools; the API image does not.
 
 Install both workspaces:
 
@@ -201,31 +193,18 @@ Install both workspaces:
 just install
 ```
 
-The default installation contains the API, core, persistence,
-storage, and web application; it does not install OCR or Mistral. Enable the
-optional OCR plugin with:
-
-```bash
-just install-ocr
-```
-
-Enable the optional LLM plugin with:
-
-```bash
-just install-llm
-```
-
-Enable the optional GIS plugin with:
-
-```bash
-just install-gis
-```
-
-Install every optional plugin together with the default workspaces using:
+The default installation contains the API, core, persistence, storage, and web
+application. Install every System project into the root integration-test
+environment using:
 
 ```bash
 just install-all
 ```
+
+Installation does not activate a System Plugin. The API loads host code only
+when an exact `GRAFY_SYSTEM_PLUGIN_DEPLOYMENT_MANIFEST` binds an installed
+distribution to a selected immutable release; isolated execution uses that
+release's retained OCI artifact.
 
 Start the API and web app in separate terminals:
 
@@ -254,13 +233,12 @@ The production recipes read `/etc/grafy/grafy.env` and merge
 ### Upgrade an existing Notarius checkout
 
 The Grafy release uses `GRAFY_*` environment variables. Rename every
-`NOTARIUS_*` key before starting the new code; unprefixed provider variables
-such as `MISTRAL_API_KEY` do not change.
+`NOTARIUS_*` key before starting the new code.
 
-External plugins must also move their dependency and import names to
-`grafy-core` and `grafy_core`, then publish through the `grafy.plugins`
-entry-point group. The old Python package and plugin-entry-point namespaces are
-not retained as aliases.
+Existing third-party Plugins must move their dependency and import names to
+`grafy-core` and `grafy_core`, then publish an immutable Workspace release. The
+old Python package and ambient host-loader namespaces are not retained as
+aliases.
 
 Local defaults reuse `.notarius-artifacts/workbench` and its
 `notarius.sqlite3` database only when the corresponding Grafy workspace or
@@ -295,12 +273,10 @@ invocation-cache entries. Override
 migration commands are `just db-current`, `just db-history`, and
 `just db-revision "describe change"`.
 
-After a default installation, `just api-ocr` installs the OCR extra and starts
-the API in one command. Use `just api-ocr` whenever that plugin should be
-available; `just api` keeps the API environment on its minimal package graph.
-Use `just api-llm` for the OpenAI-compatible and Mistral LLM nodes.
-Use `just api-gis` to discover the spatial import, layer, and map-composition
-nodes.
+`just api` never discovers installed Plugin packages ambiently. Configure an
+exact System deployment manifest and selected release when exercising a System
+host binding; use the retained OCI runtime for isolated-only families such as
+GIS, LLM, OCR, and SQL.
 
 ### Compose vector and raster maps
 
@@ -356,8 +332,7 @@ Open <http://localhost:3000>. The API is available at
 
 The workbench defaults to local artifact storage and a local API URL. Set
 `GRAFY_STORAGE_BACKEND=s3` plus the S3 settings shown in `.env.example` for
-AWS S3 or an S3-compatible service such as MinIO. `MISTRAL_API_KEY` is required
-by Mistral OCR and structured-output nodes and must remain server-side.
+AWS S3 or an S3-compatible service such as MinIO.
 
 The OpenAI-compatible node uses a write-only key configured on a saved node,
 not an environment-specific provider variable. Generate one stable encryption
@@ -419,8 +394,8 @@ example:
 }
 ```
 
-The OpenAI-compatible and Mistral adapters accept PNG, JPEG, GIF, and WebP image
-artifacts on user messages. They bound one request to eight images, 20,000,000
+The OpenAI-compatible adapter accepts PNG, JPEG, GIF, and WebP image
+artifacts on user messages. It bounds one request to eight images, 20,000,000
 bytes per image, and 50,000,000 image bytes in aggregate before base64 encoding.
 
 Node secrets currently use trusted-collaboration semantics. Any visitor who can
@@ -439,9 +414,9 @@ just check
 
 The check runs backend tests, Python and TypeScript lint/type checks, verifies
 that the generated OpenAPI client is current, and builds the production web
-bundle. It enables the OCR and LLM extras while running Python tests and type
-checks so the external plugins remain covered without becoming default runtime
-dependencies.
+bundle. Python verification enables every declared development extra so all
+System Plugin families remain covered without making them ambient runtime
+discoveries.
 
 To exercise the runtime without the browser:
 
@@ -451,11 +426,12 @@ just smoke
 
 ## Containers
 
-The API Dockerfile's default `api` target contains no OCR, LLM, or Mistral
-dependency. The Compose stack explicitly selects its `api-plugins` target so the
-optional OCR and structured-output nodes are available in that deployment. A
-one-shot migration service must complete before the API starts. SQLite, uploads,
-and artifact objects share the durable `grafy-data` volume.
+The API Dockerfile's `api-plugins` target adds the Docker CLI used by the
+opt-in retained OCI runtime and System publisher, but installs only
+`grafy-api` and its bundled dependencies. GIS, LLM, OCR, SQL, and their native
+tools belong in retained Plugin images, not the online API image. A one-shot
+migration service must complete before the API starts. SQLite, uploads, and
+artifact objects share the durable `grafy-data` volume.
 
 ```bash
 just docker-up

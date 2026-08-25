@@ -4,8 +4,8 @@
 > flows, and structural diagrams. This document complements the product
 > vocabulary in `CONTEXT.md` and the interaction plan in
 > `docs/workbench-interaction-plan.md`. It describes the *current* committed
-> backend as built — not a target architecture. Intended Plugin discovery
-> (register / publish / isolated freeze, not `grafy.plugins`) is
+> backend as built — not a target architecture. Plugin registration,
+> publication, and isolated freezes are described further in
 > [plugin unification](plugin-unification.md).
 
 - **Audience:** contributors who need to know where code lives, how services are
@@ -22,15 +22,16 @@ Grafy is a node-first workbench for building and running typed artifact
 graphs. The backend is a Python monorepo (managed by `uv`) organized as a
 **hexagonal / ports-and-adapters architecture** with one clean composition root.
 
-The backend has three entry points into the same domain:
+The backend has three execution and authoring surfaces over the same domain:
 
 1. **FastAPI HTTP API** (`apps/api`) — the primary REST surface under `/v1`,
    consumed by the Next.js workbench and by agent clients over REST.
 2. **FastMCP Streamable HTTP server** (`apps/mcp`) — agent graph-discovery and
    collaboration-aware authoring tools, mounted at `/mcp` on the API process.
-3. **Node plugins** (`plugins/*`) — independently packaged extensions that
-   register nodes, artifact types, conversions, resolvers, and writers into the
-   core registry.
+3. **Plugin releases** — serialized System releases visible globally and
+   Workspace releases visible only to their owner. A release contributes exact
+   node, artifact, conversion, and runtime contracts to the effective catalog.
+   Published Modules remain a separate catalog entry kind.
 
 ```mermaid
 flowchart LR
@@ -44,8 +45,12 @@ flowchart LR
     API --> Core["grafy_core\nlibs/core"]
     API --> Persistence["grafy_persistence\nlibs/persistence"]
     API --> Storage["grafy_storage\nlibs/storage"]
-    API -. "discovers entry points" .-> Plugins["Installed node plugins\nplugins/*"]
-    Plugins --> Core
+    Publisher["Workspace publish or\none-shot platform publisher"] --> Releases["Serialized Plugin releases\nSystem + Workspace"]
+    Releases --> API
+    API --> HostAdapter["Exact System host adapter"]
+    API --> OCIAdapter["Retained OCI adapter"]
+    HostAdapter --> Core
+    OCIAdapter --> Core
     Core --> Persistence
     Core --> Storage
     Persistence --> SQL["SQLite / PostgreSQL"]
@@ -58,27 +63,34 @@ flowchart LR
 
 | Package | Path | Responsibility |
 | --- | --- | --- |
-| `grafy_api` | `apps/api/src/grafy_api` | FastAPI app, `/v1` routes, plugin discovery, runtime composition, HTTP adapters. |
+| `grafy_api` | `apps/api/src/grafy_api` | FastAPI app, `/v1` routes, exact release admission and host loading, runtime composition, HTTP adapters. |
 | `grafy_mcp` | `apps/mcp/src/grafy_mcp` | Stateless FastMCP Streamable HTTP tools; request-scoped PAT actor context. |
-| `grafy_core` | `libs/core/src/grafy_core` | Domain aggregates, ports, application services, runtime, plugin contract, built-in operators. |
+| `grafy_core` | `libs/core/src/grafy_core` | Domain aggregates, ports, application services, runtime primitives, Plugin and producer-neutral artifact contracts, Module boundaries. |
 | `grafy_persistence` | `libs/persistence/src/grafy_persistence` | Async SQLAlchemy repositories, unit-of-work adapters, ORM mappings, Alembic schema. |
 | `grafy_storage` | `libs/storage/src/grafy_storage` | Local and S3-compatible object stores. |
-| `grafy_plugin_llm` | `plugins/llm` | OpenAI-compatible Chat Completions + legacy Mistral structured node. |
-| `grafy_plugin_ocr` | `plugins/ocr` | OCR and table-extraction nodes; Mistral + Tesseract adapters. |
+| `grafy_plugin_arithmetic` | `plugins/arithmetic` | Integer scalar artifact and arithmetic nodes; scalar resolver/writer registration. |
+| `grafy_plugin_image` | `plugins/image` | Raster image artifact, upload node, and image resolver/writer registration. |
+| `grafy_plugin_sequence` | `plugins/sequence` | Generic collect, count, slice, and pick operators. |
+| `grafy_plugin_text` | `plugins/text` | Text and Markdown artifacts and text operators; scalar resolver/writer registrations. |
+| `grafy_plugin_schema` | `plugins/schema` | JSON Schema artifact and interactive schema-builder operator. |
+| `grafy_plugin_prompt` | `plugins/prompt` | Prompt message artifact and deterministic prompt-construction operator. |
+| `grafy_plugin_table` | `plugins/table` | Table import, projection, and export operators; portable table-bundle resolver/writer registration. |
+| `grafy_plugin_llm` | `plugins/llm` | OpenAI-compatible Chat Completions node. |
+| `grafy_plugin_ocr` | `plugins/ocr` | OCR page node; Tesseract adapter. |
 | `grafy_plugin_gis` | `plugins/gis` | WGS84 vector sources, georeferenced raster scans, OGC WFS/WMS integration, map-layer recipes. |
 | `grafy_plugin_sql` | `plugins/sql` | Parameterized statement artifacts, PostgreSQL batch executor, DuckDB join executor. |
 
 ### Dependency direction (hexagonal)
 
 The core is the architectural center. Concrete infrastructure (SQLAlchemy, S3,
-Mistral SDKs) lives behind ports and is wired only at composition time.
+provider SDKs) lives behind ports and is wired only at composition time.
 
 ```mermaid
 flowchart TB
-    subgraph EntryPoints["Entry points"]
+    subgraph Surfaces["Composition and declaration surfaces"]
         API["apps/api — HTTP routes + composition root"]
         MCP["apps/mcp — MCP tools"]
-        Plugins["plugins/* — node extensions"]
+        Plugins["plugins/* — System Plugin projects"]
     end
     subgraph Policy["Policy (high-level, depends on ports only)"]
         App["grafy_core/application\nSavedGraphService · CollaborationService\nIdentityService · ModuleLibraryService · TemplateService"]
@@ -91,7 +103,7 @@ flowchart TB
     subgraph Adapters["Infrastructure adapters (low-level)"]
         Persistence["grafy_persistence\nSql*Repository · SqlAlchemyUnitOfWork"]
         Storage["grafy_storage\nLocalFileObjectStore · S3ObjectStore"]
-        SDKs["plugin SDK adapters\nMistral · OpenAI · Tesseract · GDAL · SQLAlchemy"]
+        SDKs["plugin SDK adapters\nOpenAI · Tesseract · GDAL · SQLAlchemy"]
     end
 
     API --> App
@@ -140,9 +152,12 @@ flowchart TB
     Db --> NodeSecrets["NodeSecretService"]
     Db --> UoW["SqlAlchemyUnitOfWork"]
 
-    builtin_plugins --> Registry["build_plugin_registry"]
-    discover_plugins --> Registry
+    HostManifest["Exact System deployment manifest"] --> HostVerify["Verify installed bytes\n+ exact release bindings"]
+    HostVerify --> Registry["PluginRegistry\nModule boundaries + declared System"]
     Registry --> Components["build_workbench_components\nservices/composition.py"]
+    UoW --> Releases["PluginReleaseService"]
+    Releases --> Components
+    Components --> Admission["ReleaseExecutionAdmission"]
 
     StorageFactory --> Storage["FileStoragePort"]
     Components --> AppResources["AppResources\napp.state.resources"]
@@ -153,13 +168,17 @@ flowchart TB
 
 **Key construction points** (all in `apps/api`):
 
-- **`build_plugin_registry`** (`plugin_discovery.py`) installs builtin plugins,
-  discovers external plugins via the `grafy.plugins` entry-point group, and
-  `freeze()`s the registry (validating artifact/conversion/port contracts).
+- **API lifespan** (`main.py`) always registers the host-owned Module boundary
+  operators. If `GRAFY_SYSTEM_PLUGIN_DEPLOYMENT_MANIFEST` is configured, it
+  verifies the declared installed distribution bytes and exact release bindings,
+  imports only those declared targets, installs them, and freezes the registry.
+  With no manifest it freezes a Module-only registry; there is no package scan or
+  host fallback.
 - **`build_workbench_components`** (`services/composition.py`) is the workbench
   composition root: it builds resolvers/writers from the registry, the
-  `NodeRuntime`, the compiler, the in-process execution engine, and the
-  run/execution/artifact/materialization services.
+  `NodeRuntime`, compiler, one caller-owned `ReleaseExecutionAdmission`, the
+  in-process and retained-OCI adapters, and the run/execution/artifact/
+  materialization services.
 - **`app.state`** holds two dataclasses — `AppIdentity` (auth) and
   `AppResources` (workbench services) — fetched via `get_identity(app)` and
   `get_resources(app)`.
@@ -229,63 +248,66 @@ flowchart TB
 
 ---
 
-## 6. Plugin system dependency flow
+## 6. Plugin release and catalog dependency flow
 
-Plugins are discovered from the `grafy.plugins` entry-point group and
-installed into a frozen `PluginRegistry`. The registry is the single source of
-truth for nodes, artifact types, conversions, resolvers, and writers.
+The effective Workspace catalog is assembled from persisted exact selections:
+global System releases, releases owned by the requested Workspace, and
+published Modules as a separate entry kind. Serialized release contracts are
+the catalog authority. The frozen `PluginRegistry` owns loaded host runtime
+implementations only; it is not the complete catalog.
 
 ```mermaid
 flowchart TB
-    subgraph Core["grafy_core"]
-        Registry["PluginRegistry\nnodes · artifact_types · conversions"]
-        Contract["Plugin contract\nNode · ArtifactTypeSpec · ArtifactConversion\nResolverFactory · WriterFactory"]
-        Runtime["Runtime\nNodeRuntime · InputMaterializer · OutputPersister"]
-    end
-    subgraph Builtin["Builtin operators (core)"]
-        Ops["operators/\nimage · sequence · arithmetic · text\nschema · prompt · table · modules"]
-    end
-    subgraph External["External plugins"]
-        LLM["grafy_plugin_llm"]
-        OCR["grafy_plugin_ocr"]
-        GIS["grafy_plugin_gis"]
-        SQL["grafy_plugin_sql"]
-    end
-
-    Ops --> Registry
-    LLM --> Registry
-    OCR --> Registry
-    GIS --> Registry
-    SQL --> Registry
-    Registry --> Contract
-    Contract --> Runtime
-    Registry -. "entry point discovery" .-> EntryPoints["importlib.metadata\ngroup='grafy.plugins'"]
+    Platform["One-shot platform publisher"] --> System["Selected System releases\nglobal"]
+    Workspace["Workspace owner / reviewed agent"] --> WorkspaceReleases["Selected Workspace releases\nowner only"]
+    System --> Catalog["Effective Workspace catalog"]
+    WorkspaceReleases --> Catalog
+    Modules["Published Modules\nentry_kind=module"] --> Catalog
+    Catalog --> Pin["Exact {scope, slug, revision} pin"]
+    Pin --> Admission["ReleaseExecutionAdmission"]
+    Admission --> Host["Current bound System\nin-process adapter"]
+    Admission --> OCI["Retained OCI\nisolated adapter"]
 ```
 
-**Registration path** — each `Plugin` declares:
+**Declaration path** — each `Plugin` project declares:
 - `node(...)` / `function_node(...)` → `NodeRegistration`
 - `register_artifact_type(...)` → `ArtifactTypeSpec`
-- `register_artifact_conversion(...)` → `ArtifactConversion`
 - `register_resolver(...)` / `register_writer(...)` → runtime factories
 
-**Validation on `freeze()`:** the registry verifies every port references an
-installed artifact type, conversions meet compatible runtime types, field
-projections target installed types, scalar targets are unique, and conversion
-chains are type-compatible. It then expands derived field projections for
-JSON-Schema string/integer leaves.
+Publication freezes those declarations into an immutable serialized contract.
+Artifact conversions are a separate deployment-owned map in
+`grafy_core.canonical_conversions`; the compiler resolves exact edge keys only
+from that immutable map. Release-declared conversion references are publishable
+only when their key, version, endpoints, and title exactly match a canonical
+entry, and the effective catalog exposes each canonical conversion once rather
+than assigning it to a Plugin release.
+Workspace publication is owner-authorized and isolated-only. System staging is
+a separate platform/CI authority, runs candidate verification in a one-shot
+publisher sandbox, retains OCI for every release, and never implies promotion.
+Catalog and compilation pass selection and exact revocation facts to the same
+deployment admission object. Deprecated and withdrawn families stay visible
+but are disabled for new insertion; retained exact pins may still run. Revoked
+exact releases remain identifiable but are denied with reason `revoked`.
+
+The generic host package scanner and legacy origin compatibility fields have
+been removed. Exact deployment bindings and the retained isolated runtime are
+the only Plugin execution identities. See [Slice 12](../plans/workspace-plugins/12-compatibility-cutover.md)
+and [ADR 0004](../adr/0004-unify-system-and-workspace-plugin-releases.md).
 
 ---
 
 ## 7. Graph execution dependency flow
 
-Execution is a pipeline: **preflight → compile → run → persist**. The
-composition root wires one in-process engine behind the
-`GraphExecutionEngine` protocol.
+Execution is a pipeline: **preflight → exact resolution and admission → compile
+→ run through the selected adapter → persist**.
 
 ```mermaid
 flowchart LR
     Run["RunGraph"] --> Preflight["GraphRunPreflight\nvalidate graph + registry"]
-    Run --> Compiler["GraphCompiler\ncompile nodes/edges to plan"]
+    Run --> Compiler["GraphCompiler\nresolve exact releases + compile plan"]
+    Compiler --> Admission["ReleaseExecutionAdmission"]
+    Admission --> Host["Bound System host adapter"]
+    Admission --> OCI["Retained OCI adapter"]
     Run --> Engine["GraphExecutionEngine\nin-process"]
     Engine --> Coordinator["GraphExecutionCoordinator"]
     Coordinator --> NodeExec["NodeExecutionService"]
@@ -302,7 +324,7 @@ flowchart LR
 
 **Node execution steps:**
 1. `InputMaterializer` resolves each input `ArtifactRef` to a Python value using
-   the registered `Resolver` instances (builtin integer/text + plugin resolvers).
+   the resolver registrations contributed by the exact loaded System Plugins.
 2. `NodeRuntime` runs the node `run(context, config, inputs)` and checks the
    invocation cache policy.
 3. `OutputPersister` writes produced artifacts via registered `ArtifactOutputWriter`
@@ -520,7 +542,7 @@ flowchart LR
     subgraph Forbidden["Forbidden: policy → concrete infra"]
         App["application / runtime"] -. "✗" .-> Sql["SqlAlchemy*"]
         App -. "✗" .-> Storage["LocalFileObjectStore / S3ObjectStore"]
-        App -. "✗" .-> SDK["Mistral / OpenAI SDK"]
+        App -. "✗" .-> SDK["OpenAI SDK"]
         Core -. "✗" .-> FastAPI["FastAPI routes"]
     end
 ```

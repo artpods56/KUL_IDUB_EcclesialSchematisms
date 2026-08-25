@@ -21,7 +21,7 @@ reserves a real Plugin working copy, produces a bounded review, and can publish
 only the reviewed bytes through the ordinary publication workflow.
 
 There are likewise no persisted synthetic generated-node rows to migrate.
-`PluginOrigin.AGENT` was unused and has been removed. An unknown historical
+The legacy agent origin value was unused and has been removed. An unknown historical
 operator already follows the generic compatibility policy: preserve its saved
 bytes and handles as inert, fail compilation closed, and require an explicit
 copy into an ordinary Plugin before it can run.
