@@ -1,6 +1,8 @@
 import json
 import importlib
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from alembic import command
@@ -8,13 +10,19 @@ from alembic.config import Config
 import pytest
 import sqlalchemy as sa
 from sqlalchemy import Column, Integer, MetaData, Table, create_engine, inspect, text
+from sqlalchemy.engine import Connection, Row
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.schema import CreateIndex, CreateTable
+from sqlalchemy.sql.schema import SchemaItem
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects import sqlite
 
 from grafy_api.settings import get_settings
-from grafy_persistence.schema import staged_uploads
+from grafy_persistence.schema import (
+    plugin_release_selections,
+    plugin_releases,
+    staged_uploads,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -53,11 +61,16 @@ def test_all_0008_upgrade_and_downgrade_tables_compile_for_postgresql() -> None:
     migration = importlib.import_module(
         "infra.db.migrations.versions.0008_tenant_existing_resources"
     )
-    captured_tables: list[tuple[str, tuple[object, ...]]] = []
+    captured_tables: list[tuple[str, tuple[SchemaItem, ...]]] = []
     captured_indexes: list[tuple[str, str, tuple[str, ...]]] = []
 
     class CaptureOperations:
-        def create_table(self, name: str, *elements: object, **kwargs: object) -> None:
+        def create_table(
+            self,
+            name: str,
+            *elements: SchemaItem,
+            **kwargs: object,
+        ) -> None:
             del kwargs
             captured_tables.append((name, elements))
 
@@ -78,7 +91,7 @@ def test_all_0008_upgrade_and_downgrade_tables_compile_for_postgresql() -> None:
         def exec_driver_sql(self, statement: str) -> None:
             del statement
 
-    migration.op = CaptureOperations()
+    setattr(migration, "op", CaptureOperations())
     connection = PostgresqlConnection()
     migration._create_tenant_tables(connection)
     migration._create_staged_upload_table(connection)
@@ -235,7 +248,7 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             },
         )
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "0019_scoped_plugin_releases")
     with create_engine(f"sqlite:///{database_path}").connect() as connection:
         row = (
             connection.execute(
@@ -250,7 +263,7 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
         assert row["graph_id"] == graph_id.hex
         assert row["revision"] == 7
         assert row["name"] == "Existing graph"
-        assert json.loads(row["document"]) == document
+        assert json.loads(row["document"]) == {**document, "schema_version": 5}
         assert str(row["created_at"]) == "2026-07-16 09:30:00"
 
     command.downgrade(config, "0003_node_secrets")
@@ -278,6 +291,8 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "module_releases",
             "modules",
             "plugin_releases",
+            "plugin_release_revocations",
+            "plugin_release_selections",
             "node_secrets",
             "users",
             "oidc_identities",
@@ -318,6 +333,8 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "module_releases",
             "modules",
             "plugin_releases",
+            "plugin_release_revocations",
+            "plugin_release_selections",
             "node_secrets",
             "users",
             "oidc_identities",
@@ -461,7 +478,7 @@ def test_saved_graph_revision_migration_backfills_the_current_head(
         assert row["graph_id"] == graph_id.hex
         assert row["revision"] == 7
         assert row["name"] == "Existing graph"
-        assert json.loads(row["document"]) == document
+        assert json.loads(row["document"]) == {**document, "schema_version": 5}
         assert str(row["created_at"]) == "2026-07-16 09:30:00"
         head = (
             connection.execute(
@@ -503,7 +520,11 @@ def test_collaboration_head_migration_backfills_exactly_one_sequence_zero_head(
     workspace_id = UUID("00000000-0000-0000-0000-000000000007")
     graph_a = UUID("00000000-0000-0000-0000-000000000901")
     graph_b = UUID("00000000-0000-0000-0000-000000000902")
-    document = {"schema_version": 3, "nodes": [], "edges": []}
+    document: dict[str, object] = {
+        "schema_version": 3,
+        "nodes": [],
+        "edges": [],
+    }
     with create_engine(f"sqlite:///{database_path}").begin() as connection:
         for graph_id, name, revision in (
             (graph_a, "Graph A", 2),
@@ -1123,3 +1144,1114 @@ def test_0013_upgrade_rejects_results_without_requested_nodes(
     with pytest.raises(RuntimeError, match="without a matching requested node"):
         command.upgrade(config, "head")
     get_settings.cache_clear()
+
+
+def _seed_0019_workspace_release_and_references(
+    database_path: Path,
+) -> tuple[str, str, str, str, str]:
+    workspace_hex = UUID("00000000-0000-0000-0000-000000000007").hex
+    graph_hex = UUID("00000000-0000-0000-0000-000000001901").hex
+    execution_hex = UUID("00000000-0000-0000-0000-000000001902").hex
+    artifact_hex = UUID("00000000-0000-0000-0000-000000001903").hex
+    template_hex = UUID("00000000-0000-0000-0000-000000001904").hex
+    room_epoch_hex = UUID("00000000-0000-0000-0000-000000001905").hex
+    timestamp = "2026-08-24 10:00:00"
+    pin = {"slug": "notes", "revision": 3}
+    document = {
+        "schema_version": 4,
+        "nodes": [
+            {
+                "id": "notes",
+                "operator_id": "notes.echo",
+                "operator_version": 1,
+                "config": {},
+                "position": {"x": 0, "y": 0},
+                "plugin_release_pin": pin,
+            }
+        ],
+        "edges": [],
+    }
+    submitted_request = {
+        "schema_version": 4,
+        "nodes": [
+            {
+                "id": "notes",
+                "operator_id": "notes.echo",
+                "operator_version": 1,
+                "plugin_release": pin,
+            }
+        ],
+        "edges": [],
+    }
+    provenance = {
+        "plugin_release": {
+            **pin,
+            "source_digest": "b" * 64,
+            "contract_digest": "d" * 64,
+        }
+    }
+
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO plugin_releases ("
+                "workspace_id, slug, revision, catalog, contract_digest, "
+                "capabilities, capability_digest, protocol_digest, profile_digest, "
+                "source_object_key, source_digest, lock_digest, runtime_profile, "
+                "runtime_image_digest, runtime_artifact, descriptor_digest, "
+                "published_by_user_id, published_at) VALUES ("
+                ":workspace_id, 'notes', 3, :catalog, :contract_digest, "
+                ":capabilities, :capability_digest, :protocol_digest, "
+                ":profile_digest, 'plugin-releases/notes/source.tar.gz', "
+                ":source_digest, :lock_digest, 'python-uv', NULL, NULL, "
+                ":descriptor_digest, NULL, :published_at)"
+            ),
+            {
+                "workspace_id": workspace_hex,
+                "catalog": json.dumps(
+                    {
+                        "slug": "notes",
+                        "title": "Notes",
+                        "artifact_types": [],
+                        "nodes": [],
+                    }
+                ),
+                "contract_digest": "d" * 64,
+                "capabilities": json.dumps({"capabilities": []}),
+                "capability_digest": "a" * 64,
+                "protocol_digest": "e" * 64,
+                "profile_digest": "f" * 64,
+                "source_digest": "b" * 64,
+                "lock_digest": "c" * 64,
+                "descriptor_digest": "1" * 64,
+                "published_at": timestamp,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO saved_graphs "
+                "(workspace_id, id, name, document, revision, created_at, updated_at) "
+                "VALUES (:workspace_id, :graph_id, 'Scoped migration', :document, "
+                "7, :timestamp, :timestamp)"
+            ),
+            {
+                "workspace_id": workspace_hex,
+                "graph_id": graph_hex,
+                "document": json.dumps(document),
+                "timestamp": timestamp,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO saved_graph_revisions "
+                "(workspace_id, graph_id, revision, name, document, created_at) "
+                "VALUES (:workspace_id, :graph_id, 7, 'Scoped migration', "
+                ":document, :timestamp)"
+            ),
+            {
+                "workspace_id": workspace_hex,
+                "graph_id": graph_hex,
+                "document": json.dumps(document),
+                "timestamp": timestamp,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO collaborative_graph_heads "
+                "(workspace_id, graph_id, room_epoch, collaboration_sequence, "
+                "checkpoint_sequence, checkpoint_revision, name, document, "
+                "updated_at) VALUES (:workspace_id, :graph_id, :room_epoch, 0, "
+                "0, 7, 'Scoped migration', :document, :timestamp)"
+            ),
+            {
+                "workspace_id": workspace_hex,
+                "graph_id": graph_hex,
+                "room_epoch": room_epoch_hex,
+                "document": json.dumps(document),
+                "timestamp": timestamp,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO templates "
+                "(id, workspace_id, source_graph_id, source_revision, "
+                "source_graph_name, snapshot_document, name, description, state, "
+                "created_by_user_id, created_at, updated_at) VALUES ("
+                ":template_id, :workspace_id, :graph_id, 7, 'Scoped migration', "
+                ":document, 'Scoped template', NULL, 'active', NULL, :timestamp, "
+                ":timestamp)"
+            ),
+            {
+                "template_id": template_hex,
+                "workspace_id": workspace_hex,
+                "graph_id": graph_hex,
+                "document": json.dumps(document),
+                "timestamp": timestamp,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO graph_executions "
+                "(workspace_id, execution_id, graph_id, graph_revision, status, "
+                "scope, submitted_request, created_at) VALUES ("
+                ":workspace_id, :execution_id, :graph_id, 7, 'succeeded', 'all', "
+                ":submitted_request, :timestamp)"
+            ),
+            {
+                "workspace_id": workspace_hex,
+                "execution_id": execution_hex,
+                "graph_id": graph_hex,
+                "submitted_request": json.dumps(submitted_request),
+                "timestamp": timestamp,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO artifact_objects "
+                "(id, workspace_id, artifact_type, schema_version, content_type, "
+                "storage_backend, metadata) VALUES (:artifact_id, :workspace_id, "
+                "'test.scoped', 1, 'application/json', 'inline', :metadata)"
+            ),
+            {
+                "artifact_id": artifact_hex,
+                "workspace_id": workspace_hex,
+                "metadata": json.dumps(provenance),
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO graph_execution_nodes "
+                "(workspace_id, execution_id, node_id, position, result_status, "
+                "result_position, outputs, artifact_count, diagnostics, "
+                "completed_at) VALUES (:workspace_id, :execution_id, 'notes', 0, "
+                "'succeeded', 0, '[]', 0, :diagnostics, :timestamp)"
+            ),
+            {
+                "workspace_id": workspace_hex,
+                "execution_id": execution_hex,
+                "diagnostics": json.dumps(provenance),
+                "timestamp": timestamp,
+            },
+        )
+    return workspace_hex, graph_hex, execution_hex, artifact_hex, timestamp
+
+
+def _assert_0019_timestamps_unchanged(
+    connection: sa.Connection,
+    graph_hex: str,
+    timestamp: str,
+) -> None:
+    timestamp_queries = (
+        (
+            "SELECT created_at, updated_at FROM saved_graphs WHERE id = :graph_id",
+            (timestamp, timestamp),
+        ),
+        (
+            "SELECT created_at FROM saved_graph_revisions WHERE graph_id = :graph_id",
+            (timestamp,),
+        ),
+        (
+            "SELECT updated_at FROM collaborative_graph_heads "
+            "WHERE graph_id = :graph_id",
+            (timestamp,),
+        ),
+        (
+            "SELECT created_at, updated_at FROM templates "
+            "WHERE source_graph_id = :graph_id",
+            (timestamp, timestamp),
+        ),
+    )
+    for statement, expected in timestamp_queries:
+        assert (
+            connection.execute(
+                text(statement),
+                {"graph_id": graph_hex},
+            ).one()
+            == expected
+        )
+
+
+def test_0019_scopes_releases_and_normalizes_retained_references_without_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "scoped-releases" / "migrated.sqlite3"
+    monkeypatch.setenv(
+        "GRAFY_DATABASE_URL",
+        f"sqlite+aiosqlite:///{database_path}",
+    )
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0018_local_execution_queue")
+    workspace_hex, graph_hex, execution_hex, artifact_hex, timestamp = (
+        _seed_0019_workspace_release_and_references(database_path)
+    )
+
+    command.upgrade(config, "head")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        release = (
+            connection.execute(
+                text(
+                    "SELECT id, scope, workspace_id, slug, revision, source_digest, "
+                    "descriptor_digest, execution_policy, distribution "
+                    "FROM plugin_releases"
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert release["id"] is not None
+        assert release["scope"] == "workspace"
+        assert release["workspace_id"] == workspace_hex
+        assert release["slug"] == "notes"
+        assert release["revision"] == 3
+        assert release["source_digest"] == "b" * 64
+        assert release["descriptor_digest"] == "1" * 64
+        assert release["execution_policy"] == "isolated-only"
+        assert release["distribution"] is None
+
+        indexes = {
+            row[1]
+            for row in connection.execute(text("PRAGMA index_list('plugin_releases')"))
+        }
+        assert indexes >= {
+            "uq_plugin_releases_system_slug_revision",
+            "uq_plugin_releases_workspace_slug_revision",
+            "uq_plugin_releases_system_slug_descriptor",
+            "uq_plugin_releases_workspace_slug_descriptor",
+        }
+        graph_row = (
+            connection.execute(
+                text(
+                    "SELECT revision, created_at, updated_at FROM saved_graphs "
+                    "WHERE id = :graph_id"
+                ),
+                {"graph_id": graph_hex},
+            )
+            .mappings()
+            .one()
+        )
+        assert graph_row == {
+            "revision": 7,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+        _assert_0019_timestamps_unchanged(connection, graph_hex, timestamp)
+
+        document_columns = (
+            ("saved_graphs", "document"),
+            ("saved_graph_revisions", "document"),
+            ("collaborative_graph_heads", "document"),
+            ("templates", "snapshot_document"),
+        )
+        for table_name, column_name in document_columns:
+            stored = connection.execute(
+                text(f"SELECT {column_name} FROM {table_name}")
+            ).scalar_one()
+            document = json.loads(stored)
+            assert document["schema_version"] == 5
+            assert document["edges"] == []
+            node = document["nodes"][0]
+            assert node["id"] == "notes"
+            assert node["operator_id"] == "notes.echo"
+            assert node["operator_version"] == 1
+            assert node["config"] == {}
+            assert node["position"] == {"x": 0, "y": 0}
+            pin = node["plugin_release_pin"]
+            assert pin == {"scope": "workspace", "slug": "notes", "revision": 3}
+
+        submitted = connection.execute(
+            text(
+                "SELECT submitted_request FROM graph_executions "
+                "WHERE execution_id = :execution_id"
+            ),
+            {"execution_id": execution_hex},
+        ).scalar_one()
+        submitted_request = json.loads(submitted)
+        assert submitted_request["schema_version"] == 4
+        assert submitted_request["nodes"][0]["plugin_release"] == {
+            "scope": "workspace",
+            "slug": "notes",
+            "revision": 3,
+        }
+        metadata = connection.execute(
+            text("SELECT metadata FROM artifact_objects WHERE id = :artifact_id"),
+            {"artifact_id": artifact_hex},
+        ).scalar_one()
+        diagnostics = connection.execute(
+            text(
+                "SELECT diagnostics FROM graph_execution_nodes "
+                "WHERE execution_id = :execution_id"
+            ),
+            {"execution_id": execution_hex},
+        ).scalar_one()
+        for retained in (metadata, diagnostics):
+            assert json.loads(retained)["plugin_release"]["scope"] == "workspace"
+
+    command.downgrade(config, "0018_local_execution_queue")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        columns = {
+            column["name"]
+            for column in inspect(connection).get_columns("plugin_releases")
+        }
+        assert {"id", "scope", "execution_policy", "distribution"}.isdisjoint(columns)
+        release = connection.execute(
+            text(
+                "SELECT workspace_id, slug, revision, source_digest, "
+                "descriptor_digest FROM plugin_releases"
+            )
+        ).one()
+        assert release == (workspace_hex, "notes", 3, "b" * 64, "1" * 64)
+        saved_document = connection.execute(
+            text("SELECT document FROM saved_graphs WHERE id = :graph_id"),
+            {"graph_id": graph_hex},
+        ).scalar_one()
+        downgraded_document = json.loads(saved_document)
+        assert downgraded_document["schema_version"] == 4
+        assert downgraded_document["nodes"][0]["plugin_release_pin"] == {
+            "slug": "notes",
+            "revision": 3,
+        }
+        submitted = connection.execute(
+            text(
+                "SELECT submitted_request FROM graph_executions "
+                "WHERE execution_id = :execution_id"
+            ),
+            {"execution_id": execution_hex},
+        ).scalar_one()
+        downgraded_request = json.loads(submitted)
+        assert downgraded_request["schema_version"] == 4
+        assert downgraded_request["nodes"][0]["plugin_release"] == {
+            "slug": "notes",
+            "revision": 3,
+        }
+        _assert_0019_timestamps_unchanged(connection, graph_hex, timestamp)
+    get_settings.cache_clear()
+
+
+def test_0019_downgrade_refuses_system_release_data_and_system_pins(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "scoped-release-downgrade-guard" / "migrated.sqlite3"
+    monkeypatch.setenv(
+        "GRAFY_DATABASE_URL",
+        f"sqlite+aiosqlite:///{database_path}",
+    )
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0018_local_execution_queue")
+    _, graph_hex, _, _, _ = _seed_0019_workspace_release_and_references(database_path)
+    command.upgrade(config, "0019_scoped_plugin_releases")
+
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO plugin_releases ("
+                "id, scope, workspace_id, slug, revision, catalog, contract_digest, "
+                "capabilities, capability_digest, protocol_digest, profile_digest, "
+                "source_object_key, source_digest, lock_digest, runtime_profile, "
+                "runtime_image_digest, runtime_artifact, descriptor_digest, "
+                "execution_policy, distribution, published_by_user_id, published_at) "
+                "SELECT :id, 'system', NULL, 'system-notes', 1, catalog, "
+                "contract_digest, capabilities, capability_digest, protocol_digest, "
+                "profile_digest, source_object_key, :source_digest, lock_digest, "
+                "runtime_profile, runtime_image_digest, runtime_artifact, "
+                ":descriptor_digest, 'host-eligible', 'bundled', NULL, published_at "
+                "FROM plugin_releases WHERE scope = 'workspace' LIMIT 1"
+            ),
+            {
+                "id": UUID("00000000-0000-0000-0000-000000001999").hex,
+                "source_digest": "9" * 64,
+                "descriptor_digest": "8" * 64,
+            },
+        )
+
+    with pytest.raises(RuntimeError, match="System Plugin release data"):
+        command.downgrade(config, "0018_local_execution_queue")
+
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(text("DELETE FROM plugin_releases WHERE scope = 'system'"))
+        stored = connection.execute(
+            text("SELECT document FROM saved_graphs WHERE id = :graph_id"),
+            {"graph_id": graph_hex},
+        ).scalar_one()
+        document = json.loads(stored)
+        document["nodes"][0]["plugin_release_pin"]["scope"] = "system"
+        connection.execute(
+            text("UPDATE saved_graphs SET document = :document WHERE id = :graph_id"),
+            {"document": json.dumps(document), "graph_id": graph_hex},
+        )
+
+    with pytest.raises(RuntimeError, match="System Plugin release pins or provenance"):
+        command.downgrade(config, "0018_local_execution_queue")
+
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        document["nodes"][0]["plugin_release_pin"]["scope"] = "workspace"
+        connection.execute(
+            text("UPDATE saved_graphs SET document = :document WHERE id = :graph_id"),
+            {"document": json.dumps(document), "graph_id": graph_hex},
+        )
+    command.downgrade(config, "0018_local_execution_queue")
+    get_settings.cache_clear()
+
+
+def test_0020_backfills_exact_current_selection_without_mutating_releases_or_graphs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "plugin-release-selections" / "migrated.sqlite3"
+    monkeypatch.setenv(
+        "GRAFY_DATABASE_URL",
+        f"sqlite+aiosqlite:///{database_path}",
+    )
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0018_local_execution_queue")
+    _, graph_hex, _, _, _ = _seed_0019_workspace_release_and_references(database_path)
+    command.upgrade(config, "0019_scoped_plugin_releases")
+
+    selected_release_hex = UUID("00000000-0000-0000-0000-000000002005").hex
+    selected_timestamp = "2026-08-24 11:00:00"
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO plugin_releases ("
+                "id, scope, workspace_id, slug, revision, catalog, contract_digest, "
+                "capabilities, capability_digest, protocol_digest, profile_digest, "
+                "source_object_key, source_digest, lock_digest, runtime_profile, "
+                "runtime_image_digest, runtime_artifact, descriptor_digest, "
+                "execution_policy, distribution, published_by_user_id, published_at) "
+                "SELECT :id, scope, workspace_id, slug, 5, catalog, contract_digest, "
+                "capabilities, capability_digest, protocol_digest, profile_digest, "
+                "source_object_key, :source_digest, lock_digest, runtime_profile, "
+                "runtime_image_digest, runtime_artifact, :descriptor_digest, "
+                "execution_policy, distribution, published_by_user_id, :published_at "
+                "FROM plugin_releases WHERE scope = 'workspace' AND slug = 'notes' "
+                "LIMIT 1"
+            ),
+            {
+                "id": selected_release_hex,
+                "source_digest": "5" * 64,
+                "descriptor_digest": "6" * 64,
+                "published_at": selected_timestamp,
+            },
+        )
+        release_snapshot = connection.execute(
+            text(
+                "SELECT id, scope, workspace_id, slug, revision, source_digest, "
+                "descriptor_digest, published_at FROM plugin_releases ORDER BY id"
+            )
+        ).all()
+        graph_snapshot = connection.execute(
+            text(
+                "SELECT revision, document, created_at, updated_at FROM saved_graphs "
+                "WHERE id = :graph_id"
+            ),
+            {"graph_id": graph_hex},
+        ).one()
+
+    command.upgrade(config, "0020_plugin_release_selections")
+    migration = importlib.import_module(
+        "infra.db.migrations.versions.0020_plugin_release_selections"
+    )
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        selection = (
+            connection.execute(
+                text(
+                    "SELECT scope, workspace_id, slug, selected_release_id, "
+                    "selected_revision, lifecycle, generation, updated_at, "
+                    "updated_by_actor FROM plugin_release_selections"
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert selection["scope"] == "workspace"
+        assert selection["workspace_id"] is not None
+        assert selection["slug"] == "notes"
+        assert selection["selected_release_id"] == selected_release_hex
+        assert selection["selected_revision"] == 5
+        assert selection["lifecycle"] == "published"
+        assert selection["generation"] == 1
+        assert str(selection["updated_at"]) == f"{selected_timestamp}.000000"
+        assert selection["updated_by_actor"] == "migration:0020"
+
+        migration._backfill_selections(connection)
+        migration._backfill_selections(connection)
+        assert (
+            connection.execute(
+                text("SELECT COUNT(*) FROM plugin_release_selections")
+            ).scalar_one()
+            == 1
+        )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT id, scope, workspace_id, slug, revision, source_digest, "
+                    "descriptor_digest, published_at FROM plugin_releases ORDER BY id"
+                )
+            ).all()
+            == release_snapshot
+        )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT revision, document, created_at, updated_at FROM saved_graphs "
+                    "WHERE id = :graph_id"
+                ),
+                {"graph_id": graph_hex},
+            ).one()
+            == graph_snapshot
+        )
+        assert "published_by_platform_actor" in {
+            column["name"]
+            for column in inspect(connection).get_columns("plugin_releases")
+        }
+        indexes = {
+            row[1]
+            for row in connection.execute(
+                text("PRAGMA index_list('plugin_release_selections')")
+            )
+        }
+        assert indexes >= {
+            "uq_plugin_release_selections_system_slug",
+            "uq_plugin_release_selections_workspace_slug",
+        }
+
+    command.downgrade(config, "0019_scoped_plugin_releases")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        assert "plugin_release_selections" not in inspect(connection).get_table_names()
+        assert "published_by_platform_actor" not in {
+            column["name"]
+            for column in inspect(connection).get_columns("plugin_releases")
+        }
+        assert (
+            connection.execute(
+                text(
+                    "SELECT id, scope, workspace_id, slug, revision, source_digest, "
+                    "descriptor_digest, published_at FROM plugin_releases ORDER BY id"
+                )
+            ).all()
+            == release_snapshot
+        )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT revision, document, created_at, updated_at FROM saved_graphs "
+                    "WHERE id = :graph_id"
+                ),
+                {"graph_id": graph_hex},
+            ).one()
+            == graph_snapshot
+        )
+    get_settings.cache_clear()
+
+
+def test_0020_downgrade_refuses_to_drop_system_publisher_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "system-publisher-downgrade" / "migrated.sqlite3"
+    monkeypatch.setenv(
+        "GRAFY_DATABASE_URL",
+        f"sqlite+aiosqlite:///{database_path}",
+    )
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0018_local_execution_queue")
+    _seed_0019_workspace_release_and_references(database_path)
+    command.upgrade(config, "head")
+
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO plugin_releases ("
+                "id, scope, workspace_id, slug, revision, catalog, contract_digest, "
+                "capabilities, capability_digest, protocol_digest, profile_digest, "
+                "source_object_key, source_digest, lock_digest, runtime_profile, "
+                "runtime_image_digest, runtime_artifact, descriptor_digest, "
+                "execution_policy, distribution, published_by_user_id, "
+                "published_by_platform_actor, published_at) "
+                "SELECT :id, 'system', NULL, 'system-notes', 1, catalog, "
+                "contract_digest, capabilities, capability_digest, protocol_digest, "
+                "profile_digest, source_object_key, :source_digest, lock_digest, "
+                "runtime_profile, runtime_image_digest, runtime_artifact, "
+                ":descriptor_digest, 'host-eligible', 'bundled', NULL, "
+                "'migration-test:system', published_at FROM plugin_releases "
+                "WHERE scope = 'workspace' LIMIT 1"
+            ),
+            {
+                "id": UUID("00000000-0000-0000-0000-000000002099").hex,
+                "source_digest": "9" * 64,
+                "descriptor_digest": "8" * 64,
+            },
+        )
+
+    with pytest.raises(RuntimeError, match="publisher provenance"):
+        command.downgrade(config, "0019_scoped_plugin_releases")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        assert "plugin_release_selections" in inspect(connection).get_table_names()
+        assert (
+            connection.execute(
+                text(
+                    "SELECT published_by_platform_actor FROM plugin_releases "
+                    "WHERE scope = 'system'"
+                )
+            ).scalar_one()
+            == "migration-test:system"
+        )
+    get_settings.cache_clear()
+
+
+def _assert_0020_downgrade_refused_leaves_schema_unchanged(
+    connection: Connection,
+    selection_snapshot: Sequence[Row[Any]],
+    release_snapshot: Sequence[Row[Any]],
+) -> None:
+    assert "plugin_release_selections" in inspect(connection).get_table_names()
+    assert (
+        connection.execute(
+            text(
+                "SELECT scope, workspace_id, slug, selected_release_id, "
+                "selected_revision, lifecycle, generation, updated_at, "
+                "updated_by_actor FROM plugin_release_selections "
+                "ORDER BY slug"
+            )
+        ).all()
+        == selection_snapshot
+    )
+    indexes = {
+        str(row[1])
+        for row in connection.execute(
+            text("PRAGMA index_list('plugin_release_selections')")
+        )
+    }
+    assert indexes >= {
+        "uq_plugin_release_selections_system_slug",
+        "uq_plugin_release_selections_workspace_slug",
+    }
+    table_sql = connection.execute(
+        text(
+            "SELECT sql FROM sqlite_master "
+            "WHERE name = 'plugin_release_selections'"
+        )
+    ).scalar_one()
+    assert (
+        "ck_plugin_release_selections_plugin_release_selection_lifecycle" in table_sql
+    )
+    assert "published_by_platform_actor" in {
+        column["name"] for column in inspect(connection).get_columns("plugin_releases")
+    }
+    assert (
+        connection.execute(
+            text(
+                "SELECT id, scope, workspace_id, slug, revision, source_digest, "
+                "descriptor_digest, published_at FROM plugin_releases ORDER BY id"
+            )
+        ).all()
+        == release_snapshot
+    )
+
+
+def _selection_snapshot(connection: Connection) -> Sequence[Row[Any]]:
+    return connection.execute(
+        text(
+            "SELECT scope, workspace_id, slug, selected_release_id, "
+            "selected_revision, lifecycle, generation, updated_at, "
+            "updated_by_actor FROM plugin_release_selections ORDER BY slug"
+        )
+    ).all()
+
+
+def _release_snapshot(connection: Connection) -> Sequence[Row[Any]]:
+    return connection.execute(
+        text(
+            "SELECT id, scope, workspace_id, slug, revision, source_digest, "
+            "descriptor_digest, published_at FROM plugin_releases ORDER BY id"
+        )
+    ).all()
+
+
+def test_0020_downgrade_refuses_selection_pointing_at_older_retained_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "older-revision-downgrade" / "migrated.sqlite3"
+    monkeypatch.setenv("GRAFY_DATABASE_URL", f"sqlite+aiosqlite:///{database_path}")
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0018_local_execution_queue")
+    _seed_0019_workspace_release_and_references(database_path)
+    command.upgrade(config, "head")
+
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO plugin_releases ("
+                "id, scope, workspace_id, slug, revision, catalog, contract_digest, "
+                "capabilities, capability_digest, protocol_digest, profile_digest, "
+                "source_object_key, source_digest, lock_digest, runtime_profile, "
+                "runtime_image_digest, runtime_artifact, descriptor_digest, "
+                "execution_policy, distribution, published_by_user_id, published_at) "
+                "SELECT :id, scope, workspace_id, slug, 4, catalog, contract_digest, "
+                "capabilities, capability_digest, protocol_digest, profile_digest, "
+                "source_object_key, :source_digest, lock_digest, runtime_profile, "
+                "runtime_image_digest, runtime_artifact, :descriptor_digest, "
+                "execution_policy, distribution, published_by_user_id, :published_at "
+                "FROM plugin_releases WHERE scope = 'workspace' AND slug = 'notes' "
+                "LIMIT 1"
+            ),
+            {
+                "id": UUID("00000000-0000-0000-0000-000000002101").hex,
+                "source_digest": "7" * 64,
+                "descriptor_digest": "8" * 64,
+                "published_at": "2026-08-25 10:00:00",
+            },
+        )
+        selection_snapshot = _selection_snapshot(connection)
+        release_snapshot = _release_snapshot(connection)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"family 'notes' of workspace .* selection state selects revision 3 "
+        r"instead of the family's maximum retained revision 4",
+    ):
+        command.downgrade(config, "0019_scoped_plugin_releases")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        _assert_0020_downgrade_refused_leaves_schema_unchanged(
+            connection,
+            selection_snapshot,
+            release_snapshot,
+        )
+    get_settings.cache_clear()
+
+
+@pytest.mark.parametrize("lifecycle", ["deprecated", "withdrawn"])
+def test_0020_downgrade_refuses_mutated_selection_lifecycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    lifecycle: str,
+) -> None:
+    database_path = (
+        tmp_path / f"{lifecycle}-downgrade" / "migrated.sqlite3"
+    )
+    monkeypatch.setenv("GRAFY_DATABASE_URL", f"sqlite+aiosqlite:///{database_path}")
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0018_local_execution_queue")
+    _seed_0019_workspace_release_and_references(database_path)
+    command.upgrade(config, "head")
+
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE plugin_release_selections SET lifecycle = :lifecycle "
+                "WHERE scope = 'workspace'"
+            ),
+            {"lifecycle": lifecycle},
+        )
+        selection_snapshot = _selection_snapshot(connection)
+        release_snapshot = _release_snapshot(connection)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"family 'notes' of workspace .* has lifecycle "
+        rf"'{lifecycle}' instead of 'published'",
+    ):
+        command.downgrade(config, "0019_scoped_plugin_releases")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        _assert_0020_downgrade_refused_leaves_schema_unchanged(
+            connection,
+            selection_snapshot,
+            release_snapshot,
+        )
+    get_settings.cache_clear()
+
+
+def test_0020_downgrade_refuses_generation_above_backfill(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "generation-downgrade" / "migrated.sqlite3"
+    monkeypatch.setenv("GRAFY_DATABASE_URL", f"sqlite+aiosqlite:///{database_path}")
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0018_local_execution_queue")
+    _seed_0019_workspace_release_and_references(database_path)
+    command.upgrade(config, "head")
+
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE plugin_release_selections SET generation = 2, "
+                "updated_by_actor = 'user:00000000-0000-0000-0000-000000000007' "
+                "WHERE scope = 'workspace'"
+            )
+        )
+        selection_snapshot = _selection_snapshot(connection)
+        release_snapshot = _release_snapshot(connection)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"family 'notes' of workspace .* is at generation 2 instead of 1",
+    ):
+        command.downgrade(config, "0019_scoped_plugin_releases")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        _assert_0020_downgrade_refused_leaves_schema_unchanged(
+            connection,
+            selection_snapshot,
+            release_snapshot,
+        )
+    get_settings.cache_clear()
+
+
+def test_0020_downgrade_refuses_non_migration_selection_actor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "actor-downgrade" / "migrated.sqlite3"
+    monkeypatch.setenv("GRAFY_DATABASE_URL", f"sqlite+aiosqlite:///{database_path}")
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0018_local_execution_queue")
+    _seed_0019_workspace_release_and_references(database_path)
+    command.upgrade(config, "head")
+
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE plugin_release_selections SET updated_by_actor = "
+                "'user:00000000-0000-0000-0000-000000000007' "
+                "WHERE scope = 'workspace'"
+            )
+        )
+        selection_snapshot = _selection_snapshot(connection)
+        release_snapshot = _release_snapshot(connection)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"family 'notes' of workspace .* was last updated by "
+        r"'user:00000000-0000-0000-0000-000000000007' instead of the 0020 "
+        r"migration backfill",
+    ):
+        command.downgrade(config, "0019_scoped_plugin_releases")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        _assert_0020_downgrade_refused_leaves_schema_unchanged(
+            connection,
+            selection_snapshot,
+            release_snapshot,
+        )
+    get_settings.cache_clear()
+
+
+def test_0020_downgrade_refuses_family_without_selection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "missing-selection-downgrade" / "migrated.sqlite3"
+    monkeypatch.setenv("GRAFY_DATABASE_URL", f"sqlite+aiosqlite:///{database_path}")
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0018_local_execution_queue")
+    _seed_0019_workspace_release_and_references(database_path)
+    command.upgrade(config, "head")
+
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(
+            text("DELETE FROM plugin_release_selections WHERE scope = 'workspace'")
+        )
+        selection_snapshot = _selection_snapshot(connection)
+        release_snapshot = _release_snapshot(connection)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"family 'notes' of workspace .* has releases but no explicit "
+        r"selection",
+    ):
+        command.downgrade(config, "0019_scoped_plugin_releases")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        _assert_0020_downgrade_refused_leaves_schema_unchanged(
+            connection,
+            selection_snapshot,
+            release_snapshot,
+        )
+    get_settings.cache_clear()
+
+
+def test_0021_adds_empty_exact_revocations_without_release_schema_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "plugin-release-revocations" / "migrated.sqlite3"
+    monkeypatch.setenv(
+        "GRAFY_DATABASE_URL",
+        f"sqlite+aiosqlite:///{database_path}",
+    )
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0020_plugin_release_selections")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        release_columns = [
+            (
+                column["name"],
+                str(column["type"]),
+                column["nullable"],
+                column["default"],
+                column["primary_key"],
+            )
+            for column in inspect(connection).get_columns("plugin_releases")
+        ]
+        assert "plugin_release_revocations" not in inspect(
+            connection
+        ).get_table_names()
+
+    command.upgrade(config, "0021_plugin_release_revocations")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        inspector = inspect(connection)
+        assert [
+            (
+                column["name"],
+                str(column["type"]),
+                column["nullable"],
+                column["default"],
+                column["primary_key"],
+            )
+            for column in inspector.get_columns("plugin_releases")
+        ] == release_columns
+        assert "plugin_release_revocations" in inspector.get_table_names()
+        assert [
+            column["name"]
+            for column in inspector.get_columns("plugin_release_revocations")
+        ] == [
+            "release_id",
+            "scope",
+            "workspace_id",
+            "slug",
+            "revision",
+            "reason",
+            "revoked_by_user_id",
+            "revoked_by_platform_actor",
+            "revoked_at",
+        ]
+        assert inspector.get_pk_constraint("plugin_release_revocations")[
+            "constrained_columns"
+        ] == ["release_id"]
+        release_foreign_key = next(
+            foreign_key
+            for foreign_key in inspector.get_foreign_keys(
+                "plugin_release_revocations"
+            )
+            if foreign_key["constrained_columns"] == ["release_id"]
+        )
+        assert release_foreign_key["referred_table"] == "plugin_releases"
+        assert release_foreign_key["options"]["ondelete"] == "RESTRICT"
+        assert connection.execute(
+            text("SELECT COUNT(*) FROM plugin_release_revocations")
+        ).scalar_one() == 0
+    command.check(config)
+
+    command.downgrade(config, "0020_plugin_release_selections")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        assert "plugin_release_revocations" not in inspect(
+            connection
+        ).get_table_names()
+        assert [
+            (
+                column["name"],
+                str(column["type"]),
+                column["nullable"],
+                column["default"],
+                column["primary_key"],
+            )
+            for column in inspect(connection).get_columns("plugin_releases")
+        ] == release_columns
+    get_settings.cache_clear()
+
+
+def test_0021_downgrade_refuses_to_discard_revocation_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "revocation-downgrade" / "migrated.sqlite3"
+    monkeypatch.setenv(
+        "GRAFY_DATABASE_URL",
+        f"sqlite+aiosqlite:///{database_path}",
+    )
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0018_local_execution_queue")
+    _seed_0019_workspace_release_and_references(database_path)
+    command.upgrade(config, "0021_plugin_release_revocations")
+
+    actor_id = UUID("00000000-0000-0000-0000-000000002101").hex
+    timestamp = "2026-08-24 12:00:00"
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+        connection.execute(
+            text(
+                "INSERT INTO users (id, email, display_name, active, created_at, "
+                "updated_at) VALUES (:id, 'revoker@example.test', 'Revoker', 1, "
+                ":timestamp, :timestamp)"
+            ),
+            {"id": actor_id, "timestamp": timestamp},
+        )
+        release = (
+            connection.execute(
+                text(
+                    "SELECT id, scope, workspace_id, slug, revision "
+                    "FROM plugin_releases WHERE slug = 'notes'"
+                )
+            )
+            .mappings()
+            .one()
+        )
+        connection.execute(
+            text(
+                "INSERT INTO plugin_release_revocations (release_id, scope, "
+                "workspace_id, slug, revision, reason, revoked_by_user_id, "
+                "revoked_by_platform_actor, revoked_at) VALUES (:release_id, "
+                ":scope, :workspace_id, :slug, :revision, 'security', :actor_id, "
+                "NULL, :timestamp)"
+            ),
+            {
+                **release,
+                "release_id": release["id"],
+                "actor_id": actor_id,
+                "timestamp": timestamp,
+            },
+        )
+
+    with pytest.raises(RuntimeError, match="revocations would be lost"):
+        command.downgrade(config, "0020_plugin_release_selections")
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        assert connection.execute(
+            text("SELECT COUNT(*) FROM plugin_release_revocations")
+        ).scalar_one() == 1
+        connection.execute(text("DELETE FROM plugin_release_revocations"))
+    command.downgrade(config, "0020_plugin_release_selections")
+    get_settings.cache_clear()
+
+
+def test_scoped_plugin_release_partial_indexes_compile_for_postgresql() -> None:
+    indexes = {
+        str(index.name): index
+        for table in (plugin_releases, plugin_release_selections)
+        for index in table.indexes
+        if index.name is not None
+    }
+    expected = {
+        "uq_plugin_releases_system_slug_revision",
+        "uq_plugin_releases_workspace_slug_revision",
+        "uq_plugin_releases_system_slug_descriptor",
+        "uq_plugin_releases_workspace_slug_descriptor",
+        "uq_plugin_release_selections_system_slug",
+        "uq_plugin_release_selections_workspace_slug",
+    }
+    assert expected <= indexes.keys()
+    for index_name in expected:
+        ddl = str(
+            CreateIndex(indexes[index_name]).compile(dialect=postgresql.dialect())
+        )
+        assert ddl.startswith(f"CREATE UNIQUE INDEX {index_name}")
+        assert " WHERE scope = " in ddl

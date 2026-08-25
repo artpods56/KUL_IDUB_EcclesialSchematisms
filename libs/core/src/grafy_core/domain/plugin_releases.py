@@ -1,4 +1,4 @@
-"""Append-only Workspace Plugin releases and their catalog contracts."""
+"""Append-only Plugin releases and their catalog contracts."""
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -6,24 +6,39 @@ from hashlib import sha256
 import json
 import re
 from typing import ClassVar, Literal, Self, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.errors import PydanticInvalidForJsonSchema
 
-from grafy_core.artifacts import ArtifactTypeKey, ArtifactTypeSpec
+from grafy_core.artifacts import (
+    ArtifactBundleContract,
+    ArtifactBundleFormat,
+    ArtifactTypeKey,
+    ArtifactTypeSpec,
+    MaterializedJsonType,
+)
+from grafy_core.conversions import ArtifactConversion, ArtifactConversionKey
+from grafy_core.domain.plugin_identity import (
+    PluginDistribution,
+    PluginExecutionPolicy,
+    PlatformPluginActor,
+    PluginReleaseNamespace,
+    PluginReleaseScope,
+)
+from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.nodes import (
     ArtifactTypeVariable,
     InputPortSpec,
     OutputPortSpec,
     PortShape,
 )
-from grafy_core.plugins import NodeRegistration, Plugin
+from grafy_core.plugins import NodeCachePolicy, NodeRegistration, Plugin
 
 
 PluginPortDirection = Literal["input", "output"]
 
-PLUGIN_INVOCATION_PROTOCOL = "grafy-plugin-invocation@2"
+PLUGIN_INVOCATION_PROTOCOL = "grafy-plugin-invocation@6"
 
 
 def plugin_protocol_digest() -> str:
@@ -36,8 +51,21 @@ def plugin_profile_digest(runtime_profile: str) -> str:
     return sha256(runtime_profile.strip().encode("utf-8")).hexdigest()
 
 
+_EMPTY_HTTP_EGRESS_SERIALIZATION = ',"http_egress":null'
+
+
 def plugin_contract_digest(catalog: PluginCatalogManifest) -> str:
-    return sha256(catalog.model_dump_json().encode("utf-8")).hexdigest()
+    """Digest of the serialized catalog contract.
+
+    Absent HTTP-egress declarations are dropped before hashing so a catalog
+    parsed with the newer contract fields digests identically to the bytes
+    persisted before that field existed.
+    """
+
+    serialized = catalog.model_dump_json()
+    if _EMPTY_HTTP_EGRESS_SERIALIZATION in serialized:
+        serialized = serialized.replace(_EMPTY_HTTP_EGRESS_SERIALIZATION, "")
+    return sha256(serialized.encode("utf-8")).hexdigest()
 
 
 class PluginReleaseError(ValueError):
@@ -93,12 +121,26 @@ class PluginExportFormat(PluginReleaseValue):
     filename: str = Field(min_length=1, max_length=255)
 
 
+class PluginArtifactBundleContract(PluginReleaseValue):
+    format: ArtifactBundleFormat
+    version: int = Field(ge=1, strict=True)
+
+    @classmethod
+    def from_contract(cls, contract: ArtifactBundleContract) -> Self:
+        return cls(format=contract.format, version=contract.version)
+
+
 class PluginArtifactTypeContract(PluginReleaseValue):
     key: PluginArtifactTypeKey
     title: str = Field(min_length=1, max_length=255)
     payload_schema: dict[str, object] = Field(default_factory=dict)
     field_projections: tuple[PluginFieldProjection, ...] = ()
+    materialized_json_type: MaterializedJsonType | None = None
     export_formats: tuple[PluginExportFormat, ...] = ()
+    bundle: PluginArtifactBundleContract = PluginArtifactBundleContract(
+        format="inline-json",
+        version=1,
+    )
 
     @classmethod
     def from_spec(cls, spec: ArtifactTypeSpec) -> Self:
@@ -106,6 +148,7 @@ class PluginArtifactTypeContract(PluginReleaseValue):
             key=PluginArtifactTypeKey.from_key(spec.key),
             title=spec.title,
             payload_schema=spec.payload_schema,
+            materialized_json_type=spec.materialized_json_type,
             field_projections=tuple(
                 PluginFieldProjection(
                     path=projection.path,
@@ -122,6 +165,51 @@ class PluginArtifactTypeContract(PluginReleaseValue):
                 )
                 for export_format in spec.export_formats
             ),
+            bundle=PluginArtifactBundleContract.from_contract(spec.bundle),
+        )
+
+
+class PluginArtifactConversionKey(PluginReleaseValue):
+    id: str = Field(min_length=1, max_length=255)
+    version: int = Field(ge=1, strict=True)
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError(
+                "Plugin artifact conversion id must not contain whitespace"
+            )
+        return value
+
+    @classmethod
+    def from_key(cls, key: ArtifactConversionKey) -> Self:
+        return cls(id=key.id, version=key.version)
+
+
+class PluginArtifactConversionContract(PluginReleaseValue):
+    key: PluginArtifactConversionKey
+    source: PluginArtifactTypeKey
+    target: PluginArtifactTypeKey
+    title: str = Field(min_length=1, max_length=255)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str) -> str:
+        if value.strip() == "":
+            raise ValueError("Plugin artifact conversion title must not be blank")
+        return value
+
+    @classmethod
+    def from_conversion[SourceT, TargetT](
+        cls,
+        conversion: ArtifactConversion[SourceT, TargetT],
+    ) -> Self:
+        return cls(
+            key=PluginArtifactConversionKey.from_key(conversion.key),
+            source=PluginArtifactTypeKey.from_key(conversion.source),
+            target=PluginArtifactTypeKey.from_key(conversion.target),
+            title=conversion.title,
         )
 
 
@@ -200,6 +288,39 @@ class PluginSecretInputContract(PluginReleaseValue):
     description: str | None = Field(default=None, max_length=4_000)
 
 
+class PluginStagedUploadInputContract(PluginReleaseValue):
+    config_field: str = Field(
+        pattern=r"^[a-z][a-z0-9_]*$",
+        min_length=1,
+        max_length=255,
+    )
+
+
+class PluginNodeHttpEgressContract(PluginReleaseValue):
+    """Immutable declaration of one node's network.egress destination sources."""
+
+    configured_inputs: tuple[str, ...] = ()
+    dynamic_destinations: bool = False
+
+    @field_validator("configured_inputs")
+    @classmethod
+    def validate_configured_inputs(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(value) != len(set(value)):
+            raise ValueError("Node HTTP egress config fields must be unique")
+        if len(value) > 8:
+            raise ValueError(
+                "Node HTTP egress declares more than eight configured fields"
+            )
+        for field_name in value:
+            if re.fullmatch(r"[a-z][a-z0-9_]*", field_name) is None or len(
+                field_name
+            ) > 255:
+                raise ValueError(
+                    "Node HTTP egress configured inputs must be config field names"
+                )
+        return value
+
+
 class PluginNodeContract(PluginReleaseValue):
     operator_id: str = Field(min_length=1, max_length=255)
     operator_version: int = Field(ge=1, strict=True)
@@ -211,6 +332,43 @@ class PluginNodeContract(PluginReleaseValue):
     inputs: tuple[PluginPortContract, ...]
     outputs: tuple[PluginPortContract, ...]
     secret_inputs: tuple[PluginSecretInputContract, ...] = ()
+    staged_upload_inputs: tuple[PluginStagedUploadInputContract, ...] = ()
+    required_capabilities: tuple[PluginRuntimeCapability, ...] = ()
+    cache_policy: NodeCachePolicy = NodeCachePolicy.NEVER
+    http_egress: PluginNodeHttpEgressContract | None = None
+
+    @field_validator("required_capabilities")
+    @classmethod
+    def normalize_required_capabilities(
+        cls,
+        value: tuple[PluginRuntimeCapability, ...],
+    ) -> tuple[PluginRuntimeCapability, ...]:
+        normalized = {PluginRuntimeCapability(capability) for capability in value}
+        return tuple(sorted(normalized, key=lambda capability: capability.value))
+
+    @model_validator(mode="after")
+    def validate_capability_contract(self) -> Self:
+        capabilities = set(self.required_capabilities)
+        if (
+            self.secret_inputs
+            and PluginRuntimeCapability.NODE_SECRETS not in capabilities
+        ):
+            raise ValueError("Plugin node secret inputs require node.secrets")
+        if (
+            self.staged_upload_inputs
+            and PluginRuntimeCapability.STAGED_UPLOADS not in capabilities
+        ):
+            raise ValueError("Plugin node staged uploads require staged.uploads")
+        if (
+            self.http_egress is not None
+            and PluginRuntimeCapability.NETWORK_EGRESS not in capabilities
+        ):
+            raise ValueError("Plugin node HTTP egress requires network.egress")
+        if self.operator_id == "sql.artifacts.query" and capabilities != {
+            PluginRuntimeCapability.UNTRUSTED_SQL
+        }:
+            raise ValueError("sql.artifacts.query must require exactly sql.untrusted")
+        return self
 
     @classmethod
     def from_registration(cls, registration: NodeRegistration) -> Self:
@@ -240,6 +398,25 @@ class PluginNodeContract(PluginReleaseValue):
                 )
                 for secret in registration.secret_inputs
             ),
+            staged_upload_inputs=tuple(
+                PluginStagedUploadInputContract(
+                    config_field=staged_upload.config_field,
+                )
+                for staged_upload in registration.staged_upload_inputs
+            ),
+            required_capabilities=registration.required_capabilities,
+            cache_policy=registration.cache_policy,
+            http_egress=(
+                None
+                if registration.http_egress is None
+                else PluginNodeHttpEgressContract(
+                    configured_inputs=tuple(
+                        configured_input.config_field
+                        for configured_input in registration.http_egress.configured_inputs
+                    ),
+                    dynamic_destinations=registration.http_egress.dynamic_destinations,
+                )
+            ),
         )
 
 
@@ -247,6 +424,8 @@ class PluginCatalogManifest(PluginReleaseValue):
     slug: str = Field(pattern=r"^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$", max_length=100)
     title: str = Field(min_length=1, max_length=160)
     artifact_types: tuple[PluginArtifactTypeContract, ...] = ()
+    artifact_type_dependencies: tuple[PluginArtifactTypeContract, ...] = ()
+    artifact_conversions: tuple[PluginArtifactConversionContract, ...] = ()
     nodes: tuple[PluginNodeContract, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -256,24 +435,79 @@ class PluginCatalogManifest(PluginReleaseValue):
             raise ValueError(
                 "Plugin catalog nodes must have unique operator identities"
             )
-        operator_prefix = f"{self.slug}."
-        for node in self.nodes:
-            if not node.operator_id.startswith(operator_prefix):
-                raise ValueError(
-                    f"Plugin {self.slug!r} node {node.operator_id!r} must use "
-                    f"the {operator_prefix!r} operator prefix"
-                )
         artifact_keys = [
             (artifact.key.id, artifact.key.schema_version)
             for artifact in self.artifact_types
         ]
         if len(artifact_keys) != len(set(artifact_keys)):
             raise ValueError("Plugin artifact types must have unique identities")
-        for artifact in self.artifact_types:
-            if not artifact.key.id.startswith(operator_prefix):
+        dependency_keys = [
+            (dependency.key.id, dependency.key.schema_version)
+            for dependency in self.artifact_type_dependencies
+        ]
+        if len(dependency_keys) != len(set(dependency_keys)):
+            raise ValueError(
+                "Plugin artifact type dependencies must have unique identities"
+            )
+        owned_dependency_overlap = set(artifact_keys) & set(dependency_keys)
+        if owned_dependency_overlap:
+            artifact_id, schema_version = sorted(owned_dependency_overlap)[0]
+            raise ValueError(
+                f"Plugin {self.slug!r} cannot both own and depend on artifact type "
+                f"{artifact_id}@{schema_version}"
+            )
+        conversion_keys = [
+            (conversion.key.id, conversion.key.version)
+            for conversion in self.artifact_conversions
+        ]
+        if len(conversion_keys) != len(set(conversion_keys)):
+            raise ValueError("Plugin artifact conversions must have unique identities")
+        declared_artifact_keys = set(artifact_keys) | set(dependency_keys)
+        for node in self.nodes:
+            for port in (*node.inputs, *node.outputs):
+                if port.artifact_type is None:
+                    continue
+                key = (
+                    port.artifact_type.id,
+                    port.artifact_type.schema_version,
+                )
+                if key in declared_artifact_keys:
+                    continue
                 raise ValueError(
-                    f"Plugin {self.slug!r} owned artifact type "
-                    f"{artifact.key.id!r} must use the {operator_prefix!r} prefix"
+                    f"Plugin {self.slug!r} node {node.operator_id}@"
+                    f"{node.operator_version} {port.direction} port {port.name!r} "
+                    f"references artifact type {key[0]}@{key[1]}, which is neither "
+                    "owned nor declared as an exact dependency"
+                )
+        for artifact in (*self.artifact_types, *self.artifact_type_dependencies):
+            for projection in artifact.field_projections:
+                target = (
+                    projection.target.id,
+                    projection.target.schema_version,
+                )
+                if target in declared_artifact_keys:
+                    continue
+                rendered_path = ".".join(projection.path)
+                raise ValueError(
+                    f"Plugin {self.slug!r} artifact type {artifact.key.id}@"
+                    f"{artifact.key.schema_version} field projection "
+                    f"{rendered_path!r} targets artifact type {target[0]}@"
+                    f"{target[1]}, which is neither owned nor declared as an exact "
+                    "dependency"
+                )
+        for conversion in self.artifact_conversions:
+            for endpoint_name, endpoint in (
+                ("source", conversion.source),
+                ("target", conversion.target),
+            ):
+                key = (endpoint.id, endpoint.schema_version)
+                if key in declared_artifact_keys:
+                    continue
+                raise ValueError(
+                    f"Plugin {self.slug!r} artifact conversion "
+                    f"{conversion.key.id}@{conversion.key.version} references "
+                    f"{endpoint_name} artifact type {key[0]}@{key[1]}, which is "
+                    "neither owned nor declared as an exact dependency"
                 )
         return self
 
@@ -285,6 +519,14 @@ class PluginCatalogManifest(PluginReleaseValue):
             artifact_types=tuple(
                 PluginArtifactTypeContract.from_spec(spec)
                 for spec in plugin.artifact_types
+            ),
+            artifact_type_dependencies=tuple(
+                PluginArtifactTypeContract.from_spec(spec)
+                for spec in plugin.artifact_type_dependencies
+            ),
+            artifact_conversions=tuple(
+                PluginArtifactConversionContract.from_conversion(conversion)
+                for conversion in plugin.artifact_conversions
             ),
             nodes=tuple(
                 PluginNodeContract.from_registration(registration)
@@ -302,43 +544,68 @@ class PluginReleaseIdentity:
     or diagnostics.
     """
 
+    scope: PluginReleaseScope
+    workspace_id: UUID | None
     slug: str
     revision: int
     source_digest: str
     contract_digest: str
     protocol_digest: str
+    descriptor_digest: str
 
     @classmethod
     def from_release(cls, release: PluginRelease) -> Self:
         return cls(
+            scope=release.scope,
+            workspace_id=release.workspace_id,
             slug=release.slug,
             revision=release.revision,
             source_digest=release.source_digest,
             contract_digest=release.contract_digest,
             protocol_digest=release.protocol_digest,
+            descriptor_digest=release.descriptor.digest,
         )
 
     def fingerprint_document(self) -> dict[str, object]:
         return {
+            "scope": self.scope.value,
+            "workspace_id": (
+                None if self.workspace_id is None else str(self.workspace_id)
+            ),
             "slug": self.slug,
             "revision": self.revision,
             "source_digest": self.source_digest,
+            "descriptor_digest": self.descriptor_digest,
+        }
+
+    def provenance_document(self) -> dict[str, object]:
+        return {
+            "scope": self.scope.value,
+            "workspace_id": (
+                None if self.workspace_id is None else str(self.workspace_id)
+            ),
+            "slug": self.slug,
+            "revision": self.revision,
+            "source_digest": self.source_digest,
+            "contract_digest": self.contract_digest,
+            "protocol_digest": self.protocol_digest,
+            "descriptor_digest": self.descriptor_digest,
         }
 
 
 class PluginCapabilityManifest(PluginReleaseValue):
-    capabilities: tuple[str, ...] = ()
+    capabilities: tuple[PluginRuntimeCapability, ...] = ()
 
     @field_validator("capabilities")
     @classmethod
-    def normalize_capabilities(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        normalized: set[str] = set()
+    def normalize_capabilities(
+        cls,
+        value: tuple[PluginRuntimeCapability, ...],
+    ) -> tuple[PluginRuntimeCapability, ...]:
+        normalized: set[PluginRuntimeCapability] = set()
         for capability in value:
-            candidate = capability.strip()
-            if re.fullmatch(r"[a-z][a-z0-9_.:-]{0,254}", candidate) is None:
-                raise ValueError(f"Invalid Plugin capability {capability!r}")
-            normalized.add(candidate)
-        return tuple(sorted(normalized))
+            normalized.add(PluginRuntimeCapability(capability))
+        return tuple(sorted(normalized, key=lambda capability: capability.value))
 
     @property
     def digest(self) -> str:
@@ -357,11 +624,44 @@ class PluginReleaseDescriptor(PluginReleaseValue):
     lock_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     runtime_profile: str = Field(min_length=1, max_length=100)
     runtime_artifact: PluginRuntimeArtifact | None = None
+    scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE
+    execution_policy: PluginExecutionPolicy = PluginExecutionPolicy.ISOLATED_ONLY
+    distribution: PluginDistribution | None = None
+
+    @model_validator(mode="after")
+    def validate_scope_policy(self) -> Self:
+        if (
+            self.scope is PluginReleaseScope.WORKSPACE
+            and self.execution_policy is not PluginExecutionPolicy.ISOLATED_ONLY
+        ):
+            raise ValueError(
+                "Workspace Plugin release descriptors must use isolated-only execution"
+            )
+        if self.scope is PluginReleaseScope.WORKSPACE and self.distribution is not None:
+            raise ValueError(
+                "Workspace Plugin release descriptors cannot declare System "
+                "distribution metadata"
+            )
+        if self.scope is PluginReleaseScope.SYSTEM and self.distribution is None:
+            raise ValueError(
+                "System Plugin release descriptors require distribution metadata"
+            )
+        return self
 
     @property
     def digest(self) -> str:
+        document = self.model_dump(mode="json")
+        # Preserve the descriptor digest of releases published before explicit
+        # scope metadata. Workspace/isolated/no-distribution was their only valid
+        # interpretation; non-default System metadata is content-bound below.
+        if self.scope is PluginReleaseScope.WORKSPACE:
+            document.pop("scope")
+        if self.execution_policy is PluginExecutionPolicy.ISOLATED_ONLY:
+            document.pop("execution_policy")
+        if self.distribution is None:
+            document.pop("distribution")
         payload = json.dumps(
-            self.model_dump(mode="json"),
+            document,
             ensure_ascii=False,
             allow_nan=False,
             sort_keys=True,
@@ -372,7 +672,7 @@ class PluginReleaseDescriptor(PluginReleaseValue):
 
 @dataclass
 class PluginRelease:
-    """One immutable release of a Workspace-scoped Plugin family.
+    """One immutable release of a System or Workspace Plugin family.
 
     The release descriptor references independent immutable objects: the source
     archive, the inspected catalog contract, the deployment runtime profile, the
@@ -380,7 +680,7 @@ class PluginRelease:
     runtime image digest stays absent until the image-building slice fills it.
     """
 
-    workspace_id: UUID
+    workspace_id: UUID | None
     slug: str
     revision: int
     catalog: PluginCatalogManifest
@@ -397,9 +697,58 @@ class PluginRelease:
     runtime_artifact: PluginRuntimeArtifact | None = None
     descriptor_digest: str | None = None
     published_by_user_id: UUID | None = None
+    published_by_platform_actor: str | None = None
     published_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE
+    execution_policy: PluginExecutionPolicy = PluginExecutionPolicy.ISOLATED_ONLY
+    distribution: PluginDistribution | None = None
+    id: UUID = field(default_factory=uuid4)
 
     def __post_init__(self) -> None:
+        self.scope = PluginReleaseScope(self.scope)
+        self.execution_policy = PluginExecutionPolicy(self.execution_policy)
+        if self.distribution is not None:
+            self.distribution = PluginDistribution(self.distribution)
+        try:
+            PluginReleaseNamespace(
+                scope=self.scope,
+                workspace_id=self.workspace_id,
+            )
+        except ValueError as exc:
+            raise PluginReleaseError(str(exc)) from exc
+        if self.scope is PluginReleaseScope.SYSTEM:
+            if self.published_by_user_id is not None:
+                raise PluginReleaseError(
+                    "System Plugin releases cannot use a Workspace user publisher"
+                )
+            if self.published_by_platform_actor is None:
+                raise PluginReleaseError(
+                    "System Plugin releases require a platform publisher"
+                )
+            try:
+                actor = PlatformPluginActor(self.published_by_platform_actor)
+            except ValueError as exc:
+                raise PluginReleaseError(str(exc)) from exc
+            self.published_by_platform_actor = actor.reference
+        elif self.published_by_platform_actor is not None:
+            raise PluginReleaseError(
+                "Workspace Plugin releases cannot use a platform publisher"
+            )
+        if (
+            self.scope is PluginReleaseScope.WORKSPACE
+            and self.execution_policy is not PluginExecutionPolicy.ISOLATED_ONLY
+        ):
+            raise PluginReleaseError(
+                "Workspace Plugin releases must use isolated-only execution"
+            )
+        if self.scope is PluginReleaseScope.WORKSPACE and self.distribution is not None:
+            raise PluginReleaseError(
+                "Workspace Plugin releases cannot declare System distribution metadata"
+            )
+        if self.scope is PluginReleaseScope.SYSTEM and self.distribution is None:
+            raise PluginReleaseError(
+                "System Plugin releases require distribution metadata"
+            )
         if self.catalog.slug != self.slug:
             raise PluginReleaseError("Plugin release slug must match its catalog")
         if isinstance(self.revision, bool) or self.revision < 1:
@@ -415,6 +764,52 @@ class PluginRelease:
         if self.capability_digest != self.capabilities.digest:
             raise PluginReleaseError(
                 "Plugin capability digest must match the capability manifest"
+            )
+        has_secret_inputs = any(node.secret_inputs for node in self.catalog.nodes)
+        if (
+            has_secret_inputs
+            and PluginRuntimeCapability.NODE_SECRETS
+            not in self.capabilities.capabilities
+        ):
+            raise PluginReleaseError(
+                "Plugin releases with secret inputs must declare the "
+                "node-secrets capability"
+            )
+        required_node_capabilities = {
+            capability
+            for node in self.catalog.nodes
+            for capability in node.required_capabilities
+        }
+        declared_capabilities = set(self.capabilities.capabilities)
+        missing_node_capabilities = sorted(
+            required_node_capabilities - declared_capabilities,
+            key=lambda capability: capability.value,
+        )
+        if missing_node_capabilities:
+            rendered = ", ".join(
+                capability.value for capability in missing_node_capabilities
+            )
+            raise PluginReleaseError(
+                "Plugin capability manifest omits node requirements: " + rendered
+            )
+        extra_release_capabilities = sorted(
+            declared_capabilities - required_node_capabilities,
+            key=lambda capability: capability.value,
+        )
+        if extra_release_capabilities:
+            rendered = ", ".join(
+                capability.value for capability in extra_release_capabilities
+            )
+            raise PluginReleaseError(
+                "Plugin capability manifest exceeds exact node requirements: "
+                + rendered
+            )
+        if (
+            PluginRuntimeCapability.UNTRUSTED_SQL in self.capabilities.capabilities
+            and self.execution_policy is not PluginExecutionPolicy.ISOLATED_ONLY
+        ):
+            raise PluginReleaseError(
+                "Plugins that execute untrusted SQL must use isolated-only execution"
             )
         self.protocol_digest = _sha256(
             self.protocol_digest,
@@ -481,11 +876,21 @@ class PluginRelease:
             lock_digest=self.lock_digest,
             runtime_profile=self.runtime_profile,
             runtime_artifact=self.runtime_artifact,
+            scope=self.scope,
+            execution_policy=self.execution_policy,
+            distribution=self.distribution,
         )
 
     @property
     def executable(self) -> bool:
         return self.runtime_artifact is not None
+
+    @property
+    def namespace(self) -> PluginReleaseNamespace:
+        return PluginReleaseNamespace(
+            scope=self.scope,
+            workspace_id=self.workspace_id,
+        )
 
 
 def _model_json_schema(model: type[BaseModel]) -> dict[str, object]:
@@ -514,19 +919,28 @@ def _sha256(value: str, label: str) -> str:
 
 __all__ = [
     "PLUGIN_INVOCATION_PROTOCOL",
+    "PluginArtifactBundleContract",
+    "PluginArtifactConversionContract",
+    "PluginArtifactConversionKey",
     "PluginArtifactTypeContract",
     "PluginArtifactTypeKey",
     "PluginCapabilityManifest",
     "PluginCatalogManifest",
+    "PluginDistribution",
+    "PluginExecutionPolicy",
     "PluginExportFormat",
     "PluginFieldProjection",
     "PluginNodeContract",
+    "PluginNodeHttpEgressContract",
     "PluginPortContract",
     "PluginPortDirection",
+    "PlatformPluginActor",
     "PluginRelease",
     "PluginReleaseDescriptor",
     "PluginReleaseError",
     "PluginReleaseIdentity",
+    "PluginReleaseNamespace",
+    "PluginReleaseScope",
     "PluginRuntimeArtifact",
     "PluginSecretInputContract",
     "plugin_contract_digest",

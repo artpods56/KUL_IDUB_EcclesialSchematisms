@@ -13,6 +13,7 @@ from grafy_persistence.database import create_database
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 from grafy_storage import LocalFileObjectStore
 from tests.support.identity import (
+    TEST_USER_ID,
     WORKSPACE_ID,
     browser_actor_override,
     create_schema,
@@ -45,7 +46,7 @@ def test_workspace_plugin_release_is_overlaid_in_node_catalog(tmp_path: Path) ->
             lock_digest=verified.lock_digest,
             runtime_profile=verified.runtime_profile,
             runtime_artifact=None,
-            published_by_user_id=None,
+            published_by_user_id=TEST_USER_ID,
         )
     )
     same_release = asyncio.run(
@@ -57,7 +58,7 @@ def test_workspace_plugin_release_is_overlaid_in_node_catalog(tmp_path: Path) ->
             lock_digest=verified.lock_digest,
             runtime_profile=verified.runtime_profile,
             runtime_artifact=None,
-            published_by_user_id=None,
+            published_by_user_id=TEST_USER_ID,
         )
     )
     assert same_release == release
@@ -76,7 +77,7 @@ def test_workspace_plugin_release_is_overlaid_in_node_catalog(tmp_path: Path) ->
             lock_digest=verified.lock_digest,
             runtime_profile=verified.runtime_profile,
             runtime_artifact=first_runtime_artifact,
-            published_by_user_id=None,
+            published_by_user_id=TEST_USER_ID,
         )
     )
     assert image_backed_release.revision == 2
@@ -91,7 +92,7 @@ def test_workspace_plugin_release_is_overlaid_in_node_catalog(tmp_path: Path) ->
             lock_digest=verified.lock_digest,
             runtime_profile=verified.runtime_profile,
             runtime_artifact=first_runtime_artifact,
-            published_by_user_id=None,
+            published_by_user_id=TEST_USER_ID,
         )
     )
     assert same_image_backed_release == image_backed_release
@@ -109,7 +110,7 @@ def test_workspace_plugin_release_is_overlaid_in_node_catalog(tmp_path: Path) ->
                 manifest_digest="5" * 64,
                 config_digest="6" * 64,
             ),
-            published_by_user_id=None,
+            published_by_user_id=TEST_USER_ID,
         )
     )
     assert changed_image_release.revision == 3
@@ -122,7 +123,7 @@ def test_workspace_plugin_release_is_overlaid_in_node_catalog(tmp_path: Path) ->
             lock_digest=verified.lock_digest,
             runtime_profile="python-uv-gdal",
             runtime_artifact=None,
-            published_by_user_id=None,
+            published_by_user_id=TEST_USER_ID,
         )
     )
     assert changed_profile_release.revision == 4
@@ -154,7 +155,7 @@ def test_workspace_plugin_release_is_overlaid_in_node_catalog(tmp_path: Path) ->
             lock_digest=changed_verified.lock_digest,
             runtime_profile=changed_verified.runtime_profile,
             runtime_artifact=None,
-            published_by_user_id=None,
+            published_by_user_id=TEST_USER_ID,
         )
     )
     assert changed_release.revision == 5
@@ -180,7 +181,14 @@ def test_workspace_plugin_release_is_overlaid_in_node_catalog(tmp_path: Path) ->
     assert notes_plugin == {
         "slug": "notes",
         "title": "Notes",
-        "origin": "workspace",
+        "entry_kind": "plugin",
+        "scope": "workspace",
+        "distribution": None,
+        "plugin_release": {
+            "scope": "workspace",
+            "slug": "notes",
+            "revision": 5,
+        },
         "revision": 5,
         "runnable": False,
         "non_runnable_reason": "missing_runtime_artifact",

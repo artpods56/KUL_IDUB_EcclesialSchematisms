@@ -9,6 +9,8 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.sql.schema import Table
 
 from grafy_core.artifacts import (
     ArtifactObject,
@@ -30,6 +32,7 @@ from grafy_core.domain.identity import (
 )
 from grafy_core.domain.errors import (
     CollaborationActiveExecutionError,
+    ConcurrentWriteError,
     GraphFolderNameConflictError,
     NotFoundError,
     ObjectAlreadyExistsError,
@@ -49,7 +52,20 @@ from grafy_core.domain.module_library import (
     ModulePublicationState,
     ModuleRelease,
 )
-from grafy_core.domain.plugin_releases import PluginRelease, PluginRuntimeArtifact
+from grafy_core.domain.plugin_releases import (
+    PluginCatalogManifest,
+    PluginRelease,
+    PluginReleaseNamespace,
+    PluginRuntimeArtifact,
+)
+from grafy_core.domain.plugin_revocations import (
+    PluginReleaseRevocation,
+    PluginReleaseRevocationError,
+)
+from grafy_core.domain.plugin_selection import (
+    PluginReleaseSelection,
+    PluginReleaseSelectionError,
+)
 from grafy_core.domain.node_secrets import EncryptedNodeSecret
 from grafy_core.domain.collaboration import (
     CollaborativeGraphHead,
@@ -1966,28 +1982,30 @@ class SqlPluginReleaseRepository(PluginReleaseRepositoryPort):
     @override
     async def get_by_source_digest(
         self,
-        workspace_id: UUID,
+        namespace: PluginReleaseNamespace,
         slug: str,
         source_digest: str,
     ) -> PluginRelease | None:
         return await self._session.scalar(
-            select(PluginRelease).where(
-                schema.plugin_releases.c.workspace_id == workspace_id,
+            select(PluginRelease)
+            .where(
+                *self._namespace_conditions(schema.plugin_releases, namespace),
                 schema.plugin_releases.c.slug == slug,
                 schema.plugin_releases.c.source_digest == source_digest,
             )
+            .order_by(schema.plugin_releases.c.revision.desc())
         )
 
     @override
     async def get_by_descriptor_digest(
         self,
-        workspace_id: UUID,
+        namespace: PluginReleaseNamespace,
         slug: str,
         descriptor_digest: str,
     ) -> PluginRelease | None:
         return await self._session.scalar(
             select(PluginRelease).where(
-                schema.plugin_releases.c.workspace_id == workspace_id,
+                *self._namespace_conditions(schema.plugin_releases, namespace),
                 schema.plugin_releases.c.slug == slug,
                 schema.plugin_releases.c.descriptor_digest == descriptor_digest,
             )
@@ -1996,59 +2014,218 @@ class SqlPluginReleaseRepository(PluginReleaseRepositoryPort):
     @override
     async def get_by_revision(
         self,
-        workspace_id: UUID,
+        namespace: PluginReleaseNamespace,
         slug: str,
         revision: int,
     ) -> PluginRelease | None:
         return await self._session.scalar(
             select(PluginRelease).where(
-                schema.plugin_releases.c.workspace_id == workspace_id,
+                *self._namespace_conditions(schema.plugin_releases, namespace),
                 schema.plugin_releases.c.slug == slug,
                 schema.plugin_releases.c.revision == revision,
             )
         )
 
     @override
-    async def next_revision(self, workspace_id: UUID, slug: str) -> int:
-        await self._session.execute(
-            select(schema.workspaces.c.id)
-            .where(schema.workspaces.c.id == workspace_id)
-            .with_for_update()
-        )
+    async def get_revocation_by_release_id(
+        self,
+        release_id: UUID,
+    ) -> PluginReleaseRevocation | None:
+        return await self._session.get(PluginReleaseRevocation, release_id)
+
+    @override
+    async def add_revocation(
+        self,
+        revocation: PluginReleaseRevocation,
+    ) -> PluginReleaseRevocation:
+        await self._require_revoked_release(revocation)
+        existing = await self.get_revocation_by_release_id(revocation.release_id)
+        if existing is not None:
+            if existing.has_same_intent(revocation):
+                return existing
+            raise PluginReleaseRevocationError(
+                "Plugin release revocation already exists with different immutable "
+                f"intent for {revocation.scope.value}:"
+                f"{revocation.workspace_id}:{revocation.slug}@"
+                f"{revocation.revision} ({revocation.release_id})"
+            )
+        self._session.add(revocation)
+        await self._session.flush()
+        return revocation
+
+    @override
+    async def next_revision(
+        self,
+        namespace: PluginReleaseNamespace,
+        slug: str,
+    ) -> int:
+        if namespace.workspace_id is not None:
+            await self._session.execute(
+                select(schema.workspaces.c.id)
+                .where(schema.workspaces.c.id == namespace.workspace_id)
+                .with_for_update()
+            )
+        else:
+            await self._session.execute(
+                select(schema.plugin_releases.c.id)
+                .where(
+                    *self._namespace_conditions(schema.plugin_releases, namespace),
+                    schema.plugin_releases.c.slug == slug,
+                )
+                .with_for_update()
+            )
         latest = await self._session.scalar(
             select(func.max(schema.plugin_releases.c.revision)).where(
-                schema.plugin_releases.c.workspace_id == workspace_id,
+                *self._namespace_conditions(schema.plugin_releases, namespace),
                 schema.plugin_releases.c.slug == slug,
             )
         )
         return 1 if latest is None else int(latest) + 1
 
     @override
-    async def list_current(self, workspace_id: UUID) -> list[PluginRelease]:
-        releases = schema.plugin_releases
-        latest = (
-            select(
-                releases.c.workspace_id,
-                releases.c.slug,
-                func.max(releases.c.revision).label("revision"),
+    async def family_exists(
+        self,
+        namespace: PluginReleaseNamespace,
+        slug: str,
+    ) -> bool:
+        release_id = await self._session.scalar(
+            select(schema.plugin_releases.c.id)
+            .where(
+                *self._namespace_conditions(schema.plugin_releases, namespace),
+                schema.plugin_releases.c.slug == slug,
             )
-            .where(releases.c.workspace_id == workspace_id)
-            .group_by(releases.c.workspace_id, releases.c.slug)
-            .subquery()
+            .limit(1)
         )
+        return release_id is not None
+
+    @override
+    async def workspace_family_exists(self, slug: str) -> bool:
+        release_id = await self._session.scalar(
+            select(schema.plugin_releases.c.id)
+            .where(
+                schema.plugin_releases.c.scope == "workspace",
+                schema.plugin_releases.c.slug == slug,
+            )
+            .limit(1)
+        )
+        return release_id is not None
+
+    @override
+    async def list_workspace_catalogs(self) -> list[PluginCatalogManifest]:
+        result = await self._session.scalars(
+            select(schema.plugin_releases.c.catalog)
+            .where(schema.plugin_releases.c.scope == "workspace")
+            .order_by(
+                schema.plugin_releases.c.workspace_id.asc(),
+                schema.plugin_releases.c.slug.asc(),
+                schema.plugin_releases.c.revision.asc(),
+            )
+        )
+        return list(result)
+
+    @override
+    async def list_catalogs(
+        self,
+        namespace: PluginReleaseNamespace,
+    ) -> list[PluginCatalogManifest]:
+        result = await self._session.scalars(
+            select(schema.plugin_releases.c.catalog)
+            .where(*self._namespace_conditions(schema.plugin_releases, namespace))
+            .order_by(
+                schema.plugin_releases.c.slug.asc(),
+                schema.plugin_releases.c.revision.asc(),
+            )
+        )
+        return list(result)
+
+    @override
+    async def list_current(
+        self,
+        namespace: PluginReleaseNamespace,
+    ) -> list[PluginRelease]:
+        releases = schema.plugin_releases
+        selections = schema.plugin_release_selections
         result = await self._session.scalars(
             select(PluginRelease)
             .join(
-                latest,
-                and_(
-                    releases.c.workspace_id == latest.c.workspace_id,
-                    releases.c.slug == latest.c.slug,
-                    releases.c.revision == latest.c.revision,
-                ),
+                selections,
+                selections.c.selected_release_id == releases.c.id,
             )
+            .where(*self._namespace_conditions(selections, namespace))
             .order_by(releases.c.slug.asc())
         )
         return list(result)
+
+    @override
+    async def get_selection(
+        self,
+        namespace: PluginReleaseNamespace,
+        slug: str,
+    ) -> PluginReleaseSelection | None:
+        return await self._session.scalar(
+            select(PluginReleaseSelection).where(
+                *self._namespace_conditions(
+                    schema.plugin_release_selections,
+                    namespace,
+                ),
+                schema.plugin_release_selections.c.slug == slug,
+            )
+        )
+
+    @override
+    async def add_selection(
+        self,
+        selection: PluginReleaseSelection,
+    ) -> None:
+        await self._require_selected_release(selection)
+        self._session.add(selection)
+        await self._session.flush()
+
+    @override
+    async def update_selection(
+        self,
+        selection: PluginReleaseSelection,
+        *,
+        expected_generation: int,
+    ) -> None:
+        if isinstance(expected_generation, bool) or expected_generation < 1:
+            raise ValueError("Expected Plugin selection generation must be positive")
+        if selection.generation <= expected_generation:
+            raise ValueError(
+                "Updated Plugin selection generation must exceed the expected "
+                "generation"
+            )
+        await self._require_selected_release(selection)
+        table = schema.plugin_release_selections
+        with self._session.no_autoflush:
+            result = cast(
+                CursorResult[tuple[object, ...]],
+                await self._session.execute(
+                    update(table)
+                    .where(
+                        table.c.id == selection.id,
+                        *self._namespace_conditions(table, selection.namespace),
+                        table.c.slug == selection.slug,
+                        table.c.generation == expected_generation,
+                    )
+                    .values(
+                        selected_release_id=selection.selected_release_id,
+                        selected_revision=selection.selected_revision,
+                        lifecycle=selection.lifecycle,
+                        generation=selection.generation,
+                        updated_at=selection.updated_at,
+                        updated_by_actor=selection.updated_by_actor,
+                    )
+                ),
+            )
+        if result.rowcount != 1:
+            raise ConcurrentWriteError(
+                "Plugin release selection changed concurrently for "
+                f"{selection.namespace.scope.value} family {selection.slug!r}; "
+                f"expected generation {expected_generation}"
+            )
+        if selection in self._session.sync_session:
+            await self._session.refresh(selection)
 
     @override
     async def list_runtime_artifacts(self) -> list[PluginRuntimeArtifact]:
@@ -2062,6 +2239,65 @@ class SqlPluginReleaseRepository(PluginReleaseRepositoryPort):
             if release.runtime_artifact is not None:
                 artifacts.append(release.runtime_artifact)
         return artifacts
+
+    @staticmethod
+    def _namespace_conditions(
+        table: Table,
+        namespace: PluginReleaseNamespace,
+    ) -> tuple[ColumnElement[bool], ColumnElement[bool]]:
+        owner_condition = (
+            table.c.workspace_id.is_(None)
+            if namespace.workspace_id is None
+            else table.c.workspace_id == namespace.workspace_id
+        )
+        return table.c.scope == namespace.scope, owner_condition
+
+    async def _require_selected_release(
+        self,
+        selection: PluginReleaseSelection,
+    ) -> None:
+        with self._session.no_autoflush:
+            release = await self._session.scalar(
+                select(PluginRelease).where(
+                    schema.plugin_releases.c.id == selection.selected_release_id
+                )
+            )
+        if release is None:
+            raise PluginReleaseSelectionError(
+                f"Selected Plugin release {selection.selected_release_id} does not exist"
+            )
+        if (
+            release.namespace != selection.namespace
+            or release.slug != selection.slug
+            or release.revision != selection.selected_revision
+        ):
+            raise PluginReleaseSelectionError(
+                "Selected Plugin release identity does not match selection family "
+                f"{selection.namespace.scope.value}:{selection.slug}:"
+                f"{selection.selected_revision}"
+            )
+
+    async def _require_revoked_release(
+        self,
+        revocation: PluginReleaseRevocation,
+    ) -> None:
+        with self._session.no_autoflush:
+            release = await self._session.get(PluginRelease, revocation.release_id)
+        if release is None:
+            raise PluginReleaseRevocationError(
+                f"Revoked Plugin release {revocation.release_id} does not exist"
+            )
+        if (
+            release.namespace != revocation.namespace
+            or release.slug != revocation.slug
+            or release.revision != revocation.revision
+        ):
+            raise PluginReleaseRevocationError(
+                "Revoked Plugin release identity does not match exact release "
+                f"{revocation.scope.value}:{revocation.workspace_id}:"
+                f"{revocation.slug}@{revocation.revision} "
+                f"({revocation.release_id})"
+            )
 
 
 class SqlTemplateRepository(TemplateRepositoryPort):

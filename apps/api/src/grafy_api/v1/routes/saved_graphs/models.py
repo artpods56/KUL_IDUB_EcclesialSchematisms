@@ -42,7 +42,6 @@ from grafy_core.domain.saved_graphs import (
     SavedGraphInputPlug,
     SavedGraphNode,
     SavedGraphNodeLayout,
-    SavedGraphPluginReleasePin,
     SavedGraphProjection,
     UserGraphState,
 )
@@ -442,10 +441,7 @@ class SavedGraphWriteModel(SavedGraphApiModel):
                         for binding in node.artifact_type_bindings
                     ),
                     plugin_release_pin=(
-                        SavedGraphPluginReleasePin(
-                            slug=node.plugin_release.slug,
-                            revision=node.plugin_release.revision,
-                        )
+                        node.plugin_release.to_saved_pin()
                         if node.plugin_release is not None
                         else None
                     ),
@@ -547,9 +543,8 @@ class SavedGraphResponse(SavedGraphWriteModel):
                         for binding in node.artifact_type_bindings
                     ],
                     plugin_release=(
-                        PluginReleasePinModel(
-                            slug=node.plugin_release_pin.slug,
-                            revision=node.plugin_release_pin.revision,
+                        PluginReleasePinModel.from_saved_pin(
+                            node.plugin_release_pin
                         )
                         if node.plugin_release_pin is not None
                         else None

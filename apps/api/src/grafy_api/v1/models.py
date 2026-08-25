@@ -3,6 +3,8 @@ from typing import Annotated, ClassVar
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from grafy_core.artifacts import ArtifactTypeKey
+from grafy_core.domain.plugin_releases import PluginReleaseScope
+from grafy_core.domain.saved_graphs import SavedGraphPluginReleasePin
 
 
 class ApiResponse(BaseModel):
@@ -43,10 +45,25 @@ class PluginReleasePinModel(ApiResponse):
         extra="forbid",
     )
 
+    scope: PluginReleaseScope
     slug: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)
     ]
     revision: int = Field(ge=1, strict=True)
+
+    @classmethod
+    def from_saved_pin(
+        cls,
+        pin: SavedGraphPluginReleasePin,
+    ) -> "PluginReleasePinModel":
+        return cls(scope=pin.scope, slug=pin.slug, revision=pin.revision)
+
+    def to_saved_pin(self) -> SavedGraphPluginReleasePin:
+        return SavedGraphPluginReleasePin(
+            scope=self.scope,
+            slug=self.slug,
+            revision=self.revision,
+        )
 
 
 __all__ = [

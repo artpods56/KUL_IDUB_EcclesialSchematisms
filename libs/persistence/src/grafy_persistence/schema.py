@@ -38,8 +38,13 @@ from grafy_core.domain.module_library import ModulePublicationState
 from grafy_core.domain.plugin_releases import (
     PluginCapabilityManifest,
     PluginCatalogManifest,
+    PluginDistribution,
+    PluginExecutionPolicy,
+    PluginReleaseScope,
     PluginRuntimeArtifact,
 )
+from grafy_core.domain.plugin_selection import PluginFamilyLifecycle
+from grafy_core.domain.plugin_revocations import PluginReleaseRevocationReason
 from grafy_core.domain.templates import TemplateState
 from grafy_core.domain.security_audit import (
     SecurityAuditActorKind,
@@ -156,6 +161,117 @@ class PluginRuntimeArtifactType(TypeDecorator[PluginRuntimeArtifact]):
         if value is None:
             return None
         return PluginRuntimeArtifact.model_validate(value)
+
+
+class PluginReleaseScopeType(TypeDecorator[PluginReleaseScope]):
+    impl = String(16)
+    cache_ok = True
+
+    def process_bind_param(
+        self,
+        value: PluginReleaseScope | None,
+        dialect: Dialect,
+    ) -> str | None:
+        del dialect
+        return None if value is None else PluginReleaseScope(value).value
+
+    def process_result_value(
+        self,
+        value: str | None,
+        dialect: Dialect,
+    ) -> PluginReleaseScope | None:
+        del dialect
+        return None if value is None else PluginReleaseScope(value)
+
+
+class PluginReleaseRevocationReasonType(
+    TypeDecorator[PluginReleaseRevocationReason]
+):
+    impl = String(16)
+    cache_ok = True
+
+    def process_bind_param(
+        self,
+        value: PluginReleaseRevocationReason | None,
+        dialect: Dialect,
+    ) -> str | None:
+        del dialect
+        if value is None:
+            return None
+        return PluginReleaseRevocationReason(value).value
+
+    def process_result_value(
+        self,
+        value: str | None,
+        dialect: Dialect,
+    ) -> PluginReleaseRevocationReason | None:
+        del dialect
+        if value is None:
+            return None
+        return PluginReleaseRevocationReason(value)
+
+
+class PluginExecutionPolicyType(TypeDecorator[PluginExecutionPolicy]):
+    impl = String(24)
+    cache_ok = True
+
+    def process_bind_param(
+        self,
+        value: PluginExecutionPolicy | None,
+        dialect: Dialect,
+    ) -> str | None:
+        del dialect
+        return None if value is None else PluginExecutionPolicy(value).value
+
+    def process_result_value(
+        self,
+        value: str | None,
+        dialect: Dialect,
+    ) -> PluginExecutionPolicy | None:
+        del dialect
+        return None if value is None else PluginExecutionPolicy(value)
+
+
+class PluginDistributionType(TypeDecorator[PluginDistribution]):
+    impl = String(16)
+    cache_ok = True
+
+    def process_bind_param(
+        self,
+        value: PluginDistribution | None,
+        dialect: Dialect,
+    ) -> str | None:
+        del dialect
+        return None if value is None else PluginDistribution(value).value
+
+    def process_result_value(
+        self,
+        value: str | None,
+        dialect: Dialect,
+    ) -> PluginDistribution | None:
+        del dialect
+        return None if value is None else PluginDistribution(value)
+
+
+class PluginFamilyLifecycleType(TypeDecorator[PluginFamilyLifecycle]):
+    impl = String(16)
+    cache_ok = True
+
+    def process_bind_param(
+        self,
+        value: PluginFamilyLifecycle | None,
+        dialect: Dialect,
+    ) -> str | None:
+        del dialect
+        return None if value is None else PluginFamilyLifecycle(value).value
+
+    def process_result_value(
+        self,
+        value: str | None,
+        dialect: Dialect,
+    ) -> PluginFamilyLifecycle | None:
+        del dialect
+        return None if value is None else PluginFamilyLifecycle(value)
 
 
 class UTCDateTime(TypeDecorator[datetime]):
@@ -1254,14 +1370,16 @@ module_releases = Table(
 plugin_releases = Table(
     "plugin_releases",
     metadata,
+    Column("id", SaUuid(as_uuid=True), primary_key=True),
+    Column("scope", PluginReleaseScopeType(), nullable=False),
     Column(
         "workspace_id",
         SaUuid(as_uuid=True),
         ForeignKey("workspaces.id", ondelete="CASCADE"),
-        primary_key=True,
+        nullable=True,
     ),
-    Column("slug", String(100), primary_key=True),
-    Column("revision", Integer, primary_key=True),
+    Column("slug", String(100), nullable=False),
+    Column("revision", Integer, nullable=False),
     Column("catalog", PluginCatalogManifestType(), nullable=False),
     Column("contract_digest", String(64), nullable=True),
     Column("capabilities", PluginCapabilityManifestType(), nullable=False),
@@ -1275,20 +1393,44 @@ plugin_releases = Table(
     Column("runtime_image_digest", String(64), nullable=True),
     Column("runtime_artifact", PluginRuntimeArtifactType(), nullable=True),
     Column("descriptor_digest", String(64), nullable=True),
+    Column("execution_policy", PluginExecutionPolicyType(), nullable=False),
+    Column("distribution", PluginDistributionType(), nullable=True),
     Column(
         "published_by_user_id",
         SaUuid(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     ),
+    Column("published_by_platform_actor", String(255), nullable=True),
     Column("published_at", UTCDateTime(), nullable=False),
-    UniqueConstraint(
-        "workspace_id",
-        "slug",
-        "descriptor_digest",
-        name="uq_plugin_releases_workspace_slug_descriptor",
-    ),
     CheckConstraint("revision >= 1", name="plugin_release_revision"),
+    CheckConstraint(
+        "scope IN ('system', 'workspace')",
+        name="plugin_release_scope",
+    ),
+    CheckConstraint(
+        "(scope = 'system' AND workspace_id IS NULL) OR "
+        "(scope = 'workspace' AND workspace_id IS NOT NULL)",
+        name="plugin_release_scope_workspace",
+    ),
+    CheckConstraint(
+        "execution_policy IN ('host-eligible', 'isolated-only')",
+        name="plugin_release_execution_policy",
+    ),
+    CheckConstraint(
+        "(scope = 'system' AND distribution IN "
+        "('bundled', 'optional', 'published')) OR "
+        "(scope = 'workspace' AND distribution IS NULL "
+        "AND execution_policy = 'isolated-only')",
+        name="plugin_release_scope_policy",
+    ),
+    CheckConstraint(
+        "(scope = 'system' AND published_by_user_id IS NULL "
+        "AND published_by_platform_actor IS NOT NULL "
+        "AND length(trim(published_by_platform_actor)) BETWEEN 1 AND 255) OR "
+        "(scope = 'workspace' AND published_by_platform_actor IS NULL)",
+        name="plugin_release_scope_publisher",
+    ),
     CheckConstraint(
         "length(capability_digest) = 64",
         name="plugin_release_capability_digest",
@@ -1322,7 +1464,163 @@ plugin_releases = Table(
         name="plugin_release_profile_digest",
     ),
     Index(
-        "ix_plugin_releases_workspace_slug_revision",
+        "uq_plugin_releases_system_slug_revision",
+        "slug",
+        "revision",
+        unique=True,
+        sqlite_where=text("scope = 'system'"),
+        postgresql_where=text("scope = 'system'"),
+    ),
+    Index(
+        "uq_plugin_releases_workspace_slug_revision",
+        "workspace_id",
+        "slug",
+        "revision",
+        unique=True,
+        sqlite_where=text("scope = 'workspace'"),
+        postgresql_where=text("scope = 'workspace'"),
+    ),
+    Index(
+        "uq_plugin_releases_system_slug_descriptor",
+        "slug",
+        "descriptor_digest",
+        unique=True,
+        sqlite_where=text("scope = 'system' AND descriptor_digest IS NOT NULL"),
+        postgresql_where=text("scope = 'system' AND descriptor_digest IS NOT NULL"),
+    ),
+    Index(
+        "uq_plugin_releases_workspace_slug_descriptor",
+        "workspace_id",
+        "slug",
+        "descriptor_digest",
+        unique=True,
+        sqlite_where=text("scope = 'workspace' AND descriptor_digest IS NOT NULL"),
+        postgresql_where=text("scope = 'workspace' AND descriptor_digest IS NOT NULL"),
+    ),
+)
+
+
+plugin_release_selections = Table(
+    "plugin_release_selections",
+    metadata,
+    Column("id", SaUuid(as_uuid=True), primary_key=True),
+    Column("scope", PluginReleaseScopeType(), nullable=False),
+    Column(
+        "workspace_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=True,
+    ),
+    Column("slug", String(100), nullable=False),
+    Column(
+        "selected_release_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("plugin_releases.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    Column("selected_revision", Integer, nullable=False),
+    Column("lifecycle", PluginFamilyLifecycleType(), nullable=False),
+    Column("generation", Integer, nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
+    Column("updated_by_actor", String(255), nullable=True),
+    CheckConstraint(
+        "scope IN ('system', 'workspace')",
+        name="plugin_release_selection_scope",
+    ),
+    CheckConstraint(
+        "(scope = 'system' AND workspace_id IS NULL) OR "
+        "(scope = 'workspace' AND workspace_id IS NOT NULL)",
+        name="plugin_release_selection_scope_workspace",
+    ),
+    CheckConstraint(
+        "selected_revision >= 1",
+        name="plugin_release_selection_revision",
+    ),
+    CheckConstraint(
+        "generation >= 1",
+        name="plugin_release_selection_generation",
+    ),
+    CheckConstraint(
+        "lifecycle IN ('published', 'deprecated', 'withdrawn')",
+        name="plugin_release_selection_lifecycle",
+    ),
+    CheckConstraint(
+        "updated_by_actor IS NULL OR length(trim(updated_by_actor)) BETWEEN 1 AND 255",
+        name="plugin_release_selection_actor",
+    ),
+    Index(
+        "uq_plugin_release_selections_system_slug",
+        "slug",
+        unique=True,
+        sqlite_where=text("scope = 'system'"),
+        postgresql_where=text("scope = 'system'"),
+    ),
+    Index(
+        "uq_plugin_release_selections_workspace_slug",
+        "workspace_id",
+        "slug",
+        unique=True,
+        sqlite_where=text("scope = 'workspace'"),
+        postgresql_where=text("scope = 'workspace'"),
+    ),
+)
+
+
+plugin_release_revocations = Table(
+    "plugin_release_revocations",
+    metadata,
+    Column(
+        "release_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("plugin_releases.id", ondelete="RESTRICT"),
+        primary_key=True,
+    ),
+    Column("scope", PluginReleaseScopeType(), nullable=False),
+    Column(
+        "workspace_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="RESTRICT"),
+        nullable=True,
+    ),
+    Column("slug", String(100), nullable=False),
+    Column("revision", Integer, nullable=False),
+    Column("reason", PluginReleaseRevocationReasonType(), nullable=False),
+    Column(
+        "revoked_by_user_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=True,
+    ),
+    Column("revoked_by_platform_actor", String(255), nullable=True),
+    Column("revoked_at", UTCDateTime(), nullable=False),
+    CheckConstraint(
+        "scope IN ('system', 'workspace')",
+        name="revocation_scope",
+    ),
+    CheckConstraint(
+        "(scope = 'system' AND workspace_id IS NULL) OR "
+        "(scope = 'workspace' AND workspace_id IS NOT NULL)",
+        name="revocation_scope_workspace",
+    ),
+    CheckConstraint(
+        "revision >= 1",
+        name="revocation_revision",
+    ),
+    CheckConstraint(
+        "reason IN ('security', 'integrity', 'policy', 'operational')",
+        name="revocation_reason",
+    ),
+    CheckConstraint(
+        "(scope = 'system' AND revoked_by_user_id IS NULL "
+        "AND revoked_by_platform_actor IS NOT NULL "
+        "AND length(trim(revoked_by_platform_actor)) BETWEEN 1 AND 255) OR "
+        "(scope = 'workspace' AND revoked_by_user_id IS NOT NULL "
+        "AND revoked_by_platform_actor IS NULL)",
+        name="revocation_actor",
+    ),
+    Index(
+        "ix_plugin_release_revocations_scoped_identity",
+        "scope",
         "workspace_id",
         "slug",
         "revision",

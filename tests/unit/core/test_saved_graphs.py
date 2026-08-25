@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from grafy_core.artifacts import ArtifactTypeKey
 from grafy_core.domain.errors import SavedGraphRevisionConflictError
+from grafy_core.domain.plugin_releases import PluginReleaseScope
 from grafy_core.domain.saved_graphs import (
     GraphPoint,
     GraphPresentationAnnotation,
@@ -96,7 +97,7 @@ def test_saved_graph_document_migrates_v1_singular_conversion_in_memory() -> Non
         }
     )
 
-    assert document.schema_version == 4
+    assert document.schema_version == 5
     assert document.edges[0].conversion_path == (
         SavedGraphConversion(id="example.convert", version=3),
     )
@@ -137,7 +138,7 @@ def test_saved_graph_document_migrates_v2_bindings_to_v3() -> None:
         }
     )
 
-    assert document.schema_version == 4
+    assert document.schema_version == 5
     assert document.nodes[0].artifact_type_binding_map() == {
         "T": ArtifactTypeKey("example.value", 2)
     }
@@ -546,12 +547,20 @@ def test_saved_graph_replace_preserves_timezone_aware_timestamp_invariant() -> N
 
 
 def test_saved_graph_node_serializes_the_plugin_release_pin() -> None:
-    pin = SavedGraphPluginReleasePin(slug="notes", revision=4)
+    pin = SavedGraphPluginReleasePin(
+        scope=PluginReleaseScope.WORKSPACE,
+        slug="notes",
+        revision=4,
+    )
     node = _node("echo", plugin_release_pin=pin)
 
     payload = node.model_dump(mode="json")
 
-    assert payload["plugin_release_pin"] == {"slug": "notes", "revision": 4}
+    assert payload["plugin_release_pin"] == {
+        "scope": "workspace",
+        "slug": "notes",
+        "revision": 4,
+    }
     assert SavedGraphNode.model_validate(payload) == node
     unpinned = _node("host")
     assert unpinned.plugin_release_pin is None
@@ -570,4 +579,15 @@ def test_saved_graph_plugin_release_pin_rejects_extra_or_missing_fields() -> Non
     with pytest.raises(ValidationError):
         SavedGraphPluginReleasePin.model_validate({"slug": "notes"})
     with pytest.raises(ValidationError):
-        SavedGraphPluginReleasePin(slug="notes", revision=0)
+        SavedGraphPluginReleasePin(
+            scope=PluginReleaseScope.WORKSPACE,
+            slug="notes",
+            revision=0,
+        )
+
+
+def test_saved_graph_plugin_release_pin_rejects_legacy_workspace_shape() -> None:
+    with pytest.raises(ValidationError, match="scope"):
+        SavedGraphPluginReleasePin.model_validate(
+            {"slug": "notes", "revision": 4}
+        )
