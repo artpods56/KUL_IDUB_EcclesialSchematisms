@@ -26,10 +26,12 @@ from grafy_core.artifacts import (
     UnitOfWorkPort,
 )
 from grafy_core.domain.artifact_outputs import ArtifactOutputValue
-from grafy_core.operators.tables import (
+from grafy_core.table_contracts import (
     TABLE_DATA,
     TablePage,
     TableValue,
+)
+from grafy_core.runtime.table_storage import (
     iter_table_csv,
     load_table_artifact,
     load_table_page,

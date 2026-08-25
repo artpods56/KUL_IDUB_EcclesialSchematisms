@@ -1,26 +1,43 @@
 import asyncio
+from collections.abc import Iterator
+from contextlib import contextmanager
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 from uuid import UUID
 
 import pytest
+from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import delete
 
 from grafy_core.artifacts import ArtifactObject, ArtifactRef, ArtifactRefSequence
+from grafy_core.application.plugin_releases import PluginReleaseService
+from grafy_core.application.saved_graphs import SavedGraphService
 from grafy_core.domain.materialized_outputs import MaterializedNodeOutputs
+from grafy_core.domain.plugin_releases import PluginReleaseScope
 from grafy_persistence import schema
-from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
+from grafy_persistence.database import create_database
+from grafy_persistence.unit_of_work import (
+    SqlAlchemySavedGraphUnitOfWork,
+    SqlAlchemyUnitOfWork,
+)
+from grafy_storage import LocalFileObjectStore
 
+from grafy_api.services.composition import build_workbench_components
 from grafy_api.settings import Settings
-from grafy_api.v1.models import ArtifactTypeBindingModel, ArtifactTypeKeyResponse
+from grafy_api.v1.models import (
+    ArtifactTypeBindingModel,
+    ArtifactTypeKeyResponse,
+    PluginReleasePinModel,
+)
 from grafy_api.v1.routes.auth.dependencies import browser_actor
 from grafy_api.v1.routes.executions.models import (
     GraphMaterializationsResponse,
     PinnedOutputRequest,
     RunEdgeRequest,
-    RunNodeRequest,
+    RunNodeRequest as UnpinnedRunNodeRequest,
     RunPortOutputResponse,
     RunRequest,
     RunResponse,
@@ -34,8 +51,16 @@ from grafy_api.v1.routes.saved_graphs.models import (
     SavedGraphResponse,
     UpdateSavedGraphRequest,
 )
+from grafy_api.v1.routes.saved_graphs.dependencies import saved_graph_service
 from tests.support.clients import GrafyApi
 from tests.support.identity import browser_actor_override
+from tests.support.system_plugins import (
+    SelectedSystemPluginDeployment,
+    build_selected_system_plugin_deployment,
+    pin_selected_system_nodes,
+    selected_system_run_node as RunNodeRequest,
+)
+from tests.support.workbench import workbench_dependency_overrides
 from tests.testkit import (
     client_with_overrides,
     create_db_url,
@@ -48,6 +73,28 @@ WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000007")
 
 # Every durable-API client authenticates through the shared test actor.
 _OVERRIDES = {browser_actor: browser_actor_override}
+_ARITHMETIC_RELEASE = PluginReleasePinModel(
+    scope=PluginReleaseScope.SYSTEM,
+    slug="builtin.arithmetic",
+    revision=1,
+)
+_TEXT_RELEASE = PluginReleasePinModel(
+    scope=PluginReleaseScope.SYSTEM,
+    slug="builtin.text",
+    revision=1,
+)
+_SEQUENCE_RELEASE = PluginReleasePinModel(
+    scope=PluginReleaseScope.SYSTEM,
+    slug="builtin.sequence",
+    revision=1,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class DurableApiFixture:
+    settings: Settings
+    database_url: str
+    deployment: SelectedSystemPluginDeployment
 
 
 async def _delete_artifact(database_url: str, artifact_id: UUID) -> None:
@@ -98,21 +145,72 @@ async def _persist_partially_accessible_materialization(
 
 
 @pytest.fixture
-def durable_api(tmp_path: Path) -> tuple[Settings, str]:
+def durable_api(tmp_path: Path) -> DurableApiFixture:
     database_url = create_db_url(tmp_path, "materializations.sqlite3")
+    deployment = build_selected_system_plugin_deployment()
 
     async def prepare() -> None:
         async with db(database_url) as database:
             await seed_shared_workspace(database)
+            async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+                for release in deployment.releases:
+                    await unit_of_work.plugin_releases.add(release)
+                for selection in deployment.selections:
+                    await unit_of_work.plugin_releases.add_selection(selection)
+                await unit_of_work.commit()
 
     asyncio.run(prepare())
-    return (
-        Settings(
+    return DurableApiFixture(
+        settings=Settings(
             workspace=tmp_path / "workbench",
             database_url=SecretStr(database_url),
         ),
-        database_url,
+        database_url=database_url,
+        deployment=deployment,
     )
+
+
+@contextmanager
+def _durable_client(fixture: DurableApiFixture) -> Iterator[TestClient]:
+    database = create_database(fixture.database_url)
+    deployment = fixture.deployment
+    saved_graphs = SavedGraphService(
+        lambda: SqlAlchemySavedGraphUnitOfWork(database.sessions),
+        deployment.registry,
+    )
+    storage = LocalFileObjectStore(fixture.settings.workspace / "objects")
+    plugin_releases = PluginReleaseService(
+        lambda: SqlAlchemyUnitOfWork(database.sessions),
+        storage,
+        bucket=fixture.settings.storage_bucket,
+    )
+    components = build_workbench_components(
+        plugin_registry=deployment.registry,
+        workspace=fixture.settings.workspace,
+        unit_of_work=SqlAlchemyUnitOfWork(database.sessions),
+        storage=storage,
+        storage_backend=fixture.settings.storage_backend,
+        bucket=fixture.settings.storage_bucket,
+        saved_graphs=saved_graphs,
+        plugin_releases=plugin_releases,
+        system_host_bindings=deployment.host_bindings,
+        loaded_system_plugins=deployment.loaded_plugins,
+    )
+    overrides = {
+        **_OVERRIDES,
+        **workbench_dependency_overrides(components),
+        saved_graph_service: lambda: saved_graphs,
+    }
+    try:
+        with client_with_overrides(
+            settings=fixture.settings,
+            overrides=overrides,
+        ) as client:
+            yield client
+    finally:
+        asyncio.run(components.execution_manager.shutdown())
+        asyncio.run(components.artifacts.close())
+        asyncio.run(database.dispose())
 
 
 def _graph_payload(expected_revision: int | None = None) -> dict[str, object]:
@@ -132,11 +230,12 @@ def _graph_payload(expected_revision: int | None = None) -> dict[str, object]:
                 operator_version=1,
                 config=config,
                 position=GraphPointModel(x=float(index * 200), y=20.0),
+                plugin_release=_ARITHMETIC_RELEASE,
             )
             for index, (node_id, operator_id, config) in enumerate(nodes)
         ],
         edges=[
-            SavedGraphEdgeModel(id=f"edge-{index}", **edge)
+            SavedGraphEdgeModel.model_validate({"id": f"edge-{index}", **edge})
             for index, edge in enumerate(edges, start=1)
         ],
     ).model_dump(mode="json")
@@ -187,6 +286,7 @@ def _collect_graph_payload() -> dict[str, object]:
                 operator_version=1,
                 config={"text": "first"},
                 position=GraphPointModel(x=0.0, y=0.0),
+                plugin_release=_TEXT_RELEASE,
             ),
             SavedGraphNodeModel(
                 id="sequence-input",
@@ -194,6 +294,7 @@ def _collect_graph_payload() -> dict[str, object]:
                 operator_version=1,
                 config={"text": "second|third"},
                 position=GraphPointModel(x=200.0, y=0.0),
+                plugin_release=_TEXT_RELEASE,
             ),
             SavedGraphNodeModel(
                 id="split",
@@ -201,6 +302,7 @@ def _collect_graph_payload() -> dict[str, object]:
                 operator_version=1,
                 config={"separator": "|"},
                 position=GraphPointModel(x=400.0, y=0.0),
+                plugin_release=_TEXT_RELEASE,
             ),
             SavedGraphNodeModel(
                 id="collect",
@@ -208,6 +310,7 @@ def _collect_graph_payload() -> dict[str, object]:
                 operator_version=1,
                 config={},
                 position=GraphPointModel(x=600.0, y=0.0),
+                plugin_release=_SEQUENCE_RELEASE,
                 artifact_type_bindings=[
                     ArtifactTypeBindingModel(
                         variable="T",
@@ -256,7 +359,9 @@ def _collect_run_payload(graph: SavedGraphResponse) -> dict[str, object]:
     nodes = cast(list[dict[str, object]], graph_payload["nodes"])
     edges = cast(list[dict[str, object]], graph_payload["edges"])
     return RunRequest(
-        nodes=[RunNodeRequest.model_validate(node) for node in nodes],
+        nodes=pin_selected_system_nodes(
+            [UnpinnedRunNodeRequest.model_validate(node) for node in nodes]
+        ),
         edges=[RunEdgeRequest.model_validate(edge) for edge in edges],
         graph_id=graph.id,
         graph_revision=graph.revision,
@@ -292,7 +397,7 @@ def _full_run_payload(graph_id: str, graph_revision: int) -> dict[str, object]:
             ),
         ],
         edges=[RunEdgeRequest.model_validate(edge) for edge in _edges()],
-        graph_id=graph_id,
+        graph_id=UUID(graph_id),
         graph_revision=graph_revision,
     ).model_dump(mode="json")
 
@@ -313,15 +418,17 @@ def _downstream_run_payload(
             )
         ],
         edges=[RunEdgeRequest.model_validate(edge) for edge in _edges()[2:]],
-        graph_id=graph_id,
+        graph_id=UUID(graph_id),
         graph_revision=graph_revision,
     )
     if pinned_value is not None:
         payload.pinned_outputs = [
-            PinnedOutputRequest(
-                from_node="add",
-                from_port="result",
-                value=pinned_value,
+            PinnedOutputRequest.model_validate(
+                {
+                    "from_node": "add",
+                    "from_port": "result",
+                    "value": pinned_value,
+                }
             )
         ]
     return payload.model_dump(mode="json")
@@ -354,12 +461,11 @@ def _output(run: RunResponse, node_id: str) -> RunPortOutputResponse:
     ],
 )
 def test_run_graph_context_requires_id_and_revision_together(
-    durable_api: tuple[Settings, str],
+    durable_api: DurableApiFixture,
     graph_context: dict[str, object],
     message: str,
 ) -> None:
-    settings, _ = durable_api
-    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
+    with _durable_client(durable_api) as client:
         # Half-declared graph contexts are rejected by RunRequest's own model
         # validator, so they cannot be expressed client-side; use the raw body.
         response = client.post(
@@ -372,10 +478,9 @@ def test_run_graph_context_requires_id_and_revision_together(
 
 
 def test_run_graph_contexts_must_identify_same_saved_revision(
-    durable_api: tuple[Settings, str],
+    durable_api: DurableApiFixture,
 ) -> None:
-    settings, _ = durable_api
-    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
+    with _durable_client(durable_api) as client:
         # Mismatched secret-graph revisions are rejected by RunRequest's own
         # model validator, so they cannot be expressed client-side; raw body.
         response = client.post(
@@ -395,11 +500,10 @@ def test_run_graph_contexts_must_identify_same_saved_revision(
 
 
 def test_materialization_context_validates_graph_revision_and_fragment(
-    durable_api: tuple[Settings, str],
+    durable_api: DurableApiFixture,
 ) -> None:
-    settings, _ = durable_api
     missing_graph_id = "00000000-0000-0000-0000-000000000404"
-    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
+    with _durable_client(durable_api) as client:
         missing = client.get(
             f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{missing_graph_id}/materializations",
             params={"graph_revision": 1},
@@ -438,10 +542,9 @@ def test_materialization_context_validates_graph_revision_and_fragment(
 
 
 def test_graph_context_run_rejects_omitted_saved_incoming_edge(
-    durable_api: tuple[Settings, str],
+    durable_api: DurableApiFixture,
 ) -> None:
-    settings, _ = durable_api
-    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
+    with _durable_client(durable_api) as client:
         graph = SavedGraphResponse.model_validate(
             client.post(
                 "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
@@ -469,10 +572,9 @@ def test_graph_context_run_rejects_omitted_saved_incoming_edge(
 
 
 def test_graph_context_run_rejects_duplicated_saved_incoming_edge(
-    durable_api: tuple[Settings, str],
+    durable_api: DurableApiFixture,
 ) -> None:
-    settings, _ = durable_api
-    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
+    with _durable_client(durable_api) as client:
         graph = SavedGraphResponse.model_validate(
             client.post(
                 "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
@@ -500,10 +602,9 @@ def test_graph_context_run_rejects_duplicated_saved_incoming_edge(
 
 
 def test_saved_collect_fragment_matches_ordered_plugs_and_edge_targets(
-    durable_api: tuple[Settings, str],
+    durable_api: DurableApiFixture,
 ) -> None:
-    settings, _ = durable_api
-    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
+    with _durable_client(durable_api) as client:
         created = client.post(
             "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
             json=_collect_graph_payload(),
@@ -561,10 +662,9 @@ def test_saved_collect_fragment_matches_ordered_plugs_and_edge_targets(
 
 
 def test_fresh_app_runs_collect_only_from_persisted_scalar_and_sequence_pins(
-    durable_api: tuple[Settings, str],
+    durable_api: DurableApiFixture,
 ) -> None:
-    settings, _ = durable_api
-    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
+    with _durable_client(durable_api) as client:
         graph = SavedGraphResponse.model_validate(
             client.post(
                 "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
@@ -577,7 +677,7 @@ def test_fresh_app_runs_collect_only_from_persisted_scalar_and_sequence_pins(
         )
         assert full_run.status_code == 200
 
-    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as fresh_client:
+    with _durable_client(durable_api) as fresh_client:
         materializations_response = fresh_client.get(
             f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
             params={"graph_revision": graph.revision},
@@ -615,7 +715,9 @@ def test_fresh_app_runs_collect_only_from_persisted_scalar_and_sequence_pins(
         selected_run = fresh_client.post(
             "/v1/workspaces/00000000-0000-0000-0000-000000000007/runs",
             json=RunRequest(
-                nodes=[RunNodeRequest.model_validate(collect_node)],
+                nodes=pin_selected_system_nodes(
+                    [UnpinnedRunNodeRequest.model_validate(collect_node)]
+                ),
                 edges=[RunEdgeRequest.model_validate(edge) for edge in incoming_edges],
                 pinned_outputs=[
                     PinnedOutputRequest(
@@ -647,11 +749,9 @@ def test_fresh_app_runs_collect_only_from_persisted_scalar_and_sequence_pins(
 
 
 def test_full_run_persists_outputs_and_fresh_app_reuses_them_for_downstream_run(
-    durable_api: tuple[Settings, str],
+    durable_api: DurableApiFixture,
 ) -> None:
-    settings, _ = durable_api
-
-    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
+    with _durable_client(durable_api) as client:
         created = client.post(
             "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
             json=_graph_payload(),
@@ -681,7 +781,7 @@ def test_full_run_persists_outputs_and_fresh_app_reuses_them_for_downstream_run(
             "multiply",
         }
 
-    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as fresh_client:
+    with _durable_client(durable_api) as fresh_client:
         reloaded = fresh_client.get(
             f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
             params={"graph_revision": graph.revision},
@@ -711,10 +811,9 @@ def test_full_run_persists_outputs_and_fresh_app_reuses_them_for_downstream_run(
 
 
 def test_graph_update_carries_compatible_materializations_to_new_revision(
-    durable_api: tuple[Settings, str],
+    durable_api: DurableApiFixture,
 ) -> None:
-    settings, _ = durable_api
-    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
+    with _durable_client(durable_api) as client:
         created = client.post(
             "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
             json=_graph_payload(),
@@ -770,10 +869,9 @@ def test_graph_update_carries_compatible_materializations_to_new_revision(
 
 
 def test_downstream_run_without_materialization_returns_dependency_guidance(
-    durable_api: tuple[Settings, str],
+    durable_api: DurableApiFixture,
 ) -> None:
-    settings, _ = durable_api
-    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
+    with _durable_client(durable_api) as client:
         graph = SavedGraphResponse.model_validate(
             client.post(
                 "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
@@ -812,10 +910,9 @@ def test_downstream_run_without_materialization_returns_dependency_guidance(
 
 
 def test_inaccessible_artifact_is_filtered_and_blocks_downstream_reuse(
-    durable_api: tuple[Settings, str],
+    durable_api: DurableApiFixture,
 ) -> None:
-    settings, database_url = durable_api
-    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
+    with _durable_client(durable_api) as client:
         graph = SavedGraphResponse.model_validate(
             client.post(
                 "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
@@ -833,9 +930,9 @@ def test_inaccessible_artifact_is_filtered_and_blocks_downstream_reuse(
         artifact_id = add_value.artifact_id
         pinned_value = add_value.model_dump(mode="json")
 
-    asyncio.run(_delete_artifact(database_url, artifact_id))
+    asyncio.run(_delete_artifact(durable_api.database_url, artifact_id))
 
-    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
+    with _durable_client(durable_api) as client:
         materializations = client.get(
             f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
             params={"graph_revision": graph.revision},
@@ -861,10 +958,9 @@ def test_inaccessible_artifact_is_filtered_and_blocks_downstream_reuse(
 
 
 def test_materialization_response_keeps_accessible_sibling_ports(
-    durable_api: tuple[Settings, str],
+    durable_api: DurableApiFixture,
 ) -> None:
-    settings, database_url = durable_api
-    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
+    with _durable_client(durable_api) as client:
         graph = SavedGraphResponse.model_validate(
             client.post(
                 "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",
@@ -874,13 +970,13 @@ def test_materialization_response_keeps_accessible_sibling_ports(
 
     asyncio.run(
         _persist_partially_accessible_materialization(
-            database_url,
+            durable_api.database_url,
             graph.id,
             graph.revision,
         )
     )
 
-    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
+    with _durable_client(durable_api) as client:
         response = client.get(
             f"/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs/{graph.id}/materializations",
             params={"graph_revision": graph.revision},
@@ -895,10 +991,9 @@ def test_materialization_response_keeps_accessible_sibling_ports(
 
 
 def test_saved_run_rejects_pin_that_is_not_the_latest_materialization(
-    durable_api: tuple[Settings, str],
+    durable_api: DurableApiFixture,
 ) -> None:
-    settings, _ = durable_api
-    with client_with_overrides(settings=settings, overrides=_OVERRIDES) as client:
+    with _durable_client(durable_api) as client:
         graph = SavedGraphResponse.model_validate(
             client.post(
                 "/v1/workspaces/00000000-0000-0000-0000-000000000007/graphs",

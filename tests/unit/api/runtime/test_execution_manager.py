@@ -1,7 +1,7 @@
 import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, final, override
+from typing import Annotated, cast, final, override
 from uuid import UUID, uuid4
 
 import pytest
@@ -9,6 +9,7 @@ from pydantic import StrictInt, ValidationError
 
 from grafy_core.artifacts import InMemoryUnitOfWork, NoConfig, NodeInput, NodeOutput
 from grafy_core.artifacts import JsonObject
+from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.domain.execution_history import (
     GraphExecution,
     GraphExecutionScope,
@@ -22,11 +23,9 @@ from grafy_core.nodes import (
     NodeExecutionContext,
     OutPort,
 )
-from grafy_core.operators.arithmetic import INTEGER_VALUE
+from grafy_core.artifact_contracts import INTEGER_VALUE
 from grafy_core.plugins import Plugin
 
-from grafy_api.builtins import builtin_plugins
-from grafy_api.plugin_discovery import build_plugin_registry
 from grafy_api.v1.routes.executions.models import (
     ExecutionStatusEvent,
     NodeProgressEvent,
@@ -34,6 +33,10 @@ from grafy_api.v1.routes.executions.models import (
     RunEdgeRequest,
     RunNodeRequest,
     RunRequest,
+)
+from tests.support.system_plugins import (
+    TEST_SYSTEM_PLUGINS,
+    build_selected_system_plugin_deployment,
 )
 from grafy_api.services.composition import build_workbench_components
 from grafy_api.v1.routes.executions.runtime.control import RunExecutionControl
@@ -56,6 +59,7 @@ EXECUTION_TEST_PLUGIN = Plugin(
     slug="test.execution-control",
     title="Execution control test plugin",
 )
+EXECUTION_TEST_PLUGIN.register_artifact_type_dependency(INTEGER_VALUE)
 _started: dict[str, asyncio.Event] = {}
 _release: dict[str, asyncio.Event] = {}
 _downstream_calls: list[str] = []
@@ -204,6 +208,17 @@ class FailingNode(Node[NoConfig, FailingInput, FailingOutput]):
         /,
     ) -> FailingOutput:
         raise RuntimeError("controlled node failure")
+
+
+SYSTEM_DEPLOYMENT = build_selected_system_plugin_deployment(
+    (*TEST_SYSTEM_PLUGINS, EXECUTION_TEST_PLUGIN),
+)
+
+
+def _pin_system_plugins(request: RunRequest) -> RunRequest:
+    return request.model_copy(
+        update={"nodes": [SYSTEM_DEPLOYMENT.pin_node(node) for node in request.nodes]}
+    )
 
 
 class CancellationWrappingRunGraph(RunGraph):
@@ -410,13 +425,15 @@ def _manager(
     event_capacity: int = 256,
     max_active_executions: int = 2,
 ) -> RunExecutionManager:
-    registry = build_plugin_registry(
-        (*builtin_plugins(), EXECUTION_TEST_PLUGIN),
-        external_plugins=(),
-    )
     components = build_workbench_components(
-        plugin_registry=registry,
+        plugin_registry=SYSTEM_DEPLOYMENT.registry,
         workspace=workspace,
+        plugin_releases=cast(
+            PluginReleaseService,
+            SYSTEM_DEPLOYMENT.release_lookup,
+        ),
+        system_host_bindings=SYSTEM_DEPLOYMENT.host_bindings,
+        loaded_system_plugins=SYSTEM_DEPLOYMENT.loaded_plugins,
     )
     return RunExecutionManager(
         components.run_graph,
@@ -462,38 +479,40 @@ async def test_manager_reports_exact_node_and_cancellation_stops_downstream(
     manager = _manager(tmp_path / "workbench")
     _gate("first")
     _gate("second")
-    request = RunRequest(
-        nodes=[
-            RunNodeRequest(
-                id="first",
-                operator_id="test.execution.first_gate",
-                operator_version=1,
-            ),
-            RunNodeRequest(
-                id="second",
-                operator_id="test.execution.second_gate",
-                operator_version=1,
-            ),
-            RunNodeRequest(
-                id="third",
-                operator_id="test.execution.recording",
-                operator_version=1,
-            ),
-        ],
-        edges=[
-            RunEdgeRequest(
-                from_node="first",
-                from_port="value",
-                to_node="second",
-                to_port="value",
-            ),
-            RunEdgeRequest(
-                from_node="second",
-                from_port="value",
-                to_node="third",
-                to_port="value",
-            ),
-        ],
+    request = _pin_system_plugins(
+        RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="first",
+                    operator_id="test.execution.first_gate",
+                    operator_version=1,
+                ),
+                RunNodeRequest(
+                    id="second",
+                    operator_id="test.execution.second_gate",
+                    operator_version=1,
+                ),
+                RunNodeRequest(
+                    id="third",
+                    operator_id="test.execution.recording",
+                    operator_version=1,
+                ),
+            ],
+            edges=[
+                RunEdgeRequest(
+                    from_node="first",
+                    from_port="value",
+                    to_node="second",
+                    to_port="value",
+                ),
+                RunEdgeRequest(
+                    from_node="second",
+                    from_port="value",
+                    to_node="third",
+                    to_port="value",
+                ),
+            ],
+        )
     )
 
     execution = await manager.start(WORKSPACE_ID, request)
@@ -581,26 +600,30 @@ async def test_manager_isolates_concurrent_execution_progress(tmp_path: Path) ->
     _gate("run-b")
     first = await manager.start(
         WORKSPACE_ID,
-        RunRequest(
-            nodes=[
-                RunNodeRequest(
-                    id="run-a",
-                    operator_id="test.execution.first_gate",
-                    operator_version=1,
-                )
-            ]
+        _pin_system_plugins(
+            RunRequest(
+                nodes=[
+                    RunNodeRequest(
+                        id="run-a",
+                        operator_id="test.execution.first_gate",
+                        operator_version=1,
+                    )
+                ]
+            )
         ),
     )
     second = await manager.start(
         WORKSPACE_ID,
-        RunRequest(
-            nodes=[
-                RunNodeRequest(
-                    id="run-b",
-                    operator_id="test.execution.first_gate",
-                    operator_version=1,
-                )
-            ]
+        _pin_system_plugins(
+            RunRequest(
+                nodes=[
+                    RunNodeRequest(
+                        id="run-b",
+                        operator_id="test.execution.first_gate",
+                        operator_version=1,
+                    )
+                ]
+            )
         ),
     )
 
@@ -629,26 +652,30 @@ async def test_manager_shutdown_cancels_and_awaits_active_tasks(tmp_path: Path) 
     _gate("run-b")
     first = await manager.start(
         WORKSPACE_ID,
-        RunRequest(
-            nodes=[
-                RunNodeRequest(
-                    id="run-a",
-                    operator_id="test.execution.first_gate",
-                    operator_version=1,
-                )
-            ]
+        _pin_system_plugins(
+            RunRequest(
+                nodes=[
+                    RunNodeRequest(
+                        id="run-a",
+                        operator_id="test.execution.first_gate",
+                        operator_version=1,
+                    )
+                ]
+            )
         ),
     )
     second = await manager.start(
         WORKSPACE_ID,
-        RunRequest(
-            nodes=[
-                RunNodeRequest(
-                    id="run-b",
-                    operator_id="test.execution.first_gate",
-                    operator_version=1,
-                )
-            ]
+        _pin_system_plugins(
+            RunRequest(
+                nodes=[
+                    RunNodeRequest(
+                        id="run-b",
+                        operator_id="test.execution.first_gate",
+                        operator_version=1,
+                    )
+                ]
+            )
         ),
     )
     await asyncio.gather(_started["run-a"].wait(), _started["run-b"].wait())
@@ -666,27 +693,29 @@ async def test_manager_preserves_failed_graph_result(tmp_path: Path) -> None:
     manager = _manager(tmp_path / "workbench")
     execution = await manager.start(
         WORKSPACE_ID,
-        RunRequest(
-            nodes=[
-                RunNodeRequest(
-                    id="failure",
-                    operator_id="test.execution.failure",
-                    operator_version=1,
-                ),
-                RunNodeRequest(
-                    id="skipped",
-                    operator_id="test.execution.recording",
-                    operator_version=1,
-                ),
-            ],
-            edges=[
-                RunEdgeRequest(
-                    from_node="failure",
-                    from_port="value",
-                    to_node="skipped",
-                    to_port="value",
-                )
-            ],
+        _pin_system_plugins(
+            RunRequest(
+                nodes=[
+                    RunNodeRequest(
+                        id="failure",
+                        operator_id="test.execution.failure",
+                        operator_version=1,
+                    ),
+                    RunNodeRequest(
+                        id="skipped",
+                        operator_id="test.execution.recording",
+                        operator_version=1,
+                    ),
+                ],
+                edges=[
+                    RunEdgeRequest(
+                        from_node="failure",
+                        from_port="value",
+                        to_node="skipped",
+                        to_port="value",
+                    )
+                ],
+            )
         ),
     )
 
@@ -722,29 +751,31 @@ async def test_manager_replays_lifecycle_and_mapped_progress_events(
     manager = _manager(tmp_path / "workbench")
     execution = await manager.start(
         WORKSPACE_ID,
-        RunRequest(
-            nodes=[
-                RunNodeRequest(
-                    id="sequence",
-                    operator_id="arithmetic.integer_sequence",
-                    operator_version=1,
-                    config={"start": 1, "count": 3, "step": 1},
-                ),
-                RunNodeRequest(
-                    id="progress",
-                    operator_id="test.execution.progress",
-                    operator_version=1,
-                ),
-            ],
-            edges=[
-                RunEdgeRequest(
-                    from_node="sequence",
-                    from_port="values",
-                    to_node="progress",
-                    to_port="value",
-                    collection_mode="map",
-                )
-            ],
+        _pin_system_plugins(
+            RunRequest(
+                nodes=[
+                    RunNodeRequest(
+                        id="sequence",
+                        operator_id="arithmetic.integer_sequence",
+                        operator_version=1,
+                        config={"start": 1, "count": 3, "step": 1},
+                    ),
+                    RunNodeRequest(
+                        id="progress",
+                        operator_id="test.execution.progress",
+                        operator_version=1,
+                    ),
+                ],
+                edges=[
+                    RunEdgeRequest(
+                        from_node="sequence",
+                        from_port="values",
+                        to_node="progress",
+                        to_port="value",
+                        collection_mode="map",
+                    )
+                ],
+            )
         ),
     )
     assert (await _terminal(manager, execution.execution_id)).status == "succeeded"
@@ -1255,14 +1286,16 @@ async def test_failed_execution_releases_process_capacity(tmp_path: Path) -> Non
         tmp_path / "workbench",
         max_active_executions=1,
     )
-    failing_request = RunRequest(
-        nodes=[
-            RunNodeRequest(
-                id="failure",
-                operator_id="test.execution.failure",
-                operator_version=1,
-            )
-        ]
+    failing_request = _pin_system_plugins(
+        RunRequest(
+            nodes=[
+                RunNodeRequest(
+                    id="failure",
+                    operator_id="test.execution.failure",
+                    operator_version=1,
+                )
+            ]
+        )
     )
     first = await manager.start(WORKSPACE_ID, failing_request)
     assert (await _terminal(manager, first.execution_id)).status == "failed"

@@ -22,7 +22,7 @@ from grafy_core.domain.errors import (
 from grafy_core.domain.materialized_outputs import MaterializedNodeOutputs
 from grafy_core.domain.identity import WorkspaceCapability
 from grafy_core.domain.saved_graphs import SavedGraphRevision
-from grafy_core.operators.tables import TABLE_DATA
+from grafy_core.table_contracts import TABLE_DATA
 from grafy_core.ports.execution_history import ExecutionHistoryUnitOfWorkPort
 from grafy_core.ports.materialized_outputs import WorkbenchUnitOfWorkPort
 
@@ -193,10 +193,18 @@ class ExecutionHistoryService:
                     if release is not None:
                         diagnostics = {
                             "plugin_release": {
+                                "scope": release.scope.value,
+                                "workspace_id": (
+                                    None
+                                    if release.workspace_id is None
+                                    else str(release.workspace_id)
+                                ),
                                 "slug": release.slug,
                                 "revision": release.revision,
                                 "source_digest": release.source_digest,
                                 "contract_digest": release.contract_digest,
+                                "protocol_digest": release.protocol_digest,
+                                "descriptor_digest": release.descriptor_digest,
                             },
                         }
                     await unit_of_work.execution_history.add_node_result(

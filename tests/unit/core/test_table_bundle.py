@@ -6,12 +6,12 @@ import tarfile
 
 import pytest
 
-from grafy_core.operators.tables import (
+from grafy_core.table_contracts import (
     Table,
     TableColumn,
     TableValueType,
-    iter_table_chunks,
 )
+from grafy_core.runtime.table_storage import iter_table_chunks
 from grafy_core.runtime.table_bundle import (
     TABLE_BUNDLE_MANIFEST_PATH,
     TableBundleError,

@@ -18,13 +18,13 @@ from pydantic import (
     model_validator,
 )
 
-from grafy_core.operators.tables import (
+from grafy_core.table_contracts import (
     Table,
     TableChunk,
     TableColumn,
     TableValue,
-    iter_table_chunks,
 )
+from grafy_core.runtime.table_storage import iter_table_chunks
 
 
 TABLE_BUNDLE_FORMAT = "grafy.plugin.table-bundle.v1"

@@ -173,9 +173,8 @@ class RunGraph:
                         for binding in node.artifact_type_bindings
                     ],
                     plugin_release=(
-                        PluginReleasePinModel(
-                            slug=node.plugin_release_pin.slug,
-                            revision=node.plugin_release_pin.revision,
+                        PluginReleasePinModel.from_saved_pin(
+                            node.plugin_release_pin
                         )
                         if node.plugin_release_pin is not None
                         else None

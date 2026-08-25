@@ -24,7 +24,7 @@ from grafy_core.nodes import (
     derive_input_contract,
     resolve_node_contracts,
 )
-from grafy_core.operators.images import RASTER_IMAGE
+from grafy_core.artifact_contracts import RASTER_IMAGE
 
 
 class ExampleImage:

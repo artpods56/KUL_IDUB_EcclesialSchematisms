@@ -1,17 +1,23 @@
 import asyncio
+from io import BytesIO
 import json
 import sys
 from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Literal
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import SecretStr
 
+from grafy_core.artifact_contracts import RASTER_IMAGE, TEXT_VALUE
 from grafy_core.artifacts import (
+    ArtifactBundleContract,
     ArtifactObject,
     ArtifactRef,
+    ArtifactTypeSpec,
     ArtifactTypeKey,
     InMemoryUnitOfWork,
     JsonObject,
@@ -25,17 +31,20 @@ from grafy_core.domain.plugin_releases import (
     PluginPortContract,
     PluginRelease,
     PluginReleaseIdentity,
+    PluginSecretInputContract,
+    PluginStagedUploadInputContract,
     plugin_contract_digest,
     plugin_profile_digest,
     plugin_protocol_digest,
 )
+from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
+from grafy_core.domain.node_secrets import JsonValue, node_secret_dependency_sha256
+from grafy_core.domain.staged_uploads import StagedUpload
 from grafy_core.nodes import PortShape
 from grafy_core.nodes import NodeExecutionContext
-from grafy_core.operators.tables import (
+from grafy_core.table_contracts import (
     TABLE_DATA,
     Table,
-    TableArtifactResolver,
-    TableArtifactWriter,
     TableColumn,
     TableValueType,
 )
@@ -46,6 +55,12 @@ from grafy_core.ports.storage import (
     StoredObjectInfo,
 )
 from grafy_core.runtime.materialization import MaterializationProvenance
+from grafy_core.runtime.object_set_bundle import (
+    PORTABLE_BUNDLE_METADATA_KEY,
+    PortableArtifactBundleMetadata,
+    PortableArtifactFile,
+    PortableMetadataReference,
+)
 from grafy_core.runtime.persistence import ArtifactWriteContext
 from grafy_core.runtime.plugin_invocation import (
     PluginInvocationError,
@@ -60,12 +75,14 @@ from grafy_core.runtime.plugin_protocol import (
     PluginInvocationResultEnvelope,
     PluginOutputArtifactBundle,
     PluginOutputBinding,
+    PluginProgressEvent,
 )
 from grafy_core.runtime.table_bundle import (
     load_table_bundle,
     write_table_bundle,
 )
 from grafy_storage import LocalFileObjectStore
+from grafy_plugin_table.persistence import TableArtifactResolver, TableArtifactWriter
 
 from grafy_api.v1.routes.executions.runtime.plugin_artifacts import (
     ArtifactBundlePluginInvoker,
@@ -80,6 +97,17 @@ OTHER_WORKSPACE_ID = UUID("00000000-0000-4000-8000-000000000402")
 SUMMARY = ArtifactTypeKey("notes.summary", 1)
 TEXT = ArtifactTypeKey("scalar.text", 1)
 TABLE = TABLE_DATA.key
+RASTER = RASTER_IMAGE.key
+GEO_FEATURE_COLLECTION = ArtifactTypeSpec(
+    key=ArtifactTypeKey("geo.feature_collection", 1),
+    title="GeoJSON feature collection",
+    bundle=ArtifactBundleContract(format="object-set", version=1),
+)
+GEO_RASTER_SCAN = ArtifactTypeSpec(
+    key=ArtifactTypeKey("geo.raster_scan", 1),
+    title="Georeferenced raster scan",
+    bundle=ArtifactBundleContract(format="object-set", version=1),
+)
 
 
 def _canonical(payload: JsonObject) -> bytes:
@@ -113,6 +141,8 @@ def _release(
     many_output: bool = False,
     two_inputs: bool = False,
     protocol_digest: str | None = None,
+    with_secret: bool = False,
+    with_upload: bool = False,
 ) -> PluginRelease:
     output_shape = PortShape.MANY if many_output else PortShape.ONE
     outputs = [_port("text", "output", TEXT, output_shape)]
@@ -131,6 +161,7 @@ def _release(
                 payload_schema={"type": "object"},
             ),
         ),
+        artifact_type_dependencies=(PluginArtifactTypeContract.from_spec(TEXT_VALUE),),
         nodes=(
             PluginNodeContract(
                 operator_id="notes.render",
@@ -142,10 +173,41 @@ def _release(
                 output_schema={"type": "object"},
                 inputs=tuple(inputs),
                 outputs=tuple(outputs),
+                secret_inputs=(
+                    PluginSecretInputContract(
+                        name="api_key",
+                        title="API key",
+                        config_dependencies=("base_url",),
+                    ),
+                )
+                if with_secret
+                else (),
+                staged_upload_inputs=(
+                    PluginStagedUploadInputContract(config_field="uploads"),
+                )
+                if with_upload
+                else (),
+                required_capabilities=tuple(
+                    capability
+                    for capability, enabled in (
+                        (PluginRuntimeCapability.NODE_SECRETS, with_secret),
+                        (PluginRuntimeCapability.STAGED_UPLOADS, with_upload),
+                    )
+                    if enabled
+                ),
             ),
         ),
     )
-    capabilities = PluginCapabilityManifest()
+    capabilities = PluginCapabilityManifest(
+        capabilities=tuple(
+            capability
+            for capability, enabled in (
+                (PluginRuntimeCapability.NODE_SECRETS, with_secret),
+                (PluginRuntimeCapability.STAGED_UPLOADS, with_upload),
+            )
+            if enabled
+        )
+    )
     return PluginRelease(
         workspace_id=WORKSPACE_ID,
         slug="notes",
@@ -167,6 +229,7 @@ def _table_release() -> PluginRelease:
     catalog = PluginCatalogManifest(
         slug="tables",
         title="Tables",
+        artifact_type_dependencies=(PluginArtifactTypeContract.from_spec(TABLE_DATA),),
         nodes=(
             PluginNodeContract(
                 operator_id="tables.copy",
@@ -199,6 +262,84 @@ def _table_release() -> PluginRelease:
     )
 
 
+def _binary_release() -> PluginRelease:
+    catalog = PluginCatalogManifest(
+        slug="binary",
+        title="Binary",
+        artifact_type_dependencies=(
+            PluginArtifactTypeContract.from_spec(RASTER_IMAGE),
+        ),
+        nodes=(
+            PluginNodeContract(
+                operator_id="binary.copy",
+                operator_version=1,
+                title="Copy binary",
+                description="Copy one binary artifact through the Plugin boundary",
+                config_schema={"type": "object"},
+                input_schema={"type": "object"},
+                output_schema={"type": "object"},
+                inputs=(_port("source", "input", RASTER),),
+                outputs=(_port("result", "output", RASTER),),
+            ),
+        ),
+    )
+    capabilities = PluginCapabilityManifest()
+    return PluginRelease(
+        workspace_id=WORKSPACE_ID,
+        slug="binary",
+        revision=1,
+        catalog=catalog,
+        contract_digest=plugin_contract_digest(catalog),
+        capabilities=capabilities,
+        capability_digest=capabilities.digest,
+        protocol_digest=plugin_protocol_digest(),
+        profile_digest=plugin_profile_digest("python-uv"),
+        source_object_key="plugin-releases/binary/source.tar.gz",
+        source_digest="e" * 64,
+        lock_digest="f" * 64,
+        runtime_profile="python-uv",
+    )
+
+
+def _object_set_release(spec: ArtifactTypeSpec) -> PluginRelease:
+    catalog = PluginCatalogManifest(
+        slug="portable",
+        title="Portable",
+        artifact_type_dependencies=(
+            PluginArtifactTypeContract.from_spec(spec),
+        ),
+        nodes=(
+            PluginNodeContract(
+                operator_id="portable.copy",
+                operator_version=1,
+                title="Copy file set",
+                description="Copy one portable file set",
+                config_schema={"type": "object"},
+                input_schema={"type": "object"},
+                output_schema={"type": "object"},
+                inputs=(_port("source", "input", spec.key),),
+                outputs=(_port("result", "output", spec.key),),
+            ),
+        ),
+    )
+    capabilities = PluginCapabilityManifest()
+    return PluginRelease(
+        workspace_id=WORKSPACE_ID,
+        slug="portable",
+        revision=1,
+        catalog=catalog,
+        contract_digest=plugin_contract_digest(catalog),
+        capabilities=capabilities,
+        capability_digest=capabilities.digest,
+        protocol_digest=plugin_protocol_digest(),
+        profile_digest=plugin_profile_digest("python-uv"),
+        source_object_key="plugin-releases/portable/source.tar.gz",
+        source_digest="6" * 64,
+        lock_digest="7" * 64,
+        runtime_profile="python-uv",
+    )
+
+
 async def _seed_inline_artifact(
     unit_of_work: InMemoryUnitOfWork,
     *,
@@ -226,11 +367,76 @@ async def _seed_inline_artifact(
     return artifact.ref()
 
 
+async def _seed_object_set_artifact(
+    unit_of_work: InMemoryUnitOfWork,
+    storage: LocalFileObjectStore,
+    *,
+    spec: ArtifactTypeSpec,
+    files: Mapping[str, tuple[bytes, str]],
+    primary_suffix: str,
+    content_type: str,
+    metadata: JsonObject,
+    references: tuple[PortableMetadataReference, ...],
+) -> ArtifactRef:
+    root = (
+        f"workspaces/{WORKSPACE_ID}/{spec.key.id}/v{spec.key.schema_version}"
+    )
+    portable_files: list[PortableArtifactFile] = []
+    stored_primary: StoredFile | None = None
+    for suffix, (content, file_content_type) in files.items():
+        digest = sha256(content).hexdigest()
+        stored = await storage.save(
+            SaveFileCommand(
+                bucket="artifacts",
+                path=f"{root}/{suffix}",
+                stream=BytesIO(content),
+                content_type=file_content_type,
+                metadata={"sha256": digest},
+            )
+        )
+        portable_files.append(
+            PortableArtifactFile(
+                object_key=stored.path,
+                byte_size=stored.byte_size,
+                sha256=stored.sha256,
+                content_type=file_content_type,
+            )
+        )
+        if suffix == primary_suffix:
+            stored_primary = stored
+    assert stored_primary is not None
+    logical_content = f"logical:{spec.key.id}:{primary_suffix}".encode()
+    artifact_metadata = dict(metadata)
+    artifact_metadata[PORTABLE_BUNDLE_METADATA_KEY] = (
+        PortableArtifactBundleMetadata(
+            files=tuple(portable_files),
+            references=references,
+        ).as_metadata_value()
+    )
+    artifact = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
+        artifact_type=spec.key.id,
+        schema_version=spec.key.schema_version,
+        content_type=content_type,
+        storage_backend="local",
+        bucket=stored_primary.bucket,
+        object_key=stored_primary.path,
+        byte_size=len(logical_content),
+        sha256=sha256(logical_content).hexdigest(),
+        metadata=artifact_metadata,
+    )
+    async with unit_of_work as entered:
+        await entered.artifacts.add(artifact)
+        await entered.commit()
+    return artifact.ref()
+
+
 def _request(
     release: PluginRelease,
     ref: ArtifactRef,
     *,
     second_ref: ArtifactRef | None = None,
+    config: JsonObject | None = None,
 ) -> PluginInvocationRequest:
     inputs: dict[str, object] = {"summary": ref}
     if second_ref is not None:
@@ -239,10 +445,21 @@ def _request(
         release=PluginReleaseIdentity.from_release(release),
         contract=release.catalog.nodes[0],
         artifact_type_bindings={},
-        config={},
+        config=config or {},
         inputs=inputs,
+        artifact_bundle_contracts={
+            ArtifactTypeKey(contract.key.id, contract.key.schema_version): (
+                contract.bundle
+            )
+            for contract in (
+                *release.catalog.artifact_types,
+                *release.catalog.artifact_type_dependencies,
+            )
+        },
         workspace_id=WORKSPACE_ID,
         node_id="render",
+        secret_graph_id=UUID("00000000-0000-4000-8000-000000000403"),
+        secret_graph_revision=2,
     )
 
 
@@ -256,13 +473,21 @@ RunnerMode = Literal[
     "missing_required",
     "many_files",
     "mismatched_failure",
+    "operator_failure",
 ]
 
 
 class ManifestRunner(PluginGuestRunner):
-    def __init__(self, mode: RunnerMode = "valid", *, payload_size: int = 0) -> None:
+    def __init__(
+        self,
+        mode: RunnerMode = "valid",
+        *,
+        payload_size: int = 0,
+        progress: tuple[PluginProgressEvent, ...] = (),
+    ) -> None:
         self.mode = mode
         self.payload_size = payload_size
+        self.progress = progress
         self.calls = 0
         self.observed_inputs: tuple[PluginInputBinding, ...] = ()
 
@@ -270,32 +495,38 @@ class ManifestRunner(PluginGuestRunner):
         self,
         invocation_root: Path,
         limits: PluginInvocationLimits,
+        request: PluginInvocationRequest,
     ) -> None:
-        del limits
+        del limits, request
         self.calls += 1
-        request = PluginInvocationEnvelope.from_json_bytes(
+        protocol_request = PluginInvocationEnvelope.from_json_bytes(
             (invocation_root / "invocation.json").read_bytes()
         )
-        self.observed_inputs = request.inputs
-        if self.mode == "mismatched_failure":
+        self.observed_inputs = protocol_request.inputs
+        if self.mode in {"mismatched_failure", "operator_failure"}:
             result = PluginInvocationResultEnvelope(
-                invocation_id=request.invocation_id,
+                invocation_id=protocol_request.invocation_id,
                 status="failed",
                 failure=PluginFailureEnvelope(
                     code=PluginFailureCode.OPERATOR_FAILURE,
                     message="Operator failed",
-                    release_slug="other",
-                    release_revision=request.release.revision,
-                    operator_id=request.operator_id,
-                    operator_version=request.operator_version,
-                    node_id=request.node_id,
-                    invocation_index=request.invocation_index,
+                    release_slug=(
+                        "other"
+                        if self.mode == "mismatched_failure"
+                        else protocol_request.release.slug
+                    ),
+                    release_revision=protocol_request.release.revision,
+                    operator_id=protocol_request.operator_id,
+                    operator_version=protocol_request.operator_version,
+                    node_id=protocol_request.node_id,
+                    invocation_index=protocol_request.invocation_index,
                 ),
+                progress=self.progress,
             )
             (invocation_root / "result.json").write_bytes(result.canonical_json_bytes())
             return
         bindings: list[PluginOutputBinding] = []
-        for output_index, declaration in enumerate(request.outputs):
+        for output_index, declaration in enumerate(protocol_request.outputs):
             if self.mode == "missing_required" and output_index == 0:
                 continue
             artifact_count = 2 if self.mode == "many_files" else 1
@@ -350,11 +581,96 @@ class ManifestRunner(PluginGuestRunner):
         if self.mode == "extra_file":
             (invocation_root / "outputs" / "undeclared.json").write_text("{}")
         result = PluginInvocationResultEnvelope(
-            invocation_id=request.invocation_id,
+            invocation_id=protocol_request.invocation_id,
             status="succeeded",
             outputs=tuple(bindings),
+            progress=self.progress,
         )
         (invocation_root / "result.json").write_bytes(result.canonical_json_bytes())
+
+
+class RecordingSecretResolver:
+    def __init__(self, value: str) -> None:
+        self._value = value
+        self.dependencies: Mapping[str, JsonValue] | None = None
+
+    async def resolve_secret(
+        self,
+        *,
+        workspace_id: UUID,
+        graph_id: UUID | None,
+        graph_revision: int | None,
+        node_id: str | None,
+        name: str,
+        dependencies: Mapping[str, JsonValue],
+    ) -> SecretStr:
+        assert workspace_id == WORKSPACE_ID
+        assert graph_id == UUID("00000000-0000-4000-8000-000000000403")
+        assert graph_revision == 2
+        assert node_id == "render"
+        assert name == "api_key"
+        self.dependencies = dependencies
+        return SecretStr(self._value)
+
+    async def cache_revision(
+        self,
+        *,
+        workspace_id: UUID,
+        graph_id: UUID | None,
+        graph_revision: int | None,
+        node_id: str | None,
+        name: str,
+        dependencies: Mapping[str, JsonValue],
+    ) -> str:
+        del workspace_id, graph_id, graph_revision, node_id, name, dependencies
+        raise AssertionError("Secret staging does not query cache revisions")
+
+
+class SecretObservingRunner(ManifestRunner):
+    def __init__(self, expected_secret: bytes) -> None:
+        super().__init__()
+        self._expected_secret = expected_secret
+        self.observed_envelope: PluginInvocationEnvelope | None = None
+
+    async def run(
+        self,
+        invocation_root: Path,
+        limits: PluginInvocationLimits,
+        request: PluginInvocationRequest,
+    ) -> None:
+        envelope_bytes = (invocation_root / "invocation.json").read_bytes()
+        assert self._expected_secret not in envelope_bytes
+        envelope = PluginInvocationEnvelope.from_json_bytes(envelope_bytes)
+        binding = envelope.secrets[0]
+        secret_path = invocation_root.joinpath(*binding.relative_path.split("/"))
+        assert secret_path.read_bytes() == self._expected_secret
+        assert secret_path.stat().st_mode & 0o777 == 0o400
+        self.observed_envelope = envelope
+        await super().run(invocation_root, limits, request)
+
+
+class StagedUploadObservingRunner(ManifestRunner):
+    def __init__(self, expected_content: bytes) -> None:
+        super().__init__()
+        self._expected_content = expected_content
+        self.observed_envelope: PluginInvocationEnvelope | None = None
+
+    async def run(
+        self,
+        invocation_root: Path,
+        limits: PluginInvocationLimits,
+        request: PluginInvocationRequest,
+    ) -> None:
+        envelope = PluginInvocationEnvelope.from_json_bytes(
+            (invocation_root / "invocation.json").read_bytes()
+        )
+        binding = envelope.staged_uploads[0]
+        path = invocation_root.joinpath(*binding.relative_path.split("/"))
+        assert path.read_bytes() == self._expected_content
+        assert path.stat().st_mode & 0o777 == 0o400
+        assert binding.content_sha256 == sha256(self._expected_content).hexdigest()
+        self.observed_envelope = envelope
+        await super().run(invocation_root, limits, request)
 
 
 class FailingGuestRunner(PluginGuestRunner):
@@ -362,12 +678,63 @@ class FailingGuestRunner(PluginGuestRunner):
         self,
         invocation_root: Path,
         limits: PluginInvocationLimits,
+        request: PluginInvocationRequest,
     ) -> None:
-        del invocation_root, limits
+        del invocation_root, limits, request
         raise PluginGuestRunError(
             PluginFailureCode.TIMEOUT,
             "controlled timeout",
         )
+
+
+class RecordingProgressReporter:
+    def __init__(self) -> None:
+        self.reports: list[
+            tuple[NodeExecutionContext, str, int | None, int | None]
+        ] = []
+
+    async def report_progress(
+        self,
+        context: NodeExecutionContext,
+        message: str,
+        *,
+        current: int | None,
+        total: int | None,
+    ) -> None:
+        self.reports.append((context, message, current, total))
+
+
+class FailingProgressReporter:
+    async def report_progress(
+        self,
+        context: NodeExecutionContext,
+        message: str,
+        *,
+        current: int | None,
+        total: int | None,
+    ) -> None:
+        del context, message, current, total
+        raise RuntimeError("controlled progress reporter failure")
+
+
+class BlockingGuestRunner(PluginGuestRunner):
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+
+    async def run(
+        self,
+        invocation_root: Path,
+        limits: PluginInvocationLimits,
+        request: PluginInvocationRequest,
+    ) -> None:
+        del invocation_root, limits, request
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
 
 
 class CapacityObservingRunner(PluginGuestRunner):
@@ -382,6 +749,7 @@ class CapacityObservingRunner(PluginGuestRunner):
         self,
         invocation_root: Path,
         limits: PluginInvocationLimits,
+        request: PluginInvocationRequest,
     ) -> None:
         self.calls += 1
         self.active += 1
@@ -389,7 +757,7 @@ class CapacityObservingRunner(PluginGuestRunner):
         self.entered.set()
         try:
             await self.release.wait()
-            await ManifestRunner().run(invocation_root, limits)
+            await ManifestRunner().run(invocation_root, limits, request)
         finally:
             self.active -= 1
 
@@ -399,11 +767,13 @@ class TableCopyRunner(PluginGuestRunner):
         self,
         invocation_root: Path,
         limits: PluginInvocationLimits,
+        request: PluginInvocationRequest,
     ) -> None:
-        request = PluginInvocationEnvelope.from_json_bytes(
+        del request
+        protocol_request = PluginInvocationEnvelope.from_json_bytes(
             (invocation_root / "invocation.json").read_bytes()
         )
-        input_bundle = request.inputs[0].groups[0].artifacts[0]
+        input_bundle = protocol_request.inputs[0].groups[0].artifacts[0]
         input_path = invocation_root.joinpath(*input_bundle.relative_path.split("/"))
         table = load_table_bundle(
             input_path,
@@ -420,12 +790,13 @@ class TableCopyRunner(PluginGuestRunner):
         write_table_bundle(output_path, table)
         content = output_path.read_bytes()
         result = PluginInvocationResultEnvelope(
-            invocation_id=request.invocation_id,
+            invocation_id=protocol_request.invocation_id,
             status="succeeded",
             outputs=(
                 PluginOutputBinding(
                     port="result",
                     artifact_type=PluginArtifactTypeKey.from_key(TABLE),
+                    bundle=protocol_request.outputs[0].bundle,
                     shape="one",
                     artifacts=(
                         PluginOutputArtifactBundle(
@@ -438,6 +809,181 @@ class TableCopyRunner(PluginGuestRunner):
             ),
         )
         (invocation_root / "result.json").write_bytes(result.canonical_json_bytes())
+
+
+class BinaryCopyRunner(PluginGuestRunner):
+    async def run(
+        self,
+        invocation_root: Path,
+        limits: PluginInvocationLimits,
+        request: PluginInvocationRequest,
+    ) -> None:
+        del limits, request
+        protocol_request = PluginInvocationEnvelope.from_json_bytes(
+            (invocation_root / "invocation.json").read_bytes()
+        )
+        input_bundle = protocol_request.inputs[0].groups[0].artifacts[0]
+        content = invocation_root.joinpath(
+            *input_bundle.relative_path.split("/")
+        ).read_bytes()
+        relative_path = "outputs/o0000/a000000.bin"
+        output_path = invocation_root.joinpath(*relative_path.split("/"))
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(content)
+        declaration = protocol_request.outputs[0]
+        result = PluginInvocationResultEnvelope(
+            invocation_id=protocol_request.invocation_id,
+            status="succeeded",
+            outputs=(
+                PluginOutputBinding(
+                    port=declaration.port,
+                    artifact_type=declaration.artifact_type,
+                    bundle=declaration.bundle,
+                    shape=declaration.shape,
+                    artifacts=(
+                        PluginOutputArtifactBundle(
+                            relative_path=relative_path,
+                            byte_count=len(content),
+                            content_sha256=sha256(content).hexdigest(),
+                            content_type=input_bundle.content_type,
+                            metadata=input_bundle.metadata,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        (invocation_root / "result.json").write_bytes(result.canonical_json_bytes())
+
+
+class ObjectSetCopyRunner(PluginGuestRunner):
+    async def run(
+        self,
+        invocation_root: Path,
+        limits: PluginInvocationLimits,
+        request: PluginInvocationRequest,
+    ) -> None:
+        del limits, request
+        protocol_request = PluginInvocationEnvelope.from_json_bytes(
+            (invocation_root / "invocation.json").read_bytes()
+        )
+        input_bundle = protocol_request.inputs[0].groups[0].artifacts[0]
+        content = invocation_root.joinpath(
+            *input_bundle.relative_path.split("/")
+        ).read_bytes()
+        relative_path = "outputs/o0000/a000000.objects.tar"
+        output_path = invocation_root.joinpath(*relative_path.split("/"))
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(content)
+        declaration = protocol_request.outputs[0]
+        result = PluginInvocationResultEnvelope(
+            invocation_id=protocol_request.invocation_id,
+            status="succeeded",
+            outputs=(
+                PluginOutputBinding(
+                    port=declaration.port,
+                    artifact_type=declaration.artifact_type,
+                    bundle=declaration.bundle,
+                    shape=declaration.shape,
+                    artifacts=(
+                        PluginOutputArtifactBundle(
+                            relative_path=relative_path,
+                            byte_count=len(content),
+                            content_sha256=sha256(content).hexdigest(),
+                            content_type="application/x-tar",
+                        ),
+                    ),
+                ),
+            ),
+        )
+        (invocation_root / "result.json").write_bytes(result.canonical_json_bytes())
+
+
+@pytest.mark.asyncio
+async def test_secret_is_staged_outside_ordinary_invocation_json(
+    tmp_path: Path,
+) -> None:
+    unit_of_work = InMemoryUnitOfWork()
+    input_ref = await _seed_inline_artifact(unit_of_work)
+    secret_value = "super-sensitive-token"
+    secret_resolver = RecordingSecretResolver(secret_value)
+    runner = SecretObservingRunner(secret_value.encode("utf-8"))
+    invoker = ArtifactBundlePluginInvoker(
+        unit_of_work=unit_of_work,
+        runner=runner,
+        scratch_root=tmp_path,
+        node_secrets=secret_resolver,
+    )
+    base_url = "https://provider.example/v1"
+
+    await invoker.invoke(
+        _request(
+            _release(with_secret=True),
+            input_ref,
+            config={"base_url": base_url},
+        )
+    )
+
+    assert secret_resolver.dependencies == {"base_url": base_url}
+    envelope = runner.observed_envelope
+    assert envelope is not None
+    assert envelope.secrets[0].name == "api_key"
+    assert envelope.secrets[0].dependency_digest == node_secret_dependency_sha256(
+        {"base_url": base_url}
+    )
+    assert secret_value not in envelope.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_staged_upload_is_authorized_digest_bound_and_read_only(
+    tmp_path: Path,
+) -> None:
+    unit_of_work = InMemoryUnitOfWork()
+    input_ref = await _seed_inline_artifact(unit_of_work)
+    upload_key = "upload-01"
+    filename = "source.csv"
+    content = b"name\nAda\n"
+    uploads_dir = tmp_path / "uploads"
+    workspace_uploads = uploads_dir / str(WORKSPACE_ID)
+    workspace_uploads.mkdir(parents=True)
+    (workspace_uploads / upload_key).write_bytes(content)
+    async with unit_of_work as entered:
+        await entered.staged_uploads.add(
+            StagedUpload(
+                workspace_id=WORKSPACE_ID,
+                upload_key=upload_key,
+                original_filename=filename,
+                byte_size=len(content),
+            )
+        )
+        await entered.commit()
+    runner = StagedUploadObservingRunner(content)
+    invoker = ArtifactBundlePluginInvoker(
+        unit_of_work=unit_of_work,
+        runner=runner,
+        scratch_root=tmp_path / "scratch",
+        uploads_dir=uploads_dir,
+    )
+
+    await invoker.invoke(
+        _request(
+            _release(with_upload=True),
+            input_ref,
+            config={
+                "uploads": [
+                    {
+                        "upload_key": upload_key,
+                        "filename": filename,
+                        "byte_size": len(content),
+                    }
+                ]
+            },
+        )
+    )
+
+    assert runner.observed_envelope is not None
+    assert runner.observed_envelope.required_capabilities == (
+        PluginRuntimeCapability.STAGED_UPLOADS,
+    )
 
 
 @pytest.mark.asyncio
@@ -519,6 +1065,46 @@ class FailingTableManifestStorage:
         await self._delegate.delete(bucket, path)
 
 
+class FailingSecondOutputStorage:
+    def __init__(self, delegate: LocalFileObjectStore) -> None:
+        self._delegate = delegate
+        self._save_count = 0
+        self.deleted: list[tuple[str, str]] = []
+
+    async def save(self, command: SaveFileCommand) -> StoredFile:
+        self._save_count += 1
+        if self._save_count == 2:
+            raise OSError("controlled object-set save failure")
+        return await self._delegate.save(command)
+
+    async def move(
+        self,
+        bucket: str,
+        source_path: str,
+        destination_path: str,
+    ) -> None:
+        await self._delegate.move(bucket, source_path, destination_path)
+
+    async def load(self, bucket: str, path: str) -> FileStreamProtocol:
+        return await self._delegate.load(bucket, path)
+
+    async def stat(self, bucket: str, path: str) -> StoredObjectInfo | None:
+        return await self._delegate.stat(bucket, path)
+
+    async def load_range(
+        self,
+        bucket: str,
+        path: str,
+        start: int,
+        end_exclusive: int,
+    ) -> bytes:
+        return await self._delegate.load_range(bucket, path, start, end_exclusive)
+
+    async def delete(self, bucket: str, path: str) -> None:
+        self.deleted.append((bucket, path))
+        await self._delegate.delete(bucket, path)
+
+
 @pytest.mark.asyncio
 async def test_table_input_and_output_cross_the_bundle_boundary(
     tmp_path: Path,
@@ -570,6 +1156,9 @@ async def test_table_input_and_output_cross_the_bundle_boundary(
         artifact_type_bindings={},
         config={},
         inputs={"source": input_ref},
+        artifact_bundle_contracts={
+            TABLE: PluginArtifactTypeContract.from_spec(TABLE_DATA).bundle
+        },
         workspace_id=WORKSPACE_ID,
         node_id="copy",
     )
@@ -590,12 +1179,303 @@ async def test_table_input_and_output_cross_the_bundle_boundary(
     assert output.metadata["row_count"] == 102
     assert output.metadata["chunk_count"] == 2
     assert output.metadata["plugin_release"] == {
+        "scope": "workspace",
+        "workspace_id": str(WORKSPACE_ID),
         "slug": "tables",
         "revision": 1,
         "source_digest": "c" * 64,
         "contract_digest": release.contract_digest,
+        "protocol_digest": release.protocol_digest,
+        "descriptor_digest": release.descriptor.digest,
     }
     assert list((tmp_path / "scratch").iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_binary_input_and_output_use_exact_portable_file_contract(
+    tmp_path: Path,
+) -> None:
+    unit_of_work = InMemoryUnitOfWork()
+    storage = LocalFileObjectStore(tmp_path / "objects")
+    content = b"portable raster bytes"
+    content_digest = sha256(content).hexdigest()
+    stored = await storage.save(
+        SaveFileCommand(
+            bucket="artifacts",
+            path=f"raster/{content_digest}.bin",
+            stream=BytesIO(content),
+            content_type="image/png",
+            metadata={"sha256": content_digest},
+        )
+    )
+    source = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
+        artifact_type=RASTER.id,
+        schema_version=RASTER.schema_version,
+        content_type="image/png",
+        storage_backend="local",
+        bucket=stored.bucket,
+        object_key=stored.path,
+        byte_size=stored.byte_size,
+        sha256=stored.sha256,
+        metadata={"filename": "source-map.png", "source_name": "Source map"},
+    )
+    async with unit_of_work as entered:
+        await entered.artifacts.add(source)
+        await entered.commit()
+    release = _binary_release()
+    invoker = ArtifactBundlePluginInvoker(
+        unit_of_work=unit_of_work,
+        runner=BinaryCopyRunner(),
+        scratch_root=tmp_path / "scratch",
+        storage=storage,
+        bucket="artifacts",
+        storage_backend="local",
+    )
+    result = await invoker.invoke(
+        PluginInvocationRequest(
+            release=PluginReleaseIdentity.from_release(release),
+            contract=release.catalog.nodes[0],
+            artifact_type_bindings={},
+            config={},
+            inputs={"source": source.ref()},
+            artifact_bundle_contracts={
+                RASTER: PluginArtifactTypeContract.from_spec(RASTER_IMAGE).bundle
+            },
+            workspace_id=WORKSPACE_ID,
+            node_id="copy",
+        )
+    )
+
+    output_ref = result.outputs["result"]
+    assert isinstance(output_ref, ArtifactRef)
+    async with unit_of_work as entered:
+        output = await entered.artifacts.get(WORKSPACE_ID, output_ref.artifact_id)
+    assert output is not None
+    assert output.inline_payload is None
+    assert output.content_type == "image/png"
+    assert output.sha256 == content_digest
+    assert output.metadata["filename"] == "source-map.png"
+    assert output.metadata["source_name"] == "Source map"
+    assert output.bucket is not None and output.object_key is not None
+    stream = await storage.load(output.bucket, output.object_key)
+    try:
+        assert stream.read() == content
+    finally:
+        stream.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["features", "features_pmtiles", "raster_tiles"])
+async def test_gis_object_sets_round_trip_exact_files_and_typed_metadata_references(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    unit_of_work = InMemoryUnitOfWork()
+    storage = LocalFileObjectStore(tmp_path / "objects")
+    if case.startswith("features"):
+        spec = GEO_FEATURE_COLLECTION
+        primary_suffix = "manifests/features.json"
+        content_type = "application/geo+json"
+        files: dict[str, tuple[bytes, str]] = {
+            primary_suffix: (b'{"collections":["features"]}', "application/json"),
+            "chunks/features-0000.json": (
+                b'[{"geometry":{"coordinates":[13.4,52.5],"type":"Point"}}]',
+                "application/json",
+            ),
+        }
+        metadata: JsonObject = {
+            "source_name": "Survey features",
+            "feature_count": 1,
+        }
+        references: tuple[PortableMetadataReference, ...] = ()
+        if case == "features_pmtiles":
+            projection_suffix = "projections/pmtiles/features.pmtiles"
+            projection_content = b"exact pmtiles bytes"
+            files[projection_suffix] = (
+                projection_content,
+                "application/vnd.pmtiles",
+            )
+            projection_key = (
+                f"workspaces/{WORKSPACE_ID}/{spec.key.id}/"
+                f"v{spec.key.schema_version}/{projection_suffix}"
+            )
+            metadata["vector_projection"] = {
+                "bucket": "artifacts",
+                "object_key": projection_key,
+                "byte_size": len(projection_content),
+                "sha256": sha256(projection_content).hexdigest(),
+            }
+            references = (
+                PortableMetadataReference(
+                    path=("vector_projection", "bucket"),
+                    kind="bucket",
+                ),
+                PortableMetadataReference(
+                    path=("vector_projection", "object_key"),
+                    kind="object",
+                ),
+            )
+    else:
+        spec = GEO_RASTER_SCAN
+        primary_suffix = "cog/raster.tif"
+        content_type = "image/tiff; application=geotiff"
+        files = {
+            primary_suffix: (b"exact cloud optimized geotiff", "image/tiff"),
+            "tiles/tilejson.json": (
+                b'{"tiles":["{z}/{x}/{y}.png"]}',
+                "application/json",
+            ),
+            "tiles/0/0/0.png": (b"exact raster tile", "image/png"),
+        }
+        tile_prefix = (
+            f"workspaces/{WORKSPACE_ID}/{spec.key.id}/"
+            f"v{spec.key.schema_version}/tiles"
+        )
+        metadata = {
+            "source_name": "Survey scan",
+            "original_filename": "survey-scan.tif",
+            "raster_projection": {
+                "bucket": "artifacts",
+                "prefix": tile_prefix,
+            },
+        }
+        references = (
+            PortableMetadataReference(
+                path=("raster_projection", "bucket"),
+                kind="bucket",
+            ),
+            PortableMetadataReference(
+                path=("raster_projection", "prefix"),
+                kind="prefix",
+            ),
+        )
+    input_ref = await _seed_object_set_artifact(
+        unit_of_work,
+        storage,
+        spec=spec,
+        files=files,
+        primary_suffix=primary_suffix,
+        content_type=content_type,
+        metadata=metadata,
+        references=references,
+    )
+    release = _object_set_release(spec)
+    invoker = ArtifactBundlePluginInvoker(
+        unit_of_work=unit_of_work,
+        runner=ObjectSetCopyRunner(),
+        scratch_root=tmp_path / "scratch",
+        storage=storage,
+        bucket="artifacts",
+        storage_backend="local",
+    )
+
+    result = await invoker.invoke(
+        PluginInvocationRequest(
+            release=PluginReleaseIdentity.from_release(release),
+            contract=release.catalog.nodes[0],
+            artifact_type_bindings={},
+            config={},
+            inputs={"source": input_ref},
+            artifact_bundle_contracts={
+                spec.key: release.catalog.artifact_type_dependencies[0].bundle
+            },
+            workspace_id=WORKSPACE_ID,
+            node_id="copy",
+        )
+    )
+
+    output_ref = result.outputs["result"]
+    assert isinstance(output_ref, ArtifactRef)
+    async with unit_of_work as entered:
+        source = await entered.artifacts.get(WORKSPACE_ID, input_ref.artifact_id)
+        output = await entered.artifacts.get(WORKSPACE_ID, output_ref.artifact_id)
+    assert source is not None and output is not None
+    assert output.content_type == source.content_type
+    assert output.byte_size == source.byte_size
+    assert output.sha256 == source.sha256
+    assert output.metadata["source_name"] == source.metadata["source_name"]
+    if case == "raster_tiles":
+        assert output.metadata["original_filename"] == "survey-scan.tif"
+    output_portable = PortableArtifactBundleMetadata.model_validate(
+        output.metadata[PORTABLE_BUNDLE_METADATA_KEY]
+    )
+    assert len(output_portable.files) == len(files)
+    assert output.bucket is not None and output.object_key is not None
+    primary_stream = await storage.load(output.bucket, output.object_key)
+    try:
+        assert primary_stream.read() == files[primary_suffix][0]
+    finally:
+        primary_stream.close()
+    for portable_file in output_portable.files:
+        output_stream = await storage.load(output.bucket, portable_file.object_key)
+        try:
+            output_content = output_stream.read()
+        finally:
+            output_stream.close()
+        assert len(output_content) == portable_file.byte_size
+        assert sha256(output_content).hexdigest() == portable_file.sha256
+    plugin_release = output.metadata["plugin_release"]
+    assert isinstance(plugin_release, dict)
+    assert plugin_release["descriptor_digest"] == release.descriptor.digest
+
+
+@pytest.mark.asyncio
+async def test_failed_object_set_import_removes_every_new_file_and_mints_no_ref(
+    tmp_path: Path,
+) -> None:
+    unit_of_work = InMemoryUnitOfWork()
+    durable_storage = LocalFileObjectStore(tmp_path / "objects")
+    spec = GEO_FEATURE_COLLECTION
+    input_ref = await _seed_object_set_artifact(
+        unit_of_work,
+        durable_storage,
+        spec=spec,
+        files={
+            "manifests/features.json": (
+                b'{"collections":["features"]}',
+                "application/json",
+            ),
+            "chunks/features-0000.json": (b"[]", "application/json"),
+        },
+        primary_suffix="manifests/features.json",
+        content_type="application/geo+json",
+        metadata={"source_name": "Cleanup fixture", "feature_count": 0},
+        references=(),
+    )
+    release = _object_set_release(spec)
+    failing_storage = FailingSecondOutputStorage(durable_storage)
+    invoker = ArtifactBundlePluginInvoker(
+        unit_of_work=unit_of_work,
+        runner=ObjectSetCopyRunner(),
+        scratch_root=tmp_path / "scratch",
+        storage=failing_storage,
+        bucket="artifacts",
+        storage_backend="local",
+    )
+
+    with pytest.raises(PluginInvocationError, match="committed atomically"):
+        await invoker.invoke(
+            PluginInvocationRequest(
+                release=PluginReleaseIdentity.from_release(release),
+                contract=release.catalog.nodes[0],
+                artifact_type_bindings={},
+                config={},
+                inputs={"source": input_ref},
+                artifact_bundle_contracts={
+                    spec.key: release.catalog.artifact_type_dependencies[0].bundle
+                },
+                workspace_id=WORKSPACE_ID,
+                node_id="copy",
+            )
+        )
+
+    assert len(failing_storage.deleted) == 1
+    for bucket, object_key in failing_storage.deleted:
+        assert await durable_storage.stat(bucket, object_key) is None
+    async with unit_of_work as entered:
+        artifacts = await entered.artifacts.list_by_type(WORKSPACE_ID, spec.key)
+    assert [artifact.id for artifact in artifacts] == [input_ref.artifact_id]
 
 
 @pytest.mark.asyncio
@@ -647,6 +1527,9 @@ async def test_table_from_another_workspace_fails_before_staging(
                 artifact_type_bindings={},
                 config={},
                 inputs={"source": foreign_ref},
+                artifact_bundle_contracts={
+                    TABLE: PluginArtifactTypeContract.from_spec(TABLE_DATA).bundle
+                },
                 workspace_id=WORKSPACE_ID,
                 node_id="copy",
             )
@@ -707,6 +1590,9 @@ async def test_failed_table_import_removes_new_objects_and_exposes_no_output(
         artifact_type_bindings={},
         config={},
         inputs={"source": input_ref},
+        artifact_bundle_contracts={
+            TABLE: PluginArtifactTypeContract.from_spec(TABLE_DATA).bundle
+        },
         workspace_id=WORKSPACE_ID,
         node_id="copy",
     )
@@ -759,12 +1645,129 @@ async def test_host_authorizes_stages_and_atomically_mints_output_refs(
     assert output.inline_payload == {"value": "rendered-0"}
     assert output.object_key is None
     assert output.metadata["plugin_release"] == {
+        "scope": "workspace",
+        "workspace_id": str(WORKSPACE_ID),
         "slug": "notes",
         "revision": 4,
         "source_digest": "a" * 64,
         "contract_digest": release.contract_digest,
+        "protocol_digest": release.protocol_digest,
+        "descriptor_digest": release.descriptor.digest,
     }
     assert original is not None
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_guest_progress_is_forwarded_to_the_original_context_in_order(
+    tmp_path: Path,
+) -> None:
+    unit_of_work = InMemoryUnitOfWork()
+    input_ref = await _seed_inline_artifact(unit_of_work)
+    reporter = RecordingProgressReporter()
+    context = NodeExecutionContext(
+        workspace_id=WORKSPACE_ID,
+        node_id="render",
+        invocation_index=3,
+        progress_reporter=reporter,
+    )
+    events = (
+        PluginProgressEvent(message="Starting"),
+        PluginProgressEvent(message="Halfway", current=5, total=10),
+        PluginProgressEvent(message="Complete", current=10, total=10),
+    )
+    invoker = ArtifactBundlePluginInvoker(
+        unit_of_work=unit_of_work,
+        runner=ManifestRunner(progress=events),
+        scratch_root=tmp_path,
+    )
+
+    await invoker.invoke(
+        replace(
+            _request(_release(), input_ref),
+            invocation_index=3,
+            progress_context=context,
+        )
+    )
+
+    assert reporter.reports == [
+        (context, "Starting", None, None),
+        (context, "Halfway", 5, 10),
+        (context, "Complete", 10, 10),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_progress_reporting_is_best_effort_and_guest_failure_is_unchanged(
+    tmp_path: Path,
+) -> None:
+    unit_of_work = InMemoryUnitOfWork()
+    input_ref = await _seed_inline_artifact(unit_of_work)
+    event = PluginProgressEvent(message="Working", current=1, total=2)
+    success_invoker = ArtifactBundlePluginInvoker(
+        unit_of_work=unit_of_work,
+        runner=ManifestRunner(progress=(event,)),
+        scratch_root=tmp_path / "success",
+    )
+    failure_reporter = FailingProgressReporter()
+
+    result = await success_invoker.invoke(
+        replace(
+            _request(_release(), input_ref),
+            progress_context=NodeExecutionContext(
+                workspace_id=WORKSPACE_ID,
+                node_id="render",
+                progress_reporter=failure_reporter,
+            ),
+        )
+    )
+
+    assert "text" in result.outputs
+
+    recording_reporter = RecordingProgressReporter()
+    failure_context = NodeExecutionContext(
+        workspace_id=WORKSPACE_ID,
+        node_id="render",
+        progress_reporter=recording_reporter,
+    )
+    failure_invoker = ArtifactBundlePluginInvoker(
+        unit_of_work=unit_of_work,
+        runner=ManifestRunner("operator_failure", progress=(event,)),
+        scratch_root=tmp_path / "failure",
+    )
+
+    with pytest.raises(PluginInvocationError, match="operator_failure"):
+        await failure_invoker.invoke(
+            replace(
+                _request(_release(), input_ref),
+                progress_context=failure_context,
+            )
+        )
+
+    assert recording_reporter.reports == [(failure_context, "Working", 1, 2)]
+
+
+@pytest.mark.asyncio
+async def test_cancelling_plugin_invocation_still_cancels_the_guest(
+    tmp_path: Path,
+) -> None:
+    unit_of_work = InMemoryUnitOfWork()
+    input_ref = await _seed_inline_artifact(unit_of_work)
+    runner = BlockingGuestRunner()
+    invoker = ArtifactBundlePluginInvoker(
+        unit_of_work=unit_of_work,
+        runner=runner,
+        scratch_root=tmp_path,
+    )
+    invocation = asyncio.create_task(invoker.invoke(_request(_release(), input_ref)))
+    await runner.started.wait()
+
+    invocation.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await invocation
+    await runner.cancelled.wait()
+    assert invoker.diagnostics().failed_invocations == 1
     assert list(tmp_path.iterdir()) == []
 
 

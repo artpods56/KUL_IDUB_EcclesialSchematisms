@@ -3,6 +3,8 @@
 from uuid import uuid4
 
 from grafy_core.domain.artifact_outputs import ArtifactOutputValue
+from grafy_core.runtime.execution import NodeRunError
+from grafy_core.runtime.plugin_protocol import PluginFailureCode
 
 from .errors import GraphExecutionError
 from .models import (
@@ -99,6 +101,11 @@ class GraphExecutionCoordinator:
                     node_run_id=node_run_id,
                 )
             except Exception as exc:
+                failure_code = (
+                    exc.failure_code
+                    if isinstance(exc, NodeRunError)
+                    else PluginFailureCode.INTERNAL_ADAPTER_FAILURE
+                )
                 if control is not None:
                     control.publish_node_status(
                         status="failed",
@@ -126,6 +133,7 @@ class GraphExecutionCoordinator:
                         error=_render_exception_chain(exc),
                         outputs={},
                         plugin_release=compiled_node.plugin_release,
+                        failure_code=failure_code,
                     )
                 )
                 continue

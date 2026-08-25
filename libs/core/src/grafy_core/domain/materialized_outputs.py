@@ -38,7 +38,7 @@ def _node_execution_signature(node: "SavedGraphNode") -> tuple[object, ...]:
         node.operator_version,
         node.config_dict(),
         tuple((plug.id, plug.port) for plug in node.input_plugs),
-        None if pin is None else (pin.slug, pin.revision),
+        None if pin is None else (pin.scope, pin.slug, pin.revision),
         tuple(
             (
                 binding.variable,

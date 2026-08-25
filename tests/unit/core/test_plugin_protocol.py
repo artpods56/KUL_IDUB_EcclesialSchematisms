@@ -9,7 +9,10 @@ from grafy_core.domain.plugin_releases import (
     PluginArtifactTypeKey,
     plugin_protocol_digest,
 )
+from grafy_core.domain.plugin_identity import PluginReleaseScope
 from grafy_core.runtime.plugin_protocol import (
+    MAX_PLUGIN_PROGRESS_BYTES,
+    MAX_PLUGIN_PROGRESS_EVENTS,
     PluginFailureCode,
     PluginFailureEnvelope,
     PluginInputArtifactBundle,
@@ -22,7 +25,9 @@ from grafy_core.runtime.plugin_protocol import (
     PluginOutputArtifactBundle,
     PluginOutputBinding,
     PluginOutputDeclaration,
+    PluginProgressEvent,
     PluginProtocolCompatibilityError,
+    PluginSecretBinding,
 )
 
 
@@ -38,11 +43,14 @@ def _invocation() -> PluginInvocationEnvelope:
         execution_scope_id=INVOCATION_ID,
         workspace_id=WORKSPACE_ID,
         release=PluginInvocationRelease(
+            scope=PluginReleaseScope.WORKSPACE,
+            workspace_id=WORKSPACE_ID,
             slug="notes",
             revision=4,
             source_digest="a" * 64,
             contract_digest="b" * 64,
             protocol_digest=plugin_protocol_digest(),
+            descriptor_digest="d" * 64,
         ),
         operator_id="notes.summary.render",
         operator_version=1,
@@ -84,7 +92,7 @@ def test_protocol_models_round_trip_deterministically_without_provider_details()
     first = invocation.canonical_json_bytes()
     restored = PluginInvocationEnvelope.from_json_bytes(first)
 
-    assert PLUGIN_INVOCATION_PROTOCOL == "grafy-plugin-invocation@2"
+    assert PLUGIN_INVOCATION_PROTOCOL == "grafy-plugin-invocation@6"
     assert restored == invocation
     assert restored.canonical_json_bytes() == first
     assert PLUGIN_INVOCATION_PROTOCOL.encode() in first
@@ -164,6 +172,29 @@ def test_protocol_rejects_duplicate_ports_paths_and_unknown_fields() -> None:
         PluginInvocationEnvelope.model_validate(payload)
 
 
+def test_secret_metadata_contains_only_dependency_identity_and_safe_path() -> None:
+    binding = PluginSecretBinding(
+        name="api_key",
+        config_dependencies=("base_url",),
+        dependency_digest="e" * 64,
+        relative_path="secrets/s0000-api_key",
+    )
+    payload = binding.model_dump(mode="json")
+
+    assert payload == {
+        "name": "api_key",
+        "config_dependencies": ["base_url"],
+        "dependency_digest": "e" * 64,
+        "relative_path": "secrets/s0000-api_key",
+    }
+    with pytest.raises(ValidationError, match="beneath secrets"):
+        PluginSecretBinding(
+            name="api_key",
+            dependency_digest="e" * 64,
+            relative_path="inputs/api_key",
+        )
+
+
 def test_protocol_reports_explicit_version_incompatibility() -> None:
     payload = _invocation().model_dump(mode="json")
     payload["protocol_version"] = "grafy-plugin-invocation@99"
@@ -212,3 +243,83 @@ def test_result_failure_is_typed_and_output_bundles_cannot_mint_host_identity() 
         "cancellation",
         "internal_adapter_failure",
     }
+
+
+def test_progress_events_round_trip_in_order_and_legacy_results_default_empty() -> None:
+    result = PluginInvocationResultEnvelope(
+        invocation_id=INVOCATION_ID,
+        status="succeeded",
+        progress=(
+            PluginProgressEvent(message="  Starting  "),
+            PluginProgressEvent(message="Halfway", current=5, total=10),
+            PluginProgressEvent(message="Complete", current=10, total=10),
+        ),
+    )
+
+    restored = PluginInvocationResultEnvelope.from_json_bytes(
+        result.canonical_json_bytes()
+    )
+
+    assert [event.message for event in restored.progress] == [
+        "Starting",
+        "Halfway",
+        "Complete",
+    ]
+    legacy_payload = result.model_dump(mode="json", exclude={"progress"})
+    legacy_result = PluginInvocationResultEnvelope.from_json_bytes(
+        json.dumps(legacy_payload, sort_keys=True).encode("utf-8")
+    )
+    assert legacy_result.progress == ()
+
+
+@pytest.mark.parametrize(
+    ("event", "message"),
+    [
+        ({"message": "   "}, "must not be blank"),
+        ({"message": "x" * 1_001}, "at most 1000 characters"),
+        ({"message": "working", "current": -1}, "greater than or equal to 0"),
+        (
+            {"message": "working", "current": 9_007_199_254_740_992},
+            "less than or equal to 9007199254740991",
+        ),
+        ({"message": "working", "total": -1}, "greater than or equal to 0"),
+        (
+            {"message": "working", "total": 9_007_199_254_740_992},
+            "less than or equal to 9007199254740991",
+        ),
+        (
+            {"message": "working", "current": 2, "total": 1},
+            "must not exceed total",
+        ),
+    ],
+)
+def test_progress_events_reject_unbounded_values(
+    event: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        PluginProgressEvent.model_validate(event)
+
+
+def test_result_envelope_bounds_progress_event_count() -> None:
+    event = PluginProgressEvent(message="working")
+
+    with pytest.raises(ValidationError, match="at most 128 items"):
+        PluginInvocationResultEnvelope(
+            invocation_id=INVOCATION_ID,
+            status="succeeded",
+            progress=(event,) * (MAX_PLUGIN_PROGRESS_EVENTS + 1),
+        )
+
+
+def test_result_envelope_bounds_serialized_progress_bytes() -> None:
+    escaped_message = "\0" * 1_000
+    event = PluginProgressEvent(message=escaped_message)
+    event_count = MAX_PLUGIN_PROGRESS_BYTES // len(event.canonical_json_bytes()) + 1
+
+    with pytest.raises(ValidationError, match="progress exceeds.*byte limit"):
+        PluginInvocationResultEnvelope(
+            invocation_id=INVOCATION_ID,
+            status="succeeded",
+            progress=(event,) * event_count,
+        )

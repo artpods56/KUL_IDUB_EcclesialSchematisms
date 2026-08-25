@@ -10,20 +10,23 @@ from sqlalchemy import create_engine, text
 from grafy_core.application.saved_graphs import SavedGraphService
 from grafy_core.domain.execution_history import GraphExecution
 from grafy_core.domain.saved_graphs import SavedGraphDocument
+from grafy_core.domain.plugin_releases import PluginReleaseScope
 from grafy_persistence.unit_of_work import (
     SqlAlchemySavedGraphUnitOfWork,
     SqlAlchemyUnitOfWork,
 )
 
-from grafy_api.builtins import builtin_plugins
 from tests.support.identity import browser_actor_override
 from grafy_api.v1.routes.auth.dependencies import browser_actor
-from grafy_api.plugin_discovery import build_plugin_registry
 from grafy_api.v1.routes.executions.models import (
     RunExecutionResponse,
-    RunNodeRequest,
     RunRequest,
 )
+from tests.support.system_plugins import (
+    build_explicit_plugin_registry,
+    selected_system_run_node as RunNodeRequest,
+)
+from grafy_api.v1.models import PluginReleasePinModel
 from tests.support.clients import GrafyApi
 from grafy_api.v1.routes.saved_graphs.models import (
     CreateSavedGraphRequest,
@@ -53,6 +56,11 @@ def _saved_text_graph_nodes(text: str) -> list[SavedGraphNodeModel]:
             operator_version=1,
             config={"text": text},
             position=GraphPointModel(x=0, y=0),
+            plugin_release=PluginReleasePinModel(
+                scope=PluginReleaseScope.SYSTEM,
+                slug="builtin.text",
+                revision=1,
+            ),
         )
     ]
 
@@ -261,7 +269,7 @@ async def _seed_active_execution(database_url: str) -> tuple[UUID, UUID]:
     from grafy_core.domain.collaboration import CollaborativeGraphHead
 
     async with db(database_url) as database:
-        registry = build_plugin_registry(builtin_plugins(), external_plugins=())
+        registry = build_explicit_plugin_registry()
         saved_graphs = SavedGraphService(
             lambda: SqlAlchemySavedGraphUnitOfWork(database.sessions),
             registry,

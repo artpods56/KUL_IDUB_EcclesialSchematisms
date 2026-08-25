@@ -12,16 +12,16 @@ from grafy_core.artifacts import (
     ArtifactTypeKey,
     InMemoryUnitOfWork,
 )
+from grafy_core.canonical_conversions import INTEGER_TO_TEXT
 from grafy_core.conversions import ArtifactConversion, ArtifactConversionKey
 from grafy_core.nodes import resolve_node_contracts
-from grafy_core.operators.arithmetic import (
+from grafy_plugin_arithmetic.nodes import (
     INTEGER_VALUE,
     IntegerValueOutputWriter,
     IntegerValueResolver,
 )
-from grafy_core.operators.sequences import CollectNode
-from grafy_core.operators.text import (
-    INTEGER_TO_TEXT,
+from grafy_plugin_sequence.nodes import CollectNode
+from grafy_plugin_text.nodes import (
     TEXT_VALUE,
     ReplaceTextNode,
     TextValueOutputWriter,

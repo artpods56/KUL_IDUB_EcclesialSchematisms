@@ -1,4 +1,4 @@
-"""Behavioral contracts for the release-pinned Workspace Plugin proxy node."""
+"""Behavioral contracts for the release-pinned Plugin proxy node."""
 
 from dataclasses import dataclass, field
 from typing import cast
@@ -10,8 +10,11 @@ from grafy_core.artifacts import (
     ArtifactRef,
     ArtifactRefSequence,
     ArtifactTypeKey,
+    NodeInput,
+    NodeOutput,
 )
 from grafy_core.domain.plugin_releases import (
+    PluginArtifactTypeContract,
     PluginArtifactTypeKey,
     PluginCapabilityManifest,
     PluginCatalogManifest,
@@ -24,10 +27,9 @@ from grafy_core.domain.plugin_releases import (
     plugin_profile_digest,
     plugin_protocol_digest,
 )
+from grafy_core.artifact_contracts import TEXT_VALUE
 from grafy_core.nodes import (
     NodeExecutionContext,
-    NodeInput,
-    NodeOutput,
     PortShape,
 )
 from grafy_core.runtime.materialization import InputMaterializer
@@ -35,9 +37,9 @@ from grafy_core.runtime.plugin_invocation import (
     PluginInvocationError,
     PluginInvocationRequest,
     PluginInvocationResult,
-    WorkspacePluginNodeConfig,
-    WorkspacePluginReleaseNode,
-    WorkspacePluginReleaseNodeError,
+    PluginReleaseNodeConfig,
+    PluginReleaseNode,
+    PluginReleaseNodeError,
 )
 from grafy_core.runtime.resolvers import ResolverRegistry
 
@@ -45,7 +47,7 @@ from grafy_core.runtime.resolvers import ResolverRegistry
 WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000861")
 TEXT = ArtifactTypeKey("scalar.text", 1)
 
-ProxyNode = WorkspacePluginReleaseNode[WorkspacePluginNodeConfig, NodeInput, NodeOutput]
+ProxyNode = PluginReleaseNode[PluginReleaseNodeConfig, NodeInput, NodeOutput]
 
 
 def _port(
@@ -84,6 +86,7 @@ def _manifest(nodes: tuple[PluginNodeContract, ...]) -> PluginCatalogManifest:
     return PluginCatalogManifest(
         slug="notes",
         title="Notes",
+        artifact_type_dependencies=(PluginArtifactTypeContract.from_spec(TEXT_VALUE),),
         nodes=nodes,
     )
 
@@ -147,7 +150,7 @@ def _proxy(
         revision=4,
     )
     recording_invoker = invoker or RecordingInvoker()
-    node: ProxyNode = WorkspacePluginReleaseNode(
+    node: ProxyNode = PluginReleaseNode(
         resolved_release,
         resolved_release.catalog.nodes[0],
         recording_invoker,
@@ -169,10 +172,11 @@ async def test_proxy_run_passes_authorized_refs_to_the_invoker_and_back() -> Non
     outgoing = _ref("b" * 64)
     invoker = RecordingInvoker(outputs={"text": outgoing})
     node, invoker = _proxy(invoker=invoker)
+    context = _context()
 
     result = await node.run(
-        _context(),
-        WorkspacePluginNodeConfig(),
+        context,
+        PluginReleaseNodeConfig(),
         _run_inputs(node, text=incoming),
     )
 
@@ -182,6 +186,7 @@ async def test_proxy_run_passes_authorized_refs_to_the_invoker_and_back() -> Non
     assert request.release == PluginReleaseIdentity.from_release(node.release)
     assert request.contract.operator_id == "notes.echo"
     assert request.workspace_id == WORKSPACE_ID
+    assert request.progress_context is context
     output_values = cast(dict[str, object], result.model_dump())
     assert output_values["text"] == cast(object, outgoing.model_dump())
 
@@ -205,11 +210,11 @@ async def test_proxy_preserves_sequence_containers_for_many_ports() -> None:
     )
     release = _release_from_serialized_contract(_manifest((contract,)), revision=1)
     invoker = RecordingInvoker(outputs={"texts": sequence})
-    node: ProxyNode = WorkspacePluginReleaseNode(release, contract, invoker)
+    node: ProxyNode = PluginReleaseNode(release, contract, invoker)
 
     await node.run(
         _context(),
-        WorkspacePluginNodeConfig(),
+        PluginReleaseNodeConfig(),
         _run_inputs(node, texts=sequence),
     )
 
@@ -221,12 +226,12 @@ async def test_proxy_rejects_non_ref_input_containers() -> None:
     node, _ = _proxy()
 
     with pytest.raises(
-        WorkspacePluginReleaseNodeError,
+        PluginReleaseNodeError,
         match="expected an ArtifactRef",
     ):
         await node.run(
             _context(),
-            WorkspacePluginNodeConfig(),
+            PluginReleaseNodeConfig(),
             node.input_contract.model.model_construct(
                 text="materialized python string",
             ),
@@ -241,7 +246,7 @@ async def test_proxy_wraps_invoker_failures() -> None:
     with pytest.raises(PluginInvocationError, match="sandbox exploded"):
         await node.run(
             _context(),
-            WorkspacePluginNodeConfig(),
+            PluginReleaseNodeConfig(),
             _run_inputs(node, text=_ref()),
         )
 
@@ -255,12 +260,12 @@ async def test_proxy_validates_host_minted_outputs_against_the_contract() -> Non
     node, _ = _proxy(invoker=RecordingInvoker(outputs={"text": wrong_type}))
 
     with pytest.raises(
-        WorkspacePluginReleaseNodeError,
+        PluginReleaseNodeError,
         match="expected scalar.text@1",
     ):
         await node.run(
             _context(),
-            WorkspacePluginNodeConfig(),
+            PluginReleaseNodeConfig(),
             _run_inputs(node, text=_ref()),
         )
 
@@ -271,30 +276,30 @@ async def test_proxy_validates_host_minted_outputs_against_the_contract() -> Non
     extra_invoker = RecordingInvoker(
         outputs={"text": _ref(), "surprise": _ref()},
     )
-    node_extra: ProxyNode = WorkspacePluginReleaseNode(
+    node_extra: ProxyNode = PluginReleaseNode(
         unexpected_release,
         unexpected_release.catalog.nodes[0],
         extra_invoker,
     )
     with pytest.raises(
-        WorkspacePluginReleaseNodeError,
+        PluginReleaseNodeError,
         match="unexpected outputs",
     ):
         await node_extra.run(
             _context(),
-            WorkspacePluginNodeConfig(),
+            PluginReleaseNodeConfig(),
             _run_inputs(node_extra, text=_ref()),
         )
 
     missing_invoker = RecordingInvoker(outputs={})
     node_missing, _ = _proxy(invoker=missing_invoker)
     with pytest.raises(
-        WorkspacePluginReleaseNodeError,
+        PluginReleaseNodeError,
         match="no output for required port",
     ):
         await node_missing.run(
             _context(),
-            WorkspacePluginNodeConfig(),
+            PluginReleaseNodeConfig(),
             _run_inputs(node_missing, text=_ref()),
         )
 
@@ -317,10 +322,10 @@ def test_proxy_requires_the_contract_to_match_the_pinned_catalog() -> None:
     )
 
     with pytest.raises(
-        WorkspacePluginReleaseNodeError,
+        PluginReleaseNodeError,
         match="does not match the serialized catalog",
     ):
-        WorkspacePluginReleaseNode(release, other, RecordingInvoker())
+        PluginReleaseNode(release, other, RecordingInvoker())
 
 
 @pytest.mark.asyncio

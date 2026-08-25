@@ -1,15 +1,18 @@
-"""Guest-side execution of one scalar Workspace Plugin artifact invocation."""
+"""Guest-side execution of one scalar isolated Plugin artifact invocation."""
 
 import asyncio
 import json
 import sys
 from hashlib import sha256
+from io import BytesIO
 from importlib import import_module
 from pathlib import Path
+from pathlib import PurePosixPath
+from collections.abc import Mapping
 from typing import Any, cast, final, override
 from uuid import UUID
 
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, SecretStr, TypeAdapter
 
 from grafy_core.artifacts import (
     ArtifactObject,
@@ -26,6 +29,12 @@ from grafy_core.domain.plugin_releases import (
     plugin_contract_digest,
     plugin_protocol_digest,
 )
+from grafy_core.domain.plugin_identity import PluginReleaseScope
+from grafy_core.domain.node_secrets import (
+    JsonValue,
+    node_secret_dependency_sha256,
+)
+from grafy_core.domain.staged_uploads import StagedUpload
 from grafy_core.nodes import (
     InputContract,
     Node,
@@ -33,7 +42,6 @@ from grafy_core.nodes import (
     OutputContract,
     resolve_node_contracts,
 )
-from grafy_core.operators.tables import TABLE_DATA, Table
 from grafy_core.plugins import Plugin, PluginRuntimeContext, PluginUnitOfWorkPort
 from grafy_core.ports.storage import (
     FileStoragePort,
@@ -42,7 +50,20 @@ from grafy_core.ports.storage import (
     StoredFile,
     StoredObjectInfo,
 )
+from grafy_core.ports.node_secrets import NodeSecretUnavailableError
 from grafy_core.runtime.materialization import InputMaterializer, MaterializationError
+from grafy_core.runtime.plugin_loader import (
+    PluginGuestLoaderManifest,
+    WORKSPACE_PLUGIN_LOADER_TARGET,
+    split_plugin_loader_target,
+)
+from grafy_core.runtime.object_set_bundle import (
+    ObjectSetBundleError,
+    load_object_set_bundle,
+    object_set_manifest,
+    portable_metadata,
+    write_object_set_bundle,
+)
 from grafy_core.runtime.persistence import (
     ArtifactOutputWriter,
     ArtifactWriteContext,
@@ -51,12 +72,16 @@ from grafy_core.runtime.persistence import (
     PersistedNodeOutput,
 )
 from grafy_core.runtime.plugin_protocol import (
+    MAX_PLUGIN_PROGRESS_BYTES,
+    MAX_PLUGIN_PROGRESS_EVENTS,
     PluginFailureCode,
     PluginFailureEnvelope,
     PluginInvocationEnvelope,
+    PluginInvocationRelease,
     PluginInvocationResultEnvelope,
     PluginOutputArtifactBundle,
     PluginOutputBinding,
+    PluginProgressEvent,
 )
 from grafy_core.runtime.resolvers import Resolver, ResolverRegistry
 from grafy_core.runtime.table_bundle import (
@@ -65,10 +90,89 @@ from grafy_core.runtime.table_bundle import (
     load_table_bundle_with_manifest,
     write_table_bundle,
 )
+from grafy_core.table_contracts import Table
 
 
 class PluginGuestError(RuntimeError):
     """The staged invocation cannot be executed by the guest runtime."""
+
+
+SYSTEM_PLUGIN_LOADER_MANIFEST_PATH = Path(
+    "/opt/grafy/plugin/plugin-loader.json"
+)
+
+
+def load_guest_plugin(
+    release: PluginInvocationRelease,
+    *,
+    system_loader_manifest_path: Path = SYSTEM_PLUGIN_LOADER_MANIFEST_PATH,
+) -> tuple[Plugin, PluginCatalogManifest]:
+    """Load the exact image-owned Plugin and verify its release contract."""
+
+    loader_target = WORKSPACE_PLUGIN_LOADER_TARGET
+    if release.scope is PluginReleaseScope.SYSTEM:
+        loader_manifest = PluginGuestLoaderManifest.from_json_bytes(
+            system_loader_manifest_path.read_bytes()
+        )
+        if (
+            loader_manifest.scope is not PluginReleaseScope.SYSTEM
+            or loader_manifest.slug != release.slug
+        ):
+            raise PluginGuestError(
+                "System Plugin loader manifest does not match the exact release"
+            )
+        loader_target = loader_manifest.loader_target
+    module_name, attribute_name = split_plugin_loader_target(loader_target)
+    module = import_module(module_name)
+    plugin = getattr(module, attribute_name, None)
+    if not isinstance(plugin, Plugin):
+        raise PluginGuestError(
+            f"Installed project must export Plugin target {loader_target}"
+        )
+    catalog = PluginCatalogManifest.from_plugin(plugin)
+    if (
+        plugin.slug != release.slug
+        or plugin_contract_digest(catalog) != release.contract_digest
+    ):
+        raise PluginGuestError(
+            "Installed Plugin contract does not match the exact release"
+        )
+    return plugin, catalog
+
+
+@final
+class _GuestProgressReporter:
+    """Retain a bounded ordered progress stream for the result envelope."""
+
+    def __init__(self) -> None:
+        self._events: list[PluginProgressEvent] = []
+        self._byte_count = 0
+
+    @property
+    def events(self) -> tuple[PluginProgressEvent, ...]:
+        return tuple(self._events)
+
+    async def report_progress(
+        self,
+        context: NodeExecutionContext,
+        message: str,
+        *,
+        current: int | None,
+        total: int | None,
+    ) -> None:
+        del context
+        if len(self._events) >= MAX_PLUGIN_PROGRESS_EVENTS:
+            return
+        event = PluginProgressEvent(
+            message=message,
+            current=current,
+            total=total,
+        )
+        event_bytes = len(event.canonical_json_bytes())
+        if self._byte_count + event_bytes > MAX_PLUGIN_PROGRESS_BYTES:
+            return
+        self._events.append(event)
+        self._byte_count += event_bytes
 
 
 @final
@@ -115,6 +219,280 @@ class _UnavailableGuestStorage(FileStoragePort):
     async def delete(self, bucket: str, path: str) -> None:
         del bucket, path
         raise PluginGuestError("Guest durable storage is unavailable")
+
+
+@final
+class _GuestBundleStorage(FileStoragePort):
+    """Bounded input capabilities and invocation-local output object storage."""
+
+    def __init__(
+        self, invocation_root: Path, request: PluginInvocationEnvelope
+    ) -> None:
+        self._root = invocation_root
+        self._bundles = {
+            artifact.relative_path: artifact
+            for binding in request.inputs
+            if binding.bundle.format == "binary-file"
+            for group in binding.groups
+            for artifact in group.artifacts
+        }
+        self._input_objects: dict[str, tuple[bytes, str]] = {}
+        self._output_objects: dict[str, tuple[bytes, str]] = {}
+        self._max_output_bytes = request.limits.max_output_bytes
+        self._max_files = request.limits.max_files
+
+    def install_input_objects(
+        self,
+        paths: Mapping[str, tuple[bytes, str]],
+    ) -> None:
+        overlap = set(paths) & set(self._input_objects)
+        if overlap:
+            raise PluginGuestError("Guest object-set input paths overlap")
+        if len(self._input_objects) + len(paths) > self._max_files:
+            raise PluginGuestError("Guest object-set input exceeds its file limit")
+        self._input_objects.update(paths)
+
+    @property
+    def output_paths(self) -> frozenset[str]:
+        return frozenset(self._output_objects)
+
+    def output_content(self, path: str) -> tuple[bytes, str]:
+        try:
+            return self._output_objects[path]
+        except KeyError as exc:
+            raise PluginGuestError(
+                f"Guest output object {path!r} was not written"
+            ) from exc
+
+    def _content(self, bucket: str, path: str) -> bytes:
+        if bucket == "guest-inputs":
+            installed = self._input_objects.get(path)
+            if installed is not None:
+                return installed[0]
+            bundle = self._bundles.get(path)
+            if bundle is not None:
+                bundle_path = _bundle_path(self._root, path)
+                content = bundle_path.read_bytes()
+                if (
+                    len(content) != bundle.byte_count
+                    or sha256(content).hexdigest() != bundle.content_sha256
+                ):
+                    raise PluginGuestError(
+                        "Guest binary bundle failed content validation"
+                    )
+                return content
+        if bucket == "guest-outputs" and path in self._output_objects:
+            return self._output_objects[path][0]
+        raise PluginGuestError("Guest storage path is not an authorized bundle")
+
+    @override
+    async def save(self, command: SaveFileCommand) -> StoredFile:
+        if command.bucket != "guest-outputs":
+            raise PluginGuestError("Guest storage writes require guest-outputs")
+        path = PurePosixPath(command.path)
+        if (
+            command.path == ""
+            or path.is_absolute()
+            or command.path != path.as_posix()
+            or any(part in {"", ".", ".."} for part in path.parts)
+        ):
+            raise PluginGuestError("Guest output storage path is unsafe")
+        existing = self._output_objects.get(command.path)
+        if existing is not None and not command.allow_overwrite:
+            raise PluginGuestError("Guest output storage object already exists")
+        existing_bytes = 0 if existing is None else len(existing[0])
+        total_before = sum(
+            len(content) for content, _type in self._output_objects.values()
+        )
+        remaining = self._max_output_bytes - total_before + existing_bytes
+        content = command.stream.read(remaining + 1)
+        if len(content) > remaining:
+            raise PluginGuestError("Guest output storage exceeds its byte limit")
+        if existing is None and len(self._output_objects) >= self._max_files:
+            raise PluginGuestError("Guest output storage exceeds its file limit")
+        digest = sha256(content).hexdigest()
+        self._output_objects[command.path] = (content, command.content_type)
+        return StoredFile(
+            bucket=command.bucket,
+            path=command.path,
+            etag=None,
+            version_id=None,
+            byte_size=len(content),
+            sha256=digest,
+        )
+
+    @override
+    async def move(
+        self,
+        bucket: str,
+        source_path: str,
+        destination_path: str,
+    ) -> None:
+        if bucket != "guest-outputs":
+            raise PluginGuestError("Guest storage move requires guest-outputs")
+        destination = PurePosixPath(destination_path)
+        if (
+            destination_path == ""
+            or destination.is_absolute()
+            or destination_path != destination.as_posix()
+            or any(part in {"", ".", ".."} for part in destination.parts)
+        ):
+            raise PluginGuestError("Guest output storage destination is unsafe")
+        if destination_path in self._output_objects:
+            raise PluginGuestError("Guest output storage destination exists")
+        try:
+            self._output_objects[destination_path] = self._output_objects.pop(
+                source_path
+            )
+        except KeyError as exc:
+            raise PluginGuestError(
+                "Guest output storage source is unavailable"
+            ) from exc
+
+    @override
+    async def load(self, bucket: str, path: str) -> FileStreamProtocol:
+        return cast(FileStreamProtocol, BytesIO(self._content(bucket, path)))
+
+    @override
+    async def stat(self, bucket: str, path: str) -> StoredObjectInfo | None:
+        if bucket == "guest-inputs" and path in self._input_objects:
+            return StoredObjectInfo(
+                bucket=bucket,
+                path=path,
+                byte_size=len(self._input_objects[path][0]),
+                etag=None,
+                version_id=None,
+            )
+        if bucket == "guest-outputs" and path in self._output_objects:
+            return StoredObjectInfo(
+                bucket=bucket,
+                path=path,
+                byte_size=len(self._output_objects[path][0]),
+                etag=None,
+                version_id=None,
+            )
+        bundle = self._bundles.get(path)
+        if bucket != "guest-inputs" or bundle is None:
+            return None
+        return StoredObjectInfo(
+            bucket=bucket,
+            path=path,
+            byte_size=bundle.byte_count,
+            etag=None,
+            version_id=None,
+        )
+
+    @override
+    async def load_range(
+        self,
+        bucket: str,
+        path: str,
+        start: int,
+        end_exclusive: int,
+    ) -> bytes:
+        return self._content(bucket, path)[start:end_exclusive]
+
+    @override
+    async def delete(self, bucket: str, path: str) -> None:
+        if bucket != "guest-outputs":
+            raise PluginGuestError("Guest storage delete requires guest-outputs")
+        self._output_objects.pop(path, None)
+
+
+@final
+class _GuestNodeSecretResolver:
+    """Read only exact host-staged credentials declared by the invocation."""
+
+    def __init__(
+        self,
+        invocation_root: Path,
+        request: PluginInvocationEnvelope,
+    ) -> None:
+        self._root = invocation_root
+        self._request = request
+        self._bindings = {binding.name: binding for binding in request.secrets}
+        expected = {binding.relative_path for binding in request.secrets}
+        actual: set[str] = set()
+        total_bytes = 0
+        secrets_dir = invocation_root / "secrets"
+        for path in secrets_dir.rglob("*"):
+            if path.is_symlink():
+                raise PluginGuestError("Plugin secret staging must not use symlinks")
+            if path.is_file():
+                actual.add(path.relative_to(invocation_root).as_posix())
+                total_bytes += path.stat().st_size
+        if actual != expected:
+            raise PluginGuestError(
+                "Plugin secret directory must contain exactly declared files"
+            )
+        if total_bytes > request.limits.max_secret_bytes:
+            raise PluginGuestError("Plugin staged secrets exceed their byte limit")
+
+    async def resolve_secret(
+        self,
+        *,
+        workspace_id: UUID,
+        graph_id: UUID | None,
+        graph_revision: int | None,
+        node_id: str | None,
+        name: str,
+        dependencies: Mapping[str, JsonValue],
+    ) -> SecretStr:
+        request = self._request
+        if (
+            workspace_id != request.workspace_id
+            or graph_id != request.secret_graph_id
+            or graph_revision != request.secret_graph_revision
+            or node_id != request.node_id
+        ):
+            raise NodeSecretUnavailableError(
+                "Guest secret request does not match its invocation identity"
+            )
+        binding = self._bindings.get(name)
+        if binding is None:
+            raise NodeSecretUnavailableError(
+                f"Guest secret {name!r} was not declared for this invocation"
+            )
+        if set(dependencies) != set(binding.config_dependencies):
+            raise NodeSecretUnavailableError(
+                f"Guest secret {name!r} dependencies do not match its declaration"
+            )
+        if node_secret_dependency_sha256(dependencies) != binding.dependency_digest:
+            raise NodeSecretUnavailableError(
+                f"Guest secret {name!r} dependency values do not match"
+            )
+        path = _bundle_path(self._root, binding.relative_path)
+        if path.is_symlink() or not path.is_file():
+            raise NodeSecretUnavailableError(f"Guest secret {name!r} is unavailable")
+        try:
+            value = path.read_bytes().decode("utf-8")
+        except UnicodeError as exc:
+            raise NodeSecretUnavailableError(
+                f"Guest secret {name!r} is not valid UTF-8"
+            ) from exc
+        if value == "":
+            raise NodeSecretUnavailableError(f"Guest secret {name!r} is empty")
+        return SecretStr(value)
+
+    async def cache_revision(
+        self,
+        *,
+        workspace_id: UUID,
+        graph_id: UUID | None,
+        graph_revision: int | None,
+        node_id: str | None,
+        name: str,
+        dependencies: Mapping[str, JsonValue],
+    ) -> str:
+        await self.resolve_secret(
+            workspace_id=workspace_id,
+            graph_id=graph_id,
+            graph_revision=graph_revision,
+            node_id=node_id,
+            name=name,
+            dependencies=dependencies,
+        )
+        return self._bindings[name].dependency_digest
 
 
 @final
@@ -284,6 +662,7 @@ async def _stage_input_artifacts(
     invocation_root: Path,
     request: PluginInvocationEnvelope,
     unit_of_work: InMemoryUnitOfWork,
+    storage: _GuestBundleStorage,
     input_contract: InputContract[Any],
 ) -> dict[str, object]:
     _require_exact_input_files(invocation_root, request)
@@ -303,7 +682,7 @@ async def _stage_input_artifacts(
                 total_bytes += bundle.byte_count
                 if total_bytes > request.limits.max_input_bytes:
                     raise PluginGuestError("Plugin input byte limit exceeded")
-                if key == TABLE_DATA.key:
+                if binding.bundle.format == "table-bundle":
                     path = _bundle_path(invocation_root, bundle.relative_path)
                     if path.is_symlink() or not path.is_file():
                         raise PluginGuestError(
@@ -339,7 +718,104 @@ async def _stage_input_artifacts(
                     artifact_byte_size = manifest.logical_byte_size
                     artifact_sha256 = manifest.logical_sha256
                     total_files += 1 + len(manifest.chunks)
-                else:
+                    artifact = ArtifactObject(
+                        workspace_id=request.workspace_id,
+                        id=bundle.artifact_id,
+                        artifact_type=key.id,
+                        schema_version=key.schema_version,
+                        content_type=bundle.content_type,
+                        storage_backend="inline",
+                        inline_payload=payload,
+                        byte_size=artifact_byte_size,
+                        sha256=artifact_sha256,
+                    )
+                elif binding.bundle.format == "binary-file":
+                    path = _bundle_path(invocation_root, bundle.relative_path)
+                    if path.is_symlink() or not path.is_file():
+                        raise PluginGuestError(
+                            f"Plugin binary bundle {bundle.relative_path!r} must "
+                            "be a regular file"
+                        )
+                    identity = file_identity(path)
+                    if (
+                        identity.byte_size != bundle.byte_count
+                        or identity.sha256 != bundle.content_sha256
+                    ):
+                        raise PluginGuestError(
+                            f"Plugin binary bundle {bundle.relative_path!r} failed "
+                            "size or digest validation"
+                        )
+                    total_files += 1
+                    artifact = ArtifactObject(
+                        workspace_id=request.workspace_id,
+                        id=bundle.artifact_id,
+                        artifact_type=key.id,
+                        schema_version=key.schema_version,
+                        content_type=bundle.content_type,
+                        storage_backend="guest-bundle",
+                        bucket="guest-inputs",
+                        object_key=bundle.relative_path,
+                        byte_size=bundle.byte_count,
+                        sha256=bundle.content_sha256,
+                        metadata=bundle.metadata,
+                    )
+                elif binding.bundle.format == "object-set":
+                    path = _bundle_path(invocation_root, bundle.relative_path)
+                    try:
+                        manifest, contents = load_object_set_bundle(
+                            path,
+                            max_bytes=request.limits.max_input_bytes,
+                            max_files=request.limits.max_files,
+                        )
+                    except ObjectSetBundleError as exc:
+                        raise PluginGuestError(
+                            f"Plugin object-set bundle {bundle.relative_path!r} "
+                            "is invalid"
+                        ) from exc
+                    identity = file_identity(path)
+                    if (
+                        identity.byte_size != bundle.byte_count
+                        or identity.sha256 != bundle.content_sha256
+                    ):
+                        raise PluginGuestError(
+                            f"Plugin object-set bundle {bundle.relative_path!r} "
+                            "failed size or digest validation"
+                        )
+                    guest_paths = {
+                        relative_path: (
+                            f"object-sets/{bundle.artifact_id}/{relative_path}"
+                        )
+                        for relative_path in contents
+                    }
+                    storage.install_input_objects(
+                        {
+                            guest_paths[descriptor.relative_path]: (
+                                contents[descriptor.relative_path],
+                                descriptor.content_type,
+                            )
+                            for descriptor in manifest.files
+                        }
+                    )
+                    metadata = manifest.restored_metadata(
+                        bucket="guest-inputs",
+                        paths=guest_paths,
+                    )
+                    primary_path = guest_paths[manifest.primary_path]
+                    total_files += 1 + len(manifest.files)
+                    artifact = ArtifactObject(
+                        workspace_id=request.workspace_id,
+                        id=bundle.artifact_id,
+                        artifact_type=key.id,
+                        schema_version=key.schema_version,
+                        content_type=manifest.content_type,
+                        storage_backend="guest-bundle",
+                        bucket="guest-inputs",
+                        object_key=primary_path,
+                        byte_size=manifest.logical_byte_size,
+                        sha256=manifest.logical_sha256,
+                        metadata=metadata,
+                    )
+                elif binding.bundle.format == "inline-json":
                     payload = _read_bundle(
                         invocation_root,
                         bundle.relative_path,
@@ -349,19 +825,24 @@ async def _stage_input_artifacts(
                     artifact_byte_size = bundle.byte_count
                     artifact_sha256 = bundle.content_sha256
                     total_files += 1
+                    artifact = ArtifactObject(
+                        workspace_id=request.workspace_id,
+                        id=bundle.artifact_id,
+                        artifact_type=key.id,
+                        schema_version=key.schema_version,
+                        content_type=bundle.content_type,
+                        storage_backend="inline",
+                        inline_payload=payload,
+                        byte_size=artifact_byte_size,
+                        sha256=artifact_sha256,
+                    )
+                else:
+                    raise PluginGuestError(
+                        f"Unsupported Plugin input bundle adapter "
+                        f"{binding.bundle.format!r}@{binding.bundle.version}"
+                    )
                 if total_files > request.limits.max_files:
                     raise PluginGuestError("Plugin input file-count limit exceeded")
-                artifact = ArtifactObject(
-                    workspace_id=request.workspace_id,
-                    id=bundle.artifact_id,
-                    artifact_type=key.id,
-                    schema_version=key.schema_version,
-                    content_type="application/json",
-                    storage_backend="inline",
-                    inline_payload=payload,
-                    byte_size=artifact_byte_size,
-                    sha256=artifact_sha256,
-                )
                 existing = artifacts_by_id.get(artifact.id)
                 if existing is not None and existing != artifact:
                     raise PluginGuestError(
@@ -393,6 +874,33 @@ def _build_node(
     for registration in plugin.nodes:
         if registration.key != (request.operator_id, request.operator_version):
             continue
+        expected_secrets = tuple(
+            (secret.name, secret.config_dependencies)
+            for secret in registration.secret_inputs
+        )
+        requested_secrets = tuple(
+            (secret.name, secret.config_dependencies) for secret in request.secrets
+        )
+        if requested_secrets != expected_secrets:
+            raise PluginGuestError(
+                "Invocation secret declarations do not match the installed Plugin"
+            )
+        if request.required_capabilities != registration.required_capabilities:
+            raise PluginGuestError(
+                "Invocation capability profile does not match the installed Plugin"
+            )
+        expected_staged_upload_fields = tuple(
+            declaration.config_field
+            for declaration in registration.staged_upload_inputs
+        )
+        requested_staged_upload_fields = tuple(
+            dict.fromkeys(binding.config_field for binding in request.staged_uploads)
+        )
+        if requested_staged_upload_fields != expected_staged_upload_fields:
+            raise PluginGuestError(
+                "Invocation staged-upload declarations do not match the installed "
+                "Plugin"
+            )
         if registration.factory is not None:
             return registration.factory(context)
         return registration.node_class()
@@ -400,6 +908,42 @@ def _build_node(
         f"Installed Plugin does not declare {request.operator_id}@"
         f"{request.operator_version}"
     )
+
+
+async def _stage_uploaded_files(
+    root: Path,
+    request: PluginInvocationEnvelope,
+    unit_of_work: InMemoryUnitOfWork,
+) -> None:
+    total_bytes = 0
+    for binding in request.staged_uploads:
+        path = _bundle_path(root, binding.relative_path)
+        if path.is_symlink() or not path.is_file():
+            raise PluginGuestError(
+                f"Staged upload {binding.upload_key!r} is not a regular file"
+            )
+        identity = file_identity(path)
+        if (
+            identity.byte_size != binding.byte_count
+            or identity.sha256 != binding.content_sha256
+        ):
+            raise PluginGuestError(
+                f"Staged upload {binding.upload_key!r} failed identity validation"
+            )
+        total_bytes += identity.byte_size
+        if total_bytes > request.limits.max_input_bytes:
+            raise PluginGuestError("Staged uploads exceed the input byte limit")
+    async with unit_of_work as entered:
+        for binding in request.staged_uploads:
+            await entered.staged_uploads.add(
+                StagedUpload(
+                    workspace_id=request.workspace_id,
+                    upload_key=binding.upload_key,
+                    original_filename=binding.original_filename,
+                    byte_size=binding.byte_count,
+                )
+            )
+        await entered.commit()
 
 
 def _artifact_type_bindings(
@@ -416,8 +960,16 @@ def _artifact_type_bindings(
 
 def _validate_request_contract(
     request: PluginInvocationEnvelope,
+    catalog: PluginCatalogManifest,
     node: Node[Any, Any, Any],
 ) -> tuple[InputContract[Any], OutputContract[Any]]:
+    artifact_contracts = {
+        (contract.key.id, contract.key.schema_version): contract
+        for contract in (
+            *catalog.artifact_types,
+            *catalog.artifact_type_dependencies,
+        )
+    }
     resolved = resolve_node_contracts(node, _artifact_type_bindings(request))
     input_specs = resolved.input_contract.ports
     provided_input_names = {binding.port for binding in request.inputs}
@@ -447,6 +999,14 @@ def _validate_request_contract(
         ):
             raise PluginGuestError(
                 f"Input port {binding.port!r} artifact type does not match the "
+                "installed Plugin"
+            )
+        artifact_contract = artifact_contracts.get(
+            (binding.artifact_type.id, binding.artifact_type.schema_version)
+        )
+        if artifact_contract is None or binding.bundle != artifact_contract.bundle:
+            raise PluginGuestError(
+                f"Input port {binding.port!r} bundle contract does not match the "
                 "installed Plugin"
             )
         expected_shape = spec.shape.value
@@ -481,11 +1041,20 @@ def _validate_request_contract(
                 f"Output port {declaration.port!r} contract does not match the "
                 "installed Plugin"
             )
+        artifact_contract = artifact_contracts.get(
+            (declaration.artifact_type.id, declaration.artifact_type.schema_version)
+        )
+        if artifact_contract is None or declaration.bundle != artifact_contract.bundle:
+            raise PluginGuestError(
+                f"Output port {declaration.port!r} bundle contract does not match "
+                "the installed Plugin"
+            )
     return resolved.input_contract, resolved.output_contract
 
 
 def _plugin_runtime(
     plugin: Plugin,
+    request: PluginInvocationEnvelope,
     input_contract: InputContract[Any],
     output_contract: OutputContract[Any],
     context: PluginRuntimeContext,
@@ -508,7 +1077,19 @@ def _plugin_runtime(
         )
         resolver_keys.add(key)
 
-    writers = [factory(context) for factory in plugin.writer_factories]
+    inline_output_keys = {
+        ArtifactTypeKey(
+            declaration.artifact_type.id,
+            declaration.artifact_type.schema_version,
+        )
+        for declaration in request.outputs
+        if declaration.bundle.format in {"inline-json", "table-bundle"}
+    }
+    writers: list[ArtifactOutputWriter] = []
+    for factory in plugin.writer_factories:
+        writer = factory(context)
+        if writer.artifact_type not in inline_output_keys:
+            writers.append(writer)
     writer_keys = {writer.artifact_type for writer in writers}
     for spec in output_contract.ports.values():
         if not isinstance(spec.produces, ArtifactTypeKey):
@@ -533,6 +1114,7 @@ async def _write_output_bundles(
     request: PluginInvocationEnvelope,
     persisted: PersistedNodeOutput,
     unit_of_work: InMemoryUnitOfWork,
+    storage: _GuestBundleStorage,
 ) -> tuple[PluginOutputBinding, ...]:
     output_dir = invocation_root / "outputs"
     if any(output_dir.iterdir()):
@@ -540,6 +1122,7 @@ async def _write_output_bundles(
     bindings: list[PluginOutputBinding] = []
     total_bytes = 0
     total_files = 0
+    declared_output_objects: set[str] = set()
     for output_index, declaration in enumerate(request.outputs):
         value = persisted.values.get(declaration.port)
         if value is None:
@@ -571,16 +1154,11 @@ async def _write_output_bundles(
                     f"Plugin output {declaration.port!r} returned an unknown artifact"
                 )
             payload = artifact.inline_payload
-            if payload is None:
-                raise PluginGuestError(
-                    f"Plugin output {declaration.port!r} is not inline JSON"
-                )
-            is_table = (
-                declaration.artifact_type.id == TABLE_DATA.key.id
-                and declaration.artifact_type.schema_version
-                == TABLE_DATA.key.schema_version
-            )
-            if is_table:
+            if declaration.bundle.format == "table-bundle":
+                if payload is None:
+                    raise PluginGuestError(
+                        f"Plugin output {declaration.port!r} is not inline JSON"
+                    )
                 table = Table.model_validate(payload)
                 if len(table.rows) > request.limits.max_table_rows:
                     raise PluginGuestError("Plugin Table output exceeds its row limit")
@@ -602,7 +1180,12 @@ async def _write_output_bundles(
                 byte_count = identity.byte_size
                 content_sha256 = identity.sha256
                 file_count = 1 + len(manifest.chunks)
-            else:
+                bundle_metadata: JsonObject = {}
+            elif declaration.bundle.format == "inline-json":
+                if payload is None:
+                    raise PluginGuestError(
+                        f"Plugin output {declaration.port!r} is not inline JSON"
+                    )
                 content = _canonical_payload_bytes(payload)
                 relative_path = (
                     f"outputs/o{output_index:04d}/a{artifact_index:06d}.json"
@@ -613,6 +1196,101 @@ async def _write_output_bundles(
                 byte_count = len(content)
                 content_sha256 = sha256(content).hexdigest()
                 file_count = 1
+                bundle_metadata = {}
+            elif declaration.bundle.format == "binary-file":
+                if (
+                    artifact.bucket != "guest-outputs"
+                    or artifact.object_key is None
+                    or artifact.byte_size is None
+                    or artifact.sha256 is None
+                ):
+                    raise PluginGuestError(
+                        f"Plugin binary output {declaration.port!r} has no exact "
+                        "guest object"
+                    )
+                content, stored_content_type = storage.output_content(
+                    artifact.object_key
+                )
+                if (
+                    len(content) != artifact.byte_size
+                    or sha256(content).hexdigest() != artifact.sha256
+                ):
+                    raise PluginGuestError(
+                        f"Plugin binary output {declaration.port!r} content identity "
+                        "is stale"
+                    )
+                relative_path = f"outputs/o{output_index:04d}/a{artifact_index:06d}.bin"
+                path = _bundle_path(invocation_root, relative_path)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+                byte_count = len(content)
+                content_sha256 = artifact.sha256
+                file_count = 1
+                bundle_metadata = artifact.metadata
+                declared_output_objects.add(artifact.object_key)
+                if stored_content_type != artifact.content_type:
+                    raise PluginGuestError(
+                        f"Plugin binary output {declaration.port!r} content type "
+                        "does not match its stored object"
+                    )
+            elif declaration.bundle.format == "object-set":
+                if (
+                    artifact.bucket != "guest-outputs"
+                    or artifact.object_key is None
+                    or artifact.byte_size is None
+                    or artifact.sha256 is None
+                ):
+                    raise PluginGuestError(
+                        f"Plugin object-set output {declaration.port!r} has no exact "
+                        "guest object"
+                    )
+                portable = portable_metadata(artifact.metadata)
+                object_prefix = (
+                    f"workspaces/{artifact.workspace_id}/{artifact.artifact_type}/"
+                    f"v{artifact.schema_version}"
+                )
+                object_manifest = object_set_manifest(
+                    content_type=artifact.content_type,
+                    primary_object_key=artifact.object_key,
+                    logical_byte_size=artifact.byte_size,
+                    logical_sha256=artifact.sha256,
+                    metadata=artifact.metadata,
+                    portable=portable,
+                    object_prefix=object_prefix,
+                )
+                contents: dict[str, bytes] = {}
+                for source, descriptor in zip(
+                    portable.files,
+                    object_manifest.files,
+                    strict=True,
+                ):
+                    content, content_type = storage.output_content(source.object_key)
+                    if (
+                        len(content) != source.byte_size
+                        or sha256(content).hexdigest() != source.sha256
+                        or content_type != source.content_type
+                    ):
+                        raise PluginGuestError(
+                            f"Plugin object-set output {declaration.port!r} has a "
+                            "stale file inventory"
+                        )
+                    contents[descriptor.relative_path] = content
+                    declared_output_objects.add(source.object_key)
+                relative_path = (
+                    f"outputs/o{output_index:04d}/a{artifact_index:06d}.objects.tar"
+                )
+                path = _bundle_path(invocation_root, relative_path)
+                write_object_set_bundle(path, object_manifest, contents)
+                identity = file_identity(path)
+                byte_count = identity.byte_size
+                content_sha256 = identity.sha256
+                file_count = 1 + len(object_manifest.files)
+                bundle_metadata = {}
+            else:
+                raise PluginGuestError(
+                    f"Unsupported Plugin output bundle adapter "
+                    f"{declaration.bundle.format!r}@{declaration.bundle.version}"
+                )
             total_bytes += byte_count
             total_files += file_count
             if total_bytes > request.limits.max_output_bytes:
@@ -624,15 +1302,22 @@ async def _write_output_bundles(
                     relative_path=relative_path,
                     byte_count=byte_count,
                     content_sha256=content_sha256,
+                    content_type=artifact.content_type,
+                    metadata=bundle_metadata,
                 )
             )
         bindings.append(
             PluginOutputBinding(
                 port=declaration.port,
                 artifact_type=declaration.artifact_type,
+                bundle=declaration.bundle,
                 shape=declaration.shape,
                 artifacts=tuple(bundles),
             )
+        )
+    if storage.output_paths != frozenset(declared_output_objects):
+        raise PluginGuestError(
+            "Plugin guest wrote output objects that no artifact declared"
         )
     return tuple(bindings)
 
@@ -641,6 +1326,7 @@ def _failure(
     request: PluginInvocationEnvelope,
     code: PluginFailureCode,
     message: str,
+    progress: tuple[PluginProgressEvent, ...] = (),
 ) -> PluginInvocationResultEnvelope:
     return PluginInvocationResultEnvelope(
         invocation_id=request.invocation_id,
@@ -655,6 +1341,7 @@ def _failure(
             node_id=request.node_id,
             invocation_index=request.invocation_index,
         ),
+        progress=progress,
     )
 
 
@@ -667,7 +1354,11 @@ def _clear_output_directory(invocation_root: Path) -> None:
             path.rmdir()
 
 
-async def execute_plugin_invocation(invocation_root: Path) -> None:
+async def execute_plugin_invocation(
+    invocation_root: Path,
+    *,
+    system_loader_manifest_path: Path = SYSTEM_PLUGIN_LOADER_MANIFEST_PATH,
+) -> None:
     root = invocation_root.resolve()
     request = PluginInvocationEnvelope.from_json_bytes(
         (root / "invocation.json").read_bytes()
@@ -685,29 +1376,28 @@ async def execute_plugin_invocation(invocation_root: Path) -> None:
         return
 
     try:
-        module = import_module("grafy_plugin")
-        plugin = getattr(module, "PLUGIN", None)
-        if not isinstance(plugin, Plugin):
-            raise PluginGuestError("Installed project must export grafy_plugin.PLUGIN")
-        catalog = PluginCatalogManifest.from_plugin(plugin)
-        if (
-            plugin.slug != request.release.slug
-            or plugin_contract_digest(catalog) != request.release.contract_digest
-        ):
-            raise PluginGuestError(
-                "Installed Plugin contract does not match the exact release"
-            )
+        plugin, catalog = load_guest_plugin(
+            request.release,
+            system_loader_manifest_path=system_loader_manifest_path,
+        )
         unit_of_work = InMemoryUnitOfWork()
+        await _stage_uploaded_files(root, request, unit_of_work)
+        bundle_storage = _GuestBundleStorage(root, request)
         plugin_context = PluginRuntimeContext(
             workspace=root,
-            uploads_dir=root / "inputs",
-            storage=_UnavailableGuestStorage(),
+            uploads_dir=root / "uploads",
+            storage=bundle_storage,
             uow=cast(PluginUnitOfWorkPort, unit_of_work),
-            bucket="guest-unavailable",
-            storage_backend="guest-inline",
+            bucket="guest-outputs",
+            storage_backend="guest-bundle",
+            node_secrets=_GuestNodeSecretResolver(root, request),
         )
         node = _build_node(plugin, request, plugin_context)
-        input_contract, output_contract = _validate_request_contract(request, node)
+        input_contract, output_contract = _validate_request_contract(
+            request,
+            catalog,
+            node,
+        )
     except Exception:
         result = _failure(
             request,
@@ -723,10 +1413,12 @@ async def execute_plugin_invocation(invocation_root: Path) -> None:
             root,
             request,
             unit_of_work,
+            bundle_storage,
             input_contract,
         )
         materializer, persister = _plugin_runtime(
             plugin,
+            request,
             input_contract,
             output_contract,
             plugin_context,
@@ -766,11 +1458,15 @@ async def execute_plugin_invocation(invocation_root: Path) -> None:
         result_path.write_bytes(result.canonical_json_bytes())
         return
 
+    progress_reporter = _GuestProgressReporter()
     node_context = NodeExecutionContext(
         workspace_id=request.workspace_id,
         workflow_run_id=request.workflow_run_id,
+        secret_graph_id=request.secret_graph_id,
+        secret_graph_revision=request.secret_graph_revision,
         node_id=request.node_id,
         invocation_index=request.invocation_index,
+        progress_reporter=progress_reporter,
     )
     try:
         output = await node.run(node_context, config, materialized)
@@ -779,6 +1475,7 @@ async def execute_plugin_invocation(invocation_root: Path) -> None:
             request,
             PluginFailureCode.OPERATOR_FAILURE,
             f"Operator {request.operator_id}@{request.operator_version} failed",
+            progress_reporter.events,
         )
         result_path.write_bytes(result.canonical_json_bytes())
         return
@@ -797,11 +1494,13 @@ async def execute_plugin_invocation(invocation_root: Path) -> None:
             request,
             persisted,
             unit_of_work,
+            bundle_storage,
         )
         result = PluginInvocationResultEnvelope(
             invocation_id=request.invocation_id,
             status="succeeded",
             outputs=bindings,
+            progress=progress_reporter.events,
         )
     except Exception:
         _clear_output_directory(root)
@@ -810,6 +1509,7 @@ async def execute_plugin_invocation(invocation_root: Path) -> None:
             PluginFailureCode.OUTPUT_VALIDATION,
             f"Output validation failed for {request.operator_id}@"
             f"{request.operator_version}",
+            progress_reporter.events,
         )
     result_path.write_bytes(result.canonical_json_bytes())
 
@@ -827,4 +1527,8 @@ if __name__ == "__main__":
     main()
 
 
-__all__ = ["PluginGuestError", "execute_plugin_invocation"]
+__all__ = [
+    "PluginGuestError",
+    "execute_plugin_invocation",
+    "load_guest_plugin",
+]

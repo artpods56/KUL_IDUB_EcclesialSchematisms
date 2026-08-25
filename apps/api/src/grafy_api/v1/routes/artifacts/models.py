@@ -16,7 +16,7 @@ from pydantic import (
 )
 
 from grafy_core.artifacts import ArtifactExportFormat, JsonObject
-from grafy_core.operators.tables import TableColumn, TablePage, TableValueType
+from grafy_core.table_contracts import TableColumn, TablePage, TableValueType
 
 from grafy_api.v1.models import ApiResponse
 

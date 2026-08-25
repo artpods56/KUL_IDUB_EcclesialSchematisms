@@ -14,7 +14,7 @@ from grafy_api.v1.routes.artifacts.services import (
 )
 from grafy_core.artifact_collections import JSON_COLLECTIONS_STORAGE_FORMAT
 from grafy_core.artifacts import ArtifactObject, InMemoryUnitOfWork
-from grafy_core.operators.tables import TABLE_DATA
+from grafy_core.table_contracts import TABLE_DATA
 from grafy_core.ports.storage import FileStoragePort, StoredObjectInfo
 
 

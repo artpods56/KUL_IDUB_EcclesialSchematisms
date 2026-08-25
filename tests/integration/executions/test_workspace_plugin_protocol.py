@@ -24,19 +24,19 @@ from grafy_core.domain.plugin_releases import (
     plugin_protocol_digest,
 )
 from grafy_core.nodes import NodeExecutionContext
-from grafy_core.operators.tables import (
+from grafy_core.table_contracts import (
     Table,
-    TableArtifactWriter,
     TableColumn,
     TableValueType,
 )
+from grafy_plugin_table.persistence import TableArtifactWriter
 from grafy_core.plugin_inspector import InspectionResult
 from grafy_core.runtime.materialization import MaterializationProvenance
 from grafy_core.runtime.persistence import ArtifactWriteContext
 from grafy_core.runtime.plugin_invocation import (
     PluginInvocationError,
-    WorkspacePluginNodeConfig,
-    WorkspacePluginReleaseNode,
+    PluginReleaseNodeConfig,
+    PluginReleaseNode,
 )
 from grafy_storage import LocalFileObjectStore
 
@@ -137,11 +137,11 @@ async def test_example_plugin_executes_inline_artifacts_through_local_guest(
         runner=runner,
         scratch_root=tmp_path,
     )
-    node: WorkspacePluginReleaseNode[
-        WorkspacePluginNodeConfig,
+    node: PluginReleaseNode[
+        PluginReleaseNodeConfig,
         NodeInput,
         NodeOutput,
-    ] = WorkspacePluginReleaseNode(release, render_contract, invoker)
+    ] = PluginReleaseNode(release, render_contract, invoker)
     inputs = node.input_contract.model.model_validate({"summary": artifact.ref()})
     config = node.config_contract.model.model_validate({})
 
@@ -229,16 +229,16 @@ async def test_example_plugin_summarizes_a_stored_table_then_renders_it(
         bucket="artifacts",
         storage_backend="local",
     )
-    summarize_node: WorkspacePluginReleaseNode[
-        WorkspacePluginNodeConfig,
+    summarize_node: PluginReleaseNode[
+        PluginReleaseNodeConfig,
         NodeInput,
         NodeOutput,
-    ] = WorkspacePluginReleaseNode(release, summarize_contract, invoker)
-    render_node: WorkspacePluginReleaseNode[
-        WorkspacePluginNodeConfig,
+    ] = PluginReleaseNode(release, summarize_contract, invoker)
+    render_node: PluginReleaseNode[
+        PluginReleaseNodeConfig,
         NodeInput,
         NodeOutput,
-    ] = WorkspacePluginReleaseNode(release, render_contract, invoker)
+    ] = PluginReleaseNode(release, render_contract, invoker)
 
     summarized = await summarize_node.run(
         NodeExecutionContext(
@@ -314,11 +314,11 @@ async def test_guest_rejects_tampered_or_undeclared_input_files(
         runner=runner,
         scratch_root=tmp_path,
     )
-    node: WorkspacePluginReleaseNode[
-        WorkspacePluginNodeConfig,
+    node: PluginReleaseNode[
+        PluginReleaseNodeConfig,
         NodeInput,
         NodeOutput,
-    ] = WorkspacePluginReleaseNode(release, render_contract, invoker)
+    ] = PluginReleaseNode(release, render_contract, invoker)
     inputs = node.input_contract.model.model_validate({"summary": artifact.ref()})
     config = node.config_contract.model.model_validate({})
 

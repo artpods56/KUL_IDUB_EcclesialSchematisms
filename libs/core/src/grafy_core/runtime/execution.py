@@ -32,6 +32,21 @@ from grafy_core.runtime.invocation_cache import (
 )
 from grafy_core.runtime.materialization import InputMaterializer
 from grafy_core.runtime.persistence import OutputPersister, PersistedNodeOutput
+from grafy_core.runtime.plugin_invocation import PluginInvocationError
+from grafy_core.runtime.plugin_protocol import PluginFailureCode
+
+
+class NodeRunError(RuntimeError):
+    """A node operator failed with stable execution context and classification."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure_code: PluginFailureCode,
+    ) -> None:
+        super().__init__(message)
+        self.failure_code = failure_code
 
 
 class NodeRuntime:
@@ -109,16 +124,40 @@ class NodeRuntime:
             inputs=inputs,
             workspace_id=context.workspace_id,
         )
-        run_output = await node.run(
-            context,
-            cast(ConfigT, validated_config),
-            materialized_inputs,
-        )
+        try:
+            run_output = await node.run(
+                context,
+                cast(ConfigT, validated_config),
+                materialized_inputs,
+            )
+        except PluginInvocationError as exc:
+            failure_code = (
+                exc.failure_code
+                if exc.failure_code is not None
+                else PluginFailureCode.INTERNAL_ADAPTER_FAILURE
+            )
+            raise NodeRunError(
+                f"Node {context.node_id!r} operator {node.operator_id}@"
+                f"{node.operator_version} failed ({failure_code.value}): {exc}",
+                failure_code=failure_code,
+            ) from exc
+        except Exception as exc:
+            raise NodeRunError(
+                f"Node {context.node_id!r} operator {node.operator_id}@"
+                f"{node.operator_version} failed "
+                f"({PluginFailureCode.OPERATOR_FAILURE.value}): {exc}",
+                failure_code=PluginFailureCode.OPERATOR_FAILURE,
+            ) from exc
         persisted = await self._persister.persist(
             contract=resolved_contracts.output_contract,
             context=context,
             output=run_output,
             provenance=provenance,
+            metadata=(
+                {}
+                if plugin_release is None
+                else {"plugin_release": plugin_release.provenance_document()}
+            ),
         )
         if not isinstance(persisted, PersistedNodeOutput):
             return persisted

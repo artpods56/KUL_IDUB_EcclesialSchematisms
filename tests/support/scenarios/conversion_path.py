@@ -14,8 +14,7 @@ from grafy_core.artifacts import (
 )
 from grafy_core.conversions import ArtifactConversion, ArtifactConversionKey
 from grafy_core.nodes import InPort, Node, NodeExecutionContext, OutPort
-from grafy_core.operators.arithmetic import INTEGER_VALUE
-from grafy_core.operators.text import TEXT_VALUE
+from grafy_core.artifact_contracts import INTEGER_VALUE, TEXT_VALUE
 from grafy_core.plugins import Plugin
 from grafy_core.runtime.persistence import InlineModelOutputWriter
 from grafy_core.runtime.resolvers import InlineModelResolver
@@ -100,6 +99,8 @@ CONVERSION_PATH_PLUGIN = Plugin(
     title="Conversion path test plugin",
 )
 CONVERSION_PATH_PLUGIN.register_artifact_type(TEST_COMPOUND_RESULT)
+CONVERSION_PATH_PLUGIN.register_artifact_type_dependency(INTEGER_VALUE)
+CONVERSION_PATH_PLUGIN.register_artifact_type_dependency(TEXT_VALUE)
 CONVERSION_PATH_PLUGIN.register_artifact_conversion(TEXT_TO_COMPOUND_RESULT)
 CONVERSION_PATH_PLUGIN.register_artifact_conversion(FAILING_TEXT_TO_COMPOUND_RESULT)
 CONVERSION_PATH_PLUGIN.register_artifact_conversion(INVALID_TEXT_TO_COMPOUND_RESULT)

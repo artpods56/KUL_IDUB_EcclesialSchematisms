@@ -18,8 +18,12 @@ from grafy_api.v1.routes.executions.models import (
     RunExecutionCapacityErrorResponse,
     RunExecutionIdempotencyConflictErrorResponse,
     RunExecutionQueueFullErrorResponse,
-    RunNodeRequest,
     RunRequest,
+)
+from grafy_core.canonical_conversions import CANONICAL_ARTIFACT_CONVERSIONS
+from tests.support.system_plugins import (
+    TEST_SYSTEM_PLUGINS,
+    selected_system_run_node as RunNodeRequest,
 )
 from tests.support.clients import GrafyApi
 from grafy_api.v1.routes.executions.dependencies import run_execution_manager
@@ -36,7 +40,6 @@ from grafy_api.v1.routes.uploads.models import SampleRequest
 from grafy_api.v1.routes.uploads.services import ImageUploadService
 from grafy_api.settings import Settings
 from grafy_core.artifacts import InMemoryUnitOfWork
-from grafy_core.plugins import PluginOrigin
 
 from tests.testkit import app_with_overrides, create_db_url, db
 
@@ -85,12 +88,18 @@ def test_application_lifespan_builds_and_releases_workbench_components(
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
         assert hasattr(application.state, "resources")
-        assert application.state.resources.plugin_registry.plugins
+        assert application.state.resources.plugin_registry.plugins == ()
+        assert {
+            node.key for node in application.state.resources.plugin_registry.nodes
+        } == {
+            ("module.input", 1),
+            ("module.output", 1),
+        }
 
     assert not hasattr(application.state, "resources")
 
 
-def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
+def test_node_registry_does_not_synthesize_plugins_from_runtime_registry(
     builtin_client: TestClient,
 ) -> None:
     response = builtin_client.get(
@@ -99,156 +108,27 @@ def test_node_registry_exposes_builtin_plugins_and_runtime_contracts(
 
     assert response.status_code == 200
     registry = NodeRegistryResponse.model_validate(response.json())
-    assert [(plugin.slug, plugin.title) for plugin in registry.plugins] == [
-        ("builtin.image", "Image"),
-        ("builtin.module", "Module"),
-        ("builtin.sequence", "Sequence"),
-        ("builtin.arithmetic", "Arithmetic"),
-        ("builtin.text", "Text"),
-        ("builtin.schema", "Schema"),
-        ("builtin.prompt", "Prompt"),
-        ("builtin.table", "Table"),
+    assert {(plugin.slug, plugin.title) for plugin in registry.plugins} == {
         ("graph.module", "Workspace library"),
-    ]
-    assert {plugin.origin for plugin in registry.plugins} == {
-        PluginOrigin.BUILTIN,
-        PluginOrigin.MODULE,
+        *((plugin.slug, plugin.title) for plugin in TEST_SYSTEM_PLUGINS),
     }
-    nodes = {node.operator_id: node for node in registry.nodes}
-    assert set(nodes) == {
-        "image.upload",
+    assert {node.operator_id for node in registry.nodes} == {
         "module.input",
         "module.output",
-        "sequence.collect",
-        "sequence.count",
-        "sequence.item_at",
-        "sequence.slice",
-        "arithmetic.number",
-        "arithmetic.integer_sequence",
-        "arithmetic.add",
-        "arithmetic.subtract",
-        "arithmetic.multiply",
-        "arithmetic.sum",
-        "text.input",
-        "text.as_markdown",
-        "text.split",
-        "text.replace",
-        "text.join",
-        "schema.builder",
-        "prompt.message.create",
-        "table.file.import",
-        "table.text.normalize",
-        "table.fuzzy_match",
+        *(
+            registration.key[0]
+            for plugin in TEST_SYSTEM_PLUGINS
+            for registration in plugin.nodes
+        ),
     }
-    assert {
-        (artifact_type.key.id, artifact_type.key.schema_version)
-        for artifact_type in registry.artifact_types
-    } == {
-        ("image.raster", 1),
-        ("scalar.integer", 1),
-        ("scalar.text", 1),
-        ("text.markdown", 1),
-        ("json.schema", 1),
-        ("prompt.message", 2),
-        ("table.data", 1),
+    assert {spec.key.id for spec in registry.artifact_types} == {
+        spec.key.id
+        for plugin in TEST_SYSTEM_PLUGINS
+        for spec in plugin.artifact_types
     }
-    assert [
-        conversion.model_dump() for conversion in registry.artifact_conversions
-    ] == [
-        {
-            "key": {
-                "id": "builtin.scalar.integer_to_text",
-                "version": 1,
-            },
-            "source_artifact_type": {
-                "id": "scalar.integer",
-                "schema_version": 1,
-            },
-            "target_artifact_type": {
-                "id": "scalar.text",
-                "schema_version": 1,
-            },
-            "title": "As text",
-        }
-    ]
-
-    upload = nodes["image.upload"]
-    assert upload.plugin_slug == "builtin.image"
-    assert upload.title == "Upload images"
-    assert upload.description == (
-        "Imports staged image uploads as an ordered raster image sequence."
-    )
-    assert upload.outputs[0].name == "images"
-    assert upload.outputs[0].artifact_type is not None
-    assert upload.outputs[0].artifact_type.id == "image.raster"
-    assert upload.outputs[0].shape == "many"
-    assert upload.outputs[0].description == (
-        "Ordered raster images imported from staged uploads."
-    )
-
-    text_input_properties = cast(
-        dict[str, object],
-        nodes["text.input"].config_schema["properties"],
-    )
-    assert text_input_properties["text"] == {
-        "description": "Multiline text emitted by the node.",
-        "format": "textarea",
-        "title": "Text",
-        "type": "string",
+    assert {spec.key.id for spec in registry.artifact_conversions} == {
+        conversion.key.id for conversion in CANONICAL_ARTIFACT_CONVERSIONS
     }
-
-    schema_builder = nodes["schema.builder"]
-    assert schema_builder.plugin_slug == "builtin.schema"
-    assert schema_builder.title == "Schema Builder"
-    assert schema_builder.inputs[0].name == "schemas"
-    assert schema_builder.inputs[0].artifact_type is not None
-    assert schema_builder.inputs[0].artifact_type.id == "json.schema"
-    assert schema_builder.inputs[0].accepted_shapes == ["one"]
-    assert schema_builder.inputs[0].instance_plugs is True
-    assert schema_builder.inputs[0].required is False
-    assert schema_builder.outputs[0].artifact_type is not None
-    assert schema_builder.outputs[0].artifact_type.id == "json.schema"
-    assert schema_builder.outputs[0].name == "json_schema"
-    assert schema_builder.outputs[0].title == "JSON Schema"
-
-    schema_builder_properties = cast(
-        dict[str, object],
-        schema_builder.config_schema["properties"],
-    )
-    fields_schema = cast(dict[str, object], schema_builder_properties["fields"])
-    assert fields_schema["type"] == "array"
-
-    prompt_message = nodes["prompt.message.create"]
-    prompt_message_definitions = cast(
-        dict[str, object],
-        prompt_message.config_schema["$defs"],
-    )
-    role_definition = cast(
-        dict[str, object],
-        prompt_message_definitions["PromptMessageRole"],
-    )
-    assert role_definition["enum"] == ["system", "user"]
-    image_input = next(port for port in prompt_message.inputs if port.name == "images")
-    assert image_input.artifact_type is not None
-    assert image_input.artifact_type.id == "image.raster"
-    assert image_input.shape == "many"
-    assert image_input.required is False
-
-    add = nodes["arithmetic.add"]
-    assert add.inputs[0].title == "Left"
-    assert add.inputs[0].description == "Left-hand integer operand."
-
-    collect = nodes["sequence.collect"]
-    assert collect.inputs[0].name == "items"
-    assert collect.inputs[0].shape == "one"
-    assert collect.inputs[0].accepted_shapes == ["one", "many"]
-    assert collect.inputs[0].instance_plugs is True
-    assert collect.outputs[0].accepted_shapes == ["many"]
-    assert collect.outputs[0].instance_plugs is False
-    assert collect.inputs[0].artifact_type is None
-    assert collect.inputs[0].artifact_type_variable == "T"
-    assert collect.outputs[0].artifact_type is None
-    assert collect.outputs[0].artifact_type_variable == "T"
 
 
 def test_run_accepts_empty_graph(builtin_client: TestClient) -> None:

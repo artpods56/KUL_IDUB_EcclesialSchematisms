@@ -711,6 +711,7 @@ def _release_identity(revision: int) -> PluginReleaseIdentity:
     from grafy_core.domain.plugin_releases import (
         PluginCatalogManifest,
         PluginNodeContract,
+        PluginReleaseScope,
     )
 
     catalog = PluginCatalogManifest(
@@ -731,11 +732,14 @@ def _release_identity(revision: int) -> PluginReleaseIdentity:
         ),
     )
     return PluginReleaseIdentity(
+        scope=PluginReleaseScope.WORKSPACE,
+        workspace_id=TEST_WORKSPACE_ID,
         slug=catalog.slug,
         revision=revision,
         source_digest=f"{revision}" * 64,
         contract_digest=plugin_contract_digest(catalog),
         protocol_digest="b" * 64,
+        descriptor_digest="c" * 64,
     )
 
 

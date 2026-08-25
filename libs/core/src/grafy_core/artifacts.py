@@ -46,6 +46,12 @@ if TYPE_CHECKING:
 
 JsonObject: TypeAlias = dict[str, object]
 MaterializedJsonType: TypeAlias = Literal["string", "integer"]
+ArtifactBundleFormat: TypeAlias = Literal[
+    "inline-json",
+    "table-bundle",
+    "binary-file",
+    "object-set",
+]
 
 
 class NodeConfig(BaseModel):
@@ -104,6 +110,25 @@ class ArtifactExportFormat:
 
 
 @dataclass(frozen=True, slots=True)
+class ArtifactBundleContract:
+    """Portable representation used to carry an artifact across runtimes."""
+
+    format: ArtifactBundleFormat
+    version: int
+
+    def __post_init__(self) -> None:
+        if self.format not in {
+            "inline-json",
+            "table-bundle",
+            "binary-file",
+            "object-set",
+        }:
+            raise ValueError(f"Unsupported artifact bundle format {self.format!r}")
+        if isinstance(self.version, bool) or self.version < 1:
+            raise ValueError("Artifact bundle version must be positive")
+
+
+@dataclass(frozen=True, slots=True)
 class ArtifactTypeSpec:
     key: ArtifactTypeKey
     title: str
@@ -111,6 +136,10 @@ class ArtifactTypeSpec:
     field_projections: tuple[ArtifactFieldProjection, ...] = ()
     materialized_json_type: MaterializedJsonType | None = None
     export_formats: tuple[ArtifactExportFormat, ...] = ()
+    bundle: ArtifactBundleContract = ArtifactBundleContract(
+        format="inline-json",
+        version=1,
+    )
 
 
 @dataclass(frozen=True, slots=True)

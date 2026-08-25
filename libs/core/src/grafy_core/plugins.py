@@ -32,6 +32,12 @@ from grafy_core.conversions import (
     ArtifactConversionKey,
     conversion_runtime_types_are_compatible,
 )
+from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
+from grafy_core.domain.modules import (
+    MODULE_BOUNDARY_OPERATOR_VERSION,
+    MODULE_INPUT_OPERATOR_ID,
+    MODULE_OUTPUT_OPERATOR_ID,
+)
 from grafy_core.nodes import (
     ArtifactTypeVariable,
     ConfigContract,
@@ -52,16 +58,8 @@ if TYPE_CHECKING:
     from grafy_core.runtime.resolvers import Resolver
 
 
-PLUGIN_ENTRY_POINT_GROUP = "grafy.plugins"
 _MAX_PROJECTION_SCHEMA_DEPTH: Final = 32
 _MAX_FIELD_PROJECTIONS: Final = 1024
-
-
-class PluginOrigin(StrEnum):
-    BUILTIN = "builtin"
-    EXTERNAL = "external"
-    MODULE = "module"
-    WORKSPACE = "workspace"
 
 
 class NodeCachePolicy(StrEnum):
@@ -118,6 +116,57 @@ class NodeSecretInput:
                 )
 
 
+@dataclass(frozen=True, slots=True)
+class NodeStagedUploadInput:
+    """One config field whose upload keys the host authorizes and stages."""
+
+    config_field: str
+
+    def __post_init__(self) -> None:
+        if re.fullmatch(r"[a-z][a-z0-9_]*", self.config_field) is None:
+            raise ValueError(
+                "Node staged-upload config field must start with a lowercase letter "
+                "and contain only lowercase letters, digits, and underscores"
+            )
+        if len(self.config_field) > 255:
+            raise ValueError(
+                "Node staged-upload config field must be at most 255 characters"
+            )
+
+
+MAX_NODE_HTTP_EGRESS_CONFIGURED_FIELDS: Final = 8
+
+
+@dataclass(frozen=True, slots=True)
+class NodeHttpEgressInput:
+    """One config field whose value may become a broker-mediated HTTP origin."""
+
+    config_field: str
+
+    def __post_init__(self) -> None:
+        if re.fullmatch(r"[a-z][a-z0-9_]*", self.config_field) is None:
+            raise ValueError(
+                "Node HTTP egress config field must start with a lowercase letter "
+                "and contain only lowercase letters, digits, and underscores"
+            )
+        if len(self.config_field) > 255:
+            raise ValueError(
+                "Node HTTP egress config field must be at most 255 characters"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class NodeHttpEgressContract:
+    """The destination sources one node declares for ``network.egress``.
+
+    Declaring authority is not granting authority: the deployment's assigned
+    network access profile still bounds every origin before a sandbox starts.
+    """
+
+    configured_inputs: tuple[NodeHttpEgressInput, ...] = ()
+    dynamic_destinations: bool = False
+
+
 NodeFactory: TypeAlias = Callable[
     [PluginRuntimeContext],
     Node[Any, Any, Any],
@@ -151,6 +200,9 @@ class NodeRegistration:
     node_class: type[Node[Any, Any, Any]]
     factory: NodeFactory | None
     secret_inputs: tuple[NodeSecretInput, ...] = ()
+    staged_upload_inputs: tuple[NodeStagedUploadInput, ...] = ()
+    http_egress: NodeHttpEgressContract | None = None
+    required_capabilities: tuple[PluginRuntimeCapability, ...] = ()
     cache_policy: NodeCachePolicy = NodeCachePolicy.NEVER
 
     @property
@@ -187,7 +239,7 @@ class Plugin:
         *,
         slug: str,
         title: str,
-        capabilities: tuple[str, ...] = (),
+        capabilities: tuple[PluginRuntimeCapability, ...] = (),
     ) -> None:
         if slug.strip() == "":
             raise PluginRegistrationError("Plugin slug must not be empty")
@@ -195,9 +247,12 @@ class Plugin:
             raise PluginRegistrationError(f"Plugin {slug!r} title must not be empty")
         self.slug = slug
         self.title = title
-        self.capabilities = tuple(capabilities)
+        self.capabilities = tuple(
+            PluginRuntimeCapability(value) for value in capabilities
+        )
         self._nodes: dict[tuple[str, int], NodeRegistration] = {}
         self._artifact_types: dict[tuple[str, int], ArtifactTypeSpec] = {}
+        self._artifact_type_dependencies: dict[tuple[str, int], ArtifactTypeSpec] = {}
         self._artifact_conversions: dict[
             ArtifactConversionKey,
             ArtifactConversion[Any, Any],
@@ -213,6 +268,9 @@ class Plugin:
         title: str,
         factory: NodeFactory | None = None,
         secret_inputs: tuple[NodeSecretInput, ...] = (),
+        staged_upload_inputs: tuple[NodeStagedUploadInput, ...] = (),
+        http_egress: NodeHttpEgressContract | None = None,
+        required_capabilities: tuple[PluginRuntimeCapability, ...] = (),
         cache_policy: NodeCachePolicy = NodeCachePolicy.NEVER,
     ) -> Callable[[type[NodeT]], type[NodeT]]:
         if operator_id.strip() == "":
@@ -259,11 +317,91 @@ class Plugin:
                     f"{secret_input.name!r} references missing config fields: "
                     f"{rendered}"
                 )
+            staged_upload_fields = [
+                staged_upload.config_field for staged_upload in staged_upload_inputs
+            ]
+            if len(staged_upload_fields) != len(set(staged_upload_fields)):
+                raise PluginRegistrationError(
+                    f"Plugin {self.slug!r} node {operator_id!r} declares duplicate "
+                    "staged-upload config fields"
+                )
+            missing_staged_upload_fields = sorted(
+                set(staged_upload_fields) - set(config_fields)
+            )
+            if missing_staged_upload_fields:
+                rendered = ", ".join(missing_staged_upload_fields)
+                raise PluginRegistrationError(
+                    f"Plugin {self.slug!r} node {operator_id!r} staged-upload "
+                    f"inputs reference missing config fields: {rendered}"
+                )
+            if http_egress is not None:
+                http_egress_fields = [
+                    configured_input.config_field
+                    for configured_input in http_egress.configured_inputs
+                ]
+                if len(http_egress_fields) != len(set(http_egress_fields)):
+                    raise PluginRegistrationError(
+                        f"Plugin {self.slug!r} node {operator_id!r} declares "
+                        "duplicate HTTP egress config fields"
+                    )
+                if len(http_egress_fields) > MAX_NODE_HTTP_EGRESS_CONFIGURED_FIELDS:
+                    raise PluginRegistrationError(
+                        f"Plugin {self.slug!r} node {operator_id!r} declares more "
+                        f"than {MAX_NODE_HTTP_EGRESS_CONFIGURED_FIELDS} HTTP egress "
+                        "config fields"
+                    )
+                missing_http_egress_fields = sorted(
+                    set(http_egress_fields) - set(config_fields)
+                )
+                if missing_http_egress_fields:
+                    rendered = ", ".join(missing_http_egress_fields)
+                    raise PluginRegistrationError(
+                        f"Plugin {self.slug!r} node {operator_id!r} HTTP egress "
+                        f"inputs reference missing config fields: {rendered}"
+                    )
+            normalized_capabilities = tuple(
+                sorted(
+                    {
+                        PluginRuntimeCapability(capability)
+                        for capability in required_capabilities
+                    },
+                    key=lambda capability: capability.value,
+                )
+            )
+            if (
+                secret_inputs
+                and PluginRuntimeCapability.NODE_SECRETS not in normalized_capabilities
+            ):
+                raise PluginRegistrationError(
+                    f"Plugin {self.slug!r} node {operator_id!r} declares secret "
+                    "inputs without requiring node.secrets"
+                )
+            if (
+                staged_upload_inputs
+                and PluginRuntimeCapability.STAGED_UPLOADS
+                not in normalized_capabilities
+            ):
+                raise PluginRegistrationError(
+                    f"Plugin {self.slug!r} node {operator_id!r} declares staged "
+                    "uploads without requiring staged.uploads"
+                )
+            if (
+                http_egress is not None
+                and PluginRuntimeCapability.NETWORK_EGRESS
+                not in normalized_capabilities
+            ):
+                raise PluginRegistrationError(
+                    f"Plugin {self.slug!r} node {operator_id!r} declares HTTP "
+                    "egress without requiring network.egress"
+                )
             registered_class: type[Node[Any, Any, Any]] = node_class
             registration = NodeRegistration(
                 node_class=registered_class,
                 factory=factory,
                 secret_inputs=secret_inputs,
+                staged_upload_inputs=staged_upload_inputs,
+                http_egress=http_egress,
+                required_capabilities=normalized_capabilities,
                 cache_policy=cache_policy,
             )
             self._nodes[key] = registration
@@ -281,6 +419,8 @@ class Plugin:
         operator_id: str,
         version: int,
         title: str,
+        http_egress: NodeHttpEgressContract | None = None,
+        required_capabilities: tuple[PluginRuntimeCapability, ...] = (),
         cache_policy: NodeCachePolicy = NodeCachePolicy.NEVER,
     ) -> Callable[
         [NodeFunction[ConfigT, InputT, OutputT]],
@@ -385,6 +525,8 @@ class Plugin:
                 operator_id=operator_id,
                 version=version,
                 title=title,
+                http_egress=http_egress,
+                required_capabilities=required_capabilities,
                 cache_policy=cache_policy,
             )(FunctionNodeAdapter)
             return function
@@ -396,11 +538,39 @@ class Plugin:
             artifact_type.key.id,
             artifact_type.key.schema_version,
         )
+        if key in self._artifact_type_dependencies:
+            raise PluginRegistrationError(
+                f"Plugin {self.slug!r} cannot both own and depend on artifact type "
+                f"{key[0]}@{key[1]}"
+            )
         if key in self._artifact_types:
             raise PluginRegistrationError(
                 f"Plugin {self.slug!r} already declares artifact type {key[0]}@{key[1]}"
             )
         self._artifact_types[key] = artifact_type
+
+    def register_artifact_type_dependency(
+        self,
+        artifact_type: ArtifactTypeSpec,
+    ) -> None:
+        key = (
+            artifact_type.key.id,
+            artifact_type.key.schema_version,
+        )
+        if key in self._artifact_types:
+            raise PluginRegistrationError(
+                f"Plugin {self.slug!r} cannot both own and depend on artifact type "
+                f"{key[0]}@{key[1]}"
+            )
+        existing = self._artifact_type_dependencies.get(key)
+        if existing == artifact_type:
+            return
+        if existing is not None:
+            raise PluginRegistrationError(
+                f"Plugin {self.slug!r} declares different exact contracts for "
+                f"artifact type dependency {key[0]}@{key[1]}"
+            )
+        self._artifact_type_dependencies[key] = artifact_type
 
     def register_artifact_conversion[SourceT, TargetT](
         self,
@@ -433,6 +603,10 @@ class Plugin:
         return tuple(self._artifact_types.values())
 
     @property
+    def artifact_type_dependencies(self) -> tuple[ArtifactTypeSpec, ...]:
+        return tuple(self._artifact_type_dependencies.values())
+
+    @property
     def artifact_conversions(self) -> tuple[ArtifactConversion[Any, Any], ...]:
         return tuple(self._artifact_conversions.values())
 
@@ -449,7 +623,6 @@ class Plugin:
 class InstalledPlugin:
     slug: str
     title: str
-    origin: PluginOrigin
 
 
 class PluginRegistry:
@@ -457,10 +630,19 @@ class PluginRegistry:
         self._plugins: dict[str, InstalledPlugin] = {}
         self._nodes: dict[tuple[str, int], NodeRegistration] = {}
         self._artifact_types: dict[tuple[str, int], ArtifactTypeSpec] = {}
+        self._artifact_type_owners: dict[tuple[str, int], str] = {}
+        self._plugin_artifact_types: dict[str, tuple[ArtifactTypeSpec, ...]] = {}
+        self._plugin_artifact_type_dependencies: dict[
+            str, tuple[ArtifactTypeSpec, ...]
+        ] = {}
+        self._plugin_artifact_conversions: dict[
+            str, tuple[ArtifactConversion[Any, Any], ...]
+        ] = {}
         self._artifact_conversions: dict[
             ArtifactConversionKey,
             ArtifactConversion[Any, Any],
         ] = {}
+        self._artifact_conversion_owners: dict[ArtifactConversionKey, str] = {}
         self._resolver_factories: list[ResolverFactory] = []
         self._writer_factories: list[WriterFactory] = []
         self._frozen = False
@@ -468,8 +650,6 @@ class PluginRegistry:
     def install(
         self,
         plugin: Plugin,
-        *,
-        origin: PluginOrigin = PluginOrigin.EXTERNAL,
     ) -> None:
         if self._frozen:
             raise PluginRegistrationError("Plugin registry is frozen")
@@ -522,7 +702,6 @@ class PluginRegistry:
         self._plugins[plugin.slug] = InstalledPlugin(
             slug=plugin.slug,
             title=plugin.title,
-            origin=origin,
         )
         for registration in plugin.nodes:
             self._nodes[registration.key] = registration
@@ -532,13 +711,90 @@ class PluginRegistry:
                 artifact_type.key.schema_version,
             )
             self._artifact_types[key] = artifact_type
+            self._artifact_type_owners[key] = plugin.slug
+        self._plugin_artifact_types[plugin.slug] = plugin.artifact_types
+        self._plugin_artifact_type_dependencies[plugin.slug] = (
+            plugin.artifact_type_dependencies
+        )
+        self._plugin_artifact_conversions[plugin.slug] = plugin.artifact_conversions
         for conversion in plugin.artifact_conversions:
             self._artifact_conversions[conversion.key] = conversion
+            self._artifact_conversion_owners[conversion.key] = plugin.slug
         self._resolver_factories.extend(plugin.resolver_factories)
         self._writer_factories.extend(plugin.writer_factories)
 
+    def register_module_boundaries(
+        self,
+        registrations: tuple[NodeRegistration, NodeRegistration],
+    ) -> None:
+        """Register the host-owned Module input/output execution boundaries."""
+
+        if self._frozen:
+            raise PluginRegistrationError("Plugin registry is frozen")
+        expected_keys = {
+            (MODULE_INPUT_OPERATOR_ID, MODULE_BOUNDARY_OPERATOR_VERSION),
+            (MODULE_OUTPUT_OPERATOR_ID, MODULE_BOUNDARY_OPERATOR_VERSION),
+        }
+        observed_keys = {registration.key for registration in registrations}
+        if observed_keys != expected_keys:
+            raise PluginRegistrationError(
+                "Module boundary registrations must contain module.input@1 and "
+                "module.output@1"
+            )
+        duplicate_nodes = [
+            registration.key
+            for registration in registrations
+            if registration.key in self._nodes
+        ]
+        if duplicate_nodes:
+            operator_id, version = duplicate_nodes[0]
+            owner = self._nodes[(operator_id, version)].plugin_slug
+            raise PluginRegistrationError(
+                f"Module boundary {operator_id}@{version} conflicts with "
+                f"plugin {owner!r}"
+            )
+        for registration in registrations:
+            self._nodes[registration.key] = registration
+
     def freeze(self) -> None:
+        artifact_contracts_by_key: dict[
+            ArtifactTypeKey, tuple[ArtifactTypeSpec, str]
+        ] = {
+            artifact_type.key: (artifact_type, plugin_slug)
+            for plugin_slug, artifact_types in self._plugin_artifact_types.items()
+            for artifact_type in artifact_types
+        }
+        for (
+            plugin_slug,
+            dependencies,
+        ) in self._plugin_artifact_type_dependencies.items():
+            for dependency in dependencies:
+                existing = artifact_contracts_by_key.get(dependency.key)
+                if existing is None:
+                    artifact_contracts_by_key[dependency.key] = (
+                        dependency,
+                        plugin_slug,
+                    )
+                    continue
+                existing_contract, existing_plugin_slug = existing
+                if existing_contract == dependency:
+                    continue
+                raise PluginRegistrationError(
+                    f"Plugins {existing_plugin_slug!r} and {plugin_slug!r} declare "
+                    "different exact contracts for artifact type "
+                    f"{dependency.key.id}@{dependency.key.schema_version}"
+                )
+
         for registration in self._nodes.values():
+            declared_artifact_keys = {
+                artifact_type.key
+                for artifact_type in (
+                    *self._plugin_artifact_types.get(registration.plugin_slug, ()),
+                    *self._plugin_artifact_type_dependencies.get(
+                        registration.plugin_slug, ()
+                    ),
+                )
+            }
             port_contracts = [
                 ("input", port.name, port.accepts)
                 for port in registration.node_class.input_contract.ports.values()
@@ -550,33 +806,43 @@ class PluginRegistry:
             for direction, port_name, artifact_type in port_contracts:
                 if isinstance(artifact_type, ArtifactTypeVariable):
                     continue
-                key = (artifact_type.id, artifact_type.schema_version)
-                if key in self._artifact_types:
+                if artifact_type in declared_artifact_keys:
                     continue
                 raise PluginRegistrationError(
                     f"Plugin {registration.plugin_slug!r} operator "
                     f"{registration.key[0]}@{registration.key[1]} {direction} "
                     f"port {port_name!r} references artifact type "
-                    f"{artifact_type.id}@{artifact_type.schema_version}, which "
-                    "is not installed"
+                    f"{artifact_type.id}@{artifact_type.schema_version}, which is "
+                    "neither owned nor declared as an exact dependency"
                 )
 
         conversions = tuple(self._artifact_conversions.values())
-        for conversion in conversions:
-            endpoints = (
-                ("source", conversion.source),
-                ("target", conversion.target),
-            )
-            for endpoint_name, artifact_type in endpoints:
-                key = (artifact_type.id, artifact_type.schema_version)
-                if key in self._artifact_types:
-                    continue
-                raise PluginRegistrationError(
-                    f"Artifact conversion {conversion.key.id}@"
-                    f"{conversion.key.version} references {endpoint_name} artifact "
-                    f"type {artifact_type.id}@{artifact_type.schema_version}, which "
-                    "is not installed"
+        for (
+            plugin_slug,
+            plugin_conversions,
+        ) in self._plugin_artifact_conversions.items():
+            declared_artifact_keys = {
+                artifact_type.key
+                for artifact_type in (
+                    *self._plugin_artifact_types[plugin_slug],
+                    *self._plugin_artifact_type_dependencies[plugin_slug],
                 )
+            }
+            for conversion in plugin_conversions:
+                endpoints = (
+                    ("source", conversion.source),
+                    ("target", conversion.target),
+                )
+                for endpoint_name, artifact_type in endpoints:
+                    if artifact_type in declared_artifact_keys:
+                        continue
+                    raise PluginRegistrationError(
+                        f"Plugin {plugin_slug!r} artifact conversion "
+                        f"{conversion.key.id}@{conversion.key.version} references "
+                        f"{endpoint_name} artifact type {artifact_type.id}@"
+                        f"{artifact_type.schema_version}, which is neither owned "
+                        "nor declared as an exact dependency"
+                    )
 
         conversions_by_source: dict[
             ArtifactTypeKey,
@@ -601,37 +867,50 @@ class PluginRegistry:
                 )
 
         artifact_types_by_key = {
-            artifact_type.key: artifact_type
-            for artifact_type in self._artifact_types.values()
+            key: contract
+            for key, (contract, _plugin_slug) in artifact_contracts_by_key.items()
         }
-        for artifact_type in self._artifact_types.values():
-            declared_paths: set[tuple[str, ...]] = set()
-            for projection in artifact_type.field_projections:
-                if not projection.path:
-                    raise PluginRegistrationError(
-                        f"Artifact type {artifact_type.key.id}@"
-                        f"{artifact_type.key.schema_version} declares a field "
-                        "projection with an empty path"
-                    )
-                rendered_path = ".".join(projection.path)
-                if projection.path in declared_paths:
-                    raise PluginRegistrationError(
-                        f"Artifact type {artifact_type.key.id}@"
-                        f"{artifact_type.key.schema_version} declares duplicate "
-                        f"field projection path {rendered_path!r}"
-                    )
-                declared_paths.add(projection.path)
-                if projection.target not in artifact_types_by_key:
-                    raise PluginRegistrationError(
-                        f"Artifact type {artifact_type.key.id}@"
-                        f"{artifact_type.key.schema_version} field projection "
-                        f"{rendered_path!r} targets artifact type "
-                        f"{projection.target.id}@"
-                        f"{projection.target.schema_version}, which is not installed"
-                    )
+        for plugin_slug, plugin_artifact_types in self._plugin_artifact_types.items():
+            declared_artifact_keys = {
+                artifact_type.key
+                for artifact_type in (
+                    *plugin_artifact_types,
+                    *self._plugin_artifact_type_dependencies[plugin_slug],
+                )
+            }
+            for artifact_type in (
+                *plugin_artifact_types,
+                *self._plugin_artifact_type_dependencies[plugin_slug],
+            ):
+                declared_paths: set[tuple[str, ...]] = set()
+                for projection in artifact_type.field_projections:
+                    if not projection.path:
+                        raise PluginRegistrationError(
+                            f"Artifact type {artifact_type.key.id}@"
+                            f"{artifact_type.key.schema_version} declares a field "
+                            "projection with an empty path"
+                        )
+                    rendered_path = ".".join(projection.path)
+                    if projection.path in declared_paths:
+                        raise PluginRegistrationError(
+                            f"Artifact type {artifact_type.key.id}@"
+                            f"{artifact_type.key.schema_version} declares duplicate "
+                            f"field projection path {rendered_path!r}"
+                        )
+                    declared_paths.add(projection.path)
+                    if projection.target not in declared_artifact_keys:
+                        raise PluginRegistrationError(
+                            f"Plugin {plugin_slug!r} artifact type "
+                            f"{artifact_type.key.id}@"
+                            f"{artifact_type.key.schema_version} field projection "
+                            f"{rendered_path!r} targets artifact type "
+                            f"{projection.target.id}@"
+                            f"{projection.target.schema_version}, which is neither "
+                            "owned nor declared as an exact dependency"
+                        )
 
         scalar_targets: dict[MaterializedJsonType, ArtifactTypeKey] = {}
-        for artifact_type in self._artifact_types.values():
+        for artifact_type in artifact_types_by_key.values():
             materialized_json_type = artifact_type.materialized_json_type
             if materialized_json_type is None:
                 continue
@@ -674,8 +953,24 @@ class PluginRegistry:
         return tuple(self._artifact_types.values())
 
     @property
+    def artifact_type_dependencies(self) -> tuple[ArtifactTypeSpec, ...]:
+        dependencies_by_key: dict[ArtifactTypeKey, ArtifactTypeSpec] = {}
+        for dependencies in self._plugin_artifact_type_dependencies.values():
+            for dependency in dependencies:
+                dependencies_by_key.setdefault(dependency.key, dependency)
+        return tuple(dependencies_by_key.values())
+
+    @property
     def artifact_conversions(self) -> tuple[ArtifactConversion[Any, Any], ...]:
         return tuple(self._artifact_conversions.values())
+
+    def artifact_type_owner(self, artifact_type: ArtifactTypeKey) -> str | None:
+        return self._artifact_type_owners.get(
+            (artifact_type.id, artifact_type.schema_version)
+        )
+
+    def artifact_conversion_owner(self, key: ArtifactConversionKey) -> str | None:
+        return self._artifact_conversion_owners.get(key)
 
     def node_registration(
         self,

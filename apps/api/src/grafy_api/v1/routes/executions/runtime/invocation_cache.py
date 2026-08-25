@@ -7,7 +7,8 @@ from grafy_core.artifact_collections import (
 from grafy_core.artifacts import ArtifactRef, ArtifactRefSequence
 from grafy_core.domain.artifact_outputs import ArtifactOutputValue
 from grafy_core.domain.invocation_cache import InvocationCacheEntry
-from grafy_core.operators.tables import TABLE_DATA, table_artifact_is_accessible
+from grafy_core.table_contracts import TABLE_DATA
+from grafy_core.runtime.table_storage import table_artifact_is_accessible
 from grafy_core.ports.materialized_outputs import WorkbenchUnitOfWorkPort
 from grafy_core.ports.storage import FileStoragePort
 from grafy_core.runtime.invocation_cache import InvocationCachePort
