@@ -90,16 +90,17 @@ function useHarness({ initialNodes, applyAuthoringCommands }: HarnessProps) {
 
 type HarnessValue = ReturnType<typeof useHarness>;
 
-async function startUpload(hook: {
-  result: { current: HarnessValue };
-}): Promise<Promise<void>> {
-  let captured!: Promise<void>;
-  await React.act(async () => {
-    captured = hook.result.current.handleImagesSelected("node-1", [
-      geoJsonFile(),
-    ]);
-  });
-  return captured;
+/**
+ * Returns a callable that starts an upload on the first node. The caller runs
+ * it inside `React.act`; the returned promise settles when the upload flow
+ * finishes. `React.act` must stay in the test body because nesting it inside
+ * another async function prevents it from flushing in this environment.
+ */
+function startUploadOn(
+  hook: { result: { current: HarnessValue } },
+  files: readonly File[] = [geoJsonFile()],
+): () => Promise<void> {
+  return () => hook.result.current.handleImagesSelected("node-1", [...files]);
 }
 
 describe("useNodeFileUploads", () => {
@@ -121,7 +122,11 @@ describe("useNodeFileUploads", () => {
     expect(hook.result.current.uploading).toBe(false);
     expect(hook.result.current.nodes[0].data.execution.status).toBe("idle");
 
-    const handlePromise = await startUpload(hook);
+    const begin = startUploadOn(hook);
+    let handlePromise!: Promise<void>;
+    await React.act(async () => {
+      handlePromise = begin();
+    });
     expect(hook.result.current.uploading).toBe(true);
     expect(hook.result.current.nodes[0].data.execution.status).toBe("uploading");
     expect(applyAuthoringCommands).not.toHaveBeenCalled();
@@ -157,7 +162,11 @@ describe("useNodeFileUploads", () => {
       applyAuthoringCommands,
     });
 
-    const handlePromise = await startUpload(hook);
+    const begin = startUploadOn(hook);
+    let handlePromise!: Promise<void>;
+    await React.act(async () => {
+      handlePromise = begin();
+    });
     expect(hook.result.current.uploading).toBe(true);
 
     await React.act(async () => {
@@ -186,7 +195,11 @@ describe("useNodeFileUploads", () => {
       applyAuthoringCommands,
     });
 
-    const handlePromise = await startUpload(hook);
+    const begin = startUploadOn(hook);
+    let handlePromise!: Promise<void>;
+    await React.act(async () => {
+      handlePromise = begin();
+    });
 
     await React.act(async () => {
       uploadDeferred.reject(
@@ -215,7 +228,11 @@ describe("useNodeFileUploads", () => {
       applyAuthoringCommands,
     });
 
-    const handlePromise = await startUpload(hook);
+    const begin = startUploadOn(hook);
+    let handlePromise!: Promise<void>;
+    await React.act(async () => {
+      handlePromise = begin();
+    });
     expect(hook.result.current.uploading).toBe(true);
 
     await React.act(async () => {
