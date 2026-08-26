@@ -11,9 +11,6 @@ from grafy_core.domain.errors import (
 )
 
 
-PERSONAL_WORKSPACE_SLUG_PREFIX = "personal-"
-
-
 class WorkspaceKind(StrEnum):
     PERSONAL = "personal"
     SHARED = "shared"
@@ -132,13 +129,7 @@ def normalize_workspace_slug(value: str) -> str:
             "Workspace slug must contain 1-80 lowercase letters, numbers, or "
             "internal hyphens"
         )
-    if slug == "local":
-        raise ValueError("Workspace slug 'local' is reserved")
     return slug
-
-
-def personal_workspace_slug(user_id: UUID) -> str:
-    return f"{PERSONAL_WORKSPACE_SLUG_PREFIX}{user_id.hex}"
 
 
 def capabilities_for_role(role: WorkspaceRole) -> frozenset[WorkspaceCapability]:
@@ -251,7 +242,7 @@ class Workspace:
     @classmethod
     def personal(cls, *, owner_user_id: UUID, name: str = "Personal") -> "Workspace":
         return cls(
-            slug=personal_workspace_slug(owner_user_id),
+            slug=owner_user_id.hex,
             name=name,
             kind=WorkspaceKind.PERSONAL,
             personal_owner_user_id=owner_user_id,
@@ -579,5 +570,4 @@ __all__ = [
     "capabilities_for_role",
     "ensure_last_owner_can_change",
     "normalize_workspace_slug",
-    "personal_workspace_slug",
 ]

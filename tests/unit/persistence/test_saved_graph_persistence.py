@@ -46,7 +46,7 @@ async def database(tmp_path: Path) -> AsyncIterator[Database]:
             text(
                 "INSERT INTO workspaces "
                 "(id, slug, name, kind, created_at, updated_at) "
-                "VALUES (:id, 'local', 'Local', 'shared', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                "VALUES (:id, 'team', 'Team', 'shared', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
             ),
             {"id": WORKSPACE_ID.hex},
         )
@@ -61,8 +61,8 @@ async def database(tmp_path: Path) -> AsyncIterator[Database]:
         await connection.execute(
             text(
                 "INSERT INTO users "
-                "(id, active, created_at, updated_at) "
-                "VALUES (:id, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                "(id, active, email_verified, created_at, updated_at) "
+                "VALUES (:id, 1, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
             ),
             {"id": USER_ID.hex},
         )

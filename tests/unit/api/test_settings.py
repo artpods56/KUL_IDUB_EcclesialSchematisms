@@ -11,26 +11,13 @@ from grafy_api.settings import Settings
 from grafy_api.plugin_egress import PluginEgressProtocol
 
 
-def test_default_workspace_reuses_legacy_data(
+def test_default_workspace_does_not_reuse_legacy_data(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.chdir(tmp_path)
     legacy_workspace = tmp_path / ".notarius-artifacts" / "workbench"
     legacy_workspace.mkdir(parents=True)
-
-    settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
-
-    assert settings.workspace == Path(".notarius-artifacts/workbench")
-
-
-def test_default_workspace_prefers_grafy_when_both_exist(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / ".notarius-artifacts" / "workbench").mkdir(parents=True)
-    (tmp_path / ".grafy-artifacts" / "workbench").mkdir(parents=True)
 
     settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
 
@@ -99,7 +86,7 @@ def test_system_plugin_deployment_manifest_resolves_from_environment(
     assert settings.resolved_system_plugin_deployment_manifest == manifest.resolve()
 
 
-def test_database_url_reuses_legacy_database(tmp_path: Path) -> None:
+def test_database_url_does_not_reuse_legacy_database(tmp_path: Path) -> None:
     legacy_database = tmp_path / "notarius.sqlite3"
     legacy_database.touch()
 
@@ -108,9 +95,8 @@ def test_database_url_reuses_legacy_database(tmp_path: Path) -> None:
         workspace=tmp_path,
     )
 
-    assert settings.resolved_database_url == (
-        f"sqlite+aiosqlite:///{legacy_database.resolve()}"
-    )
+    expected_database = (tmp_path / "grafy.sqlite3").resolve()
+    assert settings.resolved_database_url == f"sqlite+aiosqlite:///{expected_database}"
 
 
 def test_execution_defaults_with_bounded_map_concurrency(

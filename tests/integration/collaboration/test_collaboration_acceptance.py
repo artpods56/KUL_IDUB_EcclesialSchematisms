@@ -25,7 +25,6 @@ from grafy_core.domain.identity import (
     Workspace,
     WorkspaceKind,
     WorkspaceRole,
-    personal_workspace_slug,
 )
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
@@ -78,7 +77,7 @@ def test_phase7_two_session_collaboration_acceptance_journey(
                 email="viewer@acceptance.test", display_name="Viewer"
             )
             personal = await seeder.workspace(
-                slug=personal_workspace_slug(owner.id),
+                slug=owner.id.hex,
                 name="Owner personal",
                 kind=WorkspaceKind.PERSONAL,
                 personal_owner_user_id=owner.id,
