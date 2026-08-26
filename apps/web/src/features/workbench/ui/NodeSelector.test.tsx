@@ -157,30 +157,53 @@ function registry(): NodeRegistry {
           },
         },
       }),
-      node("text.replace", "Replace text", "builtin", [textInput], [textOutput], {
-        config_schema: {
-          type: "object",
-          properties: {
-            replacement: {
-              type: "string",
-              title: "Replacement",
-              description: "Replacement text",
+      node(
+        "text.replace",
+        "Replace text",
+        "builtin",
+        [textInput],
+        [textOutput],
+        {
+          config_schema: {
+            type: "object",
+            properties: {
+              replacement: {
+                type: "string",
+                title: "Replacement",
+                description: "Replacement text",
+              },
             },
           },
         },
-      }),
-      node("table.fuzzy_match", "Fuzzy match tables", "builtin", [tableInput], [tableOutput]),
-      node("gis.map.compose", "Compose map", "builtin", [layerInput], [mapOutput]),
+      ),
+      node(
+        "table.fuzzy_match",
+        "Fuzzy match tables",
+        "builtin",
+        [tableInput],
+        [tableOutput],
+      ),
+      node(
+        "gis.map.compose",
+        "Compose map",
+        "builtin",
+        [layerInput],
+        [mapOutput],
+      ),
       firstModuleRelease,
       currentModuleRelease,
-      node("ocr.pages", "Read image with OCR", "external.ocr", [imageInput], [textOutput]),
+      node(
+        "ocr.pages",
+        "Read image with OCR",
+        "external.ocr",
+        [imageInput],
+        [textOutput],
+      ),
     ],
   };
 }
 
-async function renderSelector(
-  overrides: Partial<NodeSelectorProps> = {},
-) {
+async function renderSelector(overrides: Partial<NodeSelectorProps> = {}) {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
@@ -201,7 +224,14 @@ async function renderSelector(
     });
   };
   await render();
-  return { container, root, render, get props() { return props; } };
+  return {
+    container,
+    root,
+    render,
+    get props() {
+      return props;
+    },
+  };
 }
 
 function dialog(): HTMLElement {
@@ -211,7 +241,9 @@ function dialog(): HTMLElement {
 }
 
 function searchInput(): HTMLInputElement {
-  const input = dialog().querySelector<HTMLInputElement>('[aria-label="Search nodes"]');
+  const input = dialog().querySelector<HTMLInputElement>(
+    '[aria-label="Search nodes"]',
+  );
   if (!input) throw new Error("Node search was not rendered");
   return input;
 }
@@ -221,7 +253,9 @@ function options(): HTMLButtonElement[] {
 }
 
 function buttonNamed(name: string): HTMLButtonElement {
-  const button = [...dialog().querySelectorAll<HTMLButtonElement>("button")].find(
+  const button = [
+    ...dialog().querySelectorAll<HTMLButtonElement>("button"),
+  ].find(
     (candidate) =>
       candidate.textContent?.trim() === name ||
       candidate.getAttribute("aria-label") === name,
@@ -260,7 +294,7 @@ afterEach(async () => {
 });
 
 describe("NodeSelector", () => {
-  it("uses the mockup artifact-family rail", async () => {
+  it("scopes the rail by source with artifact and input-node refinements", async () => {
     await renderSelector();
 
     expect(
@@ -269,22 +303,54 @@ describe("NodeSelector", () => {
         ?.getAttribute("aria-orientation"),
     ).toBe("vertical");
     const filters = [
-      ...dialog().querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'),
+      ...dialog().querySelectorAll<HTMLButtonElement>(
+        '[role="toolbar"] button',
+      ),
     ];
     expect(filters.map((filter) => filter.textContent)).toEqual([
       "All",
-      "Text",
-      "Images",
-      "Tables",
-      "Spatial",
-      "Prompts",
-      "Sequences",
+      "Built-in",
+      "OCR",
       "Workspace library",
     ]);
 
-    await React.act(async () => buttonNamed("Text, 4 nodes").click());
-    expect(dialog().textContent).toContain("Text nodes");
-    expect(options()).toHaveLength(4);
+    // Source category scopes the list to one provider plugin.
+    await React.act(async () => buttonNamed("Built-in, 4 nodes").click());
+    expect(dialog().textContent).toContain("Built-in nodes");
+    expect(options().map((option) => option.textContent)).toEqual([
+      expect.stringContaining("Compose map"),
+      expect.stringContaining("Enter text"),
+      expect.stringContaining("Fuzzy match tables"),
+      expect.stringContaining("Replace text"),
+    ]);
+
+    // The artifact type refines within the active source.
+    const artifactSelect = dialog().querySelector<HTMLSelectElement>(
+      '[aria-label="Artifact type"]',
+    );
+    expect(artifactSelect).not.toBeNull();
+    await React.act(async () => {
+      if (!artifactSelect) return;
+      artifactSelect.value = "artifact:scalar.text@1";
+      artifactSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(options().map((option) => option.textContent)).toEqual([
+      expect.stringContaining("Enter text"),
+      expect.stringContaining("Replace text"),
+    ]);
+
+    // Input nodes only: nodes that take no inputs because they are inputs themselves.
+    const inputToggle = dialog().querySelector<HTMLInputElement>(
+      'input[type="checkbox"]',
+    );
+    expect(inputToggle).not.toBeNull();
+    await React.act(async () => {
+      inputToggle?.click();
+    });
+    expect(inputToggle?.checked).toBe(true);
+    expect(options().map((option) => option.textContent)).toEqual([
+      expect.stringContaining("Enter text"),
+    ]);
   });
 
   it("searches the full registry and inspects a result without inserting it", async () => {
@@ -428,13 +494,17 @@ describe("NodeSelector", () => {
     await enterSearch("Replace text");
     await React.act(async () => options()[0]?.click());
 
-    expect(dialog().querySelector("aside")?.textContent).toContain("Works with:");
+    expect(dialog().querySelector("aside")?.textContent).toContain(
+      "Works with:",
+    );
     const portSelect = dialog().querySelector<HTMLSelectElement>(
       '[aria-label="Works with port"]',
     );
     expect(portSelect?.value).toBe("input:text");
     expect(portSelect?.selectedOptions[0]?.textContent).toBe("Text input");
-    expect(dialog().querySelector("aside")?.textContent).toContain("Enter text");
+    expect(dialog().querySelector("aside")?.textContent).toContain(
+      "Enter text",
+    );
 
     await React.act(async () => {
       if (!portSelect) return;
@@ -444,13 +514,16 @@ describe("NodeSelector", () => {
     expect(portSelect?.value).toBe("output:text");
     expect(portSelect?.selectedOptions[0]?.textContent).toBe("Text output");
 
-    await React.act(async () => buttonNamed("Inspect Normalize invoices").click());
+    await React.act(async () =>
+      buttonNamed("Inspect Normalize invoices").click(),
+    );
     expect(dialog().querySelector("aside")?.textContent).toContain(
       "Module contract · release 2",
     );
     expect(
-      options().find((option) => option.getAttribute("aria-selected") === "true")
-        ?.textContent,
+      options().find(
+        (option) => option.getAttribute("aria-selected") === "true",
+      )?.textContent,
     ).toContain("Normalize invoices");
   });
 
@@ -488,7 +561,9 @@ describe("NodeSelector", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     await renderSelector({ onAddNode, onOpenGraph });
 
-    await React.act(async () => buttonNamed("Workspace library, 1 node").click());
+    await React.act(async () =>
+      buttonNamed("Workspace library, 1 node").click(),
+    );
     expect(options()[0]?.textContent).toContain("Normalize invoices");
     expect(dialog().querySelector("aside")?.textContent).toContain(
       "Module contract · release 2",
@@ -526,7 +601,9 @@ describe("NodeSelector", () => {
       onOpenWorkspaceLibrary,
     });
 
-    await React.act(async () => buttonNamed("Workspace library, 0 nodes").click());
+    await React.act(async () =>
+      buttonNamed("Workspace library, 0 nodes").click(),
+    );
     expect(options()).toHaveLength(0);
     expect(dialog().textContent).toContain(
       "No published Modules in this workspace yet.",
@@ -543,12 +620,16 @@ describe("NodeSelector", () => {
     expect(dialog().querySelector('[role="status"]')?.textContent).toBe(
       "No nodes found.",
     );
-    expect(dialog().textContent).toContain("No nodes match the current search or filter.");
+    expect(dialog().textContent).toContain(
+      "No nodes match the current search or filter.",
+    );
     await React.act(async () => buttonNamed("Reset search and filter").click());
 
     expect(searchInput().value).toBe("");
     expect(options().length).toBeGreaterThan(0);
-    expect(buttonNamed("All, 6 nodes").getAttribute("aria-pressed")).toBe("true");
+    expect(buttonNamed("All, 6 nodes").getAttribute("aria-pressed")).toBe(
+      "true",
+    );
   });
 
   it("announces counts, loading, errors, and recovery atomically", async () => {
@@ -556,7 +637,9 @@ describe("NodeSelector", () => {
     const rendered = await renderSelector();
 
     const status = dialog().querySelector('[role="status"]');
-    expect(dialog().getAttribute("aria-labelledby")).toBe("node-selector-title");
+    expect(dialog().getAttribute("aria-labelledby")).toBe(
+      "node-selector-title",
+    );
     expect(dialog().getAttribute("aria-describedby")).toBe(
       "node-selector-description",
     );
@@ -564,9 +647,9 @@ describe("NodeSelector", () => {
       "node-selector-results",
     );
     expect(
-      dialog().querySelector('[role="listbox"]')?.getAttribute(
-        "aria-activedescendant",
-      ),
+      dialog()
+        .querySelector('[role="listbox"]')
+        ?.getAttribute("aria-activedescendant"),
     ).toBe(options()[0]?.id);
     expect(options()[0]?.getAttribute("aria-selected")).toBe("true");
     expect(status?.getAttribute("aria-live")).toBe("polite");
@@ -577,7 +660,9 @@ describe("NodeSelector", () => {
     expect(dialog().querySelector('[role="status"]')?.textContent).toBe(
       "Loading nodes…",
     );
-    expect(dialog().querySelector('[role="listbox"]')?.getAttribute("aria-busy")).toBe("true");
+    expect(
+      dialog().querySelector('[role="listbox"]')?.getAttribute("aria-busy"),
+    ).toBe("true");
 
     await rendered.render({
       loading: false,
@@ -596,11 +681,14 @@ describe("NodeSelector", () => {
   it("uses one roving filter stop and exposes permission-disabled insertion", async () => {
     await renderSelector({
       canInsert: false,
-      insertDisabledReason: "Viewers can inspect nodes but cannot edit this graph.",
+      insertDisabledReason:
+        "Viewers can inspect nodes but cannot edit this graph.",
     });
 
     const filters = [
-      ...dialog().querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'),
+      ...dialog().querySelectorAll<HTMLButtonElement>(
+        '[role="toolbar"] button',
+      ),
     ];
     expect(filters.filter((button) => button.tabIndex === 0)).toHaveLength(1);
     filters[0]?.focus();
