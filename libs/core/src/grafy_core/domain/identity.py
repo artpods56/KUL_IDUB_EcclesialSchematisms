@@ -27,6 +27,14 @@ class WorkspaceRole(StrEnum):
     OWNER = "owner"
 
 
+class WorkspaceInvitationStatus(StrEnum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    DECLINED = "declined"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
+
+
 class WorkspaceCapability(StrEnum):
     VIEW_GRAPH = "view_graph"
     VIEW_ARTIFACTS = "view_artifacts"
@@ -137,10 +145,16 @@ def capabilities_for_role(role: WorkspaceRole) -> frozenset[WorkspaceCapability]
     return _ROLE_CAPABILITIES[role]
 
 
+def normalize_user_email(value: str) -> str:
+    return _require_nonempty(value.strip(), "User email", 320).lower()
+
+
 @dataclass
 class User:
     id: UUID = field(default_factory=uuid4)
     email: str | None = None
+    normalized_email: str | None = None
+    email_verified: bool = False
     display_name: str | None = None
     active: bool = True
     created_at: datetime = field(default_factory=_utc_now)
@@ -149,6 +163,10 @@ class User:
     def __post_init__(self) -> None:
         if self.email is not None:
             self.email = _require_nonempty(self.email.strip(), "User email", 320)
+            self.normalized_email = normalize_user_email(self.email)
+        else:
+            self.normalized_email = None
+            self.email_verified = False
         if self.display_name is not None:
             self.display_name = _require_nonempty(
                 self.display_name.strip(), "User display name", 160
@@ -164,6 +182,7 @@ class User:
         self,
         *,
         email: str | None,
+        email_verified: bool,
         display_name: str | None,
         updated_at: datetime | None = None,
     ) -> None:
@@ -172,6 +191,10 @@ class User:
             if email is None
             else _require_nonempty(email.strip(), "User email", 320)
         )
+        self.normalized_email = (
+            None if self.email is None else normalize_user_email(self.email)
+        )
+        self.email_verified = email_verified if self.email is not None else False
         self.display_name = (
             None
             if display_name is None
@@ -303,6 +326,72 @@ class WorkspaceMembership:
         self.authorization_version += 1
         self.updated_at = updated_at or _utc_now()
 
+
+@dataclass
+class WorkspaceInvitation:
+    workspace_id: UUID
+    invitee_user_id: UUID
+    invited_by_user_id: UUID
+    role: WorkspaceRole
+    expires_at: datetime
+    id: UUID = field(default_factory=uuid4)
+    status: WorkspaceInvitationStatus = WorkspaceInvitationStatus.PENDING
+    resolved_at: datetime | None = None
+    created_at: datetime = field(default_factory=_utc_now)
+    updated_at: datetime = field(default_factory=_utc_now)
+
+    def __post_init__(self) -> None:
+        self.role = WorkspaceRole(self.role)
+        self.status = WorkspaceInvitationStatus(self.status)
+        _require_aware(self.expires_at, "Workspace invitation expiry timestamp")
+        _require_aware(self.created_at, "Workspace invitation creation timestamp")
+        _require_aware(self.updated_at, "Workspace invitation update timestamp")
+        if self.resolved_at is not None:
+            _require_aware(
+                self.resolved_at,
+                "Workspace invitation resolution timestamp",
+            )
+        if self.expires_at <= self.created_at:
+            raise ValueError("Workspace invitation expiry must follow creation")
+        if (
+            self.status is WorkspaceInvitationStatus.PENDING
+            and self.resolved_at is not None
+        ):
+            raise ValueError("Pending workspace invitation cannot be resolved")
+        if (
+            self.status is not WorkspaceInvitationStatus.PENDING
+            and self.resolved_at is None
+        ):
+            raise ValueError("Resolved workspace invitation needs a timestamp")
+
+    def expire_if_due(self, *, now: datetime) -> bool:
+        _require_aware(now, "Workspace invitation expiry check timestamp")
+        if self.status is not WorkspaceInvitationStatus.PENDING or now < self.expires_at:
+            return False
+        self.status = WorkspaceInvitationStatus.EXPIRED
+        self.resolved_at = now
+        self.updated_at = now
+        return True
+
+    def accept(self, *, accepted_at: datetime | None = None) -> None:
+        self._resolve(WorkspaceInvitationStatus.ACCEPTED, accepted_at or _utc_now())
+
+    def decline(self, *, declined_at: datetime | None = None) -> None:
+        self._resolve(WorkspaceInvitationStatus.DECLINED, declined_at or _utc_now())
+
+    def cancel(self, *, cancelled_at: datetime | None = None) -> None:
+        self._resolve(WorkspaceInvitationStatus.CANCELLED, cancelled_at or _utc_now())
+
+    def _resolve(self, status: WorkspaceInvitationStatus, resolved_at: datetime) -> None:
+        _require_aware(resolved_at, "Workspace invitation resolution timestamp")
+        if self.status is not WorkspaceInvitationStatus.PENDING:
+            raise IdentityInvariantError("Workspace invitation is no longer pending")
+        if resolved_at >= self.expires_at:
+            self.expire_if_due(now=resolved_at)
+            raise IdentityInvariantError("Workspace invitation has expired")
+        self.status = status
+        self.resolved_at = resolved_at
+        self.updated_at = resolved_at
 
 @dataclass
 class OidcLoginTransaction:

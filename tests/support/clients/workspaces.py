@@ -11,7 +11,10 @@ from grafy_api.v1.routes.auth.models import (
     PersonalAccessTokenCreatedResponse,
     PersonalAccessTokenResponse,
     WorkspaceCreateRequest,
-    WorkspaceMemberRequest,
+    WorkspaceInvitationCandidateRequest,
+    WorkspaceInvitationCandidateResponse,
+    WorkspaceInvitationCreateRequest,
+    WorkspaceInvitationOwnerResponse,
     WorkspaceMemberResponse,
     WorkspaceMemberRoleRequest,
     WorkspaceResponse,
@@ -87,29 +90,54 @@ class WorkspaceApi:
         response = _expect(self.list_members(headers=headers), 200)
         return _parse_list(WorkspaceMemberResponse, response)
 
-    def add_member(
+    def resolve_invitation_candidate(
         self,
-        payload: WorkspaceMemberRequest,
+        payload: WorkspaceInvitationCandidateRequest,
         *,
         headers: Mapping[str, str] | None = None,
     ) -> Response:
         return _request(
             self._client,
             "POST",
-            f"/v1/workspaces/{self._workspace_id}/members",
+            f"/v1/workspaces/{self._workspace_id}/invitation-candidates/resolve",
             payload=payload,
             headers=headers,
         )
 
-    def add_member_ok(
+    def resolve_invitation_candidate_ok(
         self,
-        payload: WorkspaceMemberRequest,
+        payload: WorkspaceInvitationCandidateRequest,
         *,
         headers: Mapping[str, str] | None = None,
-    ) -> WorkspaceMemberResponse:
+    ) -> WorkspaceInvitationCandidateResponse:
         return _parse(
-            WorkspaceMemberResponse,
-            _expect(self.add_member(payload, headers=headers), 200),
+            WorkspaceInvitationCandidateResponse,
+            _expect(self.resolve_invitation_candidate(payload, headers=headers), 200),
+        )
+
+    def create_invitation(
+        self,
+        payload: WorkspaceInvitationCreateRequest,
+        *,
+        headers: Mapping[str, str] | None = None,
+    ) -> Response:
+        return _request(
+            self._client,
+            "POST",
+            f"/v1/workspaces/{self._workspace_id}/invitations",
+            payload=payload,
+            headers=headers,
+        )
+
+    def create_invitation_ok(
+        self,
+        payload: WorkspaceInvitationCreateRequest,
+        *,
+        headers: Mapping[str, str] | None = None,
+    ) -> WorkspaceInvitationOwnerResponse:
+        return _parse(
+            WorkspaceInvitationOwnerResponse,
+            _expect(self.create_invitation(payload, headers=headers), 201),
         )
 
     def change_member_role(

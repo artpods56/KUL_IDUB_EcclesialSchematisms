@@ -66,6 +66,7 @@ from grafy_api.v1.routes.saved_graphs.views import (
 )
 from grafy_api.v1.routes.uploads.views import router as uploads_router
 from grafy_api.v1.routes.workspaces.views import (
+    me_router,
     router as workspaces_router,
     workspace_failure_metadata,
 )
@@ -547,6 +548,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     application.include_router(auth_router, prefix="/v1")
     application.include_router(workspaces_router, prefix="/v1")
+    application.include_router(me_router, prefix="/v1")
     application.include_router(graph_browser_router, prefix="/v1")
     application.include_router(graph_folders_router, prefix="/v1")
     application.include_router(saved_graphs_router, prefix="/v1")

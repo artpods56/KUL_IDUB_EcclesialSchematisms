@@ -8,7 +8,7 @@ from httpx import Response
 from pydantic import SecretStr
 
 from grafy_api.settings import Settings
-from grafy_api.v1.routes.auth.models import WorkspaceMemberRequest
+from grafy_api.v1.routes.auth.models import WorkspaceInvitationCreateRequest
 from grafy_api.v1.routes.auth.services import AuthService, IssuedSession
 from grafy_api.v1.routes.executions.models import RunRequest
 from grafy_api.v1.routes.node_secrets.models import ConfigureNodeSecretRequest
@@ -508,14 +508,14 @@ async def test_non_member_cannot_read_or_write_other_workspace_by_uuid(
             )
             _assert_not_found(workspace_b.list_members(), context="list members")
             _assert_not_found(
-                workspace_b.add_member(
-                    WorkspaceMemberRequest(
-                        user_id=matrix.viewer_a.id,
+                workspace_b.create_invitation(
+                    WorkspaceInvitationCreateRequest(
+                        email=matrix.viewer_a.email or "viewer-a@example.test",
                         role=WorkspaceRole.VIEWER,
                     ),
                     headers=_csrf_headers(owner_a_issued),
                 ),
-                context="add member",
+                context="create invitation",
             )
 
 
@@ -659,14 +659,14 @@ async def test_viewer_can_read_but_cannot_mutate_execute_or_manage_secrets(
                 context="viewer samples",
             )
             _assert_forbidden(
-                workspace_a.add_member(
-                    WorkspaceMemberRequest(
-                        user_id=matrix.owner_b.id,
+                workspace_a.create_invitation(
+                    WorkspaceInvitationCreateRequest(
+                        email=matrix.owner_b.email or "owner-b@example.test",
                         role=WorkspaceRole.VIEWER,
                     ),
                     headers=_csrf_headers(viewer_a_issued),
                 ),
-                context="viewer add member",
+                context="viewer create invitation",
             )
 
 
@@ -767,14 +767,14 @@ async def test_editor_can_edit_and_execute_but_not_manage_secrets_delete_or_memb
                 context="editor list members",
             )
             _assert_forbidden(
-                workspace_a.add_member(
-                    WorkspaceMemberRequest(
-                        user_id=matrix.owner_b.id,
+                workspace_a.create_invitation(
+                    WorkspaceInvitationCreateRequest(
+                        email=matrix.owner_b.email or "owner-b@example.test",
                         role=WorkspaceRole.VIEWER,
                     ),
                     headers=_csrf_headers(editor_a_issued),
                 ),
-                context="editor add member",
+                context="editor create invitation",
             )
 
 

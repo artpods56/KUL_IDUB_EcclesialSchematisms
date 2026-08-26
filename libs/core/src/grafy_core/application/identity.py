@@ -1,5 +1,5 @@
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from grafy_core.domain.errors import (
@@ -20,10 +20,13 @@ from grafy_core.domain.identity import (
     Workspace,
     WorkspaceAccess,
     WorkspaceCapability,
+    WorkspaceInvitation,
+    WorkspaceInvitationStatus,
     WorkspaceKind,
     WorkspaceMembership,
     WorkspaceRole,
     ensure_last_owner_can_change,
+    normalize_user_email,
     normalize_workspace_slug,
     validate_bootstrap_match,
 )
@@ -137,6 +140,286 @@ class IdentityService:
                 if user is not None:
                     members.append((user, membership))
             return members
+
+    async def resolve_workspace_invitation_candidate(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        email: str,
+    ) -> User:
+        async with self._unit_of_work_factory() as unit_of_work:
+            workspace = await self._require_shared_workspace_for_invitation(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+            )
+            del workspace
+            return await self._resolve_invitation_candidate(
+                unit_of_work,
+                workspace_id=workspace_id,
+                email=email,
+            )
+
+    async def create_workspace_invitation(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        email: str,
+        role: WorkspaceRole,
+    ) -> tuple[WorkspaceInvitation, User]:
+        now = _utc_now()
+        async with self._unit_of_work_factory() as unit_of_work:
+            workspace = await self._require_shared_workspace_for_invitation(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+            )
+            del workspace
+            await self._expire_due_invitations(
+                unit_of_work,
+                await unit_of_work.identity.list_workspace_invitations(workspace_id),
+                now=now,
+            )
+            invitee = await self._resolve_invitation_candidate(
+                unit_of_work,
+                workspace_id=workspace_id,
+                email=email,
+            )
+            invitations = await unit_of_work.identity.list_workspace_invitations(
+                workspace_id
+            )
+            if any(
+                invitation.invitee_user_id == invitee.id
+                and invitation.status is WorkspaceInvitationStatus.PENDING
+                for invitation in invitations
+            ):
+                raise IdentityInvariantError(
+                    "A pending invitation already exists for this recipient"
+                )
+            invitation = WorkspaceInvitation(
+                workspace_id=workspace_id,
+                invitee_user_id=invitee.id,
+                invited_by_user_id=actor.user_id,
+                role=WorkspaceRole(role),
+                created_at=now,
+                updated_at=now,
+                expires_at=now + timedelta(days=7),
+            )
+            await unit_of_work.identity.add_workspace_invitation(invitation)
+            await unit_of_work.security_audit.add(
+                SecurityAuditEvent(
+                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                    user_id=actor.user_id,
+                    credential_reference=actor.credential_reference,
+                    operation="workspace.invitation.create",
+                    outcome=SecurityAuditOutcome.SUCCESS,
+                    workspace_id=workspace_id,
+                    resource_type="workspace_invitation",
+                    resource_id=str(invitation.id),
+                )
+            )
+            await unit_of_work.commit()
+            return invitation, invitee
+
+    async def list_workspace_invitations(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+    ) -> list[tuple[WorkspaceInvitation, User]]:
+        now = _utc_now()
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_workspace_owner(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+            )
+            invitations = await unit_of_work.identity.list_workspace_invitations(
+                workspace_id
+            )
+            expired = await self._expire_due_invitations(
+                unit_of_work,
+                invitations,
+                now=now,
+            )
+            if expired:
+                await unit_of_work.commit()
+            rows: list[tuple[WorkspaceInvitation, User]] = []
+            for invitation in invitations:
+                if invitation.status is not WorkspaceInvitationStatus.PENDING:
+                    continue
+                invitee = await unit_of_work.identity.get_user(
+                    invitation.invitee_user_id
+                )
+                if invitee is not None:
+                    rows.append((invitation, invitee))
+            return rows
+
+    async def list_my_workspace_invitations(
+        self,
+        *,
+        actor: ActorContext,
+    ) -> list[tuple[WorkspaceInvitation, Workspace, User]]:
+        now = _utc_now()
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_active_user(unit_of_work, actor.user_id)
+            invitations = (
+                await unit_of_work.identity.list_workspace_invitations_for_user(
+                    actor.user_id
+                )
+            )
+            expired = await self._expire_due_invitations(
+                unit_of_work,
+                invitations,
+                now=now,
+            )
+            if expired:
+                await unit_of_work.commit()
+            rows: list[tuple[WorkspaceInvitation, Workspace, User]] = []
+            for invitation in invitations:
+                if invitation.status is not WorkspaceInvitationStatus.PENDING:
+                    continue
+                workspace = await unit_of_work.identity.get_workspace(
+                    invitation.workspace_id
+                )
+                inviter = await unit_of_work.identity.get_user(
+                    invitation.invited_by_user_id
+                )
+                if workspace is not None and inviter is not None:
+                    rows.append((invitation, workspace, inviter))
+            return rows
+
+    async def accept_workspace_invitation(
+        self,
+        *,
+        actor: ActorContext,
+        invitation_id: UUID,
+    ) -> tuple[WorkspaceInvitation, WorkspaceMembership]:
+        now = _utc_now()
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_active_user(unit_of_work, actor.user_id)
+            invitation = await unit_of_work.identity.get_workspace_invitation(
+                invitation_id
+            )
+            if invitation is None or invitation.invitee_user_id != actor.user_id:
+                raise NotFoundError("Workspace invitation", str(invitation_id))
+            await unit_of_work.identity.lock_workspace_for_membership_mutation(
+                invitation.workspace_id
+            )
+            if invitation.expire_if_due(now=now):
+                await self._audit_invitation_expiry(unit_of_work, invitation)
+                await unit_of_work.commit()
+                raise IdentityInvariantError("Workspace invitation has expired")
+            if invitation.status is not WorkspaceInvitationStatus.PENDING:
+                raise IdentityInvariantError("Workspace invitation is no longer pending")
+            membership = await unit_of_work.identity.get_membership(
+                workspace_id=invitation.workspace_id,
+                user_id=actor.user_id,
+            )
+            if membership is None:
+                membership = WorkspaceMembership(
+                    workspace_id=invitation.workspace_id,
+                    user_id=actor.user_id,
+                    role=invitation.role,
+                )
+                await unit_of_work.identity.add_membership(membership)
+            elif membership.is_active:
+                raise IdentityInvariantError("User is already a workspace member")
+            else:
+                membership.reactivate(role=invitation.role, updated_at=now)
+            invitation.accept(accepted_at=now)
+            await unit_of_work.security_audit.add(
+                SecurityAuditEvent(
+                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                    user_id=actor.user_id,
+                    credential_reference=actor.credential_reference,
+                    operation="workspace.invitation.accept",
+                    outcome=SecurityAuditOutcome.SUCCESS,
+                    workspace_id=invitation.workspace_id,
+                    resource_type="workspace_invitation",
+                    resource_id=str(invitation.id),
+                )
+            )
+            await unit_of_work.commit()
+            return invitation, membership
+
+    async def decline_workspace_invitation(
+        self,
+        *,
+        actor: ActorContext,
+        invitation_id: UUID,
+    ) -> WorkspaceInvitation:
+        now = _utc_now()
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_active_user(unit_of_work, actor.user_id)
+            invitation = await unit_of_work.identity.get_workspace_invitation(
+                invitation_id
+            )
+            if invitation is None or invitation.invitee_user_id != actor.user_id:
+                raise NotFoundError("Workspace invitation", str(invitation_id))
+            await unit_of_work.identity.lock_workspace_for_membership_mutation(
+                invitation.workspace_id
+            )
+            if invitation.expire_if_due(now=now):
+                await self._audit_invitation_expiry(unit_of_work, invitation)
+                await unit_of_work.commit()
+                raise IdentityInvariantError("Workspace invitation has expired")
+            invitation.decline(declined_at=now)
+            await unit_of_work.security_audit.add(
+                SecurityAuditEvent(
+                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                    user_id=actor.user_id,
+                    credential_reference=actor.credential_reference,
+                    operation="workspace.invitation.decline",
+                    outcome=SecurityAuditOutcome.SUCCESS,
+                    workspace_id=invitation.workspace_id,
+                    resource_type="workspace_invitation",
+                    resource_id=str(invitation.id),
+                )
+            )
+            await unit_of_work.commit()
+            return invitation
+
+    async def cancel_workspace_invitation(
+        self,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+        invitation_id: UUID,
+    ) -> WorkspaceInvitation:
+        now = _utc_now()
+        async with self._unit_of_work_factory() as unit_of_work:
+            await self._require_workspace_owner(
+                unit_of_work,
+                actor=actor,
+                workspace_id=workspace_id,
+            )
+            invitation = await unit_of_work.identity.get_workspace_invitation(
+                invitation_id
+            )
+            if invitation is None or invitation.workspace_id != workspace_id:
+                raise NotFoundError("Workspace invitation", str(invitation_id))
+            if invitation.expire_if_due(now=now):
+                await self._audit_invitation_expiry(unit_of_work, invitation)
+                await unit_of_work.commit()
+                raise IdentityInvariantError("Workspace invitation has expired")
+            invitation.cancel(cancelled_at=now)
+            await unit_of_work.security_audit.add(
+                SecurityAuditEvent(
+                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+                    user_id=actor.user_id,
+                    credential_reference=actor.credential_reference,
+                    operation="workspace.invitation.cancel",
+                    outcome=SecurityAuditOutcome.SUCCESS,
+                    workspace_id=workspace_id,
+                    resource_type="workspace_invitation",
+                    resource_id=str(invitation.id),
+                )
+            )
+            await unit_of_work.commit()
+            return invitation
 
     async def create_personal_access_token(
         self,
@@ -297,6 +580,7 @@ class IdentityService:
         subject: str,
         email: str | None,
         display_name: str | None,
+        email_verified: bool = False,
     ) -> IdentityProvisioningResult:
         """Provision or refresh one validated OIDC identity atomically."""
         async with self._unit_of_work_factory() as unit_of_work:
@@ -315,7 +599,11 @@ class IdentityService:
                     )
                 if not user.active:
                     raise UserDisabledError(f"User {user.id} is disabled")
-                user.update_profile(email=email, display_name=display_name)
+                user.update_profile(
+                    email=email,
+                    email_verified=email_verified,
+                    display_name=display_name,
+                )
                 personal_workspace = await unit_of_work.identity.get_personal_workspace(
                     user.id
                 )
@@ -368,7 +656,11 @@ class IdentityService:
                     subject=subject,
                 )
 
-            user = User(email=email, display_name=display_name)
+            user = User(
+                email=email,
+                email_verified=email_verified,
+                display_name=display_name,
+            )
             identity = OidcIdentity(
                 user_id=user.id,
                 issuer=issuer,
@@ -789,6 +1081,81 @@ class IdentityService:
         )
         await unit_of_work.identity.add_membership(membership)
         return membership
+
+    async def _require_shared_workspace_for_invitation(
+        self,
+        unit_of_work: IdentityUnitOfWorkPort,
+        *,
+        actor: ActorContext,
+        workspace_id: UUID,
+    ) -> Workspace:
+        workspace = await unit_of_work.identity.lock_workspace_for_membership_mutation(
+            workspace_id
+        )
+        if workspace is None:
+            raise NotFoundError("Workspace", str(workspace_id))
+        await self._require_workspace_owner(
+            unit_of_work,
+            actor=actor,
+            workspace_id=workspace_id,
+        )
+        if workspace.kind is not WorkspaceKind.SHARED:
+            raise IdentityInvariantError(
+                "Personal workspace cannot accept invitations"
+            )
+        return workspace
+
+    async def _resolve_invitation_candidate(
+        self,
+        unit_of_work: IdentityUnitOfWorkPort,
+        *,
+        workspace_id: UUID,
+        email: str,
+    ) -> User:
+        candidates = await unit_of_work.identity.find_active_users_by_verified_email(
+            normalize_user_email(email)
+        )
+        if len(candidates) != 1:
+            raise NotFoundError("Invitation recipient", "eligible")
+        invitee = candidates[0]
+        membership = await unit_of_work.identity.get_membership(
+            workspace_id=workspace_id,
+            user_id=invitee.id,
+        )
+        if membership is not None and membership.is_active:
+            raise IdentityInvariantError("User is already a workspace member")
+        return invitee
+
+    async def _expire_due_invitations(
+        self,
+        unit_of_work: IdentityUnitOfWorkPort,
+        invitations: Sequence[WorkspaceInvitation],
+        *,
+        now: datetime,
+    ) -> int:
+        expired = 0
+        for invitation in invitations:
+            if not invitation.expire_if_due(now=now):
+                continue
+            expired += 1
+            await self._audit_invitation_expiry(unit_of_work, invitation)
+        return expired
+
+    async def _audit_invitation_expiry(
+        self,
+        unit_of_work: IdentityUnitOfWorkPort,
+        invitation: WorkspaceInvitation,
+    ) -> None:
+        await unit_of_work.security_audit.add(
+            SecurityAuditEvent(
+                actor_kind=SecurityAuditActorKind.SYSTEM,
+                operation="workspace.invitation.expire",
+                outcome=SecurityAuditOutcome.SUCCESS,
+                workspace_id=invitation.workspace_id,
+                resource_type="workspace_invitation",
+                resource_id=str(invitation.id),
+            )
+        )
 
     async def _require_active_user(
         self,

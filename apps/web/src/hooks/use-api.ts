@@ -8,7 +8,11 @@ import {
   type NodeRegistry,
   type SavedGraphList,
   type Workspace,
+  type WorkspaceInvitation,
+  type WorkspaceInvitationForRecipient,
   type WorkspaceMember,
+  listMyWorkspaceInvitations,
+  listWorkspaceInvitations,
 } from "@/lib/api";
 import { request } from "@/lib/api/client";
 
@@ -107,5 +111,24 @@ export function useWorkspaceMembers(
       ? ["workspace-members", userId, workspaceId]
       : null,
     () => listWorkspaceMembers(workspaceId!),
+  );
+}
+
+export function useWorkspaceInvitations(
+  userId: string | undefined,
+  workspaceId: string | undefined,
+) {
+  return useSWR<readonly WorkspaceInvitation[]>(
+    userId && workspaceId
+      ? ["workspace-invitations", userId, workspaceId]
+      : null,
+    () => listWorkspaceInvitations(workspaceId!),
+  );
+}
+
+export function useMyWorkspaceInvitations(userId: string | undefined) {
+  return useSWR<readonly WorkspaceInvitationForRecipient[]>(
+    userId ? ["my-workspace-invitations", userId] : null,
+    () => listMyWorkspaceInvitations(),
   );
 }

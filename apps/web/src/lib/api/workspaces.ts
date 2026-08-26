@@ -2,8 +2,12 @@ import { request } from "./client";
 import type {
   Workspace,
   WorkspaceCreateRequest,
+  WorkspaceInvitation,
+  WorkspaceInvitationCandidate,
+  WorkspaceInvitationCandidateRequest,
+  WorkspaceInvitationCreateRequest,
+  WorkspaceInvitationForRecipient,
   WorkspaceMember,
-  WorkspaceMemberRequest,
   WorkspaceMemberRoleRequest,
 } from "./contract";
 
@@ -23,14 +27,68 @@ export function listWorkspaceMembers(workspaceId: string, signal?: AbortSignal) 
   );
 }
 
-export function addWorkspaceMember(
+export function resolveWorkspaceInvitationCandidate(
   workspaceId: string,
-  body: WorkspaceMemberRequest,
+  body: WorkspaceInvitationCandidateRequest,
 ) {
-  return request<WorkspaceMember>(
+  return request<WorkspaceInvitationCandidate>(
     "POST",
-    `/v1/workspaces/${encodeURIComponent(workspaceId)}/members`,
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/invitation-candidates/resolve`,
     { body },
+  );
+}
+
+export function createWorkspaceInvitation(
+  workspaceId: string,
+  body: WorkspaceInvitationCreateRequest,
+) {
+  return request<WorkspaceInvitation>(
+    "POST",
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/invitations`,
+    { body },
+  );
+}
+
+export function listWorkspaceInvitations(
+  workspaceId: string,
+  signal?: AbortSignal,
+) {
+  return request<readonly WorkspaceInvitation[]>(
+    "GET",
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/invitations`,
+    { signal },
+  );
+}
+
+export function cancelWorkspaceInvitation(
+  workspaceId: string,
+  invitationId: string,
+) {
+  return request<undefined>(
+    "DELETE",
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/invitations/${encodeURIComponent(invitationId)}`,
+  );
+}
+
+export function listMyWorkspaceInvitations(signal?: AbortSignal) {
+  return request<readonly WorkspaceInvitationForRecipient[]>(
+    "GET",
+    "/v1/me/invitations",
+    { signal },
+  );
+}
+
+export function acceptWorkspaceInvitation(invitationId: string) {
+  return request<Workspace>(
+    "POST",
+    `/v1/me/invitations/${encodeURIComponent(invitationId)}/accept`,
+  );
+}
+
+export function declineWorkspaceInvitation(invitationId: string) {
+  return request<undefined>(
+    "POST",
+    `/v1/me/invitations/${encodeURIComponent(invitationId)}/decline`,
   );
 }
 

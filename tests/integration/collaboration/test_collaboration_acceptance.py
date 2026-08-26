@@ -16,7 +16,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from grafy_api.settings import Settings
 from grafy_api.v1.routes.auth.dependencies import browser_actor
-from grafy_api.v1.routes.auth.models import WorkspaceMemberRequest
+from grafy_api.v1.routes.auth.models import WorkspaceInvitationCreateRequest
 from grafy_api.v1.routes.collaboration.views import websocket_browser_actor
 from grafy_api.v1.routes.executions.models import RunRequest
 from grafy_api.v1.routes.saved_graphs.models import CreateSavedGraphRequest
@@ -127,15 +127,31 @@ def test_phase7_two_session_collaboration_acceptance_journey(
         shared_graph = shared_api.graphs.create_ok(
             CreateSavedGraphRequest(name="Shared acceptance graph")
         )
-        added_editor = shared_api.add_member_ok(
-            WorkspaceMemberRequest(user_id=editor.id, role=WorkspaceRole.EDITOR)
+        editor_invitation = shared_api.create_invitation_ok(
+            WorkspaceInvitationCreateRequest(
+                email=editor.email or "editor@acceptance.test",
+                role=WorkspaceRole.EDITOR,
+            )
         )
-        assert added_editor.role is WorkspaceRole.EDITOR
-        added_viewer = shared_api.add_member_ok(
-            WorkspaceMemberRequest(user_id=viewer.id, role=WorkspaceRole.VIEWER)
-        )
-        assert added_viewer.role is WorkspaceRole.VIEWER
+        switcher.as_user(editor.id)
+        assert shared_api.graphs.list().status_code == 404
+        assert api.raw.post(
+            f"/v1/me/invitations/{editor_invitation.id}/accept"
+        ).status_code == 200
 
+        switcher.as_user(owner.id)
+        viewer_invitation = shared_api.create_invitation_ok(
+            WorkspaceInvitationCreateRequest(
+                email=viewer.email or "viewer@acceptance.test",
+                role=WorkspaceRole.VIEWER,
+            )
+        )
+        switcher.as_user(viewer.id)
+        assert api.raw.post(
+            f"/v1/me/invitations/{viewer_invitation.id}/accept"
+        ).status_code == 200
+
+        switcher.as_user(owner.id)
         member_ids = {member.user.id for member in shared_api.list_members_ok()}
         assert member_ids == {owner.id, editor.id, viewer.id}
 

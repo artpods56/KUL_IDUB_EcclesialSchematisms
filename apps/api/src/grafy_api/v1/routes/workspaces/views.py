@@ -12,6 +12,7 @@ from grafy_core.domain.identity import (
     ActorContext,
     PAT_ALLOWED_CAPABILITIES,
     PersonalAccessToken,
+    User,
     WorkspaceCapability,
     WorkspaceMembership,
     WorkspaceRole,
@@ -30,7 +31,13 @@ from grafy_api.v1.routes.auth.models import (
     PersonalAccessTokenResponse,
     UserResponse,
     WorkspaceCreateRequest,
-    WorkspaceMemberRequest,
+    WorkspaceInvitationCandidateRequest,
+    WorkspaceInvitationCandidateResponse,
+    WorkspaceInvitationCreateRequest,
+    WorkspaceInvitationOwnerResponse,
+    WorkspaceInvitationPersonResponse,
+    WorkspaceInvitationRecipientResponse,
+    WorkspaceInvitationWorkspaceResponse,
     WorkspaceMemberResponse,
     WorkspaceMemberRoleRequest,
     WorkspaceResponse,
@@ -41,6 +48,7 @@ from grafy_api.v1.routes.collaboration.publish import (
 
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
+me_router = APIRouter(prefix="/me", tags=["workspaces"])
 
 
 @dataclass(frozen=True)
@@ -63,9 +71,22 @@ _WORKSPACE_FAILURE_ROUTES: dict[str, WorkspaceFailureRoute] = {
         operation="workspace.membership.list",
         resource_type="workspace_membership",
     ),
-    "add_member": WorkspaceFailureRoute(
-        operation="workspace.membership.upsert",
+    "resolve_invitation_candidate": WorkspaceFailureRoute(
+        operation="workspace.invitation.candidate.resolve",
         resource_type="user",
+    ),
+    "create_workspace_invitation": WorkspaceFailureRoute(
+        operation="workspace.invitation.create",
+        resource_type="workspace_invitation",
+    ),
+    "list_workspace_invitations": WorkspaceFailureRoute(
+        operation="workspace.invitation.list",
+        resource_type="workspace_invitation",
+    ),
+    "cancel_workspace_invitation": WorkspaceFailureRoute(
+        operation="workspace.invitation.cancel",
+        resource_type="workspace_invitation",
+        resource_path_param="invitation_id",
     ),
     "change_member_role": WorkspaceFailureRoute(
         operation="workspace.membership.role_change",
@@ -244,28 +265,95 @@ async def list_members(
     ]
 
 
-@router.post("/{workspace_id}/members", response_model=WorkspaceMemberResponse)
-async def add_member(
+@router.post(
+    "/{workspace_id}/invitation-candidates/resolve",
+    response_model=WorkspaceInvitationCandidateResponse,
+)
+async def resolve_invitation_candidate(
     workspace_id: UUID,
-    payload: WorkspaceMemberRequest,
-    request: Request,
+    payload: WorkspaceInvitationCandidateRequest,
     actor: Annotated[ActorContext, Depends(browser_actor)],
     identity: IdentityServiceDependency,
-    uow_factory: IdentityUnitOfWorkFactoryDependency,
-) -> WorkspaceMemberResponse:
-    membership = await identity.add_or_reactivate_member(
+) -> WorkspaceInvitationCandidateResponse:
+    recipient = await identity.resolve_workspace_invitation_candidate(
         actor=actor,
         workspace_id=workspace_id,
-        user_id=payload.user_id,
+        email=payload.email,
+    )
+    return WorkspaceInvitationCandidateResponse(
+        recipient=_invitation_person_response(recipient)
+    )
+
+
+@router.post(
+    "/{workspace_id}/invitations",
+    response_model=WorkspaceInvitationOwnerResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_workspace_invitation(
+    workspace_id: UUID,
+    payload: WorkspaceInvitationCreateRequest,
+    actor: Annotated[ActorContext, Depends(browser_actor)],
+    identity: IdentityServiceDependency,
+) -> WorkspaceInvitationOwnerResponse:
+    invitation, recipient = await identity.create_workspace_invitation(
+        actor=actor,
+        workspace_id=workspace_id,
+        email=payload.email,
         role=payload.role,
     )
-    await close_user_rooms_for_permission_change(
-        request,
-        workspace_id=workspace_id,
-        user_id=payload.user_id,
-        access_revoked=False,
+    return WorkspaceInvitationOwnerResponse(
+        id=invitation.id,
+        recipient=_invitation_person_response(recipient),
+        role=invitation.role,
+        status=invitation.status,
+        expires_at=invitation.expires_at,
+        created_at=invitation.created_at,
     )
-    return await _member_response(uow_factory, membership.user_id, membership)
+
+
+@router.get(
+    "/{workspace_id}/invitations",
+    response_model=list[WorkspaceInvitationOwnerResponse],
+)
+async def list_workspace_invitations(
+    workspace_id: UUID,
+    actor: Annotated[ActorContext, Depends(browser_actor)],
+    identity: IdentityServiceDependency,
+) -> list[WorkspaceInvitationOwnerResponse]:
+    rows = await identity.list_workspace_invitations(
+        actor=actor,
+        workspace_id=workspace_id,
+    )
+    return [
+        WorkspaceInvitationOwnerResponse(
+            id=invitation.id,
+            recipient=_invitation_person_response(recipient),
+            role=invitation.role,
+            status=invitation.status,
+            expires_at=invitation.expires_at,
+            created_at=invitation.created_at,
+        )
+        for invitation, recipient in rows
+    ]
+
+
+@router.delete(
+    "/{workspace_id}/invitations/{invitation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def cancel_workspace_invitation(
+    workspace_id: UUID,
+    invitation_id: UUID,
+    actor: Annotated[ActorContext, Depends(browser_actor)],
+    identity: IdentityServiceDependency,
+) -> Response:
+    await identity.cancel_workspace_invitation(
+        actor=actor,
+        workspace_id=workspace_id,
+        invitation_id=invitation_id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.patch(
@@ -315,6 +403,79 @@ async def remove_member(
         access_revoked=True,
     )
     return Response(status_code=204)
+
+
+@me_router.get(
+    "/invitations",
+    response_model=list[WorkspaceInvitationRecipientResponse],
+)
+async def list_my_workspace_invitations(
+    actor: Annotated[ActorContext, Depends(browser_actor)],
+    identity: IdentityServiceDependency,
+) -> list[WorkspaceInvitationRecipientResponse]:
+    rows = await identity.list_my_workspace_invitations(actor=actor)
+    return [
+        WorkspaceInvitationRecipientResponse(
+            id=invitation.id,
+            workspace=WorkspaceInvitationWorkspaceResponse(
+                id=workspace.id,
+                slug=workspace.slug,
+                name=workspace.name,
+            ),
+            invited_by=_invitation_person_response(inviter),
+            role=invitation.role,
+            status=invitation.status,
+            expires_at=invitation.expires_at,
+            created_at=invitation.created_at,
+        )
+        for invitation, workspace, inviter in rows
+    ]
+
+
+@me_router.post(
+    "/invitations/{invitation_id}/accept",
+    response_model=WorkspaceResponse,
+)
+async def accept_workspace_invitation(
+    invitation_id: UUID,
+    actor: Annotated[ActorContext, Depends(browser_actor)],
+    identity: IdentityServiceDependency,
+    uow_factory: IdentityUnitOfWorkFactoryDependency,
+) -> WorkspaceResponse:
+    invitation, membership = await identity.accept_workspace_invitation(
+        actor=actor,
+        invitation_id=invitation_id,
+    )
+    async with uow_factory() as unit_of_work:
+        workspace = await unit_of_work.identity.get_workspace(invitation.workspace_id)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    return WorkspaceResponse(
+        id=workspace.id,
+        slug=workspace.slug,
+        name=workspace.name,
+        kind=workspace.kind,
+        role=membership.role,
+        capabilities=tuple(
+            sorted(membership.capabilities, key=lambda item: item.value)
+        ),
+    )
+
+
+@me_router.post(
+    "/invitations/{invitation_id}/decline",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def decline_workspace_invitation(
+    invitation_id: UUID,
+    actor: Annotated[ActorContext, Depends(browser_actor)],
+    identity: IdentityServiceDependency,
+) -> Response:
+    await identity.decline_workspace_invitation(
+        actor=actor,
+        invitation_id=invitation_id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(
@@ -430,6 +591,13 @@ async def _member_response(
     )
 
 
+def _invitation_person_response(user: User) -> WorkspaceInvitationPersonResponse:
+    return WorkspaceInvitationPersonResponse(
+        email=user.email,
+        display_name=user.display_name,
+    )
+
+
 def _pat_response(token: PersonalAccessToken) -> PersonalAccessTokenResponse:
     return PersonalAccessTokenResponse(
         id=token.id,
@@ -444,4 +612,4 @@ def _pat_response(token: PersonalAccessToken) -> PersonalAccessTokenResponse:
     )
 
 
-__all__ = ["router"]
+__all__ = ["me_router", "router"]

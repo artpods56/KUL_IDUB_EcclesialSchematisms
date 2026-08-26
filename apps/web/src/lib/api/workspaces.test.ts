@@ -1,12 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  addWorkspaceMember,
+  acceptWorkspaceInvitation,
+  cancelWorkspaceInvitation,
   changeWorkspaceMemberRole,
+  createWorkspaceInvitation,
   createWorkspace,
+  declineWorkspaceInvitation,
+  listMyWorkspaceInvitations,
   listWorkspaceMembers,
+  listWorkspaceInvitations,
   listWorkspaces,
   removeWorkspaceMember,
+  resolveWorkspaceInvitationCandidate,
 } from "./workspaces";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -24,7 +30,13 @@ describe("workspace API client", () => {
     await listWorkspaces();
     await createWorkspace({ name: "Shared", slug: "shared" });
     await listWorkspaceMembers(workspaceId);
-    await addWorkspaceMember(workspaceId, { user_id: userId, role: "viewer" });
+    await resolveWorkspaceInvitationCandidate(workspaceId, { email: "person@example.com" });
+    await createWorkspaceInvitation(workspaceId, { email: "person@example.com", role: "viewer" });
+    await listWorkspaceInvitations(workspaceId);
+    await cancelWorkspaceInvitation(workspaceId, "invite-uuid");
+    await listMyWorkspaceInvitations();
+    await acceptWorkspaceInvitation("invite-uuid");
+    await declineWorkspaceInvitation("invite-uuid");
     await changeWorkspaceMemberRole(workspaceId, userId, { role: "editor" });
     await removeWorkspaceMember(workspaceId, userId);
 
@@ -32,12 +44,19 @@ describe("workspace API client", () => {
       "/api/v1/workspaces",
       "/api/v1/workspaces",
       "/api/v1/workspaces/workspace-uuid/members",
-      "/api/v1/workspaces/workspace-uuid/members",
+      "/api/v1/workspaces/workspace-uuid/invitation-candidates/resolve",
+      "/api/v1/workspaces/workspace-uuid/invitations",
+      "/api/v1/workspaces/workspace-uuid/invitations",
+      "/api/v1/workspaces/workspace-uuid/invitations/invite-uuid",
+      "/api/v1/me/invitations",
+      "/api/v1/me/invitations/invite-uuid/accept",
+      "/api/v1/me/invitations/invite-uuid/decline",
       "/api/v1/workspaces/workspace-uuid/members/user-uuid",
       "/api/v1/workspaces/workspace-uuid/members/user-uuid",
     ]);
     expect(JSON.parse(fetchMock.mock.calls[1]?.[1].body as string)).toEqual({ name: "Shared", slug: "shared" });
-    expect(JSON.parse(fetchMock.mock.calls[3]?.[1].body as string)).toEqual({ user_id: userId, role: "viewer" });
-    expect(JSON.parse(fetchMock.mock.calls[4]?.[1].body as string)).toEqual({ role: "editor" });
+    expect(JSON.parse(fetchMock.mock.calls[3]?.[1].body as string)).toEqual({ email: "person@example.com" });
+    expect(JSON.parse(fetchMock.mock.calls[4]?.[1].body as string)).toEqual({ email: "person@example.com", role: "viewer" });
+    expect(JSON.parse(fetchMock.mock.calls[10]?.[1].body as string)).toEqual({ role: "editor" });
   });
 });

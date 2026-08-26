@@ -107,6 +107,57 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/me/invitations": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List My Workspace Invitations */
+        readonly get: operations["list_my_workspace_invitations_v1_me_invitations_get"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/me/invitations/{invitation_id}/accept": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Accept Workspace Invitation */
+        readonly post: operations["accept_workspace_invitation_v1_me_invitations__invitation_id__accept_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/me/invitations/{invitation_id}/decline": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Decline Workspace Invitation */
+        readonly post: operations["decline_workspace_invitation_v1_me_invitations__invitation_id__decline_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/workspaces": {
         readonly parameters: {
             readonly query?: never;
@@ -678,6 +729,58 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/workspaces/{workspace_id}/invitation-candidates/resolve": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Resolve Invitation Candidate */
+        readonly post: operations["resolve_invitation_candidate_v1_workspaces__workspace_id__invitation_candidates_resolve_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/invitations": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List Workspace Invitations */
+        readonly get: operations["list_workspace_invitations_v1_workspaces__workspace_id__invitations_get"];
+        readonly put?: never;
+        /** Create Workspace Invitation */
+        readonly post: operations["create_workspace_invitation_v1_workspaces__workspace_id__invitations_post"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/workspaces/{workspace_id}/invitations/{invitation_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Cancel Workspace Invitation */
+        readonly delete: operations["cancel_workspace_invitation_v1_workspaces__workspace_id__invitations__invitation_id__delete"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/workspaces/{workspace_id}/members": {
         readonly parameters: {
             readonly query?: never;
@@ -688,8 +791,7 @@ export interface paths {
         /** List Members */
         readonly get: operations["list_members_v1_workspaces__workspace_id__members_get"];
         readonly put?: never;
-        /** Add Member */
-        readonly post: operations["add_member_v1_workspaces__workspace_id__members_post"];
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1017,7 +1119,7 @@ export interface components {
              * Format
              * @enum {string}
              */
-            readonly format: "inline-json" | "table-bundle" | "binary-file";
+            readonly format: "inline-json" | "table-bundle" | "binary-file" | "object-set";
             /** Version */
             readonly version: number;
         };
@@ -2315,7 +2417,7 @@ export interface components {
             /** Non Runnable Detail */
             readonly non_runnable_detail?: string | null;
             /** Non Runnable Reason */
-            readonly non_runnable_reason?: ("revoked" | "missing_runtime_artifact" | "incompatible_protocol" | "unsupported_runtime_profile" | "unsupported_capabilities" | "unsupported_artifact_type" | "plugin_runtime_unavailable" | "host_binding_mismatch") | ("deprecated" | "withdrawn") | null;
+            readonly non_runnable_reason?: ("revoked" | "missing_runtime_artifact" | "incompatible_protocol" | "unsupported_runtime_profile" | "unsupported_capabilities" | "unsupported_artifact_type" | "plugin_runtime_unavailable" | "host_binding_mismatch" | "network_profile_unassigned" | "network_profile_disabled" | "network_destination_undeclared" | "network_dynamic_destination_denied" | "network_destination_not_allowlisted" | "network_origin_limit_exceeded") | ("deprecated" | "withdrawn") | null;
             /** Operator Id */
             readonly operator_id: string;
             /** Operator Version */
@@ -2470,7 +2572,7 @@ export interface components {
             /** Non Runnable Detail */
             readonly non_runnable_detail?: string | null;
             /** Non Runnable Reason */
-            readonly non_runnable_reason?: ("revoked" | "missing_runtime_artifact" | "incompatible_protocol" | "unsupported_runtime_profile" | "unsupported_capabilities" | "unsupported_artifact_type" | "plugin_runtime_unavailable" | "host_binding_mismatch") | ("deprecated" | "withdrawn") | null;
+            readonly non_runnable_reason?: ("revoked" | "missing_runtime_artifact" | "incompatible_protocol" | "unsupported_runtime_profile" | "unsupported_capabilities" | "unsupported_artifact_type" | "plugin_runtime_unavailable" | "host_binding_mismatch" | "network_profile_unassigned" | "network_profile_disabled" | "network_destination_undeclared" | "network_dynamic_destination_denied" | "network_destination_not_allowlisted" | "network_origin_limit_exceeded") | ("deprecated" | "withdrawn") | null;
             readonly plugin_release?: components["schemas"]["PluginReleasePinModel"] | null;
             /** Revision */
             readonly revision?: number | null;
@@ -3462,20 +3564,93 @@ export interface components {
             /** Slug */
             readonly slug: string;
         };
+        /** WorkspaceInvitationCandidateRequest */
+        readonly WorkspaceInvitationCandidateRequest: {
+            /** Email */
+            readonly email: string;
+        };
+        /** WorkspaceInvitationCandidateResponse */
+        readonly WorkspaceInvitationCandidateResponse: {
+            readonly recipient: components["schemas"]["WorkspaceInvitationPersonResponse"];
+        };
+        /** WorkspaceInvitationCreateRequest */
+        readonly WorkspaceInvitationCreateRequest: {
+            /** Email */
+            readonly email: string;
+            readonly role: components["schemas"]["WorkspaceRole"];
+        };
+        /** WorkspaceInvitationOwnerResponse */
+        readonly WorkspaceInvitationOwnerResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            readonly recipient: components["schemas"]["WorkspaceInvitationPersonResponse"];
+            readonly role: components["schemas"]["WorkspaceRole"];
+            readonly status: components["schemas"]["WorkspaceInvitationStatus"];
+        };
+        /** WorkspaceInvitationPersonResponse */
+        readonly WorkspaceInvitationPersonResponse: {
+            /** Display Name */
+            readonly display_name: string | null;
+            /** Email */
+            readonly email: string | null;
+        };
+        /** WorkspaceInvitationRecipientResponse */
+        readonly WorkspaceInvitationRecipientResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            readonly invited_by: components["schemas"]["WorkspaceInvitationPersonResponse"];
+            readonly role: components["schemas"]["WorkspaceRole"];
+            readonly status: components["schemas"]["WorkspaceInvitationStatus"];
+            readonly workspace: components["schemas"]["WorkspaceInvitationWorkspaceResponse"];
+        };
+        /**
+         * WorkspaceInvitationStatus
+         * @enum {string}
+         */
+        readonly WorkspaceInvitationStatus: "pending" | "accepted" | "declined" | "cancelled" | "expired";
+        /** WorkspaceInvitationWorkspaceResponse */
+        readonly WorkspaceInvitationWorkspaceResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Slug */
+            readonly slug: string;
+        };
         /**
          * WorkspaceKind
          * @enum {string}
          */
         readonly WorkspaceKind: "personal" | "shared";
-        /** WorkspaceMemberRequest */
-        readonly WorkspaceMemberRequest: {
-            readonly role: components["schemas"]["WorkspaceRole"];
-            /**
-             * User Id
-             * Format: uuid
-             */
-            readonly user_id: string;
-        };
         /** WorkspaceMemberResponse */
         readonly WorkspaceMemberResponse: {
             /** Authorization Version */
@@ -3686,6 +3861,86 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["GraphBrowserListResponse"];
+                };
+            };
+        };
+    };
+    readonly list_my_workspace_invitations_v1_me_invitations_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["WorkspaceInvitationRecipientResponse"][];
+                };
+            };
+        };
+    };
+    readonly accept_workspace_invitation_v1_me_invitations__invitation_id__accept_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly invitation_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly decline_workspace_invitation_v1_me_invitations__invitation_id__decline_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly invitation_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -5492,6 +5747,137 @@ export interface operations {
             };
         };
     };
+    readonly resolve_invitation_candidate_v1_workspaces__workspace_id__invitation_candidates_resolve_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["WorkspaceInvitationCandidateRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceInvitationCandidateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly list_workspace_invitations_v1_workspaces__workspace_id__invitations_get: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["WorkspaceInvitationOwnerResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly create_workspace_invitation_v1_workspaces__workspace_id__invitations_post: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["WorkspaceInvitationCreateRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceInvitationOwnerResponse"];
+                };
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    readonly cancel_workspace_invitation_v1_workspaces__workspace_id__invitations__invitation_id__delete: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly invitation_id: string;
+                readonly workspace_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     readonly list_members_v1_workspaces__workspace_id__members_get: {
         readonly parameters: {
             readonly query?: never;
@@ -5510,41 +5896,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["WorkspaceMemberResponse"][];
-                };
-            };
-            /** @description Validation Error */
-            readonly 422: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    readonly add_member_v1_workspaces__workspace_id__members_post: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly workspace_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["WorkspaceMemberRequest"];
-            };
-        };
-        readonly responses: {
-            /** @description Successful Response */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["WorkspaceMemberResponse"];
                 };
             };
             /** @description Validation Error */

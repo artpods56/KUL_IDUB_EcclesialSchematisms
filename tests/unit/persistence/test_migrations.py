@@ -300,6 +300,7 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "oidc_bootstrap_owner_mappings",
             "workspaces",
             "workspace_memberships",
+            "workspace_invitations",
             "auth_sessions",
             "personal_access_tokens",
             "security_audit_events",
@@ -342,6 +343,7 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "oidc_bootstrap_owner_mappings",
             "workspaces",
             "workspace_memberships",
+            "workspace_invitations",
             "auth_sessions",
             "personal_access_tokens",
             "security_audit_events",
@@ -2149,6 +2151,7 @@ def test_0021_adds_empty_exact_revocations_without_release_schema_drift(
         assert connection.execute(
             text("SELECT COUNT(*) FROM plugin_release_revocations")
         ).scalar_one() == 0
+    command.upgrade(config, "head")
     command.check(config)
 
     command.downgrade(config, "0020_plugin_release_selections")

@@ -26,6 +26,7 @@ from grafy_core.domain.identity import (
     PersonalAccessToken,
     User,
     Workspace,
+    WorkspaceInvitation,
     WorkspaceKind,
     WorkspaceMembership,
     WorkspaceRole,
@@ -123,6 +124,22 @@ class SqlIdentityRepository(IdentityRepositoryPort):
     @override
     async def get_user(self, user_id: UUID) -> User | None:
         return await self._session.get(User, user_id)
+
+    @override
+    async def find_active_users_by_verified_email(
+        self,
+        normalized_email: str,
+    ) -> list[User]:
+        result = await self._session.scalars(
+            select(User)
+            .where(
+                schema.users.c.normalized_email == normalized_email,
+                schema.users.c.email_verified.is_(True),
+                schema.users.c.active.is_(True),
+            )
+            .order_by(schema.users.c.id.asc())
+        )
+        return list(result)
 
     @override
     async def get_oidc_identity(
@@ -258,6 +275,44 @@ class SqlIdentityRepository(IdentityRepositoryPort):
             )
         )
         return int(count or 0)
+
+    @override
+    async def add_workspace_invitation(
+        self,
+        invitation: WorkspaceInvitation,
+    ) -> None:
+        self._session.add(invitation)
+
+    @override
+    async def get_workspace_invitation(
+        self,
+        invitation_id: UUID,
+    ) -> WorkspaceInvitation | None:
+        return await self._session.get(WorkspaceInvitation, invitation_id)
+
+    @override
+    async def list_workspace_invitations(
+        self,
+        workspace_id: UUID,
+    ) -> list[WorkspaceInvitation]:
+        result = await self._session.scalars(
+            select(WorkspaceInvitation)
+            .where(schema.workspace_invitations.c.workspace_id == workspace_id)
+            .order_by(schema.workspace_invitations.c.created_at.desc())
+        )
+        return list(result)
+
+    @override
+    async def list_workspace_invitations_for_user(
+        self,
+        user_id: UUID,
+    ) -> list[WorkspaceInvitation]:
+        result = await self._session.scalars(
+            select(WorkspaceInvitation)
+            .where(schema.workspace_invitations.c.invitee_user_id == user_id)
+            .order_by(schema.workspace_invitations.c.created_at.desc())
+        )
+        return list(result)
 
     @override
     async def get_unconsumed_bootstrap_mapping(
