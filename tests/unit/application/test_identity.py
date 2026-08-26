@@ -9,7 +9,6 @@ from sqlalchemy import text
 
 from grafy_core.application.identity import IdentityService
 from grafy_core.domain.errors import (
-    BootstrapOwnerMismatchError,
     IdentityInvariantError,
     LastWorkspaceOwnerError,
     NotFoundError,
@@ -19,7 +18,6 @@ from grafy_core.domain.identity import (
     AuthSession,
     PersonalAccessToken,
     User,
-    Workspace,
     WorkspaceCapability,
     WorkspaceInvitation,
     WorkspaceInvitationStatus,
@@ -38,11 +36,6 @@ async def database(tmp_path: Path) -> AsyncIterator[Database]:
     )
     async with created.engine.begin() as connection:
         await connection.run_sync(metadata.create_all)
-    async with SqlAlchemyUnitOfWork(created.sessions) as unit_of_work:
-        await unit_of_work.identity.add_workspace(
-            Workspace.shared(slug="local", name="Local workspace")
-        )
-        await unit_of_work.commit()
     try:
         yield created
     finally:
@@ -76,10 +69,6 @@ async def test_verified_email_invitation_grants_access_only_after_acceptance(
     database: Database,
 ) -> None:
     service = _service(database)
-    await service.bootstrap_oidc_owner(
-        issuer="https://issuer.example.test",
-        subject="invitation-owner",
-    )
     owner = await service.provision_oidc_identity(
         issuer="https://issuer.example.test",
         subject="invitation-owner",
@@ -195,151 +184,44 @@ async def test_verified_email_invitation_grants_access_only_after_acceptance(
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_mapping_gates_first_login_and_is_consumed_once(
+async def test_oidc_provisioning_creates_only_a_personal_workspace(
     database: Database,
 ) -> None:
     service = _service(database)
-    await service.bootstrap_oidc_owner(
-        issuer="https://issuer.example.test",
-        subject="owner-subject",
-    )
-    with pytest.raises(BootstrapOwnerMismatchError):
-        await service.provision_oidc_identity(
-            issuer="https://issuer.example.test",
-            subject="wrong-subject",
-            email="wrong@example.test",
-            display_name="Wrong",
-        )
-
-    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-        assert await unit_of_work.identity.get_user(UUID(int=1)) is None
-
     provisioned = await service.provision_oidc_identity(
         issuer="https://issuer.example.test",
-        subject="owner-subject",
+        subject="new-user-subject",
         email="owner@example.test",
         display_name="Owner",
     )
 
-    assert provisioned.local_workspace_membership is not None
-    assert provisioned.local_workspace_membership.role is WorkspaceRole.OWNER
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-        assert (
-            await unit_of_work.identity.get_unconsumed_bootstrap_mapping(
-                provisioned.local_workspace_membership.workspace_id
-            )
-            is None
+        workspaces = await unit_of_work.identity.list_workspaces_for_user(
+            provisioned.user.id
         )
         provisioning_events = await unit_of_work.security_audit.list_for_workspace(
-            provisioned.local_workspace_membership.workspace_id,
+            provisioned.personal_workspace.id,
             limit=10,
         )
+    assert workspaces == [provisioned.personal_workspace]
     assert any(
         event.operation == "oidc.identity.provision"
         and event.resource_type == "user"
         and event.resource_id == str(provisioned.user.id)
         for event in provisioning_events
     )
-
-    async with database.engine.begin() as connection:
-        await connection.execute(
-            text("UPDATE oidc_bootstrap_owner_mappings SET consumed_at = NULL")
+    with pytest.raises(ValueError, match="slug 'local' is reserved"):
+        await service.create_shared_workspace(
+            actor=ActorContext(user_id=provisioned.user.id),
+            slug="local",
+            name="Local",
         )
-
-    second = await service.provision_oidc_identity(
-        issuer="https://issuer.example.test",
-        subject="second-subject",
-        email="second@example.test",
-        display_name="Second",
-    )
-    assert second.local_workspace_membership is None
-    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-        assert (
-            await unit_of_work.identity.get_unconsumed_bootstrap_mapping(
-                provisioned.local_workspace_membership.workspace_id
-            )
-        ) is not None
-
-
-@pytest.mark.asyncio
-async def test_local_workspace_is_visible_to_editor_and_viewer_after_bootstrap(
-    database: Database,
-) -> None:
-    service = _service(database)
-    editor = User(email="editor@example.test", display_name="Editor")
-    viewer = User(email="viewer@example.test", display_name="Viewer")
-    async with database.engine.connect() as connection:
-        local_id = UUID(
-            str(
-                (
-                    await connection.execute(
-                        text("SELECT id FROM workspaces WHERE slug = 'local'")
-                    )
-                ).scalar_one()
-            )
-        )
-    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-        local = await unit_of_work.identity.get_workspace(local_id)
-        assert local is not None
-        await unit_of_work.identity.add_user(editor)
-        await unit_of_work.identity.add_user(viewer)
-        await unit_of_work.identity.add_membership(
-            WorkspaceMembership(
-                workspace_id=local.id,
-                user_id=editor.id,
-                role=WorkspaceRole.EDITOR,
-            )
-        )
-        await unit_of_work.identity.add_membership(
-            WorkspaceMembership(
-                workspace_id=local.id,
-                user_id=viewer.id,
-                role=WorkspaceRole.VIEWER,
-            )
-        )
-        await unit_of_work.commit()
-
-    editor_workspaces = await service.list_workspaces(
-        actor=ActorContext(user_id=editor.id, credential_reference="session-editor")
-    )
-    viewer_workspaces = await service.list_workspaces(
-        actor=ActorContext(user_id=viewer.id, credential_reference="session-viewer")
-    )
-    assert [
-        (workspace.slug, membership.role) for workspace, membership in editor_workspaces
-    ] == [("local", WorkspaceRole.EDITOR)]
-    assert [
-        (workspace.slug, membership.role) for workspace, membership in viewer_workspaces
-    ] == [("local", WorkspaceRole.VIEWER)]
-
-
-@pytest.mark.asyncio
-async def test_prebootstrap_user_without_membership_cannot_discover_local_workspace(
-    database: Database,
-) -> None:
-    service = _service(database)
-    user = User(email="pending@example.test", display_name="Pending")
-    async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-        await unit_of_work.identity.add_user(user)
-        await unit_of_work.commit()
-
-    assert (
-        await service.list_workspaces(
-            actor=ActorContext(user_id=user.id, credential_reference="session-pending")
-        )
-        == []
-    )
-
 
 @pytest.mark.asyncio
 async def test_personal_membership_stays_owner_and_membership_changes_are_audited(
     database: Database,
 ) -> None:
     service = _service(database)
-    await service.bootstrap_oidc_owner(
-        issuer="https://issuer.example.test",
-        subject="owner-subject",
-    )
     owner = await service.provision_oidc_identity(
         issuer="https://issuer.example.test",
         subject="owner-subject",
@@ -504,10 +386,6 @@ async def test_membership_and_role_changes_revoke_affected_workspace_pats(
     database: Database,
 ) -> None:
     service = _service(database)
-    await service.bootstrap_oidc_owner(
-        issuer="https://issuer.example.test",
-        subject="owner-subject",
-    )
     owner = await service.provision_oidc_identity(
         issuer="https://issuer.example.test",
         subject="owner-subject",
@@ -679,10 +557,6 @@ async def test_concurrent_owner_removals_preserve_one_shared_owner(
     database: Database,
 ) -> None:
     service = _service(database)
-    await service.bootstrap_oidc_owner(
-        issuer="https://issuer.example.test",
-        subject="owner-one-subject",
-    )
     owner_one = await service.provision_oidc_identity(
         issuer="https://issuer.example.test",
         subject="owner-one-subject",

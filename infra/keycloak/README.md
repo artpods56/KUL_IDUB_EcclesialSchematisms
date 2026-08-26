@@ -25,19 +25,17 @@ Imported realm `grafy` includes:
 Modern browsers resolve `*.localhost` to `127.0.0.1`; no `/etc/hosts` edit is
 required.
 
-## Bootstrap Grafy owner
+## Start Grafy
 
 With API env configured (see root `.env.example`):
 
 ```bash
 just db-upgrade
-uv run grafy-admin bootstrap-oidc-owner \
-  --issuer http://keycloak.localhost:8081/realms/grafy \
-  --subject 11111111-1111-4111-8111-111111111111
 ```
 
 Then `just api` and `just web`, open `http://localhost:3000`, and sign in as
-`owner` / `owner`.
+`owner` / `owner`. Grafy creates the user's personal workspace during the first
+successful OIDC callback.
 
 ## Reset realm import
 

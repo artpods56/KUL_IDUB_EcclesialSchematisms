@@ -9,7 +9,6 @@ from grafy_core.artifacts import JsonObject
 from grafy_core.domain.invocation_cache import InvocationCacheEntry
 from grafy_core.domain.identity import (
     AuthSession,
-    OidcBootstrapOwnerMapping,
     OidcIdentity,
     OidcLoginTransaction,
     PersonalAccessToken,
@@ -140,10 +139,6 @@ def start_mappers() -> None:
     mapper_registry.map_imperatively(
         OidcLoginTransaction,
         schema.oidc_login_transactions,
-    )
-    mapper_registry.map_imperatively(
-        OidcBootstrapOwnerMapping,
-        schema.oidc_bootstrap_owner_mappings,
     )
     mapper_registry.map_imperatively(Workspace, schema.workspaces)
     mapper_registry.map_imperatively(

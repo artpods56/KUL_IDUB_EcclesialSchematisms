@@ -35,7 +35,7 @@ export const metadata: Metadata = {
 const themeScript = `
 (function () {
   try {
-    var theme = localStorage.getItem("grafy-theme") || localStorage.getItem("ns-theme");
+    var theme = localStorage.getItem("grafy-theme");
     if (theme === "light" || theme === "dark") {
       document.documentElement.style.colorScheme = theme;
     }

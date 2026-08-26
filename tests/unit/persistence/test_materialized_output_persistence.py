@@ -40,7 +40,7 @@ async def database(tmp_path: Path) -> AsyncIterator[Database]:
             schema.workspaces.insert(),
             {
                 "id": WORKSPACE_ID,
-                "slug": "local",
+                "slug": "team",
                 "name": "Local",
                 "kind": "shared",
                 "created_at": datetime(2026, 7, 1, tzinfo=UTC),

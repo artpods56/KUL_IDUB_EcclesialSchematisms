@@ -20,7 +20,6 @@ from grafy_core.artifacts import (
 from grafy_core.domain.invocation_cache import InvocationCacheEntry
 from grafy_core.domain.identity import (
     AuthSession,
-    OidcBootstrapOwnerMapping,
     OidcIdentity,
     OidcLoginTransaction,
     PersonalAccessToken,
@@ -313,25 +312,6 @@ class SqlIdentityRepository(IdentityRepositoryPort):
             .order_by(schema.workspace_invitations.c.created_at.desc())
         )
         return list(result)
-
-    @override
-    async def get_unconsumed_bootstrap_mapping(
-        self,
-        workspace_id: UUID,
-    ) -> OidcBootstrapOwnerMapping | None:
-        return await self._session.scalar(
-            select(OidcBootstrapOwnerMapping).where(
-                schema.oidc_bootstrap_owner_mappings.c.workspace_id == workspace_id,
-                schema.oidc_bootstrap_owner_mappings.c.consumed_at.is_(None),
-            )
-        )
-
-    @override
-    async def add_bootstrap_mapping(
-        self,
-        mapping: OidcBootstrapOwnerMapping,
-    ) -> None:
-        self._session.add(mapping)
 
     @override
     async def add_login_transaction(self, transaction: OidcLoginTransaction) -> None:

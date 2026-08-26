@@ -9,7 +9,6 @@ import {
 } from "./grid-layout";
 
 const STORAGE_KEY = "grafy.workbench.canvasGridSettings.v2";
-const LEGACY_STORAGE_KEY = "notarius.workbench.canvasGridSettings.v2";
 
 type CanvasGridSettingsContextValue = {
   settings: CanvasGridSettings;
@@ -28,9 +27,7 @@ const CanvasGridSettingsContext =
 function readStoredSettings(): CanvasGridSettings {
   if (typeof window === "undefined") return { ...DEFAULT_CANVAS_GRID_SETTINGS };
   try {
-    const raw =
-      window.localStorage.getItem(STORAGE_KEY) ??
-      window.localStorage.getItem(LEGACY_STORAGE_KEY);
+    const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...DEFAULT_CANVAS_GRID_SETTINGS };
     return normalizeCanvasGridSettings(
       JSON.parse(raw) as Partial<CanvasGridSettings>,

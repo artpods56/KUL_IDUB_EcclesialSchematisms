@@ -24,7 +24,7 @@ from grafy_api.v1.routes.auth.services import (
     ProviderMetadata,
 )
 from grafy_core.application.identity import IdentityService
-from grafy_core.domain.identity import OidcLoginTransaction, User, Workspace
+from grafy_core.domain.identity import OidcLoginTransaction, User
 from grafy_core.domain.security_audit import SecurityAuditEvent
 from grafy_core.ports.identity import (
     IdentityRepositoryPort,
@@ -354,16 +354,10 @@ async def test_protocol_issuer_successfully_provisions_identity_and_rotates_sess
     async with database.engine.begin() as connection:
         await connection.run_sync(metadata.create_all)
     identity_service = IdentityService(lambda: SqlAlchemyUnitOfWork(database.sessions))
-    local_workspace = Workspace.shared(slug="local", name="Local workspace")
     old_user = User(id=UUID(int=99), email="old@example.test", display_name="Old")
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-        await unit_of_work.identity.add_workspace(local_workspace)
         await unit_of_work.identity.add_user(old_user)
         await unit_of_work.commit()
-    await identity_service.bootstrap_oidc_owner(
-        issuer="https://issuer.example.test",
-        subject="provider-user",
-    )
 
     settings = Settings(
         public_origin="https://app.example.test",

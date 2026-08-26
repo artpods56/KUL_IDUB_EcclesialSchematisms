@@ -207,8 +207,8 @@ async def seed_shared_workspace(
     user = User(id=user_id, email="owner@example.test", display_name="Owner")
     workspace = Workspace(
         id=workspace_id,
-        slug="local",
-        name="Local workspace",
+        slug="team",
+        name="Team",
         kind="shared",
     )
     membership = WorkspaceMembership(

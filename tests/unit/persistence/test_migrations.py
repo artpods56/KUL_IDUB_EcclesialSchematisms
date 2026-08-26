@@ -270,6 +270,7 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
     with create_engine(f"sqlite:///{database_path}").connect() as connection:
         assert "saved_graph_revisions" not in inspect(connection).get_table_names()
 
+    command.downgrade(config, "base")
     get_settings.cache_clear()
     config = Config(REPOSITORY_ROOT / "alembic.ini")
 
@@ -297,7 +298,6 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "users",
             "oidc_identities",
             "oidc_login_transactions",
-            "oidc_bootstrap_owner_mappings",
             "workspaces",
             "workspace_memberships",
             "workspace_invitations",
@@ -310,6 +310,9 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "user_graph_states",
             "templates",
         }
+        assert connection.execute(
+            text("SELECT COUNT(*) FROM workspaces WHERE slug = 'local'")
+        ).scalar_one() == 0
     command.check(config)
 
     command.downgrade(config, "base")
@@ -340,7 +343,6 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "users",
             "oidc_identities",
             "oidc_login_transactions",
-            "oidc_bootstrap_owner_mappings",
             "workspaces",
             "workspace_memberships",
             "workspace_invitations",
@@ -353,6 +355,9 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "user_graph_states",
             "templates",
         }
+        assert connection.execute(
+            text("SELECT COUNT(*) FROM workspaces WHERE slug = 'local'")
+        ).scalar_one() == 0
 
     get_settings.cache_clear()
 
@@ -428,6 +433,131 @@ def test_identity_migration_creates_sealed_local_workspace_and_audit_indexes(
     get_settings.cache_clear()
 
 
+def test_remove_local_workspace_renames_owned_tenant_and_preserves_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "remove-owned-local" / "migrated.sqlite3"
+    monkeypatch.setenv(
+        "GRAFY_DATABASE_URL",
+        f"sqlite+aiosqlite:///{database_path}",
+    )
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0021_plugin_release_revocations")
+
+    local_id = UUID("00000000-0000-0000-0000-000000000007").hex
+    owner_id = UUID("00000000-0000-0000-0000-000000002201").hex
+    folder_id = UUID("00000000-0000-0000-0000-000000002202").hex
+    timestamp = "2026-08-26 08:00:00"
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO users "
+                "(id, email, display_name, active, created_at, updated_at) "
+                "VALUES (:id, 'owner@example.test', 'Owner', 1, :now, :now)"
+            ),
+            {"id": owner_id, "now": timestamp},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO workspace_memberships "
+                "(workspace_id, user_id, role, authorization_version, revoked_at, "
+                "created_at, updated_at) "
+                "VALUES (:workspace_id, :user_id, 'owner', 1, NULL, :now, :now)"
+            ),
+            {"workspace_id": local_id, "user_id": owner_id, "now": timestamp},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO graph_folders "
+                "(id, workspace_id, name, created_at, updated_at) "
+                "VALUES (:id, :workspace_id, 'Legacy', :now, :now)"
+            ),
+            {"id": folder_id, "workspace_id": local_id, "now": timestamp},
+        )
+
+    command.upgrade(config, "head")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        workspace = (
+            connection.execute(
+                text(
+                    "SELECT slug, name, kind FROM workspaces WHERE id = :local_id"
+                ),
+                {"local_id": local_id},
+            )
+            .mappings()
+            .one()
+        )
+        assert workspace == {
+            "slug": "migrated-workspace",
+            "name": "Migrated workspace",
+            "kind": "shared",
+        }
+        assert connection.execute(
+            text("SELECT workspace_id FROM graph_folders WHERE id = :folder_id"),
+            {"folder_id": folder_id},
+        ).scalar_one() == local_id
+        assert "oidc_bootstrap_owner_mappings" not in inspect(
+            connection
+        ).get_table_names()
+
+    command.downgrade(config, "0021_plugin_release_revocations")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        assert connection.execute(
+            text("SELECT slug FROM workspaces WHERE id = :local_id"),
+            {"local_id": local_id},
+        ).scalar_one() == "local"
+        assert "oidc_bootstrap_owner_mappings" in inspect(
+            connection
+        ).get_table_names()
+    get_settings.cache_clear()
+
+
+def test_remove_local_workspace_refuses_unowned_tenant_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "remove-unowned-local" / "migrated.sqlite3"
+    monkeypatch.setenv(
+        "GRAFY_DATABASE_URL",
+        f"sqlite+aiosqlite:///{database_path}",
+    )
+    get_settings.cache_clear()
+    config = Config(REPOSITORY_ROOT / "alembic.ini")
+    command.upgrade(config, "0021_plugin_release_revocations")
+
+    local_id = UUID("00000000-0000-0000-0000-000000000007").hex
+    with create_engine(f"sqlite:///{database_path}").begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO graph_folders "
+                "(id, workspace_id, name, created_at, updated_at) "
+                "VALUES (:id, :workspace_id, 'Unowned', :now, :now)"
+            ),
+            {
+                "id": UUID("00000000-0000-0000-0000-000000002203").hex,
+                "workspace_id": local_id,
+                "now": "2026-08-26 08:00:00",
+            },
+        )
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"unowned local workspace containing tenant data \(graph_folders=1\)",
+    ):
+        command.upgrade(config, "head")
+    with create_engine(f"sqlite:///{database_path}").connect() as connection:
+        assert connection.execute(
+            text("SELECT slug FROM workspaces WHERE id = :local_id"),
+            {"local_id": local_id},
+        ).scalar_one() == "local"
+        assert "oidc_bootstrap_owner_mappings" in inspect(
+            connection
+        ).get_table_names()
+    get_settings.cache_clear()
+
+
 def test_saved_graph_revision_migration_backfills_the_current_head(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -465,7 +595,7 @@ def test_saved_graph_revision_migration_backfills_the_current_head(
             },
         )
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "0019_scoped_plugin_releases")
     with create_engine(f"sqlite:///{database_path}").connect() as connection:
         row = (
             connection.execute(
@@ -740,7 +870,7 @@ def test_tenant_migration_backfills_all_0006_resources_and_checks_composite_keys
             {"execution_id": execution_id.hex, "completed_at": timestamp},
         )
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "0013_thin_execution_schema")
     with create_engine(f"sqlite:///{database_path}").connect() as connection:
         connection.exec_driver_sql("PRAGMA foreign_keys=ON")
         for table_name in (
@@ -967,7 +1097,7 @@ def test_0013_merges_node_tables_preserves_data_and_reconstructs_on_downgrade(
             {"ws": workspace_hex, "e": execution_hex, "ts": timestamp},
         )
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "0013_thin_execution_schema")
     with create_engine(f"sqlite:///{database_path}").connect() as connection:
         connection.exec_driver_sql("PRAGMA foreign_keys=ON")
         rows = (
@@ -1389,7 +1519,7 @@ def test_0019_scopes_releases_and_normalizes_retained_references_without_revisio
         _seed_0019_workspace_release_and_references(database_path)
     )
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "0019_scoped_plugin_releases")
     with create_engine(f"sqlite:///{database_path}").connect() as connection:
         release = (
             connection.execute(
@@ -1763,7 +1893,7 @@ def test_0020_downgrade_refuses_to_drop_system_publisher_provenance(
     config = Config(REPOSITORY_ROOT / "alembic.ini")
     command.upgrade(config, "0018_local_execution_queue")
     _seed_0019_workspace_release_and_references(database_path)
-    command.upgrade(config, "head")
+    command.upgrade(config, "0020_plugin_release_selections")
 
     with create_engine(f"sqlite:///{database_path}").begin() as connection:
         connection.execute(
@@ -1885,7 +2015,7 @@ def test_0020_downgrade_refuses_selection_pointing_at_older_retained_revision(
     config = Config(REPOSITORY_ROOT / "alembic.ini")
     command.upgrade(config, "0018_local_execution_queue")
     _seed_0019_workspace_release_and_references(database_path)
-    command.upgrade(config, "head")
+    command.upgrade(config, "0020_plugin_release_selections")
 
     with create_engine(f"sqlite:///{database_path}").begin() as connection:
         connection.execute(
@@ -1943,7 +2073,7 @@ def test_0020_downgrade_refuses_mutated_selection_lifecycle(
     config = Config(REPOSITORY_ROOT / "alembic.ini")
     command.upgrade(config, "0018_local_execution_queue")
     _seed_0019_workspace_release_and_references(database_path)
-    command.upgrade(config, "head")
+    command.upgrade(config, "0020_plugin_release_selections")
 
     with create_engine(f"sqlite:///{database_path}").begin() as connection:
         connection.execute(
@@ -1981,7 +2111,7 @@ def test_0020_downgrade_refuses_generation_above_backfill(
     config = Config(REPOSITORY_ROOT / "alembic.ini")
     command.upgrade(config, "0018_local_execution_queue")
     _seed_0019_workspace_release_and_references(database_path)
-    command.upgrade(config, "head")
+    command.upgrade(config, "0020_plugin_release_selections")
 
     with create_engine(f"sqlite:///{database_path}").begin() as connection:
         connection.execute(
@@ -2018,7 +2148,7 @@ def test_0020_downgrade_refuses_non_migration_selection_actor(
     config = Config(REPOSITORY_ROOT / "alembic.ini")
     command.upgrade(config, "0018_local_execution_queue")
     _seed_0019_workspace_release_and_references(database_path)
-    command.upgrade(config, "head")
+    command.upgrade(config, "0020_plugin_release_selections")
 
     with create_engine(f"sqlite:///{database_path}").begin() as connection:
         connection.execute(
@@ -2057,7 +2187,7 @@ def test_0020_downgrade_refuses_family_without_selection(
     config = Config(REPOSITORY_ROOT / "alembic.ini")
     command.upgrade(config, "0018_local_execution_queue")
     _seed_0019_workspace_release_and_references(database_path)
-    command.upgrade(config, "head")
+    command.upgrade(config, "0020_plugin_release_selections")
 
     with create_engine(f"sqlite:///{database_path}").begin() as connection:
         connection.execute(

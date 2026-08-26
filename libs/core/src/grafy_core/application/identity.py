@@ -3,7 +3,6 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from grafy_core.domain.errors import (
-    BootstrapOwnerRequiredError,
     CapabilityDeniedError,
     IdentityInvariantError,
     NotFoundError,
@@ -12,7 +11,6 @@ from grafy_core.domain.errors import (
 from grafy_core.domain.identity import (
     ActorContext,
     IdentityProvisioningResult,
-    OidcBootstrapOwnerMapping,
     OidcIdentity,
     PAT_ALLOWED_CAPABILITIES,
     PersonalAccessToken,
@@ -28,7 +26,6 @@ from grafy_core.domain.identity import (
     ensure_last_owner_can_change,
     normalize_user_email,
     normalize_workspace_slug,
-    validate_bootstrap_match,
 )
 from grafy_core.domain.security_audit import (
     SecurityAuditActorKind,
@@ -531,48 +528,6 @@ class IdentityService:
             await unit_of_work.commit()
             return token
 
-    async def bootstrap_oidc_owner(
-        self,
-        *,
-        issuer: str,
-        subject: str,
-    ) -> OidcBootstrapOwnerMapping:
-        async with self._unit_of_work_factory() as unit_of_work:
-            workspace = await unit_of_work.identity.get_workspace_by_slug("local")
-            if workspace is None:
-                raise NotFoundError("Workspace", "local")
-            if workspace.kind is not WorkspaceKind.SHARED:
-                raise IdentityInvariantError(
-                    "The local bootstrap workspace must be shared"
-                )
-            if await unit_of_work.identity.count_active_owners(workspace.id) != 0:
-                raise IdentityInvariantError(
-                    "The local workspace already has an active owner"
-                )
-            existing = await unit_of_work.identity.get_unconsumed_bootstrap_mapping(
-                workspace.id
-            )
-            if existing is not None:
-                raise IdentityInvariantError(
-                    "The local workspace already has a pending bootstrap mapping"
-                )
-            mapping = OidcBootstrapOwnerMapping(
-                workspace_id=workspace.id,
-                issuer=issuer,
-                subject=subject,
-            )
-            await unit_of_work.identity.add_bootstrap_mapping(mapping)
-            await unit_of_work.security_audit.add(
-                SecurityAuditEvent(
-                    actor_kind=SecurityAuditActorKind.SYSTEM,
-                    operation="bootstrap.owner.mapping.create",
-                    outcome=SecurityAuditOutcome.SUCCESS,
-                    workspace_id=workspace.id,
-                )
-            )
-            await unit_of_work.commit()
-        return mapping
-
     async def provision_oidc_identity(
         self,
         *,
@@ -584,9 +539,6 @@ class IdentityService:
     ) -> IdentityProvisioningResult:
         """Provision or refresh one validated OIDC identity atomically."""
         async with self._unit_of_work_factory() as unit_of_work:
-            local_workspace = await unit_of_work.identity.lock_workspace_by_slug_for_membership_mutation(
-                "local"
-            )
             identity = await unit_of_work.identity.get_oidc_identity(
                 issuer=issuer,
                 subject=subject,
@@ -617,43 +569,11 @@ class IdentityService:
                             role=WorkspaceRole.OWNER,
                         )
                     )
-                local_membership = await self._consume_local_bootstrap_if_needed(
-                    unit_of_work,
-                    user=user,
-                    issuer=issuer,
-                    subject=subject,
-                )
                 await unit_of_work.commit()
                 return IdentityProvisioningResult(
                     user=user,
                     oidc_identity=identity,
                     personal_workspace=personal_workspace,
-                    local_workspace_membership=local_membership,
-                )
-
-            if local_workspace is None:
-                raise BootstrapOwnerRequiredError(
-                    "Identity provisioning requires the migrated local workspace"
-                )
-            bootstrap_mapping = (
-                await unit_of_work.identity.get_unconsumed_bootstrap_mapping(
-                    local_workspace.id
-                )
-            )
-            local_owner_count = await unit_of_work.identity.count_active_owners(
-                local_workspace.id
-            )
-            local_is_sealed = local_owner_count == 0
-            if local_is_sealed:
-                if bootstrap_mapping is None:
-                    raise BootstrapOwnerRequiredError(
-                        "The local workspace is sealed until its bootstrap owner "
-                        "mapping is configured"
-                    )
-                validate_bootstrap_match(
-                    bootstrap_mapping,
-                    issuer=issuer,
-                    subject=subject,
                 )
 
             user = User(
@@ -677,29 +597,12 @@ class IdentityService:
             await unit_of_work.identity.add_workspace(personal_workspace)
             await unit_of_work.identity.add_membership(personal_membership)
 
-            local_membership = None
-            if local_is_sealed:
-                if bootstrap_mapping is None:
-                    raise BootstrapOwnerRequiredError(
-                        "The local workspace is sealed until its bootstrap owner "
-                        "mapping is configured"
-                    )
-                bootstrap_mapping.consume()
-                local_membership = WorkspaceMembership(
-                    workspace_id=local_workspace.id,
-                    user_id=user.id,
-                    role=WorkspaceRole.OWNER,
-                )
-                await unit_of_work.identity.add_membership(local_membership)
-
             await unit_of_work.security_audit.add(
                 SecurityAuditEvent(
                     actor_kind=SecurityAuditActorKind.UNAUTHENTICATED,
                     operation="oidc.identity.provision",
                     outcome=SecurityAuditOutcome.SUCCESS,
-                    workspace_id=local_workspace.id
-                    if local_membership is not None
-                    else personal_workspace.id,
+                    workspace_id=personal_workspace.id,
                     resource_type="user",
                     resource_id=str(user.id),
                 )
@@ -709,7 +612,6 @@ class IdentityService:
             user=user,
             oidc_identity=identity,
             personal_workspace=personal_workspace,
-            local_workspace_membership=local_membership,
         )
 
     async def create_shared_workspace(
@@ -1050,37 +952,6 @@ class IdentityService:
                 actor_kind=SecurityAuditActorKind.AUTHENTICATED,
                 actor=actor,
             )
-
-    async def _consume_local_bootstrap_if_needed(
-        self,
-        unit_of_work: IdentityUnitOfWorkPort,
-        *,
-        user: User,
-        issuer: str,
-        subject: str,
-    ) -> WorkspaceMembership | None:
-        local_workspace = await unit_of_work.identity.get_workspace_by_slug("local")
-        if local_workspace is None:
-            return None
-        if await unit_of_work.identity.count_active_owners(local_workspace.id) != 0:
-            return None
-        mapping = await unit_of_work.identity.get_unconsumed_bootstrap_mapping(
-            local_workspace.id
-        )
-        if mapping is None:
-            raise BootstrapOwnerRequiredError(
-                "The local workspace is sealed until its bootstrap owner mapping "
-                "is configured"
-            )
-        validate_bootstrap_match(mapping, issuer=issuer, subject=subject)
-        mapping.consume()
-        membership = WorkspaceMembership(
-            workspace_id=local_workspace.id,
-            user_id=user.id,
-            role=WorkspaceRole.OWNER,
-        )
-        await unit_of_work.identity.add_membership(membership)
-        return membership
 
     async def _require_shared_workspace_for_invitation(
         self,

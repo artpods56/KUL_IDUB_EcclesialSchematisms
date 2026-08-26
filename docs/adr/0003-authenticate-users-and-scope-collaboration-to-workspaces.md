@@ -1,6 +1,6 @@
 # ADR 0003: Authenticate users and scope collaboration to workspaces
 
-- **Status:** Accepted; Phase 0–6 implemented; Phase 7 operator release gate open
+- **Status:** Accepted; amended 2026-08-26 to remove the legacy local workspace
 - **Date:** 2026-08-06
 - **Scope:** Identity, workspace tenancy, browser sessions, collaboration authorization, and MCP access
 - **Designs:** [Authentication and workspace tenancy design](../design/authentication-and-workspace-tenancy.md), [realtime Workbench collaboration rework](../design/workbench-realtime-collaboration.md)
@@ -69,11 +69,16 @@ A `WorkspaceMembership` relates one user to one workspace with one role:
   secrets, delete graphs, and rename a shared workspace. Workspace deletion is
   outside this decision.
 
-A normal shared workspace always retains at least one owner. The migrated
-`local` workspace is a sealed bootstrap exception: it exposes no resources
-until the explicitly mapped first OIDC identity consumes the bootstrap record
-and becomes Owner. A personal workspace has its user as its owner and does not
-accept additional memberships.
+A shared workspace always retains at least one owner. A personal workspace has
+its user as its owner and does not accept additional memberships. New OIDC
+identities create only their personal workspace; there is no special local
+workspace or first-owner bootstrap path.
+
+The removal migration deletes the deterministic legacy workspace only when it
+is empty and unowned. When it has an active owner, the migration preserves its
+tenant data and renames it into an ordinary shared workspace. An unowned legacy
+workspace containing tenant data blocks the upgrade so the previous release
+can assign its owner without data loss.
 
 Roles are translated into operation-specific capabilities by the application.
 They are not copied into a long-lived session or treated as a permanent claim.

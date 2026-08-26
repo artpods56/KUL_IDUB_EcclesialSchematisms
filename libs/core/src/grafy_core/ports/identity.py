@@ -6,7 +6,6 @@ from uuid import UUID
 
 from grafy_core.domain.identity import (
     AuthSession,
-    OidcBootstrapOwnerMapping,
     OidcIdentity,
     OidcLoginTransaction,
     PersonalAccessToken,
@@ -95,16 +94,6 @@ class IdentityRepositoryPort(Protocol):
         self,
         user_id: UUID,
     ) -> list[WorkspaceInvitation]: ...
-
-    async def get_unconsumed_bootstrap_mapping(
-        self,
-        workspace_id: UUID,
-    ) -> OidcBootstrapOwnerMapping | None: ...
-
-    async def add_bootstrap_mapping(
-        self,
-        mapping: OidcBootstrapOwnerMapping,
-    ) -> None: ...
 
     async def add_login_transaction(
         self, transaction: OidcLoginTransaction

@@ -53,7 +53,6 @@ interface WorkspaceContextValue {
 export type WorkspaceRouteAccessState = "available" | "missing" | "revoked";
 
 const RAIL_COLLAPSED_KEY = "grafy-workspace-rail-collapsed";
-const LEGACY_RAIL_COLLAPSED_KEY = "ns-workspace-rail-collapsed";
 const RAIL_EXPANDED_WIDTH = 200;
 const RAIL_COLLAPSED_WIDTH = 64;
 const RAIL_COLLAPSE_THRESHOLD = 132;
@@ -74,9 +73,7 @@ function subscribeRailCollapsed(listener: () => void): () => void {
 
 function readRailCollapsed(): boolean {
   try {
-    const stored =
-      window.localStorage.getItem(RAIL_COLLAPSED_KEY) ??
-      window.localStorage.getItem(LEGACY_RAIL_COLLAPSED_KEY);
+    const stored = window.localStorage.getItem(RAIL_COLLAPSED_KEY);
     return stored === "1";
   } catch {
     return false;
