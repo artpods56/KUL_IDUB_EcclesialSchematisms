@@ -13,6 +13,8 @@ import {
   type GraphCommandReceiptMessage,
   type GraphCommandRejectedMessage,
   type GraphRoomStatus,
+  type GraphRoomFailure,
+  type GraphRoomRecoveryReason,
   type GraphRoomTerminalReason,
   type PresenceParticipant,
   type PresenceUpdateSubmit,
@@ -22,10 +24,24 @@ import {
 import { applyRoomCommandToHead } from "./room-command-bridge";
 
 export type { GraphRoomStatus, GraphRoomTerminalReason, RoomGraphCommand };
+export type { GraphRoomFailure, GraphRoomRecoveryReason };
 export type { ActiveExecutionSummary, PresenceParticipant, PresenceUpdateSubmit };
 export { ROOM_COMMAND_QUEUE_CAP, graphRoomWebSocketUrl };
 
 export const PRESENCE_CLIENT_MIN_INTERVAL_MS = 50;
+
+const KNOWN_SERVER_MESSAGE_TYPES = new Set([
+  "room.ready",
+  "room.rehydrate",
+  "presence.join",
+  "presence.leave",
+  "presence.update",
+  "execution.active",
+  "execution.cleared",
+  "graph.command.accepted",
+  "graph.command.receipt",
+  "graph.command.rejected",
+]);
 
 /** True when `incoming` should replace the session's confirmed head snapshot. */
 export function shouldReplaceCollaborativeHead(
@@ -72,6 +88,7 @@ export interface GraphRoomSessionListeners {
   onPresenceChange?: (participants: readonly PresenceParticipant[]) => void;
   onActiveExecution?: (execution: ActiveExecutionSummary | null) => void;
   onExecutionCleared?: (message: ExecutionClearedMessage) => void;
+  onFailureChange?: (failure: GraphRoomFailure | null) => void;
   onTerminalClose?: (reason: GraphRoomTerminalReason) => void;
 }
 
@@ -80,6 +97,7 @@ export interface GraphRoomSessionOptions extends GraphRoomSessionListeners {
   graphId: string;
   webSocketFactory?: (url: string) => WebSocket;
   reconnectDelayMs?: number;
+  maxReconnectAttempts?: number;
   createCommandId?: () => string;
 }
 
@@ -95,20 +113,28 @@ interface QueuedCommand {
   receipt: GraphCommandReceiptMessage | null;
 }
 
+type GraphRoomFailureDetail = Omit<
+  GraphRoomFailure,
+  "workspaceId" | "graphId" | "graphRoomSessionId"
+>;
+
 export class GraphRoomSession {
   readonly workspaceId: string;
   readonly graphId: string;
 
   private readonly webSocketFactory: (url: string) => WebSocket;
   private readonly reconnectDelayMs: number;
+  private readonly maxReconnectAttempts: number;
   private readonly createCommandId: () => string;
   private readonly listeners: GraphRoomSessionListeners;
 
   private socket: WebSocket | null = null;
   private status: GraphRoomStatus = "idle";
   private terminalReason: GraphRoomTerminalReason | null = null;
+  private lastFailure: GraphRoomFailure | null = null;
   private intentionallyClosed = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempts = 0;
   private generation = 0;
 
   private ready: RoomReadyMessage | null = null;
@@ -132,6 +158,7 @@ export class GraphRoomSession {
     this.webSocketFactory =
       options.webSocketFactory ?? ((url) => new WebSocket(url));
     this.reconnectDelayMs = options.reconnectDelayMs ?? 750;
+    this.maxReconnectAttempts = options.maxReconnectAttempts ?? 5;
     this.createCommandId = options.createCommandId ?? (() => crypto.randomUUID());
     this.listeners = {
       onStatusChange: options.onStatusChange,
@@ -143,6 +170,7 @@ export class GraphRoomSession {
       onPresenceChange: options.onPresenceChange,
       onActiveExecution: options.onActiveExecution,
       onExecutionCleared: options.onExecutionCleared,
+      onFailureChange: options.onFailureChange,
       onTerminalClose: options.onTerminalClose,
     };
   }
@@ -153,6 +181,10 @@ export class GraphRoomSession {
 
   getTerminalReason(): GraphRoomTerminalReason | null {
     return this.terminalReason;
+  }
+
+  getLastFailure(): GraphRoomFailure | null {
+    return this.lastFailure;
   }
 
   getHead(): CollaborativeHead | null {
@@ -246,6 +278,15 @@ export class GraphRoomSession {
     this.openSocket();
   }
 
+  retry(): void {
+    if (this.terminalReason !== "reconnect_exhausted") return;
+    this.terminalReason = null;
+    this.intentionallyClosed = false;
+    this.reconnectAttempts = 0;
+    this.clearReconnectTimer();
+    this.openSocket();
+  }
+
   disconnect(): void {
     this.intentionallyClosed = true;
     this.clearReconnectTimer();
@@ -261,6 +302,8 @@ export class GraphRoomSession {
       "Graph room disconnected before the command completed.",
     ));
     this.localCommandIds.clear();
+    this.reconnectAttempts = 0;
+    this.setFailure(null);
     this.setStatus("idle");
     this.ready = null;
     this.clearPresence();
@@ -384,9 +427,20 @@ export class GraphRoomSession {
     let socket: WebSocket;
     try {
       socket = this.webSocketFactory(url);
-    } catch {
-      this.setStatus("unsynchronized");
-      this.scheduleReconnect();
+    } catch (error) {
+      this.recoverTraffic({
+        reason: "connection_lost",
+        retryable: true,
+        side: "network",
+        phase: "connect",
+        messageType: null,
+        protocolVersion: ROOM_PROTOCOL_VERSION,
+        closeCode: null,
+        detail:
+          error instanceof Error
+            ? error.message
+            : "The graph-room connection could not be opened.",
+      });
       return;
     }
 
@@ -419,8 +473,20 @@ export class GraphRoomSession {
     if (typeof data === "string") {
       try {
         raw = JSON.parse(data) as unknown;
-      } catch {
-        this.stopTraffic("protocol_error");
+      } catch (error) {
+        this.recoverTraffic({
+          reason: "protocol_error",
+          retryable: true,
+          side: "server",
+          phase: "receive",
+          messageType: null,
+          protocolVersion: null,
+          closeCode: null,
+          detail:
+            error instanceof Error
+              ? error.message
+              : "The server sent malformed JSON.",
+        });
         return;
       }
     }
@@ -432,9 +498,50 @@ export class GraphRoomSession {
     ) {
       return;
     }
+    const messageType =
+      typeof raw === "object" &&
+      raw !== null &&
+      "type" in raw &&
+      typeof (raw as { type?: unknown }).type === "string"
+        ? (raw as { type: string }).type
+        : null;
+    const protocolVersion =
+      typeof raw === "object" &&
+      raw !== null &&
+      "protocol_version" in raw &&
+      typeof (raw as { protocol_version?: unknown }).protocol_version === "number"
+        ? (raw as { protocol_version: number }).protocol_version
+        : null;
+    if (protocolVersion !== ROOM_PROTOCOL_VERSION) {
+      this.stopTraffic("protocol_incompatible", {
+        reason: "protocol_incompatible",
+        retryable: false,
+        side: "client",
+        phase: "receive",
+        messageType,
+        protocolVersion,
+        closeCode: null,
+        detail: `Expected graph-room protocol ${ROOM_PROTOCOL_VERSION}, received ${protocolVersion ?? "no version"}.`,
+      });
+      return;
+    }
+    if (messageType !== null && !KNOWN_SERVER_MESSAGE_TYPES.has(messageType)) {
+      return;
+    }
     const message = parseServerRoomMessage(raw);
     if (message === null) {
-      this.stopTraffic("protocol_error");
+      this.recoverTraffic({
+        reason: "protocol_error",
+        retryable: true,
+        side: "server",
+        phase: "receive",
+        messageType,
+        protocolVersion,
+        closeCode: null,
+        detail: messageType
+          ? `The server sent a malformed ${messageType} message.`
+          : "The server sent a message without a valid type.",
+      });
       return;
     }
 
@@ -495,7 +602,16 @@ export class GraphRoomSession {
       message.workspace_id !== this.workspaceId ||
       message.graph_id !== this.graphId
     ) {
-      this.stopTraffic("protocol_error");
+      this.recoverTraffic({
+        reason: "protocol_error",
+        retryable: true,
+        side: "server",
+        phase: "receive",
+        messageType: message.type,
+        protocolVersion: message.protocol_version,
+        closeCode: null,
+        detail: "The room-ready message identified a different workspace or graph.",
+      });
       return;
     }
     let ready = message;
@@ -518,6 +634,8 @@ export class GraphRoomSession {
     this.presenceSequence = 0;
     this.lastPresenceSentAt = 0;
     this.activeExecution = message.active_execution;
+    this.reconnectAttempts = 0;
+    this.setFailure(null);
     this.setStatus("ready");
     this.listeners.onReady?.(ready);
     this.listeners.onActiveExecution?.(message.active_execution);
@@ -739,30 +857,76 @@ export class GraphRoomSession {
   }
 
   private handleClose(code: number, reason: string): void {
-    const terminal = terminalReasonFromClose(code, reason);
-    if (terminal !== null) {
-      this.stopTraffic(terminal);
+    const classifiedReason = terminalReasonFromClose(code, reason);
+    if (
+      classifiedReason === "access_revoked" ||
+      classifiedReason === "graph_deleted"
+    ) {
+      this.stopTraffic(classifiedReason, {
+        reason: classifiedReason,
+        retryable: false,
+        side: "server",
+        phase: "close",
+        messageType: null,
+        protocolVersion: ROOM_PROTOCOL_VERSION,
+        closeCode: code,
+        detail: reason || `The server closed the graph room (${classifiedReason}).`,
+      });
       return;
     }
+    if (this.intentionallyClosed) {
+      this.setStatus("idle");
+      return;
+    }
+    const recoveryReason: GraphRoomRecoveryReason =
+      classifiedReason === "permissions_changed" ||
+      classifiedReason === "protocol_error" ||
+      classifiedReason === "slow_consumer"
+        ? classifiedReason
+        : "connection_lost";
+    this.recoverTraffic({
+      reason: recoveryReason,
+      retryable: true,
+      side: classifiedReason === null ? "network" : "server",
+      phase: "close",
+      messageType: null,
+      protocolVersion: ROOM_PROTOCOL_VERSION,
+      closeCode: code,
+      detail: reason || "The graph-room connection closed unexpectedly.",
+    });
+  }
+
+  private recoverTraffic(failure: GraphRoomFailureDetail): void {
+    this.setFailure(this.failureWithContext(failure));
     this.ready = null;
+    this.capabilities = [];
+    this.authorizationVersion = null;
+    this.activeExecution = null;
+    this.listeners.onActiveExecution?.(null);
     this.clearPresence();
     if (this.inFlight) {
       const interrupted = this.inFlight;
       this.inFlight = null;
       this.queue.unshift(interrupted);
     }
-    if (this.intentionallyClosed) {
-      this.setStatus("idle");
-      return;
+    this.generation += 1;
+    const socket = this.socket;
+    this.socket = null;
+    if (socket && socket.readyState < WebSocket.CLOSING) {
+      socket.close();
     }
     this.setStatus("unsynchronized");
     this.scheduleReconnect();
   }
 
-  private stopTraffic(reason: GraphRoomTerminalReason): void {
+  private stopTraffic(
+    reason: GraphRoomTerminalReason,
+    failure?: GraphRoomFailureDetail,
+  ): void {
     this.intentionallyClosed = true;
     this.clearReconnectTimer();
     this.terminalReason = reason;
+    if (failure) this.setFailure(this.failureWithContext(failure));
     this.ready = null;
     this.capabilities = [];
     this.authorizationVersion = null;
@@ -777,7 +941,7 @@ export class GraphRoomSession {
       new GraphRoomCommandError(
         "",
         reason,
-        `Graph room closed (${reason}). Protected traffic has stopped.`,
+        `Graph room closed (${reason}). The displayed graph is not trusted for graph operations.`,
       ),
     );
     this.setStatus("stopped");
@@ -801,12 +965,32 @@ export class GraphRoomSession {
 
   private scheduleReconnect(): void {
     if (this.intentionallyClosed || this.terminalReason !== null) return;
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      const priorFailure = this.lastFailure;
+      this.stopTraffic("reconnect_exhausted", {
+        reason: "reconnect_exhausted",
+        retryable: true,
+        side: priorFailure?.side ?? "network",
+        phase: priorFailure?.phase ?? "connect",
+        messageType: priorFailure?.messageType ?? null,
+        protocolVersion:
+          priorFailure?.protocolVersion ?? ROOM_PROTOCOL_VERSION,
+        closeCode: priorFailure?.closeCode ?? null,
+        detail: `Automatic reconnection stopped after ${this.maxReconnectAttempts} attempts.`,
+      });
+      return;
+    }
     this.clearReconnectTimer();
+    const delay = Math.min(
+      this.reconnectDelayMs * 2 ** this.reconnectAttempts,
+      10_000,
+    );
+    this.reconnectAttempts += 1;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this.intentionallyClosed || this.terminalReason !== null) return;
       this.openSocket();
-    }, this.reconnectDelayMs);
+    }, delay);
   }
 
   private clearReconnectTimer(): void {
@@ -819,5 +1003,24 @@ export class GraphRoomSession {
     if (this.status === status) return;
     this.status = status;
     this.listeners.onStatusChange?.(status);
+  }
+
+  private setFailure(failure: GraphRoomFailure | null): void {
+    this.lastFailure = failure;
+    this.listeners.onFailureChange?.(failure);
+  }
+
+  private failureWithContext(
+    failure: GraphRoomFailureDetail,
+  ): GraphRoomFailure {
+    return {
+      workspaceId: this.workspaceId,
+      graphId: this.graphId,
+      graphRoomSessionId:
+        this.getGraphRoomSessionId() ??
+        this.lastFailure?.graphRoomSessionId ??
+        null,
+      ...failure,
+    };
   }
 }

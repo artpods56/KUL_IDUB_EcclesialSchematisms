@@ -220,6 +220,7 @@ class AuthService:
             if not isinstance(subject, str) or not subject:
                 raise OidcProtocolError("missing_subject", transaction_consumed=True)
             email = claims.get("email")
+            email_verified = claims.get("email_verified") is True
             display_name = claims.get("name")
             if not isinstance(email, str):
                 email = None
@@ -231,6 +232,7 @@ class AuthService:
                     subject=subject,
                     email=email,
                     display_name=display_name,
+                    email_verified=email_verified,
                 )
             except UserDisabledError as exc:
                 raise OidcProtocolError(

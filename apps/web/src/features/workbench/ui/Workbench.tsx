@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 
 import { ExecutionHistoryDrawer } from "./ExecutionHistoryDrawer";
+import { GraphRoomRecoveryNotice } from "./GraphRoomRecoveryNotice";
 import { GlobalIssueToastList, type GlobalIssue } from "./GlobalIssueToastList";
 import {
   WorkbenchActivityBar,
@@ -95,6 +96,7 @@ import {
   GraphRoomCommandError,
   PRESENCE_CLIENT_MIN_INTERVAL_MS,
   PresenceOverlay,
+  graphReadiness,
   remoteSelectionColor,
   shouldReplaceCollaborativeHead,
   toLocalGraphCommand,
@@ -1625,13 +1627,14 @@ function WorkbenchBody({
         router.replace(`/workspaces/${encodeURIComponent(workspaceSlug)}`);
         return;
       }
-      if (reason === "permissions_changed") {
-        // Stopped traffic; leave remount/reload to the operator.
-        // Protected caches are cleared so stale authority is not reused.
-        purgeLocalGraphState();
-      }
     },
   });
+  const displayedGraphReadiness = graphReadiness(
+    graphRoom.status,
+    graphRoom.head !== null,
+  );
+  const graphOperationsTrusted =
+    !activeGraph || displayedGraphReadiness.trusted;
   const canSubmitRoomCommands = graphRoom.canSubmitCommands;
   const submitRoomCommand = graphRoom.submitCommand;
   const reconcileCheckpointHead = graphRoom.reconcileCheckpointHead;
@@ -1805,7 +1808,9 @@ function WorkbenchBody({
   const localAuthoringEnabled =
     !graphOperationBusy &&
     (activeGraph
-      ? canEditGraph && graphRoom.canSubmitCommands
+      ? canEditGraph &&
+        graphOperationsTrusted &&
+        graphRoom.canSubmitCommands
       : initialGraphId === null && canCreateGraph);
   const localAuthoringBlockedMessage = !(activeGraph
     ? canEditGraph
@@ -1950,9 +1955,13 @@ function WorkbenchBody({
   ).length;
   const runSelectionBusy = !registry || running || selectedWorkflowCount === 0;
   const runSelectedDisabled =
-    !canExecuteGraph || runSelectionBusy || !selectedNodesAreRunnable;
+    !canExecuteGraph ||
+    !graphOperationsTrusted ||
+    runSelectionBusy ||
+    !selectedNodesAreRunnable;
   const runSelectedWithDependenciesDisabled =
     !canExecuteGraph ||
+    !graphOperationsTrusted ||
     runSelectionBusy ||
     !selectedWithDependenciesAreRunnable;
   const globalIssues = React.useMemo<GlobalIssue[]>(() => {
@@ -3914,6 +3923,16 @@ function WorkbenchBody({
       >
         {executionAnnouncement}
       </span>
+      {activeGraph ? (
+        <GraphRoomRecoveryNotice
+          readiness={displayedGraphReadiness.state}
+          status={graphRoom.status}
+          failure={graphRoom.failure}
+          terminalReason={graphRoom.terminalReason}
+          onRetry={graphRoom.retry}
+          onReload={() => window.location.reload()}
+        />
+      ) : null}
       <section
         {...stylex.props(s.canvas)}
         aria-label="Workflow canvas"
@@ -3982,7 +4001,9 @@ function WorkbenchBody({
                 type="button"
                 disabled={runSelectedDisabled}
                 title={
-                  selectedNodesAreRunnable
+                  !graphOperationsTrusted
+                    ? "Run is unavailable until the displayed graph is current"
+                    : selectedNodesAreRunnable
                     ? "Run only the selected nodes; latest accessible upstream outputs are pinned"
                     : "Unavailable or invalid selected nodes cannot run"
                 }
@@ -4000,7 +4021,9 @@ function WorkbenchBody({
                 type="button"
                 disabled={runSelectedWithDependenciesDisabled}
                 title={
-                  selectedWithDependenciesAreRunnable
+                  !graphOperationsTrusted
+                    ? "Run is unavailable until the displayed graph is current"
+                    : selectedWithDependenciesAreRunnable
                     ? `Run the selection and every upstream dependency (${selectedWithDependenciesCount} total)`
                     : "Unavailable or invalid upstream dependencies cannot run"
                 }
@@ -4081,9 +4104,11 @@ function WorkbenchBody({
           title={
             running
               ? "Stop the current execution before opening Module setup"
+              : !graphOperationsTrusted
+                ? "Module setup is unavailable until the displayed graph is current"
               : "Set up and publish this graph as a Module"
           }
-          disabled={running}
+          disabled={running || !graphOperationsTrusted}
           {...stylex.props(s.railButton)}
           onClick={() => {
             closeGraphBrowser();

@@ -1,7 +1,7 @@
 """Remove the special local workspace and bootstrap-owner mapping.
 
-Revision ID: 0022_remove_local_workspace
-Revises: 0021_plugin_release_revocations
+Revision ID: 0023_remove_local_workspace
+Revises: 0022_workspace_invitations
 Create Date: 2026-08-26
 """
 
@@ -13,8 +13,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0022_remove_local_workspace"
-down_revision: str | Sequence[str] | None = "0021_plugin_release_revocations"
+revision: str = "0023_remove_local_workspace"
+down_revision: str | Sequence[str] | None = "0022_workspace_invitations"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -41,9 +41,7 @@ _DIRECT_WORKSPACE_RESOURCES = (
 def upgrade() -> None:
     connection = op.get_bind()
     local_workspace = connection.execute(
-        sa.text(
-            "SELECT id, kind FROM workspaces WHERE slug = 'local'"
-        )
+        sa.text("SELECT id, kind FROM workspaces WHERE slug = 'local'")
     ).one_or_none()
 
     if local_workspace is not None:
@@ -66,8 +64,7 @@ def upgrade() -> None:
         resource_counts = {
             table_name: connection.execute(
                 sa.text(
-                    f"SELECT COUNT(*) FROM {table_name} "
-                    "WHERE workspace_id = :local_id"
+                    f"SELECT COUNT(*) FROM {table_name} WHERE workspace_id = :local_id"
                 ).bindparams(local_id),
                 {"local_id": LOCAL_WORKSPACE_ID},
             ).scalar_one()
@@ -102,10 +99,13 @@ def upgrade() -> None:
         else:
             migrated_slug = "migrated-workspace"
             suffix = 2
-            while connection.execute(
-                sa.text("SELECT 1 FROM workspaces WHERE slug = :slug"),
-                {"slug": migrated_slug},
-            ).first() is not None:
+            while (
+                connection.execute(
+                    sa.text("SELECT 1 FROM workspaces WHERE slug = :slug"),
+                    {"slug": migrated_slug},
+                ).first()
+                is not None
+            ):
                 migrated_slug = f"migrated-workspace-{suffix}"
                 suffix += 1
             connection.execute(
@@ -197,9 +197,7 @@ def downgrade() -> None:
         sa.ForeignKeyConstraint(
             ["workspace_id"],
             ["workspaces.id"],
-            name=op.f(
-                "fk_oidc_bootstrap_owner_mappings_workspace_id_workspaces"
-            ),
+            name=op.f("fk_oidc_bootstrap_owner_mappings_workspace_id_workspaces"),
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint(

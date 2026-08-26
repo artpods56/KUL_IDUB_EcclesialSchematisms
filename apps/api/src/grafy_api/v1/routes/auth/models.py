@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 from grafy_core.domain.identity import (
     WorkspaceCapability,
+    WorkspaceInvitationStatus,
     WorkspaceKind,
     WorkspaceRole,
     normalize_workspace_slug,
@@ -66,11 +67,56 @@ class WorkspaceCreateRequest(BaseModel):
         return value
 
 
-class WorkspaceMemberRequest(BaseModel):
+class WorkspaceInvitationCandidateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    user_id: UUID
+    email: str = Field(min_length=3, max_length=320)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        email = value.strip()
+        if "@" not in email:
+            raise ValueError("email must be a valid address")
+        return email
+
+
+class WorkspaceInvitationCreateRequest(WorkspaceInvitationCandidateRequest):
     role: WorkspaceRole
+
+
+class WorkspaceInvitationPersonResponse(BaseModel):
+    email: str | None
+    display_name: str | None
+
+
+class WorkspaceInvitationCandidateResponse(BaseModel):
+    recipient: WorkspaceInvitationPersonResponse
+
+
+class WorkspaceInvitationOwnerResponse(BaseModel):
+    id: UUID
+    recipient: WorkspaceInvitationPersonResponse
+    role: WorkspaceRole
+    status: WorkspaceInvitationStatus
+    expires_at: datetime
+    created_at: datetime
+
+
+class WorkspaceInvitationWorkspaceResponse(BaseModel):
+    id: UUID
+    slug: str
+    name: str
+
+
+class WorkspaceInvitationRecipientResponse(BaseModel):
+    id: UUID
+    workspace: WorkspaceInvitationWorkspaceResponse
+    invited_by: WorkspaceInvitationPersonResponse
+    role: WorkspaceRole
+    status: WorkspaceInvitationStatus
+    expires_at: datetime
+    created_at: datetime
 
 
 class WorkspaceMemberRoleRequest(BaseModel):

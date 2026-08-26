@@ -50,6 +50,20 @@ vi.mock("@/components/threshold-status", () => ({
   ThresholdStatus: () => null,
 }));
 
+vi.mock("@/components/ui/dialog", () => ({
+  Dialog: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
+    open ? React.createElement("div", { role: "dialog" }, children) : null,
+  DialogBody: ({ children }: { children: React.ReactNode }) => React.createElement("div", null, children),
+  DialogContent: ({ children }: { children: React.ReactNode }) => React.createElement("div", null, children),
+  DialogDescription: ({ children }: { children: React.ReactNode }) => React.createElement("p", null, children),
+  DialogHeader: ({ children }: { children: React.ReactNode }) => React.createElement("div", null, children),
+  DialogTitle: ({ children }: { children: React.ReactNode }) => React.createElement("h2", null, children),
+}));
+
+vi.mock("swr", () => ({
+  useSWRConfig: () => ({ mutate: vi.fn() }),
+}));
+
 vi.mock("@/features/auth/AuthSessionBoundary", () => ({
   useAuthSession: () => ({ session: testSession, logout: vi.fn() }),
 }));
@@ -64,6 +78,7 @@ vi.mock("@/hooks/use-api", () => ({
     mutate: vi.fn(),
   }),
   useWorkspaces: () => ({ data: [] }),
+  useMyWorkspaceInvitations: () => ({ data: [], mutate: vi.fn() }),
 }));
 
 const mountedRoots = new Set<Root>();

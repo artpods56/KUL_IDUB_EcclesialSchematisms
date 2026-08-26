@@ -31,6 +31,7 @@ from grafy_core.domain.artifact_outputs import (
 from grafy_core.domain.saved_graphs import SavedGraphDocument
 from grafy_core.domain.identity import (
     WorkspaceCapability,
+    WorkspaceInvitationStatus,
     WorkspaceKind,
     WorkspaceRole,
 )
@@ -401,6 +402,27 @@ class WorkspaceRoleType(TypeDecorator[WorkspaceRole]):
     ) -> WorkspaceRole | None:
         del dialect
         return None if value is None else WorkspaceRole(value)
+
+
+class WorkspaceInvitationStatusType(TypeDecorator[WorkspaceInvitationStatus]):
+    impl = String(16)
+    cache_ok = True
+
+    def process_bind_param(
+        self,
+        value: WorkspaceInvitationStatus | None,
+        dialect: Dialect,
+    ) -> str | None:
+        del dialect
+        return None if value is None else WorkspaceInvitationStatus(value).value
+
+    def process_result_value(
+        self,
+        value: str | None,
+        dialect: Dialect,
+    ) -> WorkspaceInvitationStatus | None:
+        del dialect
+        return None if value is None else WorkspaceInvitationStatus(value)
 
 
 class ModulePublicationStateType(TypeDecorator[ModulePublicationState]):
@@ -932,11 +954,19 @@ users = Table(
     metadata,
     Column("id", SaUuid(as_uuid=True), primary_key=True),
     Column("email", String(320), nullable=True),
+    Column("normalized_email", String(320), nullable=True),
+    Column("email_verified", Boolean, nullable=False, default=False),
     Column("display_name", String(160), nullable=True),
     Column("active", Boolean, nullable=False, default=True),
     Column("created_at", UTCDateTime(), nullable=False),
     Column("updated_at", UTCDateTime(), nullable=False),
     Index("ix_users_active_updated_at", "active", "updated_at"),
+    Index(
+        "ix_users_invitation_email",
+        "normalized_email",
+        "email_verified",
+        "active",
+    ),
 )
 
 
@@ -1060,6 +1090,74 @@ workspace_memberships = Table(
         "workspace_id",
         "role",
         "revoked_at",
+    ),
+)
+
+
+workspace_invitations = Table(
+    "workspace_invitations",
+    metadata,
+    Column("id", SaUuid(as_uuid=True), primary_key=True),
+    Column(
+        "workspace_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column(
+        "invitee_user_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column(
+        "invited_by_user_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    Column("role", WorkspaceRoleType(), nullable=False),
+    Column("status", WorkspaceInvitationStatusType(), nullable=False),
+    Column("expires_at", UTCDateTime(), nullable=False),
+    Column("resolved_at", UTCDateTime(), nullable=True),
+    Column("created_at", UTCDateTime(), nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
+    CheckConstraint(
+        "role IN ('viewer', 'editor', 'owner')",
+        name="ck_workspace_invitations_role_choice",
+    ),
+    CheckConstraint(
+        "status IN ('pending', 'accepted', 'declined', 'cancelled', 'expired')",
+        name="ck_workspace_invitations_status_choice",
+    ),
+    CheckConstraint(
+        "(status = 'pending' AND resolved_at IS NULL) OR "
+        "(status != 'pending' AND resolved_at IS NOT NULL)",
+        name="ck_workspace_invitations_resolution_shape",
+    ),
+    CheckConstraint(
+        "expires_at > created_at",
+        name="ck_workspace_invitations_expiry_after_creation",
+    ),
+    Index(
+        "ix_workspace_invitations_invitee_status_expiry",
+        "invitee_user_id",
+        "status",
+        "expires_at",
+    ),
+    Index(
+        "ix_workspace_invitations_workspace_status_expiry",
+        "workspace_id",
+        "status",
+        "expires_at",
+    ),
+    Index(
+        "uq_workspace_invitations_pending_recipient",
+        "workspace_id",
+        "invitee_user_id",
+        unique=True,
+        sqlite_where=text("status = 'pending'"),
+        postgresql_where=text("status = 'pending'"),
     ),
 )
 

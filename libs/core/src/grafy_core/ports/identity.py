@@ -11,6 +11,7 @@ from grafy_core.domain.identity import (
     PersonalAccessToken,
     User,
     Workspace,
+    WorkspaceInvitation,
     WorkspaceMembership,
 )
 from grafy_core.domain.security_audit import SecurityAuditEvent
@@ -20,6 +21,11 @@ class IdentityRepositoryPort(Protocol):
     async def add_user(self, user: User) -> None: ...
 
     async def get_user(self, user_id: UUID) -> User | None: ...
+
+    async def find_active_users_by_verified_email(
+        self,
+        normalized_email: str,
+    ) -> list[User]: ...
 
     async def get_oidc_identity(
         self,
@@ -68,6 +74,26 @@ class IdentityRepositoryPort(Protocol):
     ) -> list[WorkspaceMembership]: ...
 
     async def count_active_owners(self, workspace_id: UUID) -> int: ...
+
+    async def add_workspace_invitation(
+        self,
+        invitation: WorkspaceInvitation,
+    ) -> None: ...
+
+    async def get_workspace_invitation(
+        self,
+        invitation_id: UUID,
+    ) -> WorkspaceInvitation | None: ...
+
+    async def list_workspace_invitations(
+        self,
+        workspace_id: UUID,
+    ) -> list[WorkspaceInvitation]: ...
+
+    async def list_workspace_invitations_for_user(
+        self,
+        user_id: UUID,
+    ) -> list[WorkspaceInvitation]: ...
 
     async def add_login_transaction(
         self, transaction: OidcLoginTransaction

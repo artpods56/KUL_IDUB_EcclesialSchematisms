@@ -416,7 +416,12 @@ async def test_protocol_issuer_successfully_provisions_identity_and_rotates_sess
             nonce = parse_qs(urlsplit(cast(str, protocol_state["url"])).query)["nonce"][
                 0
             ]
-            claims = _claims(nonce=nonce, sub="provider-user")
+            claims = _claims(
+                nonce=nonce,
+                sub="provider-user",
+                email="provider@example.test",
+                email_verified=True,
+            )
             token = _signed_token(private_key, claims)
             return httpx.Response(
                 200,
@@ -495,7 +500,9 @@ async def test_protocol_issuer_successfully_provisions_identity_and_rotates_sess
         current_session_cookie=old_session.cookie_value,
     )
 
-    assert provisioned.user.email is None
+    assert provisioned.user.email == "provider@example.test"
+    assert provisioned.user.email_verified
+    assert provisioned.user.normalized_email == "provider@example.test"
     assert return_path == "/after-login"
     assert replacement.cookie_value != old_session.cookie_value
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:

@@ -8,6 +8,7 @@ import {
   GraphRoomSession,
   type ActiveExecutionSummary,
   type GraphRoomAcceptedMeta,
+  type GraphRoomFailure,
   type GraphRoomStatus,
   type GraphRoomTerminalReason,
   type PresenceParticipant,
@@ -34,6 +35,7 @@ export interface GraphRoomSubmitResult {
 export interface UseGraphRoomSessionResult {
   readonly status: GraphRoomStatus;
   readonly terminalReason: GraphRoomTerminalReason | null;
+  readonly failure: GraphRoomFailure | null;
   readonly head: CollaborativeHead | null;
   readonly capabilities: readonly string[];
   readonly authorizationVersion: number | null;
@@ -55,6 +57,7 @@ export interface UseGraphRoomSessionResult {
   readonly publishPresence: (
     update: Omit<PresenceUpdateSubmit, "presence_sequence">,
   ) => boolean;
+  readonly retry: () => void;
 }
 
 interface UseGraphRoomSessionOptions {
@@ -89,6 +92,7 @@ export function useGraphRoomSession({
   const [status, setStatus] = React.useState<GraphRoomStatus>("idle");
   const [terminalReason, setTerminalReason] =
     React.useState<GraphRoomTerminalReason | null>(null);
+  const [failure, setFailure] = React.useState<GraphRoomFailure | null>(null);
   const [head, setHead] = React.useState<CollaborativeHead | null>(null);
   const [capabilities, setCapabilities] = React.useState<readonly string[]>([]);
   const [authorizationVersion, setAuthorizationVersion] = React.useState<
@@ -146,8 +150,11 @@ export function useGraphRoomSession({
       onStatusChange: (nextStatus) => {
         setStateGraphId(graphId);
         setStatus(nextStatus);
+        if (nextStatus === "connecting" || nextStatus === "reconnecting") {
+          setTerminalReason(null);
+        }
         if (nextStatus !== "connecting") return;
-        setTerminalReason(null);
+        setFailure(null);
         setHead(null);
         setCapabilities([]);
         setAuthorizationVersion(null);
@@ -160,6 +167,7 @@ export function useGraphRoomSession({
         setCapabilities(ready.capabilities.capabilities);
         setAuthorizationVersion(ready.capabilities.authorization_version);
         setTerminalReason(null);
+        setFailure(null);
         setLocalSessionId(ready.graph_room_session_id);
         setParticipants(ready.participants);
         setActiveExecution(ready.active_execution);
@@ -183,6 +191,15 @@ export function useGraphRoomSession({
         onCommandRejectedRef.current?.(message);
       },
       onPresenceChange: setParticipants,
+      onFailureChange: (nextFailure) => {
+        setFailure(nextFailure);
+        if (!nextFailure) return;
+        setCapabilities([]);
+        setAuthorizationVersion(null);
+        setParticipants([]);
+        setActiveExecution(null);
+        setLocalSessionId(null);
+      },
       onActiveExecution: (execution) => {
         setActiveExecution(execution);
         onActiveExecutionRef.current?.(execution);
@@ -214,6 +231,7 @@ export function useGraphRoomSession({
   const stateIsCurrent = graphId !== null && stateGraphId === graphId;
   const currentStatus = stateIsCurrent ? status : "idle";
   const currentTerminalReason = stateIsCurrent ? terminalReason : null;
+  const currentFailure = stateIsCurrent ? failure : null;
   const currentHead = stateIsCurrent ? head : null;
   const currentCapabilities = stateIsCurrent ? capabilities : [];
   const currentAuthorizationVersion = stateIsCurrent
@@ -287,9 +305,15 @@ export function useGraphRoomSession({
     [graphId],
   );
 
+  const retry = React.useCallback(() => {
+    if (!graphId) return;
+    sessionRef.current?.retry();
+  }, [graphId]);
+
   return {
     status: currentStatus,
     terminalReason: currentTerminalReason,
+    failure: currentFailure,
     head: currentHead,
     capabilities: currentCapabilities,
     authorizationVersion: currentAuthorizationVersion,
@@ -309,5 +333,6 @@ export function useGraphRoomSession({
     replaceHead,
     reconcileCheckpointHead,
     publishPresence,
+    retry,
   };
 }

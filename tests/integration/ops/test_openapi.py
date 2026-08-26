@@ -78,6 +78,12 @@ def test_openapi_contains_exact_public_routes(settings: Settings) -> None:
         "/v1/workspaces",
         "/v1/workspaces/{workspace_id}/members",
         "/v1/workspaces/{workspace_id}/members/{user_id}",
+        "/v1/workspaces/{workspace_id}/invitation-candidates/resolve",
+        "/v1/workspaces/{workspace_id}/invitations",
+        "/v1/workspaces/{workspace_id}/invitations/{invitation_id}",
+        "/v1/me/invitations",
+        "/v1/me/invitations/{invitation_id}/accept",
+        "/v1/me/invitations/{invitation_id}/decline",
         "/v1/workspaces/{workspace_id}/personal-access-tokens",
         "/v1/workspaces/{workspace_id}/personal-access-tokens/{token_id}",
     }

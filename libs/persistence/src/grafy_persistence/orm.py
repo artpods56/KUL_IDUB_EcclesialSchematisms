@@ -14,6 +14,7 @@ from grafy_core.domain.identity import (
     PersonalAccessToken,
     User,
     Workspace,
+    WorkspaceInvitation,
     WorkspaceMembership,
 )
 from grafy_core.domain.execution_history import (
@@ -143,6 +144,10 @@ def start_mappers() -> None:
     mapper_registry.map_imperatively(
         WorkspaceMembership,
         schema.workspace_memberships,
+    )
+    mapper_registry.map_imperatively(
+        WorkspaceInvitation,
+        schema.workspace_invitations,
     )
     mapper_registry.map_imperatively(AuthSession, schema.auth_sessions)
     mapper_registry.map_imperatively(
