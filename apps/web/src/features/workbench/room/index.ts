@@ -11,6 +11,8 @@ export {
   type GraphRoomSessionOptions,
   type ActiveExecutionSummary,
   type GraphRoomStatus,
+  type GraphRoomFailure,
+  type GraphRoomRecoveryReason,
   type GraphRoomTerminalReason,
   type PresenceParticipant,
   type PresenceUpdateSubmit,
@@ -32,6 +34,11 @@ export {
   type UseGraphRoomSessionResult,
 } from "./useGraphRoomSession";
 export { useRemoteDragPreviews } from "./useRemoteDragPreviews";
+export {
+  graphReadiness,
+  type GraphReadiness,
+  type GraphReadinessState,
+} from "./graph-readiness";
 export type {
   ExecutionActiveMessage,
   ExecutionClearedMessage,

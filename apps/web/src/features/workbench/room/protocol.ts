@@ -16,11 +16,30 @@ export const CLOSE_GRAPH_DELETED = 4010;
 export type RoomGraphCommand = SubmitGraphCommandRequest["command"];
 
 export type GraphRoomTerminalReason =
-  | "permissions_changed"
   | "access_revoked"
   | "graph_deleted"
+  | "protocol_incompatible"
+  | "reconnect_exhausted";
+
+export type GraphRoomRecoveryReason =
+  | "connection_lost"
+  | "permissions_changed"
   | "protocol_error"
   | "slow_consumer";
+
+export interface GraphRoomFailure {
+  readonly workspaceId: string;
+  readonly graphId: string;
+  readonly graphRoomSessionId: string | null;
+  readonly reason: GraphRoomRecoveryReason | GraphRoomTerminalReason;
+  readonly retryable: boolean;
+  readonly side: "client" | "server" | "network";
+  readonly phase: "connect" | "receive" | "close";
+  readonly messageType: string | null;
+  readonly protocolVersion: number | null;
+  readonly closeCode: number | null;
+  readonly detail: string;
+}
 
 export type GraphRoomStatus =
   | "idle"
@@ -573,7 +592,7 @@ export function parseServerRoomMessage(raw: unknown): ServerRoomMessage | null {
 export function terminalReasonFromClose(
   code: number,
   reason: string,
-): GraphRoomTerminalReason | null {
+): GraphRoomRecoveryReason | GraphRoomTerminalReason | null {
   const normalized = reason.trim();
   if (
     code === CLOSE_PERMISSIONS_CHANGED ||
