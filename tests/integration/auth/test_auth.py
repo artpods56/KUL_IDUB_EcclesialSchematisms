@@ -18,7 +18,7 @@ from grafy_api.v1.routes.auth.models import (
     PersonalAccessTokenCreateRequest,
     PersonalAccessTokenScope,
     WorkspaceCreateRequest,
-    WorkspaceMemberRequest,
+    WorkspaceInvitationCreateRequest,
 )
 from grafy_api.v1.routes.auth.services import (
     OIDC_TRANSACTION_COOKIE,
@@ -887,9 +887,9 @@ async def test_workspace_failure_audits_preserve_route_metadata(
         with client_with_overrides(settings=app_settings) as client:
             api = GrafyApi(client)
             api.authenticate(viewer_issued)
-            capability = api.workspace(workspace.id).add_member(
-                WorkspaceMemberRequest(
-                    user_id=owner.id,
+            capability = api.workspace(workspace.id).create_invitation(
+                WorkspaceInvitationCreateRequest(
+                    email=owner.email or "owner@example.test",
                     role=WorkspaceRole.VIEWER,
                 ),
                 headers=_csrf_headers(viewer_issued),
@@ -933,9 +933,9 @@ async def test_workspace_failure_audits_preserve_route_metadata(
         ] == [
             (
                 SecurityAuditActorKind.AUTHENTICATED,
-                "workspace.membership.upsert",
-                workspace.id,
-                "user",
+                    "workspace.invitation.create",
+                    workspace.id,
+                    "workspace_invitation",
                 None,
                 "capability_denied",
             ),

@@ -7,9 +7,18 @@ export type User = Schemas["UserResponse"];
 export type Workspace = Schemas["WorkspaceResponse"];
 export type WorkspaceCreateRequest = Schemas["WorkspaceCreateRequest"];
 export type WorkspaceMember = Schemas["WorkspaceMemberResponse"];
-export type WorkspaceMemberRequest = Schemas["WorkspaceMemberRequest"];
 export type WorkspaceMemberRoleRequest =
   Schemas["WorkspaceMemberRoleRequest"];
+export type WorkspaceInvitationCandidateRequest =
+  Schemas["WorkspaceInvitationCandidateRequest"];
+export type WorkspaceInvitationCandidate =
+  Schemas["WorkspaceInvitationCandidateResponse"];
+export type WorkspaceInvitationCreateRequest =
+  Schemas["WorkspaceInvitationCreateRequest"];
+export type WorkspaceInvitation =
+  Schemas["WorkspaceInvitationOwnerResponse"];
+export type WorkspaceInvitationForRecipient =
+  Schemas["WorkspaceInvitationRecipientResponse"];
 export type WorkspaceCapability = Schemas["WorkspaceCapability"];
 export type WorkspaceRole = Schemas["WorkspaceRole"];
 

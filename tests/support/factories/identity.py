@@ -20,6 +20,7 @@ class UserFactory(DataclassFactory[User]):
     email = "test@email.com"
     display_name = "Test User"
     active = True
+    email_verified = True
 
     created_at = datetime.now(tz=timezone.utc)
     updated_at = datetime.now(tz=timezone.utc)
@@ -45,9 +46,16 @@ class IdentitySeeder:
         self.unit_of_work_factory = unit_of_work_factory
 
     async def user(
-        self, *, email: str | None = None, display_name: str | None = None
+        self,
+        *,
+        email: str | None = None,
+        display_name: str | None = None,
+        email_verified: bool = True,
     ) -> User:
-        user = UserFactory.build(**_overrides(email=email, display_name=display_name))
+        user = UserFactory.build(
+            **_overrides(email=email, display_name=display_name),
+            email_verified=email_verified,
+        )
 
         async with self.unit_of_work_factory() as uow:
             await uow.identity.add_user(user)
