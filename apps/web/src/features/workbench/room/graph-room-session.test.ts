@@ -6,6 +6,8 @@ import {
   CLOSE_ACCESS_REVOKED,
   CLOSE_GRAPH_DELETED,
   CLOSE_PERMISSIONS_CHANGED,
+  CLOSE_PROTOCOL_ERROR,
+  CLOSE_SLOW_CONSUMER,
   ROOM_COMMAND_QUEUE_CAP,
 } from "./protocol";
 import {
@@ -60,6 +62,10 @@ class FakeWebSocket {
 
   emitMessage(payload: unknown): void {
     this.dispatch("message", { data: JSON.stringify(payload) });
+  }
+
+  emitRawMessage(data: string): void {
+    this.dispatch("message", { data });
   }
 
   emitClose(code: number, reason: string): void {
@@ -140,7 +146,7 @@ function connectReadySession(
     workspaceId: options.workspaceId ?? WORKSPACE_ID,
     graphId: options.graphId ?? GRAPH_ID,
     webSocketFactory: (url) => new FakeWebSocket(url) as unknown as WebSocket,
-    reconnectDelayMs: 10_000,
+    reconnectDelayMs: options.reconnectDelayMs ?? 10_000,
   });
   session.connect();
   const socket = FakeWebSocket.instances.at(-1);
@@ -1163,11 +1169,6 @@ describe("GraphRoomSession", () => {
       label: "access_revoked",
     },
     {
-      code: CLOSE_PERMISSIONS_CHANGED,
-      reason: "permissions_changed",
-      label: "permissions_changed",
-    },
-    {
       code: CLOSE_GRAPH_DELETED,
       reason: "graph_deleted",
       label: "graph_deleted",
@@ -1209,6 +1210,114 @@ describe("GraphRoomSession", () => {
       ).rejects.toMatchObject({ errorCode: "not_ready" });
     },
   );
+
+  it.each([
+    [CLOSE_PERMISSIONS_CHANGED, "permissions_changed"],
+    [CLOSE_PROTOCOL_ERROR, "protocol_error"],
+    [CLOSE_SLOW_CONSUMER, "slow_consumer"],
+  ] as const)("rehydrates after recoverable %s room closure", async (code, reason) => {
+    vi.useFakeTimers();
+    const { session, socket } = connectReadySession({
+      workspaceId: WORKSPACE_ID,
+      graphId: GRAPH_ID,
+      reconnectDelayMs: 10,
+    });
+
+    socket.emitClose(code, reason);
+
+    expect(session.getStatus()).toBe("unsynchronized");
+    expect(session.getTerminalReason()).toBeNull();
+    expect(session.getHead()?.graph_id).toBe(GRAPH_ID);
+    expect(session.canSubmitCommands()).toBe(false);
+    expect(session.getLastFailure()).toMatchObject({ reason, retryable: true });
+
+    await vi.advanceTimersByTimeAsync(10);
+    const reconnect = FakeWebSocket.instances.at(-1)!;
+    reconnect.open();
+    reconnect.emitMessage(roomReady({
+      head: { ...roomReady().head, collaboration_sequence: 5 },
+    }));
+
+    expect(session.getStatus()).toBe("ready");
+    expect(session.getLastFailure()).toBeNull();
+    expect(session.getHead()?.collaboration_sequence).toBe(5);
+  });
+
+  it("ignores unknown additive version-1 server messages", () => {
+    const { session, socket } = connectReadySession();
+
+    socket.emitMessage({
+      protocol_version: 1,
+      type: "room.future_addition",
+      value: "ignored",
+    });
+
+    expect(session.getStatus()).toBe("ready");
+    expect(session.getLastFailure()).toBeNull();
+  });
+
+  it("reconnects after malformed known messages but stops for incompatible versions", () => {
+    const { session, socket } = connectReadySession();
+
+    socket.emitMessage({ protocol_version: 1, type: "room.ready" });
+    expect(session.getStatus()).toBe("unsynchronized");
+    expect(session.getLastFailure()).toMatchObject({
+      reason: "protocol_error",
+      messageType: "room.ready",
+    });
+
+    const incompatible = connectReadySession();
+    incompatible.socket.emitMessage({ protocol_version: 2, type: "room.ready" });
+    expect(incompatible.session.getStatus()).toBe("stopped");
+    expect(incompatible.session.getTerminalReason()).toBe("protocol_incompatible");
+    expect(incompatible.session.getLastFailure()).toMatchObject({
+      retryable: false,
+      protocolVersion: 2,
+    });
+  });
+
+  it("reconnects after malformed JSON without logging the payload", () => {
+    const { session, socket } = connectReadySession();
+
+    socket.emitRawMessage('{"protocol_version":1,"type":"room.ready"');
+
+    expect(session.getStatus()).toBe("unsynchronized");
+    expect(session.getLastFailure()).toMatchObject({
+      workspaceId: WORKSPACE_ID,
+      graphId: GRAPH_ID,
+      graphRoomSessionId: SESSION_ID,
+      reason: "protocol_error",
+      side: "server",
+      phase: "receive",
+      messageType: null,
+    });
+    expect(session.getLastFailure()?.detail).not.toContain("room.ready");
+  });
+
+  it("bounds reconnect attempts and allows a manual retry", async () => {
+    vi.useFakeTimers();
+    const { session, socket } = connectReadySession({
+      workspaceId: WORKSPACE_ID,
+      graphId: GRAPH_ID,
+      reconnectDelayMs: 10,
+      maxReconnectAttempts: 2,
+    });
+
+    socket.emitClose(1006, "");
+    await vi.advanceTimersByTimeAsync(10);
+    FakeWebSocket.instances.at(-1)!.emitClose(1006, "");
+    await vi.advanceTimersByTimeAsync(20);
+    FakeWebSocket.instances.at(-1)!.emitClose(1006, "");
+
+    expect(session.getStatus()).toBe("stopped");
+    expect(session.getTerminalReason()).toBe("reconnect_exhausted");
+    expect(session.getLastFailure()).toMatchObject({ retryable: true });
+
+    const socketCount = FakeWebSocket.instances.length;
+    session.retry();
+    expect(session.getStatus()).toBe("reconnecting");
+    expect(FakeWebSocket.instances).toHaveLength(socketCount + 1);
+  });
 
   it("caps the in-memory command queue", async () => {
     const { session, socket } = connectReadySession({
