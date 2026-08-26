@@ -82,4 +82,14 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - Barrel exports: `src/lib/api/index.ts` re-exports everything.
   Features like `useAuthSession` must be imported from their full file path
   unless a barrel exists.
+
+## Browser storage
+
+- Web Storage is for device-local presentation preferences only. Current keys
+  cover theme, workspace-rail collapse, and canvas-grid settings.
+- Do not persist workspace selection, graph state, collaboration state,
+  credentials, authorization data, or server-owned user settings in
+  `localStorage` or `sessionStorage`.
+- Do not add compatibility reads for retired product-name keys. Preference
+  migrations must be explicit and time-bounded when they are genuinely needed.
 <!-- END:web-app-conventions -->

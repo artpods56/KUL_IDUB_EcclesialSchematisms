@@ -6,7 +6,6 @@ export type ThemePreference = "light" | "dark" | "system";
 export type ResolvedTheme = "light" | "dark";
 
 const STORAGE_KEY = "grafy-theme";
-const LEGACY_STORAGE_KEY = "ns-theme";
 
 interface ThemeContextValue {
   preference: ThemePreference;
@@ -34,9 +33,7 @@ function subscribePreference(listener: () => void): () => void {
 
 function readStoredPreference(): ThemePreference {
   try {
-    const stored =
-      window.localStorage.getItem(STORAGE_KEY) ??
-      window.localStorage.getItem(LEGACY_STORAGE_KEY);
+    const stored = window.localStorage.getItem(STORAGE_KEY);
     if (stored === "light" || stored === "dark" || stored === "system") {
       return stored;
     }

@@ -106,6 +106,13 @@ loads accessible materialized outputs for that exact graph revision. These
 runtime records are separate from the saved graph's workflow structure and
 canvas layout.
 
+## Browser-local preferences
+
+The frontend uses `localStorage` only for device-local presentation settings:
+theme, workspace-rail collapse, and canvas-grid behavior. Workspace selection,
+graph documents, collaboration state, sessions, and authorization remain
+server-owned. Grafy does not use `sessionStorage` or IndexedDB.
+
 ## Current flow
 
 1. `GET /v1/nodes` returns the catalog with each plugin's host-assigned
