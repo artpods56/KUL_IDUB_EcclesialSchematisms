@@ -230,40 +230,6 @@ The production recipes read `/etc/grafy/grafy.env` and merge
 `/etc/grafy/storage.override.yaml`; override those paths with
 `GRAFY_ENV_FILE` and `GRAFY_COMPOSE_OVERRIDE` when required.
 
-### Upgrade an existing Notarius checkout
-
-The Grafy release uses `GRAFY_*` environment variables. Rename every
-`NOTARIUS_*` key before starting the new code.
-
-Existing third-party Plugins must move their dependency and import names to
-`grafy-core` and `grafy_core`, then publish an immutable Workspace release. The
-old Python package and ambient host-loader namespaces are not retained as
-aliases.
-
-Local defaults reuse `.notarius-artifacts/workbench` and its
-`notarius.sqlite3` database only when the corresponding Grafy workspace or
-database does not exist. New installations write `.grafy-artifacts/workbench`
-and `grafy.sqlite3`. Legacy chunked table and JSON-collection manifests remain
-readable; new manifests use the `grafy.*` storage-format identifiers.
-
-For an existing Compose deployment, point `GRAFY_DATA_VOLUME` at the exact old
-Docker volume name and keep the existing SQLite filename in
-`GRAFY_DOCKER_DATABASE_URL` for the first Grafy deployment. Inspect the names
-before starting anything:
-
-```bash
-docker volume ls
-# Examples from the former local and production project names:
-GRAFY_DATA_VOLUME=notarius_notarius-data
-GRAFY_DATA_VOLUME=graphy_notarius-data
-GRAFY_DOCKER_DATABASE_URL=sqlite+aiosqlite:////data/workbench/notarius.sqlite3
-```
-
-After Grafy is healthy against the existing data, volume and database files
-may be renamed during a separately backed-up maintenance window. Do not let
-Compose create an empty `grafy-data` volume and mistake it for a successful
-migration.
-
 `just api` applies pending Alembic migrations before starting FastAPI. Saved
 graphs, artifact metadata, and materialization bindings are stored in SQLite at
 `.grafy-artifacts/workbench/grafy.sqlite3` by default, together with exact

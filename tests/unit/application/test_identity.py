@@ -210,12 +210,7 @@ async def test_oidc_provisioning_creates_only_a_personal_workspace(
         and event.resource_id == str(provisioned.user.id)
         for event in provisioning_events
     )
-    with pytest.raises(ValueError, match="slug 'local' is reserved"):
-        await service.create_shared_workspace(
-            actor=ActorContext(user_id=provisioned.user.id),
-            slug="local",
-            name="Local",
-        )
+
 
 @pytest.mark.asyncio
 async def test_personal_membership_stays_owner_and_membership_changes_are_audited(

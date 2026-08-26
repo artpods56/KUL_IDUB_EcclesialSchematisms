@@ -306,19 +306,6 @@ the data workspace; a second owner fails closed. Do not add replicas, Uvicorn
 `--workers`, or shared room pubsub across processes until a separate design is
 accepted.
 
-## Legacy local-workspace upgrade
-
-New installations and installations with an empty legacy `local` workspace
-need no identity bootstrap. The first successful OIDC callback creates that
-user's personal workspace.
-
-If an older installation still has tenant data in an unowned `local`
-workspace, the migration fails without changing that workspace. Before
-deploying this release, run the previous release's documented
-`bootstrap-oidc-owner` command and complete the mapped owner's first login.
-The new migration then preserves the tenant as a normal shared workspace named
-`Migrated workspace`; it never deletes populated tenant data.
-
 ## Persistence, backup, and rollback
 
 The `grafy-data` volume contains the Grafy SQLite database, staged
@@ -373,7 +360,6 @@ a human on a real host/IdP/data copy.
 
 - [ ] Exact `GRAFY_PUBLIC_ORIGIN` and OIDC callback registered
 - [ ] Secrets generated and backed up outside the data volume
-- [ ] Any populated legacy `local` workspace has an active owner before upgrade
 - [ ] Plain HTTP gateway serves `/`, `/api/v1` on loopback `:8080` only
 - [ ] Separate TLS endpoint and both proxy hops validated for the public origin
 - [ ] One API replica / one worker; second owner fails startup

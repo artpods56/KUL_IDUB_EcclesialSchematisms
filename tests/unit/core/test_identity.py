@@ -117,10 +117,17 @@ def test_personal_workspace_has_one_owner_shape() -> None:
         role=WorkspaceRole.OWNER,
     )
 
+    assert workspace.slug == owner_id.hex
     assert workspace.personal_owner_user_id == owner_id
     assert membership.grants(WorkspaceCapability.MANAGE_MEMBERS)
     with pytest.raises(IdentityInvariantError):
         Workspace(slug="personal", name="Bad", kind=WorkspaceKind.PERSONAL)
+
+
+def test_local_is_an_ordinary_shared_workspace_slug() -> None:
+    workspace = Workspace.shared(slug="local", name="Local")
+
+    assert workspace.slug == "local"
 
 
 def test_sensitive_credential_material_is_not_in_default_repr() -> None:
