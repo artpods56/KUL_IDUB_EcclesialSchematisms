@@ -114,10 +114,11 @@ create or merge an account.
 The tenant, sharing boundary, and owner of graphs and workspace resources.
 
 - A `personal` workspace has one owner and accepts no additional members.
-- A normal `shared` workspace has one or more members and always retains an
-  owner. The migrated `local` workspace is a sealed bootstrap exception: no
-  resource access is possible until the mapped first OIDC identity consumes the
-  bootstrap record and becomes Owner.
+- A `shared` workspace has one or more members and always retains an owner.
+
+There is no local workspace kind or bootstrap workspace. A new OIDC identity
+creates a personal workspace, and shared workspaces are created explicitly by
+authenticated users.
 
 “Team” and “organization” are product-language synonyms for a shared
 workspace. They do not introduce additional aggregates.
@@ -278,11 +279,9 @@ administration.
    claims, state, nonce, PKCE verifier, expiry, and single use.
 4. FastAPI maps exact `(issuer, subject)` to OidcIdentity. For a new identity it
    creates User, personal Workspace, and Owner membership atomically.
-5. An exact unconsumed legacy-owner bootstrap mapping, if present, also grants
-   Owner membership in the migrated `local` shared workspace.
-6. FastAPI creates a fresh opaque AuthSession and redirects only to the
+5. FastAPI creates a fresh opaque AuthSession and redirects only to the
    validated application-local return path.
-7. Provider tokens are discarded after identity mapping unless a later
+6. Provider tokens are discarded after identity mapping unless a later
    accepted feature genuinely needs a provider API.
 
 The application never merges users by email and never accepts a callback
@@ -623,7 +622,6 @@ hostname even when SSH forwards the gateway port.
 - `users`
 - `oidc_identities`
 - `oidc_login_transactions`
-- `oidc_bootstrap_owner_mappings`
 - `workspaces`
 - `workspace_memberships`
 - `auth_sessions`
@@ -632,9 +630,9 @@ hostname even when SSH forwards the gateway port.
 
 Important constraints include unique `(issuer, subject)`, unique workspace
 slug, membership uniqueness, role and workspace-kind choices, token/session
-lookup and expiry indexes, one-use login and bootstrap state, one personal owner,
+lookup and expiry indexes, one-use login state, one personal owner,
 retained membership revocation/version state, protection against removing the
-last shared-workspace owner after bootstrap, and bounded audit-event indexes for
+last shared-workspace owner, and bounded audit-event indexes for
 actor, workspace, operation, and retention.
 
 ### Workspace-scoped data

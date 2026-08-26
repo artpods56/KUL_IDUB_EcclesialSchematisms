@@ -11,7 +11,6 @@ from grafy_core.domain.modules import (
 from grafy_core.domain.identity import (
     ActorContext,
     AuthSession,
-    OidcBootstrapOwnerMapping,
     OidcIdentity,
     OidcLoginTransaction,
     PersonalAccessToken,
@@ -39,7 +38,6 @@ __all__ = [
     "ModuleBoundaryConfig",
     "ActorContext",
     "AuthSession",
-    "OidcBootstrapOwnerMapping",
     "OidcIdentity",
     "OidcLoginTransaction",
     "PersonalAccessToken",

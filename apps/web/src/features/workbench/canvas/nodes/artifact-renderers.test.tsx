@@ -90,7 +90,7 @@ vi.mock("@/features/workspaces/WorkspaceLayout", () => ({
   useWorkspaceContext: () => ({
     workspace: {
       id: "workspace-1",
-      slug: "local",
+      slug: "team",
       name: "Local",
       kind: "personal",
       role: "owner",

@@ -24,8 +24,8 @@ describe("auth API client", () => {
     expect(safeReturnPath("/workspaces/acme?tab=members#top")).toBe("/workspaces/acme?tab=members#top");
     expect(safeReturnPath("//evil.example/login")).toBe("/workspaces");
     expect(safeReturnPath("https://evil.example/login")).toBe("/workspaces");
-    expect(oidcLoginUrl("/workspaces/local")).toBe(
-      "/api/v1/auth/oidc/login?return_path=%2Fworkspaces%2Flocal",
+    expect(oidcLoginUrl("/workspaces/team")).toBe(
+      "/api/v1/auth/oidc/login?return_path=%2Fworkspaces%2Fteam",
     );
   });
 

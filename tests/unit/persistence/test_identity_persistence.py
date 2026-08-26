@@ -8,13 +8,13 @@ from sqlalchemy import text
 
 from grafy_core.domain.identity import (
     AuthSession,
-    OidcBootstrapOwnerMapping,
     OidcIdentity,
     OidcLoginTransaction,
     PersonalAccessToken,
     User,
     Workspace,
     WorkspaceCapability,
+    WorkspaceKind,
     WorkspaceMembership,
     WorkspaceRole,
 )
@@ -61,16 +61,16 @@ async def test_identity_records_round_trip_without_plain_credential_material(
     )
     workspace = Workspace(
         id=UUID(int=103),
-        slug="local",
-        name="Local workspace",
-        kind="shared",
+        slug="team",
+        name="Team",
+        kind=WorkspaceKind.SHARED,
         created_at=now,
         updated_at=now,
     )
     membership = WorkspaceMembership(
         workspace_id=workspace.id,
         user_id=user.id,
-        role="owner",
+        role=WorkspaceRole.OWNER,
         created_at=now,
         updated_at=now,
     )
@@ -80,15 +80,8 @@ async def test_identity_records_round_trip_without_plain_credential_material(
         nonce_digest=b"nonce-digest",
         encrypted_pkce_verifier=b"encrypted-verifier",
         pkce_key_version=2,
-        return_path="/workspaces/local",
+        return_path="/workspaces/team",
         expires_at=now + timedelta(minutes=5),
-        created_at=now,
-    )
-    mapping = OidcBootstrapOwnerMapping(
-        id=UUID(int=105),
-        workspace_id=workspace.id,
-        issuer=identity.issuer,
-        subject=identity.subject,
         created_at=now,
     )
     session = AuthSession(
@@ -129,7 +122,6 @@ async def test_identity_records_round_trip_without_plain_credential_material(
         await unit_of_work.identity.add_workspace(workspace)
         await unit_of_work.identity.add_membership(membership)
         await unit_of_work.identity.add_login_transaction(transaction)
-        await unit_of_work.identity.add_bootstrap_mapping(mapping)
         await unit_of_work.identity.add_auth_session(session)
         await unit_of_work.identity.add_personal_access_token(token)
         await unit_of_work.security_audit.add(audit)

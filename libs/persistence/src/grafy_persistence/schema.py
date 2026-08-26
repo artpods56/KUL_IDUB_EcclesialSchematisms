@@ -1064,32 +1064,6 @@ workspace_memberships = Table(
 )
 
 
-oidc_bootstrap_owner_mappings = Table(
-    "oidc_bootstrap_owner_mappings",
-    metadata,
-    Column("id", SaUuid(as_uuid=True), primary_key=True),
-    Column(
-        "workspace_id",
-        SaUuid(as_uuid=True),
-        ForeignKey("workspaces.id", ondelete="CASCADE"),
-        nullable=False,
-    ),
-    Column("issuer", String(2048), nullable=False),
-    Column("subject", String(512), nullable=False),
-    Column("created_at", UTCDateTime(), nullable=False),
-    Column("consumed_at", UTCDateTime(), nullable=True),
-    UniqueConstraint(
-        "workspace_id",
-        name="uq_oidc_bootstrap_owner_mappings_workspace_id",
-    ),
-    Index(
-        "ix_oidc_bootstrap_owner_mappings_unconsumed",
-        "workspace_id",
-        "consumed_at",
-    ),
-)
-
-
 auth_sessions = Table(
     "auth_sessions",
     metadata,

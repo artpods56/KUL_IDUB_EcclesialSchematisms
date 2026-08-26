@@ -133,7 +133,7 @@ function lifecycleOptions(
   return {
     options: {
       workspaceId: "workspace-1",
-      workspaceSlug: "local",
+      workspaceSlug: "team",
       initialGraphId,
       registry,
       document,
@@ -502,7 +502,7 @@ describe("useSavedGraphLifecycle document ownership", () => {
     });
 
     expect(router.push).toHaveBeenCalledWith(
-      `/workspaces/local/graphs/${GRAPH_B_ID}`,
+      `/workspaces/team/graphs/${GRAPH_B_ID}`,
       { scroll: false },
     );
     expect(hook.result.current.openingGraphId).toBe(GRAPH_B_ID);
@@ -659,7 +659,7 @@ describe("useSavedGraphLifecycle document ownership", () => {
     expect(hook.result.current.graphName).toBe("Newer local name");
     expect(hook.result.current.isDirty).toBe(true);
     expect(router.replace).toHaveBeenCalledWith(
-      `/workspaces/local/graphs/${GRAPH_A_ID}`,
+      `/workspaces/team/graphs/${GRAPH_A_ID}`,
       { scroll: false },
     );
   });
@@ -686,7 +686,7 @@ describe("useSavedGraphLifecycle document ownership", () => {
 
     expect(hook.result.current.activeGraph?.id).toBe(GRAPH_A_ID);
     expect(router.replace).toHaveBeenCalledWith(
-      `/workspaces/local/graphs/${GRAPH_A_ID}`,
+      `/workspaces/team/graphs/${GRAPH_A_ID}`,
       { scroll: false },
     );
     expect(callbacks.replaceDocument).not.toHaveBeenCalled();

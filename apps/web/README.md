@@ -98,14 +98,13 @@ Open <http://localhost:3000>.
 The API key stays on the server. It is never stored in node configuration or
 sent to the browser.
 
-Saved graphs have canonical browser URLs at
-`/workspaces/local/graphs/{graph_uuid}`. A blank draft uses
-`/workspaces/local/graphs/new`; the root route redirects there.
-`local` is intentionally the only accepted workspace slug today. It names the
-single active workbench in the URL, but it is not yet a tenant or authorization
-boundary. Reopening a saved graph also loads accessible materialized outputs for
-that exact graph revision. These runtime records are separate from the saved
-graph's workflow structure and canvas layout.
+The root route and `/graphs` show the authenticated user's graphs across their
+personal and shared workspaces. A workbench keeps its tenancy boundary in the
+canonical URL `/workspaces/{workspace_slug}/graphs/{graph_uuid}`; a blank draft
+uses `/workspaces/{workspace_slug}/graphs/new`. Reopening a saved graph also
+loads accessible materialized outputs for that exact graph revision. These
+runtime records are separate from the saved graph's workflow structure and
+canvas layout.
 
 ## Current flow
 

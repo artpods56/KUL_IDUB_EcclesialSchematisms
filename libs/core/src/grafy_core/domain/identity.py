@@ -5,14 +5,12 @@ import re
 from uuid import UUID, uuid4
 
 from grafy_core.domain.errors import (
-    BootstrapOwnerMismatchError,
     CapabilityDeniedError,
     IdentityInvariantError,
     LastWorkspaceOwnerError,
 )
 
 
-LOCAL_WORKSPACE_SLUG = "local"
 PERSONAL_WORKSPACE_SLUG_PREFIX = "personal-"
 
 
@@ -126,6 +124,8 @@ def normalize_workspace_slug(value: str) -> str:
             "Workspace slug must contain 1-80 lowercase letters, numbers, or "
             "internal hyphens"
         )
+    if slug == "local":
+        raise ValueError("Workspace slug 'local' is reserved")
     return slug
 
 
@@ -238,11 +238,6 @@ class Workspace:
     def shared(cls, *, slug: str, name: str) -> "Workspace":
         return cls(slug=slug, name=name, kind=WorkspaceKind.SHARED)
 
-    @property
-    def is_sealed_bootstrap_workspace(self) -> bool:
-        return self.kind is WorkspaceKind.SHARED and self.slug == LOCAL_WORKSPACE_SLUG
-
-
 @dataclass
 class WorkspaceMembership:
     workspace_id: UUID
@@ -336,32 +331,6 @@ class OidcLoginTransaction:
     def consume(self, *, consumed_at: datetime | None = None) -> None:
         if self.is_consumed:
             raise IdentityInvariantError("OIDC login transaction was already consumed")
-        self.consumed_at = consumed_at or _utc_now()
-
-
-@dataclass
-class OidcBootstrapOwnerMapping:
-    workspace_id: UUID
-    issuer: str
-    subject: str
-    id: UUID = field(default_factory=uuid4)
-    created_at: datetime = field(default_factory=_utc_now)
-    consumed_at: datetime | None = None
-
-    def __post_init__(self) -> None:
-        _require_nonempty(self.issuer, "Bootstrap OIDC issuer", 2048)
-        _require_nonempty(self.subject, "Bootstrap OIDC subject", 512)
-        _require_aware(self.created_at, "Bootstrap mapping creation timestamp")
-        if self.consumed_at is not None:
-            _require_aware(self.consumed_at, "Bootstrap mapping consumption timestamp")
-
-    @property
-    def is_consumed(self) -> bool:
-        return self.consumed_at is not None
-
-    def consume(self, *, consumed_at: datetime | None = None) -> None:
-        if self.is_consumed:
-            raise IdentityInvariantError("Bootstrap owner mapping was already consumed")
         self.consumed_at = consumed_at or _utc_now()
 
 
@@ -469,7 +438,6 @@ class IdentityProvisioningResult:
     user: User
     oidc_identity: OidcIdentity
     personal_workspace: Workspace
-    local_workspace_membership: WorkspaceMembership | None
 
 
 def ensure_last_owner_can_change(
@@ -504,24 +472,10 @@ def ensure_last_owner_can_change(
         )
 
 
-def validate_bootstrap_match(
-    mapping: OidcBootstrapOwnerMapping,
-    *,
-    issuer: str,
-    subject: str,
-) -> None:
-    if mapping.issuer != issuer or mapping.subject != subject:
-        raise BootstrapOwnerMismatchError(
-            "OIDC identity does not match the configured bootstrap owner"
-        )
-
-
 __all__ = [
     "ActorContext",
     "AuthSession",
     "IdentityProvisioningResult",
-    "LOCAL_WORKSPACE_SLUG",
-    "OidcBootstrapOwnerMapping",
     "OidcIdentity",
     "OidcLoginTransaction",
     "PAT_ALLOWED_CAPABILITIES",
@@ -537,5 +491,4 @@ __all__ = [
     "ensure_last_owner_can_change",
     "normalize_workspace_slug",
     "personal_workspace_slug",
-    "validate_bootstrap_match",
 ]

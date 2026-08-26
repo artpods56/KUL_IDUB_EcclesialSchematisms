@@ -20,7 +20,6 @@ from fastapi import HTTPException, Request, Response, status
 
 from grafy_core.application.identity import IdentityService
 from grafy_core.domain.errors import (
-    BootstrapOwnerRequiredError,
     NotFoundError,
     UserDisabledError,
 )
@@ -233,7 +232,7 @@ class AuthService:
                     email=email,
                     display_name=display_name,
                 )
-            except (BootstrapOwnerRequiredError, UserDisabledError) as exc:
+            except UserDisabledError as exc:
                 raise OidcProtocolError(
                     "identity_not_eligible",
                     transaction_consumed=True,

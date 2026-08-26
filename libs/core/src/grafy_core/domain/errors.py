@@ -26,14 +26,6 @@ class IdentityInvariantError(GrafyCoreError):
     """Raised when an identity or workspace invariant would be violated."""
 
 
-class BootstrapOwnerRequiredError(IdentityInvariantError):
-    """Raised while the sealed legacy workspace is awaiting its owner."""
-
-
-class BootstrapOwnerMismatchError(IdentityInvariantError):
-    """Raised when a login does not match the configured bootstrap identity."""
-
-
 class LastWorkspaceOwnerError(IdentityInvariantError):
     """Raised when an operation would remove the last active workspace owner."""
 

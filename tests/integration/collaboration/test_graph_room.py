@@ -82,7 +82,7 @@ async def _seed_room_population(database_url: str) -> RoomPopulation:
         stranger = await seeder.user(
             email="stranger@example.test", display_name="Stranger"
         )
-        workspace = await seeder.workspace(slug="local", name="Local workspace")
+        workspace = await seeder.workspace(slug="team", name="Team")
         for user, role in (
             (owner, WorkspaceRole.OWNER),
             (editor, WorkspaceRole.EDITOR),

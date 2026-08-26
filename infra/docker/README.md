@@ -306,27 +306,18 @@ the data workspace; a second owner fails closed. Do not add replicas, Uvicorn
 `--workers`, or shared room pubsub across processes until a separate design is
 accepted.
 
-## First-owner bootstrap
+## Legacy local-workspace upgrade
 
-After migrate and before ordinary login:
+New installations and installations with an empty legacy `local` workspace
+need no identity bootstrap. The first successful OIDC callback creates that
+user's personal workspace.
 
-```bash
-docker compose \
-  --env-file .env.production \
-  -f infra/docker/compose.yaml \
-  exec api \
-  .venv/bin/grafy-admin bootstrap-oidc-owner \
-  --subject "<first-owner-subject>"
-```
-
-The command reads `GRAFY_OIDC_ISSUER` from the API container's configured
-environment. Its optional `--issuer` argument is only an equality assertion;
-it is not needed for this Compose invocation. In particular, `--env-file` does
-not export variables into the host shell.
-
-The matching identity's first valid OIDC callback consumes the mapping and owns
-the migrated `local` workspace. Do not invent local passwords or anonymous
-owners.
+If an older installation still has tenant data in an unowned `local`
+workspace, the migration fails without changing that workspace. Before
+deploying this release, run the previous release's documented
+`bootstrap-oidc-owner` command and complete the mapped owner's first login.
+The new migration then preserves the tenant as a normal shared workspace named
+`Migrated workspace`; it never deletes populated tenant data.
 
 ## Persistence, backup, and rollback
 
@@ -382,7 +373,7 @@ a human on a real host/IdP/data copy.
 
 - [ ] Exact `GRAFY_PUBLIC_ORIGIN` and OIDC callback registered
 - [ ] Secrets generated and backed up outside the data volume
-- [ ] `bootstrap-oidc-owner` mapping written for the intended first subject
+- [ ] Any populated legacy `local` workspace has an active owner before upgrade
 - [ ] Plain HTTP gateway serves `/`, `/api/v1` on loopback `:8080` only
 - [ ] Separate TLS endpoint and both proxy hops validated for the public origin
 - [ ] One API replica / one worker; second owner fails startup

@@ -165,16 +165,16 @@ describe("workspace route and capability state", () => {
   });
 
   it("resolves the open graph so the rail can highlight it", () => {
-    expect(workspaceRouteGraphId("/workspaces/local")).toBeNull();
-    expect(workspaceRouteGraphId("/workspaces/local/graphs/new")).toBeNull();
+    expect(workspaceRouteGraphId("/workspaces/team")).toBeNull();
+    expect(workspaceRouteGraphId("/workspaces/team/graphs/new")).toBeNull();
     expect(
       workspaceRouteGraphId(
-        "/workspaces/local/graphs/00000000-0000-0000-0000-000000000001",
+        "/workspaces/team/graphs/00000000-0000-0000-0000-000000000001",
       ),
     ).toBe("00000000-0000-0000-0000-000000000001");
     expect(
       workspaceRouteGraphId(
-        "/workspaces/local/graphs/00000000-0000-0000-0000-000000000001/runs",
+        "/workspaces/team/graphs/00000000-0000-0000-0000-000000000001/runs",
       ),
     ).toBe("00000000-0000-0000-0000-000000000001");
   });

@@ -532,6 +532,6 @@ only when an actual deployment or development workflow requires them. This does
 not include saved-graph persistence: graph documents are stored in the active
 workbench's migrated SQLite database, while discovery of multiple filesystem
 workspaces remains deferred. The web route
-`/workspaces/local/graphs/{graph_uuid}` is only the canonical address for that
+`/workspaces/{workspace_slug}/graphs/{graph_uuid}` is the canonical address for that
 single active workbench; its `local` segment does not imply tenant isolation or
 workspace-scoped authorization.

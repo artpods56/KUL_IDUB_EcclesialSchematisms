@@ -80,8 +80,8 @@ async def create_schema(database_url: str) -> None:
             await unit_of_work.identity.add_workspace(
                 Workspace(
                     id=WORKSPACE_ID,
-                    slug="local",
-                    name="Local workspace",
+                    slug="team",
+                    name="Team",
                     kind="shared",
                 )
             )
