@@ -4,10 +4,22 @@ from pathlib import Path
 import pytest
 from typing_extensions import override
 
-from grafy_api.plugin_admission import ReleaseExecutionAdmission
+from grafy_api.plugin_admission import (
+    ReleaseExecutionAdmission,
+    isolated_release_admission,
+)
+from grafy_api.plugin_egress import (
+    PluginEgressBrokerPolicy,
+    PluginEgressDestination,
+)
+from grafy_api.network_policy import legacy_network_policy
+from grafy_api.plugin_oci import runtime_profile
 from grafy_api.plugin_oci import PluginOciImageBuilder
 from grafy_api.plugin_publication import SystemPluginPublicationWorkflow
-from grafy_api.plugin_publishing import PluginPublishingError, VerifiedPluginDirectory
+from grafy_api.plugin_publishing import (
+    PluginPublishingError,
+    VerifiedPluginCandidate,
+)
 from grafy_api.system_host_bindings import SystemHostPluginBinding
 from grafy_api.system_plugin_inventory import (
     CHECKED_IN_SYSTEM_PLUGIN_INVENTORY_PATH,
@@ -20,7 +32,6 @@ from grafy_core.domain.plugin_releases import (
     PlatformPluginActor,
     PluginCapabilityManifest,
     PluginCatalogManifest,
-    PluginDistribution,
     PluginExecutionPolicy,
     PluginNodeContract,
     PluginNodeHttpEgressContract,
@@ -46,24 +57,18 @@ class RecordingSystemImageBuilder(PluginOciImageBuilder):
         self,
         *,
         namespace: PluginReleaseNamespace,
-        catalog: PluginCatalogManifest,
-        loader_target: str,
-        source_archive: bytes,
-        source_digest: str,
-        contract_digest: str,
-        profile_digest: str,
+        candidate: VerifiedPluginCandidate,
     ) -> PluginRuntimeArtifact:
-        del source_archive
         self.namespaces.append(namespace)
-        self.loader_targets.append(loader_target)
+        self.loader_targets.append(candidate.loader_target)
         return PluginRuntimeArtifact(
             object_key=(
-                f"plugin-releases/{namespace.storage_path}/{catalog.slug}/"
-                f"runtime/{source_digest}.oci.tar"
+                f"plugin-releases/{namespace.storage_path}/{candidate.catalog.slug}/"
+                f"runtime/{candidate.source_digest}.oci.tar"
             ),
-            archive_digest=source_digest,
-            manifest_digest=contract_digest,
-            config_digest=profile_digest,
+            archive_digest=candidate.source_digest,
+            manifest_digest=plugin_contract_digest(candidate.catalog),
+            config_digest="a" * 64,
         )
 
 
@@ -75,9 +80,7 @@ def _catalog(
 ) -> PluginCatalogManifest:
     http_egress = None
     if PluginRuntimeCapability.NETWORK_EGRESS in set(required_capabilities):
-        http_egress = PluginNodeHttpEgressContract(
-            configured_inputs=("base_url",)
-        )
+        http_egress = PluginNodeHttpEgressContract(configured_inputs=("base_url",))
     return PluginCatalogManifest(
         slug=slug,
         title=slug,
@@ -104,10 +107,12 @@ def _verified(
     *,
     catalog: PluginCatalogManifest | None = None,
     capabilities: PluginCapabilityManifest | None = None,
-) -> VerifiedPluginDirectory:
-    return VerifiedPluginDirectory(
+    loader_target: str = "grafy_plugin_text.plugin:TEXT",
+) -> VerifiedPluginCandidate:
+    return VerifiedPluginCandidate(
         catalog=catalog or _catalog(),
         capabilities=capabilities or PluginCapabilityManifest(),
+        loader_target=loader_target,
         source_archive=source,
         lock_digest=sha256(b"lock").hexdigest(),
         runtime_profile="python-uv",
@@ -152,14 +157,10 @@ async def test_system_publication_stages_then_explicitly_promotes_and_rolls_back
 
     first = await workflow.stage_verified(
         _verified(b"first"),
-        execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
-        distribution=PluginDistribution.BUNDLED,
         platform_actor=actor,
     )
     second = await workflow.stage_verified(
         _verified(b"second"),
-        execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
-        distribution=PluginDistribution.BUNDLED,
         platform_actor=actor,
     )
 
@@ -282,12 +283,67 @@ async def test_system_publication_rejects_unauthorized_identity_before_image_bui
     with pytest.raises(PluginPublishingError, match="allowlisted prefixes"):
         await workflow.stage_verified(
             _verified(b"bad", catalog=_catalog(operator_id="external.evil.echo")),
-            execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
-            distribution=PluginDistribution.BUNDLED,
             platform_actor=PlatformPluginActor("ci:system-release"),
         )
 
     assert image_builder.namespaces == []
+    await database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_isolated_llm_system_release_promotes_without_a_host_manifest(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'llm.sqlite3'}"
+    await create_schema(database_url)
+    database = create_database(database_url)
+    releases = PluginReleaseService(
+        lambda: SqlAlchemyUnitOfWork(database.sessions),
+        LocalFileObjectStore(tmp_path / "objects"),
+        bucket="plugins",
+    )
+    image_builder = RecordingSystemImageBuilder()
+    inventory = load_system_plugin_inventory(CHECKED_IN_SYSTEM_PLUGIN_INVENTORY_PATH)
+    destination = PluginEgressDestination.parse("https://api.openai.com:443")
+    workflow = SystemPluginPublicationWorkflow(
+        image_builder,
+        releases,
+        isolated_release_admission(
+            profile=runtime_profile("python-uv"),
+            egress_policy=PluginEgressBrokerPolicy(
+                broker_image="registry.example/grafy-egress@sha256:" + "a" * 64,
+                destinations=(destination,),
+            ),
+            network_policy=legacy_network_policy(
+                http_destinations=(destination,),
+            ),
+        ),
+        inventory,
+    )
+    entry = inventory.entry_for("external.llm")
+    candidate = _verified(
+        b"llm",
+        catalog=_catalog(
+            slug=entry.slug,
+            operator_id="llm.openai_compatible.chat_completion",
+            required_capabilities=entry.capabilities,
+        ),
+        capabilities=PluginCapabilityManifest(capabilities=entry.capabilities),
+        loader_target=entry.loader_target,
+    )
+    actor = PlatformPluginActor("ci:system-release")
+
+    release = await workflow.stage_verified(candidate, platform_actor=actor)
+    selection = await workflow.promote(
+        slug=release.slug,
+        revision=release.revision,
+        platform_actor=actor,
+        expected_generation=0,
+    )
+
+    assert release.execution_policy is PluginExecutionPolicy.ISOLATED_ONLY
+    assert selection.selected_release_id == release.id
+    assert image_builder.loader_targets == [entry.loader_target]
     await database.dispose()
 
 
@@ -317,9 +373,8 @@ async def test_direct_workspace_publish_cannot_reuse_historical_system_identity(
             b"retained-system",
             catalog=system_catalog,
             capabilities=PluginCapabilityManifest(capabilities=gis_entry.capabilities),
+            loader_target=gis_entry.loader_target,
         ),
-        execution_policy=gis_entry.execution_policy,
-        distribution=gis_entry.distribution,
         platform_actor=PlatformPluginActor("ci:system-release"),
     )
 

@@ -15,7 +15,10 @@ from grafy_api.plugin_publication import (
     PluginPublicationConflictError,
     PluginPublicationWorkflow,
 )
-from grafy_api.plugin_publishing import PluginDirectoryPublisher
+from grafy_api.plugin_publishing import (
+    PluginDirectoryPublisher,
+    VerifiedPluginCandidate,
+)
 from grafy_api.system_plugin_inventory import (
     CHECKED_IN_SYSTEM_PLUGIN_INVENTORY_PATH,
     load_system_plugin_inventory,
@@ -23,7 +26,6 @@ from grafy_api.system_plugin_inventory import (
 from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.domain.errors import UserDisabledError
 from grafy_core.domain.plugin_releases import (
-    PluginCatalogManifest,
     PluginReleaseNamespace,
     PluginRuntimeArtifact,
 )
@@ -53,24 +55,18 @@ class RecordingImageBuilder(PluginOciImageBuilder):
         self,
         *,
         namespace: PluginReleaseNamespace,
-        catalog: PluginCatalogManifest,
-        loader_target: str,
-        source_archive: bytes,
-        source_digest: str,
-        contract_digest: str,
-        profile_digest: str,
+        candidate: VerifiedPluginCandidate,
     ) -> PluginRuntimeArtifact:
-        del source_archive
         self.build_count += 1
-        self.loader_targets.append(loader_target)
+        self.loader_targets.append(candidate.loader_target)
         return PluginRuntimeArtifact(
             object_key=(
-                f"plugin-releases/{namespace.storage_path}/{catalog.slug}/runtime/"
-                f"{source_digest}.oci.tar"
+                f"plugin-releases/{namespace.storage_path}/{candidate.catalog.slug}/"
+                f"runtime/{candidate.source_digest}.oci.tar"
             ),
-            archive_digest=source_digest,
-            manifest_digest=contract_digest,
-            config_digest=profile_digest,
+            archive_digest=candidate.source_digest,
+            manifest_digest="a" * 64,
+            config_digest="b" * 64,
         )
 
 

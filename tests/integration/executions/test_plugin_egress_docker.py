@@ -27,7 +27,6 @@ from grafy_core.runtime.plugin_invocation import (
     PluginReleaseNodeConfig,
     PluginReleaseNode,
 )
-from grafy_core.runtime.plugin_loader import WORKSPACE_PLUGIN_LOADER_TARGET
 from grafy_storage import LocalFileObjectStore
 
 from grafy_api.network_policy import (
@@ -356,12 +355,7 @@ async def test_docker_runtime_routes_historical_network_egress_through_live_brok
                 scope=PluginReleaseScope.WORKSPACE,
                 workspace_id=WORKSPACE_ID,
             ),
-            catalog=verified.catalog,
-            loader_target=WORKSPACE_PLUGIN_LOADER_TARGET,
-            source_archive=verified.source_archive,
-            source_digest=source_digest,
-            contract_digest=contract_digest,
-            profile_digest=profile_digest,
+            candidate=verified,
         )
         plugin_image = f"sha256:{artifact.manifest_digest}"
         # Construct the release directly because this fixture models a persisted

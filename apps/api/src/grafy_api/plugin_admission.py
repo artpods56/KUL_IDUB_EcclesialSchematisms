@@ -35,6 +35,7 @@ from grafy_api.network_policy import (
     NetworkProfileMode,
     NetworkRejectionReason,
 )
+from grafy_api.plugin_oci import PluginRuntimeProfile
 
 
 PluginNonRunnableReason = Literal[
@@ -57,6 +58,13 @@ PluginNonRunnableReason = Literal[
 _DEFAULT_PLATFORM_ARTIFACT_CONTRACTS = tuple(
     PluginArtifactTypeContract.from_spec(spec)
     for spec in (INTEGER_VALUE, TEXT_VALUE, RASTER_IMAGE, TABLE_DATA)
+)
+ISOLATED_BASE_CAPABILITIES = frozenset(
+    {
+        PluginRuntimeCapability.NODE_SECRETS,
+        PluginRuntimeCapability.STAGED_UPLOADS,
+        PluginRuntimeCapability.UNTRUSTED_SQL,
+    }
 )
 
 
@@ -407,6 +415,51 @@ class ReleaseExecutionAdmission:
                 ),
             )
         return None
+
+
+def isolated_release_admission(
+    *,
+    profile: PluginRuntimeProfile,
+    egress_policy: PluginEgressBrokerPolicy,
+    network_policy: NetworkPolicy,
+    system_host_bindings: tuple[SystemHostPluginBinding, ...] = (),
+    supported_capabilities: frozenset[PluginRuntimeCapability] = (
+        ISOLATED_BASE_CAPABILITIES
+    ),
+) -> ReleaseExecutionAdmission:
+    """Build the admission policy shared by publication and execution."""
+
+    effective_capabilities = set(supported_capabilities)
+    effective_capabilities.update(profile.native_capabilities)
+    for native_capability in (
+        PluginRuntimeCapability.NATIVE_GDAL,
+        PluginRuntimeCapability.NATIVE_TESSERACT,
+    ):
+        if native_capability not in profile.native_capabilities:
+            effective_capabilities.discard(native_capability)
+    network_egress = PluginNetworkEgressPolicy(
+        proxy_adapter_available=egress_policy.broker_image is not None,
+        broker=egress_policy,
+    )
+    postgresql_egress = PluginPostgresqlEgressPolicy(
+        tcp_adapter_available=bool(
+            egress_policy.destinations_for(PluginEgressProtocol.POSTGRESQL)
+        ),
+        broker=egress_policy,
+    )
+    if egress_policy.broker_image is not None:
+        effective_capabilities.add(PluginRuntimeCapability.NETWORK_EGRESS)
+    if postgresql_egress.available:
+        effective_capabilities.add(PluginRuntimeCapability.POSTGRESQL_EGRESS)
+    return ReleaseExecutionAdmission(
+        isolated_adapter_available=True,
+        runtime_profile=profile.name,
+        supported_capabilities=frozenset(effective_capabilities),
+        network_egress=network_egress,
+        postgresql_egress=postgresql_egress,
+        network_policy=network_policy,
+        system_host_bindings=system_host_bindings,
+    )
 
 
 def _node_has_network_source(

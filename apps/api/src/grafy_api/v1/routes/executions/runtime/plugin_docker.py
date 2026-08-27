@@ -36,11 +36,11 @@ from grafy_core.runtime.plugin_protocol import (
 )
 
 from grafy_api.plugin_admission import (
-    PluginNetworkEgressPolicy,
-    PluginPostgresqlEgressPolicy,
+    ISOLATED_BASE_CAPABILITIES,
     ReleaseExecutionAdmission,
     ReleaseExecutionRejection,
     ReleaseExecutionRoute,
+    isolated_release_admission,
 )
 from grafy_api.plugin_egress import (
     PLUGIN_HTTP_PROXY_PORT,
@@ -74,13 +74,6 @@ _EGRESS_RESOURCE_LABEL = "io.grafy.plugin.egress=1"
 _EGRESS_BROKER_ALIAS = "grafy-egress-broker"
 _CONTAINER_INVOCATIONS = PurePosixPath("/run/grafy/invocations")
 _RESULT_TAR_LIMIT = 2 * 1_024 * 1_024
-_ISOLATED_BASE_CAPABILITIES = frozenset(
-    {
-        PluginRuntimeCapability.NODE_SECRETS,
-        PluginRuntimeCapability.STAGED_UPLOADS,
-        PluginRuntimeCapability.UNTRUSTED_SQL,
-    }
-)
 
 
 class DockerPluginRuntimeError(RuntimeError):
@@ -222,7 +215,7 @@ class DockerPluginRuntime(
         max_distinct_releases_per_scope: int = 4,
         max_sandbox_variants_per_scope: int | None = None,
         supported_capabilities: frozenset[PluginRuntimeCapability] = (
-            _ISOLATED_BASE_CAPABILITIES
+            ISOLATED_BASE_CAPABILITIES
         ),
         egress_policy: PluginEgressBrokerPolicy = PluginEgressBrokerPolicy(),
         network_policy: NetworkPolicy | None = None,
@@ -251,42 +244,11 @@ class DockerPluginRuntime(
         self._storage = storage
         self._bucket = bucket
         self._profile = profile
-        effective_supported_capabilities = set(supported_capabilities)
-        effective_supported_capabilities.update(profile.native_capabilities)
-        for native_capability in (
-            PluginRuntimeCapability.NATIVE_GDAL,
-            PluginRuntimeCapability.NATIVE_TESSERACT,
-        ):
-            if native_capability not in profile.native_capabilities:
-                effective_supported_capabilities.discard(native_capability)
-        network_egress = PluginNetworkEgressPolicy(
-            proxy_adapter_available=egress_policy.broker_image is not None,
-            broker=egress_policy,
-        )
-        postgresql_egress = PluginPostgresqlEgressPolicy(
-            tcp_adapter_available=bool(
-                egress_policy.destinations_for(PluginEgressProtocol.POSTGRESQL)
-            ),
-            broker=egress_policy,
-        )
-        # A pinned broker image plus a valid profile makes HTTP egress
-        # potentially available; invocation destinations decide whether a
-        # concrete broker plan can be created.
-        if egress_policy.broker_image is not None:
-            effective_supported_capabilities.add(
-                PluginRuntimeCapability.NETWORK_EGRESS
-            )
-        if postgresql_egress.available:
-            effective_supported_capabilities.add(
-                PluginRuntimeCapability.POSTGRESQL_EGRESS
-            )
-        self._release_admission = ReleaseExecutionAdmission(
-            isolated_adapter_available=True,
-            runtime_profile=profile.name,
-            supported_capabilities=frozenset(effective_supported_capabilities),
-            network_egress=network_egress,
-            postgresql_egress=postgresql_egress,
+        self._release_admission = isolated_release_admission(
+            profile=profile,
+            egress_policy=egress_policy,
             network_policy=network_policy or NetworkPolicy(),
+            supported_capabilities=supported_capabilities,
         )
         self._network_policy = network_policy or NetworkPolicy()
         self._egress_policy = egress_policy

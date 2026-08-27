@@ -1,6 +1,7 @@
 """Verify and freeze a human-authored uv Plugin directory."""
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 import gzip
 from hashlib import sha256
 from io import BytesIO
@@ -19,6 +20,8 @@ from pydantic import ValidationError
 from grafy_core.domain.plugin_releases import (
     PluginCapabilityManifest,
     PluginCatalogManifest,
+    plugin_contract_digest,
+    plugin_profile_digest,
 )
 from grafy_core.plugin_inspector import InspectionResult
 from grafy_core.runtime.plugin_loader import WORKSPACE_PLUGIN_LOADER_TARGET
@@ -54,31 +57,28 @@ class PluginPublishingError(RuntimeError):
     """A Plugin working copy cannot be safely published."""
 
 
-class VerifiedPluginDirectory:
-    """The immutable verification products of one Plugin working copy."""
+@dataclass(frozen=True, slots=True)
+class VerifiedPluginCandidate:
+    """Immutable source and contract identity produced by verification."""
 
-    __slots__ = (
-        "capabilities",
-        "catalog",
-        "lock_digest",
-        "runtime_profile",
-        "source_archive",
-    )
+    catalog: PluginCatalogManifest
+    capabilities: PluginCapabilityManifest
+    loader_target: str
+    source_archive: bytes
+    lock_digest: str
+    runtime_profile: str
 
-    def __init__(
-        self,
-        *,
-        catalog: PluginCatalogManifest,
-        capabilities: PluginCapabilityManifest,
-        source_archive: bytes,
-        lock_digest: str,
-        runtime_profile: str,
-    ) -> None:
-        self.catalog = catalog
-        self.capabilities = capabilities
-        self.source_archive = source_archive
-        self.lock_digest = lock_digest
-        self.runtime_profile = runtime_profile
+    @property
+    def source_digest(self) -> str:
+        return sha256(self.source_archive).hexdigest()
+
+    @property
+    def contract_digest(self) -> str:
+        return plugin_contract_digest(self.catalog)
+
+    @property
+    def profile_digest(self) -> str:
+        return plugin_profile_digest(self.runtime_profile)
 
 
 class PluginDirectoryPublisher:
@@ -116,7 +116,7 @@ class PluginDirectoryPublisher:
         *,
         expected_slug: str | None = None,
         loader_target: str = WORKSPACE_PLUGIN_LOADER_TARGET,
-    ) -> VerifiedPluginDirectory:
+    ) -> VerifiedPluginCandidate:
         project = self._require_allowed_project(directory)
         entries = scan_source_tree(project)
         staging = Path(tempfile.mkdtemp(prefix="grafy-plugin-publish-"))
@@ -164,31 +164,24 @@ class PluginDirectoryPublisher:
                 snapshot,
                 "catalog inspection",
             )
-            try:
-                result = InspectionResult.model_validate_json(inspected.stdout)
-            except ValidationError as exc:
-                raise PluginPublishingError(
-                    "Plugin catalog inspection did not return a valid manifest"
-                ) from exc
-            catalog = result.catalog
-            capabilities = result.capabilities
-            if expected_slug is not None and catalog.slug != expected_slug:
-                raise PluginPublishingError(
-                    f"Inspected Plugin slug {catalog.slug!r} does not match the "
-                    f"publish target slug {expected_slug!r} for {project}"
-                )
-            return VerifiedPluginDirectory(
-                catalog=catalog,
-                capabilities=capabilities,
+            return self._verified_candidate(
+                inspection_output=inspected.stdout,
+                project=project,
+                expected_slug=expected_slug,
+                loader_target=loader_target,
                 source_archive=source_archive,
                 lock_digest=lock_digest,
-                runtime_profile=self._runtime_profile,
             )
         finally:
             shutil.rmtree(staging, ignore_errors=True)
 
     def _require_allowed_project(self, directory: Path) -> Path:
-        project = directory.expanduser().resolve(strict=True)
+        try:
+            project = directory.expanduser().resolve(strict=True)
+        except OSError as exc:
+            raise PluginPublishingError(
+                f"Plugin project cannot be resolved: {directory}: {exc}"
+            ) from exc
         if not project.is_dir():
             raise PluginPublishingError(f"Plugin project is not a directory: {project}")
         if not self._allowed_roots:
@@ -199,6 +192,36 @@ class PluginDirectoryPublisher:
                 f"Plugin project {project} is outside configured roots: {rendered}"
             )
         return project
+
+    def _verified_candidate(
+        self,
+        *,
+        inspection_output: str | bytes,
+        project: Path,
+        expected_slug: str | None,
+        loader_target: str,
+        source_archive: bytes,
+        lock_digest: str,
+    ) -> VerifiedPluginCandidate:
+        try:
+            result = InspectionResult.model_validate_json(inspection_output)
+        except ValidationError as exc:
+            raise PluginPublishingError(
+                "Plugin catalog inspection did not return a valid manifest"
+            ) from exc
+        if expected_slug is not None and result.catalog.slug != expected_slug:
+            raise PluginPublishingError(
+                f"Inspected Plugin slug {result.catalog.slug!r} does not match the "
+                f"publish target slug {expected_slug!r} for {project}"
+            )
+        return VerifiedPluginCandidate(
+            catalog=result.catalog,
+            capabilities=result.capabilities,
+            loader_target=loader_target,
+            source_archive=source_archive,
+            lock_digest=lock_digest,
+            runtime_profile=self._runtime_profile,
+        )
 
     def _run_uv_command(
         self,
@@ -514,7 +537,7 @@ __all__ = [
     "PluginDirectoryPublisher",
     "constrained_environment",
     "PluginPublishingError",
-    "VerifiedPluginDirectory",
+    "VerifiedPluginCandidate",
     "build_deterministic_archive",
     "reject_escaping_path_dependencies",
     "scan_source_tree",

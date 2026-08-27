@@ -25,6 +25,7 @@ def test_candidate_command_is_networkless_read_only_and_resource_bounded(
     command = sandbox.command(
         ("/venv/bin/python", "-m", "pytest", "-q"),
         source=tmp_path / "snapshot",
+        source_read_only=True,
         environment_directory=tmp_path / "venv",
         cache_directory=tmp_path / "cache",
         network_enabled=False,
@@ -56,6 +57,7 @@ def test_dependency_fetch_is_the_only_network_enabled_phase(tmp_path: Path) -> N
     command = sandbox.command(
         ("uv", "sync", "--locked", "--active"),
         source=tmp_path / "snapshot",
+        source_read_only=False,
         environment_directory=tmp_path / "venv",
         cache_directory=tmp_path / "cache",
         network_enabled=True,
@@ -68,7 +70,7 @@ def test_dependency_fetch_is_the_only_network_enabled_phase(tmp_path: Path) -> N
         for index, value in enumerate(command)
         if value == "--mount"
     ]
-    assert mounts[0].endswith("dst=/candidate,readonly")
+    assert mounts[0].endswith("dst=/candidate")
     assert mounts[1].endswith("dst=/venv")
     assert mounts[2].endswith("dst=/cache")
     assert all(not mount.endswith("readonly") for mount in mounts[1:])
@@ -154,6 +156,7 @@ def test_directory_publisher_resolves_the_locked_vendored_wheel(
     )
 
     sync_command = next(command for command in commands if command[:2] == ("uv", "sync"))
+    assert "--no-editable" in sync_command
     assert sync_command[-2:] == ("--find-links", "/candidate/wheels")
     inspection_command = next(
         command for command in commands if "grafy_core.plugin_inspector" in command
@@ -188,6 +191,7 @@ def test_sandbox_fails_closed_when_output_exceeds_the_bound(
         sandbox.run(
             ("uv", "lock", "--check"),
             source=tmp_path / "snapshot",
+            source_read_only=True,
             environment_directory=tmp_path / "venv",
             cache_directory=tmp_path / "cache",
             network_enabled=True,
@@ -211,6 +215,7 @@ def test_sandbox_wraps_timeout_with_operation_context(
         sandbox.run(
             ("/venv/bin/python", "-m", "grafy_core.plugin_inspector"),
             source=tmp_path / "snapshot",
+            source_read_only=True,
             environment_directory=tmp_path / "venv",
             cache_directory=tmp_path / "cache",
             network_enabled=False,

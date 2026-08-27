@@ -43,7 +43,6 @@ from grafy_core.runtime.plugin_invocation import (
     PluginReleaseNodeConfig,
     PluginReleaseNode,
 )
-from grafy_core.runtime.plugin_loader import WORKSPACE_PLUGIN_LOADER_TARGET
 from grafy_core.runtime.plugin_protocol import PluginInvocationLimits
 from grafy_storage import LocalFileObjectStore
 
@@ -265,24 +264,14 @@ async def test_docker_runtime_restores_reuses_hardens_and_cleans_sandbox(
             scope=PluginReleaseScope.WORKSPACE,
             workspace_id=WORKSPACE_ID,
         ),
-        catalog=verified.catalog,
-        loader_target=WORKSPACE_PLUGIN_LOADER_TARGET,
-        source_archive=verified.source_archive,
-        source_digest=source_digest,
-        contract_digest=contract_digest,
-        profile_digest=profile_digest,
+        candidate=verified,
     )
     repeated_artifact = await builder.build_and_store(
         namespace=PluginReleaseNamespace(
             scope=PluginReleaseScope.WORKSPACE,
             workspace_id=WORKSPACE_ID,
         ),
-        catalog=verified.catalog,
-        loader_target=WORKSPACE_PLUGIN_LOADER_TARGET,
-        source_archive=verified.source_archive,
-        source_digest=source_digest,
-        contract_digest=contract_digest,
-        profile_digest=profile_digest,
+        candidate=verified,
     )
     assert repeated_artifact == artifact
     capabilities = verified.capabilities

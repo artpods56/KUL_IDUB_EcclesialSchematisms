@@ -3,19 +3,19 @@
 import argparse
 import asyncio
 from pathlib import Path
+import sys
+from typing import Literal
 from uuid import UUID
 
+from pydantic import BaseModel, Field
+
 from grafy_core.application.plugin_releases import PluginReleaseService
-from grafy_core.domain.plugin_releases import (
-    PlatformPluginActor,
-    PluginDistribution,
-    PluginExecutionPolicy,
-)
+from grafy_core.domain.plugin_releases import PlatformPluginActor
 from grafy_core.domain.plugin_revocations import PluginReleaseRevocationReason
 from grafy_persistence.database import create_database
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
-from grafy_api.plugin_admission import ReleaseExecutionAdmission
+from grafy_api.plugin_admission import isolated_release_admission
 from grafy_api.plugin_authoring import PluginAuthoringService
 from grafy_api.plugin_publication import (
     PluginPublicationWorkflow,
@@ -23,7 +23,10 @@ from grafy_api.plugin_publication import (
     SystemPluginRevocationWorkflow,
 )
 from grafy_api.plugin_publisher_sandbox import DockerPluginDirectoryPublisher
-from grafy_api.plugin_publishing import PluginDirectoryPublisher
+from grafy_api.plugin_publishing import (
+    PluginDirectoryPublisher,
+    PluginPublishingError,
+)
 from grafy_api.plugin_oci import PluginOciImageBuilder, runtime_profile
 from grafy_api.network_policy import load_network_policy_manifest
 from grafy_api.settings import get_settings
@@ -47,6 +50,21 @@ from grafy_api.system_plugin_inventory import (
     load_system_plugin_inventory,
 )
 from grafy_api.system_plugin_loader import load_system_plugin_deployment_file
+from grafy_core.runtime.plugin_loader import WORKSPACE_PLUGIN_LOADER_TARGET
+
+
+class PluginCheckReport(BaseModel):
+    """Read-only CLI summary of one verified Plugin working copy."""
+
+    status: Literal["valid"] = "valid"
+    slug: str
+    loader_target: str
+    node_count: int = Field(ge=0)
+    artifact_type_count: int = Field(ge=0)
+    capabilities: tuple[str, ...]
+    source_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    lock_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    runtime_profile: str
 
 
 async def _run_system_cutover(args: argparse.Namespace) -> None:
@@ -147,6 +165,49 @@ async def _run(args: argparse.Namespace) -> None:
     if args.group != "plugin":
         raise ValueError("Unsupported Grafy command")
     settings = get_settings()
+    if args.command == "check":
+        directory = Path(args.directory)
+        loader_target = WORKSPACE_PLUGIN_LOADER_TARGET
+        expected_slug: str | None = None
+        system_inventory = load_system_plugin_inventory(
+            CHECKED_IN_SYSTEM_PLUGIN_INVENTORY_PATH
+        )
+        repository_root = CHECKED_IN_SYSTEM_PLUGIN_INVENTORY_PATH.parents[1]
+        resolved_directory = directory.expanduser().resolve()
+        for entry in system_inventory.plugins:
+            if resolved_directory == (repository_root / entry.project).resolve():
+                loader_target = entry.loader_target
+                expected_slug = entry.slug
+                break
+        publisher = PluginDirectoryPublisher(
+            settings.resolved_plugin_roots,
+            runtime_profile=settings.plugin_runtime_profile,
+            wheelhouse=settings.resolved_plugin_wheelhouse,
+        )
+        try:
+            verified = await asyncio.to_thread(
+                publisher.verify,
+                directory,
+                expected_slug=expected_slug,
+                loader_target=loader_target,
+            )
+        except PluginPublishingError as exc:
+            print(f"Plugin check failed: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        report = PluginCheckReport(
+            slug=verified.catalog.slug,
+            loader_target=verified.loader_target,
+            node_count=len(verified.catalog.nodes),
+            artifact_type_count=len(verified.catalog.artifact_types),
+            capabilities=tuple(
+                capability.value for capability in verified.capabilities.capabilities
+            ),
+            source_digest=verified.source_digest,
+            lock_digest=verified.lock_digest,
+            runtime_profile=verified.runtime_profile,
+        )
+        print(report.model_dump_json(indent=2))
+        return
     database = create_database(settings.resolved_database_url)
     try:
         storage = configured_file_storage(settings)
@@ -170,16 +231,15 @@ async def _run(args: argparse.Namespace) -> None:
                 f"{revocation.revision} for {revocation.reason.value}"
             )
             return
+        profile = runtime_profile(
+            settings.plugin_runtime_profile,
+            native_base_image=settings.plugin_runtime_native_base_image,
+            native_base_image_digest=(settings.plugin_runtime_native_base_image_digest),
+        )
         image_builder = PluginOciImageBuilder(
             storage,
             bucket=settings.storage_bucket,
-            profile=runtime_profile(
-                settings.plugin_runtime_profile,
-                native_base_image=settings.plugin_runtime_native_base_image,
-                native_base_image_digest=(
-                    settings.plugin_runtime_native_base_image_digest
-                ),
-            ),
+            profile=profile,
             docker_binary=settings.plugin_docker_binary,
         )
         system_inventory = load_system_plugin_inventory(
@@ -199,7 +259,10 @@ async def _run(args: argparse.Namespace) -> None:
             return
         if args.command in {"stage-system", "promote-system"}:
             host_bindings: tuple[SystemHostPluginBinding, ...] = ()
-            if args.command == "promote-system":
+            if (
+                args.command == "promote-system"
+                and args.deployment_manifest is not None
+            ):
                 deployment = load_system_plugin_deployment_file(
                     args.deployment_manifest
                 )
@@ -207,9 +270,10 @@ async def _run(args: argparse.Namespace) -> None:
             system_publication = SystemPluginPublicationWorkflow(
                 image_builder,
                 releases,
-                ReleaseExecutionAdmission(
-                    isolated_adapter_available=True,
-                    runtime_profile=settings.plugin_runtime_profile,
+                isolated_release_admission(
+                    profile=profile,
+                    egress_policy=settings.resolved_plugin_egress_policy,
+                    network_policy=settings.resolved_network_policy,
                     system_host_bindings=host_bindings,
                 ),
                 system_inventory,
@@ -242,8 +306,6 @@ async def _run(args: argparse.Namespace) -> None:
                 )
                 release = await system_publication.stage_verified(
                     verified,
-                    execution_policy=PluginExecutionPolicy(args.execution_policy),
-                    distribution=PluginDistribution(args.distribution),
                     platform_actor=platform_actor,
                 )
                 print(f"Staged System Plugin {release.slug} release {release.revision}")
@@ -380,6 +442,11 @@ def main() -> None:
     groups = parser.add_subparsers(dest="group", required=True)
     plugin = groups.add_parser("plugin")
     commands = plugin.add_subparsers(dest="command", required=True)
+    check = commands.add_parser(
+        "check",
+        help="verify a Plugin directory without publishing it",
+    )
+    check.add_argument("directory")
     publish = commands.add_parser("publish")
     publish.add_argument("directory")
     publish.add_argument("--workspace", required=True)
@@ -401,16 +468,6 @@ def main() -> None:
     stage_system = commands.add_parser("stage-system")
     stage_system.add_argument("directory")
     stage_system.add_argument("--slug", required=True)
-    stage_system.add_argument(
-        "--execution-policy",
-        required=True,
-        choices=tuple(policy.value for policy in PluginExecutionPolicy),
-    )
-    stage_system.add_argument(
-        "--distribution",
-        required=True,
-        choices=tuple(distribution.value for distribution in PluginDistribution),
-    )
     stage_system.add_argument("--platform-actor", required=True)
     stage_system.add_argument("--sandbox-image", required=True)
     stage_system.add_argument("--sandbox-scratch-root")
@@ -427,8 +484,8 @@ def main() -> None:
     promote_system.add_argument("--expected-generation", type=int)
     promote_system.add_argument(
         "--deployment-manifest",
-        required=True,
         type=Path,
+        help="Exact host bindings; required only for host-eligible System Plugins",
     )
 
     revoke_system = commands.add_parser("revoke-system")

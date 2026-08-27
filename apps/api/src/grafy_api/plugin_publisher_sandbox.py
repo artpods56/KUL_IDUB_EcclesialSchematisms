@@ -10,18 +10,15 @@ import subprocess
 import tempfile
 import time
 
-from pydantic import ValidationError
-
 from grafy_api.plugin_publishing import (
     PluginDirectoryPublisher,
     PluginPublishingError,
-    VerifiedPluginDirectory,
+    VerifiedPluginCandidate,
     build_deterministic_archive,
     reject_escaping_path_dependencies,
     scan_source_tree,
     unpack_source_snapshot,
 )
-from grafy_core.plugin_inspector import InspectionResult
 from grafy_core.runtime.plugin_loader import WORKSPACE_PLUGIN_LOADER_TARGET
 
 
@@ -66,6 +63,7 @@ class DockerPublisherSandbox:
         command: tuple[str, ...],
         *,
         source: Path,
+        source_read_only: bool,
         environment_directory: Path,
         cache_directory: Path,
         network_enabled: bool,
@@ -75,6 +73,7 @@ class DockerPublisherSandbox:
         docker_command = self.command(
             command,
             source=source,
+            source_read_only=source_read_only,
             environment_directory=environment_directory,
             cache_directory=cache_directory,
             network_enabled=network_enabled,
@@ -104,6 +103,7 @@ class DockerPublisherSandbox:
         candidate_command: tuple[str, ...],
         *,
         source: Path,
+        source_read_only: bool,
         environment_directory: Path,
         cache_directory: Path,
         network_enabled: bool,
@@ -111,6 +111,9 @@ class DockerPublisherSandbox:
     ) -> tuple[str, ...]:
         """Build the complete auditable Docker invocation for one phase."""
 
+        source_mount = f"type=bind,src={source},dst=/candidate"
+        if source_read_only:
+            source_mount += ",readonly"
         environment_mount = (
             f"type=bind,src={environment_directory},dst=/venv,readonly"
             if environment_read_only
@@ -146,7 +149,7 @@ class DockerPublisherSandbox:
             "--tmpfs",
             "/tmp:rw,noexec,nosuid,nodev,size=64m",
             "--mount",
-            f"type=bind,src={source},dst=/candidate,readonly",
+            source_mount,
             "--mount",
             environment_mount,
             "--mount",
@@ -247,7 +250,6 @@ class DockerPluginDirectoryPublisher(PluginDirectoryPublisher):
             image=image,
             docker_binary=docker_binary,
         )
-        self._sandbox_runtime_profile = runtime_profile
         self._scratch_root = (
             None if scratch_root is None else scratch_root.expanduser().resolve()
         )
@@ -258,7 +260,7 @@ class DockerPluginDirectoryPublisher(PluginDirectoryPublisher):
         *,
         expected_slug: str | None = None,
         loader_target: str = WORKSPACE_PLUGIN_LOADER_TARGET,
-    ) -> VerifiedPluginDirectory:
+    ) -> VerifiedPluginCandidate:
         project = self._require_allowed_project(directory)
         entries = scan_source_tree(project)
         source_archive = build_deterministic_archive(entries)
@@ -272,6 +274,7 @@ class DockerPluginDirectoryPublisher(PluginDirectoryPublisher):
         )
         try:
             snapshot = staging / "snapshot"
+            build_snapshot = staging / "build-snapshot"
             environment_directory = staging / "venv"
             cache_directory = staging / "cache"
             snapshot.mkdir()
@@ -279,10 +282,12 @@ class DockerPluginDirectoryPublisher(PluginDirectoryPublisher):
             cache_directory.mkdir()
             unpack_source_snapshot(source_archive, snapshot)
             reject_escaping_path_dependencies(snapshot)
+            shutil.copytree(snapshot, build_snapshot)
             lock_digest = sha256((snapshot / "uv.lock").read_bytes()).hexdigest()
             self._sandbox.run(
                 ("uv", "lock", "--check", "--project", "/candidate"),
                 source=snapshot,
+                source_read_only=True,
                 environment_directory=environment_directory,
                 cache_directory=cache_directory,
                 network_enabled=True,
@@ -297,10 +302,12 @@ class DockerPluginDirectoryPublisher(PluginDirectoryPublisher):
                     "/candidate",
                     "--locked",
                     "--active",
+                    "--no-editable",
                     "--find-links",
                     "/candidate/wheels",
                 ),
-                source=snapshot,
+                source=build_snapshot,
+                source_read_only=False,
                 environment_directory=environment_directory,
                 cache_directory=cache_directory,
                 network_enabled=True,
@@ -310,6 +317,7 @@ class DockerPluginDirectoryPublisher(PluginDirectoryPublisher):
             self._sandbox.run(
                 ("/venv/bin/python", "-m", "pytest", "-q", "-p", "no:cacheprovider"),
                 source=snapshot,
+                source_read_only=True,
                 environment_directory=environment_directory,
                 cache_directory=cache_directory,
                 network_enabled=False,
@@ -325,29 +333,20 @@ class DockerPluginDirectoryPublisher(PluginDirectoryPublisher):
                     loader_target,
                 ),
                 source=snapshot,
+                source_read_only=True,
                 environment_directory=environment_directory,
                 cache_directory=cache_directory,
                 network_enabled=False,
                 environment_read_only=True,
                 operation="catalog inspection",
             )
-            try:
-                result = InspectionResult.model_validate_json(inspected.stdout)
-            except ValidationError as exc:
-                raise PluginPublishingError(
-                    "Plugin catalog inspection did not return a valid manifest"
-                ) from exc
-            if expected_slug is not None and result.catalog.slug != expected_slug:
-                raise PluginPublishingError(
-                    f"Inspected Plugin slug {result.catalog.slug!r} does not match the "
-                    f"publish target slug {expected_slug!r} for {project}"
-                )
-            return VerifiedPluginDirectory(
-                catalog=result.catalog,
-                capabilities=result.capabilities,
+            return self._verified_candidate(
+                inspection_output=inspected.stdout,
+                project=project,
+                expected_slug=expected_slug,
+                loader_target=loader_target,
                 source_archive=source_archive,
                 lock_digest=lock_digest,
-                runtime_profile=self._sandbox_runtime_profile,
             )
         finally:
             shutil.rmtree(staging, ignore_errors=True)

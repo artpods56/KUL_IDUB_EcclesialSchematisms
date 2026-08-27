@@ -18,7 +18,6 @@ from pydantic import ValidationError
 from grafy_core.domain.errors import ObjectAlreadyExistsError
 from grafy_core.domain.plugin_releases import (
     PLUGIN_INVOCATION_PROTOCOL,
-    PluginCatalogManifest,
     PluginReleaseNamespace,
     PluginRuntimeArtifact,
     plugin_protocol_digest,
@@ -27,7 +26,7 @@ from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.ports.storage import FileStoragePort, SaveFileCommand
 from grafy_core.runtime.plugin_loader import PluginGuestLoaderManifest
 
-from grafy_api.plugin_publishing import unpack_source_snapshot
+from grafy_api.plugin_publishing import VerifiedPluginCandidate, unpack_source_snapshot
 
 
 PYTHON_UV_BASE_IMAGE = "ghcr.io/astral-sh/uv:python3.14-bookworm-slim"
@@ -136,39 +135,33 @@ class PluginOciImageBuilder:
         self,
         *,
         namespace: PluginReleaseNamespace,
-        catalog: PluginCatalogManifest,
-        loader_target: str,
-        source_archive: bytes,
-        source_digest: str,
-        contract_digest: str,
-        profile_digest: str,
+        candidate: VerifiedPluginCandidate,
     ) -> PluginRuntimeArtifact:
-        if sha256(source_archive).hexdigest() != source_digest:
-            raise PluginOciBuildError(
-                "Plugin source archive does not match its publication digest"
-            )
+        source_digest = candidate.source_digest
+        contract_digest = candidate.contract_digest
+        profile_digest = candidate.profile_digest
         try:
             loader_manifest = PluginGuestLoaderManifest(
                 scope=namespace.scope,
-                slug=catalog.slug,
-                loader_target=loader_target,
+                slug=candidate.catalog.slug,
+                loader_target=candidate.loader_target,
             )
         except ValidationError as exc:
             raise PluginOciBuildError(
-                f"Plugin {catalog.slug!r} has an invalid guest loader target"
+                f"Plugin {candidate.catalog.slug!r} has an invalid guest loader target"
             ) from exc
         built = await asyncio.to_thread(
             self._build,
             namespace,
-            catalog.slug,
+            candidate.catalog.slug,
             loader_manifest,
-            source_archive,
+            candidate.source_archive,
             source_digest,
             contract_digest,
             profile_digest,
         )
         object_key = (
-            f"plugin-releases/{namespace.storage_path}/{catalog.slug}/runtime/"
+            f"plugin-releases/{namespace.storage_path}/{candidate.catalog.slug}/runtime/"
             f"{built.archive_digest}.oci.tar"
         )
         artifact = PluginRuntimeArtifact(

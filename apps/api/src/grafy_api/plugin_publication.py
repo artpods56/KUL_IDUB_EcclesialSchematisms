@@ -1,7 +1,6 @@
 """Verified publication workflows for Workspace and System Plugin releases."""
 
 import asyncio
-from hashlib import sha256
 from pathlib import Path
 from uuid import UUID
 
@@ -18,7 +17,6 @@ from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.domain.plugin_releases import (
     PlatformPluginActor,
     PluginCatalogManifest,
-    PluginDistribution,
     PluginExecutionPolicy,
     PluginNodeContract,
     PluginNodeHttpEgressContract,
@@ -26,15 +24,12 @@ from grafy_core.domain.plugin_releases import (
     PluginReleaseError,
     PluginReleaseNamespace,
     PluginReleaseScope,
-    plugin_contract_digest,
-    plugin_profile_digest,
 )
 from grafy_core.domain.plugin_selection import PluginReleaseSelection
 from grafy_core.domain.plugin_revocations import (
     PluginReleaseRevocation,
     PluginReleaseRevocationReason,
 )
-from grafy_core.runtime.plugin_loader import WORKSPACE_PLUGIN_LOADER_TARGET
 from grafy_persistence import schema
 
 from grafy_api.plugin_admission import (
@@ -46,7 +41,7 @@ from grafy_api.plugin_oci import PluginOciImageBuilder
 from grafy_api.plugin_publishing import (
     PluginDirectoryPublisher,
     PluginPublishingError,
-    VerifiedPluginDirectory,
+    VerifiedPluginCandidate,
 )
 from grafy_api.system_plugin_inventory import (
     SystemPluginInventory,
@@ -201,7 +196,7 @@ class PluginPublicationWorkflow:
         directory: Path,
         *,
         expected_slug: str,
-    ) -> VerifiedPluginDirectory:
+    ) -> VerifiedPluginCandidate:
         verified = await asyncio.to_thread(
             self._publisher.verify,
             directory,
@@ -233,7 +228,7 @@ class PluginPublicationWorkflow:
             published_by_user_id,
         )
         verified = await self.verify(directory, expected_slug=expected_slug)
-        source_digest = sha256(verified.source_archive).hexdigest()
+        source_digest = verified.source_digest
         if (
             reviewed_source_digest is not None
             and source_digest != reviewed_source_digest
@@ -260,12 +255,7 @@ class PluginPublicationWorkflow:
                 scope=PluginReleaseScope.WORKSPACE,
                 workspace_id=workspace_id,
             ),
-            catalog=verified.catalog,
-            loader_target=WORKSPACE_PLUGIN_LOADER_TARGET,
-            source_archive=verified.source_archive,
-            source_digest=source_digest,
-            contract_digest=plugin_contract_digest(verified.catalog),
-            profile_digest=plugin_profile_digest(verified.runtime_profile),
+            candidate=verified,
         )
         return await self._releases.publish(
             workspace_id=workspace_id,
@@ -338,7 +328,7 @@ class SystemPluginPublicationWorkflow:
     """Stage and explicitly promote global releases from a trusted publisher.
 
     Verification is deliberately outside this boundary. A one-shot platform
-    publisher or CI sandbox supplies ``VerifiedPluginDirectory``; the online
+    publisher or CI sandbox supplies ``VerifiedPluginCandidate``; the online
     API does not expose this workflow or receive Docker build authority.
     """
 
@@ -356,10 +346,8 @@ class SystemPluginPublicationWorkflow:
 
     async def stage_verified(
         self,
-        verified: VerifiedPluginDirectory,
+        verified: VerifiedPluginCandidate,
         *,
-        execution_policy: PluginExecutionPolicy,
-        distribution: PluginDistribution,
         platform_actor: PlatformPluginActor,
     ) -> PluginRelease:
         try:
@@ -368,33 +356,22 @@ class SystemPluginPublicationWorkflow:
             require_network_contract(verified.catalog)
         except SystemPluginInventoryError as exc:
             raise PluginPublishingError(str(exc)) from exc
-        if execution_policy is not entry.execution_policy:
-            raise PluginPublishingError(
-                f"System Plugin {entry.slug!r} execution policy does not match "
-                "the checked-in inventory"
-            )
-        if distribution is not entry.distribution:
-            raise PluginPublishingError(
-                f"System Plugin {entry.slug!r} distribution does not match the "
-                "checked-in inventory"
-            )
         if verified.capabilities.capabilities != entry.capabilities:
             raise PluginPublishingError(
                 f"System Plugin {entry.slug!r} capabilities do not match the "
                 "checked-in inventory"
             )
-        source_digest = sha256(verified.source_archive).hexdigest()
+        if verified.loader_target != entry.loader_target:
+            raise PluginPublishingError(
+                f"System Plugin {entry.slug!r} was inspected with loader target "
+                f"{verified.loader_target!r}, expected {entry.loader_target!r}"
+            )
         runtime_artifact = await self._image_builder.build_and_store(
             namespace=PluginReleaseNamespace(
                 scope=PluginReleaseScope.SYSTEM,
                 workspace_id=None,
             ),
-            catalog=verified.catalog,
-            loader_target=entry.loader_target,
-            source_archive=verified.source_archive,
-            source_digest=source_digest,
-            contract_digest=plugin_contract_digest(verified.catalog),
-            profile_digest=plugin_profile_digest(verified.runtime_profile),
+            candidate=verified,
         )
         return await self._releases.stage_system(
             catalog=verified.catalog,
@@ -403,8 +380,8 @@ class SystemPluginPublicationWorkflow:
             lock_digest=verified.lock_digest,
             runtime_profile=verified.runtime_profile,
             runtime_artifact=runtime_artifact,
-            execution_policy=execution_policy,
-            distribution=distribution,
+            execution_policy=entry.execution_policy,
+            distribution=entry.distribution,
             platform_actor=platform_actor,
         )
 

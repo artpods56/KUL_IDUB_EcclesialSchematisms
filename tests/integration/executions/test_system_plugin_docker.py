@@ -10,7 +10,6 @@ from grafy_core.domain.plugin_identity import PluginReleaseScope
 from grafy_core.domain.plugin_releases import (
     PluginReleaseNamespace,
     plugin_contract_digest,
-    plugin_profile_digest,
 )
 from grafy_core.runtime.plugin_loader import PluginGuestLoaderManifest
 from grafy_storage import LocalFileObjectStore
@@ -103,7 +102,6 @@ async def test_retained_system_oci_executes_its_exact_family_loader(
     )
     source_digest = sha256(verified.source_archive).hexdigest()
     contract_digest = plugin_contract_digest(verified.catalog)
-    profile_digest = plugin_profile_digest(verified.runtime_profile)
     storage = LocalFileObjectStore(tmp_path / "objects")
     artifact = await PluginOciImageBuilder(
         storage,
@@ -114,12 +112,7 @@ async def test_retained_system_oci_executes_its_exact_family_loader(
             scope=PluginReleaseScope.SYSTEM,
             workspace_id=None,
         ),
-        catalog=verified.catalog,
-        loader_target=SYSTEM_LOADER_TARGET,
-        source_archive=verified.source_archive,
-        source_digest=source_digest,
-        contract_digest=contract_digest,
-        profile_digest=profile_digest,
+        candidate=verified,
     )
     archive_path = tmp_path / "system-arithmetic.oci.tar"
     stream = await storage.load("runtime-test", artifact.object_key)
@@ -147,7 +140,7 @@ async def test_retained_system_oci_executes_its_exact_family_loader(
                 "image",
                 "inspect",
                 "--format",
-                "{{ index .Config.Labels \"io.grafy.plugin.loader.digest\" }}",
+                '{{ index .Config.Labels "io.grafy.plugin.loader.digest" }}',
                 image_reference,
             ),
             check=True,
