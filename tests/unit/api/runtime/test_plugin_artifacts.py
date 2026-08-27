@@ -31,11 +31,18 @@ from grafy_core.domain.plugin_releases import (
     PluginPortContract,
     PluginRelease,
     PluginReleaseIdentity,
+    PluginReleaseNamespace,
+    PluginReleaseScope,
+    PluginExecutionPolicy,
     PluginSecretInputContract,
     PluginStagedUploadInputContract,
     plugin_contract_digest,
     plugin_profile_digest,
     plugin_protocol_digest,
+)
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
 )
 from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.domain.node_secrets import JsonValue, node_secret_dependency_sha256
@@ -93,6 +100,23 @@ from grafy_api.v1.routes.executions.runtime.plugin_artifacts import (
 
 
 WORKSPACE_ID = UUID("00000000-0000-4000-8000-000000000401")
+
+
+def _installed_workspace_release(release: PluginRelease) -> InstalledPluginRelease:
+    return InstalledPluginRelease(
+        release=release,
+        installation=PluginInstallation.from_release(
+            release,
+            namespace=PluginReleaseNamespace(
+                scope=PluginReleaseScope.WORKSPACE,
+                workspace_id=WORKSPACE_ID,
+            ),
+            execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
+            distribution=None,
+            installed_by_user_id=WORKSPACE_ID,
+            installed_by_platform_actor=None,
+        ),
+    )
 OTHER_WORKSPACE_ID = UUID("00000000-0000-4000-8000-000000000402")
 SUMMARY = ArtifactTypeKey("notes.summary", 1)
 TEXT = ArtifactTypeKey("scalar.text", 1)
@@ -143,7 +167,7 @@ def _release(
     protocol_digest: str | None = None,
     with_secret: bool = False,
     with_upload: bool = False,
-) -> PluginRelease:
+) -> InstalledPluginRelease:
     output_shape = PortShape.MANY if many_output else PortShape.ONE
     outputs = [_port("text", "output", TEXT, output_shape)]
     if two_outputs:
@@ -208,8 +232,7 @@ def _release(
             if enabled
         )
     )
-    return PluginRelease(
-        workspace_id=WORKSPACE_ID,
+    return _installed_workspace_release(PluginRelease(
         slug="notes",
         revision=4,
         catalog=catalog,
@@ -222,10 +245,12 @@ def _release(
         source_digest="a" * 64,
         lock_digest="b" * 64,
         runtime_profile="python-uv",
-    )
+        loader_target="grafy_plugin:PLUGIN",
+        published_by_user_id=WORKSPACE_ID,
+    ))
 
 
-def _table_release() -> PluginRelease:
+def _table_release() -> InstalledPluginRelease:
     catalog = PluginCatalogManifest(
         slug="tables",
         title="Tables",
@@ -245,8 +270,7 @@ def _table_release() -> PluginRelease:
         ),
     )
     capabilities = PluginCapabilityManifest()
-    return PluginRelease(
-        workspace_id=WORKSPACE_ID,
+    return _installed_workspace_release(PluginRelease(
         slug="tables",
         revision=1,
         catalog=catalog,
@@ -259,10 +283,12 @@ def _table_release() -> PluginRelease:
         source_digest="c" * 64,
         lock_digest="d" * 64,
         runtime_profile="python-uv",
-    )
+        loader_target="grafy_plugin:PLUGIN",
+        published_by_user_id=WORKSPACE_ID,
+    ))
 
 
-def _binary_release() -> PluginRelease:
+def _binary_release() -> InstalledPluginRelease:
     catalog = PluginCatalogManifest(
         slug="binary",
         title="Binary",
@@ -284,8 +310,7 @@ def _binary_release() -> PluginRelease:
         ),
     )
     capabilities = PluginCapabilityManifest()
-    return PluginRelease(
-        workspace_id=WORKSPACE_ID,
+    return _installed_workspace_release(PluginRelease(
         slug="binary",
         revision=1,
         catalog=catalog,
@@ -298,10 +323,12 @@ def _binary_release() -> PluginRelease:
         source_digest="e" * 64,
         lock_digest="f" * 64,
         runtime_profile="python-uv",
-    )
+        loader_target="grafy_plugin:PLUGIN",
+        published_by_user_id=WORKSPACE_ID,
+    ))
 
 
-def _object_set_release(spec: ArtifactTypeSpec) -> PluginRelease:
+def _object_set_release(spec: ArtifactTypeSpec) -> InstalledPluginRelease:
     catalog = PluginCatalogManifest(
         slug="portable",
         title="Portable",
@@ -323,8 +350,7 @@ def _object_set_release(spec: ArtifactTypeSpec) -> PluginRelease:
         ),
     )
     capabilities = PluginCapabilityManifest()
-    return PluginRelease(
-        workspace_id=WORKSPACE_ID,
+    return _installed_workspace_release(PluginRelease(
         slug="portable",
         revision=1,
         catalog=catalog,
@@ -337,7 +363,9 @@ def _object_set_release(spec: ArtifactTypeSpec) -> PluginRelease:
         source_digest="6" * 64,
         lock_digest="7" * 64,
         runtime_profile="python-uv",
-    )
+        loader_target="grafy_plugin:PLUGIN",
+        published_by_user_id=WORKSPACE_ID,
+    ))
 
 
 async def _seed_inline_artifact(
@@ -432,7 +460,7 @@ async def _seed_object_set_artifact(
 
 
 def _request(
-    release: PluginRelease,
+    release: InstalledPluginRelease,
     ref: ArtifactRef,
     *,
     second_ref: ArtifactRef | None = None,

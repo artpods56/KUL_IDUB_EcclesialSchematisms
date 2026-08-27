@@ -88,7 +88,6 @@ def test_system_guest_loads_the_image_owned_family_target(tmp_path: Path) -> Non
     manifest_path = tmp_path / "plugin-loader.json"
     manifest_path.write_bytes(
         PluginGuestLoaderManifest(
-            scope=PluginReleaseScope.SYSTEM,
             slug="builtin.text",
             loader_target="grafy_plugin_text.plugin:TEXT",
         ).canonical_json_bytes()
@@ -109,7 +108,6 @@ def test_system_guest_rejects_manifest_and_contract_identity_drift(
     manifest_path = tmp_path / "plugin-loader.json"
     manifest_path.write_bytes(
         PluginGuestLoaderManifest(
-            scope=PluginReleaseScope.SYSTEM,
             slug="builtin.arithmetic",
             loader_target="grafy_plugin_text.plugin:TEXT",
         ).canonical_json_bytes()
@@ -123,7 +121,6 @@ def test_system_guest_rejects_manifest_and_contract_identity_drift(
 
     manifest_path.write_bytes(
         PluginGuestLoaderManifest(
-            scope=PluginReleaseScope.SYSTEM,
             slug="builtin.text",
             loader_target="grafy_plugin_text.plugin:TEXT",
         ).canonical_json_bytes()
@@ -135,14 +132,19 @@ def test_system_guest_rejects_manifest_and_contract_identity_drift(
         )
 
 
-def test_workspace_guest_ignores_image_manifest_and_uses_fixed_package(
+def test_workspace_guest_uses_the_same_image_owned_loader_manifest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manifest_path = tmp_path / "plugin-loader.json"
-    manifest_path.write_bytes(b"not a loader manifest")
-    module = ModuleType("grafy_plugin")
-    module.PLUGIN = TEXT  # type: ignore[attr-defined]
+    manifest_path.write_bytes(
+        PluginGuestLoaderManifest(
+            slug="builtin.text",
+            loader_target="workspace_plugin:CUSTOM_PLUGIN",
+        ).canonical_json_bytes()
+    )
+    module = ModuleType("workspace_plugin")
+    module.CUSTOM_PLUGIN = TEXT  # type: ignore[attr-defined]
     importer = Mock(return_value=module)
     monkeypatch.setattr(plugin_guest_module, "import_module", importer)
     workspace_id = UUID("00000000-0000-4000-8000-000000000503")
@@ -156,7 +158,7 @@ def test_workspace_guest_ignores_image_manifest_and_uses_fixed_package(
     )
 
     assert plugin is TEXT
-    importer.assert_called_once_with("grafy_plugin")
+    importer.assert_called_once_with("workspace_plugin")
 
 
 @pytest.mark.asyncio

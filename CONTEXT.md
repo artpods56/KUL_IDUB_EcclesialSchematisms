@@ -286,15 +286,17 @@ to own its projection and artifact conversion path.
 A uv-managed project that groups nodes, artifact types, and the resolver/writer
 factories those types require under one stable slug.
 The working copy is a directory; execution trusts an immutable **Plugin
-release** (a freeze in object storage), not an ambient import into the API
-process. A Plugin is either globally visible **System** scope or owned by one
-**Workspace**; Module is a separate catalog entry kind, not a Plugin scope.
+release** and an exact **Plugin installation**, not an ambient import into the
+API process. An installation is either globally visible in **System** scope or
+owned by one **Workspace**. Module is a separate catalog entry kind, not a
+Plugin scope.
 
-Workspace projects export `grafy_plugin.PLUGIN`. Co-installed System projects
-use a family-specific import package named by platform-owned distribution
-metadata. The import name is never catalog identity. Publishing a Workspace
-directory under a deployment **Plugin root** creates revision N and may
-establish the `(Workspace, slug)` family on first successful publish.
+Each project owns one loader target in `[tool.grafy.plugin]`; projects without
+that declaration use `grafy_plugin:PLUGIN`. System inventory repeats the target
+as a deployment assertion, not as a second runtime path. The import name is
+never catalog identity. Publishing a Plugin directory under a deployment
+**Plugin root** creates revision N. Installing that release may establish a
+System or Workspace family.
 Coding-agent authoring reserves the deterministic
 `<authoring-root>/<workspace-id>/<slug>` working copy, verifies and reviews an
 exact freeze, then uses the same publication workflow as human publication.
@@ -320,20 +322,32 @@ are additionally namespaced by Workspace id.
 
 ### Plugin release
 
-An append-only, digest-addressed freeze of one System or Workspace Plugin:
-source archive, lock, inspected node/artifact/canonical-conversion references, runtime
-profile, invocation protocol, capabilities, execution policy, distribution,
-publisher attribution, and immutable OCI artifact. Its public identity is
-`{scope, slug, revision}`; the database's surrogate release UUID is not a graph
-pin. Same descriptor bytes do not create a new revision.
+An append-only, digest-addressed freeze of one Plugin package: source archive,
+lock, inspected node and artifact contracts, canonical-conversion references,
+runtime profile, invocation protocol, capabilities, loader contract, publisher
+attribution, and immutable OCI artifact. A release has no System or Workspace
+scope. The same descriptor bytes do not create another revision.
+
+### Plugin installation
+
+An append-only assignment of one exact Plugin release to either System scope or
+one Workspace. The installation owns execution policy, System distribution
+metadata, installation authority, and installation time. Assigning the same
+release to another scope does not rebuild or copy its source or OCI artifact.
+
+### Plugin selection
+
+The mutable current installation for one scoped Plugin family. Its public graph
+pin is `{scope, slug, release revision}`. A selection has a generation and a
+published, deprecated, or withdrawn lifecycle state. Current never means the
+greatest retained release revision.
 
 A graph node carries two independent exact identities: the operator
-(`notes.table.summarize@1`) and Plugin release
+(`notes.table.summarize@1`) and the installed Plugin release
 (`{scope: workspace, slug: notes, revision: 4}`). Publishing revision 5 never
-moves that pin. Current is an explicit mutable family selection with a
-generation, never `max(revision)`. Deprecation and withdrawal prevent new
-insertion while retained exact pins may run. Exact revocation retains source
-and OCI identity but denies execution.
+moves that pin. Deprecation and withdrawal prevent new insertion while retained
+exact pins may run. Exact revocation retains the release and installation but
+denies execution.
 
 ### Module (workspace library)
 

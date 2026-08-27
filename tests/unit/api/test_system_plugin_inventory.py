@@ -34,11 +34,16 @@ from grafy_core.domain.plugin_releases import (
     PluginCatalogManifest,
     PluginNodeContract,
     PluginRelease,
+    PluginReleaseNamespace,
     PluginReleaseScope,
     PluginRuntimeArtifact,
     plugin_contract_digest,
     plugin_profile_digest,
     plugin_protocol_digest,
+)
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
 )
 from grafy_core.domain.plugin_selection import PluginReleaseSelection
 from grafy_core.plugins import Plugin
@@ -55,7 +60,10 @@ from grafy_plugin_sql import SQL
 INVENTORY_PATH = Path(__file__).parents[3] / "plugins" / "system-plugins.toml"
 
 
-def _release(entry: SystemPluginInventoryEntry, position: int) -> PluginRelease:
+def _release(
+    entry: SystemPluginInventoryEntry,
+    position: int,
+) -> InstalledPluginRelease:
     operator_prefix = entry.operator_prefixes[0]
     catalog = PluginCatalogManifest(
         slug=entry.slug,
@@ -84,8 +92,7 @@ def _release(entry: SystemPluginInventoryEntry, position: int) -> PluginRelease:
         manifest_digest=manifest_digest,
         config_digest=sha256(f"config:{entry.slug}".encode()).hexdigest(),
     )
-    return PluginRelease(
-        workspace_id=None,
+    release = PluginRelease(
         slug=entry.slug,
         revision=position + 1,
         catalog=catalog,
@@ -98,19 +105,33 @@ def _release(entry: SystemPluginInventoryEntry, position: int) -> PluginRelease:
         source_digest=sha256(f"source:{entry.slug}".encode()).hexdigest(),
         lock_digest=sha256(f"lock:{entry.slug}".encode()).hexdigest(),
         runtime_profile="python-uv",
+        loader_target=entry.loader_target,
         runtime_image_digest=manifest_digest,
         runtime_artifact=runtime,
         published_by_platform_actor="test:inventory",
-        scope=PluginReleaseScope.SYSTEM,
-        execution_policy=entry.execution_policy,
-        distribution=entry.distribution,
+    )
+    return InstalledPluginRelease(
+        release=release,
+        installation=PluginInstallation.from_release(
+            release,
+            namespace=PluginReleaseNamespace(
+                scope=PluginReleaseScope.SYSTEM,
+                workspace_id=None,
+            ),
+            execution_policy=entry.execution_policy,
+            distribution=entry.distribution,
+            installed_by_user_id=None,
+            installed_by_platform_actor="test:inventory",
+        ),
     )
 
 
 @pytest.fixture
 async def inventory_database(
     tmp_path: Path,
-) -> AsyncIterator[tuple[Database, SystemPluginInventory, dict[str, PluginRelease]]]:
+) -> AsyncIterator[
+    tuple[Database, SystemPluginInventory, dict[str, InstalledPluginRelease]]
+]:
     inventory = load_system_plugin_inventory(INVENTORY_PATH)
     database = create_database(
         f"sqlite+aiosqlite:///{tmp_path / 'system-inventory.sqlite3'}"
@@ -124,7 +145,10 @@ async def inventory_database(
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
         for entry in inventory.plugins:
             release = releases[entry.slug]
-            await unit_of_work.plugin_releases.add(release)
+            await unit_of_work.plugin_releases.add(release.release)
+            await unit_of_work.plugin_releases.add_installation(
+                release.installation
+            )
             await unit_of_work.plugin_releases.add_selection(
                 PluginReleaseSelection.from_release(
                     release,
@@ -327,7 +351,7 @@ async def test_generator_resolves_exact_releases_and_host_bindings_idempotently(
     inventory_database: tuple[
         Database,
         SystemPluginInventory,
-        dict[str, PluginRelease],
+        dict[str, InstalledPluginRelease],
     ],
     tmp_path: Path,
 ) -> None:
@@ -402,7 +426,7 @@ async def test_generator_refuses_missing_selection_and_inventory_release_mismatc
     inventory_database: tuple[
         Database,
         SystemPluginInventory,
-        dict[str, PluginRelease],
+        dict[str, InstalledPluginRelease],
     ],
 ) -> None:
     database, inventory, _releases = inventory_database
@@ -434,7 +458,10 @@ async def test_generator_refuses_missing_selection_and_inventory_release_mismatc
         async with SqlAlchemyUnitOfWork(database_two.sessions) as unit_of_work:
             for position, entry in enumerate(inventory.plugins):
                 release = _release(entry, position)
-                await unit_of_work.plugin_releases.add(release)
+                await unit_of_work.plugin_releases.add(release.release)
+                await unit_of_work.plugin_releases.add_installation(
+                    release.installation
+                )
                 await unit_of_work.plugin_releases.add_selection(
                     PluginReleaseSelection.from_release(release)
                 )

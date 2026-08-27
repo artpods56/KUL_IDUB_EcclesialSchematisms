@@ -19,6 +19,7 @@ from sqlalchemy.dialects import sqlite
 
 from grafy_api.settings import get_settings
 from grafy_persistence.schema import (
+    plugin_installations,
     plugin_release_selections,
     plugin_releases,
     staged_uploads,
@@ -292,6 +293,7 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "module_releases",
             "modules",
             "plugin_releases",
+            "plugin_installations",
             "plugin_release_revocations",
             "plugin_release_selections",
             "node_secrets",
@@ -337,6 +339,7 @@ def test_alembic_migration_upgrades_downgrades_and_has_no_schema_drift(
             "module_releases",
             "modules",
             "plugin_releases",
+            "plugin_installations",
             "plugin_release_revocations",
             "plugin_release_selections",
             "node_secrets",
@@ -2366,18 +2369,22 @@ def test_0021_downgrade_refuses_to_discard_revocation_provenance(
     get_settings.cache_clear()
 
 
-def test_scoped_plugin_release_partial_indexes_compile_for_postgresql() -> None:
+def test_plugin_registry_unique_indexes_compile_for_postgresql() -> None:
     indexes = {
         str(index.name): index
-        for table in (plugin_releases, plugin_release_selections)
+        for table in (
+            plugin_releases,
+            plugin_installations,
+            plugin_release_selections,
+        )
         for index in table.indexes
         if index.name is not None
     }
     expected = {
-        "uq_plugin_releases_system_slug_revision",
-        "uq_plugin_releases_workspace_slug_revision",
-        "uq_plugin_releases_system_slug_descriptor",
-        "uq_plugin_releases_workspace_slug_descriptor",
+        "uq_plugin_releases_slug_revision",
+        "uq_plugin_releases_slug_descriptor",
+        "uq_plugin_installations_system_slug_revision",
+        "uq_plugin_installations_workspace_slug_revision",
         "uq_plugin_release_selections_system_slug",
         "uq_plugin_release_selections_workspace_slug",
     }
@@ -2387,4 +2394,9 @@ def test_scoped_plugin_release_partial_indexes_compile_for_postgresql() -> None:
             CreateIndex(indexes[index_name]).compile(dialect=postgresql.dialect())
         )
         assert ddl.startswith(f"CREATE UNIQUE INDEX {index_name}")
-        assert " WHERE scope = " in ddl
+        if index_name == "uq_plugin_releases_slug_revision":
+            assert " WHERE " not in ddl
+        elif index_name == "uq_plugin_releases_slug_descriptor":
+            assert " WHERE descriptor_digest IS NOT NULL" in ddl
+        else:
+            assert " WHERE scope = " in ddl

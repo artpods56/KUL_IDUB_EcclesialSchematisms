@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
+)
 from grafy_core.domain.plugin_releases import (
     PluginArtifactConversionContract,
     PluginArtifactTypeContract,
@@ -13,6 +17,7 @@ from grafy_core.domain.plugin_releases import (
     PluginDistribution,
     PluginExecutionPolicy,
     PluginRelease,
+    PluginReleaseNamespace,
     PluginReleaseScope,
     PluginRuntimeArtifact,
     plugin_contract_digest,
@@ -64,7 +69,7 @@ class SelectedSystemReleaseLookup:
 
     def __init__(
         self,
-        releases: tuple[PluginRelease, ...],
+        releases: tuple[InstalledPluginRelease, ...],
         selections: tuple[PluginReleaseSelection, ...],
     ) -> None:
         self._releases = {
@@ -83,7 +88,7 @@ class SelectedSystemReleaseLookup:
         revision: int,
         *,
         scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE,
-    ) -> PluginRelease | None:
+    ) -> InstalledPluginRelease | None:
         self.release_reads += 1
         release = self._releases.get((scope, slug, revision))
         if release is None:
@@ -105,14 +110,17 @@ class SelectedSystemReleaseLookup:
         del workspace_id
         return self._selections.get((scope, slug))
 
-    async def list_current_system(self) -> list[PluginRelease]:
+    async def list_current_system(self) -> list[InstalledPluginRelease]:
         return [
             release
             for release in self._releases.values()
             if release.scope is PluginReleaseScope.SYSTEM
         ]
 
-    async def list_current(self, workspace_id: UUID) -> list[PluginRelease]:
+    async def list_current(
+        self,
+        workspace_id: UUID,
+    ) -> list[InstalledPluginRelease]:
         return [
             release
             for release in self._releases.values()
@@ -143,7 +151,7 @@ class SelectedSystemReleaseLookup:
 @dataclass(frozen=True, slots=True)
 class SelectedSystemPluginDeployment:
     registry: PluginRegistry
-    releases: tuple[PluginRelease, ...]
+    releases: tuple[InstalledPluginRelease, ...]
     selections: tuple[PluginReleaseSelection, ...]
     host_bindings: tuple[SystemHostPluginBinding, ...]
     loaded_plugins: tuple[LoadedSystemPlugin, ...]
@@ -180,7 +188,7 @@ def build_selected_system_plugin_deployment(
 ) -> SelectedSystemPluginDeployment:
     selected_plugins = tuple(plugins)
     registry = build_explicit_plugin_registry(selected_plugins)
-    releases: list[PluginRelease] = []
+    releases: list[InstalledPluginRelease] = []
     selections: list[PluginReleaseSelection] = []
     host_bindings: list[SystemHostPluginBinding] = []
     loaded_plugins: list[LoadedSystemPlugin] = []
@@ -241,8 +249,10 @@ def build_selected_system_plugin_deployment(
             manifest_digest=digest_character * 64,
             config_digest=digest_character * 64,
         )
-        release = PluginRelease(
-            workspace_id=None,
+        loader_target = "tests.support.system_plugins:" + plugin.slug.replace(
+            ".", "_"
+        ).replace("-", "_")
+        release_record = PluginRelease(
             slug=plugin.slug,
             revision=1,
             catalog=catalog,
@@ -255,19 +265,28 @@ def build_selected_system_plugin_deployment(
             source_digest=digest_character * 64,
             lock_digest=digest_character * 64,
             runtime_profile="python-uv",
+            loader_target=loader_target,
             runtime_image_digest=runtime_artifact.manifest_digest,
             runtime_artifact=runtime_artifact,
-            scope=PluginReleaseScope.SYSTEM,
-            execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
-            distribution=PluginDistribution.BUNDLED,
             published_by_platform_actor="test:system",
+        )
+        release = InstalledPluginRelease(
+            release=release_record,
+            installation=PluginInstallation.from_release(
+                release_record,
+                namespace=PluginReleaseNamespace(
+                    scope=PluginReleaseScope.SYSTEM,
+                    workspace_id=None,
+                ),
+                execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
+                distribution=PluginDistribution.BUNDLED,
+                installed_by_user_id=None,
+                installed_by_platform_actor="test:system",
+            ),
         )
         selection = PluginReleaseSelection.from_release(release)
         releases.append(release)
         selections.append(selection)
-        loader_target = "tests.support.system_plugins:" + plugin.slug.replace(
-            ".", "_"
-        ).replace("-", "_")
         host_build_digest = digest_character * 64
         host_bindings.append(
             SystemHostPluginBinding.from_release(

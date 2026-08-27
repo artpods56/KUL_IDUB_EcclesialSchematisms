@@ -5,9 +5,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from grafy_core.domain.plugin_installations import InstalledPluginRelease
 from grafy_core.domain.plugin_releases import (
     PluginCatalogManifest,
-    PluginRelease,
     PluginReleaseScope,
     plugin_contract_digest,
 )
@@ -65,7 +65,7 @@ class SystemHostPluginBinding(BaseModel):
     @classmethod
     def from_release(
         cls,
-        release: PluginRelease,
+        release: InstalledPluginRelease,
         *,
         selection_generation: int,
         loader_target: str,
@@ -89,7 +89,7 @@ class SystemHostPluginBinding(BaseModel):
             catalog=release.catalog,
         )
 
-    def release_mismatch(self, release: PluginRelease) -> str | None:
+    def release_mismatch(self, release: InstalledPluginRelease) -> str | None:
         """Return the first immutable identity mismatch, if one exists."""
 
         if release.scope is not self.scope or release.workspace_id is not None:

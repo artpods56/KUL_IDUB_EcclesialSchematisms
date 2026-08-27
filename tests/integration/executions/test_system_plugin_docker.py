@@ -6,11 +6,7 @@ import subprocess
 
 import pytest
 
-from grafy_core.domain.plugin_identity import PluginReleaseScope
-from grafy_core.domain.plugin_releases import (
-    PluginReleaseNamespace,
-    plugin_contract_digest,
-)
+from grafy_core.domain.plugin_releases import plugin_contract_digest
 from grafy_core.runtime.plugin_loader import PluginGuestLoaderManifest
 from grafy_storage import LocalFileObjectStore
 
@@ -108,10 +104,6 @@ async def test_retained_system_oci_executes_its_exact_family_loader(
         bucket="runtime-test",
         profile=runtime_profile(verified.runtime_profile),
     ).build_and_store(
-        namespace=PluginReleaseNamespace(
-            scope=PluginReleaseScope.SYSTEM,
-            workspace_id=None,
-        ),
         candidate=verified,
     )
     archive_path = tmp_path / "system-arithmetic.oci.tar"
@@ -129,7 +121,6 @@ async def test_retained_system_oci_executes_its_exact_family_loader(
     )
     image_reference = f"sha256:{artifact.manifest_digest}"
     loader_manifest = PluginGuestLoaderManifest(
-        scope=PluginReleaseScope.SYSTEM,
         slug="builtin.arithmetic",
         loader_target=SYSTEM_LOADER_TARGET,
     )

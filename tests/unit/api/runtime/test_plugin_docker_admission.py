@@ -11,11 +11,17 @@ from grafy_core.domain.plugin_releases import (
     PluginNodeContract,
     PluginRelease,
     PluginReleaseIdentity,
+    PluginReleaseNamespace,
     PluginReleaseScope,
+    PluginExecutionPolicy,
     PluginRuntimeArtifact,
     plugin_contract_digest,
     plugin_profile_digest,
     plugin_protocol_digest,
+)
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
 )
 from grafy_core.domain.plugin_revocations import (
     PluginReleaseRevocation,
@@ -48,7 +54,7 @@ WORKSPACE_ID = UUID("00000000-0000-4000-8000-000000000992")
 class _ReleaseLookup:
     def __init__(
         self,
-        release: PluginRelease,
+        release: InstalledPluginRelease,
         revocation: PluginReleaseRevocation | None = None,
     ) -> None:
         self._release = release
@@ -61,7 +67,7 @@ class _ReleaseLookup:
         revision: int,
         *,
         scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE,
-    ) -> PluginRelease | None:
+    ) -> InstalledPluginRelease | None:
         release = self._release
         if (
             workspace_id == WORKSPACE_ID
@@ -144,7 +150,7 @@ def test_native_capability_cannot_be_enabled_without_exact_pinned_profile(
     )
 
 
-def _unsupported_release() -> PluginRelease:
+def _unsupported_release() -> InstalledPluginRelease:
     catalog = PluginCatalogManifest(
         slug="notes",
         title="Notes",
@@ -174,8 +180,7 @@ def _unsupported_release() -> PluginRelease:
         manifest_digest="b" * 64,
         config_digest="c" * 64,
     )
-    return PluginRelease(
-        workspace_id=WORKSPACE_ID,
+    release = PluginRelease(
         slug=catalog.slug,
         revision=1,
         catalog=catalog,
@@ -188,8 +193,24 @@ def _unsupported_release() -> PluginRelease:
         source_digest="d" * 64,
         lock_digest="e" * 64,
         runtime_profile="python-uv",
+        loader_target="grafy_plugin:PLUGIN",
         runtime_image_digest=artifact.manifest_digest,
         runtime_artifact=artifact,
+        published_by_user_id=WORKSPACE_ID,
+    )
+    return InstalledPluginRelease(
+        release=release,
+        installation=PluginInstallation.from_release(
+            release,
+            namespace=PluginReleaseNamespace(
+                scope=PluginReleaseScope.WORKSPACE,
+                workspace_id=WORKSPACE_ID,
+            ),
+            execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
+            distribution=None,
+            installed_by_user_id=WORKSPACE_ID,
+            installed_by_platform_actor=None,
+        ),
     )
 
 

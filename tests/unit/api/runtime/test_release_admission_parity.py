@@ -19,11 +19,17 @@ from grafy_core.domain.plugin_releases import (
     PluginNodeContract,
     PluginPortContract,
     PluginRelease,
+    PluginReleaseNamespace,
     PluginReleaseScope,
+    PluginExecutionPolicy,
     PluginRuntimeArtifact,
     plugin_contract_digest,
     plugin_profile_digest,
     plugin_protocol_digest,
+)
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
 )
 from grafy_core.nodes import NodeExecutionContext, PortShape
 from grafy_core.plugins import PluginRegistry, PluginRuntimeContext
@@ -58,7 +64,7 @@ class _UnusedModuleExecutor:
 
 
 class _ReleaseLookup:
-    def __init__(self, release: PluginRelease) -> None:
+    def __init__(self, release: InstalledPluginRelease) -> None:
         self._release = release
 
     async def get_by_revision(
@@ -68,7 +74,7 @@ class _ReleaseLookup:
         revision: int,
         *,
         scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE,
-    ) -> PluginRelease | None:
+    ) -> InstalledPluginRelease | None:
         release = self._release
         if (
             workspace_id == release.workspace_id
@@ -136,7 +142,7 @@ def _contract(
     )
 
 
-def _release() -> PluginRelease:
+def _release() -> InstalledPluginRelease:
     contracts = (
         _contract("parity.safe"),
         _contract(
@@ -161,8 +167,7 @@ def _release() -> PluginRelease:
         manifest_digest="b" * 64,
         config_digest="c" * 64,
     )
-    return PluginRelease(
-        workspace_id=WORKSPACE_ID,
+    release = PluginRelease(
         slug=catalog.slug,
         revision=1,
         catalog=catalog,
@@ -175,14 +180,30 @@ def _release() -> PluginRelease:
         source_digest="d" * 64,
         lock_digest="e" * 64,
         runtime_profile="python-uv",
+        loader_target="grafy_plugin:PLUGIN",
         runtime_image_digest=runtime_artifact.manifest_digest,
         runtime_artifact=runtime_artifact,
+        published_by_user_id=WORKSPACE_ID,
+    )
+    return InstalledPluginRelease(
+        release=release,
+        installation=PluginInstallation.from_release(
+            release,
+            namespace=PluginReleaseNamespace(
+                scope=PluginReleaseScope.WORKSPACE,
+                workspace_id=WORKSPACE_ID,
+            ),
+            execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
+            distribution=None,
+            installed_by_user_id=WORKSPACE_ID,
+            installed_by_platform_actor=None,
+        ),
     )
 
 
 def _compiler(
     tmp_path: Path,
-    release: PluginRelease,
+    release: InstalledPluginRelease,
     admission: ReleaseExecutionAdmission,
 ) -> GraphCompiler:
     registry = PluginRegistry()

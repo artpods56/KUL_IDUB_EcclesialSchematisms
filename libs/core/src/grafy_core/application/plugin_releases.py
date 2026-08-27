@@ -34,6 +34,10 @@ from grafy_core.domain.plugin_releases import (
     plugin_profile_digest,
     plugin_protocol_digest,
 )
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
+)
 from grafy_core.domain.plugin_selection import PluginReleaseSelection
 from grafy_core.domain.plugin_revocations import (
     PluginReleaseRevocation,
@@ -57,25 +61,26 @@ _CANONICAL_CONVERSION_CONTRACTS = {
 class SystemPluginPromotionCandidate:
     """Exact release and prospective selection checked before promotion."""
 
-    release: PluginRelease
+    release: InstalledPluginRelease
     selection: PluginReleaseSelection
     expected_generation: int
 
 
 def require_workspace_catalog_authority(catalog: PluginCatalogManifest) -> None:
-    """Require every Workspace-owned identity to use its exact slug namespace."""
+    """Require Workspace-owned identities to use the slug's family namespace."""
 
-    prefix = f"{catalog.slug}."
+    family = catalog.slug.rsplit(".", maxsplit=1)[-1]
+    prefixes = (f"{catalog.slug}.", f"{family}.")
     identities = [("node", node.operator_id) for node in catalog.nodes]
     identities.extend(
         ("artifact type", artifact.key.id) for artifact in catalog.artifact_types
     )
     for identity_kind, identity in identities:
-        if identity.startswith(prefix):
+        if identity.startswith(prefixes):
             continue
         raise PluginReleaseError(
             f"Workspace Plugin {catalog.slug!r} owned {identity_kind} "
-            f"{identity!r} must use the exact {prefix!r} namespace"
+            f"{identity!r} must use one of the family namespaces {prefixes!r}"
         )
 
 
@@ -128,6 +133,35 @@ class PluginReleaseService:
                 published_by_user_id,
             )
 
+    async def reusable_runtime_artifact(
+        self,
+        *,
+        catalog: PluginCatalogManifest,
+        capabilities: PluginCapabilityManifest,
+        source_digest: str,
+        lock_digest: str,
+        runtime_profile: str,
+        loader_target: str,
+    ) -> PluginRuntimeArtifact | None:
+        """Return the retained artifact for an identical verified release."""
+
+        async with self._unit_of_work_factory() as unit_of_work:
+            release = await unit_of_work.plugin_releases.get_by_source_digest(
+                catalog.slug,
+                source_digest,
+            )
+        if release is None or release.runtime_artifact is None:
+            return None
+        if (
+            release.catalog != catalog
+            or release.capabilities != capabilities
+            or release.lock_digest != lock_digest
+            or release.runtime_profile != runtime_profile.strip()
+            or release.loader_target != loader_target
+        ):
+            return None
+        return release.runtime_artifact
+
     async def publish(
         self,
         *,
@@ -139,7 +173,8 @@ class PluginReleaseService:
         runtime_profile: str,
         runtime_artifact: PluginRuntimeArtifact | None,
         published_by_user_id: UUID,
-    ) -> PluginRelease:
+        loader_target: str,
+    ) -> InstalledPluginRelease:
         require_workspace_catalog_authority(catalog)
         return await self._append_release(
             namespace=PluginReleaseNamespace(
@@ -151,6 +186,7 @@ class PluginReleaseService:
             source_archive=source_archive,
             lock_digest=lock_digest,
             runtime_profile=runtime_profile,
+            loader_target=loader_target,
             runtime_artifact=runtime_artifact,
             execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
             distribution=None,
@@ -171,7 +207,8 @@ class PluginReleaseService:
         execution_policy: PluginExecutionPolicy,
         distribution: PluginDistribution,
         platform_actor: PlatformPluginActor,
-    ) -> PluginRelease:
+        loader_target: str,
+    ) -> InstalledPluginRelease:
         """Append an immutable global release without implicitly promoting it."""
 
         return await self._append_release(
@@ -184,6 +221,7 @@ class PluginReleaseService:
             source_archive=source_archive,
             lock_digest=lock_digest,
             runtime_profile=runtime_profile,
+            loader_target=loader_target,
             runtime_artifact=runtime_artifact,
             execution_policy=execution_policy,
             distribution=distribution,
@@ -319,7 +357,8 @@ class PluginReleaseService:
         published_by_user_id: UUID | None,
         published_by_platform_actor: str | None,
         select_release: bool,
-    ) -> PluginRelease:
+        loader_target: str,
+    ) -> InstalledPluginRelease:
         require_canonical_conversion_references(catalog)
         if not source_archive:
             raise PluginReleaseError("Plugin source archive must not be empty")
@@ -333,8 +372,7 @@ class PluginReleaseService:
         profile_digest = plugin_profile_digest(runtime_profile)
         protocol_digest = plugin_protocol_digest()
         source_object_key = (
-            f"plugin-releases/{namespace.storage_path}/{catalog.slug}/"
-            f"{source_digest}.tar.gz"
+            f"plugin-releases/{catalog.slug}/{source_digest}.tar.gz"
         )
         descriptor = PluginReleaseDescriptor(
             source_digest=source_digest,
@@ -344,12 +382,14 @@ class PluginReleaseService:
             profile_digest=profile_digest,
             lock_digest=lock_digest,
             runtime_profile=runtime_profile,
+            loader_target=loader_target,
             runtime_artifact=runtime_artifact,
-            scope=namespace.scope,
-            execution_policy=execution_policy,
-            distribution=distribution,
         )
         async with self._unit_of_work_factory() as unit_of_work:
+            existing = await unit_of_work.plugin_releases.get_by_descriptor_digest(
+                catalog.slug,
+                descriptor.digest,
+            )
             if namespace.scope is PluginReleaseScope.WORKSPACE:
                 if namespace.workspace_id is None or published_by_user_id is None:
                     raise PluginReleaseError(
@@ -364,9 +404,12 @@ class PluginReleaseService:
                     scope=PluginReleaseScope.SYSTEM,
                     workspace_id=None,
                 )
-                if await unit_of_work.plugin_releases.family_exists(
-                    system_namespace,
-                    catalog.slug,
+                if (
+                    existing is None
+                    and await unit_of_work.plugin_releases.family_exists(
+                        system_namespace,
+                        catalog.slug,
+                    )
                 ):
                     raise PluginReleaseError(
                         f"Workspace Plugin {catalog.slug!r} conflicts with a "
@@ -380,8 +423,11 @@ class PluginReleaseService:
                     scope=PluginReleaseScope.WORKSPACE,
                 )
             else:
-                if await unit_of_work.plugin_releases.workspace_family_exists(
-                    catalog.slug
+                if (
+                    existing is None
+                    and await unit_of_work.plugin_releases.workspace_family_exists(
+                        catalog.slug
+                    )
                 ):
                     raise PluginReleaseError(
                         f"System Plugin {catalog.slug!r} conflicts with a Workspace "
@@ -392,54 +438,65 @@ class PluginReleaseService:
                     await unit_of_work.plugin_releases.list_workspace_catalogs(),
                     scope=PluginReleaseScope.SYSTEM,
                 )
-            existing = await unit_of_work.plugin_releases.get_by_descriptor_digest(
-                namespace,
-                catalog.slug,
-                descriptor.digest,
-            )
             if existing is not None:
                 if existing.catalog != catalog or existing.capabilities != capabilities:
                     raise PluginReleaseError(
                         "Plugin release descriptor digest matched different metadata"
                     )
-                return existing
-            revision = await unit_of_work.plugin_releases.next_revision(
+                release = existing
+            else:
+                revision = await unit_of_work.plugin_releases.next_revision(
+                    catalog.slug,
+                )
+                await self._save_source_archive(
+                    source_object_key,
+                    source_archive,
+                    source_digest,
+                )
+                release = PluginRelease(
+                    slug=catalog.slug,
+                    revision=revision,
+                    catalog=catalog,
+                    contract_digest=contract_digest,
+                    capabilities=capabilities,
+                    capability_digest=capabilities.digest,
+                    protocol_digest=protocol_digest,
+                    profile_digest=profile_digest,
+                    source_object_key=source_object_key,
+                    source_digest=source_digest,
+                    lock_digest=lock_digest,
+                    runtime_profile=runtime_profile,
+                    loader_target=loader_target,
+                    runtime_image_digest=(
+                        None
+                        if runtime_artifact is None
+                        else runtime_artifact.manifest_digest
+                    ),
+                    runtime_artifact=runtime_artifact,
+                    descriptor_digest=descriptor.digest,
+                    published_by_user_id=published_by_user_id,
+                    published_by_platform_actor=published_by_platform_actor,
+                )
+                await unit_of_work.plugin_releases.add(release)
+            installed = await unit_of_work.plugin_releases.get_by_revision(
                 namespace,
                 catalog.slug,
+                release.revision,
             )
-            await self._save_source_archive(
-                source_object_key,
-                source_archive,
-                source_digest,
-            )
-            release = PluginRelease(
-                workspace_id=namespace.workspace_id,
-                slug=catalog.slug,
-                revision=revision,
-                catalog=catalog,
-                contract_digest=contract_digest,
-                capabilities=capabilities,
-                capability_digest=capabilities.digest,
-                protocol_digest=protocol_digest,
-                profile_digest=profile_digest,
-                source_object_key=source_object_key,
-                source_digest=source_digest,
-                lock_digest=lock_digest,
-                runtime_profile=runtime_profile,
-                runtime_image_digest=(
-                    None
-                    if runtime_artifact is None
-                    else runtime_artifact.manifest_digest
-                ),
-                runtime_artifact=runtime_artifact,
-                descriptor_digest=descriptor.digest,
-                published_by_user_id=published_by_user_id,
-                published_by_platform_actor=published_by_platform_actor,
-                scope=namespace.scope,
-                execution_policy=execution_policy,
-                distribution=distribution,
-            )
-            await unit_of_work.plugin_releases.add(release)
+            if installed is None:
+                installation = PluginInstallation.from_release(
+                    release,
+                    namespace=namespace,
+                    execution_policy=execution_policy,
+                    distribution=distribution,
+                    installed_by_user_id=published_by_user_id,
+                    installed_by_platform_actor=published_by_platform_actor,
+                )
+                await unit_of_work.plugin_releases.add_installation(installation)
+                installed = InstalledPluginRelease(
+                    release=release,
+                    installation=installation,
+                )
             if select_release:
                 selection = await unit_of_work.plugin_releases.get_selection(
                     namespace,
@@ -449,23 +506,24 @@ class PluginReleaseService:
                 if selection is None:
                     await unit_of_work.plugin_releases.add_selection(
                         PluginReleaseSelection.from_release(
-                            release,
+                            installed,
                             actor_reference=actor_reference,
                         )
                     )
                 else:
                     expected_generation = selection.generation
                     selection.select(
-                        release,
+                        installed,
                         publish=True,
                         actor_reference=actor_reference,
                     )
-                    await unit_of_work.plugin_releases.update_selection(
-                        selection,
-                        expected_generation=expected_generation,
-                    )
+                    if selection.generation != expected_generation:
+                        await unit_of_work.plugin_releases.update_selection(
+                            selection,
+                            expected_generation=expected_generation,
+                        )
             await unit_of_work.commit()
-            return release
+            return installed
 
     @staticmethod
     def _require_no_cross_scope_identity_collisions(
@@ -482,6 +540,7 @@ class PluginReleaseService:
         retained_nodes = {
             (node.operator_id, node.operator_version)
             for retained_catalog in retained_catalogs
+            if retained_catalog != catalog
             for node in retained_catalog.nodes
         }
         for node in catalog.nodes:
@@ -495,6 +554,7 @@ class PluginReleaseService:
         retained_artifacts = {
             (artifact.key.id, artifact.key.schema_version)
             for retained_catalog in retained_catalogs
+            if retained_catalog != catalog
             for artifact in retained_catalog.artifact_types
         }
         for artifact in catalog.artifact_types:
@@ -506,7 +566,10 @@ class PluginReleaseService:
                     f"with a retained {retained_scope.value.title()} Plugin identity"
                 )
 
-    async def list_current(self, workspace_id: UUID) -> list[PluginRelease]:
+    async def list_current(
+        self,
+        workspace_id: UUID,
+    ) -> list[InstalledPluginRelease]:
         namespace = PluginReleaseNamespace(
             scope=PluginReleaseScope.WORKSPACE,
             workspace_id=workspace_id,
@@ -514,7 +577,7 @@ class PluginReleaseService:
         async with self._unit_of_work_factory() as unit_of_work:
             return await unit_of_work.plugin_releases.list_current(namespace)
 
-    async def list_current_system(self) -> list[PluginRelease]:
+    async def list_current_system(self) -> list[InstalledPluginRelease]:
         namespace = PluginReleaseNamespace(
             scope=PluginReleaseScope.SYSTEM,
             workspace_id=None,
@@ -526,7 +589,7 @@ class PluginReleaseService:
         self,
         slug: str,
         revision: int,
-    ) -> PluginRelease | None:
+    ) -> InstalledPluginRelease | None:
         namespace = PluginReleaseNamespace(
             scope=PluginReleaseScope.SYSTEM,
             workspace_id=None,
@@ -545,7 +608,7 @@ class PluginReleaseService:
         revision: int,
         *,
         scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE,
-    ) -> PluginRelease | None:
+    ) -> InstalledPluginRelease | None:
         namespace = PluginReleaseNamespace(
             scope=scope,
             workspace_id=(
@@ -696,8 +759,8 @@ class PluginReleaseService:
                 revoked_by_platform_actor=revoked_by_platform_actor,
             )
             existing = (
-                await unit_of_work.plugin_releases.get_revocation_by_release_id(
-                    release.id
+                await unit_of_work.plugin_releases.get_revocation_by_installation_id(
+                    release.installation_id
                 )
             )
             if existing is not None:
@@ -726,8 +789,8 @@ class PluginReleaseService:
             )
             if release is None:
                 return None
-            return await unit_of_work.plugin_releases.get_revocation_by_release_id(
-                release.id
+            return await unit_of_work.plugin_releases.get_revocation_by_installation_id(
+                release.installation_id
             )
 
     async def list_runtime_artifacts(self) -> list[PluginRuntimeArtifact]:

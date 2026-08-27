@@ -4,12 +4,10 @@ from hashlib import sha256
 import re
 from typing import ClassVar, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-from grafy_core.domain.plugin_identity import PluginReleaseScope
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-PLUGIN_GUEST_LOADER_MANIFEST = "grafy-plugin-guest-loader@1"
+PLUGIN_GUEST_LOADER_MANIFEST = "grafy-plugin-guest-loader@2"
 WORKSPACE_PLUGIN_LOADER_TARGET = "grafy_plugin:PLUGIN"
 PLUGIN_LOADER_TARGET_PATTERN = (
     r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*"
@@ -39,10 +37,9 @@ class PluginGuestLoaderManifest(BaseModel):
         allow_inf_nan=False,
     )
 
-    manifest_version: Literal["grafy-plugin-guest-loader@1"] = (
+    manifest_version: Literal["grafy-plugin-guest-loader@2"] = (
         PLUGIN_GUEST_LOADER_MANIFEST
     )
-    scope: PluginReleaseScope
     slug: str = Field(
         pattern=r"^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$",
         max_length=100,
@@ -52,17 +49,11 @@ class PluginGuestLoaderManifest(BaseModel):
         max_length=512,
     )
 
-    @model_validator(mode="after")
-    def validate_workspace_target(self) -> Self:
-        split_plugin_loader_target(self.loader_target)
-        if (
-            self.scope is PluginReleaseScope.WORKSPACE
-            and self.loader_target != WORKSPACE_PLUGIN_LOADER_TARGET
-        ):
-            raise ValueError(
-                "Workspace Plugin loader manifests must use grafy_plugin:PLUGIN"
-            )
-        return self
+    @field_validator("loader_target")
+    @classmethod
+    def validate_loader_target(cls, value: str) -> str:
+        split_plugin_loader_target(value)
+        return value
 
     @classmethod
     def from_json_bytes(cls, value: bytes) -> Self:

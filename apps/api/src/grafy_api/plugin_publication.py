@@ -14,16 +14,14 @@ from grafy_core.application.plugin_releases import (
 )
 from grafy_core.domain.errors import NotFoundError
 from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
+from grafy_core.domain.plugin_installations import InstalledPluginRelease
 from grafy_core.domain.plugin_releases import (
     PlatformPluginActor,
     PluginCatalogManifest,
     PluginExecutionPolicy,
     PluginNodeContract,
     PluginNodeHttpEgressContract,
-    PluginRelease,
     PluginReleaseError,
-    PluginReleaseNamespace,
-    PluginReleaseScope,
 )
 from grafy_core.domain.plugin_selection import PluginReleaseSelection
 from grafy_core.domain.plugin_revocations import (
@@ -136,6 +134,7 @@ def _diff_http_egress(
     if previous is None and proposed is None:
         return
     if previous is None:
+        assert proposed is not None
         changes.append(f"node {key} now declares HTTP egress")
         changes.append(_describe_http_egress(key, proposed))
         return
@@ -222,7 +221,7 @@ class PluginPublicationWorkflow:
         published_by_user_id: UUID,
         reviewed_source_digest: str | None = None,
         reviewed_base_revision: int | None = None,
-    ) -> PluginRelease:
+    ) -> InstalledPluginRelease:
         await self._releases.authorize_publisher(
             workspace_id,
             published_by_user_id,
@@ -250,13 +249,18 @@ class PluginPublicationWorkflow:
                 raise PluginPublicationConflictError(
                     "Plugin release head changed after review"
                 )
-        runtime_artifact = await self._image_builder.build_and_store(
-            namespace=PluginReleaseNamespace(
-                scope=PluginReleaseScope.WORKSPACE,
-                workspace_id=workspace_id,
-            ),
-            candidate=verified,
+        runtime_artifact = await self._releases.reusable_runtime_artifact(
+            catalog=verified.catalog,
+            capabilities=verified.capabilities,
+            source_digest=verified.source_digest,
+            lock_digest=verified.lock_digest,
+            runtime_profile=verified.runtime_profile,
+            loader_target=verified.loader_target,
         )
+        if runtime_artifact is None:
+            runtime_artifact = await self._image_builder.build_and_store(
+                candidate=verified,
+            )
         return await self._releases.publish(
             workspace_id=workspace_id,
             catalog=verified.catalog,
@@ -265,6 +269,7 @@ class PluginPublicationWorkflow:
             lock_digest=verified.lock_digest,
             runtime_profile=verified.runtime_profile,
             runtime_artifact=runtime_artifact,
+            loader_target=verified.loader_target,
             published_by_user_id=published_by_user_id,
         )
 
@@ -349,7 +354,7 @@ class SystemPluginPublicationWorkflow:
         verified: VerifiedPluginCandidate,
         *,
         platform_actor: PlatformPluginActor,
-    ) -> PluginRelease:
+    ) -> InstalledPluginRelease:
         try:
             entry = self._system_inventory.entry_for(verified.catalog.slug)
             self._system_inventory.require_catalog_authority(verified.catalog)
@@ -366,13 +371,18 @@ class SystemPluginPublicationWorkflow:
                 f"System Plugin {entry.slug!r} was inspected with loader target "
                 f"{verified.loader_target!r}, expected {entry.loader_target!r}"
             )
-        runtime_artifact = await self._image_builder.build_and_store(
-            namespace=PluginReleaseNamespace(
-                scope=PluginReleaseScope.SYSTEM,
-                workspace_id=None,
-            ),
-            candidate=verified,
+        runtime_artifact = await self._releases.reusable_runtime_artifact(
+            catalog=verified.catalog,
+            capabilities=verified.capabilities,
+            source_digest=verified.source_digest,
+            lock_digest=verified.lock_digest,
+            runtime_profile=verified.runtime_profile,
+            loader_target=verified.loader_target,
         )
+        if runtime_artifact is None:
+            runtime_artifact = await self._image_builder.build_and_store(
+                candidate=verified,
+            )
         return await self._releases.stage_system(
             catalog=verified.catalog,
             capabilities=verified.capabilities,
@@ -380,6 +390,7 @@ class SystemPluginPublicationWorkflow:
             lock_digest=verified.lock_digest,
             runtime_profile=verified.runtime_profile,
             runtime_artifact=runtime_artifact,
+            loader_target=verified.loader_target,
             execution_policy=entry.execution_policy,
             distribution=entry.distribution,
             platform_actor=platform_actor,
@@ -424,6 +435,11 @@ class SystemPluginPublicationWorkflow:
         if candidate.release.capabilities.capabilities != entry.capabilities:
             raise PluginPublishingError(
                 f"System Plugin {entry.slug!r} capabilities do not match the "
+                "checked-in inventory"
+            )
+        if candidate.release.loader_target != entry.loader_target:
+            raise PluginPublishingError(
+                f"System Plugin {entry.slug!r} loader target does not match the "
                 "checked-in inventory"
             )
         decision = self._admission.decide(

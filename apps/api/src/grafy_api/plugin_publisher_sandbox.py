@@ -15,11 +15,11 @@ from grafy_api.plugin_publishing import (
     PluginPublishingError,
     VerifiedPluginCandidate,
     build_deterministic_archive,
+    project_loader_target,
     reject_escaping_path_dependencies,
     scan_source_tree,
     unpack_source_snapshot,
 )
-from grafy_core.runtime.plugin_loader import WORKSPACE_PLUGIN_LOADER_TARGET
 
 
 PUBLISHER_TIMEOUT_SECONDS = 600
@@ -259,9 +259,11 @@ class DockerPluginDirectoryPublisher(PluginDirectoryPublisher):
         directory: Path,
         *,
         expected_slug: str | None = None,
-        loader_target: str = WORKSPACE_PLUGIN_LOADER_TARGET,
+        loader_target: str | None = None,
     ) -> VerifiedPluginCandidate:
         project = self._require_allowed_project(directory)
+        if loader_target is None:
+            loader_target = project_loader_target(project)
         entries = scan_source_tree(project)
         source_archive = build_deterministic_archive(entries)
         if self._scratch_root is not None:

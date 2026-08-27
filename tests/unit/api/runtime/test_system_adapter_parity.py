@@ -28,12 +28,17 @@ from grafy_core.domain.plugin_releases import (
     PluginExecutionPolicy,
     PluginRelease,
     PluginReleaseIdentity,
+    PluginReleaseNamespace,
     PluginReleaseScope,
     PluginRuntimeArtifact,
     PluginSecretInputContract,
     plugin_contract_digest,
     plugin_profile_digest,
     plugin_protocol_digest,
+)
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
 )
 from grafy_core.nodes import (
     InPort,
@@ -204,7 +209,6 @@ class _InProcessSystemGuestRunner:
     ) -> None:
         del limits, request
         loader_manifest = PluginGuestLoaderManifest(
-            scope=PluginReleaseScope.SYSTEM,
             slug=PARITY_PLUGIN.slug,
             loader_target=LOADER_TARGET,
         )
@@ -278,7 +282,7 @@ class _SecretRevisions:
         return self.revision
 
 
-def _release() -> PluginRelease:
+def _release() -> InstalledPluginRelease:
     catalog = PluginCatalogManifest.from_plugin(PARITY_PLUGIN)
     capabilities = PluginCapabilityManifest()
     runtime_artifact = PluginRuntimeArtifact(
@@ -287,8 +291,7 @@ def _release() -> PluginRelease:
         manifest_digest="2" * 64,
         config_digest="3" * 64,
     )
-    return PluginRelease(
-        workspace_id=None,
+    release = PluginRelease(
         slug=catalog.slug,
         revision=1,
         catalog=catalog,
@@ -301,16 +304,28 @@ def _release() -> PluginRelease:
         source_digest="4" * 64,
         lock_digest="5" * 64,
         runtime_profile="python-uv",
+        loader_target=LOADER_TARGET,
         runtime_image_digest=runtime_artifact.manifest_digest,
         runtime_artifact=runtime_artifact,
-        scope=PluginReleaseScope.SYSTEM,
-        execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
-        distribution=PluginDistribution.BUNDLED,
         published_by_platform_actor="test:parity",
+    )
+    return InstalledPluginRelease(
+        release=release,
+        installation=PluginInstallation.from_release(
+            release,
+            namespace=PluginReleaseNamespace(
+                scope=PluginReleaseScope.SYSTEM,
+                workspace_id=None,
+            ),
+            execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
+            distribution=PluginDistribution.BUNDLED,
+            installed_by_user_id=None,
+            installed_by_platform_actor="test:parity",
+        ),
     )
 
 
-def _secret_release() -> PluginRelease:
+def _secret_release() -> InstalledPluginRelease:
     base = _release()
     contract = base.catalog.nodes[0].model_copy(
         update={
@@ -330,8 +345,7 @@ def _secret_release() -> PluginRelease:
     capabilities = PluginCapabilityManifest(
         capabilities=(PluginRuntimeCapability.NODE_SECRETS,)
     )
-    return PluginRelease(
-        workspace_id=base.workspace_id,
+    release = PluginRelease(
         slug=base.slug,
         revision=base.revision,
         catalog=catalog,
@@ -340,16 +354,25 @@ def _secret_release() -> PluginRelease:
         capability_digest=capabilities.digest,
         protocol_digest=base.protocol_digest,
         profile_digest=base.profile_digest,
-        source_object_key=base.source_object_key,
+        source_object_key=base.release.source_object_key,
         source_digest=base.source_digest,
         lock_digest=base.lock_digest,
         runtime_profile=base.runtime_profile,
+        loader_target=base.loader_target,
         runtime_image_digest=base.runtime_image_digest,
         runtime_artifact=base.runtime_artifact,
-        scope=base.scope,
-        execution_policy=base.execution_policy,
-        distribution=base.distribution,
         published_by_platform_actor=base.published_by_platform_actor,
+    )
+    return InstalledPluginRelease(
+        release=release,
+        installation=PluginInstallation.from_release(
+            release,
+            namespace=base.namespace,
+            execution_policy=base.execution_policy,
+            distribution=base.distribution,
+            installed_by_user_id=None,
+            installed_by_platform_actor=base.published_by_platform_actor,
+        ),
     )
 
 

@@ -9,7 +9,7 @@ from grafy_core.domain.plugin_identity import (
     PluginReleaseNamespace,
     PluginReleaseScope,
 )
-from grafy_core.domain.plugin_releases import PluginRelease
+from grafy_core.domain.plugin_installations import InstalledPluginRelease
 
 
 class PluginFamilyLifecycle(StrEnum):
@@ -69,7 +69,7 @@ class PluginReleaseSelection:
     @classmethod
     def from_release(
         cls,
-        release: PluginRelease,
+        release: InstalledPluginRelease,
         *,
         actor_reference: str | None = None,
     ) -> "PluginReleaseSelection":
@@ -95,7 +95,7 @@ class PluginReleaseSelection:
 
     def select(
         self,
-        release: PluginRelease,
+        release: InstalledPluginRelease,
         *,
         publish: bool = False,
         when: datetime | None = None,

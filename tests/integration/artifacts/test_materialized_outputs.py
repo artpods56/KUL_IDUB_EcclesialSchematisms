@@ -154,7 +154,10 @@ def durable_api(tmp_path: Path) -> DurableApiFixture:
             await seed_shared_workspace(database)
             async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
                 for release in deployment.releases:
-                    await unit_of_work.plugin_releases.add(release)
+                    await unit_of_work.plugin_releases.add(release.release)
+                    await unit_of_work.plugin_releases.add_installation(
+                        release.installation
+                    )
                 for selection in deployment.selections:
                     await unit_of_work.plugin_releases.add_selection(selection)
                 await unit_of_work.commit()

@@ -12,6 +12,10 @@ from grafy_core.domain.identity import (
     WorkspaceMembership,
     WorkspaceRole,
 )
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
+)
 from grafy_core.domain.plugin_releases import (
     PluginArtifactTypeContract,
     PluginArtifactTypeKey,
@@ -44,7 +48,10 @@ PUBLISHER_USER_ID = UUID("00000000-4000-8000-0000-000000000903")
 PLATFORM_ACTOR = PlatformPluginActor("ci:cross-scope")
 
 
-def _release(namespace: PluginReleaseNamespace, slug: str) -> PluginRelease:
+def _release(
+    namespace: PluginReleaseNamespace,
+    slug: str,
+) -> InstalledPluginRelease:
     catalog = PluginCatalogManifest(
         slug=slug,
         title=f"{slug} Plugin",
@@ -74,8 +81,7 @@ def _release(namespace: PluginReleaseNamespace, slug: str) -> PluginRelease:
         if is_system
         else None
     )
-    return PluginRelease(
-        workspace_id=namespace.workspace_id,
+    release = PluginRelease(
         slug=slug,
         revision=1,
         catalog=catalog,
@@ -88,19 +94,27 @@ def _release(namespace: PluginReleaseNamespace, slug: str) -> PluginRelease:
         source_digest="4" * 64,
         lock_digest="5" * 64,
         runtime_profile="python-uv",
+        loader_target="grafy_plugin:PLUGIN",
         runtime_image_digest=(
             None if runtime_artifact is None else runtime_artifact.manifest_digest
         ),
         runtime_artifact=runtime_artifact,
+        published_by_user_id=None if is_system else PUBLISHER_USER_ID,
         published_by_platform_actor="test:catalog" if is_system else None,
-        scope=namespace.scope,
+    )
+    installation = PluginInstallation.from_release(
+        release,
+        namespace=namespace,
         execution_policy=(
             PluginExecutionPolicy.HOST_ELIGIBLE
             if is_system
             else PluginExecutionPolicy.ISOLATED_ONLY
         ),
         distribution=PluginDistribution.BUNDLED if is_system else None,
+        installed_by_user_id=None if is_system else PUBLISHER_USER_ID,
+        installed_by_platform_actor="test:catalog" if is_system else None,
     )
+    return InstalledPluginRelease(release=release, installation=installation)
 
 
 @pytest.mark.asyncio
@@ -130,6 +144,13 @@ async def test_catalog_shares_system_selection_and_isolates_workspace_releases(
     system_release = _release(system_namespace, "global-notes")
 
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
+        await unit_of_work.identity.add_user(
+            User(
+                id=PUBLISHER_USER_ID,
+                email="publisher@example.test",
+                display_name="Publisher",
+            )
+        )
         await unit_of_work.identity.add_workspace(
             Workspace(
                 id=FIRST_WORKSPACE_ID,
@@ -147,7 +168,10 @@ async def test_catalog_shares_system_selection_and_isolates_workspace_releases(
             )
         )
         for release in (first_release, second_release, system_release):
-            await unit_of_work.plugin_releases.add(release)
+            await unit_of_work.plugin_releases.add(release.release)
+            await unit_of_work.plugin_releases.add_installation(
+                release.installation
+            )
             await unit_of_work.plugin_releases.add_selection(
                 PluginReleaseSelection.from_release(release)
             )
@@ -309,6 +333,7 @@ async def test_workspace_publication_cannot_reuse_retained_system_identities(
             execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
             distribution=PluginDistribution.BUNDLED,
             platform_actor=PLATFORM_ACTOR,
+            loader_target="grafy_plugin:PLUGIN",
         )
 
         with pytest.raises(
@@ -328,6 +353,7 @@ async def test_workspace_publication_cannot_reuse_retained_system_identities(
                 runtime_profile="python-uv",
                 runtime_artifact=None,
                 published_by_user_id=PUBLISHER_USER_ID,
+                loader_target="grafy_plugin:PLUGIN",
             )
         with pytest.raises(
             PluginReleaseError,
@@ -347,6 +373,7 @@ async def test_workspace_publication_cannot_reuse_retained_system_identities(
                 runtime_profile="python-uv",
                 runtime_artifact=None,
                 published_by_user_id=PUBLISHER_USER_ID,
+                loader_target="grafy_plugin:PLUGIN",
             )
 
         assert await _release_count(database, "workspace-a") == 0
@@ -381,12 +408,13 @@ async def test_system_publication_cannot_reuse_retained_workspace_identities(
             runtime_profile="python-uv",
             runtime_artifact=None,
             published_by_user_id=PUBLISHER_USER_ID,
+            loader_target="grafy_plugin:PLUGIN",
         )
 
         async def _stage(
             clash: str,
             artifact_clash: str | None,
-        ) -> PluginRelease:
+        ) -> InstalledPluginRelease:
             return await service.stage_system(
                 catalog=_identity_catalog(
                     "system-b",
@@ -406,6 +434,7 @@ async def test_system_publication_cannot_reuse_retained_workspace_identities(
                 execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
                 distribution=PluginDistribution.BUNDLED,
                 platform_actor=PLATFORM_ACTOR,
+                loader_target="grafy_plugin:PLUGIN",
             )
 
         with pytest.raises(
@@ -452,6 +481,7 @@ async def test_historical_workspace_revision_identity_still_blocks_system_public
             runtime_profile="python-uv",
             runtime_artifact=None,
             published_by_user_id=PUBLISHER_USER_ID,
+            loader_target="grafy_plugin:PLUGIN",
         )
         await service.publish(
             workspace_id=FIRST_WORKSPACE_ID,
@@ -465,6 +495,7 @@ async def test_historical_workspace_revision_identity_still_blocks_system_public
             runtime_profile="python-uv",
             runtime_artifact=None,
             published_by_user_id=PUBLISHER_USER_ID,
+            loader_target="grafy_plugin:PLUGIN",
         )
         assert first.revision == 1
 
@@ -491,6 +522,7 @@ async def test_historical_workspace_revision_identity_still_blocks_system_public
                 execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
                 distribution=PluginDistribution.BUNDLED,
                 platform_actor=PLATFORM_ACTOR,
+                loader_target="grafy_plugin:PLUGIN",
             )
 
         assert await _release_count(database, "system-b") == 0
@@ -530,6 +562,7 @@ async def test_non_colliding_cross_scope_publications_succeed(
             execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
             distribution=PluginDistribution.BUNDLED,
             platform_actor=PLATFORM_ACTOR,
+            loader_target="grafy_plugin:PLUGIN",
         )
         workspace_release = await service.publish(
             workspace_id=FIRST_WORKSPACE_ID,
@@ -544,6 +577,7 @@ async def test_non_colliding_cross_scope_publications_succeed(
             runtime_profile="python-uv",
             runtime_artifact=None,
             published_by_user_id=PUBLISHER_USER_ID,
+            loader_target="grafy_plugin:PLUGIN",
         )
 
         assert system_release.revision == 1

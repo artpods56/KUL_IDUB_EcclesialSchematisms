@@ -35,7 +35,6 @@ from grafy_core.domain.plugin_releases import (
     PluginExecutionPolicy,
     PluginNodeContract,
     PluginNodeHttpEgressContract,
-    PluginReleaseNamespace,
     PluginReleaseError,
     PluginReleaseScope,
     PluginRuntimeArtifact,
@@ -49,22 +48,21 @@ from tests.support.identity import TEST_USER_ID, WORKSPACE_ID, create_schema
 
 class RecordingSystemImageBuilder(PluginOciImageBuilder):
     def __init__(self) -> None:
-        self.namespaces: list[PluginReleaseNamespace] = []
+        self.build_count = 0
         self.loader_targets: list[str] = []
 
     @override
     async def build_and_store(
         self,
         *,
-        namespace: PluginReleaseNamespace,
         candidate: VerifiedPluginCandidate,
     ) -> PluginRuntimeArtifact:
-        self.namespaces.append(namespace)
+        self.build_count += 1
         self.loader_targets.append(candidate.loader_target)
         return PluginRuntimeArtifact(
             object_key=(
-                f"plugin-releases/{namespace.storage_path}/{candidate.catalog.slug}/"
-                f"runtime/{candidate.source_digest}.oci.tar"
+                f"plugin-releases/{candidate.catalog.slug}/runtime/"
+                f"{candidate.source_digest}.oci.tar"
             ),
             archive_digest=candidate.source_digest,
             manifest_digest=plugin_contract_digest(candidate.catalog),
@@ -169,7 +167,7 @@ async def test_system_publication_stages_then_explicitly_promotes_and_rolls_back
     assert first.runtime_artifact is not None
     assert first.contract_digest == plugin_contract_digest(first.catalog)
     assert await releases.list_current_system() == []
-    assert all(namespace.workspace_id is None for namespace in image_builder.namespaces)
+    assert image_builder.build_count == 2
     assert image_builder.loader_targets == [
         inventory.entry_for(first.slug).loader_target,
         inventory.entry_for(second.slug).loader_target,
@@ -286,7 +284,7 @@ async def test_system_publication_rejects_unauthorized_identity_before_image_bui
             platform_actor=PlatformPluginActor("ci:system-release"),
         )
 
-    assert image_builder.namespaces == []
+    assert image_builder.build_count == 0
     await database.dispose()
 
 
@@ -348,6 +346,70 @@ async def test_isolated_llm_system_release_promotes_without_a_host_manifest(
 
 
 @pytest.mark.asyncio
+async def test_system_install_reuses_workspace_release_and_runtime_artifact(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'shared-release.sqlite3'}"
+    await create_schema(database_url)
+    database = create_database(database_url)
+    releases = PluginReleaseService(
+        lambda: SqlAlchemyUnitOfWork(database.sessions),
+        LocalFileObjectStore(tmp_path / "objects"),
+        bucket="plugins",
+    )
+    image_builder = RecordingSystemImageBuilder()
+    inventory = load_system_plugin_inventory(CHECKED_IN_SYSTEM_PLUGIN_INVENTORY_PATH)
+    entry = inventory.entry_for("external.llm")
+    candidate = _verified(
+        b"shared-llm",
+        catalog=_catalog(
+            slug=entry.slug,
+            operator_id="llm.openai_compatible.chat_completion",
+            required_capabilities=entry.capabilities,
+        ),
+        capabilities=PluginCapabilityManifest(capabilities=entry.capabilities),
+        loader_target=entry.loader_target,
+    )
+    runtime_artifact = PluginRuntimeArtifact(
+        object_key=(
+            f"plugin-releases/{candidate.catalog.slug}/runtime/"
+            f"{candidate.source_digest}.oci.tar"
+        ),
+        archive_digest=candidate.source_digest,
+        manifest_digest=plugin_contract_digest(candidate.catalog),
+        config_digest="a" * 64,
+    )
+    workspace_release = await releases.publish(
+        workspace_id=WORKSPACE_ID,
+        catalog=candidate.catalog,
+        capabilities=candidate.capabilities,
+        source_archive=candidate.source_archive,
+        lock_digest=candidate.lock_digest,
+        runtime_profile=candidate.runtime_profile,
+        runtime_artifact=runtime_artifact,
+        loader_target=candidate.loader_target,
+        published_by_user_id=TEST_USER_ID,
+    )
+
+    system_release = await _workflow(
+        image_builder,
+        releases,
+        inventory,
+    ).stage_verified(
+        candidate,
+        platform_actor=PlatformPluginActor("ci:system-release"),
+    )
+
+    assert system_release.id == workspace_release.id
+    assert system_release.installation_id != workspace_release.installation_id
+    assert system_release.runtime_artifact == workspace_release.runtime_artifact
+    assert system_release.scope is PluginReleaseScope.SYSTEM
+    assert workspace_release.scope is PluginReleaseScope.WORKSPACE
+    assert image_builder.build_count == 0
+    await database.dispose()
+
+
+@pytest.mark.asyncio
 async def test_direct_workspace_publish_cannot_reuse_historical_system_identity(
     tmp_path: Path,
 ) -> None:
@@ -386,9 +448,10 @@ async def test_direct_workspace_publish_cannot_reuse_historical_system_identity(
             capabilities=PluginCapabilityManifest(),
             source_archive=b"workspace",
             lock_digest=sha256(b"workspace-lock").hexdigest(),
-            runtime_profile="python-uv",
-            runtime_artifact=None,
-            published_by_user_id=TEST_USER_ID,
+                runtime_profile="python-uv",
+                runtime_artifact=None,
+                loader_target="grafy_plugin:PLUGIN",
+                published_by_user_id=TEST_USER_ID,
         )
 
     await database.dispose()

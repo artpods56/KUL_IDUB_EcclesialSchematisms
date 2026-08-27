@@ -15,7 +15,7 @@ from uuid import UUID, uuid7
 from pydantic import BaseModel, Field
 
 from grafy_core.application.plugin_releases import PluginReleaseService
-from grafy_core.domain.plugin_releases import PluginRelease
+from grafy_core.domain.plugin_installations import InstalledPluginRelease
 from grafy_core.ports.storage import FileStoragePort
 
 from grafy_api.plugin_publication import (
@@ -271,7 +271,7 @@ class PluginAuthoringService:
         slug: str,
         actor_user_id: UUID,
         session_id: UUID,
-    ) -> PluginRelease:
+    ) -> InstalledPluginRelease:
         reservation = self._require_reservation(
             workspace_id=workspace_id,
             slug=slug,

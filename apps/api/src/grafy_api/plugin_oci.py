@@ -18,7 +18,6 @@ from pydantic import ValidationError
 from grafy_core.domain.errors import ObjectAlreadyExistsError
 from grafy_core.domain.plugin_releases import (
     PLUGIN_INVOCATION_PROTOCOL,
-    PluginReleaseNamespace,
     PluginRuntimeArtifact,
     plugin_protocol_digest,
 )
@@ -134,7 +133,6 @@ class PluginOciImageBuilder:
     async def build_and_store(
         self,
         *,
-        namespace: PluginReleaseNamespace,
         candidate: VerifiedPluginCandidate,
     ) -> PluginRuntimeArtifact:
         source_digest = candidate.source_digest
@@ -142,7 +140,6 @@ class PluginOciImageBuilder:
         profile_digest = candidate.profile_digest
         try:
             loader_manifest = PluginGuestLoaderManifest(
-                scope=namespace.scope,
                 slug=candidate.catalog.slug,
                 loader_target=candidate.loader_target,
             )
@@ -152,7 +149,6 @@ class PluginOciImageBuilder:
             ) from exc
         built = await asyncio.to_thread(
             self._build,
-            namespace,
             candidate.catalog.slug,
             loader_manifest,
             candidate.source_archive,
@@ -161,7 +157,7 @@ class PluginOciImageBuilder:
             profile_digest,
         )
         object_key = (
-            f"plugin-releases/{namespace.storage_path}/{candidate.catalog.slug}/runtime/"
+            f"plugin-releases/{candidate.catalog.slug}/runtime/"
             f"{built.archive_digest}.oci.tar"
         )
         artifact = PluginRuntimeArtifact(
@@ -175,7 +171,6 @@ class PluginOciImageBuilder:
 
     def _build(
         self,
-        namespace: PluginReleaseNamespace,
         slug: str,
         loader_manifest: PluginGuestLoaderManifest,
         source_archive: bytes,
@@ -194,7 +189,6 @@ class PluginOciImageBuilder:
             )
             build_identity = sha256(
                 (
-                    f"{namespace.scope.value}:{namespace.storage_path}:"
                     f"{source_digest}:{contract_digest}:{profile_digest}:"
                     f"{self._profile.base_image_digest}:"
                     f"{plugin_protocol_digest()}:{loader_manifest.digest}"
@@ -204,7 +198,6 @@ class PluginOciImageBuilder:
             dockerfile.write_text(
                 _dockerfile(
                     self._profile,
-                    release_namespace=namespace.storage_path,
                     source_digest=source_digest,
                     contract_digest=contract_digest,
                     profile_digest=profile_digest,
@@ -291,7 +284,6 @@ class PluginOciImageBuilder:
 def _dockerfile(
     profile: PluginRuntimeProfile,
     *,
-    release_namespace: str,
     source_digest: str,
     contract_digest: str,
     profile_digest: str,
@@ -316,7 +308,6 @@ RUN uv sync --locked --no-dev --no-editable \\
     && rm -rf /tmp/uv-cache
 LABEL org.opencontainers.image.source.digest="sha256:{source_digest}" \\
       io.grafy.plugin.runtime="1" \\
-      io.grafy.plugin.release.namespace="{release_namespace}" \\
       io.grafy.plugin.contract.digest="sha256:{contract_digest}" \\
       io.grafy.plugin.profile.digest="sha256:{profile_digest}" \\
       io.grafy.plugin.base.digest="sha256:{profile.base_image_digest}" \\

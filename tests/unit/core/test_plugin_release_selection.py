@@ -7,6 +7,7 @@ from grafy_core.domain.plugin_releases import (
     PluginCapabilityManifest,
     PluginCatalogManifest,
     PluginDistribution,
+    PluginExecutionPolicy,
     PluginNodeContract,
     PluginRelease,
     PluginReleaseScope,
@@ -14,6 +15,11 @@ from grafy_core.domain.plugin_releases import (
     plugin_profile_digest,
     plugin_protocol_digest,
 )
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
+)
+from grafy_core.domain.plugin_identity import PluginReleaseNamespace
 from grafy_core.domain.plugin_selection import (
     PluginFamilyLifecycle,
     PluginReleaseSelection,
@@ -29,7 +35,7 @@ def _release(
     *,
     scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE,
     slug: str = "notes",
-) -> PluginRelease:
+) -> InstalledPluginRelease:
     catalog = PluginCatalogManifest(
         slug=slug,
         title=slug.title(),
@@ -48,11 +54,7 @@ def _release(
         ),
     )
     capabilities = PluginCapabilityManifest()
-    return PluginRelease(
-        scope=scope,
-        workspace_id=(
-            WORKSPACE_ID if scope is PluginReleaseScope.WORKSPACE else None
-        ),
+    release = PluginRelease(
         slug=slug,
         revision=revision,
         catalog=catalog,
@@ -65,15 +67,30 @@ def _release(
         source_digest=f"{revision}" * 64,
         lock_digest="9" * 64,
         runtime_profile="python-uv",
+        loader_target="grafy_plugin:PLUGIN",
+    )
+    installation = PluginInstallation.from_release(
+        release,
+        namespace=PluginReleaseNamespace(
+            scope=scope,
+            workspace_id=(
+                WORKSPACE_ID if scope is PluginReleaseScope.WORKSPACE else None
+            ),
+        ),
+        execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
         distribution=(
             PluginDistribution.PUBLISHED
             if scope is PluginReleaseScope.SYSTEM
             else None
         ),
-        published_by_platform_actor=(
+        installed_by_user_id=(
+            WORKSPACE_ID if scope is PluginReleaseScope.WORKSPACE else None
+        ),
+        installed_by_platform_actor=(
             "test:system" if scope is PluginReleaseScope.SYSTEM else None
         ),
     )
+    return InstalledPluginRelease(release=release, installation=installation)
 
 
 def test_selection_moves_exact_pointer_without_mutating_release_facts() -> None:

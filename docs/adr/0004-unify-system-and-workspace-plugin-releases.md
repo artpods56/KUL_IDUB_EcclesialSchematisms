@@ -1,6 +1,6 @@
 # ADR 0004: Unify System and Workspace Plugin releases
 
-- **Status:** Accepted; Slices 8–12 in progress
+- **Status:** Superseded by ADR 0005
 - **Date:** 2026-08-24
 - **Scope:** Plugin identity, publication authority, catalog visibility, runtime
   selection, and compatibility cutover

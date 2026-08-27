@@ -24,11 +24,16 @@ from grafy_core.domain.plugin_releases import (
     PluginCatalogManifest,
     PluginNodeContract,
     PluginRelease,
+    PluginReleaseNamespace,
     PluginReleaseScope,
     PluginRuntimeArtifact,
     plugin_contract_digest,
     plugin_profile_digest,
     plugin_protocol_digest,
+)
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
 )
 from grafy_core.domain.plugin_selection import PluginReleaseSelection
 from grafy_persistence.database import Database, create_database
@@ -70,7 +75,7 @@ def _release(
     *,
     catalog: PluginCatalogManifest | None = None,
     repository_root: Path = REPOSITORY_ROOT,
-) -> PluginRelease:
+) -> InstalledPluginRelease:
     entry = inventory.entry_for("builtin.text")
     source_digest, lock_digest = _project_digests(entry, repository_root)
     release_catalog = catalog or PluginCatalogManifest.from_plugin(TEXT)
@@ -81,8 +86,7 @@ def _release(
         manifest_digest=sha256(f"manifest:{revision}".encode()).hexdigest(),
         config_digest=sha256(f"config:{revision}".encode()).hexdigest(),
     )
-    return PluginRelease(
-        workspace_id=None,
+    release = PluginRelease(
         slug=entry.slug,
         revision=revision,
         catalog=release_catalog,
@@ -95,16 +99,28 @@ def _release(
         source_digest=source_digest,
         lock_digest=lock_digest,
         runtime_profile="python-uv",
+        loader_target=entry.loader_target,
         runtime_image_digest=runtime_artifact.manifest_digest,
         runtime_artifact=runtime_artifact,
         published_by_platform_actor="test:deployment",
-        scope=PluginReleaseScope.SYSTEM,
-        execution_policy=entry.execution_policy,
-        distribution=entry.distribution,
+    )
+    return InstalledPluginRelease(
+        release=release,
+        installation=PluginInstallation.from_release(
+            release,
+            namespace=PluginReleaseNamespace(
+                scope=PluginReleaseScope.SYSTEM,
+                workspace_id=None,
+            ),
+            execution_policy=entry.execution_policy,
+            distribution=entry.distribution,
+            installed_by_user_id=None,
+            installed_by_platform_actor="test:deployment",
+        ),
     )
 
 
-def _isolated_release(inventory: SystemPluginInventory) -> PluginRelease:
+def _isolated_release(inventory: SystemPluginInventory) -> InstalledPluginRelease:
     entry = inventory.entry_for("external.gis")
     source_digest, lock_digest = _project_digests(entry)
     catalog = PluginCatalogManifest(
@@ -132,8 +148,7 @@ def _isolated_release(inventory: SystemPluginInventory) -> PluginRelease:
         manifest_digest=sha256(b"gis-manifest").hexdigest(),
         config_digest=sha256(b"gis-config").hexdigest(),
     )
-    return PluginRelease(
-        workspace_id=None,
+    release = PluginRelease(
         slug=entry.slug,
         revision=1,
         catalog=catalog,
@@ -146,19 +161,31 @@ def _isolated_release(inventory: SystemPluginInventory) -> PluginRelease:
         source_digest=source_digest,
         lock_digest=lock_digest,
         runtime_profile="python-uv",
+        loader_target=entry.loader_target,
         runtime_image_digest=runtime_artifact.manifest_digest,
         runtime_artifact=runtime_artifact,
         published_by_platform_actor="test:deployment",
-        scope=PluginReleaseScope.SYSTEM,
-        execution_policy=entry.execution_policy,
-        distribution=entry.distribution,
+    )
+    return InstalledPluginRelease(
+        release=release,
+        installation=PluginInstallation.from_release(
+            release,
+            namespace=PluginReleaseNamespace(
+                scope=PluginReleaseScope.SYSTEM,
+                workspace_id=None,
+            ),
+            execution_policy=entry.execution_policy,
+            distribution=entry.distribution,
+            installed_by_user_id=None,
+            installed_by_platform_actor="test:deployment",
+        ),
     )
 
 
 def _inventory_release(
     entry: SystemPluginInventoryEntry,
     revision: int,
-) -> PluginRelease:
+) -> InstalledPluginRelease:
     source_digest, lock_digest = _project_digests(entry)
     catalog = PluginCatalogManifest(
         slug=entry.slug,
@@ -191,8 +218,7 @@ def _inventory_release(
             f"all-config:{entry.slug}:{revision}".encode()
         ).hexdigest(),
     )
-    return PluginRelease(
-        workspace_id=None,
+    release = PluginRelease(
         slug=entry.slug,
         revision=revision,
         catalog=catalog,
@@ -205,12 +231,24 @@ def _inventory_release(
         source_digest=source_digest,
         lock_digest=lock_digest,
         runtime_profile="python-uv",
+        loader_target=entry.loader_target,
         runtime_image_digest=runtime_artifact.manifest_digest,
         runtime_artifact=runtime_artifact,
         published_by_platform_actor="test:deployment",
-        scope=PluginReleaseScope.SYSTEM,
-        execution_policy=entry.execution_policy,
-        distribution=entry.distribution,
+    )
+    return InstalledPluginRelease(
+        release=release,
+        installation=PluginInstallation.from_release(
+            release,
+            namespace=PluginReleaseNamespace(
+                scope=PluginReleaseScope.SYSTEM,
+                workspace_id=None,
+            ),
+            execution_policy=entry.execution_policy,
+            distribution=entry.distribution,
+            installed_by_user_id=None,
+            installed_by_platform_actor="test:deployment",
+        ),
     )
 
 
@@ -228,13 +266,22 @@ async def deployment_database(
     await database.dispose()
 
 
-async def _persist_release(database: Database, release: PluginRelease) -> None:
+async def _persist_release(
+    database: Database,
+    release: InstalledPluginRelease,
+) -> None:
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-        await unit_of_work.plugin_releases.add(release)
+        await unit_of_work.plugin_releases.add(release.release)
+        await unit_of_work.plugin_releases.add_installation(
+            release.installation
+        )
         await unit_of_work.commit()
 
 
-async def _persist_selection(database: Database, release: PluginRelease) -> None:
+async def _persist_selection(
+    database: Database,
+    release: InstalledPluginRelease,
+) -> None:
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
         await unit_of_work.plugin_releases.add_selection(
             PluginReleaseSelection.from_release(release)
@@ -401,8 +448,8 @@ async def test_builder_rejects_staged_lock_digest_mismatch(
 ) -> None:
     database, inventory = deployment_database
     release = _release(inventory, 1)
-    release.lock_digest = "f" * 64
-    release.descriptor_digest = release.descriptor.digest
+    release.release.lock_digest = "f" * 64
+    release.release.descriptor_digest = release.descriptor.digest
     await _persist_release(database, release)
 
     with pytest.raises(

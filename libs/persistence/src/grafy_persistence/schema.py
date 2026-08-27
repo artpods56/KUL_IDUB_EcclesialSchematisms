@@ -1443,13 +1443,6 @@ plugin_releases = Table(
     "plugin_releases",
     metadata,
     Column("id", SaUuid(as_uuid=True), primary_key=True),
-    Column("scope", PluginReleaseScopeType(), nullable=False),
-    Column(
-        "workspace_id",
-        SaUuid(as_uuid=True),
-        ForeignKey("workspaces.id", ondelete="CASCADE"),
-        nullable=True,
-    ),
     Column("slug", String(100), nullable=False),
     Column("revision", Integer, nullable=False),
     Column("catalog", PluginCatalogManifestType(), nullable=False),
@@ -1462,11 +1455,10 @@ plugin_releases = Table(
     Column("source_digest", String(64), nullable=False),
     Column("lock_digest", String(64), nullable=False),
     Column("runtime_profile", String(100), nullable=False),
+    Column("loader_target", String(255), nullable=False),
     Column("runtime_image_digest", String(64), nullable=True),
     Column("runtime_artifact", PluginRuntimeArtifactType(), nullable=True),
     Column("descriptor_digest", String(64), nullable=True),
-    Column("execution_policy", PluginExecutionPolicyType(), nullable=False),
-    Column("distribution", PluginDistributionType(), nullable=True),
     Column(
         "published_by_user_id",
         SaUuid(as_uuid=True),
@@ -1477,31 +1469,8 @@ plugin_releases = Table(
     Column("published_at", UTCDateTime(), nullable=False),
     CheckConstraint("revision >= 1", name="plugin_release_revision"),
     CheckConstraint(
-        "scope IN ('system', 'workspace')",
-        name="plugin_release_scope",
-    ),
-    CheckConstraint(
-        "(scope = 'system' AND workspace_id IS NULL) OR "
-        "(scope = 'workspace' AND workspace_id IS NOT NULL)",
-        name="plugin_release_scope_workspace",
-    ),
-    CheckConstraint(
-        "execution_policy IN ('host-eligible', 'isolated-only')",
-        name="plugin_release_execution_policy",
-    ),
-    CheckConstraint(
-        "(scope = 'system' AND distribution IN "
-        "('bundled', 'optional', 'published')) OR "
-        "(scope = 'workspace' AND distribution IS NULL "
-        "AND execution_policy = 'isolated-only')",
-        name="plugin_release_scope_policy",
-    ),
-    CheckConstraint(
-        "(scope = 'system' AND published_by_user_id IS NULL "
-        "AND published_by_platform_actor IS NOT NULL "
-        "AND length(trim(published_by_platform_actor)) BETWEEN 1 AND 255) OR "
-        "(scope = 'workspace' AND published_by_platform_actor IS NULL)",
-        name="plugin_release_scope_publisher",
+        "published_by_user_id IS NULL OR published_by_platform_actor IS NULL",
+        name="plugin_release_single_publisher",
     ),
     CheckConstraint(
         "length(capability_digest) = 64",
@@ -1536,38 +1505,99 @@ plugin_releases = Table(
         name="plugin_release_profile_digest",
     ),
     Index(
-        "uq_plugin_releases_system_slug_revision",
+        "uq_plugin_releases_slug_revision",
         "slug",
         "revision",
+        unique=True,
+    ),
+    Index(
+        "uq_plugin_releases_slug_descriptor",
+        "slug",
+        "descriptor_digest",
+        unique=True,
+        sqlite_where=text("descriptor_digest IS NOT NULL"),
+        postgresql_where=text("descriptor_digest IS NOT NULL"),
+    ),
+)
+
+
+plugin_installations = Table(
+    "plugin_installations",
+    metadata,
+    Column("id", SaUuid(as_uuid=True), primary_key=True),
+    Column(
+        "release_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("plugin_releases.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    Column("scope", PluginReleaseScopeType(), nullable=False),
+    Column(
+        "workspace_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=True,
+    ),
+    Column("slug", String(100), nullable=False),
+    Column("release_revision", Integer, nullable=False),
+    Column("execution_policy", PluginExecutionPolicyType(), nullable=False),
+    Column("distribution", PluginDistributionType(), nullable=True),
+    Column(
+        "installed_by_user_id",
+        SaUuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    ),
+    Column("installed_by_platform_actor", String(255), nullable=True),
+    Column("installed_at", UTCDateTime(), nullable=False),
+    CheckConstraint(
+        "scope IN ('system', 'workspace')",
+        name="plugin_installation_scope",
+    ),
+    CheckConstraint(
+        "(scope = 'system' AND workspace_id IS NULL) OR "
+        "(scope = 'workspace' AND workspace_id IS NOT NULL)",
+        name="plugin_installation_scope_workspace",
+    ),
+    CheckConstraint(
+        "release_revision >= 1",
+        name="plugin_installation_release_revision",
+    ),
+    CheckConstraint(
+        "execution_policy IN ('host-eligible', 'isolated-only')",
+        name="plugin_installation_execution_policy",
+    ),
+    CheckConstraint(
+        "(scope = 'system' AND distribution IN "
+        "('bundled', 'optional', 'published')) OR "
+        "(scope = 'workspace' AND distribution IS NULL "
+        "AND execution_policy = 'isolated-only')",
+        name="plugin_installation_scope_policy",
+    ),
+    CheckConstraint(
+        "(scope = 'system' AND installed_by_user_id IS NULL "
+        "AND installed_by_platform_actor IS NOT NULL "
+        "AND length(trim(installed_by_platform_actor)) BETWEEN 1 AND 255) OR "
+        "(scope = 'workspace' AND installed_by_user_id IS NOT NULL "
+        "AND installed_by_platform_actor IS NULL)",
+        name="plugin_installation_actor",
+    ),
+    Index(
+        "uq_plugin_installations_system_slug_revision",
+        "slug",
+        "release_revision",
         unique=True,
         sqlite_where=text("scope = 'system'"),
         postgresql_where=text("scope = 'system'"),
     ),
     Index(
-        "uq_plugin_releases_workspace_slug_revision",
+        "uq_plugin_installations_workspace_slug_revision",
         "workspace_id",
         "slug",
-        "revision",
+        "release_revision",
         unique=True,
         sqlite_where=text("scope = 'workspace'"),
         postgresql_where=text("scope = 'workspace'"),
-    ),
-    Index(
-        "uq_plugin_releases_system_slug_descriptor",
-        "slug",
-        "descriptor_digest",
-        unique=True,
-        sqlite_where=text("scope = 'system' AND descriptor_digest IS NOT NULL"),
-        postgresql_where=text("scope = 'system' AND descriptor_digest IS NOT NULL"),
-    ),
-    Index(
-        "uq_plugin_releases_workspace_slug_descriptor",
-        "workspace_id",
-        "slug",
-        "descriptor_digest",
-        unique=True,
-        sqlite_where=text("scope = 'workspace' AND descriptor_digest IS NOT NULL"),
-        postgresql_where=text("scope = 'workspace' AND descriptor_digest IS NOT NULL"),
     ),
 )
 
@@ -1642,9 +1672,9 @@ plugin_release_revocations = Table(
     "plugin_release_revocations",
     metadata,
     Column(
-        "release_id",
+        "installation_id",
         SaUuid(as_uuid=True),
-        ForeignKey("plugin_releases.id", ondelete="RESTRICT"),
+        ForeignKey("plugin_installations.id", ondelete="RESTRICT"),
         primary_key=True,
     ),
     Column("scope", PluginReleaseScopeType(), nullable=False),

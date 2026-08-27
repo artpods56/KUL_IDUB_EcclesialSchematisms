@@ -13,11 +13,15 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from grafy_core.canonical_conversions import CANONICAL_ARTIFACT_CONVERSIONS
 from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
+)
 from grafy_core.domain.plugin_releases import (
     PluginArtifactConversionContract,
     PluginCatalogManifest,
@@ -390,6 +394,7 @@ class SystemBaselineManifestGenerator:
                     await session.execute(
                         select(
                             PluginRelease,
+                            PluginInstallation,
                             schema.plugin_release_selections.c.selected_revision,
                             schema.plugin_release_selections.c.generation,
                             schema.plugin_release_selections.c.lifecycle,
@@ -398,6 +403,18 @@ class SystemBaselineManifestGenerator:
                             schema.plugin_release_selections,
                             schema.plugin_release_selections.c.selected_release_id
                             == schema.plugin_releases.c.id,
+                        )
+                        .join(
+                            PluginInstallation,
+                            and_(
+                                schema.plugin_installations.c.release_id
+                                == schema.plugin_releases.c.id,
+                                schema.plugin_installations.c.scope
+                                == schema.plugin_release_selections.c.scope,
+                                schema.plugin_installations.c.workspace_id.is_not_distinct_from(
+                                    schema.plugin_release_selections.c.workspace_id
+                                ),
+                            ),
                         )
                         .where(
                             schema.plugin_release_selections.c.scope
@@ -426,8 +443,12 @@ class SystemBaselineManifestGenerator:
                 baseline_releases: list[SystemBaselineRelease] = []
                 for slug in sorted(inventory_by_slug):
                     entry = inventory_by_slug[slug]
-                    release, selected_revision, generation, _lifecycle = (
+                    raw_release, installation, selected_revision, generation, _lifecycle = (
                         releases_by_slug[slug]
+                    )
+                    release = InstalledPluginRelease(
+                        release=raw_release,
+                        installation=installation,
                     )
                     inventory.require_catalog_authority(release.catalog)
                     await self._verify_release(
@@ -537,7 +558,7 @@ class SystemBaselineManifestGenerator:
         self,
         session: AsyncSession,
         entry: SystemPluginInventoryEntry,
-        release: PluginRelease,
+        release: InstalledPluginRelease,
         *,
         selected_revision: int,
     ) -> None:
@@ -579,6 +600,11 @@ class SystemBaselineManifestGenerator:
                 f"Selected System release {entry.slug!r} capabilities do not match "
                 "the static inventory"
             )
+        if release.loader_target != entry.loader_target:
+            raise SystemPluginInventoryError(
+                f"Selected System release {entry.slug!r} loader target does not "
+                "match the static inventory"
+            )
         if release.runtime_artifact is None:
             raise SystemPluginInventoryError(
                 f"Selected System release {entry.slug!r} has no retained OCI artifact"
@@ -588,8 +614,9 @@ class SystemBaselineManifestGenerator:
                 f"Selected System release {entry.slug!r} OCI digest does not match"
             )
         revoked = await session.scalar(
-            select(schema.plugin_release_revocations.c.release_id).where(
-                schema.plugin_release_revocations.c.release_id == release.id
+            select(schema.plugin_release_revocations.c.installation_id).where(
+                schema.plugin_release_revocations.c.installation_id
+                == release.installation_id
             )
         )
         if revoked is not None:

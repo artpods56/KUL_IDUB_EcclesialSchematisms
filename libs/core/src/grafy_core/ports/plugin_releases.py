@@ -8,6 +8,10 @@ from grafy_core.domain.plugin_releases import (
     PluginReleaseNamespace,
     PluginRuntimeArtifact,
 )
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
+)
 from grafy_core.domain.plugin_revocations import PluginReleaseRevocation
 from grafy_core.domain.plugin_selection import PluginReleaseSelection
 from grafy_core.ports.identity import IdentityRepositoryPort
@@ -16,16 +20,16 @@ from grafy_core.ports.identity import IdentityRepositoryPort
 class PluginReleaseRepositoryPort(Protocol):
     async def add(self, release: PluginRelease) -> None: ...
 
+    async def add_installation(self, installation: PluginInstallation) -> None: ...
+
     async def get_by_source_digest(
         self,
-        namespace: PluginReleaseNamespace,
         slug: str,
         source_digest: str,
     ) -> PluginRelease | None: ...
 
     async def get_by_descriptor_digest(
         self,
-        namespace: PluginReleaseNamespace,
         slug: str,
         descriptor_digest: str,
     ) -> PluginRelease | None: ...
@@ -35,11 +39,11 @@ class PluginReleaseRepositoryPort(Protocol):
         namespace: PluginReleaseNamespace,
         slug: str,
         revision: int,
-    ) -> PluginRelease | None: ...
+    ) -> InstalledPluginRelease | None: ...
 
-    async def get_revocation_by_release_id(
+    async def get_revocation_by_installation_id(
         self,
-        release_id: UUID,
+        installation_id: UUID,
     ) -> PluginReleaseRevocation | None: ...
 
     async def add_revocation(
@@ -49,7 +53,6 @@ class PluginReleaseRepositoryPort(Protocol):
 
     async def next_revision(
         self,
-        namespace: PluginReleaseNamespace,
         slug: str,
     ) -> int: ...
 
@@ -71,7 +74,7 @@ class PluginReleaseRepositoryPort(Protocol):
     async def list_current(
         self,
         namespace: PluginReleaseNamespace,
-    ) -> list[PluginRelease]: ...
+    ) -> list[InstalledPluginRelease]: ...
 
     async def get_selection(
         self,

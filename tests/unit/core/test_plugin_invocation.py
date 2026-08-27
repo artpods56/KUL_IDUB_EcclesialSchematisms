@@ -23,9 +23,16 @@ from grafy_core.domain.plugin_releases import (
     PluginPortDirection,
     PluginRelease,
     PluginReleaseIdentity,
+    PluginReleaseNamespace,
+    PluginReleaseScope,
+    PluginExecutionPolicy,
     plugin_contract_digest,
     plugin_profile_digest,
     plugin_protocol_digest,
+)
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
 )
 from grafy_core.artifact_contracts import TEXT_VALUE
 from grafy_core.nodes import (
@@ -96,13 +103,12 @@ def _release_from_serialized_contract(
     *,
     revision: int,
     workspace_id: UUID = WORKSPACE_ID,
-) -> PluginRelease:
+) -> InstalledPluginRelease:
     """Rebuild the release contract from JSON only, as the host would."""
     serialized = manifest.model_dump_json()
     rebuilt = PluginCatalogManifest.model_validate_json(serialized)
     capabilities = PluginCapabilityManifest()
-    return PluginRelease(
-        workspace_id=workspace_id,
+    release = PluginRelease(
         slug=rebuilt.slug,
         revision=revision,
         catalog=rebuilt,
@@ -115,6 +121,22 @@ def _release_from_serialized_contract(
         source_digest=f"{revision}" * 64,
         lock_digest="9" * 64,
         runtime_profile="python-uv",
+        loader_target="grafy_plugin:PLUGIN",
+        published_by_user_id=workspace_id,
+    )
+    return InstalledPluginRelease(
+        release=release,
+        installation=PluginInstallation.from_release(
+            release,
+            namespace=PluginReleaseNamespace(
+                scope=PluginReleaseScope.WORKSPACE,
+                workspace_id=workspace_id,
+            ),
+            execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
+            distribution=None,
+            installed_by_user_id=workspace_id,
+            installed_by_platform_actor=None,
+        ),
     )
 
 
@@ -142,7 +164,7 @@ def _ref(content_hash: str = "a" * 64) -> ArtifactRef:
 
 
 def _proxy(
-    release: PluginRelease | None = None,
+    release: InstalledPluginRelease | None = None,
     invoker: RecordingInvoker | None = None,
 ) -> tuple[ProxyNode, RecordingInvoker]:
     resolved_release = release or _release_from_serialized_contract(

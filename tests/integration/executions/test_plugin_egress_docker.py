@@ -13,6 +13,7 @@ import pytest
 from grafy_core.artifacts import ArtifactRef, InMemoryUnitOfWork, NodeInput, NodeOutput
 from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.domain.plugin_releases import (
+    PluginExecutionPolicy,
     PluginRelease,
     PluginReleaseNamespace,
     PluginReleaseScope,
@@ -20,6 +21,10 @@ from grafy_core.domain.plugin_releases import (
     plugin_contract_digest,
     plugin_profile_digest,
     plugin_protocol_digest,
+)
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
 )
 from grafy_core.domain.plugin_revocations import PluginReleaseRevocation
 from grafy_core.nodes import NodeExecutionContext
@@ -59,7 +64,7 @@ WORKSPACE_ID = UUID("00000000-0000-4000-8000-000000000952")
 
 @dataclass
 class ReleaseLookup:
-    release: PluginRelease
+    release: InstalledPluginRelease
 
     async def get_by_revision(
         self,
@@ -68,7 +73,7 @@ class ReleaseLookup:
         revision: int,
         *,
         scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE,
-    ) -> PluginRelease | None:
+    ) -> InstalledPluginRelease | None:
         if (
             scope is self.release.scope
             and workspace_id == self.release.workspace_id
@@ -351,18 +356,13 @@ async def test_docker_runtime_routes_historical_network_egress_through_live_brok
             bucket="runtime-test",
             profile=profile,
         ).build_and_store(
-            namespace=PluginReleaseNamespace(
-                scope=PluginReleaseScope.WORKSPACE,
-                workspace_id=WORKSPACE_ID,
-            ),
             candidate=verified,
         )
         plugin_image = f"sha256:{artifact.manifest_digest}"
         # Construct the release directly because this fixture models a persisted
         # historical catalog that predates HTTP egress contracts. The current
         # publication workflow rejects a newly published equivalent.
-        release = PluginRelease(
-            workspace_id=WORKSPACE_ID,
+        release_record = PluginRelease(
             slug=verified.catalog.slug,
             revision=1,
             catalog=verified.catalog,
@@ -375,8 +375,24 @@ async def test_docker_runtime_routes_historical_network_egress_through_live_brok
             source_digest=source_digest,
             lock_digest=verified.lock_digest,
             runtime_profile=verified.runtime_profile,
+            loader_target=verified.loader_target,
             runtime_image_digest=artifact.manifest_digest,
             runtime_artifact=artifact,
+            published_by_user_id=WORKSPACE_ID,
+        )
+        release = InstalledPluginRelease(
+            release=release_record,
+            installation=PluginInstallation.from_release(
+                release_record,
+                namespace=PluginReleaseNamespace(
+                    scope=PluginReleaseScope.WORKSPACE,
+                    workspace_id=WORKSPACE_ID,
+                ),
+                execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
+                distribution=None,
+                installed_by_user_id=WORKSPACE_ID,
+                installed_by_platform_actor=None,
+            ),
         )
         probe_destination = PluginEgressDestination(
             protocol=PluginEgressProtocol.HTTP,

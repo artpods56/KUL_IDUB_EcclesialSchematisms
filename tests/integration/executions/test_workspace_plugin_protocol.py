@@ -18,10 +18,17 @@ from grafy_core.artifacts import (
     NodeOutput,
 )
 from grafy_core.domain.plugin_releases import (
+    PluginExecutionPolicy,
     PluginRelease,
+    PluginReleaseNamespace,
+    PluginReleaseScope,
     plugin_contract_digest,
     plugin_profile_digest,
     plugin_protocol_digest,
+)
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
 )
 from grafy_core.nodes import NodeExecutionContext
 from grafy_core.table_contracts import (
@@ -72,9 +79,8 @@ def _inspect_example_plugin(project_root: Path) -> InspectionResult:
     return InspectionResult.model_validate_json(completed.stdout)
 
 
-def _example_release(inspection: InspectionResult) -> PluginRelease:
-    return PluginRelease(
-        workspace_id=WORKSPACE_ID,
+def _example_release(inspection: InspectionResult) -> InstalledPluginRelease:
+    release = PluginRelease(
         slug="notes",
         revision=1,
         catalog=inspection.catalog,
@@ -87,6 +93,22 @@ def _example_release(inspection: InspectionResult) -> PluginRelease:
         source_digest="a" * 64,
         lock_digest="b" * 64,
         runtime_profile="python-uv",
+        loader_target="grafy_plugin:PLUGIN",
+        published_by_user_id=WORKSPACE_ID,
+    )
+    return InstalledPluginRelease(
+        release=release,
+        installation=PluginInstallation.from_release(
+            release,
+            namespace=PluginReleaseNamespace(
+                scope=PluginReleaseScope.WORKSPACE,
+                workspace_id=WORKSPACE_ID,
+            ),
+            execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
+            distribution=None,
+            installed_by_user_id=WORKSPACE_ID,
+            installed_by_platform_actor=None,
+        ),
     )
 
 
@@ -303,7 +325,8 @@ async def test_guest_rejects_tampered_or_undeclared_input_files(
         "from grafy_core.runtime.plugin_guest import execute_plugin_invocation; "
         "root = Path(sys.argv[1]); "
         f"{mutate}; "
-        "asyncio.run(execute_plugin_invocation(root))"
+        "asyncio.run(execute_plugin_invocation("
+        "root, system_loader_manifest_path=Path(sys.argv[2])))"
     )
     runner = SubprocessPluginGuestRunner(
         (sys.executable, "-c", command),

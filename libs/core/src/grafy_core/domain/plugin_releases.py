@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 import json
 import re
-from typing import ClassVar, Literal, Self, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, Self, cast
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -34,6 +34,10 @@ from grafy_core.nodes import (
     PortShape,
 )
 from grafy_core.plugins import NodeCachePolicy, NodeRegistration, Plugin
+
+
+if TYPE_CHECKING:
+    from grafy_core.domain.plugin_installations import InstalledPluginRelease
 
 
 PluginPortDirection = Literal["input", "output"]
@@ -554,7 +558,7 @@ class PluginReleaseIdentity:
     descriptor_digest: str
 
     @classmethod
-    def from_release(cls, release: PluginRelease) -> Self:
+    def from_release(cls, release: "InstalledPluginRelease") -> Self:
         return cls(
             scope=release.scope,
             workspace_id=release.workspace_id,
@@ -623,43 +627,15 @@ class PluginReleaseDescriptor(PluginReleaseValue):
     profile_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     lock_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     runtime_profile: str = Field(min_length=1, max_length=100)
+    loader_target: str = Field(
+        pattern=r"^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$",
+        max_length=255,
+    )
     runtime_artifact: PluginRuntimeArtifact | None = None
-    scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE
-    execution_policy: PluginExecutionPolicy = PluginExecutionPolicy.ISOLATED_ONLY
-    distribution: PluginDistribution | None = None
-
-    @model_validator(mode="after")
-    def validate_scope_policy(self) -> Self:
-        if (
-            self.scope is PluginReleaseScope.WORKSPACE
-            and self.execution_policy is not PluginExecutionPolicy.ISOLATED_ONLY
-        ):
-            raise ValueError(
-                "Workspace Plugin release descriptors must use isolated-only execution"
-            )
-        if self.scope is PluginReleaseScope.WORKSPACE and self.distribution is not None:
-            raise ValueError(
-                "Workspace Plugin release descriptors cannot declare System "
-                "distribution metadata"
-            )
-        if self.scope is PluginReleaseScope.SYSTEM and self.distribution is None:
-            raise ValueError(
-                "System Plugin release descriptors require distribution metadata"
-            )
-        return self
 
     @property
     def digest(self) -> str:
         document = self.model_dump(mode="json")
-        # Preserve the descriptor digest of releases published before explicit
-        # scope metadata. Workspace/isolated/no-distribution was their only valid
-        # interpretation; non-default System metadata is content-bound below.
-        if self.scope is PluginReleaseScope.WORKSPACE:
-            document.pop("scope")
-        if self.execution_policy is PluginExecutionPolicy.ISOLATED_ONLY:
-            document.pop("execution_policy")
-        if self.distribution is None:
-            document.pop("distribution")
         payload = json.dumps(
             document,
             ensure_ascii=False,
@@ -672,7 +648,7 @@ class PluginReleaseDescriptor(PluginReleaseValue):
 
 @dataclass
 class PluginRelease:
-    """One immutable release of a System or Workspace Plugin family.
+    """One immutable, scope-neutral release of a Plugin package.
 
     The release descriptor references independent immutable objects: the source
     archive, the inspected catalog contract, the deployment runtime profile, the
@@ -680,7 +656,6 @@ class PluginRelease:
     runtime image digest stays absent until the image-building slice fills it.
     """
 
-    workspace_id: UUID | None
     slug: str
     revision: int
     catalog: PluginCatalogManifest
@@ -693,61 +668,28 @@ class PluginRelease:
     source_digest: str
     lock_digest: str
     runtime_profile: str
+    loader_target: str
     runtime_image_digest: str | None = None
     runtime_artifact: PluginRuntimeArtifact | None = None
     descriptor_digest: str | None = None
     published_by_user_id: UUID | None = None
     published_by_platform_actor: str | None = None
     published_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE
-    execution_policy: PluginExecutionPolicy = PluginExecutionPolicy.ISOLATED_ONLY
-    distribution: PluginDistribution | None = None
     id: UUID = field(default_factory=uuid4)
 
     def __post_init__(self) -> None:
-        self.scope = PluginReleaseScope(self.scope)
-        self.execution_policy = PluginExecutionPolicy(self.execution_policy)
-        if self.distribution is not None:
-            self.distribution = PluginDistribution(self.distribution)
-        try:
-            PluginReleaseNamespace(
-                scope=self.scope,
-                workspace_id=self.workspace_id,
-            )
-        except ValueError as exc:
-            raise PluginReleaseError(str(exc)) from exc
-        if self.scope is PluginReleaseScope.SYSTEM:
-            if self.published_by_user_id is not None:
-                raise PluginReleaseError(
-                    "System Plugin releases cannot use a Workspace user publisher"
-                )
-            if self.published_by_platform_actor is None:
-                raise PluginReleaseError(
-                    "System Plugin releases require a platform publisher"
-                )
+        if self.published_by_platform_actor is not None:
             try:
                 actor = PlatformPluginActor(self.published_by_platform_actor)
             except ValueError as exc:
                 raise PluginReleaseError(str(exc)) from exc
             self.published_by_platform_actor = actor.reference
-        elif self.published_by_platform_actor is not None:
-            raise PluginReleaseError(
-                "Workspace Plugin releases cannot use a platform publisher"
-            )
         if (
-            self.scope is PluginReleaseScope.WORKSPACE
-            and self.execution_policy is not PluginExecutionPolicy.ISOLATED_ONLY
+            self.published_by_user_id is not None
+            and self.published_by_platform_actor is not None
         ):
             raise PluginReleaseError(
-                "Workspace Plugin releases must use isolated-only execution"
-            )
-        if self.scope is PluginReleaseScope.WORKSPACE and self.distribution is not None:
-            raise PluginReleaseError(
-                "Workspace Plugin releases cannot declare System distribution metadata"
-            )
-        if self.scope is PluginReleaseScope.SYSTEM and self.distribution is None:
-            raise PluginReleaseError(
-                "System Plugin releases require distribution metadata"
+                "Plugin releases cannot have both user and platform publishers"
             )
         if self.catalog.slug != self.slug:
             raise PluginReleaseError("Plugin release slug must match its catalog")
@@ -804,13 +746,6 @@ class PluginRelease:
                 "Plugin capability manifest exceeds exact node requirements: "
                 + rendered
             )
-        if (
-            PluginRuntimeCapability.UNTRUSTED_SQL in self.capabilities.capabilities
-            and self.execution_policy is not PluginExecutionPolicy.ISOLATED_ONLY
-        ):
-            raise PluginReleaseError(
-                "Plugins that execute untrusted SQL must use isolated-only execution"
-            )
         self.protocol_digest = _sha256(
             self.protocol_digest,
             "Plugin invocation protocol digest",
@@ -842,6 +777,11 @@ class PluginRelease:
             raise PluginReleaseError(
                 "Plugin runtime profile must be at most 100 characters"
             )
+        if re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*",
+            self.loader_target,
+        ) is None:
+            raise PluginReleaseError("Plugin loader target is invalid")
         if self.source_object_key == "":
             raise PluginReleaseError("Plugin source object key must not be blank")
         if self.source_object_key.startswith(
@@ -875,23 +815,13 @@ class PluginRelease:
             profile_digest=self.profile_digest,
             lock_digest=self.lock_digest,
             runtime_profile=self.runtime_profile,
+            loader_target=self.loader_target,
             runtime_artifact=self.runtime_artifact,
-            scope=self.scope,
-            execution_policy=self.execution_policy,
-            distribution=self.distribution,
         )
 
     @property
     def executable(self) -> bool:
         return self.runtime_artifact is not None
-
-    @property
-    def namespace(self) -> PluginReleaseNamespace:
-        return PluginReleaseNamespace(
-            scope=self.scope,
-            workspace_id=self.workspace_id,
-        )
-
 
 def _model_json_schema(model: type[BaseModel]) -> dict[str, object]:
     try:

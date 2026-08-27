@@ -36,7 +36,6 @@ def test_runtime_profile_is_pinned_and_unknown_names_are_rejected() -> None:
 def test_dockerfile_sync_uses_bundled_plugin_wheels() -> None:
     dockerfile = _dockerfile(
         runtime_profile("python-uv"),
-        release_namespace="workspace/example",
         source_digest="1" * 64,
         contract_digest="2" * 64,
         profile_digest="3" * 64,
@@ -72,7 +71,6 @@ def test_native_capabilities_require_exact_deployment_owned_profile_image() -> N
     )
     dockerfile = _dockerfile(
         profile,
-        release_namespace="system/external.gis",
         source_digest="1" * 64,
         contract_digest="2" * 64,
         profile_digest="3" * 64,

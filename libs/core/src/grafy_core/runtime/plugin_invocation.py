@@ -23,11 +23,11 @@ from grafy_core.artifacts import (
     NodeInput,
     NodeOutput,
 )
+from grafy_core.domain.plugin_installations import InstalledPluginRelease
 from grafy_core.domain.plugin_releases import (
     PluginArtifactBundleContract,
     PluginNodeContract,
     PluginPortContract,
-    PluginRelease,
     PluginReleaseIdentity,
 )
 from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
@@ -163,7 +163,7 @@ class PluginReleaseNode[
 
     def __init__(
         self,
-        release: PluginRelease,
+        release: InstalledPluginRelease,
         contract: PluginNodeContract,
         invoker: PluginInvoker,
         artifact_type_bindings: Mapping[str, ArtifactTypeKey] | None = None,
@@ -210,7 +210,7 @@ class PluginReleaseNode[
         dynamic_attributes["output_contract"] = derive_output_contract(output_model)
 
     @property
-    def release(self) -> PluginRelease:
+    def release(self) -> InstalledPluginRelease:
         return self._release
 
     @property

@@ -4,6 +4,10 @@ import pytest
 
 from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.domain.errors import NotFoundError
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
+)
 from grafy_core.domain.plugin_releases import (
     PlatformPluginActor,
     PluginCapabilityManifest,
@@ -36,7 +40,7 @@ def _release(
     slug: str,
     revision: int,
     digest_character: str,
-) -> PluginRelease:
+) -> InstalledPluginRelease:
     catalog = PluginCatalogManifest(
         slug=slug,
         title="Revocation test Plugin",
@@ -68,8 +72,7 @@ def _release(
         if is_system
         else None
     )
-    return PluginRelease(
-        workspace_id=namespace.workspace_id,
+    release = PluginRelease(
         slug=slug,
         revision=revision,
         catalog=catalog,
@@ -82,20 +85,27 @@ def _release(
         source_digest=digest_character * 64,
         lock_digest="f" * 64,
         runtime_profile="python-uv",
+        loader_target="grafy_plugin:PLUGIN",
         runtime_image_digest=(
             None if runtime_artifact is None else runtime_artifact.manifest_digest
         ),
         runtime_artifact=runtime_artifact,
         published_by_user_id=None if is_system else TEST_USER_ID,
         published_by_platform_actor="ci:publisher" if is_system else None,
-        scope=namespace.scope,
+    )
+    installation = PluginInstallation.from_release(
+        release,
+        namespace=namespace,
         execution_policy=(
             PluginExecutionPolicy.HOST_ELIGIBLE
             if is_system
             else PluginExecutionPolicy.ISOLATED_ONLY
         ),
         distribution=PluginDistribution.BUNDLED if is_system else None,
+        installed_by_user_id=None if is_system else TEST_USER_ID,
+        installed_by_platform_actor="ci:publisher" if is_system else None,
     )
+    return InstalledPluginRelease(release=release, installation=installation)
 
 
 @pytest.mark.asyncio
@@ -137,9 +147,11 @@ async def test_revocation_service_enforces_authority_scope_and_idempotency(
         digest_character="3",
     )
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-        await unit_of_work.plugin_releases.add(first)
-        await unit_of_work.plugin_releases.add(current)
-        await unit_of_work.plugin_releases.add(system_current)
+        for release in (first, current, system_current):
+            await unit_of_work.plugin_releases.add(release.release)
+            await unit_of_work.plugin_releases.add_installation(
+                release.installation
+            )
         await unit_of_work.plugin_releases.add_selection(
             PluginReleaseSelection.from_release(
                 current,
@@ -161,7 +173,7 @@ async def test_revocation_service_enforces_authority_scope_and_idempotency(
         reason=PluginReleaseRevocationReason.SECURITY,
         revoked_by_user_id=TEST_USER_ID,
     )
-    assert workspace_revocation.release_id == first.id
+    assert workspace_revocation.installation_id == first.installation_id
     assert workspace_revocation.revoked_by_user_id == TEST_USER_ID
     assert await service.get_revocation(
         workspace_id=WORKSPACE_ID,

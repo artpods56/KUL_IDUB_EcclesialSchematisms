@@ -16,13 +16,13 @@ from grafy_core.artifacts import (
 from grafy_core.canonical_conversions import CANONICAL_ARTIFACT_CONVERSIONS
 from grafy_core.conversions import ArtifactConversion, ArtifactConversionKey
 from grafy_core.domain.module_library import ModulePublicationState
+from grafy_core.domain.plugin_installations import InstalledPluginRelease
 from grafy_core.domain.plugin_releases import (
     PluginArtifactConversionContract,
     PluginArtifactTypeContract,
     PluginDistribution,
     PluginNodeContract,
     PluginPortContract,
-    PluginRelease,
     PluginReleaseScope,
 )
 from grafy_core.domain.plugin_revocations import PluginReleaseRevocation
@@ -82,7 +82,7 @@ class PluginReleaseReadiness:
 
 
 def plugin_release_readiness(
-    release: PluginRelease,
+    release: InstalledPluginRelease,
     admission: ReleaseExecutionAdmission | None,
     *,
     state: PluginCatalogReleaseState | None = None,
@@ -347,7 +347,7 @@ class PluginSpecResponse(ApiResponse):
     @classmethod
     def from_plugin_release(
         cls,
-        release: PluginRelease,
+        release: InstalledPluginRelease,
         readiness: PluginReleaseReadiness,
     ) -> Self:
         return cls(
@@ -586,7 +586,7 @@ class NodeSpecResponse(ApiResponse):
     @classmethod
     def from_plugin_release(
         cls,
-        release: PluginRelease,
+        release: InstalledPluginRelease,
         contract: PluginNodeContract,
         readiness: PluginReleaseReadiness,
     ) -> Self:
@@ -657,7 +657,7 @@ class NodeRegistryResponse(ApiResponse):
         registry: PluginRegistry,
         module_listing: GraphModuleCatalogListing,
         module_executor: GraphModuleExecutorPort,
-        plugin_releases: list[PluginRelease],
+        plugin_releases: list[InstalledPluginRelease],
         *,
         workspace_id: UUID,
         release_admission: ReleaseExecutionAdmission | None = None,
@@ -720,7 +720,7 @@ class NodeRegistryResponse(ApiResponse):
             )
 
         host_nodes = {registration.key: registration for registration in registry.nodes}
-        release_node_owners: dict[tuple[str, int], PluginRelease] = {}
+        release_node_owners: dict[tuple[str, int], InstalledPluginRelease] = {}
         for release in plugin_releases:
             for contract in release.catalog.nodes:
                 key = (contract.operator_id, contract.operator_version)
@@ -807,7 +807,9 @@ class NodeRegistryResponse(ApiResponse):
             for release in plugin_releases
             for contract in release.catalog.artifact_types
         ]
-        seen_artifact_owners: dict[tuple[str, int], PluginRelease] = {}
+        seen_artifact_owners: dict[
+            tuple[str, int], InstalledPluginRelease
+        ] = {}
         for key, release in release_artifact_owners:
             other_release = seen_artifact_owners.get(key)
             if other_release is not None:

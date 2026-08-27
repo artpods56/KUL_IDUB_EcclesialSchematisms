@@ -39,6 +39,8 @@ from grafy_core.domain.plugin_releases import (
     plugin_profile_digest,
     plugin_protocol_digest,
 )
+from grafy_core.domain.plugin_installations import PluginInstallation
+from grafy_core.domain.plugin_identity import PluginReleaseNamespace
 from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.nodes import InPort, OutPort
 from grafy_core.artifact_contracts import INTEGER_VALUE, TEXT_VALUE, TextValue
@@ -94,22 +96,10 @@ PLUGIN.register_artifact_conversion(INTEGER_TO_PORTABLE_VALUE)
 
 
 def _release(
-    *,
-    workspace_id: UUID | None,
-    scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE,
-    execution_policy: PluginExecutionPolicy = PluginExecutionPolicy.ISOLATED_ONLY,
-    distribution: PluginDistribution | None = None,
 ) -> PluginRelease:
     catalog = PluginCatalogManifest.from_plugin(PLUGIN)
     capabilities = PluginCapabilityManifest()
     return PluginRelease(
-        workspace_id=workspace_id,
-        scope=scope,
-        execution_policy=execution_policy,
-        distribution=distribution,
-        published_by_platform_actor=(
-            "test:system" if scope is PluginReleaseScope.SYSTEM else None
-        ),
         slug=catalog.slug,
         revision=1,
         catalog=catalog,
@@ -122,6 +112,7 @@ def _release(
         source_digest="4" * 64,
         lock_digest="5" * 64,
         runtime_profile="python-uv",
+        loader_target="grafy_plugin:PLUGIN",
     )
 
 
@@ -405,7 +396,6 @@ def test_runtime_artifact_makes_release_executable_and_part_of_its_identity() ->
         config_digest="3" * 64,
     )
     source_only = PluginRelease(
-        workspace_id=UUID("00000000-0000-4000-8000-000000000853"),
         slug=catalog.slug,
         revision=1,
         catalog=catalog,
@@ -418,9 +408,9 @@ def test_runtime_artifact_makes_release_executable_and_part_of_its_identity() ->
         source_digest="4" * 64,
         lock_digest="5" * 64,
         runtime_profile="python-uv",
+        loader_target="grafy_plugin:PLUGIN",
     )
     executable = PluginRelease(
-        workspace_id=source_only.workspace_id,
         slug=catalog.slug,
         revision=2,
         catalog=catalog,
@@ -433,6 +423,7 @@ def test_runtime_artifact_makes_release_executable_and_part_of_its_identity() ->
         source_digest=source_only.source_digest,
         lock_digest=source_only.lock_digest,
         runtime_profile=source_only.runtime_profile,
+        loader_target=source_only.loader_target,
         runtime_image_digest=artifact.manifest_digest,
         runtime_artifact=artifact,
     )
@@ -455,7 +446,6 @@ def test_release_rejects_runtime_image_that_does_not_match_oci_manifest() -> Non
 
     with pytest.raises(PluginReleaseError, match="must match its OCI artifact"):
         PluginRelease(
-            workspace_id=UUID("00000000-0000-4000-8000-000000000853"),
             slug=catalog.slug,
             revision=1,
             catalog=catalog,
@@ -468,6 +458,7 @@ def test_release_rejects_runtime_image_that_does_not_match_oci_manifest() -> Non
             source_digest="4" * 64,
             lock_digest="5" * 64,
             runtime_profile="python-uv",
+            loader_target="grafy_plugin:PLUGIN",
             runtime_image_digest="6" * 64,
             runtime_artifact=artifact,
         )
@@ -487,33 +478,61 @@ def test_runtime_artifact_rejects_unsafe_object_keys(object_key: str) -> None:
         )
 
 
-def test_release_scope_requires_exactly_the_matching_workspace_owner() -> None:
-    with pytest.raises(PluginReleaseError, match="require a Workspace owner"):
-        _release(workspace_id=None)
-    with pytest.raises(PluginReleaseError, match="cannot have a Workspace owner"):
-        _release(
-            workspace_id=UUID("00000000-0000-4000-8000-000000000853"),
-            scope=PluginReleaseScope.SYSTEM,
+def test_installation_scope_requires_exactly_the_matching_workspace_owner() -> None:
+    release = _release()
+    with pytest.raises(ValueError, match="require a Workspace owner"):
+        PluginInstallation.from_release(
+            release,
+            namespace=PluginReleaseNamespace(
+                scope=PluginReleaseScope.WORKSPACE,
+                workspace_id=None,
+            ),
+            execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
+            distribution=None,
+            installed_by_user_id=UUID(int=1),
+            installed_by_platform_actor=None,
+        )
+    with pytest.raises(ValueError, match="cannot have a Workspace owner"):
+        PluginInstallation.from_release(
+            release,
+            namespace=PluginReleaseNamespace(
+                scope=PluginReleaseScope.SYSTEM,
+                workspace_id=UUID(int=1),
+            ),
+            execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
             distribution=PluginDistribution.BUNDLED,
+            installed_by_user_id=None,
+            installed_by_platform_actor="test:system",
         )
     with pytest.raises(PluginReleaseError, match="isolated-only"):
-        _release(
-            workspace_id=UUID("00000000-0000-4000-8000-000000000853"),
+        PluginInstallation.from_release(
+            release,
+            namespace=PluginReleaseNamespace(
+                scope=PluginReleaseScope.WORKSPACE,
+                workspace_id=UUID(int=1),
+            ),
             execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
+            distribution=None,
+            installed_by_user_id=UUID(int=1),
+            installed_by_platform_actor=None,
         )
 
-    system = _release(
-        workspace_id=None,
-        scope=PluginReleaseScope.SYSTEM,
+    system = PluginInstallation.from_release(
+        release,
+        namespace=PluginReleaseNamespace(
+            scope=PluginReleaseScope.SYSTEM,
+            workspace_id=None,
+        ),
         execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
         distribution=PluginDistribution.BUNDLED,
+        installed_by_user_id=None,
+        installed_by_platform_actor="test:system",
     )
 
     assert system.namespace.scope is PluginReleaseScope.SYSTEM
     assert system.namespace.storage_path == "system"
-    assert system.descriptor.scope is PluginReleaseScope.SYSTEM
-    assert system.descriptor.execution_policy is PluginExecutionPolicy.HOST_ELIGIBLE
-    assert system.descriptor.distribution is PluginDistribution.BUNDLED
+    assert system.execution_policy is PluginExecutionPolicy.HOST_ELIGIBLE
+    assert system.distribution is PluginDistribution.BUNDLED
 
 
 def test_untrusted_artifact_query_cannot_gain_network_secrets_or_native_access() -> None:
@@ -560,9 +579,7 @@ def test_release_capabilities_are_normalized_and_equal_exact_node_union() -> Non
     )
     assert node.required_capabilities == (PluginRuntimeCapability.NETWORK_EGRESS,)
 
-    release = _release(
-        workspace_id=UUID("00000000-0000-4000-8000-000000000853")
-    )
+    release = _release()
     with pytest.raises(PluginReleaseError, match="exceeds exact node requirements"):
         replace(
             release,

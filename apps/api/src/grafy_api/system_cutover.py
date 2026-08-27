@@ -454,9 +454,22 @@ class SystemBaselineCutoverService:
             row = (
                 (
                     await session.execute(
-                        select(schema.plugin_releases).where(
+                        select(
+                            schema.plugin_releases,
+                            schema.plugin_installations.c.id.label(
+                                "installation_id"
+                            ),
+                        )
+                        .join(
+                            schema.plugin_installations,
+                            schema.plugin_installations.c.release_id
+                            == schema.plugin_releases.c.id,
+                        )
+                        .where(
                             schema.plugin_releases.c.id == declared.release_id,
-                            schema.plugin_releases.c.scope == PluginReleaseScope.SYSTEM,
+                            schema.plugin_installations.c.scope
+                            == PluginReleaseScope.SYSTEM,
+                            schema.plugin_installations.c.workspace_id.is_(None),
                         )
                     )
                 )
@@ -468,9 +481,9 @@ class SystemBaselineCutoverService:
                     f"System baseline release {declared.release_id} is missing"
                 )
             revoked = await session.scalar(
-                select(schema.plugin_release_revocations.c.release_id).where(
-                    schema.plugin_release_revocations.c.release_id
-                    == declared.release_id
+                select(schema.plugin_release_revocations.c.installation_id).where(
+                    schema.plugin_release_revocations.c.installation_id
+                    == row["installation_id"]
                 )
             )
             if revoked is not None:

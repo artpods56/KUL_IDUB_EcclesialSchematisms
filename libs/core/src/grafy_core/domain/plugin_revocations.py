@@ -11,7 +11,7 @@ from grafy_core.domain.plugin_identity import (
     PluginReleaseNamespace,
     PluginReleaseScope,
 )
-from grafy_core.domain.plugin_releases import PluginRelease
+from grafy_core.domain.plugin_installations import InstalledPluginRelease
 
 
 class PluginReleaseRevocationReason(StrEnum):
@@ -31,7 +31,7 @@ class PluginReleaseRevocationError(ValueError):
 class PluginReleaseRevocation:
     """Permanent execution denial for one exact, still-retained release."""
 
-    release_id: UUID
+    installation_id: UUID
     scope: PluginReleaseScope
     workspace_id: UUID | None
     slug: str
@@ -91,7 +91,7 @@ class PluginReleaseRevocation:
     @classmethod
     def from_release(
         cls,
-        release: PluginRelease,
+        release: InstalledPluginRelease,
         *,
         reason: PluginReleaseRevocationReason,
         revoked_by_user_id: UUID | None = None,
@@ -99,7 +99,7 @@ class PluginReleaseRevocation:
         revoked_at: datetime | None = None,
     ) -> Self:
         return cls(
-            release_id=release.id,
+            installation_id=release.installation_id,
             scope=release.scope,
             workspace_id=release.workspace_id,
             slug=release.slug,
@@ -121,7 +121,7 @@ class PluginReleaseRevocation:
         """Compare immutable request intent while ignoring creation time."""
 
         return (
-            self.release_id == other.release_id
+            self.installation_id == other.installation_id
             and self.scope is other.scope
             and self.workspace_id == other.workspace_id
             and self.slug == other.slug

@@ -16,8 +16,8 @@ from tempfile import TemporaryDirectory
 from typing import Protocol, cast, final, override
 from uuid import UUID
 
+from grafy_core.domain.plugin_installations import InstalledPluginRelease
 from grafy_core.domain.plugin_releases import (
-    PluginRelease,
     PluginReleaseIdentity,
     PluginReleaseScope,
     PluginRuntimeArtifact,
@@ -96,7 +96,7 @@ class PluginRuntimeReleaseLookup(Protocol):
         revision: int,
         *,
         scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE,
-    ) -> PluginRelease | None: ...
+    ) -> InstalledPluginRelease | None: ...
 
     async def get_revocation(
         self,
@@ -677,7 +677,7 @@ class DockerPluginRuntime(
     async def _sandbox_for(
         self,
         key: _SandboxKey,
-        release: PluginRelease,
+        release: InstalledPluginRelease,
         artifact: PluginRuntimeArtifact,
         scratch_root: Path,
         *,
@@ -739,7 +739,7 @@ class DockerPluginRuntime(
 
     async def _ensure_image(
         self,
-        release: PluginRelease,
+        release: InstalledPluginRelease,
         artifact: PluginRuntimeArtifact,
     ) -> None:
         image_reference = f"sha256:{artifact.manifest_digest}"
@@ -790,7 +790,6 @@ class DockerPluginRuntime(
         expected = {
             "org.opencontainers.image.source.digest": f"sha256:{release.source_digest}",
             "io.grafy.plugin.runtime": "1",
-            "io.grafy.plugin.release.namespace": release.namespace.storage_path,
             "io.grafy.plugin.contract.digest": f"sha256:{release.contract_digest}",
             "io.grafy.plugin.profile.digest": f"sha256:{release.profile_digest}",
             "io.grafy.plugin.base.digest": (
@@ -1352,7 +1351,7 @@ def _sandbox_key_sha256(key: _SandboxKey) -> str:
 
 
 def _release_matches_identity(
-    release: PluginRelease,
+    release: InstalledPluginRelease,
     identity: PluginReleaseIdentity,
 ) -> bool:
     return (

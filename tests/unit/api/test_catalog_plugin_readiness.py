@@ -16,12 +16,17 @@ from grafy_core.domain.plugin_releases import (
     PluginRelease,
     PluginDistribution,
     PluginExecutionPolicy,
+    PluginReleaseNamespace,
     PluginReleaseScope,
     PluginRuntimeArtifact,
     PluginSecretInputContract,
     plugin_contract_digest,
     plugin_profile_digest,
     plugin_protocol_digest,
+)
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
 )
 from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.domain.plugin_revocations import (
@@ -131,7 +136,7 @@ def _release(
     output_type: str = "scalar.text",
     own_output_type: bool = False,
     secret_inputs: bool = False,
-) -> PluginRelease:
+) -> InstalledPluginRelease:
     if secret_inputs and PluginRuntimeCapability.NODE_SECRETS not in capabilities:
         capabilities = (*capabilities, PluginRuntimeCapability.NODE_SECRETS)
     artifact_types = (
@@ -208,8 +213,7 @@ def _release(
         if executable
         else None
     )
-    return PluginRelease(
-        workspace_id=workspace_id,
+    release = PluginRelease(
         slug="notes",
         revision=1,
         catalog=catalog,
@@ -222,10 +226,26 @@ def _release(
         source_digest="4" * 64,
         lock_digest="5" * 64,
         runtime_profile=runtime_profile,
+        loader_target="grafy_plugin:PLUGIN",
         runtime_image_digest=(
             runtime_artifact.manifest_digest if runtime_artifact is not None else None
         ),
         runtime_artifact=runtime_artifact,
+        published_by_user_id=workspace_id,
+    )
+    return InstalledPluginRelease(
+        release=release,
+        installation=PluginInstallation.from_release(
+            release,
+            namespace=PluginReleaseNamespace(
+                scope=PluginReleaseScope.WORKSPACE,
+                workspace_id=workspace_id,
+            ),
+            execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
+            distribution=None,
+            installed_by_user_id=workspace_id,
+            installed_by_platform_actor=None,
+        ),
     )
 
 
@@ -233,7 +253,7 @@ def _system_release(
     plugin: Plugin,
     *,
     catalog: PluginCatalogManifest | None = None,
-) -> PluginRelease:
+) -> InstalledPluginRelease:
     catalog = catalog or PluginCatalogManifest.from_plugin(plugin)
     capabilities = PluginCapabilityManifest(capabilities=plugin.capabilities)
     runtime_artifact = PluginRuntimeArtifact(
@@ -242,8 +262,7 @@ def _system_release(
         manifest_digest="7" * 64,
         config_digest="8" * 64,
     )
-    return PluginRelease(
-        workspace_id=None,
+    release = PluginRelease(
         slug=catalog.slug,
         revision=3,
         catalog=catalog,
@@ -256,16 +275,28 @@ def _system_release(
         source_digest="9" * 64,
         lock_digest="a" * 64,
         runtime_profile="python-uv",
+        loader_target="grafy_plugin:PLUGIN",
         runtime_image_digest=runtime_artifact.manifest_digest,
         runtime_artifact=runtime_artifact,
         published_by_platform_actor="test:system-catalog",
-        scope=PluginReleaseScope.SYSTEM,
-        execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
-        distribution=PluginDistribution.BUNDLED,
+    )
+    return InstalledPluginRelease(
+        release=release,
+        installation=PluginInstallation.from_release(
+            release,
+            namespace=PluginReleaseNamespace(
+                scope=PluginReleaseScope.SYSTEM,
+                workspace_id=None,
+            ),
+            execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
+            distribution=PluginDistribution.BUNDLED,
+            installed_by_user_id=None,
+            installed_by_platform_actor="test:system-catalog",
+        ),
     )
 
 
-def _system_notes_release() -> PluginRelease:
+def _system_notes_release() -> InstalledPluginRelease:
     return _system_release(HOST_NOTES)
 
 
@@ -323,7 +354,7 @@ def _system_notes_release() -> PluginRelease:
     ],
 )
 def test_release_readiness_returns_a_stable_fail_closed_reason(
-    release: PluginRelease,
+    release: InstalledPluginRelease,
     admission: ReleaseExecutionAdmission,
     reason: PluginNonRunnableReason,
 ) -> None:

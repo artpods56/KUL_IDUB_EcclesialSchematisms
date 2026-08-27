@@ -9,6 +9,10 @@ import tempfile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
+)
 from grafy_core.domain.plugin_releases import (
     PluginExecutionPolicy,
     PluginRelease,
@@ -184,7 +188,7 @@ class SystemPluginDeploymentManifestBuilder:
         self,
         repository_root: Path,
         entry: SystemPluginInventoryEntry,
-        release: PluginRelease,
+        release: InstalledPluginRelease,
     ) -> list[tuple[str, bytes]]:
         project = repository_root.joinpath(*entry.project.split("/"))
         try:
@@ -228,7 +232,7 @@ class SystemPluginDeploymentManifestBuilder:
     def _source_wheel_build_digest(
         self,
         entry: SystemPluginInventoryEntry,
-        release: PluginRelease,
+        release: InstalledPluginRelease,
         entries: list[tuple[str, bytes]],
     ) -> str:
         with tempfile.TemporaryDirectory(
@@ -307,10 +311,18 @@ class SystemPluginDeploymentManifestBuilder:
         *,
         slug: str | None,
         revision: int | None,
-    ) -> tuple[PluginRelease, ...]:
-        statement = select(PluginRelease).where(
-            schema.plugin_releases.c.scope == PluginReleaseScope.SYSTEM,
-            schema.plugin_releases.c.workspace_id.is_(None),
+    ) -> tuple[InstalledPluginRelease, ...]:
+        statement = (
+            select(PluginRelease, PluginInstallation)
+            .join(
+                PluginInstallation,
+                schema.plugin_installations.c.release_id
+                == schema.plugin_releases.c.id,
+            )
+            .where(
+                schema.plugin_installations.c.scope == PluginReleaseScope.SYSTEM,
+                schema.plugin_installations.c.workspace_id.is_(None),
+            )
         )
         if slug is not None:
             inventory.entry_for(slug)
@@ -318,7 +330,10 @@ class SystemPluginDeploymentManifestBuilder:
                 schema.plugin_releases.c.slug == slug,
                 schema.plugin_releases.c.revision == revision,
             )
-        rows = list(await session.scalars(statement))
+        rows = [
+            InstalledPluginRelease(release=release, installation=installation)
+            for release, installation in await session.execute(statement)
+        ]
         if slug is not None:
             if not rows:
                 raise SystemPluginDeploymentBuildError(
@@ -326,7 +341,7 @@ class SystemPluginDeploymentManifestBuilder:
                 )
             return tuple(rows)
 
-        latest_by_slug: dict[str, PluginRelease] = {}
+        latest_by_slug: dict[str, InstalledPluginRelease] = {}
         for release in rows:
             current = latest_by_slug.get(release.slug)
             if current is None or release.revision > current.revision:
@@ -360,7 +375,7 @@ class SystemPluginDeploymentManifestBuilder:
         self,
         session: AsyncSession,
         entry: SystemPluginInventoryEntry,
-        release: PluginRelease,
+        release: InstalledPluginRelease,
     ) -> None:
         try:
             if (
@@ -398,6 +413,11 @@ class SystemPluginDeploymentManifestBuilder:
                     f"Staged System release {entry.slug!r} capabilities do not "
                     "match the checked-in inventory"
                 )
+            if release.loader_target != entry.loader_target:
+                raise SystemPluginInventoryError(
+                    f"Staged System release {entry.slug!r} loader target does not "
+                    "match the checked-in inventory"
+                )
             if release.runtime_artifact is None:
                 raise SystemPluginInventoryError(
                     f"Staged System release {entry.slug!r} has no retained OCI "
@@ -408,8 +428,9 @@ class SystemPluginDeploymentManifestBuilder:
                     f"Staged System release {entry.slug!r} OCI digest does not match"
                 )
             revoked = await session.scalar(
-                select(schema.plugin_release_revocations.c.release_id).where(
-                    schema.plugin_release_revocations.c.release_id == release.id
+                select(schema.plugin_release_revocations.c.installation_id).where(
+                    schema.plugin_release_revocations.c.installation_id
+                    == release.installation_id
                 )
             )
             if revoked is not None:

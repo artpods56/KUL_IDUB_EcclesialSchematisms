@@ -34,11 +34,16 @@ from grafy_core.domain.plugin_releases import (
     PluginExecutionPolicy,
     PluginNodeContract,
     PluginRelease,
+    PluginReleaseNamespace,
     PluginReleaseScope,
     PluginRuntimeArtifact,
     plugin_contract_digest,
     plugin_profile_digest,
     plugin_protocol_digest,
+)
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
 )
 from grafy_core.domain.plugin_revocations import PluginReleaseRevocationReason
 from grafy_core.domain.plugin_selection import PluginReleaseSelection
@@ -60,7 +65,7 @@ ARTIFACT_ID = UUID("00000000-0000-0000-0000-000000001208")
 NOW = datetime(2026, 8, 24, 10, 0, tzinfo=UTC)
 
 
-def _system_release() -> PluginRelease:
+def _system_release() -> InstalledPluginRelease:
     catalog = PluginCatalogManifest(
         slug="builtin.text",
         title="Text",
@@ -85,8 +90,7 @@ def _system_release() -> PluginRelease:
         manifest_digest="b" * 64,
         config_digest="c" * 64,
     )
-    return PluginRelease(
-        workspace_id=None,
+    release = PluginRelease(
         slug=catalog.slug,
         revision=3,
         catalog=catalog,
@@ -99,16 +103,28 @@ def _system_release() -> PluginRelease:
         source_digest="d" * 64,
         lock_digest="e" * 64,
         runtime_profile="python-uv",
+        loader_target="grafy_plugin_text.plugin:TEXT",
         runtime_image_digest=runtime.manifest_digest,
         runtime_artifact=runtime,
         published_by_platform_actor="test:cutover",
-        scope=PluginReleaseScope.SYSTEM,
-        execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
-        distribution=PluginDistribution.BUNDLED,
+    )
+    return InstalledPluginRelease(
+        release=release,
+        installation=PluginInstallation.from_release(
+            release,
+            namespace=PluginReleaseNamespace(
+                scope=PluginReleaseScope.SYSTEM,
+                workspace_id=None,
+            ),
+            execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
+            distribution=PluginDistribution.BUNDLED,
+            installed_by_user_id=None,
+            installed_by_platform_actor="test:cutover",
+        ),
     )
 
 
-def _baseline(release: PluginRelease) -> SystemBaselineManifest:
+def _baseline(release: InstalledPluginRelease) -> SystemBaselineManifest:
     assert release.runtime_artifact is not None
     assert release.runtime_image_digest is not None
     return SystemBaselineManifest(
@@ -208,7 +224,7 @@ def _run_request() -> dict[str, object]:
 @pytest.fixture
 async def cutover_database(
     tmp_path: Path,
-) -> AsyncIterator[tuple[Database, PluginRelease]]:
+) -> AsyncIterator[tuple[Database, InstalledPluginRelease]]:
     database = create_database(f"sqlite+aiosqlite:///{tmp_path / 'cutover.sqlite3'}")
     release = _system_release()
     document = _graph_document()
@@ -225,7 +241,10 @@ async def cutover_database(
             )
         )
     async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
-        await unit_of_work.plugin_releases.add(release)
+        await unit_of_work.plugin_releases.add(release.release)
+        await unit_of_work.plugin_releases.add_installation(
+            release.installation
+        )
         await unit_of_work.plugin_releases.add_selection(
             PluginReleaseSelection.from_release(
                 release,
@@ -352,7 +371,7 @@ async def _raw_document(
 
 @pytest.mark.asyncio
 async def test_cutover_backfills_all_stores_without_logical_graph_change_and_is_idempotent(
-    cutover_database: tuple[Database, PluginRelease],
+    cutover_database: tuple[Database, InstalledPluginRelease],
 ) -> None:
     database, release = cutover_database
     service = SystemBaselineCutoverService(database.sessions)
@@ -479,7 +498,7 @@ async def test_cutover_backfills_all_stores_without_logical_graph_change_and_is_
 
 @pytest.mark.asyncio
 async def test_cutover_refuses_a_baseline_digest_mismatch_without_rewriting(
-    cutover_database: tuple[Database, PluginRelease],
+    cutover_database: tuple[Database, InstalledPluginRelease],
 ) -> None:
     database, release = cutover_database
     baseline = _baseline(release)
@@ -504,7 +523,7 @@ async def test_cutover_refuses_a_baseline_digest_mismatch_without_rewriting(
 
 @pytest.mark.asyncio
 async def test_cutover_refuses_active_executions_and_stale_preconditions(
-    cutover_database: tuple[Database, PluginRelease],
+    cutover_database: tuple[Database, InstalledPluginRelease],
 ) -> None:
     database, release = cutover_database
     service = SystemBaselineCutoverService(database.sessions)
@@ -555,7 +574,7 @@ async def test_cutover_refuses_active_executions_and_stale_preconditions(
 
 @pytest.mark.asyncio
 async def test_system_revocation_requires_durable_execution_drain(
-    cutover_database: tuple[Database, PluginRelease],
+    cutover_database: tuple[Database, InstalledPluginRelease],
     tmp_path: Path,
 ) -> None:
     database, release = cutover_database
@@ -597,14 +616,14 @@ async def test_system_revocation_requires_durable_execution_drain(
         platform_actor=actor,
     )
 
-    assert revoked.release_id == release.id
+    assert revoked.installation_id == release.installation_id
     assert revoked.reason is PluginReleaseRevocationReason.SECURITY
     assert revoked.revoked_by_platform_actor == actor.reference
 
 
 @pytest.mark.asyncio
 async def test_cutover_transaction_rolls_back_documents_and_cache_deletes_on_error(
-    cutover_database: tuple[Database, PluginRelease],
+    cutover_database: tuple[Database, InstalledPluginRelease],
 ) -> None:
     database, release = cutover_database
     service = SystemBaselineCutoverService(database.sessions)
@@ -674,7 +693,7 @@ class _FenceDialectProbe:
 
 @pytest.mark.asyncio
 async def test_postgresql_fence_locks_every_cutover_table_in_fixed_order(
-    cutover_database: tuple[Database, PluginRelease],
+    cutover_database: tuple[Database, InstalledPluginRelease],
 ) -> None:
     database, _ = cutover_database
     probe = _FenceDialectProbe("postgresql")
@@ -704,7 +723,7 @@ async def test_postgresql_fence_locks_every_cutover_table_in_fixed_order(
 
 @pytest.mark.asyncio
 async def test_apply_fence_fails_closed_on_unsupported_dialect(
-    cutover_database: tuple[Database, PluginRelease],
+    cutover_database: tuple[Database, InstalledPluginRelease],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database, release = cutover_database
@@ -745,7 +764,7 @@ async def test_apply_fence_fails_closed_on_unsupported_dialect(
 
 @pytest.mark.asyncio
 async def test_apply_fence_serializes_queued_execution_insert_before_drain_check(
-    cutover_database: tuple[Database, PluginRelease],
+    cutover_database: tuple[Database, InstalledPluginRelease],
 ) -> None:
     database, release = cutover_database
     service = SystemBaselineCutoverService(database.sessions)
@@ -811,7 +830,7 @@ async def test_apply_fence_serializes_queued_execution_insert_before_drain_check
 
 @pytest.mark.asyncio
 async def test_sqlite_apply_waits_for_write_reservation_before_auditing(
-    cutover_database: tuple[Database, PluginRelease],
+    cutover_database: tuple[Database, InstalledPluginRelease],
 ) -> None:
     database, release = cutover_database
     service = SystemBaselineCutoverService(database.sessions)
@@ -846,7 +865,7 @@ async def test_sqlite_apply_waits_for_write_reservation_before_auditing(
 
 @pytest.mark.asyncio
 async def test_apply_cas_rejects_document_changed_after_audit_and_rolls_back(
-    cutover_database: tuple[Database, PluginRelease],
+    cutover_database: tuple[Database, InstalledPluginRelease],
 ) -> None:
     database, release = cutover_database
     service = SystemBaselineCutoverService(database.sessions)
@@ -918,7 +937,7 @@ async def test_apply_cas_rejects_document_changed_after_audit_and_rolls_back(
 
 @pytest.mark.asyncio
 async def test_apply_cas_rejects_deleted_audited_row_and_rolls_back(
-    cutover_database: tuple[Database, PluginRelease],
+    cutover_database: tuple[Database, InstalledPluginRelease],
 ) -> None:
     database, release = cutover_database
     service = SystemBaselineCutoverService(database.sessions)

@@ -33,12 +33,17 @@ from grafy_core.domain.plugin_releases import (
     PluginPortDirection,
     PluginRelease,
     PluginReleaseIdentity,
+    PluginReleaseNamespace,
     PluginReleaseScope,
     PluginRuntimeArtifact,
     PluginSecretInputContract,
     plugin_contract_digest,
     plugin_profile_digest,
     plugin_protocol_digest,
+)
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
 )
 from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.domain.plugin_selection import (
@@ -151,7 +156,7 @@ def _release(
     execution_policy: PluginExecutionPolicy = PluginExecutionPolicy.ISOLATED_ONLY,
     artifact_types: tuple[PluginArtifactTypeContract, ...] = (),
     artifact_type_dependencies: tuple[PluginArtifactTypeContract, ...] | None = None,
-) -> PluginRelease:
+) -> InstalledPluginRelease:
     dependencies = artifact_type_dependencies
     if dependencies is None:
         text_registry = build_explicit_plugin_registry((TEXT_PLUGIN,))
@@ -179,8 +184,7 @@ def _release(
         if executable
         else None
     )
-    return PluginRelease(
-        workspace_id=(workspace_id if scope is PluginReleaseScope.WORKSPACE else None),
+    release = PluginRelease(
         slug=catalog.slug,
         revision=revision,
         catalog=catalog,
@@ -193,22 +197,43 @@ def _release(
         source_digest=f"{revision}" * 64,
         lock_digest="9" * 64,
         runtime_profile="python-uv",
+        loader_target="grafy_plugin:PLUGIN",
         runtime_image_digest=(
             runtime_artifact.manifest_digest if runtime_artifact is not None else None
         ),
         runtime_artifact=runtime_artifact,
-        scope=scope,
-        distribution=(
-            PluginDistribution.PUBLISHED if scope is PluginReleaseScope.SYSTEM else None
+        published_by_user_id=(
+            workspace_id if scope is PluginReleaseScope.WORKSPACE else None
         ),
         published_by_platform_actor=(
             "test:system" if scope is PluginReleaseScope.SYSTEM else None
         ),
-        execution_policy=execution_policy,
     )
+    installation = PluginInstallation.from_release(
+        release,
+        namespace=PluginReleaseNamespace(
+            scope=scope,
+            workspace_id=(
+                workspace_id if scope is PluginReleaseScope.WORKSPACE else None
+            ),
+        ),
+        execution_policy=execution_policy,
+        distribution=(
+            PluginDistribution.PUBLISHED
+            if scope is PluginReleaseScope.SYSTEM
+            else None
+        ),
+        installed_by_user_id=(
+            workspace_id if scope is PluginReleaseScope.WORKSPACE else None
+        ),
+        installed_by_platform_actor=(
+            "test:system" if scope is PluginReleaseScope.SYSTEM else None
+        ),
+    )
+    return InstalledPluginRelease(release=release, installation=installation)
 
 
-def _host_text_release(revision: int) -> PluginRelease:
+def _host_text_release(revision: int) -> InstalledPluginRelease:
     text_registry = build_explicit_plugin_registry((TEXT_PLUGIN,))
     plugin_catalog = PluginCatalogManifest.from_plugin(TEXT_PLUGIN)
     catalog = plugin_catalog.model_copy(
@@ -226,8 +251,7 @@ def _host_text_release(revision: int) -> PluginRelease:
         manifest_digest="b" * 64,
         config_digest="c" * 64,
     )
-    return PluginRelease(
-        workspace_id=None,
+    release = PluginRelease(
         slug=catalog.slug,
         revision=revision,
         catalog=catalog,
@@ -240,19 +264,31 @@ def _host_text_release(revision: int) -> PluginRelease:
         source_digest=f"{revision}" * 64,
         lock_digest="9" * 64,
         runtime_profile="python-uv",
+        loader_target="grafy_plugin_text.plugin:TEXT",
         runtime_image_digest=runtime_artifact.manifest_digest,
         runtime_artifact=runtime_artifact,
-        scope=PluginReleaseScope.SYSTEM,
-        execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
-        distribution=PluginDistribution.BUNDLED,
         published_by_platform_actor="test:system",
+    )
+    return InstalledPluginRelease(
+        release=release,
+        installation=PluginInstallation.from_release(
+            release,
+            namespace=PluginReleaseNamespace(
+                scope=PluginReleaseScope.SYSTEM,
+                workspace_id=None,
+            ),
+            execution_policy=PluginExecutionPolicy.HOST_ELIGIBLE,
+            distribution=PluginDistribution.BUNDLED,
+            installed_by_user_id=None,
+            installed_by_platform_actor="test:system",
+        ),
     )
 
 
 class RecordingReleaseLookup:
     def __init__(
         self,
-        *releases: PluginRelease,
+        *releases: InstalledPluginRelease,
         selection: PluginReleaseSelection | None = None,
         revocation: PluginReleaseRevocation | None = None,
     ) -> None:
@@ -270,7 +306,7 @@ class RecordingReleaseLookup:
         revision: int,
         *,
         scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE,
-    ) -> PluginRelease | None:
+    ) -> InstalledPluginRelease | None:
         self.release_reads += 1
         expected_owner = workspace_id if scope is PluginReleaseScope.WORKSPACE else None
         for release in self._releases:
@@ -1171,7 +1207,7 @@ async def test_missing_pinned_release_blocks_compilation_with_a_clear_error() ->
 )
 @pytest.mark.asyncio
 async def test_exact_release_pin_cannot_bypass_execution_admission(
-    release: PluginRelease,
+    release: InstalledPluginRelease,
     reason: PluginNonRunnableReason,
 ) -> None:
     with pytest.raises(GraphExecutionError, match=reason):

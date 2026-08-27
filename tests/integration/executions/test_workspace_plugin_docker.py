@@ -20,6 +20,7 @@ from grafy_core.artifacts import (
     NodeOutput,
 )
 from grafy_core.domain.plugin_releases import (
+    PluginExecutionPolicy,
     PluginRelease,
     PluginReleaseNamespace,
     PluginReleaseScope,
@@ -27,6 +28,10 @@ from grafy_core.domain.plugin_releases import (
     plugin_contract_digest,
     plugin_profile_digest,
     plugin_protocol_digest,
+)
+from grafy_core.domain.plugin_installations import (
+    InstalledPluginRelease,
+    PluginInstallation,
 )
 from grafy_core.domain.plugin_revocations import PluginReleaseRevocation
 from grafy_core.nodes import NodeExecutionContext
@@ -64,7 +69,7 @@ WORKSPACE_ID = UUID("00000000-0000-4000-8000-000000000951")
 
 @dataclass
 class ReleaseLookup:
-    releases: tuple[PluginRelease, ...]
+    releases: tuple[InstalledPluginRelease, ...]
 
     async def get_by_revision(
         self,
@@ -73,7 +78,7 @@ class ReleaseLookup:
         revision: int,
         *,
         scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE,
-    ) -> PluginRelease | None:
+    ) -> InstalledPluginRelease | None:
         for release in self.releases:
             if (
                 scope is release.scope
@@ -260,23 +265,14 @@ async def test_docker_runtime_restores_reuses_hardens_and_cleans_sandbox(
         profile=profile,
     )
     artifact = await builder.build_and_store(
-        namespace=PluginReleaseNamespace(
-            scope=PluginReleaseScope.WORKSPACE,
-            workspace_id=WORKSPACE_ID,
-        ),
         candidate=verified,
     )
     repeated_artifact = await builder.build_and_store(
-        namespace=PluginReleaseNamespace(
-            scope=PluginReleaseScope.WORKSPACE,
-            workspace_id=WORKSPACE_ID,
-        ),
         candidate=verified,
     )
     assert repeated_artifact == artifact
     capabilities = verified.capabilities
-    release = PluginRelease(
-        workspace_id=WORKSPACE_ID,
+    release_record = PluginRelease(
         slug=verified.catalog.slug,
         revision=1,
         catalog=verified.catalog,
@@ -289,13 +285,38 @@ async def test_docker_runtime_restores_reuses_hardens_and_cleans_sandbox(
         source_digest=source_digest,
         lock_digest=verified.lock_digest,
         runtime_profile=verified.runtime_profile,
+        loader_target=verified.loader_target,
         runtime_image_digest=artifact.manifest_digest,
         runtime_artifact=artifact,
+        published_by_user_id=WORKSPACE_ID,
     )
-    second_release = replace(
-        release,
+    second_release_record = replace(
+        release_record,
         revision=2,
         descriptor_digest=None,
+    )
+    installation = PluginInstallation.from_release(
+        release_record,
+        namespace=PluginReleaseNamespace(
+            scope=PluginReleaseScope.WORKSPACE,
+            workspace_id=WORKSPACE_ID,
+        ),
+        execution_policy=PluginExecutionPolicy.ISOLATED_ONLY,
+        distribution=None,
+        installed_by_user_id=WORKSPACE_ID,
+        installed_by_platform_actor=None,
+    )
+    release = InstalledPluginRelease(
+        release=release_record,
+        installation=installation,
+    )
+    second_release = InstalledPluginRelease(
+        release=second_release_record,
+        installation=replace(
+            installation,
+            release_id=second_release_record.id,
+            release_revision=second_release_record.revision,
+        ),
     )
     subprocess.run(
         ("docker", "image", "rm", "-f", f"sha256:{artifact.manifest_digest}"),

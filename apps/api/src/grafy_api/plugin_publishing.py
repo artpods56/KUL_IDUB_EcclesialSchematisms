@@ -24,7 +24,10 @@ from grafy_core.domain.plugin_releases import (
     plugin_profile_digest,
 )
 from grafy_core.plugin_inspector import InspectionResult
-from grafy_core.runtime.plugin_loader import WORKSPACE_PLUGIN_LOADER_TARGET
+from grafy_core.runtime.plugin_loader import (
+    WORKSPACE_PLUGIN_LOADER_TARGET,
+    split_plugin_loader_target,
+)
 
 
 MAX_PLUGIN_SOURCE_FILES = 2_000
@@ -55,6 +58,43 @@ SUBPROCESS_TIMEOUT_SECONDS = 600
 
 class PluginPublishingError(RuntimeError):
     """A Plugin working copy cannot be safely published."""
+
+
+def project_loader_target(project: Path) -> str:
+    """Read the package-owned loader target, with the generic export as default."""
+
+    try:
+        document = cast(
+            dict[str, object],
+            tomllib.loads((project / "pyproject.toml").read_text("utf-8")),
+        )
+        tool = document.get("tool", {})
+        if not isinstance(tool, dict):
+            raise PluginPublishingError("pyproject.toml [tool] must be a table")
+        tool = cast(dict[str, object], tool)
+        grafy = tool.get("grafy", {})
+        if not isinstance(grafy, dict):
+            raise PluginPublishingError("pyproject.toml [tool.grafy] must be a table")
+        grafy = cast(dict[str, object], grafy)
+        plugin = grafy.get("plugin", {})
+        if not isinstance(plugin, dict):
+            raise PluginPublishingError(
+                "pyproject.toml [tool.grafy.plugin] must be a table"
+            )
+        plugin = cast(dict[str, object], plugin)
+        value = plugin.get("loader-target", WORKSPACE_PLUGIN_LOADER_TARGET)
+        if not isinstance(value, str):
+            raise PluginPublishingError(
+                "pyproject.toml Plugin loader-target must be a string"
+            )
+        split_plugin_loader_target(value)
+        return value
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError, ValueError) as exc:
+        if isinstance(exc, PluginPublishingError):
+            raise
+        raise PluginPublishingError(
+            f"Cannot read Plugin loader target from {project / 'pyproject.toml'}"
+        ) from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,9 +155,11 @@ class PluginDirectoryPublisher:
         directory: Path,
         *,
         expected_slug: str | None = None,
-        loader_target: str = WORKSPACE_PLUGIN_LOADER_TARGET,
+        loader_target: str | None = None,
     ) -> VerifiedPluginCandidate:
         project = self._require_allowed_project(directory)
+        if loader_target is None:
+            loader_target = project_loader_target(project)
         entries = scan_source_tree(project)
         staging = Path(tempfile.mkdtemp(prefix="grafy-plugin-publish-"))
         try:

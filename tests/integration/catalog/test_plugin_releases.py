@@ -46,6 +46,7 @@ def test_workspace_plugin_release_is_overlaid_in_node_catalog(tmp_path: Path) ->
             lock_digest=verified.lock_digest,
             runtime_profile=verified.runtime_profile,
             runtime_artifact=None,
+            loader_target=verified.loader_target,
             published_by_user_id=TEST_USER_ID,
         )
     )
@@ -58,6 +59,7 @@ def test_workspace_plugin_release_is_overlaid_in_node_catalog(tmp_path: Path) ->
             lock_digest=verified.lock_digest,
             runtime_profile=verified.runtime_profile,
             runtime_artifact=None,
+            loader_target=verified.loader_target,
             published_by_user_id=TEST_USER_ID,
         )
     )
@@ -77,6 +79,7 @@ def test_workspace_plugin_release_is_overlaid_in_node_catalog(tmp_path: Path) ->
             lock_digest=verified.lock_digest,
             runtime_profile=verified.runtime_profile,
             runtime_artifact=first_runtime_artifact,
+            loader_target=verified.loader_target,
             published_by_user_id=TEST_USER_ID,
         )
     )
@@ -92,6 +95,7 @@ def test_workspace_plugin_release_is_overlaid_in_node_catalog(tmp_path: Path) ->
             lock_digest=verified.lock_digest,
             runtime_profile=verified.runtime_profile,
             runtime_artifact=first_runtime_artifact,
+            loader_target=verified.loader_target,
             published_by_user_id=TEST_USER_ID,
         )
     )
@@ -110,6 +114,7 @@ def test_workspace_plugin_release_is_overlaid_in_node_catalog(tmp_path: Path) ->
                 manifest_digest="5" * 64,
                 config_digest="6" * 64,
             ),
+            loader_target=verified.loader_target,
             published_by_user_id=TEST_USER_ID,
         )
     )
@@ -123,6 +128,7 @@ def test_workspace_plugin_release_is_overlaid_in_node_catalog(tmp_path: Path) ->
             lock_digest=verified.lock_digest,
             runtime_profile="python-uv-gdal",
             runtime_artifact=None,
+            loader_target=verified.loader_target,
             published_by_user_id=TEST_USER_ID,
         )
     )
@@ -155,6 +161,7 @@ def test_workspace_plugin_release_is_overlaid_in_node_catalog(tmp_path: Path) ->
             lock_digest=changed_verified.lock_digest,
             runtime_profile=changed_verified.runtime_profile,
             runtime_artifact=None,
+            loader_target=changed_verified.loader_target,
             published_by_user_id=TEST_USER_ID,
         )
     )

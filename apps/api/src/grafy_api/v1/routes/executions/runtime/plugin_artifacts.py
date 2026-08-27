@@ -57,6 +57,10 @@ from grafy_core.runtime.plugin_invocation import (
     PluginInvocationResult,
     PluginInvoker,
 )
+from grafy_core.runtime.plugin_loader import (
+    PluginGuestLoaderManifest,
+    WORKSPACE_PLUGIN_LOADER_TARGET,
+)
 from grafy_core.runtime.plugin_protocol import (
     PluginArtifactShape,
     PluginFailureCode,
@@ -172,6 +176,7 @@ class SubprocessPluginGuestRunner(PluginGuestRunner):
         command: tuple[str, ...],
         *,
         environment: Mapping[str, str] | None = None,
+        loader_target: str = WORKSPACE_PLUGIN_LOADER_TARGET,
     ) -> None:
         if not command:
             raise ValueError("Plugin guest subprocess command must not be empty")
@@ -182,6 +187,7 @@ class SubprocessPluginGuestRunner(PluginGuestRunner):
         }
         if environment is not None:
             self._environment.update(environment)
+        self._loader_target = loader_target
 
     @override
     async def run(
@@ -190,10 +196,18 @@ class SubprocessPluginGuestRunner(PluginGuestRunner):
         limits: PluginInvocationLimits,
         request: PluginInvocationRequest | None = None,
     ) -> None:
-        del request
+        command = (*self._command, str(invocation_root))
+        if request is not None:
+            loader_manifest_path = invocation_root / "plugin-loader.json"
+            loader_manifest_path.write_bytes(
+                PluginGuestLoaderManifest(
+                    slug=request.release.slug,
+                    loader_target=self._loader_target,
+                ).canonical_json_bytes()
+            )
+            command = (*command, str(loader_manifest_path))
         process = await asyncio.create_subprocess_exec(
-            *self._command,
-            str(invocation_root),
+            *command,
             cwd=invocation_root,
             env=self._environment,
             stdin=asyncio.subprocess.DEVNULL,

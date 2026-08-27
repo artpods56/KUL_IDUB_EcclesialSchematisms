@@ -23,7 +23,7 @@ def test_revocation_requires_scope_specific_actor_provenance() -> None:
         match="cannot be revoked by a Workspace user",
     ):
         PluginReleaseRevocation(
-            release_id=RELEASE_ID,
+            installation_id=RELEASE_ID,
             scope=PluginReleaseScope.SYSTEM,
             workspace_id=None,
             slug="notes",
@@ -37,7 +37,7 @@ def test_revocation_requires_scope_specific_actor_provenance() -> None:
         match="cannot be revoked by a platform actor",
     ):
         PluginReleaseRevocation(
-            release_id=RELEASE_ID,
+            installation_id=RELEASE_ID,
             scope=PluginReleaseScope.WORKSPACE,
             workspace_id=WORKSPACE_ID,
             slug="notes",
@@ -51,7 +51,7 @@ def test_revocation_requires_scope_specific_actor_provenance() -> None:
 def test_revocation_rejects_unsafe_reason_and_naive_timestamp() -> None:
     with pytest.raises(ValueError, match="not a valid PluginReleaseRevocationReason"):
         PluginReleaseRevocation(
-            release_id=RELEASE_ID,
+            installation_id=RELEASE_ID,
             scope=PluginReleaseScope.WORKSPACE,
             workspace_id=WORKSPACE_ID,
             slug="notes",
@@ -68,7 +68,7 @@ def test_revocation_rejects_unsafe_reason_and_naive_timestamp() -> None:
         match="timestamp must be timezone-aware",
     ):
         PluginReleaseRevocation(
-            release_id=RELEASE_ID,
+            installation_id=RELEASE_ID,
             scope=PluginReleaseScope.WORKSPACE,
             workspace_id=WORKSPACE_ID,
             slug="notes",

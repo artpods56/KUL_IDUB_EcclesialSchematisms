@@ -26,7 +26,6 @@ from grafy_api.system_plugin_inventory import (
 from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.domain.errors import UserDisabledError
 from grafy_core.domain.plugin_releases import (
-    PluginReleaseNamespace,
     PluginRuntimeArtifact,
 )
 from grafy_core.runtime.plugin_loader import WORKSPACE_PLUGIN_LOADER_TARGET
@@ -54,15 +53,14 @@ class RecordingImageBuilder(PluginOciImageBuilder):
     async def build_and_store(
         self,
         *,
-        namespace: PluginReleaseNamespace,
         candidate: VerifiedPluginCandidate,
     ) -> PluginRuntimeArtifact:
         self.build_count += 1
         self.loader_targets.append(candidate.loader_target)
         return PluginRuntimeArtifact(
             object_key=(
-                f"plugin-releases/{namespace.storage_path}/{candidate.catalog.slug}/"
-                f"runtime/{candidate.source_digest}.oci.tar"
+                f"plugin-releases/{candidate.catalog.slug}/runtime/"
+                f"{candidate.source_digest}.oci.tar"
             ),
             archive_digest=candidate.source_digest,
             manifest_digest="a" * 64,
@@ -226,9 +224,8 @@ def test_agent_authoring_scaffolds_reviews_fences_and_uses_shared_publisher(
         )
     )
     assert human_release == agent_release
-    assert image_builder.build_count == 2
+    assert image_builder.build_count == 1
     assert image_builder.loader_targets == [
-        WORKSPACE_PLUGIN_LOADER_TARGET,
         WORKSPACE_PLUGIN_LOADER_TARGET,
     ]
     asyncio.run(database.dispose())

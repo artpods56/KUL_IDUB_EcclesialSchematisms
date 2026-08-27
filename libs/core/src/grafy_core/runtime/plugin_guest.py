@@ -29,7 +29,6 @@ from grafy_core.domain.plugin_releases import (
     plugin_contract_digest,
     plugin_protocol_digest,
 )
-from grafy_core.domain.plugin_identity import PluginReleaseScope
 from grafy_core.domain.node_secrets import (
     JsonValue,
     node_secret_dependency_sha256,
@@ -54,7 +53,6 @@ from grafy_core.ports.node_secrets import NodeSecretUnavailableError
 from grafy_core.runtime.materialization import InputMaterializer, MaterializationError
 from grafy_core.runtime.plugin_loader import (
     PluginGuestLoaderManifest,
-    WORKSPACE_PLUGIN_LOADER_TARGET,
     split_plugin_loader_target,
 )
 from grafy_core.runtime.object_set_bundle import (
@@ -109,19 +107,14 @@ def load_guest_plugin(
 ) -> tuple[Plugin, PluginCatalogManifest]:
     """Load the exact image-owned Plugin and verify its release contract."""
 
-    loader_target = WORKSPACE_PLUGIN_LOADER_TARGET
-    if release.scope is PluginReleaseScope.SYSTEM:
-        loader_manifest = PluginGuestLoaderManifest.from_json_bytes(
-            system_loader_manifest_path.read_bytes()
+    loader_manifest = PluginGuestLoaderManifest.from_json_bytes(
+        system_loader_manifest_path.read_bytes()
+    )
+    if loader_manifest.slug != release.slug:
+        raise PluginGuestError(
+            "Plugin loader manifest does not match the exact release"
         )
-        if (
-            loader_manifest.scope is not PluginReleaseScope.SYSTEM
-            or loader_manifest.slug != release.slug
-        ):
-            raise PluginGuestError(
-                "System Plugin loader manifest does not match the exact release"
-            )
-        loader_target = loader_manifest.loader_target
+    loader_target = loader_manifest.loader_target
     module_name, attribute_name = split_plugin_loader_target(loader_target)
     module = import_module(module_name)
     plugin = getattr(module, attribute_name, None)
@@ -1515,10 +1508,23 @@ async def execute_plugin_invocation(
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: python -m grafy_core.runtime.plugin_guest ROOT")
+    if len(sys.argv) not in (2, 3):
+        raise SystemExit(
+            "usage: python -m grafy_core.runtime.plugin_guest ROOT "
+            "[LOADER_MANIFEST]"
+        )
+    loader_manifest_path = (
+        SYSTEM_PLUGIN_LOADER_MANIFEST_PATH
+        if len(sys.argv) == 2
+        else Path(sys.argv[2])
+    )
     try:
-        asyncio.run(execute_plugin_invocation(Path(sys.argv[1])))
+        asyncio.run(
+            execute_plugin_invocation(
+                Path(sys.argv[1]),
+                system_loader_manifest_path=loader_manifest_path,
+            )
+        )
     except Exception as exc:
         raise SystemExit(f"Plugin guest runtime failed: {type(exc).__name__}") from exc
 

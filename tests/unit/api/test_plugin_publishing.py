@@ -5,7 +5,6 @@ from pathlib import Path
 import gzip
 import shutil
 import tarfile
-import uuid
 
 import pytest
 
@@ -15,6 +14,7 @@ from grafy_api.plugin_publishing import (
     PluginPublishingError,
     constrained_environment,
     build_deterministic_archive,
+    project_loader_target,
     scan_source_tree,
     unpack_source_snapshot,
     validate_relative_source_name,
@@ -32,6 +32,12 @@ from grafy_core.domain.plugin_releases import (
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE_PLUGIN = REPOSITORY_ROOT / "examples" / "plugin-notes"
+
+
+def test_project_can_own_a_non_generic_loader_target() -> None:
+    assert project_loader_target(REPOSITORY_ROOT / "plugins" / "llm") == (
+        "grafy_plugin_llm.plugin:LLM"
+    )
 
 
 def _copy_example_plugin(destination_root: Path) -> Path:
@@ -168,7 +174,6 @@ def test_generated_release_metadata_does_not_change_the_source_digest() -> None:
 
     releases = [
         PluginRelease(
-            workspace_id=uuid.uuid4(),
             slug="notes",
             revision=revision,
             catalog=_minimal_catalog(capabilities),
@@ -183,6 +188,7 @@ def test_generated_release_metadata_does_not_change_the_source_digest() -> None:
             source_digest=source_digest,
             lock_digest="2" * 64,
             runtime_profile=runtime_profile,
+            loader_target="grafy_plugin:PLUGIN",
             published_at=datetime.now(UTC),
         )
         for revision, capabilities, runtime_profile in (

@@ -19,9 +19,9 @@ from grafy_core.domain.modules import (
     ModuleInputConfig,
 )
 from grafy_core.domain.saved_graphs import SavedGraph, SavedGraphRevision
+from grafy_core.domain.plugin_installations import InstalledPluginRelease
 from grafy_core.domain.plugin_releases import (
     PluginNodeContract,
-    PluginRelease,
     PluginReleaseScope,
 )
 from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
@@ -51,7 +51,7 @@ class PreflightPluginReleaseLookup(Protocol):
         revision: int,
         *,
         scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE,
-    ) -> PluginRelease | None: ...
+    ) -> InstalledPluginRelease | None: ...
 
 
 class GraphRunPreflight:
@@ -81,7 +81,7 @@ class GraphRunPreflight:
         submitted_secret_nodes: set[str] = set()
         release_contracts: dict[
             tuple[PluginReleaseScope, str, int],
-            PluginRelease | None,
+            InstalledPluginRelease | None,
         ] = {}
         release_contracts_by_node: dict[str, PluginNodeContract] = {}
         for node in request.nodes:
@@ -206,7 +206,7 @@ class GraphRunPreflight:
     def _validate_network_preflight(
         self,
         node: RunNodeRequest,
-        release: PluginRelease,
+        release: InstalledPluginRelease,
         contract: PluginNodeContract,
     ) -> None:
         """Deny invocations whose effective network authority cannot be met."""

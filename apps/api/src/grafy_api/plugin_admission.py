@@ -7,11 +7,11 @@ from typing import Literal
 from grafy_core.artifact_contracts import INTEGER_VALUE, RASTER_IMAGE, TEXT_VALUE
 from grafy_core.artifacts import ArtifactBundleFormat
 from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
+from grafy_core.domain.plugin_installations import InstalledPluginRelease
 from grafy_core.domain.plugin_releases import (
     PluginArtifactTypeContract,
     PluginExecutionPolicy,
     PluginNodeContract,
-    PluginRelease,
     PluginReleaseScope,
     plugin_profile_digest,
     plugin_protocol_digest,
@@ -146,7 +146,7 @@ class ReleaseExecutionAdmission:
 
     def decide(
         self,
-        release: PluginRelease,
+        release: InstalledPluginRelease,
         *,
         node_contract: PluginNodeContract | None = None,
         selection: PluginReleaseSelection | None = None,
@@ -350,7 +350,7 @@ class ReleaseExecutionAdmission:
 
     def _network_egress_rejection(
         self,
-        release: PluginRelease,
+        release: InstalledPluginRelease,
         node_contract: PluginNodeContract | None,
     ) -> ReleaseExecutionRejection | None:
         """Fail closed when the assigned profile cannot satisfy the request."""

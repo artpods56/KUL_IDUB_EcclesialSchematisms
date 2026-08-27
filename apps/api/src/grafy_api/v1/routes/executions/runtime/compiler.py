@@ -23,10 +23,10 @@ from grafy_core.domain.modules import (
     GraphModuleReference,
     GraphModuleReferenceError,
 )
+from grafy_core.domain.plugin_installations import InstalledPluginRelease
 from grafy_core.domain.plugin_releases import (
     PluginArtifactTypeContract,
     PluginNodeContract,
-    PluginRelease,
     PluginReleaseIdentity,
     PluginReleaseScope,
 )
@@ -96,7 +96,7 @@ class PluginReleaseLookup(Protocol):
         revision: int,
         *,
         scope: PluginReleaseScope = PluginReleaseScope.WORKSPACE,
-    ) -> PluginRelease | None: ...
+    ) -> InstalledPluginRelease | None: ...
 
     async def get_selection(
         self,
@@ -124,7 +124,7 @@ class PluginReleaseLookup(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class _ReleaseExecutionSnapshot:
-    release: PluginRelease
+    release: InstalledPluginRelease
     selection: PluginReleaseSelection | None
     revocation: PluginReleaseRevocation | None
 
