@@ -144,7 +144,7 @@ boundary.
 
 ## One-shot System Plugin publisher
 
-System candidates must be staged by the opt-in `publisher` profile. The job is
+Publish System candidates with the opt-in `publisher` profile. The job is
 separate from the online API and is the only service in the base Compose file
 that mounts the Docker socket. It receives storage/database configuration but
 none of the OIDC, credential-encryption, command-HMAC, LLM, or other online API
@@ -156,7 +156,7 @@ must also be an absolute host path and is mounted at the identical path in the
 job so sibling sandbox containers can bind the exact frozen snapshot. The
 default scratch path is `/tmp/grafy-plugin-publisher`.
 
-Build the publisher image, then stage one candidate:
+Build the publisher image, then publish one candidate globally:
 
 ```bash
 docker compose \
@@ -170,16 +170,15 @@ docker compose \
   -f infra/docker/compose.yaml \
   --profile publisher \
   run --rm publisher \
-  plugin stage-system /publisher-input/<plugin-directory> \
+  plugin publish /publisher-input/<plugin-directory> \
+  --global \
   --slug <plugin-slug> \
-  --execution-policy isolated-only \
-  --distribution published \
-  --platform-actor "ci:<release-job-id>" \
+  --actor "ci:<release-job-id>" \
   --sandbox-image "${GRAFY_PUBLISHER_IMAGE:-grafy-publisher:local}" \
   --sandbox-scratch-root "${GRAFY_PUBLISHER_SCRATCH_ROOT:-/tmp/grafy-plugin-publisher}"
 ```
 
-`stage-system` has no host-verification option. Dependency lock checking and
+`publish --global` has no host-verification option. Dependency lock checking and
 locked sync run in resource-bounded containers with package-network access.
 Candidate tests and catalog inspection then run in fresh containers with no
 network, a read-only root filesystem, a read-only frozen source mount, a
@@ -187,7 +186,8 @@ read-only environment mount, no Linux capabilities, `no-new-privileges`, and
 explicit CPU, memory, PID, timeout, temporary-disk, and captured-output limits.
 Only an explicit non-secret environment is passed to those containers.
 
-Staging does not select the release. Promote its exact revision separately:
+Global publication does not select the release. Promote its exact revision
+separately:
 
 ```bash
 docker compose \
@@ -195,11 +195,11 @@ docker compose \
   -f infra/docker/compose.yaml \
   --profile publisher \
   run --rm publisher \
-  plugin promote-system \
+  plugin promote \
   --slug <plugin-slug> \
   --revision <revision> \
   --expected-generation <current-generation> \
-  --platform-actor "ci:<release-job-id>"
+  --actor "ci:<release-job-id>"
 ```
 
 Docker-socket possession remains root-equivalent host authority. Restrict this

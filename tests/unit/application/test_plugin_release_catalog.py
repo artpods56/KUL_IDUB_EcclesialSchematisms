@@ -314,7 +314,7 @@ async def test_workspace_publication_cannot_reuse_retained_system_identities(
         bucket="plugins",
     )
     try:
-        await service.stage_system(
+        await service.publish_system(
             catalog=_identity_catalog(
                 "system-b",
                 node_id="workspace-a.clash",
@@ -415,7 +415,7 @@ async def test_system_publication_cannot_reuse_retained_workspace_identities(
             clash: str,
             artifact_clash: str | None,
         ) -> InstalledPluginRelease:
-            return await service.stage_system(
+            return await service.publish_system(
                 catalog=_identity_catalog(
                     "system-b",
                     node_id=clash,
@@ -504,7 +504,7 @@ async def test_historical_workspace_revision_identity_still_blocks_system_public
             match=r"System Plugin 'system-b' node workspace-a.historical@1 "
             r"conflicts with a retained Workspace Plugin identity",
         ):
-            await service.stage_system(
+            await service.publish_system(
                 catalog=_identity_catalog(
                     "system-b",
                     node_id="workspace-a.historical",
@@ -543,7 +543,7 @@ async def test_non_colliding_cross_scope_publications_succeed(
         bucket="plugins",
     )
     try:
-        system_release = await service.stage_system(
+        system_release = await service.publish_system(
             catalog=_identity_catalog(
                 "system-b",
                 node_id="system-b.clash",

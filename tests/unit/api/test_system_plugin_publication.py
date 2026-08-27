@@ -153,11 +153,11 @@ async def test_system_publication_stages_then_explicitly_promotes_and_rolls_back
     workflow = _workflow(image_builder, releases, inventory)
     actor = PlatformPluginActor("ci:system-release")
 
-    first = await workflow.stage_verified(
+    first = await workflow.publish_verified(
         _verified(b"first"),
         platform_actor=actor,
     )
-    second = await workflow.stage_verified(
+    second = await workflow.publish_verified(
         _verified(b"second"),
         platform_actor=actor,
     )
@@ -279,7 +279,7 @@ async def test_system_publication_rejects_unauthorized_identity_before_image_bui
     workflow = _workflow(image_builder, releases, inventory)
 
     with pytest.raises(PluginPublishingError, match="allowlisted prefixes"):
-        await workflow.stage_verified(
+        await workflow.publish_verified(
             _verified(b"bad", catalog=_catalog(operator_id="external.evil.echo")),
             platform_actor=PlatformPluginActor("ci:system-release"),
         )
@@ -331,7 +331,7 @@ async def test_isolated_llm_system_release_promotes_without_a_host_manifest(
     )
     actor = PlatformPluginActor("ci:system-release")
 
-    release = await workflow.stage_verified(candidate, platform_actor=actor)
+    release = await workflow.publish_verified(candidate, platform_actor=actor)
     selection = await workflow.promote(
         slug=release.slug,
         revision=release.revision,
@@ -395,7 +395,7 @@ async def test_system_install_reuses_workspace_release_and_runtime_artifact(
         image_builder,
         releases,
         inventory,
-    ).stage_verified(
+    ).publish_verified(
         candidate,
         platform_actor=PlatformPluginActor("ci:system-release"),
     )
@@ -430,7 +430,7 @@ async def test_direct_workspace_publish_cannot_reuse_historical_system_identity(
         operator_id="gis.node",
         required_capabilities=gis_entry.capabilities,
     )
-    await workflow.stage_verified(
+    await workflow.publish_verified(
         _verified(
             b"retained-system",
             catalog=system_catalog,

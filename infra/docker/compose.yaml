@@ -157,7 +157,7 @@ services:
       dockerfile: infra/docker/api.Dockerfile
       target: api-plugins
     entrypoint: [".venv/bin/grafy"]
-    command: ["plugin", "stage-system", "--help"]
+    command: ["plugin", "publish", "--help"]
     environment:
       <<: *persistence-environment
       GRAFY_PLUGIN_ROOTS: '["/publisher-input"]'

@@ -349,7 +349,7 @@ class SystemPluginPublicationWorkflow:
         self._admission = admission
         self._system_inventory = system_inventory
 
-    async def stage_verified(
+    async def publish_verified(
         self,
         verified: VerifiedPluginCandidate,
         *,
@@ -383,7 +383,7 @@ class SystemPluginPublicationWorkflow:
             runtime_artifact = await self._image_builder.build_and_store(
                 candidate=verified,
             )
-        return await self._releases.stage_system(
+        return await self._releases.publish_system(
             catalog=verified.catalog,
             capabilities=verified.capabilities,
             source_archive=verified.source_archive,

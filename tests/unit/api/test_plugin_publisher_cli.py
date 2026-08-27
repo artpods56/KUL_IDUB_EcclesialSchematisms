@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 
@@ -63,6 +64,11 @@ def create_fake_database(database_url: str) -> FakeDatabase:
 
 def configured_fake_storage(settings: object) -> object:
     del settings
+    return object()
+
+
+def fake_isolated_release_admission(**kwargs: object) -> object:
+    del kwargs
     return object()
 
 
@@ -225,7 +231,7 @@ class FakeSystemPublicationWorkflow:
     def __init__(self, *args: object, **kwargs: object) -> None:
         del args, kwargs
 
-    async def stage_verified(
+    async def publish_verified(
         self,
         verified: object,
         *,
@@ -235,7 +241,34 @@ class FakeSystemPublicationWorkflow:
         return SimpleNamespace(slug="builtin.text", revision=1)
 
 
-def test_system_stage_command_requires_the_sandbox_image_at_parse_time(
+class RecordingWorkspacePublicationWorkflow:
+    observed: tuple[UUID, Path, str, UUID] | None = None
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+    async def publish(
+        self,
+        *,
+        workspace_id: UUID,
+        directory: Path,
+        expected_slug: str,
+        published_by_user_id: UUID,
+    ) -> SimpleNamespace:
+        type(self).observed = (
+            workspace_id,
+            directory,
+            expected_slug,
+            published_by_user_id,
+        )
+        return SimpleNamespace(
+            slug=expected_slug,
+            revision=1,
+            workspace_id=workspace_id,
+        )
+
+
+def test_global_publish_requires_the_sandbox_image_at_parse_time(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -245,11 +278,12 @@ def test_system_stage_command_requires_the_sandbox_image_at_parse_time(
         [
             "grafy",
             "plugin",
-            "stage-system",
+            "publish",
             "/plugins/notes",
+            "--global",
             "--slug",
             "notes",
-            "--platform-actor",
+            "--actor",
             "ci:test",
         ],
     )
@@ -261,7 +295,28 @@ def test_system_stage_command_requires_the_sandbox_image_at_parse_time(
     assert "--sandbox-image" in capsys.readouterr().err
 
 
-def test_system_stage_inspects_with_checked_in_loader_target(
+def test_publish_exposes_workspace_and_global_targets(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["grafy", "plugin", "publish", "--help"],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main()
+
+    assert excinfo.value.code == 0
+    output = capsys.readouterr().out
+    assert "(--workspace WORKSPACE | --global)" in output
+    assert "--actor" in output
+    assert "--published-by" not in output
+    assert "--platform-actor" not in output
+
+
+def test_global_publish_inspects_with_checked_in_loader_target(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -283,7 +338,11 @@ def test_system_stage_inspects_with_checked_in_loader_target(
     monkeypatch.setattr(cli, "configured_file_storage", configured_fake_storage)
     monkeypatch.setattr(cli, "PluginReleaseService", FakePluginReleaseService)
     monkeypatch.setattr(cli, "PluginOciImageBuilder", FakePluginOciImageBuilder)
-    monkeypatch.setattr(cli, "isolated_release_admission", lambda **kwargs: object())
+    monkeypatch.setattr(
+        cli,
+        "isolated_release_admission",
+        fake_isolated_release_admission,
+    )
     monkeypatch.setattr(
         cli,
         "DockerPluginDirectoryPublisher",
@@ -300,11 +359,12 @@ def test_system_stage_inspects_with_checked_in_loader_target(
         [
             "grafy",
             "plugin",
-            "stage-system",
+            "publish",
             "plugins/text",
+            "--global",
             "--slug",
             "builtin.text",
-            "--platform-actor",
+            "--actor",
             "ci:test",
             "--sandbox-image",
             "grafy-publisher:test",
@@ -317,17 +377,80 @@ def test_system_stage_inspects_with_checked_in_loader_target(
         RecordingSystemPublisher.observed_loader_target
         == "grafy_plugin_text.plugin:TEXT"
     )
-    assert "Staged System Plugin builtin.text release 1" in capsys.readouterr().out
+    assert (
+        "Published global Plugin builtin.text release 1; promote it explicitly "
+        "to activate it"
+        in capsys.readouterr().out
+    )
 
 
-def test_system_promotion_is_a_distinct_command(
+def test_workspace_publish_uses_the_same_command_and_actor_option(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = SimpleNamespace(
+        resolved_database_url="sqlite+aiosqlite://",
+        storage_bucket="plugins",
+        plugin_runtime_profile="python-uv",
+        plugin_runtime_native_base_image=None,
+        plugin_runtime_native_base_image_digest=None,
+        plugin_docker_binary="docker",
+        resolved_plugin_roots=(),
+        resolved_plugin_wheelhouse=None,
+    )
+    workspace_id = UUID("00000000-0000-0000-0000-000000000001")
+    actor_id = UUID("00000000-0000-0000-0000-000000000002")
+    RecordingWorkspacePublicationWorkflow.observed = None
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    monkeypatch.setattr(cli, "create_database", create_fake_database)
+    monkeypatch.setattr(cli, "configured_file_storage", configured_fake_storage)
+    monkeypatch.setattr(cli, "PluginReleaseService", FakePluginReleaseService)
+    monkeypatch.setattr(cli, "PluginOciImageBuilder", FakePluginOciImageBuilder)
+    monkeypatch.setattr(cli, "PluginDirectoryPublisher", RecordingPluginChecker)
+    monkeypatch.setattr(
+        cli,
+        "PluginPublicationWorkflow",
+        RecordingWorkspacePublicationWorkflow,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "grafy",
+            "plugin",
+            "publish",
+            "plugins/notes",
+            "--workspace",
+            str(workspace_id),
+            "--slug",
+            "notes",
+            "--actor",
+            str(actor_id),
+        ],
+    )
+
+    cli.main()
+
+    assert RecordingWorkspacePublicationWorkflow.observed == (
+        workspace_id,
+        Path("plugins/notes"),
+        "notes",
+        actor_id,
+    )
+    assert (
+        f"Published Plugin notes release 1 for Workspace {workspace_id}"
+        in capsys.readouterr().out
+    )
+
+
+def test_global_promotion_is_a_distinct_command(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
         sys,
         "argv",
-        ["grafy", "plugin", "promote-system", "--help"],
+        ["grafy", "plugin", "promote", "--help"],
     )
 
     with pytest.raises(SystemExit) as excinfo:
@@ -338,6 +461,38 @@ def test_system_promotion_is_a_distinct_command(
     assert "--revision" in output
     assert "--expected-generation" in output
     assert "--deployment-manifest" in output
+    assert "--actor" in output
+
+
+def test_publish_requires_exactly_one_target(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "grafy",
+            "plugin",
+            "publish",
+            "plugins/text",
+            "--workspace",
+            "00000000-0000-0000-0000-000000000001",
+            "--global",
+            "--slug",
+            "builtin.text",
+            "--actor",
+            "ci:test",
+            "--sandbox-image",
+            "grafy-publisher:test",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main()
+
+    assert excinfo.value.code == 2
+    assert "not allowed with argument" in capsys.readouterr().err
 
 
 def test_system_deployment_builder_exposes_exact_or_all_modes(

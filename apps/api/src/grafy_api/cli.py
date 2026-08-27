@@ -257,12 +257,11 @@ async def _run(args: argparse.Namespace) -> None:
             )
             print(manifest.model_dump_json(indent=2))
             return
-        if args.command in {"stage-system", "promote-system"}:
+        if args.command == "promote" or (
+            args.command == "publish" and args.global_scope
+        ):
             host_bindings: tuple[SystemHostPluginBinding, ...] = ()
-            if (
-                args.command == "promote-system"
-                and args.deployment_manifest is not None
-            ):
+            if args.command == "promote" and args.deployment_manifest is not None:
                 deployment = load_system_plugin_deployment_file(
                     args.deployment_manifest
                 )
@@ -278,8 +277,12 @@ async def _run(args: argparse.Namespace) -> None:
                 ),
                 system_inventory,
             )
-            platform_actor = PlatformPluginActor(args.platform_actor)
-            if args.command == "stage-system":
+            platform_actor = PlatformPluginActor(args.actor)
+            if args.command == "publish":
+                if args.sandbox_image is None:
+                    raise SystemExit(
+                        "--sandbox-image is required for global Plugin publication"
+                    )
                 inventory_entry = system_inventory.entry_for(args.slug)
                 if settings.resolved_plugin_wheelhouse is not None:
                     raise SystemExit(
@@ -304,11 +307,14 @@ async def _run(args: argparse.Namespace) -> None:
                     expected_slug=args.slug,
                     loader_target=inventory_entry.loader_target,
                 )
-                release = await system_publication.stage_verified(
+                release = await system_publication.publish_verified(
                     verified,
                     platform_actor=platform_actor,
                 )
-                print(f"Staged System Plugin {release.slug} release {release.revision}")
+                print(
+                    f"Published global Plugin {release.slug} release "
+                    f"{release.revision}; promote it explicitly to activate it"
+                )
                 return
             selection = await system_publication.promote(
                 slug=args.slug,
@@ -351,19 +357,20 @@ async def _run(args: argparse.Namespace) -> None:
             releases,
             system_inventory,
         )
-        workspace_id = UUID(args.workspace)
         if args.command == "publish":
+            workspace_id = UUID(args.workspace)
             release = await publication.publish(
                 workspace_id=workspace_id,
                 directory=Path(args.directory),
                 expected_slug=args.slug,
-                published_by_user_id=UUID(args.published_by),
+                published_by_user_id=UUID(args.actor),
             )
             print(
                 f"Published Plugin {release.slug} release {release.revision} "
                 f"for Workspace {release.workspace_id}"
             )
             return
+        workspace_id = UUID(args.workspace)
         authoring = PluginAuthoringService(
             authoring_root=settings.resolved_plugin_authoring_root,
             allowed_roots=settings.resolved_plugin_roots,
@@ -447,16 +454,29 @@ def main() -> None:
         help="verify a Plugin directory without publishing it",
     )
     check.add_argument("directory")
-    publish = commands.add_parser("publish")
+    publish = commands.add_parser(
+        "publish",
+        help="verify and publish a Plugin to a Workspace or globally",
+    )
     publish.add_argument("directory")
-    publish.add_argument("--workspace", required=True)
+    publish_target = publish.add_mutually_exclusive_group(required=True)
+    publish_target.add_argument("--workspace")
+    publish_target.add_argument(
+        "--global",
+        dest="global_scope",
+        action="store_true",
+        help="publish a global Plugin without activating it",
+    )
     publish.add_argument(
         "--slug",
         required=True,
-        help="Expected Plugin slug; must match the inspected grafy_plugin.PLUGIN "
-        "declaration and the established Workspace Plugin identity",
+        help="expected Plugin slug; must match the inspected declaration",
     )
-    publish.add_argument("--published-by", required=True)
+    publish.add_argument(
+        "--actor",
+        required=True,
+        help="Workspace user UUID or global platform actor reference",
+    )
     publish.add_argument(
         "--publisher-sandbox",
         action="store_true",
@@ -465,24 +485,20 @@ def main() -> None:
     publish.add_argument("--sandbox-image")
     publish.add_argument("--sandbox-scratch-root")
 
-    stage_system = commands.add_parser("stage-system")
-    stage_system.add_argument("directory")
-    stage_system.add_argument("--slug", required=True)
-    stage_system.add_argument("--platform-actor", required=True)
-    stage_system.add_argument("--sandbox-image", required=True)
-    stage_system.add_argument("--sandbox-scratch-root")
-
     build_system_deployment = commands.add_parser("build-system-deployment")
     build_system_deployment.add_argument("--output", required=True, type=Path)
     build_system_deployment.add_argument("--slug")
     build_system_deployment.add_argument("--revision", type=int)
 
-    promote_system = commands.add_parser("promote-system")
-    promote_system.add_argument("--slug", required=True)
-    promote_system.add_argument("--revision", required=True, type=int)
-    promote_system.add_argument("--platform-actor", required=True)
-    promote_system.add_argument("--expected-generation", type=int)
-    promote_system.add_argument(
+    promote = commands.add_parser(
+        "promote",
+        help="activate one published global Plugin release",
+    )
+    promote.add_argument("--slug", required=True)
+    promote.add_argument("--revision", required=True, type=int)
+    promote.add_argument("--actor", required=True)
+    promote.add_argument("--expected-generation", type=int)
+    promote.add_argument(
         "--deployment-manifest",
         type=Path,
         help="Exact host bindings; required only for host-eligible System Plugins",
@@ -562,7 +578,15 @@ def main() -> None:
     apply_cutover.add_argument("--baseline", required=True, type=Path)
     apply_cutover.add_argument("--rollback-unit", required=True, type=Path)
     apply_cutover.add_argument("--precondition-token", required=True)
-    asyncio.run(_run(parser.parse_args()))
+    args = parser.parse_args()
+    if (
+        args.group == "plugin"
+        and args.command == "publish"
+        and args.global_scope
+        and args.sandbox_image is None
+    ):
+        parser.error("--sandbox-image is required with plugin publish --global")
+    asyncio.run(_run(args))
 
 
 if __name__ == "__main__":

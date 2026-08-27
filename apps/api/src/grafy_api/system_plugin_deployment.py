@@ -337,7 +337,7 @@ class SystemPluginDeploymentManifestBuilder:
         if slug is not None:
             if not rows:
                 raise SystemPluginDeploymentBuildError(
-                    f"Staged System Plugin {slug!r} revision {revision} does not exist"
+                    f"Published System Plugin {slug!r} revision {revision} does not exist"
                 )
             return tuple(rows)
 

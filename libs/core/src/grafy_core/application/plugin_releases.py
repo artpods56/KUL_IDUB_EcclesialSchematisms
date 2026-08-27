@@ -195,7 +195,7 @@ class PluginReleaseService:
             select_release=True,
         )
 
-    async def stage_system(
+    async def publish_system(
         self,
         *,
         catalog: PluginCatalogManifest,

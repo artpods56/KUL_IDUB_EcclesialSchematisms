@@ -43,7 +43,7 @@ A **Module** stays a published subgraph. It is not a Plugin.
 ## Shared release lifecycle
 
 `grafy plugin publish <directory> --workspace <uuid> --slug <slug>
---published-by <user-uuid>` now:
+--actor <user-uuid>` now:
 
 1. Requires the directory to be below a configured Plugin root and to contain
    its own `pyproject.toml`, `uv.lock`, source, and tests.
@@ -94,8 +94,9 @@ and `release-reservation` add a fenced pre-publish workflow without adding a
 second release path. A standalone database registration aggregate remains
 unnecessary: first publish establishes `(Workspace, slug)`, while the local
 reservation owns only exclusive access to one Workspace-namespaced working
-copy. System selection is deliberately separate: stage never means promote,
-and current is an exact pointer rather than the highest revision.
+copy. System selection is deliberately separate. Global publication never
+means promotion, and current is an exact pointer rather than the highest
+revision.
 
 ```mermaid
 flowchart LR
