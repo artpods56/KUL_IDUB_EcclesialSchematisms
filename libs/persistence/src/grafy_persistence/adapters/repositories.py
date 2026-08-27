@@ -22,6 +22,7 @@ from grafy_core.domain.identity import (
     AuthSession,
     OidcIdentity,
     OidcLoginTransaction,
+    PlatformAccessToken,
     PersonalAccessToken,
     User,
     Workspace,
@@ -401,6 +402,48 @@ class SqlIdentityRepository(IdentityRepositoryPort):
                 schema.personal_access_tokens.c.secret_digest == secret_digest
             )
         )
+
+    @override
+    async def get_personal_access_token_by_prefix(
+        self,
+        public_prefix: str,
+    ) -> PersonalAccessToken | None:
+        return await self._session.scalar(
+            select(PersonalAccessToken).where(
+                schema.personal_access_tokens.c.public_prefix == public_prefix
+            )
+        )
+
+    @override
+    async def add_platform_access_token(self, token: PlatformAccessToken) -> None:
+        self._session.add(token)
+
+    @override
+    async def get_platform_access_token(
+        self,
+        token_id: UUID,
+    ) -> PlatformAccessToken | None:
+        return await self._session.get(PlatformAccessToken, token_id)
+
+    @override
+    async def get_platform_access_token_by_prefix(
+        self,
+        public_prefix: str,
+    ) -> PlatformAccessToken | None:
+        return await self._session.scalar(
+            select(PlatformAccessToken).where(
+                schema.platform_access_tokens.c.public_prefix == public_prefix
+            )
+        )
+
+    @override
+    async def list_platform_access_tokens(self) -> list[PlatformAccessToken]:
+        result = await self._session.scalars(
+            select(PlatformAccessToken).order_by(
+                schema.platform_access_tokens.c.created_at.desc()
+            )
+        )
+        return list(result)
 
     @override
     async def list_personal_access_tokens_for_user(
@@ -2162,8 +2205,7 @@ class SqlPluginReleaseRepository(PluginReleaseRepositoryPort):
             select(schema.plugin_releases.c.catalog)
             .join(
                 schema.plugin_installations,
-                schema.plugin_installations.c.release_id
-                == schema.plugin_releases.c.id,
+                schema.plugin_installations.c.release_id == schema.plugin_releases.c.id,
             )
             .where(schema.plugin_installations.c.scope == "workspace")
             .order_by(
@@ -2183,12 +2225,9 @@ class SqlPluginReleaseRepository(PluginReleaseRepositoryPort):
             select(schema.plugin_releases.c.catalog)
             .join(
                 schema.plugin_installations,
-                schema.plugin_installations.c.release_id
-                == schema.plugin_releases.c.id,
+                schema.plugin_installations.c.release_id == schema.plugin_releases.c.id,
             )
-            .where(
-                *self._namespace_conditions(schema.plugin_installations, namespace)
-            )
+            .where(*self._namespace_conditions(schema.plugin_installations, namespace))
             .order_by(
                 schema.plugin_releases.c.slug.asc(),
                 schema.plugin_releases.c.revision.asc(),
@@ -2337,8 +2376,7 @@ class SqlPluginReleaseRepository(PluginReleaseRepositoryPort):
                         == schema.plugin_releases.c.id,
                     )
                     .where(
-                        schema.plugin_releases.c.id
-                        == selection.selected_release_id,
+                        schema.plugin_releases.c.id == selection.selected_release_id,
                         *self._namespace_conditions(
                             schema.plugin_installations,
                             selection.namespace,
@@ -2377,8 +2415,7 @@ class SqlPluginReleaseRepository(PluginReleaseRepositoryPort):
                         == schema.plugin_releases.c.id,
                     )
                     .where(
-                        schema.plugin_installations.c.id
-                        == revocation.installation_id
+                        schema.plugin_installations.c.id == revocation.installation_id
                     )
                 )
             ).one_or_none()

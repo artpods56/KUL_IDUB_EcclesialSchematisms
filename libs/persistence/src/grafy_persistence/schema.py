@@ -30,6 +30,7 @@ from grafy_core.domain.artifact_outputs import (
 )
 from grafy_core.domain.saved_graphs import SavedGraphDocument
 from grafy_core.domain.identity import (
+    PlatformTokenScope,
     WorkspaceCapability,
     WorkspaceInvitationStatus,
     WorkspaceKind,
@@ -185,9 +186,7 @@ class PluginReleaseScopeType(TypeDecorator[PluginReleaseScope]):
         return None if value is None else PluginReleaseScope(value)
 
 
-class PluginReleaseRevocationReasonType(
-    TypeDecorator[PluginReleaseRevocationReason]
-):
+class PluginReleaseRevocationReasonType(TypeDecorator[PluginReleaseRevocationReason]):
     impl = String(16)
     cache_ok = True
 
@@ -360,6 +359,41 @@ class WorkspaceCapabilityTupleType(TypeDecorator[tuple[WorkspaceCapability, ...]
             return tuple(WorkspaceCapability(item) for item in items)
         except ValueError as exc:
             raise ValueError("Stored workspace capability is unknown") from exc
+
+
+class PlatformTokenScopeTupleType(TypeDecorator[tuple[PlatformTokenScope, ...]]):
+    impl = JSON
+    cache_ok = True
+
+    def process_bind_param(
+        self,
+        value: tuple[PlatformTokenScope, ...] | None,
+        dialect: Dialect,
+    ) -> list[str] | None:
+        del dialect
+        return None if value is None else [scope.value for scope in value]
+
+    def process_result_value(
+        self,
+        value: object | None,
+        dialect: Dialect,
+    ) -> tuple[PlatformTokenScope, ...] | None:
+        del dialect
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            raise ValueError("Stored platform token scopes are not a JSON string list")
+        items: list[str] = []
+        for item in cast(list[object], value):
+            if not isinstance(item, str):
+                raise ValueError(
+                    "Stored platform token scopes are not a JSON string list"
+                )
+            items.append(item)
+        try:
+            return tuple(PlatformTokenScope(item) for item in items)
+        except ValueError as exc:
+            raise ValueError("Stored platform token scope is unknown") from exc
 
 
 class WorkspaceKindType(TypeDecorator[WorkspaceKind]):
@@ -1217,6 +1251,34 @@ personal_access_tokens = Table(
     ),
     Index(
         "ix_personal_access_tokens_expiry_revoked",
+        "expires_at",
+        "revoked_at",
+    ),
+)
+
+
+platform_access_tokens = Table(
+    "platform_access_tokens",
+    metadata,
+    Column("id", SaUuid(as_uuid=True), primary_key=True),
+    Column("principal_reference", String(120), nullable=False),
+    Column("public_prefix", String(32), nullable=False),
+    Column("secret_digest", LargeBinary(64), nullable=False),
+    Column("label", String(160), nullable=False),
+    Column("scopes", PlatformTokenScopeTupleType(), nullable=False),
+    Column("expires_at", UTCDateTime(), nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    Column("last_used_at", UTCDateTime(), nullable=True),
+    Column("revoked_at", UTCDateTime(), nullable=True),
+    UniqueConstraint("public_prefix", name="uq_platform_access_tokens_public_prefix"),
+    UniqueConstraint("secret_digest", name="uq_platform_access_tokens_secret_digest"),
+    Index(
+        "ix_platform_access_tokens_principal_revoked",
+        "principal_reference",
+        "revoked_at",
+    ),
+    Index(
+        "ix_platform_access_tokens_expiry_revoked",
         "expires_at",
         "revoked_at",
     ),

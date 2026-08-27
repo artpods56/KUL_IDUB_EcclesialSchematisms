@@ -11,6 +11,7 @@ from grafy_core.domain.identity import (
     AuthSession,
     OidcIdentity,
     OidcLoginTransaction,
+    PlatformAccessToken,
     PersonalAccessToken,
     User,
     Workspace,
@@ -154,6 +155,10 @@ def start_mappers() -> None:
     mapper_registry.map_imperatively(
         PersonalAccessToken,
         schema.personal_access_tokens,
+    )
+    mapper_registry.map_imperatively(
+        PlatformAccessToken,
+        schema.platform_access_tokens,
     )
     mapper_registry.map_imperatively(
         SecurityAuditEvent,

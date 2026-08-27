@@ -11,6 +11,7 @@ dependencies = [
     "cryptography>=45.0.0",
     "fastapi>=0.123.0",
     "httpx>=0.28.0",
+    "keyring>=25.7.0",
     "grafy-core",
     "grafy-persistence",
     "grafy-plugin-arithmetic",
@@ -32,7 +33,6 @@ dependencies = [
 
 [project.scripts]
 grafy = "grafy_api.cli:main"
-grafy-admin = "grafy_api.admin:main"
 
 [tool.uv.sources]
 grafy-core = { workspace = true }

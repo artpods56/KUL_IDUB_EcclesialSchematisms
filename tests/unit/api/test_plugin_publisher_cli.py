@@ -6,6 +6,13 @@ from uuid import UUID
 import pytest
 
 from grafy_api import cli
+from grafy_api.cli_credentials import CredentialDigest
+from grafy_core.domain.identity import (
+    ActorContext,
+    PlatformTokenPrincipal,
+    WorkspaceCapability,
+    WorkspacePatPrincipal,
+)
 from grafy_core.domain.plugin_releases import PlatformPluginActor
 
 
@@ -24,6 +31,45 @@ class FakePluginReleaseService:
 class FakePluginOciImageBuilder:
     def __init__(self, *args: object, **kwargs: object) -> None:
         del args, kwargs
+
+
+WORKSPACE_ID = UUID("00000000-0000-0000-0000-000000000001")
+ACTOR_ID = UUID("00000000-0000-0000-0000-000000000002")
+
+
+class FakeIdentityService:
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+    async def authenticate_personal_access_token(
+        self, **kwargs: object
+    ) -> WorkspacePatPrincipal:
+        del kwargs
+        return WorkspacePatPrincipal(
+            actor=ActorContext(ACTOR_ID, "pat:test"),
+            workspace_id=WORKSPACE_ID,
+            capabilities=frozenset({WorkspaceCapability.PUBLISH_PLUGIN}),
+            token_id=UUID("00000000-0000-0000-0000-000000000003"),
+        )
+
+    async def authenticate_platform_access_token(
+        self, **kwargs: object
+    ) -> PlatformTokenPrincipal:
+        del kwargs
+        return PlatformTokenPrincipal(
+            principal_reference="ci:test",
+            credential_reference="platform-token:test",
+            scopes=frozenset(),
+            token_id=UUID("00000000-0000-0000-0000-000000000004"),
+        )
+
+
+def personal_credential(_database_url: str) -> CredentialDigest:
+    return CredentialDigest("personal", "nrt_test", b"digest")
+
+
+def platform_credential(_database_url: str) -> CredentialDigest:
+    return CredentialDigest("platform", "gpat_test", b"digest")
 
 
 class RecordingPluginChecker:
@@ -283,8 +329,6 @@ def test_global_publish_requires_the_sandbox_image_at_parse_time(
             "--global",
             "--slug",
             "notes",
-            "--actor",
-            "ci:test",
         ],
     )
 
@@ -295,7 +339,7 @@ def test_global_publish_requires_the_sandbox_image_at_parse_time(
     assert "--sandbox-image" in capsys.readouterr().err
 
 
-def test_publish_exposes_workspace_and_global_targets(
+def test_publish_derives_workspace_target_and_exposes_optional_global_target(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -310,10 +354,9 @@ def test_publish_exposes_workspace_and_global_targets(
 
     assert excinfo.value.code == 0
     output = capsys.readouterr().out
-    assert "(--workspace WORKSPACE | --global)" in output
-    assert "--actor" in output
-    assert "--published-by" not in output
-    assert "--platform-actor" not in output
+    assert "--global" in output
+    assert "--workspace" not in output
+    assert "--actor" not in output
 
 
 def test_global_publish_inspects_with_checked_in_loader_target(
@@ -338,6 +381,8 @@ def test_global_publish_inspects_with_checked_in_loader_target(
     monkeypatch.setattr(cli, "configured_file_storage", configured_fake_storage)
     monkeypatch.setattr(cli, "PluginReleaseService", FakePluginReleaseService)
     monkeypatch.setattr(cli, "PluginOciImageBuilder", FakePluginOciImageBuilder)
+    monkeypatch.setattr(cli, "IdentityService", FakeIdentityService)
+    monkeypatch.setattr(cli, "_load_credential_digest", platform_credential)
     monkeypatch.setattr(
         cli,
         "isolated_release_admission",
@@ -364,8 +409,6 @@ def test_global_publish_inspects_with_checked_in_loader_target(
             "--global",
             "--slug",
             "builtin.text",
-            "--actor",
-            "ci:test",
             "--sandbox-image",
             "grafy-publisher:test",
         ],
@@ -384,7 +427,7 @@ def test_global_publish_inspects_with_checked_in_loader_target(
     )
 
 
-def test_workspace_publish_uses_the_same_command_and_actor_option(
+def test_workspace_publish_derives_workspace_and_actor_from_the_pat(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -398,14 +441,14 @@ def test_workspace_publish_uses_the_same_command_and_actor_option(
         resolved_plugin_roots=(),
         resolved_plugin_wheelhouse=None,
     )
-    workspace_id = UUID("00000000-0000-0000-0000-000000000001")
-    actor_id = UUID("00000000-0000-0000-0000-000000000002")
     RecordingWorkspacePublicationWorkflow.observed = None
     monkeypatch.setattr(cli, "get_settings", lambda: settings)
     monkeypatch.setattr(cli, "create_database", create_fake_database)
     monkeypatch.setattr(cli, "configured_file_storage", configured_fake_storage)
     monkeypatch.setattr(cli, "PluginReleaseService", FakePluginReleaseService)
     monkeypatch.setattr(cli, "PluginOciImageBuilder", FakePluginOciImageBuilder)
+    monkeypatch.setattr(cli, "IdentityService", FakeIdentityService)
+    monkeypatch.setattr(cli, "_load_credential_digest", personal_credential)
     monkeypatch.setattr(cli, "PluginDirectoryPublisher", RecordingPluginChecker)
     monkeypatch.setattr(
         cli,
@@ -420,25 +463,21 @@ def test_workspace_publish_uses_the_same_command_and_actor_option(
             "plugin",
             "publish",
             "plugins/notes",
-            "--workspace",
-            str(workspace_id),
             "--slug",
             "notes",
-            "--actor",
-            str(actor_id),
         ],
     )
 
     cli.main()
 
     assert RecordingWorkspacePublicationWorkflow.observed == (
-        workspace_id,
+        WORKSPACE_ID,
         Path("plugins/notes"),
         "notes",
-        actor_id,
+        ACTOR_ID,
     )
     assert (
-        f"Published Plugin notes release 1 for Workspace {workspace_id}"
+        f"Published Plugin notes release 1 for Workspace {WORKSPACE_ID}"
         in capsys.readouterr().out
     )
 
@@ -458,13 +497,13 @@ def test_global_promotion_is_a_distinct_command(
 
     assert excinfo.value.code == 0
     output = capsys.readouterr().out
-    assert "--revision" in output
-    assert "--expected-generation" in output
+    assert "release" in output
+    assert "--if-generation" in output
     assert "--deployment-manifest" in output
-    assert "--actor" in output
+    assert "--actor" not in output
 
 
-def test_publish_requires_exactly_one_target(
+def test_publish_rejects_legacy_workspace_and_actor_options(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -478,13 +517,10 @@ def test_publish_requires_exactly_one_target(
             "plugins/text",
             "--workspace",
             "00000000-0000-0000-0000-000000000001",
-            "--global",
             "--slug",
             "builtin.text",
             "--actor",
             "ci:test",
-            "--sandbox-image",
-            "grafy-publisher:test",
         ],
     )
 
@@ -492,7 +528,7 @@ def test_publish_requires_exactly_one_target(
         cli.main()
 
     assert excinfo.value.code == 2
-    assert "not allowed with argument" in capsys.readouterr().err
+    assert "unrecognized arguments" in capsys.readouterr().err
 
 
 def test_system_deployment_builder_exposes_exact_or_all_modes(
@@ -515,14 +551,14 @@ def test_system_deployment_builder_exposes_exact_or_all_modes(
     assert "--revision" in output
 
 
-def test_system_revocation_requires_exact_reason_and_platform_actor(
+def test_global_revocation_uses_release_reference_and_derived_platform_actor(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
         sys,
         "argv",
-        ["grafy", "plugin", "revoke-system", "--help"],
+        ["grafy", "plugin", "revoke", "--help"],
     )
 
     with pytest.raises(SystemExit) as excinfo:
@@ -530,7 +566,36 @@ def test_system_revocation_requires_exact_reason_and_platform_actor(
 
     assert excinfo.value.code == 0
     output = capsys.readouterr().out
-    assert "--revision" in output
+    assert "release" in output
     assert "--reason" in output
     assert "security" in output
-    assert "--platform-actor" in output
+    assert "--platform-actor" not in output
+
+
+def test_auth_and_platform_token_commands_do_not_accept_raw_token_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["grafy", "admin", "platform-token", "create", "--help"],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main()
+
+    assert excinfo.value.code == 0
+    output = capsys.readouterr().out
+    assert "--principal" in output
+    assert "--label" in output
+    assert "--scope" in output
+    assert "--expires-at" in output
+    assert "--token" not in output
+
+    monkeypatch.setattr(sys, "argv", ["grafy", "auth", "login", "--help"])
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main()
+
+    assert excinfo.value.code == 0
+    assert "--token" not in capsys.readouterr().out

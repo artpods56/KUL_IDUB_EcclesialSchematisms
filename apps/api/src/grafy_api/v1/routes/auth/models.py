@@ -136,6 +136,7 @@ class PersonalAccessTokenScope(StrEnum):
     CHECKPOINT_GRAPH = "checkpoint_graph"
     EXECUTE_GRAPH = "execute_graph"
     CANCEL_EXECUTION = "cancel_execution"
+    PUBLISH_PLUGIN = "publish_plugin"
     PUBLISH_MODULE = "publish_module"
 
 
@@ -143,7 +144,10 @@ class PersonalAccessTokenCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     label: str = Field(min_length=1, max_length=160)
-    scopes: tuple[PersonalAccessTokenScope, ...] = Field(min_length=1, max_length=8)
+    scopes: tuple[PersonalAccessTokenScope, ...] = Field(
+        min_length=1,
+        max_length=len(PersonalAccessTokenScope),
+    )
     expires_at: datetime
 
     @field_validator("label")

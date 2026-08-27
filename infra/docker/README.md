@@ -173,10 +173,12 @@ docker compose \
   plugin publish /publisher-input/<plugin-directory> \
   --global \
   --slug <plugin-slug> \
-  --actor "ci:<release-job-id>" \
-  --sandbox-image "${GRAFY_PUBLISHER_IMAGE:-grafy-publisher:local}" \
-  --sandbox-scratch-root "${GRAFY_PUBLISHER_SCRATCH_ROOT:-/tmp/grafy-plugin-publisher}"
+  --sandbox-image "${GRAFY_PUBLISHER_IMAGE:-grafy-publisher:local}"
 ```
+
+Mount a protected platform-token file into the one-shot container and set
+`GRAFY_TOKEN_FILE` to that in-container path. The token must include
+`plugin.publish_global`.
 
 `publish --global` has no host-verification option. Dependency lock checking and
 locked sync run in resource-bounded containers with package-network access.
@@ -195,12 +197,12 @@ docker compose \
   -f infra/docker/compose.yaml \
   --profile publisher \
   run --rm publisher \
-  plugin promote \
-  --slug <plugin-slug> \
-  --revision <revision> \
-  --expected-generation <current-generation> \
-  --actor "ci:<release-job-id>"
+  plugin promote <plugin-slug>@<revision>
 ```
+
+Promotion requires `plugin.promote_global`. Add `--if-generation
+<current-generation>` only when the job must fail if another operator changed
+the selection concurrently.
 
 Docker-socket possession remains root-equivalent host authority. Restrict this
 job to platform operators/CI, pin `GRAFY_PUBLISHER_IMAGE` by digest in

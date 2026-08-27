@@ -1,9 +1,11 @@
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
+import hmac
 from uuid import UUID
 
 from grafy_core.domain.errors import (
     CapabilityDeniedError,
+    CredentialAuthenticationError,
     IdentityInvariantError,
     NotFoundError,
     UserDisabledError,
@@ -13,6 +15,9 @@ from grafy_core.domain.identity import (
     IdentityProvisioningResult,
     OidcIdentity,
     PAT_ALLOWED_CAPABILITIES,
+    PlatformAccessToken,
+    PlatformTokenPrincipal,
+    PlatformTokenScope,
     PersonalAccessToken,
     User,
     Workspace,
@@ -22,6 +27,7 @@ from grafy_core.domain.identity import (
     WorkspaceInvitationStatus,
     WorkspaceKind,
     WorkspaceMembership,
+    WorkspacePatPrincipal,
     WorkspaceRole,
     ensure_last_owner_can_change,
     normalize_user_email,
@@ -97,6 +103,111 @@ class IdentityService:
         unit_of_work_factory: Callable[[], IdentityUnitOfWorkPort],
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
+
+    async def authenticate_personal_access_token(
+        self,
+        *,
+        public_prefix: str,
+        secret_digest: bytes,
+        required_capability: WorkspaceCapability | None = None,
+    ) -> WorkspacePatPrincipal:
+        now = _utc_now()
+        async with self._unit_of_work_factory() as unit_of_work:
+            token = await unit_of_work.identity.get_personal_access_token_by_prefix(
+                public_prefix
+            )
+            if (
+                token is None
+                or not hmac.compare_digest(token.secret_digest, secret_digest)
+                or token.is_revoked
+                or token.expires_at <= now
+            ):
+                raise CredentialAuthenticationError()
+            user = await unit_of_work.identity.get_user(token.user_id)
+            membership = await unit_of_work.identity.get_membership(
+                workspace_id=token.workspace_id,
+                user_id=token.user_id,
+            )
+            if (
+                user is None
+                or not user.active
+                or membership is None
+                or not membership.is_active
+            ):
+                raise CredentialAuthenticationError()
+            capabilities = frozenset(token.scopes).intersection(membership.capabilities)
+            principal = WorkspacePatPrincipal(
+                actor=ActorContext(
+                    user_id=token.user_id,
+                    credential_reference=f"pat:{token.id}",
+                ),
+                workspace_id=token.workspace_id,
+                capabilities=frozenset(capabilities),
+                token_id=token.id,
+            )
+            if required_capability is not None:
+                principal.require(required_capability)
+            token.last_used_at = now
+            await unit_of_work.commit()
+            return principal
+
+    async def authenticate_platform_access_token(
+        self,
+        *,
+        public_prefix: str,
+        secret_digest: bytes,
+        required_scope: PlatformTokenScope | None = None,
+    ) -> PlatformTokenPrincipal:
+        now = _utc_now()
+        async with self._unit_of_work_factory() as unit_of_work:
+            token = await unit_of_work.identity.get_platform_access_token_by_prefix(
+                public_prefix
+            )
+            if (
+                token is None
+                or not hmac.compare_digest(token.secret_digest, secret_digest)
+                or token.is_revoked
+                or token.expires_at <= now
+            ):
+                raise CredentialAuthenticationError()
+            principal = PlatformTokenPrincipal(
+                principal_reference=token.principal_reference,
+                credential_reference=f"platform-token:{token.id}",
+                scopes=frozenset(token.scopes),
+                token_id=token.id,
+            )
+            if required_scope is not None:
+                principal.require(required_scope)
+            token.last_used_at = now
+            await unit_of_work.commit()
+            return principal
+
+    async def create_platform_access_token(
+        self,
+        *,
+        token: PlatformAccessToken,
+    ) -> PlatformAccessToken:
+        async with self._unit_of_work_factory() as unit_of_work:
+            await unit_of_work.identity.add_platform_access_token(token)
+            await unit_of_work.commit()
+            return token
+
+    async def list_platform_access_tokens(self) -> list[PlatformAccessToken]:
+        async with self._unit_of_work_factory() as unit_of_work:
+            return await unit_of_work.identity.list_platform_access_tokens()
+
+    async def revoke_platform_access_token(
+        self,
+        *,
+        token_id: UUID,
+    ) -> PlatformAccessToken:
+        async with self._unit_of_work_factory() as unit_of_work:
+            token = await unit_of_work.identity.get_platform_access_token(token_id)
+            if token is None:
+                raise NotFoundError("Platform access token", str(token_id))
+            token.revoke()
+            await unit_of_work.commit()
+            return token
 
     async def list_workspaces(
         self, *, actor: ActorContext
@@ -310,7 +421,9 @@ class IdentityService:
                 await unit_of_work.commit()
                 raise IdentityInvariantError("Workspace invitation has expired")
             if invitation.status is not WorkspaceInvitationStatus.PENDING:
-                raise IdentityInvariantError("Workspace invitation is no longer pending")
+                raise IdentityInvariantError(
+                    "Workspace invitation is no longer pending"
+                )
             membership = await unit_of_work.identity.get_membership(
                 workspace_id=invitation.workspace_id,
                 user_id=actor.user_id,
@@ -971,9 +1084,7 @@ class IdentityService:
             workspace_id=workspace_id,
         )
         if workspace.kind is not WorkspaceKind.SHARED:
-            raise IdentityInvariantError(
-                "Personal workspace cannot accept invitations"
-            )
+            raise IdentityInvariantError("Personal workspace cannot accept invitations")
         return workspace
 
     async def _resolve_invitation_candidate(

@@ -2532,7 +2532,7 @@ export interface components {
          * PersonalAccessTokenScope
          * @enum {string}
          */
-        readonly PersonalAccessTokenScope: "view_graph" | "view_artifacts" | "view_materializations" | "view_history" | "view_execution" | "create_graph" | "edit_graph" | "checkpoint_graph" | "execute_graph" | "cancel_execution" | "publish_module";
+        readonly PersonalAccessTokenScope: "view_graph" | "view_artifacts" | "view_materializations" | "view_history" | "view_execution" | "create_graph" | "edit_graph" | "checkpoint_graph" | "execute_graph" | "cancel_execution" | "publish_plugin" | "publish_module";
         /** PinnedOutputRequest */
         readonly PinnedOutputRequest: {
             /** From Node */

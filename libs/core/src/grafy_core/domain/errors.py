@@ -34,6 +34,13 @@ class UserDisabledError(IdentityInvariantError):
     """Raised when a disabled user attempts to authenticate or authorize."""
 
 
+class CredentialAuthenticationError(IdentityInvariantError):
+    """Raised when a bearer credential cannot authenticate a principal."""
+
+    def __init__(self) -> None:
+        super().__init__("Credential is invalid, expired, or revoked")
+
+
 class CapabilityDeniedError(IdentityInvariantError):
     """Raised when an active membership lacks one required capability."""
 

@@ -2,20 +2,41 @@
 
 import argparse
 import asyncio
+from datetime import UTC, datetime
+import getpass
+import hashlib
 from pathlib import Path
+from secrets import token_urlsafe
 import sys
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from grafy_core.application.identity import IdentityService
 from grafy_core.application.plugin_releases import PluginReleaseService
+from grafy_core.domain.errors import IdentityInvariantError
+from grafy_core.domain.identity import (
+    PlatformAccessToken,
+    PlatformTokenPrincipal,
+    PlatformTokenScope,
+    WorkspaceCapability,
+    WorkspacePatPrincipal,
+)
 from grafy_core.domain.plugin_releases import PlatformPluginActor
 from grafy_core.domain.plugin_revocations import PluginReleaseRevocationReason
 from grafy_persistence.database import create_database
 from grafy_persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 from grafy_api.plugin_admission import isolated_release_admission
+from grafy_api.cli_credentials import (
+    CliCredentialError,
+    CredentialDigest,
+    delete_sensitive_cli_token,
+    load_sensitive_cli_token,
+    parse_sensitive_bearer_token,
+    store_sensitive_cli_token,
+)
 from grafy_api.plugin_authoring import PluginAuthoringService
 from grafy_api.plugin_publication import (
     PluginPublicationWorkflow,
@@ -65,6 +86,142 @@ class PluginCheckReport(BaseModel):
     source_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     lock_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     runtime_profile: str
+
+
+def _parse_release_reference(value: str) -> tuple[str, int]:
+    slug, separator, revision_text = value.rpartition("@")
+    if not separator or slug == "":
+        raise argparse.ArgumentTypeError("release must use SLUG@REVISION")
+    try:
+        revision = int(revision_text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("release revision must be an integer") from exc
+    if revision < 1:
+        raise argparse.ArgumentTypeError("release revision must be positive")
+    return slug, revision
+
+
+def _parse_aware_timestamp(value: str) -> datetime:
+    try:
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("timestamp must be ISO 8601") from exc
+    if timestamp.tzinfo is None:
+        raise argparse.ArgumentTypeError("timestamp must include a UTC offset")
+    return timestamp
+
+
+def _load_credential_digest(database_url: str) -> CredentialDigest:
+    raw_token = load_sensitive_cli_token(database_url)
+    return parse_sensitive_bearer_token(raw_token)
+
+
+async def _authenticate_credential(
+    identity: IdentityService,
+    credential: CredentialDigest,
+) -> WorkspacePatPrincipal | PlatformTokenPrincipal:
+    if credential.kind == "personal":
+        return await identity.authenticate_personal_access_token(
+            public_prefix=credential.public_prefix,
+            secret_digest=credential.secret_digest,
+        )
+    return await identity.authenticate_platform_access_token(
+        public_prefix=credential.public_prefix,
+        secret_digest=credential.secret_digest,
+    )
+
+
+async def _run_auth(args: argparse.Namespace) -> None:
+    settings = get_settings()
+    if args.command == "logout":
+        removed = delete_sensitive_cli_token(settings.resolved_database_url)
+        print("Removed stored Grafy credential" if removed else "No stored credential")
+        return
+
+    database = create_database(settings.resolved_database_url)
+    try:
+        identity = IdentityService(lambda: SqlAlchemyUnitOfWork(database.sessions))
+        if args.command == "login":
+            raw_token = getpass.getpass("Grafy token: ")
+            credential = parse_sensitive_bearer_token(raw_token)
+            principal = await _authenticate_credential(identity, credential)
+            store_sensitive_cli_token(settings.resolved_database_url, raw_token)
+        elif args.command == "status":
+            credential = _load_credential_digest(settings.resolved_database_url)
+            principal = await _authenticate_credential(identity, credential)
+        else:
+            raise ValueError("Unsupported Grafy auth command")
+        if isinstance(principal, WorkspacePatPrincipal):
+            print(
+                f"Authenticated user {principal.actor.user_id} for Workspace "
+                f"{principal.workspace_id} via {principal.actor.credential_reference}"
+            )
+        else:
+            print(
+                f"Authenticated platform principal {principal.principal_reference!r} "
+                f"via {principal.credential_reference}"
+            )
+    finally:
+        await database.dispose()
+
+
+async def _run_admin(args: argparse.Namespace) -> None:
+    settings = get_settings()
+    database = create_database(settings.resolved_database_url)
+    try:
+        identity = IdentityService(lambda: SqlAlchemyUnitOfWork(database.sessions))
+        if args.admin_command == "disable-user":
+            await identity.disable_user(user_id=UUID(args.user_id))
+            print(f"Disabled user {args.user_id}")
+            return
+        if (
+            args.admin_command == "platform-token"
+            and args.platform_token_command == "create"
+        ):
+            secret = token_urlsafe(32)
+            public_prefix = f"gpat_{secret[:12]}"
+            scopes = tuple(PlatformTokenScope(scope) for scope in args.scope)
+            if len(scopes) != len(set(scopes)):
+                raise SystemExit("Platform token scopes must not be repeated")
+            if args.expires_at <= datetime.now(UTC):
+                raise SystemExit("Platform token expiry must be in the future")
+            token = PlatformAccessToken(
+                principal_reference=args.principal,
+                public_prefix=public_prefix,
+                secret_digest=hashlib.sha256(secret.encode("utf-8")).digest(),
+                label=args.label,
+                scopes=scopes,
+                expires_at=args.expires_at,
+            )
+            await identity.create_platform_access_token(token=token)
+            print(f"{public_prefix}.{secret}")
+            print("Store this token now; it will not be shown again.", file=sys.stderr)
+            return
+        if (
+            args.admin_command == "platform-token"
+            and args.platform_token_command == "list"
+        ):
+            for token in await identity.list_platform_access_tokens():
+                status = "revoked" if token.is_revoked else "active"
+                scopes = ",".join(scope.value for scope in token.scopes)
+                print(
+                    f"{token.id} {token.public_prefix} {status} "
+                    f"principal={token.principal_reference!r} label={token.label!r} "
+                    f"scopes={scopes} expires={token.expires_at.isoformat()}"
+                )
+            return
+        if (
+            args.admin_command == "platform-token"
+            and args.platform_token_command == "revoke"
+        ):
+            token = await identity.revoke_platform_access_token(
+                token_id=UUID(args.token_id)
+            )
+            print(f"Revoked platform token {token.id}")
+            return
+        raise ValueError("Unsupported Grafy admin command")
+    finally:
+        await database.dispose()
 
 
 async def _run_system_cutover(args: argparse.Namespace) -> None:
@@ -156,6 +313,12 @@ async def _run_network_policy(args: argparse.Namespace) -> None:
 
 
 async def _run(args: argparse.Namespace) -> None:
+    if args.group == "auth":
+        await _run_auth(args)
+        return
+    if args.group == "admin":
+        await _run_admin(args)
+        return
     if args.group == "network-policy":
         await _run_network_policy(args)
         return
@@ -210,21 +373,31 @@ async def _run(args: argparse.Namespace) -> None:
         return
     database = create_database(settings.resolved_database_url)
     try:
+        identity = IdentityService(lambda: SqlAlchemyUnitOfWork(database.sessions))
         storage = configured_file_storage(settings)
         releases = PluginReleaseService(
             lambda: SqlAlchemyUnitOfWork(database.sessions),
             storage,
             bucket=settings.storage_bucket,
         )
-        if args.command == "revoke-system":
+        if args.command == "revoke":
+            credential = _load_credential_digest(settings.resolved_database_url)
+            if credential.kind != "platform":
+                raise SystemExit("Global Plugin revocation requires a platform token")
+            principal = await identity.authenticate_platform_access_token(
+                public_prefix=credential.public_prefix,
+                secret_digest=credential.secret_digest,
+                required_scope=PlatformTokenScope.REVOKE_GLOBAL,
+            )
+            slug, revision = args.release
             revocation = await SystemPluginRevocationWorkflow(
                 database.sessions,
                 releases,
             ).revoke(
-                slug=args.slug,
-                revision=args.revision,
+                slug=slug,
+                revision=revision,
                 reason=PluginReleaseRevocationReason(args.reason),
-                platform_actor=PlatformPluginActor(args.platform_actor),
+                platform_actor=PlatformPluginActor(principal.principal_reference),
             )
             print(
                 f"Revoked System Plugin {revocation.slug} release "
@@ -260,6 +433,19 @@ async def _run(args: argparse.Namespace) -> None:
         if args.command == "promote" or (
             args.command == "publish" and args.global_scope
         ):
+            credential = _load_credential_digest(settings.resolved_database_url)
+            if credential.kind != "platform":
+                raise SystemExit("Global Plugin operations require a platform token")
+            required_scope = (
+                PlatformTokenScope.PUBLISH_GLOBAL
+                if args.command == "publish"
+                else PlatformTokenScope.PROMOTE_GLOBAL
+            )
+            principal = await identity.authenticate_platform_access_token(
+                public_prefix=credential.public_prefix,
+                secret_digest=credential.secret_digest,
+                required_scope=required_scope,
+            )
             host_bindings: tuple[SystemHostPluginBinding, ...] = ()
             if args.command == "promote" and args.deployment_manifest is not None:
                 deployment = load_system_plugin_deployment_file(
@@ -277,7 +463,7 @@ async def _run(args: argparse.Namespace) -> None:
                 ),
                 system_inventory,
             )
-            platform_actor = PlatformPluginActor(args.actor)
+            platform_actor = PlatformPluginActor(principal.principal_reference)
             if args.command == "publish":
                 if args.sandbox_image is None:
                     raise SystemExit(
@@ -295,11 +481,6 @@ async def _run(args: argparse.Namespace) -> None:
                     runtime_profile=settings.plugin_runtime_profile,
                     image=args.sandbox_image,
                     docker_binary=settings.plugin_docker_binary,
-                    scratch_root=(
-                        None
-                        if args.sandbox_scratch_root is None
-                        else Path(args.sandbox_scratch_root)
-                    ),
                 )
                 verified = await asyncio.to_thread(
                     publisher.verify,
@@ -316,41 +497,23 @@ async def _run(args: argparse.Namespace) -> None:
                     f"{release.revision}; promote it explicitly to activate it"
                 )
                 return
+            slug, revision = args.release
             selection = await system_publication.promote(
-                slug=args.slug,
-                revision=args.revision,
+                slug=slug,
+                revision=revision,
                 platform_actor=platform_actor,
-                expected_generation=args.expected_generation,
+                expected_generation=args.if_generation,
             )
             print(
                 f"Promoted System Plugin {selection.slug} release "
                 f"{selection.selected_revision} at generation {selection.generation}"
             )
             return
-        if args.command == "publish" and args.publisher_sandbox:
-            if args.sandbox_image is None:
-                raise SystemExit("--sandbox-image is required with --publisher-sandbox")
-            if settings.resolved_plugin_wheelhouse is not None:
-                raise SystemExit(
-                    "Docker publisher mode does not support host wheelhouse mounts"
-                )
-            publisher: PluginDirectoryPublisher = DockerPluginDirectoryPublisher(
-                settings.resolved_plugin_roots,
-                runtime_profile=settings.plugin_runtime_profile,
-                image=args.sandbox_image,
-                docker_binary=settings.plugin_docker_binary,
-                scratch_root=(
-                    None
-                    if args.sandbox_scratch_root is None
-                    else Path(args.sandbox_scratch_root)
-                ),
-            )
-        else:
-            publisher = PluginDirectoryPublisher(
-                settings.resolved_plugin_roots,
-                runtime_profile=settings.plugin_runtime_profile,
-                wheelhouse=settings.resolved_plugin_wheelhouse,
-            )
+        publisher = PluginDirectoryPublisher(
+            settings.resolved_plugin_roots,
+            runtime_profile=settings.plugin_runtime_profile,
+            wheelhouse=settings.resolved_plugin_wheelhouse,
+        )
         publication = PluginPublicationWorkflow(
             publisher,
             image_builder,
@@ -358,19 +521,36 @@ async def _run(args: argparse.Namespace) -> None:
             system_inventory,
         )
         if args.command == "publish":
-            workspace_id = UUID(args.workspace)
+            credential = _load_credential_digest(settings.resolved_database_url)
+            if credential.kind != "personal":
+                raise SystemExit(
+                    "Workspace Plugin publication requires a personal token"
+                )
+            principal = await identity.authenticate_personal_access_token(
+                public_prefix=credential.public_prefix,
+                secret_digest=credential.secret_digest,
+                required_capability=WorkspaceCapability.PUBLISH_PLUGIN,
+            )
             release = await publication.publish(
-                workspace_id=workspace_id,
+                workspace_id=principal.workspace_id,
                 directory=Path(args.directory),
                 expected_slug=args.slug,
-                published_by_user_id=UUID(args.actor),
+                published_by_user_id=principal.actor.user_id,
             )
             print(
                 f"Published Plugin {release.slug} release {release.revision} "
                 f"for Workspace {release.workspace_id}"
             )
             return
-        workspace_id = UUID(args.workspace)
+        credential = _load_credential_digest(settings.resolved_database_url)
+        if credential.kind != "personal":
+            raise SystemExit("Plugin authoring requires a personal token")
+        principal = await identity.authenticate_personal_access_token(
+            public_prefix=credential.public_prefix,
+            secret_digest=credential.secret_digest,
+            required_capability=WorkspaceCapability.PUBLISH_PLUGIN,
+        )
+        workspace_id = principal.workspace_id
         authoring = PluginAuthoringService(
             authoring_root=settings.resolved_plugin_authoring_root,
             allowed_roots=settings.resolved_plugin_roots,
@@ -380,7 +560,7 @@ async def _run(args: argparse.Namespace) -> None:
             storage=storage,
             bucket=settings.storage_bucket,
         )
-        actor_user_id = UUID(args.actor)
+        actor_user_id = principal.actor.user_id
         if args.command == "scaffold":
             reservation = await asyncio.to_thread(
                 authoring.scaffold,
@@ -447,6 +627,52 @@ async def _run(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="grafy")
     groups = parser.add_subparsers(dest="group", required=True)
+
+    auth = groups.add_parser("auth")
+    auth_commands = auth.add_subparsers(dest="command", required=True)
+    auth_commands.add_parser(
+        "login", help="verify and store a token in the OS keychain"
+    )
+    auth_commands.add_parser("status", help="verify the active CLI credential")
+    auth_commands.add_parser("logout", help="remove the token from the OS keychain")
+
+    admin = groups.add_parser("admin")
+    admin_commands = admin.add_subparsers(dest="admin_command", required=True)
+    disable_user = admin_commands.add_parser("disable-user")
+    disable_user.add_argument("user_id")
+    platform_token = admin_commands.add_parser("platform-token")
+    platform_token_commands = platform_token.add_subparsers(
+        dest="platform_token_command",
+        required=True,
+    )
+    create_platform_token = platform_token_commands.add_parser("create")
+    create_platform_token.add_argument(
+        "--principal",
+        required=True,
+        help="stable non-secret actor reference recorded for global operations",
+    )
+    create_platform_token.add_argument(
+        "--label",
+        required=True,
+        help="operator-facing purpose for token inventory and rotation",
+    )
+    create_platform_token.add_argument(
+        "--scope",
+        required=True,
+        action="append",
+        choices=tuple(scope.value for scope in PlatformTokenScope),
+        help="one allowed global operation; repeat to grant multiple operations",
+    )
+    create_platform_token.add_argument(
+        "--expires-at",
+        required=True,
+        type=_parse_aware_timestamp,
+        help="absolute ISO 8601 expiry with a UTC offset",
+    )
+    platform_token_commands.add_parser("list")
+    revoke_platform_token = platform_token_commands.add_parser("revoke")
+    revoke_platform_token.add_argument("token_id")
+
     plugin = groups.add_parser("plugin")
     commands = plugin.add_subparsers(dest="command", required=True)
     check = commands.add_parser(
@@ -458,10 +684,11 @@ def main() -> None:
         "publish",
         help="verify and publish a Plugin to a Workspace or globally",
     )
-    publish.add_argument("directory")
-    publish_target = publish.add_mutually_exclusive_group(required=True)
-    publish_target.add_argument("--workspace")
-    publish_target.add_argument(
+    publish.add_argument(
+        "directory",
+        help="Plugin project to verify and freeze",
+    )
+    publish.add_argument(
         "--global",
         dest="global_scope",
         action="store_true",
@@ -473,17 +700,9 @@ def main() -> None:
         help="expected Plugin slug; must match the inspected declaration",
     )
     publish.add_argument(
-        "--actor",
-        required=True,
-        help="Workspace user UUID or global platform actor reference",
+        "--sandbox-image",
+        help="publisher image used to verify a global candidate in isolation",
     )
-    publish.add_argument(
-        "--publisher-sandbox",
-        action="store_true",
-        help="verify in the Docker publisher boundary instead of host subprocesses",
-    )
-    publish.add_argument("--sandbox-image")
-    publish.add_argument("--sandbox-scratch-root")
 
     build_system_deployment = commands.add_parser("build-system-deployment")
     build_system_deployment.add_argument("--output", required=True, type=Path)
@@ -494,25 +713,33 @@ def main() -> None:
         "promote",
         help="activate one published global Plugin release",
     )
-    promote.add_argument("--slug", required=True)
-    promote.add_argument("--revision", required=True, type=int)
-    promote.add_argument("--actor", required=True)
-    promote.add_argument("--expected-generation", type=int)
+    promote.add_argument(
+        "release",
+        type=_parse_release_reference,
+        help="exact inactive global release as SLUG@REVISION",
+    )
+    promote.add_argument(
+        "--if-generation",
+        type=int,
+        help="optional compare-and-swap guard for concurrent automation",
+    )
     promote.add_argument(
         "--deployment-manifest",
         type=Path,
         help="Exact host bindings; required only for host-eligible System Plugins",
     )
 
-    revoke_system = commands.add_parser("revoke-system")
-    revoke_system.add_argument("--slug", required=True)
-    revoke_system.add_argument("--revision", required=True, type=int)
-    revoke_system.add_argument(
+    revoke = commands.add_parser("revoke")
+    revoke.add_argument(
+        "release",
+        type=_parse_release_reference,
+        help="exact global release as SLUG@REVISION",
+    )
+    revoke.add_argument(
         "--reason",
         required=True,
         choices=tuple(reason.value for reason in PluginReleaseRevocationReason),
     )
-    revoke_system.add_argument("--platform-actor", required=True)
     for name in (
         "scaffold",
         "reserve",
@@ -521,9 +748,7 @@ def main() -> None:
         "release-reservation",
     ):
         command = commands.add_parser(name)
-        command.add_argument("--workspace", required=True)
         command.add_argument("--slug", required=True)
-        command.add_argument("--actor", required=True)
         if name not in {"scaffold", "reserve"}:
             command.add_argument("--session", required=True)
         if name == "scaffold":
@@ -586,7 +811,10 @@ def main() -> None:
         and args.sandbox_image is None
     ):
         parser.error("--sandbox-image is required with plugin publish --global")
-    asyncio.run(_run(args))
+    try:
+        asyncio.run(_run(args))
+    except (CliCredentialError, IdentityInvariantError) as exc:
+        parser.error(str(exc))
 
 
 if __name__ == "__main__":

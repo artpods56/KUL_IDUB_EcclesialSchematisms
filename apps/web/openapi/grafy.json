@@ -3816,7 +3816,7 @@
             "items": {
               "$ref": "#/components/schemas/PersonalAccessTokenScope"
             },
-            "maxItems": 8,
+            "maxItems": 12,
             "minItems": 1,
             "title": "Scopes",
             "type": "array"
@@ -4002,6 +4002,7 @@
           "checkpoint_graph",
           "execute_graph",
           "cancel_execution",
+          "publish_plugin",
           "publish_module"
         ],
         "title": "PersonalAccessTokenScope",

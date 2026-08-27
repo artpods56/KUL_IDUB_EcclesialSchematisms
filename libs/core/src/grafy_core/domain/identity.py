@@ -54,6 +54,12 @@ class WorkspaceCapability(StrEnum):
     RENAME_WORKSPACE = "rename_workspace"
 
 
+class PlatformTokenScope(StrEnum):
+    PUBLISH_GLOBAL = "plugin.publish_global"
+    PROMOTE_GLOBAL = "plugin.promote_global"
+    REVOKE_GLOBAL = "plugin.revoke_global"
+
+
 _SLUG_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$")
 _ROLE_CAPABILITIES: dict[WorkspaceRole, frozenset[WorkspaceCapability]] = {
     WorkspaceRole.VIEWER: frozenset(
@@ -99,6 +105,7 @@ PAT_ALLOWED_CAPABILITIES = frozenset(
         WorkspaceCapability.CHECKPOINT_GRAPH,
         WorkspaceCapability.EXECUTE_GRAPH,
         WorkspaceCapability.CANCEL_EXECUTION,
+        WorkspaceCapability.PUBLISH_PLUGIN,
         WorkspaceCapability.PUBLISH_MODULE,
         WorkspaceCapability.CREATE_TEMPLATE,
     }
@@ -252,6 +259,7 @@ class Workspace:
     def shared(cls, *, slug: str, name: str) -> "Workspace":
         return cls(slug=slug, name=name, kind=WorkspaceKind.SHARED)
 
+
 @dataclass
 class WorkspaceMembership:
     workspace_id: UUID
@@ -352,7 +360,10 @@ class WorkspaceInvitation:
 
     def expire_if_due(self, *, now: datetime) -> bool:
         _require_aware(now, "Workspace invitation expiry check timestamp")
-        if self.status is not WorkspaceInvitationStatus.PENDING or now < self.expires_at:
+        if (
+            self.status is not WorkspaceInvitationStatus.PENDING
+            or now < self.expires_at
+        ):
             return False
         self.status = WorkspaceInvitationStatus.EXPIRED
         self.resolved_at = now
@@ -368,7 +379,9 @@ class WorkspaceInvitation:
     def cancel(self, *, cancelled_at: datetime | None = None) -> None:
         self._resolve(WorkspaceInvitationStatus.CANCELLED, cancelled_at or _utc_now())
 
-    def _resolve(self, status: WorkspaceInvitationStatus, resolved_at: datetime) -> None:
+    def _resolve(
+        self, status: WorkspaceInvitationStatus, resolved_at: datetime
+    ) -> None:
         _require_aware(resolved_at, "Workspace invitation resolution timestamp")
         if self.status is not WorkspaceInvitationStatus.PENDING:
             raise IdentityInvariantError("Workspace invitation is no longer pending")
@@ -378,6 +391,7 @@ class WorkspaceInvitation:
         self.status = status
         self.resolved_at = resolved_at
         self.updated_at = resolved_at
+
 
 @dataclass
 class OidcLoginTransaction:
@@ -488,10 +502,92 @@ class PersonalAccessToken:
         self.revoked_at = revoked_at or _utc_now()
 
 
+@dataclass
+class PlatformAccessToken:
+    principal_reference: str
+    public_prefix: str
+    secret_digest: bytes = field(repr=False)
+    label: str
+    scopes: tuple[PlatformTokenScope, ...]
+    expires_at: datetime
+    id: UUID = field(default_factory=uuid4)
+    created_at: datetime = field(default_factory=_utc_now)
+    last_used_at: datetime | None = None
+    revoked_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        self.scopes = tuple(PlatformTokenScope(scope) for scope in self.scopes)
+        self.principal_reference = _require_nonempty(
+            self.principal_reference.strip(), "Platform principal reference", 120
+        )
+        _require_nonempty(self.public_prefix, "Platform access token prefix", 32)
+        if len(self.secret_digest) == 0:
+            raise ValueError("Platform access token digest must not be empty")
+        self.label = _require_nonempty(
+            self.label.strip(), "Platform access token label", 160
+        )
+        if len(self.scopes) == 0:
+            raise ValueError("Platform access token must have at least one scope")
+        if len(set(self.scopes)) != len(self.scopes):
+            raise ValueError("Platform access token scopes must be unique")
+        _require_aware(self.created_at, "Platform access token creation timestamp")
+        _require_aware(self.expires_at, "Platform access token expiry timestamp")
+        if self.expires_at <= self.created_at:
+            raise ValueError(
+                "Platform access token expiry must be after its creation timestamp"
+            )
+        if self.last_used_at is not None:
+            _require_aware(
+                self.last_used_at, "Platform access token last-used timestamp"
+            )
+        if self.revoked_at is not None:
+            _require_aware(
+                self.revoked_at, "Platform access token revocation timestamp"
+            )
+
+    @property
+    def is_revoked(self) -> bool:
+        return self.revoked_at is not None
+
+    def revoke(self, *, revoked_at: datetime | None = None) -> None:
+        self.revoked_at = revoked_at or _utc_now()
+
+
 @dataclass(frozen=True, slots=True)
 class ActorContext:
     user_id: UUID
     credential_reference: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspacePatPrincipal:
+    actor: ActorContext
+    workspace_id: UUID
+    capabilities: frozenset[WorkspaceCapability]
+    token_id: UUID
+
+    def require(self, capability: WorkspaceCapability) -> None:
+        if capability not in self.capabilities:
+            raise CapabilityDeniedError(
+                capability=capability.value,
+                workspace_id=self.workspace_id,
+                user_id=self.actor.user_id,
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class PlatformTokenPrincipal:
+    principal_reference: str
+    credential_reference: str
+    scopes: frozenset[PlatformTokenScope]
+    token_id: UUID
+
+    def require(self, scope: PlatformTokenScope) -> None:
+        if scope not in self.scopes:
+            raise IdentityInvariantError(
+                f"Platform principal {self.principal_reference!r} is not authorized "
+                f"for scope {scope.value!r}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -559,6 +655,9 @@ __all__ = [
     "OidcIdentity",
     "OidcLoginTransaction",
     "PAT_ALLOWED_CAPABILITIES",
+    "PlatformAccessToken",
+    "PlatformTokenPrincipal",
+    "PlatformTokenScope",
     "PersonalAccessToken",
     "User",
     "Workspace",
@@ -566,6 +665,7 @@ __all__ = [
     "WorkspaceCapability",
     "WorkspaceKind",
     "WorkspaceMembership",
+    "WorkspacePatPrincipal",
     "WorkspaceRole",
     "capabilities_for_role",
     "ensure_last_owner_can_change",

@@ -180,11 +180,11 @@ def test_security_audit_requires_explicit_safe_attribution() -> None:
         )
 
 
-def test_personal_access_tokens_exclude_administration_capabilities() -> None:
+def test_personal_access_tokens_allow_publication_but_exclude_administration() -> None:
     assert WorkspaceCapability.MANAGE_MEMBERS not in PAT_ALLOWED_CAPABILITIES
     assert WorkspaceCapability.MANAGE_SECRETS not in PAT_ALLOWED_CAPABILITIES
     assert WorkspaceCapability.MANAGE_MODULE_LIBRARY not in PAT_ALLOWED_CAPABILITIES
-    assert WorkspaceCapability.PUBLISH_PLUGIN not in PAT_ALLOWED_CAPABILITIES
+    assert WorkspaceCapability.PUBLISH_PLUGIN in PAT_ALLOWED_CAPABILITIES
     assert WorkspaceCapability.PUBLISH_MODULE in PAT_ALLOWED_CAPABILITIES
     with pytest.raises(ValueError, match="scope is not available"):
         PersonalAccessToken(

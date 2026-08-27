@@ -93,12 +93,6 @@ keycloak-up:
 keycloak-down:
     docker compose -f infra/docker/compose.keycloak.yaml down
 
-# Bootstrap the configured OIDC owner.
-bootstrap-oidc-owner:
-    uv run --no-dev grafy-admin bootstrap-oidc-owner \
-        --issuer "${GRAFY_OIDC_ISSUER:?set GRAFY_OIDC_ISSUER}" \
-        --subject "${GRAFY_OIDC_BOOTSTRAP_SUBJECT:?set GRAFY_OIDC_BOOTSTRAP_SUBJECT}"
-
 # Run Docker Compose against the production Grafy configuration.
 prod *args:
     docker compose \

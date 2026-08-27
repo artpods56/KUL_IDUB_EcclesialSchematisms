@@ -42,8 +42,10 @@ A **Module** stays a published subgraph. It is not a Plugin.
 
 ## Shared release lifecycle
 
-`grafy plugin publish <directory> --workspace <uuid> --slug <slug>
---actor <user-uuid>` now:
+`grafy plugin publish <directory> --slug <slug>` now authenticates with a
+Workspace-bound PAT and derives both the Workspace and publishing User from
+that credential. `grafy plugin publish <directory> --slug <slug> --global
+--sandbox-image <image>` uses a scoped platform token instead:
 
 1. Requires the directory to be below a configured Plugin root and to contain
    its own `pyproject.toml`, `uv.lock`, source, and tests.
