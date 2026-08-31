@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     )
 
     workspace: Path = Path(".grafy-artifacts/workbench")
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    log_renderer: Literal["console", "json"] = "console"
     public_origin: str = "http://localhost:3000"
     oidc_issuer: str | None = None
     oidc_client_id: str | None = None

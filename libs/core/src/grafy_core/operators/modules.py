@@ -23,6 +23,7 @@ from grafy_core.nodes import (
     Node,
     NodeExecutionContext,
     OutPort,
+    UserFacingNodeError,
     derive_input_contract,
     derive_output_contract,
 )
@@ -87,7 +88,7 @@ class ModuleBoundaryExecutionError(RuntimeError):
     pass
 
 
-class GraphModuleExecutionError(RuntimeError):
+class GraphModuleExecutionError(UserFacingNodeError):
     pass
 
 
@@ -171,7 +172,7 @@ class GraphModuleNode(Node[NoConfig, GraphModuleInput, GraphModuleOutput]):
 
         input_model = _input_model_for(definition)
         output_model = _output_model_for(definition)
-        dynamic_attributes = self.__dict__
+        dynamic_attributes = cast(dict[str, object], self.__dict__)
         dynamic_attributes["operator_id"] = definition.operator_id
         dynamic_attributes["operator_version"] = definition.operator_version
         dynamic_attributes["plugin_slug"] = "graph.module"
@@ -217,6 +218,8 @@ class GraphModuleNode(Node[NoConfig, GraphModuleInput, GraphModuleOutput]):
                 context,
                 public_inputs,
             )
+        except UserFacingNodeError:
+            raise
         except Exception as exc:
             node_id = context.node_id or "<unknown>"
             raise GraphModuleExecutionError(

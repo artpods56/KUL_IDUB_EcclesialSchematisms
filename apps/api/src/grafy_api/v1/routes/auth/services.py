@@ -39,6 +39,11 @@ from grafy_core.domain.security_audit import (
 )
 from grafy_core.ports.identity import IdentityUnitOfWorkPort
 
+from grafy_api.diagnostics import (
+    DiagnosticContext,
+    diagnostic_scope,
+    record_failure,
+)
 from grafy_api.settings import Settings
 from grafy_api.v1.routes.auth.abuse import (
     AuthAbuseControl,
@@ -454,19 +459,16 @@ class AuthService:
         resource_type: str | None = None,
         resource_id: str | None = None,
     ) -> None:
-        async with self._unit_of_work_factory() as unit_of_work:
-            await unit_of_work.security_audit.add(
-                SecurityAuditEvent(
-                    actor_kind=SecurityAuditActorKind.UNAUTHENTICATED,
-                    operation=operation,
-                    outcome=SecurityAuditOutcome.FAILURE,
-                    workspace_id=workspace_id,
-                    resource_type=resource_type,
-                    resource_id=resource_id,
-                    error_code=error_code,
-                )
-            )
-            await unit_of_work.commit()
+        event = SecurityAuditEvent(
+            actor_kind=SecurityAuditActorKind.UNAUTHENTICATED,
+            operation=operation,
+            outcome=SecurityAuditOutcome.FAILURE,
+            workspace_id=workspace_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            error_code=error_code,
+        )
+        await self._write_failure_audit_event(event)
 
     async def audit_authenticated_failure(
         self,
@@ -479,21 +481,34 @@ class AuthService:
         resource_type: str | None = None,
         resource_id: str | None = None,
     ) -> None:
-        async with self._unit_of_work_factory() as unit_of_work:
-            await unit_of_work.security_audit.add(
-                SecurityAuditEvent(
-                    actor_kind=SecurityAuditActorKind.AUTHENTICATED,
-                    user_id=user_id,
-                    credential_reference=credential_reference,
-                    operation=operation,
-                    outcome=SecurityAuditOutcome.FAILURE,
-                    workspace_id=workspace_id,
-                    resource_type=resource_type,
-                    resource_id=resource_id,
-                    error_code=error_code,
-                )
+        event = SecurityAuditEvent(
+            actor_kind=SecurityAuditActorKind.AUTHENTICATED,
+            user_id=user_id,
+            credential_reference=credential_reference,
+            operation=operation,
+            outcome=SecurityAuditOutcome.FAILURE,
+            workspace_id=workspace_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            error_code=error_code,
+        )
+        await self._write_failure_audit_event(event)
+
+    async def _write_failure_audit_event(self, event: SecurityAuditEvent) -> None:
+        try:
+            async with self._unit_of_work_factory() as unit_of_work:
+                await unit_of_work.security_audit.add(event)
+                await unit_of_work.commit()
+        except Exception as exc:
+            context = DiagnosticContext(
+                actor_id=event.user_id,
+                workspace_id=event.workspace_id,
             )
-            await unit_of_work.commit()
+            with diagnostic_scope(context, inherit=True):
+                record_failure(
+                    exc,
+                    operation=f"security.audit.write.{event.operation}",
+                )
 
     async def audit_request_failure(
         self,

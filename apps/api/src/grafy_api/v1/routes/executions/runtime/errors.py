@@ -1,3 +1,4 @@
+from grafy_core.nodes import UserFacingNodeError
 from grafy_core.runtime.execution import NodeRunError
 
 from grafy_api.services.errors import WorkbenchOperationError
@@ -5,6 +6,10 @@ from grafy_api.services.errors import WorkbenchOperationError
 
 class GraphExecutionError(WorkbenchOperationError):
     pass
+
+
+class NestedGraphExecutionError(UserFacingNodeError, GraphExecutionError):
+    """A bounded nested-graph failure that is safe at the node seam."""
 
 
 def render_execution_error(exception: BaseException) -> str:
@@ -25,4 +30,8 @@ def render_execution_error(exception: BaseException) -> str:
     return " <- caused by ".join(rendered)
 
 
-__all__ = ["GraphExecutionError", "render_execution_error"]
+__all__ = [
+    "GraphExecutionError",
+    "NestedGraphExecutionError",
+    "render_execution_error",
+]

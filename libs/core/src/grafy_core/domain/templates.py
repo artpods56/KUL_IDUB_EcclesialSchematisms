@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
+from grafy_core.domain.errors import FailureKind, FailureSpec, GrafyCoreError
 from grafy_core.domain.saved_graphs import SavedGraphDocument
 
 
@@ -15,6 +16,34 @@ class TemplateState(StrEnum):
 
 class TemplateLibraryError(ValueError):
     """Raised when a template library invariant would be violated."""
+
+
+class TemplateCopyRejectedError(GrafyCoreError):
+    """Raised when a graph cannot safely cross the template-copy seam."""
+
+    failure_spec = FailureSpec(
+        code="template.copy_rejected",
+        kind=FailureKind.VALIDATION,
+        public_message="This graph cannot be saved as a template",
+    )
+
+    def __init__(self, *, reason_code: str, diagnostic_message: str) -> None:
+        self.reason_code = reason_code
+        super().__init__(diagnostic_message)
+
+    @property
+    def diagnostic_context(self) -> dict[str, object]:
+        return {"reason_code": self.reason_code}
+
+
+class TemplateUnavailableError(GrafyCoreError):
+    """Raised when an archived template is selected for instantiation."""
+
+    failure_spec = FailureSpec(
+        code="template.unavailable",
+        kind=FailureKind.VALIDATION,
+        public_message="Archived templates cannot be used",
+    )
 
 
 def _utc_now() -> datetime:
@@ -104,4 +133,10 @@ class Template:
         self.updated_at = when or _utc_now()
 
 
-__all__ = ["Template", "TemplateLibraryError", "TemplateState"]
+__all__ = [
+    "Template",
+    "TemplateCopyRejectedError",
+    "TemplateLibraryError",
+    "TemplateState",
+    "TemplateUnavailableError",
+]

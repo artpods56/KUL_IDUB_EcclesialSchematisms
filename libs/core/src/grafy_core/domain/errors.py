@@ -1,29 +1,127 @@
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import ClassVar
 from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+_FAILURE_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
+_MAX_FAILURE_CODE_LENGTH = 120
+_MAX_PUBLIC_MESSAGE_LENGTH = 200
+
+
+class FailureKind(StrEnum):
+    VALIDATION = "validation"
+    UNAUTHENTICATED = "unauthenticated"
+    FORBIDDEN = "forbidden"
+    NOT_FOUND = "not_found"
+    CONFLICT = "conflict"
+    CAPACITY = "capacity"
+    UNAVAILABLE = "unavailable"
+    INTERNAL = "internal"
+
+
+@dataclass(frozen=True, slots=True)
+class FailureSpec:
+    code: str
+    kind: FailureKind
+    public_message: str
+
+    def __post_init__(self) -> None:
+        if len(self.code) > _MAX_FAILURE_CODE_LENGTH:
+            raise ValueError(
+                f"Failure code must be at most {_MAX_FAILURE_CODE_LENGTH} characters"
+            )
+        if _FAILURE_CODE_PATTERN.fullmatch(self.code) is None:
+            raise ValueError("Failure code must be a lowercase namespaced identifier")
+        if self.public_message.strip() == "":
+            raise ValueError("Failure public message must not be blank")
+        if len(self.public_message) > _MAX_PUBLIC_MESSAGE_LENGTH:
+            raise ValueError(
+                "Failure public message must be at most "
+                f"{_MAX_PUBLIC_MESSAGE_LENGTH} characters"
+            )
+
+
+class Failure(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    error_id: UUID
+    code: str = Field(
+        min_length=3,
+        max_length=_MAX_FAILURE_CODE_LENGTH,
+        pattern=_FAILURE_CODE_PATTERN.pattern,
+    )
+    kind: FailureKind
+    message: str = Field(min_length=1, max_length=_MAX_PUBLIC_MESSAGE_LENGTH)
 
 
 class GrafyCoreError(Exception):
     """Base application error."""
 
+    failure_spec: ClassVar[FailureSpec | None] = None
+
+    @property
+    def public_message(self) -> str | None:
+        if self.failure_spec is None:
+            return None
+        return self.failure_spec.public_message
+
+    @property
+    def diagnostic_context(self) -> Mapping[str, object]:
+        return {}
+
 
 class NotFoundError(GrafyCoreError):
     """A requested resource was not found."""
+
+    failure_spec = FailureSpec(
+        code="resource.not_found",
+        kind=FailureKind.NOT_FOUND,
+        public_message="Not found",
+    )
 
     def __init__(self, resource: str, resource_id: str) -> None:
         self.resource = resource
         self.resource_id = resource_id
         super().__init__(f"{resource} not found: {resource_id}")
 
+    @property
+    def diagnostic_context(self) -> Mapping[str, object]:
+        return {"resource": self.resource}
+
 
 class ObjectAlreadyExistsError(GrafyCoreError):
     """Raised when an object already exists in the storage backend."""
+
+    failure_spec = FailureSpec(
+        code="resource.already_exists",
+        kind=FailureKind.CONFLICT,
+        public_message="The resource already exists",
+    )
 
 
 class ConcurrentWriteError(GrafyCoreError):
     """Raised when persistence detects an optimistic concurrency conflict."""
 
+    failure_spec = FailureSpec(
+        code="persistence.concurrent_write",
+        kind=FailureKind.CONFLICT,
+        public_message="The resource changed during this operation",
+    )
+
 
 class IdentityInvariantError(GrafyCoreError):
     """Raised when an identity or workspace invariant would be violated."""
+
+    failure_spec = FailureSpec(
+        code="identity.invariant",
+        kind=FailureKind.CONFLICT,
+        public_message="Identity operation failed",
+    )
 
 
 class LastWorkspaceOwnerError(IdentityInvariantError):
@@ -32,6 +130,12 @@ class LastWorkspaceOwnerError(IdentityInvariantError):
 
 class UserDisabledError(IdentityInvariantError):
     """Raised when a disabled user attempts to authenticate or authorize."""
+
+    failure_spec = FailureSpec(
+        code="identity.user_disabled",
+        kind=FailureKind.UNAUTHENTICATED,
+        public_message="Authentication required",
+    )
 
 
 class CredentialAuthenticationError(IdentityInvariantError):
@@ -44,6 +148,12 @@ class CredentialAuthenticationError(IdentityInvariantError):
 class CapabilityDeniedError(IdentityInvariantError):
     """Raised when an active membership lacks one required capability."""
 
+    failure_spec = FailureSpec(
+        code="identity.capability_denied",
+        kind=FailureKind.FORBIDDEN,
+        public_message="Forbidden",
+    )
+
     def __init__(self, *, capability: str, workspace_id: UUID, user_id: UUID) -> None:
         self.capability = capability
         self.workspace_id = workspace_id
@@ -53,8 +163,22 @@ class CapabilityDeniedError(IdentityInvariantError):
             f"in workspace {workspace_id}"
         )
 
+    @property
+    def diagnostic_context(self) -> Mapping[str, object]:
+        return {
+            "capability": self.capability,
+            "workspace_id": self.workspace_id,
+            "actor_id": self.user_id,
+        }
+
 
 class SavedGraphRevisionConflictError(GrafyCoreError):
+    failure_spec = FailureSpec(
+        code="graph.revision_conflict",
+        kind=FailureKind.CONFLICT,
+        public_message="The graph changed while it was being saved",
+    )
+
     def __init__(
         self,
         *,
@@ -74,9 +198,23 @@ class SavedGraphRevisionConflictError(GrafyCoreError):
             f"{expected_revision}, but {detail}"
         )
 
+    @property
+    def diagnostic_context(self) -> Mapping[str, object]:
+        return {
+            "graph_id": self.graph_id,
+            "expected_revision": self.expected_revision,
+            "actual_revision": self.actual_revision,
+        }
+
 
 class GraphFolderNameConflictError(GrafyCoreError):
     """Raised when one workspace already has a folder with the requested name."""
+
+    failure_spec = FailureSpec(
+        code="graph.folder_name_conflict",
+        kind=FailureKind.CONFLICT,
+        public_message="A graph folder with this name already exists",
+    )
 
     def __init__(self, *, workspace_id: UUID, name: str) -> None:
         self.workspace_id = workspace_id

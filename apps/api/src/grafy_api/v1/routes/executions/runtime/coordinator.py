@@ -3,10 +3,11 @@
 from uuid import uuid4
 
 from grafy_core.domain.artifact_outputs import ArtifactOutputValue
+from grafy_core.nodes import UserFacingNodeError
 from grafy_core.runtime.execution import NodeRunError
 from grafy_core.runtime.plugin_protocol import PluginFailureCode
 
-from .errors import GraphExecutionError, render_execution_error
+from .errors import NestedGraphExecutionError, render_execution_error
 from .models import (
     CompiledEdge,
     GraphExecutionResult,
@@ -120,10 +121,15 @@ class GraphExecutionCoordinator:
                         graph_context = (
                             f"graph {execution.graph_id}@{execution.graph_revision}"
                         )
-                    raise GraphExecutionError(
+                    public_context = (
+                        f": {exc}"
+                        if isinstance(exc, (NodeRunError, UserFacingNodeError))
+                        else ""
+                    )
+                    raise NestedGraphExecutionError(
                         f"{graph_context} node {node_request.id!r} "
                         f"({node_request.operator_id}@"
-                        f"{node_request.operator_version}) failed"
+                        f"{node_request.operator_version}) failed{public_context}"
                     ) from exc
                 failed.add(node_request.id)
                 node_results.append(
@@ -170,4 +176,6 @@ class GraphExecutionCoordinator:
             node_results=tuple(node_results),
             outputs=outputs,
         )
+
+
 __all__ = ["GraphExecutionCoordinator"]

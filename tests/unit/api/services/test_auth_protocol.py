@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import SecretStr
 
 from grafy_api.settings import Settings
+from grafy_api.v1.routes.auth import services as auth_services
 from grafy_api.v1.routes.auth.services import (
     AuthService,
     OidcCallbackInternalError,
@@ -25,7 +26,7 @@ from grafy_api.v1.routes.auth.services import (
 )
 from grafy_core.application.identity import IdentityService
 from grafy_core.domain.identity import OidcLoginTransaction, User
-from grafy_core.domain.security_audit import SecurityAuditEvent
+from grafy_core.domain.security_audit import SecurityAuditEvent, SecurityAuditOutcome
 from grafy_core.ports.identity import (
     IdentityRepositoryPort,
     IdentityUnitOfWorkPort,
@@ -149,6 +150,101 @@ class _FailingCallbackAuditUnitOfWork(IdentityUnitOfWorkPort):
 
     async def rollback(self) -> None:
         await self._delegate.rollback()
+
+
+class _FailureOnlyAuditRepository(SecurityAuditRepositoryPort):
+    def __init__(self) -> None:
+        self.attempts: list[SecurityAuditEvent] = []
+
+    async def add(self, event: SecurityAuditEvent) -> None:
+        self.attempts.append(event)
+        if event.outcome is SecurityAuditOutcome.FAILURE:
+            raise RuntimeError("failure audit sentinel")
+
+    async def list_for_workspace(
+        self,
+        workspace_id: UUID,
+        *,
+        limit: int,
+    ) -> Sequence[SecurityAuditEvent]:
+        del workspace_id, limit
+        return []
+
+    async def delete_before(self, occurred_before: datetime) -> int:
+        del occurred_before
+        return 0
+
+
+class _FailureOnlyAuditUnitOfWork(IdentityUnitOfWorkPort):
+    def __init__(self, repository: _FailureOnlyAuditRepository) -> None:
+        self._repository = repository
+        self.commit_attempts = 0
+
+    @property
+    def identity(self) -> IdentityRepositoryPort:
+        raise AssertionError("Failure audit writes must not use identity storage")
+
+    @property
+    def security_audit(self) -> SecurityAuditRepositoryPort:
+        return self._repository
+
+    async def __aenter__(self) -> "_FailureOnlyAuditUnitOfWork":
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        del exc_type, exc, traceback
+
+    async def commit(self) -> None:
+        self.commit_attempts += 1
+
+    async def rollback(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("authenticated", [False, True])
+async def test_secondary_failure_audit_write_is_fail_open(
+    authenticated: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _FailureOnlyAuditRepository()
+    unit_of_work = _FailureOnlyAuditUnitOfWork(repository)
+    auth = _auth_service()
+    monkeypatch.setattr(auth, "_unit_of_work_factory", lambda: unit_of_work)
+    recorded: list[tuple[Exception, str]] = []
+
+    def record_failure(exc: Exception, *, operation: str) -> None:
+        recorded.append((exc, operation))
+
+    monkeypatch.setattr(auth_services, "record_failure", record_failure)
+    operation = "workspace.authorize"
+    workspace_id = UUID("00000000-0000-0000-0000-000000000001")
+
+    if authenticated:
+        await auth.audit_authenticated_failure(
+            user_id=UUID("00000000-0000-0000-0000-000000000002"),
+            credential_reference="credential-sentinel",
+            operation=operation,
+            error_code="forbidden",
+            workspace_id=workspace_id,
+        )
+    else:
+        await auth.audit_unauthenticated_failure(
+            operation=operation,
+            error_code="unauthenticated",
+            workspace_id=workspace_id,
+        )
+
+    assert len(repository.attempts) == 1
+    assert unit_of_work.commit_attempts == 0
+    assert len(recorded) == 1
+    assert isinstance(recorded[0][0], RuntimeError)
+    assert recorded[0][1] == "security.audit.write.workspace.authorize"
 
 
 def test_oidc_transaction_return_path_is_sensitive_state() -> None:

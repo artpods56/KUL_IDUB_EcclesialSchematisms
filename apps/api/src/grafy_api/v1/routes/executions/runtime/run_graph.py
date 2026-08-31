@@ -8,6 +8,7 @@ from uuid import UUID
 from grafy_core.artifacts import ArtifactRef
 from grafy_core.domain.modules import MODULE_BOUNDARY_PORT, GraphModuleDefinition
 from grafy_core.nodes import NodeExecutionContext
+from grafy_core.operators.modules import GraphModuleExecutionError
 from grafy_core.ports.modules import GraphModuleExecutionResult
 
 from grafy_api.v1.models import (
@@ -113,7 +114,7 @@ class RunGraph:
         graph_path_item = definition.reference.module_path_item
         if len(context.node_path) >= MAX_EXECUTION_NODE_PATH_LENGTH:
             rendered_node_path = " -> ".join(context.node_path)
-            raise GraphExecutionError(
+            raise GraphModuleExecutionError(
                 f"Graph module {definition.name!r} at revision {graph_revision} "
                 "cannot be entered because child node paths would exceed the "
                 f"maximum of {MAX_EXECUTION_NODE_PATH_LENGTH} instances: "
@@ -121,7 +122,7 @@ class RunGraph:
             )
         if graph_path_item in context.module_path:
             rendered_path = " -> ".join((*context.module_path, graph_path_item))
-            raise GraphExecutionError(
+            raise GraphModuleExecutionError(
                 f"Graph module cycle detected while entering {definition.name!r} "
                 f"at revision {graph_revision}: {rendered_path}"
             )
@@ -173,9 +174,7 @@ class RunGraph:
                         for binding in node.artifact_type_bindings
                     ],
                     plugin_release=(
-                        PluginReleasePinModel.from_saved_pin(
-                            node.plugin_release_pin
-                        )
+                        PluginReleasePinModel.from_saved_pin(node.plugin_release_pin)
                         if node.plugin_release_pin is not None
                         else None
                     ),

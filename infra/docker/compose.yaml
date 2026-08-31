@@ -13,6 +13,8 @@ x-persistence-environment: &persistence-environment
 x-api-environment: &api-environment
   <<: *persistence-environment
   OPENAI_CUSTOM_HEADERS: ${OPENAI_CUSTOM_HEADERS:-}
+  GRAFY_LOG_LEVEL: ${GRAFY_LOG_LEVEL:-INFO}
+  GRAFY_LOG_RENDERER: ${GRAFY_LOG_RENDERER:-json}
   GRAFY_PUBLIC_ORIGIN: ${GRAFY_PUBLIC_ORIGIN:-https://grafy.example.com}
   GRAFY_CORS_ORIGINS: ${GRAFY_CORS_ORIGINS:-https://grafy.example.com}
   GRAFY_OIDC_ISSUER: ${GRAFY_OIDC_ISSUER:?GRAFY_OIDC_ISSUER must be set and non-empty}

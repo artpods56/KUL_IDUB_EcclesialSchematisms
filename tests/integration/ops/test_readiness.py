@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import cast
+from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
@@ -58,7 +59,9 @@ async def test_readiness_reports_database_failure_without_breaking_liveness(
             response = client.get("/ready")
 
             assert response.status_code == 503
-            assert response.json() == {"detail": "Service unavailable"}
+            assert response.json()["detail"] == "Service unavailable"
+            assert response.json()["code"] == "http.unavailable"
+            UUID(response.json()["error_id"])
             liveness = client.get("/health")
             assert liveness.status_code == 200
             assert liveness.json() == {"status": "ok"}
@@ -111,4 +114,6 @@ async def test_readiness_translates_uninitialized_resources_to_unavailable(
                 application.state.resources = resources
 
             assert response.status_code == 503
-            assert response.json() == {"detail": "Service unavailable"}
+            assert response.json()["detail"] == "Service unavailable"
+            assert response.json()["code"] == "http.unavailable"
+            UUID(response.json()["error_id"])

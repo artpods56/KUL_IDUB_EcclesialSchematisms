@@ -1,10 +1,8 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Query, status
 
-from grafy_core.domain.errors import NotFoundError
 from grafy_core.domain.identity import WorkspaceCapability
-from grafy_core.domain.templates import TemplateLibraryError
 
 from grafy_api.v1.routes.auth.dependencies import (
     require_workspace_capability,
@@ -44,19 +42,14 @@ async def create_template(
     service: TemplateDependency,
     access: require_workspace_capability(WorkspaceCapability.CREATE_TEMPLATE),
 ) -> TemplateResponse:
-    try:
-        template = await service.create_from_graph_revision(
-            actor=access.actor,
-            workspace_id=access.workspace_id,
-            source_graph_id=body.source_graph_id,
-            source_revision=body.source_revision,
-            name=body.name,
-            description=body.description,
-        )
-    except NotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except TemplateLibraryError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    template = await service.create_from_graph_revision(
+        actor=access.actor,
+        workspace_id=access.workspace_id,
+        source_graph_id=body.source_graph_id,
+        source_revision=body.source_revision,
+        name=body.name,
+        description=body.description,
+    )
     return TemplateResponse.from_template(template)
 
 
@@ -66,10 +59,7 @@ async def get_template(
     service: TemplateDependency,
     access: require_workspace_capability(WorkspaceCapability.VIEW_GRAPH),
 ) -> TemplateResponse:
-    try:
-        template = await service.get(access.workspace_id, template_id)
-    except NotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    template = await service.get(access.workspace_id, template_id)
     return TemplateResponse.from_template(template)
 
 
@@ -80,18 +70,13 @@ async def update_template_metadata(
     service: TemplateDependency,
     access: require_workspace_capability(WorkspaceCapability.CREATE_TEMPLATE),
 ) -> TemplateResponse:
-    try:
-        template = await service.update_metadata(
-            actor=access.actor,
-            workspace_id=access.workspace_id,
-            template_id=template_id,
-            name=body.name,
-            description=body.description,
-        )
-    except NotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except TemplateLibraryError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    template = await service.update_metadata(
+        actor=access.actor,
+        workspace_id=access.workspace_id,
+        template_id=template_id,
+        name=body.name,
+        description=body.description,
+    )
     return TemplateResponse.from_template(template)
 
 
@@ -101,14 +86,11 @@ async def archive_template(
     service: TemplateDependency,
     access: require_workspace_capability(WorkspaceCapability.MANAGE_TEMPLATE_LIBRARY),
 ) -> TemplateResponse:
-    try:
-        template = await service.archive(
-            actor=access.actor,
-            workspace_id=access.workspace_id,
-            template_id=template_id,
-        )
-    except NotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    template = await service.archive(
+        actor=access.actor,
+        workspace_id=access.workspace_id,
+        template_id=template_id,
+    )
     return TemplateResponse.from_template(template)
 
 
@@ -123,19 +105,14 @@ async def instantiate_template(
     service: TemplateDependency,
     access: require_workspace_capability(WorkspaceCapability.VIEW_GRAPH),
 ) -> TemplateInstantiationResponse:
-    try:
-        result = await service.instantiate(
-            actor=access.actor,
-            source_workspace_id=access.workspace_id,
-            template_id=template_id,
-            destination_workspace_id=body.destination_workspace_id,
-            name=body.name,
-            folder_id=body.folder_id,
-        )
-    except NotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except (TemplateLibraryError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    result = await service.instantiate(
+        actor=access.actor,
+        source_workspace_id=access.workspace_id,
+        template_id=template_id,
+        destination_workspace_id=body.destination_workspace_id,
+        name=body.name,
+        folder_id=body.folder_id,
+    )
     return TemplateInstantiationResponse.from_instantiation(result)
 
 

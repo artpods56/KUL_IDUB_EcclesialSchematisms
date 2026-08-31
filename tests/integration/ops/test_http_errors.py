@@ -1,0 +1,220 @@
+import logging
+from collections.abc import Iterator, Mapping
+from typing import cast
+from uuid import UUID
+
+import structlog
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.testclient import TestClient
+from pydantic import BaseModel, Field
+import pytest
+
+from grafy_api.diagnostics import configure_diagnostics
+from grafy_api.http_errors import register_http_error_handlers
+from grafy_core.domain.errors import NotFoundError
+
+
+_PRIVATE_IDENTIFIER = "private-resource-4cc5ae31"
+_UNEXPECTED_SENTINEL = "unexpected-secret-98d58c37"
+
+
+class _ValidatedRequest(BaseModel):
+    count: int = Field(ge=1)
+
+
+@pytest.fixture
+def error_client() -> Iterator[TestClient]:
+    configure_diagnostics(level="INFO", renderer="json")
+    app = FastAPI()
+
+    @app.get("/typed")
+    async def typed_failure() -> None:  # pyright: ignore[reportUnusedFunction]
+        raise NotFoundError("Private resource", _PRIVATE_IDENTIFIER)
+
+    @app.get("/unexpected")
+    async def unexpected_failure() -> None:  # pyright: ignore[reportUnusedFunction]
+        raise RuntimeError(_UNEXPECTED_SENTINEL)
+
+    @app.get("/legacy-500")
+    async def legacy_internal_failure() -> None:  # pyright: ignore[reportUnusedFunction]
+        raise HTTPException(status_code=500, detail=_UNEXPECTED_SENTINEL)
+
+    @app.get("/unavailable")
+    async def unavailable_failure() -> None:  # pyright: ignore[reportUnusedFunction]
+        try:
+            raise ConnectionError(_UNEXPECTED_SENTINEL)
+        except ConnectionError as exception:
+            raise HTTPException(status_code=503, detail="legacy detail") from exception
+
+    @app.get("/legacy-404")
+    async def legacy_not_found() -> None:  # pyright: ignore[reportUnusedFunction]
+        raise HTTPException(status_code=404, detail="Explicit public detail")
+
+    @app.post("/validated")
+    async def validate_request(  # pyright: ignore[reportUnusedFunction]
+        _body: _ValidatedRequest,
+    ) -> None:
+        return None
+
+    register_http_error_handlers(app)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["https://app.example"],
+    )
+    with TestClient(app) as client:
+        yield client
+
+
+def _event_records(
+    caplog: pytest.LogCaptureFixture,
+    event: str,
+) -> list[Mapping[str, object]]:
+    records: list[Mapping[str, object]] = []
+    for record in caplog.records:
+        raw_message = cast(  # pyright: ignore[reportUnknownMemberType]
+            object,
+            record.msg,
+        )
+        if not isinstance(raw_message, Mapping):
+            continue
+        message = cast(Mapping[str, object], raw_message)
+        if message.get("event") == event:
+            records.append(message)
+    return records
+
+
+def test_typed_failure_exposes_only_the_declared_contract(
+    error_client: TestClient,
+) -> None:
+    response = error_client.get("/typed")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": "Not found",
+        "code": "resource.not_found",
+        "error_id": response.json()["error_id"],
+    }
+    UUID(response.json()["error_id"])
+    UUID(response.headers["X-Request-ID"])
+    assert _PRIVATE_IDENTIFIER not in response.text
+
+
+def test_unexpected_failure_is_correlated_without_exposing_exception_text(
+    error_client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+
+    response = error_client.get(
+        "/unexpected",
+        headers={"Origin": "https://app.example"},
+    )
+
+    assert response.status_code == 500
+    body = response.json()
+    assert body["detail"] == "An internal error occurred"
+    assert body["code"] == "internal.unexpected_error"
+    error_id = UUID(body["error_id"])
+    request_id = UUID(response.headers["X-Request-ID"])
+    assert _UNEXPECTED_SENTINEL not in response.text
+    assert _UNEXPECTED_SENTINEL not in caplog.text
+    assert response.headers["Access-Control-Allow-Origin"] == "https://app.example"
+
+    failures = _event_records(caplog, "operation_failed")
+    matching_failure = next(
+        event for event in failures if event.get("error_id") == str(error_id)
+    )
+    assert matching_failure["request_id"] == str(request_id)
+    completions = _event_records(caplog, "http_request_completed")
+    assert any(
+        event.get("request_id") == str(request_id)
+        and event.get("route") == "/unexpected"
+        and event.get("status_code") == 500
+        for event in completions
+    )
+
+
+def test_legacy_internal_http_error_is_sanitized(
+    error_client: TestClient,
+) -> None:
+    response = error_client.get("/legacy-500")
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "An internal error occurred"
+    assert response.json()["code"] == "internal.unexpected_error"
+    UUID(response.json()["error_id"])
+    assert _UNEXPECTED_SENTINEL not in response.text
+
+
+def test_unavailable_failure_keeps_sanitized_cause_diagnostics(
+    error_client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+
+    response = error_client.get("/unavailable")
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["detail"] == "Service unavailable"
+    matching_failure = next(
+        event
+        for event in _event_records(caplog, "operation_failed")
+        if event.get("error_id") == body["error_id"]
+    )
+    exception = cast(Mapping[str, object], matching_failure["exception"])
+    assert exception["type"] == "fastapi.exceptions.HTTPException"
+    assert exception["cause_types"] == ["builtins.ConnectionError"]
+    assert _UNEXPECTED_SENTINEL not in caplog.text
+
+
+def test_legacy_client_error_keeps_its_contract_without_phantom_error_id(
+    error_client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+
+    response = error_client.get("/legacy-404")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Explicit public detail"}
+    assert not _event_records(caplog, "operation_rejected")
+
+
+def test_validation_redacts_input_and_context(
+    error_client: TestClient,
+) -> None:
+    response = error_client.post("/validated", json={"count": 0})
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == "request.validation_failed"
+    UUID(body["error_id"])
+    assert body["detail"]
+    assert all("input" not in error and "ctx" not in error for error in body["detail"])
+
+
+def test_request_context_is_distinct_for_each_request(
+    error_client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+
+    first = error_client.get("/typed")
+    second = error_client.get("/typed")
+    structlog.get_logger("test.after_request").info("outside_request")
+
+    first_request_id = first.headers["X-Request-ID"]
+    second_request_id = second.headers["X-Request-ID"]
+    assert first_request_id != second_request_id
+    completions = _event_records(caplog, "http_request_completed")
+    request_ids = {
+        event.get("request_id")
+        for event in completions
+        if event.get("route") == "/typed"
+    }
+    assert {first_request_id, second_request_id} <= request_ids
+    outside = _event_records(caplog, "outside_request")
+    assert outside
+    assert "request_id" not in outside[-1]

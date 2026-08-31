@@ -648,6 +648,7 @@ async def test_callback_validation_is_bounded_and_consumes_transaction(
             assert "Path=/api/v1/auth/oidc" in first.headers.get("set-cookie", "")
             assert second.status_code == 429
             assert "Too many callback attempts" in second.text
+            assert second.json()["code"] == "http.capacity_exceeded"
 
         async with SqlAlchemyUnitOfWork(database.sessions) as unit_of_work:
             stored = await unit_of_work.identity.lock_login_transaction(transaction_id)
@@ -692,6 +693,7 @@ async def test_login_validation_is_bounded_and_audited(
 
             assert first.status_code == 422
             assert second.status_code == 429
+            assert second.json()["code"] == "http.capacity_exceeded"
             assert sentinel not in first.text
             assert sentinel not in second.text
 
@@ -933,9 +935,9 @@ async def test_workspace_failure_audits_preserve_route_metadata(
         ] == [
             (
                 SecurityAuditActorKind.AUTHENTICATED,
-                    "workspace.invitation.create",
-                    workspace.id,
-                    "workspace_invitation",
+                "workspace.invitation.create",
+                workspace.id,
+                "workspace_invitation",
                 None,
                 "capability_denied",
             ),

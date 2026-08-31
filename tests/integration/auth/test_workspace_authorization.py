@@ -109,12 +109,18 @@ async def _seed_authorization_matrix(database: Database) -> AuthorizationMatrix:
 
 def _assert_not_found(response: Response, *, context: object) -> None:
     assert response.status_code == 404, (context, response.status_code, response.text)
-    assert response.json() == {"detail": "Not found"}
+    body = response.json()
+    assert body["detail"] == "Not found"
+    assert body["code"] == "resource.not_found"
+    UUID(body["error_id"])
 
 
 def _assert_forbidden(response: Response, *, context: object) -> None:
     assert response.status_code == 403, (context, response.status_code, response.text)
-    assert response.json() == {"detail": "Forbidden"}
+    body = response.json()
+    assert body["detail"] == "Forbidden"
+    assert body["code"] == "identity.capability_denied"
+    UUID(body["error_id"])
 
 
 async def test_global_graph_browser_is_authorized_and_keeps_user_state_private(

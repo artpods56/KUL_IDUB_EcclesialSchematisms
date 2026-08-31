@@ -14,7 +14,11 @@ from grafy_core.domain.saved_graphs import (
     SavedGraph,
     SavedGraphDocument,
 )
-from grafy_core.domain.templates import Template, TemplateLibraryError
+from grafy_core.domain.templates import (
+    Template,
+    TemplateCopyRejectedError,
+    TemplateUnavailableError,
+)
 from grafy_core.ports.templates import TemplateUnitOfWorkPort
 
 
@@ -68,7 +72,10 @@ class TemplateService:
                     revision.document
                 )
             except CollaborationCommandRejectedError as exc:
-                raise TemplateLibraryError(str(exc)) from exc
+                raise TemplateCopyRejectedError(
+                    reason_code=exc.error_code,
+                    diagnostic_message=str(exc),
+                ) from exc
             template = Template(
                 workspace_id=workspace_id,
                 source_graph_id=source_graph_id,
@@ -177,7 +184,7 @@ class TemplateService:
             if template is None:
                 raise NotFoundError("Template", str(template_id))
             if not template.is_available:
-                raise TemplateLibraryError("Archived templates cannot be used")
+                raise TemplateUnavailableError("Archived templates cannot be used")
             if folder_id is not None:
                 folder = await unit_of_work.graphs.get_folder(
                     destination_workspace_id,

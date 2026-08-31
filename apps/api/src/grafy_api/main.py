@@ -1,17 +1,11 @@
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.exception_handlers import (
-    http_exception_handler as default_http_exception_handler,
-    request_validation_exception_handler as default_validation_error_handler,
-)
-from fastapi.exceptions import RequestValidationError
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 
 from grafy_api.health import HealthResponse, health, readiness
 from grafy_core.application.collaboration import CollaborationService
@@ -20,12 +14,6 @@ from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.application.saved_graphs import SavedGraphService
 from grafy_core.application.templates import TemplateService
 from grafy_core.application.identity import IdentityService
-from grafy_core.domain.errors import (
-    CapabilityDeniedError,
-    IdentityInvariantError,
-    NotFoundError,
-    UserDisabledError,
-)
 from grafy_core.operators.modules import MODULE_BOUNDARY_REGISTRATIONS
 from grafy_core.plugins import PluginRegistry
 
@@ -35,6 +23,8 @@ from grafy_persistence.unit_of_work import (
     SqlAlchemyUnitOfWork,
 )
 from grafy_api.app_state import AppIdentity, AppResources, get_identity
+from grafy_api.diagnostics import configure_diagnostics
+from grafy_api.http_errors import register_http_error_handlers
 from grafy_api.plugin_oci import runtime_profile
 from grafy_api.services.composition import build_workbench_components
 from grafy_api.settings import Settings, get_settings
@@ -44,10 +34,7 @@ from grafy_api.system_plugin_loader import (
     LoadedSystemPluginDeployment,
     load_system_plugin_deployment_file,
 )
-from grafy_api.v1.routes.auth.services import (
-    OIDC_TRANSACTION_COOKIE,
-    AuthService,
-)
+from grafy_api.v1.routes.auth.services import AuthService
 from grafy_api.v1.routes.auth.views import router as auth_router
 from grafy_api.v1.routes.artifacts.views import router as artifacts_router
 from grafy_api.v1.routes.catalog.views import router as catalog_router
@@ -65,178 +52,22 @@ from grafy_api.v1.routes.saved_graphs.views import (
     router as saved_graphs_router,
 )
 from grafy_api.v1.routes.uploads.views import router as uploads_router
-from grafy_api.v1.routes.workspaces.views import (
-    me_router,
-    router as workspaces_router,
-    workspace_failure_metadata,
-)
+from grafy_api.v1.routes.workspaces.views import me_router, router as workspaces_router
 
 
 logger = logging.getLogger(__name__)
 
 
-async def _request_validation_error_handler(
-    request: Request,
-    exception: Exception,
-) -> Response:
-    if not isinstance(exception, RequestValidationError):
-        raise exception
-    is_oidc_callback = request.url.path.endswith("/auth/oidc/callback")
-    is_oidc_login = request.url.path.endswith("/auth/oidc/login")
-    if is_oidc_login:
-        login_auth: AuthService = get_identity(request.app).auth_service
-        abuse_keys = login_auth.browser_abuse_keys(request)
-        allowed = await login_auth.allow_login_start(
-            abuse_keys.browser_key,
-            abuse_keys.network_key,
-        )
-        await login_auth.audit_request_failure(
-            request,
-            operation="oidc.login.start",
-            error_code="validation_failed" if allowed else "rate_limited",
-        )
-        return JSONResponse(
-            status_code=422 if allowed else 429,
-            content=(
-                {
-                    "detail": [
-                        {"loc": error.get("loc"), "type": error.get("type")}
-                        for error in exception.errors()
-                    ]
-                }
-                if allowed
-                else {"detail": "Too many login attempts"}
-            ),
-        )
-    if is_oidc_callback:
-        auth: AuthService = get_identity(request.app).auth_service
-        abuse_keys = auth.browser_abuse_keys(request)
-        allowed = await auth.allow_callback(
-            abuse_keys.browser_key,
-            abuse_keys.network_key,
-        )
-        consumed_transaction_id = await auth.replace_login_transaction(
-            request.cookies.get(OIDC_TRANSACTION_COOKIE)
-        )
-        if consumed_transaction_id is not None:
-            await auth.release_login(str(consumed_transaction_id))
-        error_code = "validation_failed" if allowed else "rate_limited"
-        await auth.audit_request_failure(
-            request,
-            operation="oidc.login.callback",
-            error_code=error_code,
-        )
-        response = JSONResponse(
-            status_code=422 if allowed else 429,
-            content=(
-                {
-                    "detail": [
-                        {"loc": error.get("loc"), "type": error.get("type")}
-                        for error in exception.errors()
-                    ]
-                }
-                if allowed
-                else {"detail": "Too many callback attempts"}
-            ),
-        )
-        auth.clear_transaction_cookie(response)
-        return response
-    await _audit_workspace_failure(request, "validation_failed")
-    if request.method != "PUT" or "/secrets/" not in request.url.path:
-        return await default_validation_error_handler(request, exception)
-    redacted_errors = [
-        {key: value for key, value in error.items() if key not in {"input", "ctx"}}
-        for error in exception.errors()
-    ]
-    return JSONResponse(status_code=422, content={"detail": redacted_errors})
-
-
-async def _not_found_error_handler(
-    request: Request,
-    _exception: Exception,
-) -> JSONResponse:
-    await _audit_workspace_failure(request, "not_found")
-    await _audit_auth_failure(request, "not_found")
-    return JSONResponse(status_code=404, content={"detail": "Not found"})
-
-
-async def _capability_denied_error_handler(
-    request: Request,
-    _exception: Exception,
-) -> JSONResponse:
-    await _audit_workspace_failure(request, "capability_denied")
-    return JSONResponse(status_code=403, content={"detail": "Forbidden"})
-
-
-async def _disabled_user_error_handler(
-    request: Request,
-    _exception: Exception,
-) -> JSONResponse:
-    await _audit_workspace_failure(request, "disabled_user")
-    return JSONResponse(status_code=401, content={"detail": "Authentication required"})
-
-
-async def _identity_invariant_error_handler(
-    request: Request,
-    _exception: Exception,
-) -> JSONResponse:
-    await _audit_workspace_failure(request, "identity_invariant")
-    return JSONResponse(
-        status_code=409, content={"detail": "Identity operation failed"}
-    )
-
-
-async def _http_error_handler(request: Request, exception: Exception) -> Response:
-    if isinstance(exception, HTTPException):
-        error_code = "not_found" if exception.status_code == 404 else "http_error"
-        await _audit_workspace_failure(request, error_code)
-        await _audit_auth_failure(request, error_code)
-        return await default_http_exception_handler(request, exception)
-    raise exception
-
-
-async def _audit_workspace_failure(
-    request: Request,
-    error_code: str,
-) -> None:
-    if getattr(request.state, "auth_failure_audited", False):
-        return
-    metadata = workspace_failure_metadata(request)
-    if metadata is None:
-        return
-    operation, workspace_id, resource_type, resource_id = metadata
-    await get_identity(request.app).auth_service.audit_request_failure(
-        request,
-        operation=operation,
-        error_code=error_code,
-        workspace_id=workspace_id,
-        resource_type=resource_type,
-        resource_id=resource_id,
-    )
-
-
-async def _audit_auth_failure(request: Request, error_code: str) -> None:
-    if getattr(request.state, "auth_failure_audited", False):
-        return
-    if request.url.path.startswith("/v1/auth/") and not request.url.path.endswith(
-        ("/oidc/login", "/oidc/callback")
-    ):
-        await get_identity(request.app).auth_service.audit_request_failure(
-            request,
-            operation="auth.session.request",
-            error_code=error_code,
-        )
-
-
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or get_settings()
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    configure_diagnostics(
+        level=resolved_settings.log_level,
+        renderer=resolved_settings.log_renderer,
+    )
     database = create_database(resolved_settings.resolved_database_url)
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         owner_lease: ApiOwnerLease | None = None
         try:
             if resolved_settings.require_single_api_owner:
@@ -309,9 +140,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     max_sandbox_variants_per_scope=(
                         resolved_settings.max_plugin_sandbox_variants_per_execution
                     ),
-                    egress_policy=(
-                        resolved_settings.resolved_plugin_egress_policy
-                    ),
+                    egress_policy=(resolved_settings.resolved_plugin_egress_policy),
                     network_policy=network_policy,
                 )
                 await plugin_runtime.recover_orphans()
@@ -505,6 +334,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         identity_service=identity_service,
         auth_service=auth_service,
     )
+    register_http_error_handlers(application)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=list(resolved_settings.allowed_cors_origins),
@@ -517,20 +347,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "Content-Length",
             "Content-Range",
             "ETag",
+            "X-Request-ID",
         ],
-    )
-    application.add_exception_handler(
-        RequestValidationError,
-        _request_validation_error_handler,
-    )
-    application.add_exception_handler(HTTPException, _http_error_handler)
-    application.add_exception_handler(NotFoundError, _not_found_error_handler)
-    application.add_exception_handler(
-        CapabilityDeniedError, _capability_denied_error_handler
-    )
-    application.add_exception_handler(UserDisabledError, _disabled_user_error_handler)
-    application.add_exception_handler(
-        IdentityInvariantError, _identity_invariant_error_handler
     )
     application.add_api_route(
         "/health",

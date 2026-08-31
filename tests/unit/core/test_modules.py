@@ -687,6 +687,7 @@ async def test_graph_module_node_preserves_inner_failure_as_contextual_cause() -
         )
 
     assert raised.value.failure_code is PluginFailureCode.OPERATOR_FAILURE
+    assert "inner graph failed" not in str(raised.value)
     module_error = raised.value.__cause__
     assert isinstance(module_error, GraphModuleExecutionError)
     assert "failed while executing parent node 'module-instance'" in str(module_error)

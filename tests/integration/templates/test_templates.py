@@ -391,7 +391,11 @@ def test_template_snapshot_and_instantiations_remain_independent_and_safe(
         )
     )
     assert invalid_capability.status_code == 422
-    assert "cannot include module operator" in invalid_capability.text
+    assert invalid_capability.json()["detail"] == (
+        "This graph cannot be saved as a template"
+    )
+    assert invalid_capability.json()["code"] == "template.copy_rejected"
+    assert "cannot include module operator" not in invalid_capability.text
 
 
 def test_template_search_metadata_archive_and_role_authorization(
@@ -427,7 +431,8 @@ def test_template_search_metadata_archive_and_role_authorization(
         ),
     )
     assert use_archived.status_code == 422
-    assert "Archived templates cannot be used" in use_archived.text
+    assert use_archived.json()["detail"] == "Archived templates cannot be used"
+    assert use_archived.json()["code"] == "template.unavailable"
 
 
 def test_using_template_requires_source_read_and_destination_create(
@@ -492,4 +497,6 @@ def test_template_destination_folder_must_exist_in_destination_workspace(
         ),
     )
     assert response.status_code == 404
-    assert "Graph folder" in response.text
+    assert response.json()["detail"] == "Not found"
+    assert response.json()["code"] == "resource.not_found"
+    assert "00000000-0000-0000-0000-000000000999" not in response.text
