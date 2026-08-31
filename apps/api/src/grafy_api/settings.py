@@ -105,13 +105,16 @@ class Settings(BaseSettings):
         default=None,
         pattern=r"^[0-9a-f]{64}$",
     )
-    # Exact System Plugin host bindings are loaded only from this deployment
-    # manifest. When omitted, startup registers Module boundaries only.
+    # Exact System Plugin host bindings are loaded once at API startup from this
+    # deployment manifest. When omitted, startup registers Module boundaries only.
     system_plugin_deployment_manifest: Path | None = None
     # Workspace Plugin execution is fail-closed unless the local Docker
     # sandbox owner is explicitly enabled for this single API process.
     plugin_runtime_enabled: bool = False
     plugin_docker_binary: str = Field(default="docker", min_length=1, max_length=1_024)
+    # The Docker daemon must be able to bind this host path into one-shot
+    # publisher containers. The local default stays beneath the repository.
+    plugin_publisher_scratch_root: Path = Path(".grafy-artifacts/plugin-publisher")
     plugin_runtime_seccomp_profile: Path | None = None
     plugin_egress_broker_image: str | None = None
     # Legacy translation inputs. When GRAFY_NETWORK_POLICY_MANIFEST is set it
@@ -120,7 +123,8 @@ class Settings(BaseSettings):
     plugin_http_egress_destinations: tuple[str, ...] = ()
     plugin_postgresql_egress_destinations: tuple[str, ...] = ()
     # Versioned deployment manifest of network access profiles and their
-    # assignments. Its absence translates the legacy egress variables.
+    # assignments. When configured, it replaces legacy HTTP destination grants
+    # for Plugin execution; its absence translates the legacy egress variables.
     network_policy_manifest: Path | None = None
     # Deployment-owned directory of versioned Grafy Plugin SDK wheels (e.g. a
     # built grapy-core wheel) exposed to Plugin dependency resolution via
@@ -317,6 +321,10 @@ class Settings(BaseSettings):
     @property
     def resolved_plugin_authoring_root(self) -> Path:
         return self.plugin_authoring_root.expanduser().resolve()
+
+    @property
+    def resolved_plugin_publisher_scratch_root(self) -> Path:
+        return self.plugin_publisher_scratch_root.expanduser().resolve()
 
     @property
     def resolved_plugin_sdk_project(self) -> Path:

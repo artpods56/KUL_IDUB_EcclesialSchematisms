@@ -154,7 +154,9 @@ Set `GRAFY_PUBLISHER_SOURCE_ROOT` to an absolute, deployment-owned host
 directory containing System Plugin projects. `GRAFY_PUBLISHER_SCRATCH_ROOT`
 must also be an absolute host path and is mounted at the identical path in the
 job so sibling sandbox containers can bind the exact frozen snapshot. The
-default scratch path is `/tmp/grafy-plugin-publisher`.
+Compose passes that path to Grafy as
+`GRAFY_PLUGIN_PUBLISHER_SCRATCH_ROOT`. The default scratch path is
+`/tmp/grafy-plugin-publisher`.
 
 Build the publisher image, then publish one candidate globally:
 

@@ -49,6 +49,18 @@ def test_agent_authoring_paths_are_deployment_owned(tmp_path: Path) -> None:
     assert settings.resolved_plugin_sdk_project == (tmp_path / "sdk").resolve()
 
 
+def test_plugin_publisher_scratch_root_resolves_from_configuration(
+    tmp_path: Path,
+) -> None:
+    scratch_root = tmp_path / "publisher-scratch"
+    settings = Settings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
+        plugin_publisher_scratch_root=scratch_root,
+    )
+
+    assert settings.resolved_plugin_publisher_scratch_root == scratch_root.resolve()
+
+
 def test_default_authoring_root_does_not_overlap_system_plugin_packages(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

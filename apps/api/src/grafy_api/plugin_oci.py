@@ -305,6 +305,7 @@ RUN uv sync --locked --no-dev --no-editable \\
     --find-links /opt/grafy/plugin/wheels \\
     && test -x /opt/grafy/plugin/.venv/bin/python \\
     && test -r /opt/grafy/plugin/plugin-loader.json \\
+    && /opt/grafy/plugin/.venv/bin/python -I -c "from pathlib import Path; from grafy_core.runtime.plugin_loader import PluginGuestLoaderManifest; PluginGuestLoaderManifest.from_json_bytes(Path('/opt/grafy/plugin/plugin-loader.json').read_bytes())" \\
     && rm -rf /tmp/uv-cache
 LABEL org.opencontainers.image.source.digest="sha256:{source_digest}" \\
       io.grafy.plugin.runtime="1" \\

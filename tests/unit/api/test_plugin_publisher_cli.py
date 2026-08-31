@@ -7,6 +7,8 @@ import pytest
 
 from grafy_api import cli
 from grafy_api.cli_credentials import CredentialDigest
+from grafy_api.plugin_publishing import PluginPublishingError
+from grafy_api.system_plugin_inventory import SystemPluginInventoryError
 from grafy_core.domain.identity import (
     ActorContext,
     PlatformTokenPrincipal,
@@ -257,9 +259,16 @@ def test_check_rejects_a_symlinked_source_directory(
 
 class RecordingSystemPublisher:
     observed_loader_target: str | None = None
+    observed_scratch_root: Path | None = None
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
+    def __init__(
+        self,
+        *args: object,
+        scratch_root: Path | None = None,
+        **kwargs: object,
+    ) -> None:
         del args, kwargs
+        type(self).observed_scratch_root = scratch_root
 
     def verify(
         self,
@@ -363,6 +372,7 @@ def test_global_publish_inspects_with_checked_in_loader_target(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    publisher_scratch_root = Path("/docker-visible/plugin-publisher")
     settings = SimpleNamespace(
         resolved_database_url="sqlite+aiosqlite://",
         storage_bucket="plugins",
@@ -372,10 +382,12 @@ def test_global_publish_inspects_with_checked_in_loader_target(
         plugin_docker_binary="docker",
         resolved_plugin_roots=(),
         resolved_plugin_wheelhouse=None,
+        resolved_plugin_publisher_scratch_root=publisher_scratch_root,
         resolved_plugin_egress_policy=object(),
         resolved_network_policy=object(),
     )
     RecordingSystemPublisher.observed_loader_target = None
+    RecordingSystemPublisher.observed_scratch_root = None
     monkeypatch.setattr(cli, "get_settings", lambda: settings)
     monkeypatch.setattr(cli, "create_database", create_fake_database)
     monkeypatch.setattr(cli, "configured_file_storage", configured_fake_storage)
@@ -420,10 +432,10 @@ def test_global_publish_inspects_with_checked_in_loader_target(
         RecordingSystemPublisher.observed_loader_target
         == "grafy_plugin_text.plugin:TEXT"
     )
+    assert RecordingSystemPublisher.observed_scratch_root == publisher_scratch_root
     assert (
         "Published global Plugin builtin.text release 1; promote it explicitly "
-        "to activate it"
-        in capsys.readouterr().out
+        "to activate it" in capsys.readouterr().out
     )
 
 
@@ -599,3 +611,34 @@ def test_auth_and_platform_token_commands_do_not_accept_raw_token_arguments(
 
     assert excinfo.value.code == 0
     assert "--token" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "failure",
+    (
+        PluginPublishingError("Plugin publisher sandbox lock check failed"),
+        SystemPluginInventoryError("System Plugin 'llm' is not registered"),
+    ),
+)
+def test_cli_renders_publication_failures_without_a_traceback(
+    failure: RuntimeError,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async def fail(_args: object) -> None:
+        raise failure
+
+    monkeypatch.setattr(cli, "_run", fail)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["grafy", "plugin", "check", "plugins/llm"],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main()
+
+    assert excinfo.value.code == 2
+    error = capsys.readouterr().err
+    assert str(failure) in error
+    assert "Traceback" not in error

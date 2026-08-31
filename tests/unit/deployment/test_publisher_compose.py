@@ -13,11 +13,15 @@ def test_publisher_is_one_shot_profile_and_only_base_service_with_docker_socket(
     services = cast(dict[str, dict[str, object]], document["services"])
     publisher = services["publisher"]
     publisher_volumes = cast(list[str], publisher["volumes"])
+    publisher_environment = cast(dict[str, object], publisher["environment"])
 
     assert publisher["profiles"] == ["publisher"]
     assert publisher["restart"] == "no"
     assert publisher["entrypoint"] == [".venv/bin/grafy"]
     assert "/var/run/docker.sock:/var/run/docker.sock" in publisher_volumes
+    assert publisher_environment["GRAFY_PLUGIN_PUBLISHER_SCRATCH_ROOT"] == (
+        "${GRAFY_PUBLISHER_SCRATCH_ROOT:-/tmp/grafy-plugin-publisher}"
+    )
     assert all(
         "/var/run/docker.sock" not in str(service.get("volumes", []))
         for name, service in services.items()

@@ -68,6 +68,7 @@ from grafy_api.system_plugin_deployment import SystemPluginDeploymentManifestBui
 from grafy_api.system_plugin_inventory import (
     CHECKED_IN_SYSTEM_PLUGIN_INVENTORY_PATH,
     SystemBaselineManifestGenerator,
+    SystemPluginInventoryError,
     load_system_plugin_inventory,
 )
 from grafy_api.system_plugin_loader import load_system_plugin_deployment_file
@@ -481,6 +482,7 @@ async def _run(args: argparse.Namespace) -> None:
                     runtime_profile=settings.plugin_runtime_profile,
                     image=args.sandbox_image,
                     docker_binary=settings.plugin_docker_binary,
+                    scratch_root=(settings.resolved_plugin_publisher_scratch_root),
                 )
                 verified = await asyncio.to_thread(
                     publisher.verify,
@@ -813,7 +815,12 @@ def main() -> None:
         parser.error("--sandbox-image is required with plugin publish --global")
     try:
         asyncio.run(_run(args))
-    except (CliCredentialError, IdentityInvariantError) as exc:
+    except (
+        CliCredentialError,
+        IdentityInvariantError,
+        PluginPublishingError,
+        SystemPluginInventoryError,
+    ) as exc:
         parser.error(str(exc))
 
 
