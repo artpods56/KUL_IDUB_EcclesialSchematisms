@@ -11,7 +11,10 @@ import type {
 } from "@/lib/api";
 import { deferred } from "./test/deferred";
 import { renderHook } from "./test/renderHook";
-import { useSavedGraphLifecycle } from "./useSavedGraphLifecycle";
+import {
+  useSavedGraphLifecycle,
+  type GraphRoomPersistenceResult,
+} from "./useSavedGraphLifecycle";
 
 const router = vi.hoisted(() => ({
   push: vi.fn(),
@@ -261,7 +264,17 @@ describe("useSavedGraphLifecycle document ownership", () => {
   });
 
   it("keeps an uncheckpointed collaborative head dirty and non-materializable", async () => {
-    const graph = savedGraph(GRAPH_A_ID, "Checkpoint", 3);
+    const checkpointNode = {
+      id: "llm",
+      operator_id: "llm.openai.completion",
+      operator_version: 1,
+      position: { x: 0, y: 0 },
+      config: { base_url: "https://api.openai.com/v1" },
+    };
+    const graph = {
+      ...savedGraph(GRAPH_A_ID, "Checkpoint", 3),
+      nodes: [checkpointNode],
+    };
     api.getSavedGraph.mockResolvedValue(graph);
     const { options, callbacks } = lifecycleOptions(GRAPH_A_ID);
     const hook = await renderHook(useSavedGraphLifecycle, options);
@@ -274,7 +287,10 @@ describe("useSavedGraphLifecycle document ownership", () => {
       checkpoint_revision: 3,
       name: "Live room edit",
       updated_at: "2026-08-13T12:00:00Z",
-      nodes: [],
+      nodes: [{
+        ...checkpointNode,
+        config: { base_url: "https://openrouter.ai/api/v1" },
+      }],
       edges: [],
     };
 
@@ -282,35 +298,47 @@ describe("useSavedGraphLifecycle document ownership", () => {
       hook.result.current.syncFromCollaborativeHead(liveHead);
     });
 
-    expect(hook.result.current.activeGraph).toMatchObject({
+    expect(hook.result.current.activeGraph).toEqual({
       id: GRAPH_A_ID,
       revision: 3,
+      nodes: [checkpointNode],
     });
     expect(hook.result.current.isDirty).toBe(true);
     expect(hook.result.current.canMaterializeSavedGraph).toBe(false);
-    expect(callbacks.replaceDocument).toHaveBeenLastCalledWith({
-      name: "Live room edit",
-      nodes: [],
-      edges: [],
-    });
+    expect(callbacks.replaceDocument).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        name: "Live room edit",
+        nodes: [
+          expect.objectContaining({
+            id: "llm",
+            config: { base_url: "https://openrouter.ai/api/v1" },
+          }),
+        ],
+        edges: [],
+      }),
+    );
   });
 
   it("marks the reconciled room head saved when checkpoint catches up", async () => {
     const graph = savedGraph(GRAPH_A_ID, "Checkpoint", 1);
     api.getSavedGraph.mockResolvedValue(graph);
     const { options } = lifecycleOptions(GRAPH_A_ID);
+    const checkpointHead: CollaborativeHead = {
+      graph_id: GRAPH_A_ID,
+      room_epoch: "00000000-0000-4000-8000-0000000000ee",
+      collaboration_sequence: 4,
+      checkpoint_sequence: 4,
+      checkpoint_revision: 2,
+      name: "Checkpoint",
+      updated_at: "2026-08-13T12:00:00Z",
+      nodes: [],
+      edges: [],
+    };
     options.roomPersistence = {
       canPersist: true,
       persistDocument: vi.fn().mockResolvedValue({
-        graph_id: GRAPH_A_ID,
-        room_epoch: "00000000-0000-4000-8000-0000000000ee",
-        collaboration_sequence: 4,
-        checkpoint_sequence: 4,
-        checkpoint_revision: 2,
-        name: "Checkpoint",
-        updated_at: "2026-08-13T12:00:00Z",
-        nodes: [],
-        edges: [],
+        checkpointHead,
+        currentHead: checkpointHead,
       }),
     };
     const hook = await renderHook(useSavedGraphLifecycle, options);
@@ -328,9 +356,65 @@ describe("useSavedGraphLifecycle document ownership", () => {
     expect(hook.result.current.canMaterializeSavedGraph).toBe(true);
   });
 
+  it("refreshes the secret binding snapshot from a checkpointed room head", async () => {
+    const checkpointNode = {
+      id: "llm",
+      operator_id: "llm.openai.completion",
+      operator_version: 1,
+      position: { x: 0, y: 0 },
+      config: { base_url: "https://api.openai.com/v1" },
+    };
+    const graph = {
+      ...savedGraph(GRAPH_A_ID, "Checkpoint", 1),
+      nodes: [checkpointNode],
+    };
+    const refreshNodeSecretStatuses = vi.fn().mockResolvedValue(true);
+    api.getSavedGraph.mockResolvedValue(graph);
+    const { options } = lifecycleOptions(
+      GRAPH_A_ID,
+      refreshNodeSecretStatuses,
+    );
+    const hook = await renderHook(useSavedGraphLifecycle, options);
+    await waitFor(() => hook.result.current.activeGraph?.id === GRAPH_A_ID);
+    refreshNodeSecretStatuses.mockClear();
+    const checkpointedNode = {
+      ...checkpointNode,
+      config: { base_url: "https://openrouter.ai/api/v1" },
+    };
+
+    React.act(() => {
+      hook.result.current.syncFromCollaborativeHead({
+        graph_id: GRAPH_A_ID,
+        room_epoch: "00000000-0000-4000-8000-0000000000ee",
+        collaboration_sequence: 4,
+        checkpoint_sequence: 4,
+        checkpoint_revision: 2,
+        name: "Checkpoint",
+        updated_at: "2026-08-13T12:00:00Z",
+        nodes: [checkpointedNode],
+        edges: [],
+      });
+    });
+
+    expect(hook.result.current.activeGraph).toEqual({
+      id: GRAPH_A_ID,
+      revision: 2,
+      nodes: [checkpointedNode],
+    });
+    expect(refreshNodeSecretStatuses).toHaveBeenCalledOnce();
+    expect(refreshNodeSecretStatuses).toHaveBeenCalledWith(
+      {
+        id: GRAPH_A_ID,
+        revision: 2,
+        nodes: [checkpointedNode],
+      },
+      expect.any(Array),
+    );
+  });
+
   it("keeps a peer head dirty when it advances during checkpoint continuation", async () => {
     const graph = savedGraph(GRAPH_A_ID, "Checkpoint", 1);
-    const checkpointContinuation = deferred<CollaborativeHead>();
+    const checkpointContinuation = deferred<GraphRoomPersistenceResult>();
     const persistDocument = vi.fn(() => checkpointContinuation.promise);
     api.getSavedGraph.mockResolvedValue(graph);
     const { options, callbacks } = lifecycleOptions(GRAPH_A_ID);
@@ -376,10 +460,24 @@ describe("useSavedGraphLifecycle document ownership", () => {
     });
 
     await React.act(async () => {
-      checkpointContinuation.resolve({
-        ...peerHeadBeforeCheckpoint,
+      const checkpointHead: CollaborativeHead = {
+        graph_id: GRAPH_A_ID,
+        room_epoch: peerHeadBeforeCheckpoint.room_epoch,
+        collaboration_sequence: 4,
         checkpoint_sequence: 4,
         checkpoint_revision: 2,
+        name: "Checkpoint",
+        updated_at: "2026-08-13T12:00:00Z",
+        nodes: [],
+        edges: [],
+      };
+      checkpointContinuation.resolve({
+        checkpointHead,
+        currentHead: {
+          ...peerHeadBeforeCheckpoint,
+          checkpoint_sequence: 4,
+          checkpoint_revision: 2,
+        },
       });
       await savePromise;
     });

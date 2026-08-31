@@ -101,6 +101,7 @@ import {
   shouldReplaceCollaborativeHead,
   toLocalGraphCommand,
   toRoomGraphCommand,
+  toRoomReplaceDocumentCommand,
   useGraphRoomSession,
   useRemoteDragPreviews,
   type RoomGraphCommand,
@@ -141,7 +142,6 @@ import {
   ARTIFACT_VIEWER_INTERACTION_OUTPUT_HANDLE,
   ARTIFACT_VIEWER_NODE_TYPE,
   artifactViewersFromPresentation,
-  emptyGraphPresentation,
   presentationFromArtifactViewers,
   type ArtifactViewerCanvasState,
   type ArtifactViewerEdge,
@@ -1751,25 +1751,20 @@ function WorkbenchBody({
         if (!graphId) {
           throw new Error("Graph room requires a saved graph id.");
         }
-        const command = {
-          kind: "replace_document",
-          name: draft.name,
-          document: {
-            schema_version: 5,
-            nodes: draft.nodes ?? [],
-            edges: draft.edges ?? [],
-            presentation: draft.presentation ?? emptyGraphPresentation(),
-          },
-        } as RoomGraphCommand;
+        const command = toRoomReplaceDocumentCommand(draft);
         const { head: replacedHead } = await submitRoomCommand(command);
         const checkpointed = await checkpointGraph(workspaceId, graphId, {
           expected_room_epoch: replacedHead.room_epoch,
           expected_sequence: replacedHead.collaboration_sequence,
         });
-        return reconcileCheckpointHead(
+        const currentHead = reconcileCheckpointHead(
           checkpointed.head,
           replacedHead.room_epoch,
         );
+        return {
+          checkpointHead: checkpointed.head,
+          currentHead,
+        };
       },
     };
   }, [

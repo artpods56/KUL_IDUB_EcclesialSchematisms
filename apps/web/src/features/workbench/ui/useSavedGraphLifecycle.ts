@@ -19,6 +19,7 @@ import {
 } from "@/lib/api";
 import { ApiError } from "@/lib/api/client";
 import {
+  hydrateAuthoredGraphDocument,
   hydrateSavedGraph,
   savedGraphExecutionFingerprint,
   savedGraphFingerprint,
@@ -47,13 +48,18 @@ export interface ActiveSavedGraph {
   nodes: readonly SavedGraphNode[];
 }
 
+export interface GraphRoomPersistenceResult {
+  readonly checkpointHead: CollaborativeHead;
+  readonly currentHead: CollaborativeHead;
+}
+
 /** Prefer room/command persistence when the graph room can accept edits. */
 export interface GraphRoomPersistenceAdapter {
   readonly canPersist: boolean;
-  /** Checkpoint the draft and return the effective current room head. */
+  /** Keep the exact checkpoint separate from a newer effective room head. */
   persistDocument: (
     draft: CreateSavedGraphRequest,
-  ) => Promise<CollaborativeHead>;
+  ) => Promise<GraphRoomPersistenceResult>;
 }
 
 interface UseSavedGraphLifecycleOptions {
@@ -278,7 +284,7 @@ export function useSavedGraphLifecycle({
 
   const syncFromCollaborativeHead = React.useCallback((
     head: CollaborativeHead,
-  ) => {
+  ): void => {
     const responseDocument = authoredGraphDocument({
       name: head.name,
       nodes: head.nodes ?? [],
@@ -291,9 +297,11 @@ export function useSavedGraphLifecycle({
       revision: head.checkpoint_revision,
       nodes: head.nodes ?? [],
     };
+    const headIsCheckpointed =
+      head.collaboration_sequence === head.checkpoint_sequence;
     approvedRouteGraphIdRef.current = head.graph_id;
-    setActiveGraph(nextActiveGraph);
-    if (head.collaboration_sequence === head.checkpoint_sequence) {
+    if (headIsCheckpointed) {
+      setActiveGraph(nextActiveGraph);
       rememberSavedDraft(
         createSavedGraphRequest(responseDocument, responsePresentation),
       );
@@ -307,7 +315,26 @@ export function useSavedGraphLifecycle({
     // Preserve execution overlays: room sync must not clear materialized pins.
     replaceDocument(responseDocument);
     replacePresentation(head.graph_id, responsePresentation);
-  }, [rememberSavedDraft, replaceDocument, replacePresentation]);
+    if (headIsCheckpointed) {
+      const checkpointNodes = registry
+        ? hydrateAuthoredGraphDocument(responseDocument, registry).nodes.map(
+            (node) => ({
+              ...node,
+              data: attachNodeCallbacks(node.data),
+            }),
+          )
+        : nodes;
+      void refreshNodeSecretStatuses(nextActiveGraph, checkpointNodes);
+    }
+  }, [
+    attachNodeCallbacks,
+    nodes,
+    refreshNodeSecretStatuses,
+    registry,
+    rememberSavedDraft,
+    replaceDocument,
+    replacePresentation,
+  ]);
 
   const saveCurrentGraph = React.useCallback(async (nameOverride?: string) => {
     if (
@@ -342,7 +369,7 @@ export function useSavedGraphLifecycle({
       const persistenceResult = activeRoomPersistence
         ? {
             kind: "collaborative" as const,
-            head: await activeRoomPersistence.persistDocument(submittedDraft),
+            result: await activeRoomPersistence.persistDocument(submittedDraft),
           }
         : {
             kind: "saved" as const,
@@ -362,14 +389,15 @@ export function useSavedGraphLifecycle({
         return;
       }
       if (persistenceResult.kind === "collaborative") {
-        const head = persistenceResult.head;
-        const nextActiveGraph = {
-          id: head.graph_id,
-          revision: head.checkpoint_revision,
-          nodes: head.nodes ?? [],
-        };
-        syncFromCollaborativeHead(head);
-        await refreshNodeSecretStatuses(nextActiveGraph, nodes);
+        const { checkpointHead, currentHead } = persistenceResult.result;
+        syncFromCollaborativeHead(checkpointHead);
+        if (
+          currentHead.room_epoch !== checkpointHead.room_epoch ||
+          currentHead.collaboration_sequence !==
+            checkpointHead.collaboration_sequence
+        ) {
+          syncFromCollaborativeHead(currentHead);
+        }
         if (
           !mountedRef.current ||
           documentGenerationRef.current !== documentGeneration

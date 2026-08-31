@@ -22,6 +22,7 @@ export {
   applyRoomCommandToHead,
   toLocalGraphCommand,
   toRoomGraphCommand,
+  toRoomReplaceDocumentCommand,
 } from "./room-command-bridge";
 export { PresenceOverlay } from "./PresenceOverlay";
 export { RemoteSelectionRing } from "./RemoteSelectionRing";

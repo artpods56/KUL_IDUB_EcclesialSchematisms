@@ -470,6 +470,47 @@ async def test_unavailable_operator_keeps_secret_dormant_until_supported_again(
     assert restored.get_secret_value() == "dormant-provider-key"
 
 
+async def test_pinned_isolated_operator_uses_release_contract_for_secret_binding(
+    node_secret_setup: tuple[
+        Database,
+        NodeSecretService,
+        SavedGraphService,
+        PluginRegistry,
+    ],
+) -> None:
+    database, _, saved_graphs, _ = node_secret_setup
+    graph = await _saved_secret_graph(saved_graphs)
+    deployment = build_selected_system_plugin_deployment((SECRET_TEST_PLUGIN,))
+    host_registry = PluginRegistry()
+    host_registry.freeze()
+    service = NodeSecretService(
+        unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
+        plugin_registry=host_registry,
+        plugin_release_lookup=deployment.release_lookup,
+        encryption_key=_encryption_key(),
+    )
+
+    configured = await service.configure(
+        workspace_id=WORKSPACE_ID,
+        graph_id=graph.id,
+        node_id="llm",
+        name="api_key",
+        value=SecretStr("isolated-provider-key"),
+        expected_graph_revision=graph.revision,
+    )
+    resolved = await service.resolve_secret(
+        workspace_id=WORKSPACE_ID,
+        graph_id=graph.id,
+        graph_revision=graph.revision,
+        node_id="llm",
+        name="api_key",
+        dependencies={"base_url": "https://llm.example/v1"},
+    )
+
+    assert configured.configured is True
+    assert resolved.get_secret_value() == "isolated-provider-key"
+
+
 async def test_secret_resolution_uses_the_pinned_saved_graph_revision(
     node_secret_setup: tuple[
         Database,

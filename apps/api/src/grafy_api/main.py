@@ -334,6 +334,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             node_secrets = NodeSecretService(
                 unit_of_work_factory=lambda: SqlAlchemyUnitOfWork(database.sessions),
                 plugin_registry=registry,
+                plugin_release_lookup=plugin_releases,
                 encryption_key=resolved_settings.credential_encryption_key,
             )
             components = build_workbench_components(

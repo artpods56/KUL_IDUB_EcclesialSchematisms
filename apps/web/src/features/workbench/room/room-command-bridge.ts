@@ -1,4 +1,4 @@
-import type { CollaborativeHead } from "@/lib/api";
+import type { CollaborativeHead, CreateSavedGraphRequest } from "@/lib/api";
 
 import {
   emptyGraphPresentation,
@@ -17,6 +17,14 @@ type RoomSavedGraphNode = Extract<
   RoomGraphCommand,
   { readonly kind: "add_node" }
 >["node"];
+type RoomSavedGraphEdge = Extract<
+  RoomGraphCommand,
+  { readonly kind: "add_edge" }
+>["edge"];
+type RoomReplaceDocumentCommand = Extract<
+  RoomGraphCommand,
+  { readonly kind: "replace_document" }
+>;
 
 function toRoomSavedGraphNode(node: AuthoredGraphDocument["nodes"][number]): RoomSavedGraphNode {
   return {
@@ -56,6 +64,56 @@ function toRoomSavedGraphNode(node: AuthoredGraphDocument["nodes"][number]): Roo
     position: {
       x: node.position.x,
       y: node.position.y,
+    },
+  };
+}
+
+function toRoomSavedGraphEdge(
+  edge: AuthoredGraphDocument["edges"][number],
+): RoomSavedGraphEdge {
+  return {
+    collection_mode: edge.collection_mode,
+    conversion_path: (edge.conversion_path ?? []).map((conversion) => ({
+      id: conversion.id,
+      version: conversion.version,
+    })),
+    enabled: edge.enabled,
+    from_node: edge.from_node,
+    from_port: edge.from_port,
+    id: edge.id,
+    projection:
+      edge.projection === null || edge.projection === undefined
+        ? null
+        : { path: [...edge.projection.path] },
+    route_offset:
+      edge.route_offset === null || edge.route_offset === undefined
+        ? null
+        : { x: edge.route_offset.x, y: edge.route_offset.y },
+    to_node: edge.to_node,
+    to_plug: edge.to_plug ?? null,
+    to_port: edge.to_port,
+  };
+}
+
+/** Project the REST/UI draft aliases into the exact graph-room wire contract. */
+export function toRoomReplaceDocumentCommand(
+  draft: CreateSavedGraphRequest,
+): RoomReplaceDocumentCommand {
+  const document = authoredGraphDocument(draft);
+  const presentation = draft.presentation ?? emptyGraphPresentation();
+  return {
+    kind: "replace_document",
+    name: document.name,
+    document: {
+      schema_version: 5,
+      nodes: document.nodes.map(toRoomSavedGraphNode),
+      edges: document.edges.map(toRoomSavedGraphEdge),
+      presentation: {
+        annotations: [...(presentation.annotations ?? [])],
+        bindings: [...(presentation.bindings ?? [])],
+        links: [...(presentation.links ?? [])],
+        viewers: [...(presentation.viewers ?? [])],
+      },
     },
   };
 }
@@ -141,7 +199,10 @@ export function toRoomGraphCommand(
         nodes: document.nodes,
         edges: [command.edge],
       });
-      return asRoom({ kind: "add_edge", edge: projected.edges?.[0] });
+      const edge = projected.edges?.[0];
+      return edge
+        ? { kind: "add_edge", edge: toRoomSavedGraphEdge(edge) }
+        : null;
     }
     case "remove_edges":
       return asRoom({
@@ -262,24 +323,19 @@ export function toRoomGraphCommand(
         nodes: document.nodes,
         edges: [edge],
       });
-      return asRoom({
+      const projectedEdge = projected.edges?.[0];
+      const expectedEdge = expected.edges?.[0];
+      if (!projectedEdge || !expectedEdge) return null;
+      return {
         kind: "update_edge",
-        expected_edge: expected.edges?.[0],
-        edge: projected.edges?.[0],
-      });
+        expected_edge: toRoomSavedGraphEdge(expectedEdge),
+        edge: toRoomSavedGraphEdge(projectedEdge),
+      };
     }
     case "replace_document": {
-      const projected = createSavedGraphRequest(command.document);
-      return asRoom({
-        kind: "replace_document",
-        name: projected.name,
-        document: {
-          schema_version: 5,
-          nodes: (projected.nodes ?? []).map(toRoomSavedGraphNode),
-          edges: projected.edges ?? [],
-          presentation: projected.presentation ?? emptyGraphPresentation(),
-        },
-      });
+      return toRoomReplaceDocumentCommand(
+        createSavedGraphRequest(command.document),
+      );
     }
     case "add_input_plug":
     case "remove_input_plug":

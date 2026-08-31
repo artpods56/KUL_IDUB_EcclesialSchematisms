@@ -4,6 +4,7 @@ import {
   applyRoomCommandToHead,
   toLocalGraphCommand,
   toRoomGraphCommand,
+  toRoomReplaceDocumentCommand,
 } from "./room-command-bridge";
 import type { AuthoredGraphDocument } from "../model/graph-document";
 import type { CollaborativeHead } from "@/lib/api";
@@ -169,6 +170,57 @@ describe("room-command-bridge", () => {
           },
         },
       ],
+    });
+  });
+
+  it("projects saved draft node aliases into the exact replace_document wire shape", () => {
+    const room = toRoomReplaceDocumentCommand({
+      name: "Replacement",
+      nodes: [scopedNode],
+      edges: [],
+      presentation: {
+        viewers: [],
+        links: [],
+        bindings: [],
+        annotations: [],
+      },
+    });
+
+    expect(room).toEqual({
+      kind: "replace_document",
+      name: "Replacement",
+      document: {
+        schema_version: 5,
+        nodes: [
+          {
+            artifact_type_bindings: [
+              {
+                variable: "T",
+                artifact_type: { id: "table.data", schema_version: 2 },
+              },
+            ],
+            config: { nested: { threshold: 3 } },
+            id: "scoped",
+            input_plugs: [{ id: "plug-1", port: "rows" }],
+            layout: { width: 420, body_height: 180, appendix_height: 260 },
+            operator_id: "reports.render",
+            operator_version: 7,
+            plugin_release_pin: {
+              scope: "system",
+              slug: "reports",
+              revision: 11,
+            },
+            position: { x: 80, y: 120 },
+          },
+        ],
+        edges: [],
+        presentation: {
+          viewers: [],
+          links: [],
+          bindings: [],
+          annotations: [],
+        },
+      },
     });
   });
 
