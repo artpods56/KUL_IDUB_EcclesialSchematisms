@@ -45,6 +45,7 @@ from grafy_core.nodes import (
     NodeExecutionContext,
     NodeProgressReporter,
     OutPort,
+    UserFacingNodeError,
     resolve_node_contracts,
 )
 from grafy_core.plugins import NodeCachePolicy, Plugin, PluginRegistry, PluginRuntimeContext
@@ -102,7 +103,7 @@ LOADER_TARGET = (
 
 
 class ParityConfig(NodeConfig):
-    behavior: Literal["success", "failure", "block"] = "success"
+    behavior: Literal["success", "failure", "safe_failure", "block"] = "success"
 
 
 class ParityInput(NodeInput):
@@ -135,6 +136,8 @@ async def parity_transform(
     await context.progress("started", current=1, total=2)
     if config.behavior == "failure":
         raise RuntimeError("intentional parity failure")
+    if config.behavior == "safe_failure":
+        raise UserFacingNodeError("safe parity failure")
     if config.behavior == "block":
         _block_started.setdefault(node_id, asyncio.Event()).set()
         await _block_release.setdefault(node_id, asyncio.Event()).wait()
@@ -588,6 +591,7 @@ async def test_same_exact_system_release_has_failure_and_cancellation_parity(
             plugin_release=identity,
         )
     assert host_failure.value.failure_code is PluginFailureCode.OPERATOR_FAILURE
+    assert "intentional parity failure" not in str(host_failure.value)
     host_cause = host_failure.value.__cause__
     assert isinstance(host_cause, RuntimeError)
     assert "intentional parity failure" in str(host_cause)
@@ -609,6 +613,7 @@ async def test_same_exact_system_release_has_failure_and_cancellation_parity(
     assert (
         oci_invocation_error.failure_code is PluginFailureCode.OPERATOR_FAILURE
     )
+    assert "intentional parity failure" not in str(oci_failure.value)
     assert host_failure_progress.events == oci_failure_progress.events == [
         ("started", 1, 2)
     ]
@@ -663,8 +668,17 @@ async def test_same_exact_system_release_has_failure_and_cancellation_parity(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("behavior", "safe_message"),
+    [
+        ("failure", None),
+        ("safe_failure", "safe parity failure"),
+    ],
+)
 async def test_same_exact_system_release_has_graph_result_failure_code_parity(
     tmp_path: Path,
+    behavior: Literal["failure", "safe_failure"],
+    safe_message: str | None,
 ) -> None:
     _calls.clear()
     release = _release()
@@ -711,7 +725,7 @@ async def test_same_exact_system_release_has_graph_result_failure_code_parity(
             id=f"{label}-failure",
             operator_id=contract.operator_id,
             operator_version=contract.operator_version,
-            config={"behavior": "failure"},
+            config={"behavior": behavior},
         )
         compiled_node = CompiledNode(
             request=request,
@@ -761,7 +775,13 @@ async def test_same_exact_system_release_has_graph_result_failure_code_parity(
     oci_error = oci_node_result.error
     assert host_error is not None
     assert oci_error is not None
-    assert "intentional parity failure" in host_error
+    if safe_message is None:
+        assert "intentional parity failure" not in host_error
+        assert "intentional parity failure" not in oci_error
+    else:
+        assert host_error.count(safe_message) == 1
+        assert oci_error.count(safe_message) == 1
+    assert "operator_failure" in host_error
     assert "operator_failure" in oci_error
 
 
@@ -830,6 +850,7 @@ async def test_oci_invoker_failures_preserve_explicit_codes_and_default_to_inter
         assert raised.value.failure_code is expected_code
         cause = raised.value.__cause__
         assert isinstance(cause, PluginInvocationError)
+        assert str(invoker_error) not in str(raised.value)
         if isinstance(invoker_error, PluginInvocationError):
             assert cause is invoker_error
         else:

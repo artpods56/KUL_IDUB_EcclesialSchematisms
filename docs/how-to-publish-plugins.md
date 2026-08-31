@@ -28,8 +28,8 @@ token itself in an environment variable or command argument.
 Check the directory before publication:
 
 ```console
-grafy plugin check plugins/llm
-grafy plugin publish plugins/llm --slug llm
+grafy plugin check examples/plugin-notes
+grafy plugin publish examples/plugin-notes --slug notes
 ```
 
 Grafy derives the Workspace and User from the PAT. There is no Workspace or
@@ -63,20 +63,44 @@ and appends an inactive release:
 
 ```console
 grafy plugin publish plugins/llm \
-  --slug llm \
+  --slug external.llm \
   --global \
-  --sandbox-image grafy-plugin-publisher:current
+  --sandbox-image grafy-publisher:local
 ```
+
+Grafy stages the candidate under
+`.grafy-artifacts/plugin-publisher` by default. Set
+`GRAFY_PLUGIN_PUBLISHER_SCRATCH_ROOT` to an absolute host path if the Docker
+daemon cannot mount that directory.
 
 Activate the returned revision explicitly:
 
 ```console
-grafy plugin promote llm@3
+grafy plugin promote external.llm@3
 ```
 
 Use `--if-generation N` only when an automation job must reject a concurrent
 selection change. Ordinary interactive promotion reads and advances the current
 generation automatically.
+
+## Report expected execution failures
+
+Raise `UserFacingNodeError` when a Plugin can give the graph user a useful,
+sanitized correction:
+
+```python
+from grafy_core.nodes import UserFacingNodeError
+
+
+raise UserFacingNodeError(
+    "The provider returned HTTP 404. Check the base URL and model name."
+)
+```
+
+Grafy carries that message across both the in-process and isolated Plugin
+runtimes. Other exception messages remain internal and appear to graph users as
+a generic `operator_failure`. Never put credentials, prompts, provider response
+bodies, or other sensitive runtime data in a `UserFacingNodeError`.
 
 Remove the interactive credential when it is no longer needed:
 

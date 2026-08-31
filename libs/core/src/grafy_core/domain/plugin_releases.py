@@ -14,6 +14,8 @@ from pydantic.errors import PydanticInvalidForJsonSchema
 from grafy_core.artifacts import (
     ArtifactBundleContract,
     ArtifactBundleFormat,
+    ArtifactReferenceContract,
+    ArtifactReferenceShape,
     ArtifactTypeKey,
     ArtifactTypeSpec,
     MaterializedJsonType,
@@ -42,7 +44,7 @@ if TYPE_CHECKING:
 
 PluginPortDirection = Literal["input", "output"]
 
-PLUGIN_INVOCATION_PROTOCOL = "grafy-plugin-invocation@6"
+PLUGIN_INVOCATION_PROTOCOL = "grafy-plugin-invocation@7"
 
 
 def plugin_protocol_digest() -> str:
@@ -134,6 +136,23 @@ class PluginArtifactBundleContract(PluginReleaseValue):
         return cls(format=contract.format, version=contract.version)
 
 
+class PluginArtifactReferenceContract(PluginReleaseValue):
+    path: tuple[str, ...] = Field(min_length=1)
+    target: PluginArtifactTypeKey
+    shape: ArtifactReferenceShape
+
+    @classmethod
+    def from_contract(
+        cls,
+        contract: ArtifactReferenceContract,
+    ) -> "PluginArtifactReferenceContract":
+        return cls(
+            path=contract.path,
+            target=PluginArtifactTypeKey.from_key(contract.target),
+            shape=contract.shape,
+        )
+
+
 class PluginArtifactTypeContract(PluginReleaseValue):
     key: PluginArtifactTypeKey
     title: str = Field(min_length=1, max_length=255)
@@ -141,6 +160,7 @@ class PluginArtifactTypeContract(PluginReleaseValue):
     field_projections: tuple[PluginFieldProjection, ...] = ()
     materialized_json_type: MaterializedJsonType | None = None
     export_formats: tuple[PluginExportFormat, ...] = ()
+    references: tuple[PluginArtifactReferenceContract, ...] = ()
     bundle: PluginArtifactBundleContract = PluginArtifactBundleContract(
         format="inline-json",
         version=1,
@@ -168,6 +188,10 @@ class PluginArtifactTypeContract(PluginReleaseValue):
                     filename=export_format.filename,
                 )
                 for export_format in spec.export_formats
+            ),
+            references=tuple(
+                PluginArtifactReferenceContract.from_contract(reference)
+                for reference in spec.references
             ),
             bundle=PluginArtifactBundleContract.from_contract(spec.bundle),
         )
@@ -498,6 +522,20 @@ class PluginCatalogManifest(PluginReleaseValue):
                     f"{rendered_path!r} targets artifact type {target[0]}@"
                     f"{target[1]}, which is neither owned nor declared as an exact "
                     "dependency"
+                )
+            for reference in artifact.references:
+                target = (
+                    reference.target.id,
+                    reference.target.schema_version,
+                )
+                if target in declared_artifact_keys:
+                    continue
+                rendered_path = ".".join(reference.path)
+                raise ValueError(
+                    f"Plugin {self.slug!r} artifact type {artifact.key.id}@"
+                    f"{artifact.key.schema_version} reference {rendered_path!r} "
+                    f"targets artifact type {target[0]}@{target[1]}, which is "
+                    "neither owned nor declared as an exact dependency"
                 )
         for conversion in self.artifact_conversions:
             for endpoint_name, endpoint in (
@@ -850,6 +888,7 @@ def _sha256(value: str, label: str) -> str:
 __all__ = [
     "PLUGIN_INVOCATION_PROTOCOL",
     "PluginArtifactBundleContract",
+    "PluginArtifactReferenceContract",
     "PluginArtifactConversionContract",
     "PluginArtifactConversionKey",
     "PluginArtifactTypeContract",

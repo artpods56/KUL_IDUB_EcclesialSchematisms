@@ -795,8 +795,14 @@ class NodeRegistryResponse(ApiResponse):
                     release_admission,
                     state=release_states.get(release.id),
                 )
-        installed_artifacts = {
+        declared_host_artifacts = {
             (spec.key.id, spec.key.schema_version): spec
+            for spec in registry.declared_artifact_types
+        }
+        expanded_host_artifact_contracts = {
+            (spec.key.id, spec.key.schema_version): (
+                PluginArtifactTypeContract.from_spec(spec)
+            )
             for spec in registry.artifact_types
         }
         release_artifact_owners = [
@@ -818,7 +824,7 @@ class NodeRegistryResponse(ApiResponse):
                     f"type {key[0]}@{key[1]} conflicts with "
                     f"{other_release.scope.value} Plugin {other_release.slug!r}"
                 )
-            installed = installed_artifacts.get(key)
+            installed = declared_host_artifacts.get(key)
             if installed is not None:
                 release_contract = next(
                     contract
@@ -877,7 +883,7 @@ class NodeRegistryResponse(ApiResponse):
                         f"Plugin releases declare different exact contracts for "
                         f"artifact type {key[0]}@{key[1]}"
                     )
-                installed = installed_artifacts.get(key)
+                installed = declared_host_artifacts.get(key)
                 if (
                     installed is not None
                     and contract != PluginArtifactTypeContract.from_spec(installed)
@@ -910,8 +916,10 @@ class NodeRegistryResponse(ApiResponse):
                 for release in plugin_releases
             ],
             artifact_types=[
-                ArtifactTypeSpecResponse.from_plugin_contract(contract)
-                for contract in serialized_artifact_contracts.values()
+                ArtifactTypeSpecResponse.from_plugin_contract(
+                    expanded_host_artifact_contracts.get(key, contract)
+                )
+                for key, contract in serialized_artifact_contracts.items()
             ],
             artifact_conversions=[
                 ArtifactConversionSpecResponse.from_spec(conversion)

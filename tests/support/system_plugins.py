@@ -11,7 +11,6 @@ from grafy_core.domain.plugin_installations import (
 )
 from grafy_core.domain.plugin_releases import (
     PluginArtifactConversionContract,
-    PluginArtifactTypeContract,
     PluginCapabilityManifest,
     PluginCatalogManifest,
     PluginDistribution,
@@ -202,16 +201,6 @@ def build_selected_system_plugin_deployment(
         plugin_catalog = PluginCatalogManifest.from_plugin(plugin)
         catalog = plugin_catalog.model_copy(
             update={
-                "artifact_types": tuple(
-                    PluginArtifactTypeContract.from_spec(artifact_type)
-                    for artifact_type in registry.artifact_types
-                    if registry.artifact_type_owner(artifact_type.key) == plugin.slug
-                ),
-                "artifact_type_dependencies": tuple(
-                    PluginArtifactTypeContract.from_spec(artifact_type)
-                    for artifact_type in registry.artifact_types
-                    if registry.artifact_type_owner(artifact_type.key) != plugin.slug
-                ),
                 "artifact_conversions": tuple(
                     contract
                     for contract in plugin_catalog.artifact_conversions

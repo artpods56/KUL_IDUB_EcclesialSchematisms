@@ -17,6 +17,7 @@ from grafy_core.nodes import (
     ArtifactTypeVariable,
     InPort,
     OutPort,
+    UserFacingNodeError,
 )
 from grafy_core.plugins import NodeCachePolicy
 
@@ -81,7 +82,7 @@ async def collect(
                 source.schema_version,
             )
         if source_type != artifact_type:
-            raise ValueError(
+            raise UserFacingNodeError(
                 "Collect inputs must share one artifact type; expected "
                 f"{artifact_type.id}@{artifact_type.schema_version}, got "
                 f"{source_type.id}@{source_type.schema_version} at input "
@@ -191,7 +192,9 @@ async def slice_sequence(config: SliceConfig, inputs: SliceInput) -> SliceOutput
     """Selects a contiguous range from an ordered artifact sequence."""
     source = inputs.items
     if not source.ordered:
-        raise ValueError(f"Cannot slice unordered sequence {source.sequence_id}")
+        raise UserFacingNodeError(
+            f"Cannot slice unordered sequence {source.sequence_id}"
+        )
 
     stop = None if config.count is None else config.start + config.count
     return SliceOutput(
@@ -247,13 +250,13 @@ async def item_at(config: ItemAtConfig, inputs: ItemAtInput) -> ItemAtOutput:
     """Picks one artifact ref from an ordered artifact sequence."""
     source = inputs.items
     if not source.ordered:
-        raise ValueError(
+        raise UserFacingNodeError(
             f"Cannot pick an item from unordered sequence {source.sequence_id}"
         )
 
     length = len(source.item_refs)
     if config.index >= length:
-        raise ValueError(
+        raise UserFacingNodeError(
             f"Cannot pick index {config.index} from sequence "
             f"{source.sequence_id} with length {length}"
         )

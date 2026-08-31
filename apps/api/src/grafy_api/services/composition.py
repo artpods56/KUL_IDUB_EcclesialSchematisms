@@ -8,7 +8,6 @@ from grafy_core.artifacts import InMemoryUnitOfWork
 from grafy_core.application.modules import ModuleLibraryService
 from grafy_core.application.plugin_releases import PluginReleaseService
 from grafy_core.application.saved_graphs import SavedGraphService
-from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.canonical_conversions import (
     CANONICAL_ARTIFACT_CONVERSIONS_BY_KEY,
     CanonicalArtifactConversionMap,
@@ -29,7 +28,10 @@ from grafy_core.runtime.persistence import (
 from grafy_core.runtime.resolvers import ResolverRegistry
 from grafy_storage import LocalFileObjectStore
 
-from grafy_api.plugin_admission import ReleaseExecutionAdmission
+from grafy_api.plugin_admission import (
+    HOST_BASE_CAPABILITIES,
+    ReleaseExecutionAdmission,
+)
 from grafy_api.network_policy import NetworkPolicy
 from grafy_api.system_host_bindings import (
     LoadedSystemPlugin,
@@ -190,12 +192,7 @@ def build_workbench_components(
                 isolated_adapter_available=False,
                 runtime_profile=None,
                 system_host_bindings=system_host_bindings,
-                host_supported_capabilities=frozenset(
-                    {
-                        PluginRuntimeCapability.NODE_SECRETS,
-                        PluginRuntimeCapability.STAGED_UPLOADS,
-                    }
-                ),
+                host_supported_capabilities=HOST_BASE_CAPABILITIES,
             )
         else:
             artifact_plugin_invoker = ArtifactBundlePluginInvoker(
@@ -225,12 +222,7 @@ def build_workbench_components(
                     runtime_admission.platform_artifact_contracts
                 ),
                 system_host_bindings=system_host_bindings,
-                host_supported_capabilities=frozenset(
-                    {
-                        PluginRuntimeCapability.NODE_SECRETS,
-                        PluginRuntimeCapability.STAGED_UPLOADS,
-                    }
-                ),
+                host_supported_capabilities=HOST_BASE_CAPABILITIES,
             )
     compiler = GraphCompiler(
         plugin_registry=plugin_registry,

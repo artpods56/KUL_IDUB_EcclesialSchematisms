@@ -31,6 +31,7 @@ from grafy_core.artifacts import (
 
 MAX_NODE_PROGRESS_MESSAGE_LENGTH: Final = 1_000
 MAX_NODE_PROGRESS_COUNTER: Final = 9_007_199_254_740_991
+MAX_NODE_ERROR_MESSAGE_LENGTH: Final = 1_000
 
 
 class PortShape(StrEnum):
@@ -44,6 +45,27 @@ class NodeContractError(TypeError):
 
 class NodeContractResolutionError(ValueError):
     pass
+
+
+class UserFacingNodeError(RuntimeError):
+    """An operator failure whose bounded message is safe to show to graph users.
+
+    Raising this exception is an explicit assertion by Plugin code that the
+    message contains no credentials, prompts, provider response bodies, or other
+    sensitive runtime state. Unknown exceptions remain private implementation
+    failures and cross runtime adapters only as a generic error.
+    """
+
+    def __init__(self, message: str) -> None:
+        normalized = message.strip()
+        if normalized == "":
+            raise ValueError("User-facing node error message must not be blank")
+        if len(normalized) > MAX_NODE_ERROR_MESSAGE_LENGTH:
+            raise ValueError(
+                "User-facing node error message must be at most "
+                f"{MAX_NODE_ERROR_MESSAGE_LENGTH} characters"
+            )
+        super().__init__(normalized)
 
 
 @dataclass(frozen=True, slots=True)

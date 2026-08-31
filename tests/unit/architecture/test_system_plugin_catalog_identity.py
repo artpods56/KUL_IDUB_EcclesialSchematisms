@@ -124,6 +124,16 @@ def _artifact_identity(
             }
             for projection in artifact.field_projections
         ],
+        "references": [
+            {
+                "path": list(reference.path),
+                "shape": reference.shape,
+                "target": (
+                    f"{reference.target.id}@{reference.target.schema_version}"
+                ),
+            }
+            for reference in artifact.references
+        ],
         "schema": _schema_identity(artifact.payload_schema),
         "title": artifact.title,
     }

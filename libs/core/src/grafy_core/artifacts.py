@@ -52,6 +52,7 @@ ArtifactBundleFormat: TypeAlias = Literal[
     "binary-file",
     "object-set",
 ]
+ArtifactReferenceShape: TypeAlias = Literal["one", "many"]
 
 
 class NodeConfig(BaseModel):
@@ -129,6 +130,21 @@ class ArtifactBundleContract:
 
 
 @dataclass(frozen=True, slots=True)
+class ArtifactReferenceContract:
+    """One JSON field whose value names other persisted artifacts."""
+
+    path: tuple[str, ...]
+    target: ArtifactTypeKey
+    shape: ArtifactReferenceShape
+
+    def __post_init__(self) -> None:
+        if not self.path or any(
+            segment == "" or segment != segment.strip() for segment in self.path
+        ):
+            raise ValueError("Artifact reference path must contain nonblank segments")
+
+
+@dataclass(frozen=True, slots=True)
 class ArtifactTypeSpec:
     key: ArtifactTypeKey
     title: str
@@ -136,10 +152,20 @@ class ArtifactTypeSpec:
     field_projections: tuple[ArtifactFieldProjection, ...] = ()
     materialized_json_type: MaterializedJsonType | None = None
     export_formats: tuple[ArtifactExportFormat, ...] = ()
+    references: tuple[ArtifactReferenceContract, ...] = ()
     bundle: ArtifactBundleContract = ArtifactBundleContract(
         format="inline-json",
         version=1,
     )
+
+    def __post_init__(self) -> None:
+        paths = [reference.path for reference in self.references]
+        if len(paths) != len(set(paths)):
+            raise ValueError("Artifact reference paths must be unique")
+        if self.references and self.bundle.format != "inline-json":
+            raise ValueError(
+                "Artifact references currently require the inline-json bundle"
+            )
 
 
 @dataclass(frozen=True, slots=True)

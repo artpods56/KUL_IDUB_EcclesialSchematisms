@@ -150,9 +150,12 @@ class GraphCompiler:
         self._artifact_types = {
             artifact_type.key for artifact_type in plugin_registry.artifact_types
         }
-        self._artifact_contracts = {
+        self._declared_artifact_contracts = {
             artifact_type.key: PluginArtifactTypeContract.from_spec(artifact_type)
-            for artifact_type in plugin_registry.artifact_types
+            for artifact_type in (
+                *plugin_registry.declared_artifact_types,
+                *plugin_registry.artifact_type_dependencies,
+            )
         }
         self._projectable_artifact_types = {
             artifact_type.key: artifact_type
@@ -201,7 +204,7 @@ class GraphCompiler:
             releases_by_id[node_request.id] = release_identity
 
         artifact_types = set(self._artifact_types)
-        artifact_contracts = dict(self._artifact_contracts)
+        artifact_contracts = dict(self._declared_artifact_contracts)
         projectable_artifact_types = dict(self._projectable_artifact_types)
         for snapshot in release_snapshots.values():
             release = snapshot.release

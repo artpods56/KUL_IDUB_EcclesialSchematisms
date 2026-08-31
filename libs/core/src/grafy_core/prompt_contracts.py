@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr, model_validator
 from grafy_core.artifact_contracts import RASTER_IMAGE
 from grafy_core.artifacts import (
     ArtifactRef,
+    ArtifactReferenceContract,
     ArtifactTypeKey,
     ArtifactTypeSpec,
     JsonObject,
@@ -42,6 +43,13 @@ PROMPT_MESSAGE = ArtifactTypeSpec(
     key=ArtifactTypeKey("prompt.message", 2),
     title="Prompt message",
     payload_schema=cast(JsonObject, PromptMessage.model_json_schema()),
+    references=(
+        ArtifactReferenceContract(
+            path=("image_refs",),
+            target=RASTER_IMAGE.key,
+            shape="many",
+        ),
+    ),
 )
 
 

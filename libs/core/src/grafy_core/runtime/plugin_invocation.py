@@ -26,6 +26,7 @@ from grafy_core.artifacts import (
 from grafy_core.domain.plugin_installations import InstalledPluginRelease
 from grafy_core.domain.plugin_releases import (
     PluginArtifactBundleContract,
+    PluginArtifactReferenceContract,
     PluginNodeContract,
     PluginPortContract,
     PluginReleaseIdentity,
@@ -53,9 +54,11 @@ class PluginInvocationError(RuntimeError):
         message: str,
         *,
         failure_code: PluginFailureCode | None = None,
+        user_facing: bool = False,
     ) -> None:
         super().__init__(message)
         self.failure_code = failure_code
+        self.user_facing = user_facing
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +75,15 @@ class PluginInvocationRequest:
         ArtifactTypeKey,
         PluginArtifactBundleContract,
     ] = field(default_factory=dict[ArtifactTypeKey, PluginArtifactBundleContract])
+    artifact_reference_contracts: Mapping[
+        ArtifactTypeKey,
+        tuple[PluginArtifactReferenceContract, ...],
+    ] = field(
+        default_factory=dict[
+            ArtifactTypeKey,
+            tuple[PluginArtifactReferenceContract, ...],
+        ]
+    )
     required_capabilities: tuple[PluginRuntimeCapability, ...] = ()
     node_id: str | None = None
     workflow_run_id: UUID | None = None
@@ -195,6 +207,17 @@ class PluginReleaseNode[
                 *release.catalog.artifact_type_dependencies,
             )
         }
+        self._artifact_reference_contracts = {
+            ArtifactTypeKey(
+                artifact.key.id,
+                artifact.key.schema_version,
+            ): artifact.references
+            for artifact in (
+                *release.catalog.artifact_types,
+                *release.catalog.artifact_type_dependencies,
+            )
+            if artifact.references
+        }
 
         dynamic_attributes = self.__dict__
         dynamic_attributes["operator_id"] = contract.operator_id
@@ -246,6 +269,9 @@ class PluginReleaseNode[
                     config=config.model_dump(mode="json", by_alias=True),
                     inputs=request_inputs,
                     artifact_bundle_contracts=self._artifact_bundle_contracts,
+                    artifact_reference_contracts=(
+                        self._artifact_reference_contracts
+                    ),
                     required_capabilities=self._contract.required_capabilities,
                     workspace_id=context.workspace_id,
                     node_id=context.node_id,

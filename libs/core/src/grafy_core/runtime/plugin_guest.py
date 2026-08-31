@@ -39,6 +39,7 @@ from grafy_core.nodes import (
     Node,
     NodeExecutionContext,
     OutputContract,
+    UserFacingNodeError,
     resolve_node_contracts,
 )
 from grafy_core.plugins import Plugin, PluginRuntimeContext, PluginUnitOfWorkPort
@@ -74,6 +75,8 @@ from grafy_core.runtime.plugin_protocol import (
     MAX_PLUGIN_PROGRESS_EVENTS,
     PluginFailureCode,
     PluginFailureEnvelope,
+    PluginInputArtifactGroup,
+    PluginInputBinding,
     PluginInvocationEnvelope,
     PluginInvocationRelease,
     PluginInvocationResultEnvelope,
@@ -626,12 +629,17 @@ def _read_bundle(
 
 
 def _declared_input_files(request: PluginInvocationEnvelope) -> set[str]:
-    return {
+    paths = {
         artifact.relative_path
         for binding in request.inputs
         for group in binding.groups
         for artifact in group.artifacts
     }
+    paths.update(
+        dependency.artifact.relative_path
+        for dependency in request.input_artifact_dependencies
+    )
+    return paths
 
 
 def _require_exact_input_files(
@@ -663,7 +671,22 @@ async def _stage_input_artifacts(
     inputs: dict[str, object] = {}
     total_bytes = 0
     total_files = 0
-    for binding in request.inputs:
+    staged_bindings = list(request.inputs)
+    staged_bindings.extend(
+        PluginInputBinding(
+            port=f"dependency-{index}",
+            artifact_type=dependency.artifact_type,
+            bundle=dependency.bundle,
+            groups=(
+                PluginInputArtifactGroup(
+                    shape="one",
+                    artifacts=(dependency.artifact,),
+                ),
+            ),
+        )
+        for index, dependency in enumerate(request.input_artifact_dependencies)
+    )
+    for binding_index, binding in enumerate(staged_bindings):
         groups: list[ArtifactRef | ArtifactRefSequence] = []
         key = ArtifactTypeKey(
             binding.artifact_type.id,
@@ -847,6 +870,8 @@ async def _stage_input_artifacts(
                 groups.append(refs[0])
             else:
                 groups.append(ArtifactRefSequence.from_key(key=key, item_refs=refs))
+        if binding_index >= len(request.inputs):
+            continue
         spec = input_contract.ports[binding.port]
         if spec.instance_plugs or spec.variadic:
             inputs[binding.port] = groups
@@ -1463,6 +1488,15 @@ async def execute_plugin_invocation(
     )
     try:
         output = await node.run(node_context, config, materialized)
+    except UserFacingNodeError as exc:
+        result = _failure(
+            request,
+            PluginFailureCode.OPERATOR_FAILURE,
+            str(exc),
+            progress_reporter.events,
+        )
+        result_path.write_bytes(result.canonical_json_bytes())
+        return
     except Exception:
         result = _failure(
             request,

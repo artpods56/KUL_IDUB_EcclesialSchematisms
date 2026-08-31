@@ -66,6 +66,12 @@ ISOLATED_BASE_CAPABILITIES = frozenset(
         PluginRuntimeCapability.UNTRUSTED_SQL,
     }
 )
+HOST_BASE_CAPABILITIES = frozenset(
+    {
+        PluginRuntimeCapability.NODE_SECRETS,
+        PluginRuntimeCapability.STAGED_UPLOADS,
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -459,6 +465,7 @@ def isolated_release_admission(
         postgresql_egress=postgresql_egress,
         network_policy=network_policy,
         system_host_bindings=system_host_bindings,
+        host_supported_capabilities=HOST_BASE_CAPABILITIES,
     )
 
 

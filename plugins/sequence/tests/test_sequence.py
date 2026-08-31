@@ -27,7 +27,7 @@ from grafy_plugin_sequence.nodes import (
     SliceNode,
 )
 from grafy_core.plugins import PluginRegistry
-from grafy_core.runtime.execution import NodeRuntime
+from grafy_core.runtime.execution import NodeRunError, NodeRuntime
 from grafy_core.runtime.materialization import (
     InputMaterializer,
     MaterializationError,
@@ -339,7 +339,7 @@ async def test_slice_rejects_unordered_sequence_with_its_id() -> None:
         ordered=False,
     )
 
-    with pytest.raises(ValueError, match=str(source.sequence_id)):
+    with pytest.raises(NodeRunError, match=str(source.sequence_id)):
         await _runtime().run_node(
             SliceNode(),
             NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="slice"),
@@ -374,7 +374,7 @@ async def test_item_at_rejects_unordered_sequence_with_its_id() -> None:
         ordered=False,
     )
 
-    with pytest.raises(ValueError, match=str(source.sequence_id)):
+    with pytest.raises(NodeRunError, match=str(source.sequence_id)):
         await _runtime().run_node(
             ItemAtNode(),
             NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="pick"),
@@ -388,7 +388,7 @@ async def test_item_at_out_of_range_error_has_sequence_context() -> None:
     ref = ArtifactRef.from_key(artifact_id=uuid4(), key=VALUE_TYPE)
     source = ArtifactRefSequence.from_key(key=VALUE_TYPE, item_refs=[ref])
 
-    with pytest.raises(ValueError) as error:
+    with pytest.raises(NodeRunError) as error:
         await _runtime().run_node(
             ItemAtNode(),
             NodeExecutionContext(workspace_id=TEST_WORKSPACE_ID, node_id="pick"),

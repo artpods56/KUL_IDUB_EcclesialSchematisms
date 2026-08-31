@@ -22,6 +22,7 @@ from grafy_core.nodes import (
     NodeExecutionContext,
     OutputContract,
     PortShape,
+    UserFacingNodeError,
     resolve_node_contracts,
 )
 from grafy_core.plugins import NodeCachePolicy
@@ -136,16 +137,25 @@ class NodeRuntime:
                 if exc.failure_code is not None
                 else PluginFailureCode.INTERNAL_ADAPTER_FAILURE
             )
+            public_context = f": {exc}" if exc.user_facing else ""
             raise NodeRunError(
                 f"Node {context.node_id!r} operator {node.operator_id}@"
-                f"{node.operator_version} failed ({failure_code.value}): {exc}",
+                f"{node.operator_version} failed ({failure_code.value})"
+                f"{public_context}",
                 failure_code=failure_code,
+            ) from exc
+        except UserFacingNodeError as exc:
+            raise NodeRunError(
+                f"Node {context.node_id!r} operator {node.operator_id}@"
+                f"{node.operator_version} failed "
+                f"({PluginFailureCode.OPERATOR_FAILURE.value}): {exc}",
+                failure_code=PluginFailureCode.OPERATOR_FAILURE,
             ) from exc
         except Exception as exc:
             raise NodeRunError(
                 f"Node {context.node_id!r} operator {node.operator_id}@"
                 f"{node.operator_version} failed "
-                f"({PluginFailureCode.OPERATOR_FAILURE.value}): {exc}",
+                f"({PluginFailureCode.OPERATOR_FAILURE.value})",
                 failure_code=PluginFailureCode.OPERATOR_FAILURE,
             ) from exc
         persisted = await self._persister.persist(

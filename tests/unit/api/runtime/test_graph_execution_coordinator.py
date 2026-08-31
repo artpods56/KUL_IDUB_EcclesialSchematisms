@@ -23,6 +23,7 @@ from grafy_core.nodes import (
     Node,
     NodeExecutionContext,
     OutPort,
+    UserFacingNodeError,
     resolve_node_contracts,
 )
 from grafy_core.plugins import NodeCachePolicy, NodeRegistration
@@ -171,7 +172,7 @@ class SynchronizedAddNode(AddNode):
         try:
             await self._release_gates[index].wait()
             if index == self._fail_index:
-                raise RuntimeError("controlled MAP item failure")
+                raise UserFacingNodeError("controlled MAP item failure")
             self.completed_indexes.append(index)
             self.completed[index].set()
             return AddOutput(value=inputs.item + inputs.broadcast)
@@ -654,7 +655,7 @@ async def test_map_execution_failure_cancels_items_and_skips_dependents() -> Non
     error = result.node_results[0].error
     assert error is not None
     assert f"MAP input 'item' failed at item 1 ({item_refs[1].artifact_id})" in error
-    assert "RuntimeError: controlled MAP item failure" in error
+    assert "controlled MAP item failure" in error
     assert edge_values.calls == ["failed"]
 
 

@@ -953,6 +953,16 @@ class PluginRegistry:
         return tuple(self._artifact_types.values())
 
     @property
+    def declared_artifact_types(self) -> tuple[ArtifactTypeSpec, ...]:
+        """Artifact contracts as declared before registry projection expansion."""
+
+        return tuple(
+            artifact_type
+            for plugin_artifact_types in self._plugin_artifact_types.values()
+            for artifact_type in plugin_artifact_types
+        )
+
+    @property
     def artifact_type_dependencies(self) -> tuple[ArtifactTypeSpec, ...]:
         dependencies_by_key: dict[ArtifactTypeKey, ArtifactTypeSpec] = {}
         for dependencies in self._plugin_artifact_type_dependencies.values():

@@ -15,7 +15,13 @@ from pydantic import (
 
 from grafy_core.artifacts import JsonObject, NodeConfig, NodeInput, NodeOutput
 from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
-from grafy_core.nodes import InPort, Node, NodeExecutionContext, OutPort
+from grafy_core.nodes import (
+    InPort,
+    Node,
+    NodeExecutionContext,
+    OutPort,
+    UserFacingNodeError,
+)
 from grafy_core.prompt_contracts import PROMPT_MESSAGE, PromptMessage
 from grafy_core.schema_contracts import JSON_SCHEMA
 from grafy_core.plugins import (
@@ -164,7 +170,7 @@ class OpenAICompatibleProviderError(RuntimeError):
     """A provider failure whose message is safe to show to graph users."""
 
 
-class OpenAICompatibleExecutionError(RuntimeError):
+class OpenAICompatibleExecutionError(UserFacingNodeError):
     pass
 
 

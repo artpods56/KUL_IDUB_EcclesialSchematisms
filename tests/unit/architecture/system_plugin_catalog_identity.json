@@ -9,6 +9,7 @@
           "key": "scalar.integer@1",
           "materialized_json_type": "integer",
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [
               "value"
@@ -425,6 +426,7 @@
           "key": "image.raster@1",
           "materialized_json_type": null,
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [],
             "required": [],
@@ -507,6 +509,7 @@
           "key": "scalar.text@1",
           "materialized_json_type": "string",
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [
               "value"
@@ -524,6 +527,7 @@
           "key": "image.raster@1",
           "materialized_json_type": null,
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [],
             "required": [],
@@ -539,6 +543,15 @@
           "key": "prompt.message@2",
           "materialized_json_type": null,
           "projections": [],
+          "references": [
+            {
+              "path": [
+                "image_refs"
+              ],
+              "shape": "many",
+              "target": "image.raster@1"
+            }
+          ],
           "schema": {
             "fields": [
               "role",
@@ -647,6 +660,7 @@
           "key": "json.schema@1",
           "materialized_json_type": null,
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [
               "value"
@@ -738,6 +752,7 @@
           "key": "scalar.integer@1",
           "materialized_json_type": "integer",
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [
               "value"
@@ -1026,6 +1041,7 @@
           "key": "table.data@1",
           "materialized_json_type": null,
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [
               "columns",
@@ -1285,6 +1301,7 @@
           "key": "scalar.text@1",
           "materialized_json_type": "string",
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [
               "value"
@@ -1308,6 +1325,7 @@
           "key": "text.markdown@1",
           "materialized_json_type": null,
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [
               "markdown"
@@ -1647,6 +1665,7 @@
           "key": "table.data@1",
           "materialized_json_type": null,
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [
               "columns",
@@ -1668,6 +1687,7 @@
           "key": "geo.feature_collection@1",
           "materialized_json_type": null,
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [],
             "required": [],
@@ -1681,6 +1701,7 @@
           "key": "geo.raster_scan@1",
           "materialized_json_type": null,
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [],
             "required": [],
@@ -1694,6 +1715,7 @@
           "key": "geo.map_layer@1",
           "materialized_json_type": null,
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [
               "title",
@@ -1719,6 +1741,7 @@
           "key": "geo.map_document@1",
           "materialized_json_type": null,
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [
               "layers",
@@ -2323,6 +2346,15 @@
           "key": "prompt.message@2",
           "materialized_json_type": null,
           "projections": [],
+          "references": [
+            {
+              "path": [
+                "image_refs"
+              ],
+              "shape": "many",
+              "target": "image.raster@1"
+            }
+          ],
           "schema": {
             "fields": [
               "role",
@@ -2338,11 +2370,26 @@
           "title": "Prompt message"
         },
         {
+          "bundle": "binary-file@1",
+          "exports": [],
+          "key": "image.raster@1",
+          "materialized_json_type": null,
+          "projections": [],
+          "references": [],
+          "schema": {
+            "fields": [],
+            "required": [],
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+          },
+          "title": "Raster image"
+        },
+        {
           "bundle": "inline-json@1",
           "exports": [],
           "key": "json.schema@1",
           "materialized_json_type": null,
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [
               "value"
@@ -2362,6 +2409,7 @@
           "key": "llm.completion@1",
           "materialized_json_type": null,
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [
               "content",
@@ -2503,6 +2551,7 @@
           "key": "image.raster@1",
           "materialized_json_type": null,
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [],
             "required": [],
@@ -2518,6 +2567,7 @@
           "key": "ocr.page_result@1",
           "materialized_json_type": null,
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [],
             "required": [],
@@ -2610,6 +2660,7 @@
           "key": "table.data@1",
           "materialized_json_type": null,
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [
               "columns",
@@ -2631,6 +2682,7 @@
           "key": "sql.statement@1",
           "materialized_json_type": null,
           "projections": [],
+          "references": [],
           "schema": {
             "fields": [
               "sql",
@@ -2657,6 +2709,7 @@
               "title": "Table"
             }
           ],
+          "references": [],
           "schema": {
             "fields": [
               "statement_index",

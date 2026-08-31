@@ -11,7 +11,7 @@ from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Protocol, cast, final, override
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from grafy_core.artifacts import (
     ArtifactObject,
@@ -23,6 +23,7 @@ from grafy_core.artifacts import (
 )
 from grafy_core.domain.plugin_releases import (
     PluginArtifactBundleContract,
+    PluginArtifactReferenceContract,
     PluginArtifactTypeKey,
     PluginPortContract,
     plugin_protocol_digest,
@@ -65,6 +66,7 @@ from grafy_core.runtime.plugin_protocol import (
     PluginArtifactShape,
     PluginFailureCode,
     PluginInputArtifactBundle,
+    PluginInputArtifactDependency,
     PluginInputArtifactGroup,
     PluginInputBinding,
     PluginInvocationArtifactTypeBinding,
@@ -102,6 +104,12 @@ from grafy_core.runtime.table_storage import load_table_manifest
 
 
 _RESULT_MANIFEST_MAX_BYTES = 1 * 1_024 * 1_024
+_INPUT_BUNDLE_SUFFIX = {
+    "table-bundle": ".table.tar",
+    "binary-file": ".bin",
+    "object-set": ".objects.tar",
+    "inline-json": ".json",
+}
 
 
 class PluginGuestRunner(Protocol):
@@ -423,6 +431,59 @@ def _bundle_contract_for(
     return contract
 
 
+def _referenced_artifact_refs(
+    artifact: ArtifactObject,
+    contracts: tuple[PluginArtifactReferenceContract, ...],
+) -> list[ArtifactRef]:
+    if not contracts:
+        return []
+    payload = artifact.inline_payload
+    if payload is None:
+        raise PluginInvocationError(
+            f"Artifact {artifact.id} declares references without inline JSON"
+        )
+    refs: list[ArtifactRef] = []
+    for contract in contracts:
+        value: object = payload
+        for segment in contract.path:
+            if not isinstance(value, dict) or segment not in value:
+                rendered_path = ".".join(contract.path)
+                raise PluginInvocationError(
+                    f"Artifact {artifact.id} is missing declared reference "
+                    f"field {rendered_path!r}"
+                )
+            mapping = cast(dict[str, object], value)
+            value = mapping[segment]
+        if contract.shape == "many" and not isinstance(value, list):
+            rendered_path = ".".join(contract.path)
+            raise PluginInvocationError(
+                f"Artifact {artifact.id} reference field {rendered_path!r} "
+                f"does not have {contract.shape!r} shape"
+            )
+        values = cast(list[object], value) if contract.shape == "many" else [value]
+        for raw_ref in values:
+            try:
+                ref = ArtifactRef.model_validate(raw_ref)
+            except Exception as exc:
+                rendered_path = ".".join(contract.path)
+                raise PluginInvocationError(
+                    f"Artifact {artifact.id} reference field "
+                    f"{rendered_path!r} contains an invalid artifact reference"
+                ) from exc
+            expected = ArtifactTypeKey(
+                contract.target.id,
+                contract.target.schema_version,
+            )
+            if ref.key() != expected:
+                rendered_path = ".".join(contract.path)
+                raise PluginInvocationError(
+                    f"Artifact {artifact.id} reference field {rendered_path!r} "
+                    f"must target {expected.id}@{expected.schema_version}"
+                )
+            refs.append(ref)
+    return refs
+
+
 @final
 class ArtifactBundlePluginInvoker(PluginInvoker):
     """Authorize refs, exchange inline bundles, and mint host output refs."""
@@ -567,6 +628,7 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
                     f"{failure.operator_version} {failure.code.value}: "
                     f"{failure.message}",
                     failure_code=failure.code,
+                    user_facing=True,
                 )
             validated_outputs = self._validate_outputs(
                 invocation_root,
@@ -854,6 +916,49 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
                 "staged"
             ) from exc
 
+    async def _stage_input_artifact_bundle(
+        self,
+        artifact: ArtifactObject,
+        ref: ArtifactRef,
+        bundle_contract: PluginArtifactBundleContract,
+        path: Path,
+    ) -> tuple[int, str, int]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if bundle_contract.format == "table-bundle":
+            return await self._stage_table_input(artifact, path)
+        if bundle_contract.format == "binary-file":
+            byte_count, content_digest = await self._stage_binary_input(
+                artifact,
+                path,
+            )
+            return byte_count, content_digest, 1
+        if bundle_contract.format == "object-set":
+            return await self._stage_object_set_input(artifact, path)
+        if bundle_contract.format != "inline-json":
+            raise PluginInvocationError(
+                f"Plugin bundle adapter {bundle_contract.format}@"
+                f"{bundle_contract.version} is unavailable"
+            )
+        payload = artifact.inline_payload
+        if payload is None:
+            raise PluginInvocationError(
+                f"Plugin input artifact {ref.artifact_id} is not supported by "
+                "the inline JSON protocol"
+            )
+        content = _canonical_payload_bytes(payload)
+        content_digest = sha256(content).hexdigest()
+        if (
+            artifact.byte_size != len(content)
+            or artifact.sha256 != content_digest
+            or ref.content_hash != content_digest
+        ):
+            raise PluginInvocationError(
+                f"Plugin input artifact {ref.artifact_id} content metadata is stale"
+            )
+        path.write_bytes(content)
+        path.chmod(0o400)
+        return len(content), content_digest, 1
+
     async def _save_content_addressed_output(
         self,
         command: SaveFileCommand,
@@ -1090,6 +1195,70 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
             )
         return tuple(bindings), total_bytes, len(bindings)
 
+    async def _load_referenced_input_artifacts(
+        self,
+        request: PluginInvocationRequest,
+        direct_artifacts: Mapping[UUID, ArtifactObject],
+    ) -> dict[UUID, ArtifactObject]:
+        known_artifacts = dict(direct_artifacts)
+        dependencies: dict[UUID, ArtifactObject] = {}
+        pending = list(direct_artifacts.values())
+        while pending:
+            refs_by_id: dict[UUID, ArtifactRef] = {}
+            for artifact in pending:
+                contracts = request.artifact_reference_contracts.get(
+                    ArtifactTypeKey(
+                        artifact.artifact_type,
+                        artifact.schema_version,
+                    ),
+                    (),
+                )
+                for ref in _referenced_artifact_refs(artifact, contracts):
+                    existing_ref = refs_by_id.get(ref.artifact_id)
+                    if existing_ref is not None and existing_ref != ref:
+                        raise PluginInvocationError(
+                            f"Artifact {artifact.id} contains conflicting refs for "
+                            f"artifact {ref.artifact_id}"
+                        )
+                    known = known_artifacts.get(ref.artifact_id)
+                    if known is not None:
+                        if known.ref() != ref:
+                            raise PluginInvocationError(
+                                f"Artifact {artifact.id} contains a stale or "
+                                f"type-mismatched ref for artifact {ref.artifact_id}"
+                            )
+                        continue
+                    refs_by_id[ref.artifact_id] = ref
+            if not refs_by_id:
+                break
+            if len(dependencies) + len(refs_by_id) > 10_000:
+                raise PluginInvocationError(
+                    "Plugin input references more than 10000 artifacts"
+                )
+            async with self._unit_of_work as unit_of_work:
+                loaded = await unit_of_work.artifacts.get_many(
+                    request.workspace_id,
+                    set(refs_by_id),
+                )
+            next_pending: list[ArtifactObject] = []
+            for artifact_id, ref in refs_by_id.items():
+                artifact = loaded.get(artifact_id)
+                if artifact is None:
+                    raise PluginInvocationError(
+                        f"Plugin input references inaccessible or missing artifact "
+                        f"{artifact_id}"
+                    )
+                if artifact.ref() != ref:
+                    raise PluginInvocationError(
+                        f"Plugin input contains a stale or type-mismatched ref for "
+                        f"artifact {artifact_id}"
+                    )
+                known_artifacts[artifact_id] = artifact
+                dependencies[artifact_id] = artifact
+                next_pending.append(artifact)
+            pending = next_pending
+        return dependencies
+
     async def _stage_inputs(
         self,
         request: PluginInvocationRequest,
@@ -1138,6 +1307,10 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
                 request.workspace_id,
                 artifact_ids,
             )
+        dependencies = await self._load_referenced_input_artifacts(
+            request,
+            artifacts,
+        )
 
         bindings: list[PluginInputBinding] = []
         total_bytes = 0
@@ -1165,77 +1338,22 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
                             f"Plugin input {port.name!r} contains a stale "
                             f"or type-mismatched ref for artifact {ref.artifact_id}"
                         )
-                    if bundle_contract.format == "table-bundle":
-                        relative_path = (
-                            f"inputs/p{port_index:04d}/g{group_index:04d}/"
-                            f"a{artifact_index:06d}.table.tar"
-                        )
-                        path = _bundle_path(invocation_root, relative_path)
-                        path.parent.mkdir(parents=True, exist_ok=True)
-                        (
-                            byte_count,
-                            content_digest,
-                            file_count,
-                        ) = await self._stage_table_input(artifact, path)
-                    elif bundle_contract.format == "binary-file":
-                        relative_path = (
-                            f"inputs/p{port_index:04d}/g{group_index:04d}/"
-                            f"a{artifact_index:06d}.bin"
-                        )
-                        path = _bundle_path(invocation_root, relative_path)
-                        path.parent.mkdir(parents=True, exist_ok=True)
-                        byte_count, content_digest = await self._stage_binary_input(
-                            artifact,
-                            path,
-                        )
-                        file_count = 1
-                    elif bundle_contract.format == "object-set":
-                        relative_path = (
-                            f"inputs/p{port_index:04d}/g{group_index:04d}/"
-                            f"a{artifact_index:06d}.objects.tar"
-                        )
-                        path = _bundle_path(invocation_root, relative_path)
-                        path.parent.mkdir(parents=True, exist_ok=True)
-                        (
-                            byte_count,
-                            content_digest,
-                            file_count,
-                        ) = await self._stage_object_set_input(artifact, path)
-                    elif bundle_contract.format == "inline-json":
-                        payload = artifact.inline_payload
-                        if payload is None:
-                            raise PluginInvocationError(
-                                f"Plugin input {port.name!r} artifact "
-                                f"{ref.artifact_id} is not supported by the inline "
-                                "JSON protocol"
-                            )
-                        content = _canonical_payload_bytes(payload)
-                        content_digest = sha256(content).hexdigest()
-                        if (
-                            artifact.byte_size != len(content)
-                            or artifact.sha256 != content_digest
-                            or ref.content_hash != content_digest
-                        ):
-                            raise PluginInvocationError(
-                                f"Plugin input {port.name!r} artifact "
-                                f"{ref.artifact_id} content metadata is stale"
-                            )
-                        relative_path = (
-                            f"inputs/p{port_index:04d}/g{group_index:04d}/"
-                            f"a{artifact_index:06d}.json"
-                        )
-                        path = _bundle_path(invocation_root, relative_path)
-                        path.parent.mkdir(parents=True, exist_ok=True)
-                        path.write_bytes(content)
-                        path.chmod(0o400)
-                        byte_count = len(content)
-                        file_count = 1
-                    else:
-                        raise PluginInvocationError(
-                            f"Plugin bundle adapter "
-                            f"{bundle_contract.format}@{bundle_contract.version} "
-                            "is unavailable"
-                        )
+                    relative_path = (
+                        f"inputs/p{port_index:04d}/g{group_index:04d}/"
+                        f"a{artifact_index:06d}"
+                        f"{_INPUT_BUNDLE_SUFFIX[bundle_contract.format]}"
+                    )
+                    path = _bundle_path(invocation_root, relative_path)
+                    (
+                        byte_count,
+                        content_digest,
+                        file_count,
+                    ) = await self._stage_input_artifact_bundle(
+                        artifact,
+                        ref,
+                        bundle_contract,
+                        path,
+                    )
                     total_bytes += byte_count
                     total_files += file_count
                     if total_bytes > self._limits.max_input_bytes:
@@ -1272,6 +1390,60 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
                     artifact_type=PluginArtifactTypeKey.from_key(expected),
                     bundle=bundle_contract,
                     groups=tuple(protocol_groups),
+                )
+            )
+
+        dependency_bindings: list[PluginInputArtifactDependency] = []
+        for dependency_index, artifact in enumerate(
+            sorted(dependencies.values(), key=lambda value: str(value.id))
+        ):
+            key = ArtifactTypeKey(
+                artifact.artifact_type,
+                artifact.schema_version,
+            )
+            bundle_contract = _bundle_contract_for(request, key)
+            ref = artifact.ref()
+            relative_path = (
+                f"inputs/references/r{dependency_index:06d}"
+                f"{_INPUT_BUNDLE_SUFFIX[bundle_contract.format]}"
+            )
+            path = _bundle_path(invocation_root, relative_path)
+            (
+                byte_count,
+                content_digest,
+                file_count,
+            ) = await self._stage_input_artifact_bundle(
+                artifact,
+                ref,
+                bundle_contract,
+                path,
+            )
+            total_bytes += byte_count
+            total_files += file_count
+            if total_bytes > self._limits.max_input_bytes:
+                raise PluginInvocationError(
+                    "Plugin aggregate input byte limit exceeded"
+                )
+            if total_files > self._limits.max_files:
+                raise PluginInvocationError(
+                    "Plugin aggregate input file-count limit exceeded"
+                )
+            dependency_bindings.append(
+                PluginInputArtifactDependency(
+                    artifact_type=PluginArtifactTypeKey.from_key(key),
+                    bundle=bundle_contract,
+                    artifact=PluginInputArtifactBundle(
+                        artifact_id=artifact.id,
+                        relative_path=relative_path,
+                        byte_count=byte_count,
+                        content_sha256=content_digest,
+                        content_type=artifact.content_type,
+                        metadata=(
+                            artifact.metadata
+                            if bundle_contract.format == "binary-file"
+                            else {}
+                        ),
+                    ),
                 )
             )
 
@@ -1340,6 +1512,7 @@ class ArtifactBundlePluginInvoker(PluginInvoker):
             ),
             config=request.config,
             inputs=tuple(bindings),
+            input_artifact_dependencies=tuple(dependency_bindings),
             outputs=tuple(declarations),
             secrets=secret_bindings,
             staged_uploads=staged_uploads,

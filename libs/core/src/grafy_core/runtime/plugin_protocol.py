@@ -23,6 +23,7 @@ from grafy_core.domain.plugin_releases import (
 from grafy_core.domain.plugin_identity import PluginReleaseScope
 from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.nodes import (
+    MAX_NODE_ERROR_MESSAGE_LENGTH,
     MAX_NODE_PROGRESS_COUNTER,
     MAX_NODE_PROGRESS_MESSAGE_LENGTH,
 )
@@ -172,6 +173,12 @@ class PluginInputArtifactBundle(PluginProtocolValue):
         return self
 
 
+class PluginInputArtifactDependency(PluginProtocolValue):
+    artifact_type: PluginArtifactTypeKey
+    bundle: PluginArtifactBundleContract
+    artifact: PluginInputArtifactBundle
+
+
 class PluginOutputArtifactBundle(PluginProtocolValue):
     relative_path: str = Field(min_length=1, max_length=1_024)
     byte_count: int = Field(ge=0, strict=True)
@@ -273,7 +280,7 @@ class PluginStagedUploadBinding(PluginProtocolValue):
 
 
 class PluginInvocationEnvelope(PluginProtocolValue):
-    protocol_version: Literal["grafy-plugin-invocation@6"] = PLUGIN_INVOCATION_PROTOCOL
+    protocol_version: Literal["grafy-plugin-invocation@7"] = PLUGIN_INVOCATION_PROTOCOL
     invocation_id: UUID
     execution_scope_id: UUID
     workspace_id: UUID
@@ -289,6 +296,10 @@ class PluginInvocationEnvelope(PluginProtocolValue):
     artifact_type_bindings: tuple[PluginInvocationArtifactTypeBinding, ...] = ()
     config: JsonObject
     inputs: tuple[PluginInputBinding, ...]
+    input_artifact_dependencies: tuple[PluginInputArtifactDependency, ...] = Field(
+        default=(),
+        max_length=10_000,
+    )
     outputs: tuple[PluginOutputDeclaration, ...]
     secrets: tuple[PluginSecretBinding, ...] = ()
     staged_uploads: tuple[PluginStagedUploadBinding, ...] = ()
@@ -336,12 +347,32 @@ class PluginInvocationEnvelope(PluginProtocolValue):
         ]
         if len(staged_upload_keys) != len(set(staged_upload_keys)):
             raise ValueError("Plugin staged-upload bindings must be unique")
+        direct_artifact_ids = {
+            artifact.artifact_id
+            for binding in self.inputs
+            for group in binding.groups
+            for artifact in group.artifacts
+        }
+        dependency_artifact_ids = [
+            dependency.artifact.artifact_id
+            for dependency in self.input_artifact_dependencies
+        ]
+        if len(dependency_artifact_ids) != len(set(dependency_artifact_ids)):
+            raise ValueError("Plugin input artifact dependencies must be unique")
+        if direct_artifact_ids & set(dependency_artifact_ids):
+            raise ValueError(
+                "Plugin direct inputs and artifact dependencies must be disjoint"
+            )
         paths = [
             artifact.relative_path
             for binding in self.inputs
             for group in binding.groups
             for artifact in group.artifacts
         ]
+        paths.extend(
+            dependency.artifact.relative_path
+            for dependency in self.input_artifact_dependencies
+        )
         if len(paths) != len(set(paths)):
             raise ValueError("Plugin invocation input bundle paths must be unique")
         json.dumps(
@@ -361,7 +392,7 @@ class PluginInvocationEnvelope(PluginProtocolValue):
 
 class PluginFailureEnvelope(PluginProtocolValue):
     code: PluginFailureCode
-    message: str = Field(min_length=1, max_length=1_000)
+    message: str = Field(min_length=1, max_length=MAX_NODE_ERROR_MESSAGE_LENGTH)
     release_slug: str = Field(min_length=1, max_length=100)
     release_revision: int = Field(ge=1, strict=True)
     operator_id: str = Field(min_length=1, max_length=255)
@@ -409,7 +440,7 @@ class PluginProgressEvent(PluginProtocolValue):
 
 
 class PluginInvocationResultEnvelope(PluginProtocolValue):
-    protocol_version: Literal["grafy-plugin-invocation@6"] = PLUGIN_INVOCATION_PROTOCOL
+    protocol_version: Literal["grafy-plugin-invocation@7"] = PLUGIN_INVOCATION_PROTOCOL
     invocation_id: UUID
     status: PluginInvocationStatus
     outputs: tuple[PluginOutputBinding, ...] = ()
@@ -457,6 +488,7 @@ __all__ = [
     "PluginFailureCode",
     "PluginFailureEnvelope",
     "PluginInputArtifactBundle",
+    "PluginInputArtifactDependency",
     "PluginInputArtifactGroup",
     "PluginInputBinding",
     "PluginInvocationArtifactTypeBinding",

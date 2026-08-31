@@ -24,6 +24,7 @@ from grafy_core.domain.plugin_releases import (
     PluginArtifactBundleContract,
     PluginArtifactConversionContract,
     PluginArtifactConversionKey,
+    PluginArtifactReferenceContract,
     PluginArtifactTypeContract,
     PluginArtifactTypeKey,
     PluginCapabilityManifest,
@@ -43,7 +44,13 @@ from grafy_core.domain.plugin_installations import PluginInstallation
 from grafy_core.domain.plugin_identity import PluginReleaseNamespace
 from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.nodes import InPort, OutPort
-from grafy_core.artifact_contracts import INTEGER_VALUE, TEXT_VALUE, TextValue
+from grafy_core.artifact_contracts import (
+    INTEGER_VALUE,
+    RASTER_IMAGE,
+    TEXT_VALUE,
+    TextValue,
+)
+from grafy_core.prompt_contracts import PROMPT_MESSAGE
 from grafy_plugin_arithmetic import ARITHMETIC
 from grafy_plugin_table import TABLES
 from grafy_plugin_text import TEXT
@@ -170,6 +177,35 @@ def test_catalog_manifest_serializes_portable_artifacts_and_exact_conversions() 
         manifest.model_dump_json()
     )
     assert round_tripped == manifest
+
+
+def test_catalog_manifest_binds_inline_artifact_reference_contracts() -> None:
+    prompt_contract = PluginArtifactTypeContract.from_spec(PROMPT_MESSAGE)
+    assert prompt_contract.references == (
+        PluginArtifactReferenceContract(
+            path=("image_refs",),
+            target=PluginArtifactTypeKey(id="image.raster", schema_version=1),
+            shape="many",
+        ),
+    )
+
+    manifest = PluginCatalogManifest.from_plugin(PLUGIN)
+    payload = manifest.model_dump(mode="python")
+    payload["artifact_type_dependencies"] = (
+        *manifest.artifact_type_dependencies,
+        prompt_contract,
+    )
+    with pytest.raises(ValueError, match="reference 'image_refs'.*neither owned"):
+        PluginCatalogManifest.model_validate(payload)
+
+    payload["artifact_type_dependencies"] = (
+        *payload["artifact_type_dependencies"],
+        PluginArtifactTypeContract.from_spec(RASTER_IMAGE),
+    )
+    validated = PluginCatalogManifest.model_validate(payload)
+    assert validated.artifact_type_dependencies[-1].key == (
+        PluginArtifactTypeKey(id="image.raster", schema_version=1)
+    )
 
 
 def test_catalog_manifest_requires_every_foreign_port_dependency() -> None:

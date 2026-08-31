@@ -6,7 +6,7 @@ from grafy_core.domain.artifact_outputs import ArtifactOutputValue
 from grafy_core.runtime.execution import NodeRunError
 from grafy_core.runtime.plugin_protocol import PluginFailureCode
 
-from .errors import GraphExecutionError
+from .errors import GraphExecutionError, render_execution_error
 from .models import (
     CompiledEdge,
     GraphExecutionResult,
@@ -130,7 +130,7 @@ class GraphExecutionCoordinator:
                     NodeExecutionResult(
                         node_id=node_request.id,
                         status="failed",
-                        error=_render_exception_chain(exc),
+                        error=render_execution_error(exc),
                         outputs={},
                         plugin_release=compiled_node.plugin_release,
                         failure_code=failure_code,
@@ -170,20 +170,4 @@ class GraphExecutionCoordinator:
             node_results=tuple(node_results),
             outputs=outputs,
         )
-
-
-def _render_exception_chain(exception: BaseException) -> str:
-    rendered: list[str] = []
-    seen: set[int] = set()
-    current: BaseException | None = exception
-    while current is not None and id(current) not in seen and len(rendered) < 12:
-        seen.add(id(current))
-        rendered.append(f"{type(current).__name__}: {current}")
-        if current.__cause__ is not None:
-            current = current.__cause__
-            continue
-        current = None if current.__suppress_context__ else current.__context__
-    return " <- caused by ".join(rendered)
-
-
 __all__ = ["GraphExecutionCoordinator"]

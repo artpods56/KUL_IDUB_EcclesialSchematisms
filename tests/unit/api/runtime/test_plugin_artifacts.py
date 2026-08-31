@@ -6,7 +6,7 @@ from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
 from collections.abc import Mapping
-from typing import Literal
+from typing import Annotated, Literal, override
 from uuid import UUID, uuid4
 
 import pytest
@@ -21,6 +21,9 @@ from grafy_core.artifacts import (
     ArtifactTypeKey,
     InMemoryUnitOfWork,
     JsonObject,
+    NoConfig,
+    NodeInput,
+    NodeOutput,
 )
 from grafy_core.domain.plugin_releases import (
     PluginArtifactTypeContract,
@@ -47,8 +50,20 @@ from grafy_core.domain.plugin_installations import (
 from grafy_core.domain.plugin_capabilities import PluginRuntimeCapability
 from grafy_core.domain.node_secrets import JsonValue, node_secret_dependency_sha256
 from grafy_core.domain.staged_uploads import StagedUpload
-from grafy_core.nodes import PortShape
-from grafy_core.nodes import NodeExecutionContext
+from grafy_core.nodes import (
+    InPort,
+    Node,
+    NodeExecutionContext,
+    OutPort,
+    PortShape,
+    UserFacingNodeError,
+)
+from grafy_core.plugins import Plugin, PluginUnitOfWorkPort
+from grafy_core.prompt_contracts import (
+    PROMPT_MESSAGE,
+    PromptMessage,
+    PromptMessageRole,
+)
 from grafy_core.table_contracts import (
     TABLE_DATA,
     Table,
@@ -69,6 +84,8 @@ from grafy_core.runtime.object_set_bundle import (
     PortableMetadataReference,
 )
 from grafy_core.runtime.persistence import ArtifactWriteContext
+from grafy_core.runtime.persistence import InlineModelOutputWriter
+from grafy_core.runtime.plugin_guest import execute_plugin_invocation
 from grafy_core.runtime.plugin_invocation import (
     PluginInvocationError,
     PluginInvocationRequest,
@@ -84,6 +101,8 @@ from grafy_core.runtime.plugin_protocol import (
     PluginOutputBinding,
     PluginProgressEvent,
 )
+from grafy_core.runtime.plugin_loader import PluginGuestLoaderManifest
+from grafy_core.runtime.resolvers import InlineModelResolver
 from grafy_core.runtime.table_bundle import (
     load_table_bundle,
     write_table_bundle,
@@ -100,6 +119,68 @@ from grafy_api.v1.routes.executions.runtime.plugin_artifacts import (
 
 
 WORKSPACE_ID = UUID("00000000-0000-4000-8000-000000000401")
+
+
+REFERENCED_ARTIFACT_PLUGIN = Plugin(
+    slug="test.referenced-artifact",
+    title="Referenced artifact test Plugin",
+)
+REFERENCED_ARTIFACT_PLUGIN.register_artifact_type_dependency(PROMPT_MESSAGE)
+REFERENCED_ARTIFACT_PLUGIN.register_artifact_type_dependency(RASTER_IMAGE)
+
+
+class ReferencedArtifactInput(NodeInput):
+    message: Annotated[PromptMessage, InPort(PROMPT_MESSAGE)]
+
+
+class ReferencedArtifactOutput(NodeOutput):
+    message: Annotated[PromptMessage, OutPort(PROMPT_MESSAGE)]
+
+
+@REFERENCED_ARTIFACT_PLUGIN.node(
+    operator_id="test.referenced-artifact.lookup",
+    version=1,
+    title="Look up referenced artifact",
+    factory=lambda context: ReferencedArtifactNode(context.uow),
+)
+class ReferencedArtifactNode(
+    Node[NoConfig, ReferencedArtifactInput, ReferencedArtifactOutput]
+):
+    def __init__(self, unit_of_work: PluginUnitOfWorkPort) -> None:
+        self._unit_of_work = unit_of_work
+
+    @override
+    async def run(
+        self,
+        _context: NodeExecutionContext,
+        _config: NoConfig,
+        inputs: ReferencedArtifactInput,
+        /,
+    ) -> ReferencedArtifactOutput:
+        image_ref = inputs.message.image_refs[0]
+        async with self._unit_of_work as entered:
+            image = await entered.artifacts.get(WORKSPACE_ID, image_ref.artifact_id)
+        if image is None:
+            raise UserFacingNodeError(
+                f"Prompt image artifact {image_ref.artifact_id} was not found"
+            )
+        return ReferencedArtifactOutput(message=inputs.message)
+
+
+REFERENCED_ARTIFACT_PLUGIN.register_resolver(
+    lambda context: InlineModelResolver(
+        source=PROMPT_MESSAGE.key,
+        target=PromptMessage,
+        uow=context.uow,
+    )
+)
+REFERENCED_ARTIFACT_PLUGIN.register_writer(
+    lambda context: InlineModelOutputWriter(
+        artifact_type=PROMPT_MESSAGE.key,
+        model=PromptMessage,
+        uow=context.uow,
+    )
+)
 
 
 def _installed_workspace_release(release: PluginRelease) -> InstalledPluginRelease:
@@ -326,6 +407,32 @@ def _binary_release() -> InstalledPluginRelease:
         loader_target="grafy_plugin:PLUGIN",
         published_by_user_id=WORKSPACE_ID,
     ))
+
+
+def _referenced_artifact_release() -> InstalledPluginRelease:
+    catalog = PluginCatalogManifest.from_plugin(REFERENCED_ARTIFACT_PLUGIN)
+    capabilities = PluginCapabilityManifest()
+    return _installed_workspace_release(
+        PluginRelease(
+            slug=REFERENCED_ARTIFACT_PLUGIN.slug,
+            revision=1,
+            catalog=catalog,
+            contract_digest=plugin_contract_digest(catalog),
+            capabilities=capabilities,
+            capability_digest=capabilities.digest,
+            protocol_digest=plugin_protocol_digest(),
+            profile_digest=plugin_profile_digest("python-uv"),
+            source_object_key="plugin-releases/referenced-artifact/source.tar.gz",
+            source_digest="1" * 64,
+            lock_digest="2" * 64,
+            runtime_profile="python-uv",
+            loader_target=(
+                "tests.unit.api.runtime.test_plugin_artifacts:"
+                "REFERENCED_ARTIFACT_PLUGIN"
+            ),
+            published_by_user_id=WORKSPACE_ID,
+        )
+    )
 
 
 def _object_set_release(spec: ArtifactTypeSpec) -> InstalledPluginRelease:
@@ -615,6 +722,29 @@ class ManifestRunner(PluginGuestRunner):
             progress=self.progress,
         )
         (invocation_root / "result.json").write_bytes(result.canonical_json_bytes())
+
+
+class ReferencedArtifactGuestRunner(PluginGuestRunner):
+    async def run(
+        self,
+        invocation_root: Path,
+        limits: PluginInvocationLimits,
+        request: PluginInvocationRequest,
+    ) -> None:
+        del limits, request
+        loader_manifest = PluginGuestLoaderManifest(
+            slug=REFERENCED_ARTIFACT_PLUGIN.slug,
+            loader_target=(
+                "tests.unit.api.runtime.test_plugin_artifacts:"
+                "REFERENCED_ARTIFACT_PLUGIN"
+            ),
+        )
+        manifest_path = invocation_root / "plugin-loader.json"
+        manifest_path.write_bytes(loader_manifest.canonical_json_bytes())
+        await execute_plugin_invocation(
+            invocation_root,
+            system_loader_manifest_path=manifest_path,
+        )
 
 
 class RecordingSecretResolver:
@@ -1291,6 +1421,104 @@ async def test_binary_input_and_output_use_exact_portable_file_contract(
         assert stream.read() == content
     finally:
         stream.close()
+
+
+@pytest.mark.asyncio
+async def test_inline_input_references_are_available_inside_the_plugin_guest(
+    tmp_path: Path,
+) -> None:
+    unit_of_work = InMemoryUnitOfWork()
+    storage = LocalFileObjectStore(tmp_path / "objects")
+    image_content = b"referenced raster bytes"
+    image_digest = sha256(image_content).hexdigest()
+    stored_image = await storage.save(
+        SaveFileCommand(
+            bucket="artifacts",
+            path=f"raster/{image_digest}.png",
+            stream=BytesIO(image_content),
+            content_type="image/png",
+            metadata={"sha256": image_digest},
+        )
+    )
+    image = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
+        artifact_type=RASTER.id,
+        schema_version=RASTER.schema_version,
+        content_type="image/png",
+        storage_backend="local",
+        bucket=stored_image.bucket,
+        object_key=stored_image.path,
+        byte_size=stored_image.byte_size,
+        sha256=stored_image.sha256,
+    )
+    prompt = PromptMessage(
+        role=PromptMessageRole.USER,
+        text="Describe this image.",
+        image_refs=[image.ref()],
+    )
+    prompt_payload = prompt.model_dump(mode="json")
+    prompt_content = _canonical(prompt_payload)
+    prompt_artifact = ArtifactObject(
+        workspace_id=WORKSPACE_ID,
+        artifact_type=PROMPT_MESSAGE.key.id,
+        schema_version=PROMPT_MESSAGE.key.schema_version,
+        content_type="application/json",
+        storage_backend="inline",
+        inline_payload=prompt_payload,
+        byte_size=len(prompt_content),
+        sha256=sha256(prompt_content).hexdigest(),
+    )
+    async with unit_of_work as entered:
+        await entered.artifacts.add(image)
+        await entered.artifacts.add(prompt_artifact)
+        await entered.commit()
+
+    release = _referenced_artifact_release()
+    invoker = ArtifactBundlePluginInvoker(
+        unit_of_work=unit_of_work,
+        runner=ReferencedArtifactGuestRunner(),
+        scratch_root=tmp_path / "scratch",
+        storage=storage,
+        bucket="artifacts",
+        storage_backend="local",
+    )
+    result = await invoker.invoke(
+        PluginInvocationRequest(
+            release=PluginReleaseIdentity.from_release(release),
+            contract=release.catalog.nodes[0],
+            artifact_type_bindings={},
+            config={},
+            inputs={"message": prompt_artifact.ref()},
+            artifact_bundle_contracts={
+                ArtifactTypeKey(contract.key.id, contract.key.schema_version): (
+                    contract.bundle
+                )
+                for contract in (
+                    *release.catalog.artifact_types,
+                    *release.catalog.artifact_type_dependencies,
+                )
+            },
+            artifact_reference_contracts={
+                ArtifactTypeKey(contract.key.id, contract.key.schema_version): (
+                    contract.references
+                )
+                for contract in (
+                    *release.catalog.artifact_types,
+                    *release.catalog.artifact_type_dependencies,
+                )
+                if contract.references
+            },
+            workspace_id=WORKSPACE_ID,
+            node_id="lookup",
+        )
+    )
+
+    output_ref = result.outputs["message"]
+    assert isinstance(output_ref, ArtifactRef)
+    async with unit_of_work as entered:
+        output = await entered.artifacts.get(WORKSPACE_ID, output_ref.artifact_id)
+    assert output is not None
+    assert output.inline_payload == prompt_payload
 
 
 @pytest.mark.asyncio

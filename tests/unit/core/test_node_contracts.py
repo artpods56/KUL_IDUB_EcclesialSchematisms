@@ -13,6 +13,7 @@ from grafy_core.artifacts import (
     NodeOutput,
 )
 from grafy_core.nodes import (
+    MAX_NODE_ERROR_MESSAGE_LENGTH,
     ArtifactTypeVariable,
     InPort,
     Node,
@@ -21,6 +22,7 @@ from grafy_core.nodes import (
     NodeExecutionContext,
     OutPort,
     PortShape,
+    UserFacingNodeError,
     derive_input_contract,
     resolve_node_contracts,
 )
@@ -144,6 +146,17 @@ def test_node_contracts_derive_shape_and_resolver_target_from_annotations() -> N
 def test_node_models_forbid_unknown_fields() -> None:
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         NoConfig.model_validate({"unexpected": True})
+
+
+def test_user_facing_node_error_requires_a_bounded_nonblank_message() -> None:
+    assert str(UserFacingNodeError("  Safe provider failure.  ")) == (
+        "Safe provider failure."
+    )
+
+    with pytest.raises(ValueError, match="must not be blank"):
+        UserFacingNodeError("  ")
+    with pytest.raises(ValueError, match="must be at most"):
+        UserFacingNodeError("x" * (MAX_NODE_ERROR_MESSAGE_LENGTH + 1))
 
 
 def test_input_contract_supports_optional_variadic_and_structural_types() -> None:

@@ -6,6 +6,7 @@ import pytest
 
 from grafy_core.domain.plugin_releases import (
     PLUGIN_INVOCATION_PROTOCOL,
+    PluginArtifactBundleContract,
     PluginArtifactTypeKey,
     plugin_protocol_digest,
 )
@@ -16,6 +17,7 @@ from grafy_core.runtime.plugin_protocol import (
     PluginFailureCode,
     PluginFailureEnvelope,
     PluginInputArtifactBundle,
+    PluginInputArtifactDependency,
     PluginInputArtifactGroup,
     PluginInputBinding,
     PluginInvocationEnvelope,
@@ -34,7 +36,9 @@ from grafy_core.runtime.plugin_protocol import (
 INVOCATION_ID = UUID("00000000-0000-4000-8000-000000000301")
 WORKSPACE_ID = UUID("00000000-0000-4000-8000-000000000302")
 ARTIFACT_ID = UUID("00000000-0000-4000-8000-000000000303")
+DEPENDENCY_ID = UUID("00000000-0000-4000-8000-000000000304")
 TEXT = PluginArtifactTypeKey(id="scalar.text", schema_version=1)
+IMAGE = PluginArtifactTypeKey(id="image.raster", schema_version=1)
 
 
 def _invocation() -> PluginInvocationEnvelope:
@@ -74,6 +78,22 @@ def _invocation() -> PluginInvocationEnvelope:
                 ),
             ),
         ),
+        input_artifact_dependencies=(
+            PluginInputArtifactDependency(
+                artifact_type=IMAGE,
+                bundle=PluginArtifactBundleContract(
+                    format="binary-file",
+                    version=1,
+                ),
+                artifact=PluginInputArtifactBundle(
+                    artifact_id=DEPENDENCY_ID,
+                    relative_path="inputs/references/r000000.bin",
+                    byte_count=4,
+                    content_sha256="e" * 64,
+                    content_type="image/png",
+                ),
+            ),
+        ),
         outputs=(
             PluginOutputDeclaration(
                 port="text",
@@ -92,7 +112,7 @@ def test_protocol_models_round_trip_deterministically_without_provider_details()
     first = invocation.canonical_json_bytes()
     restored = PluginInvocationEnvelope.from_json_bytes(first)
 
-    assert PLUGIN_INVOCATION_PROTOCOL == "grafy-plugin-invocation@6"
+    assert PLUGIN_INVOCATION_PROTOCOL == "grafy-plugin-invocation@7"
     assert restored == invocation
     assert restored.canonical_json_bytes() == first
     assert PLUGIN_INVOCATION_PROTOCOL.encode() in first
@@ -126,6 +146,16 @@ def test_protocol_rejects_duplicate_ports_paths_and_unknown_fields() -> None:
     with pytest.raises(ValidationError, match="port bindings must be unique"):
         PluginInvocationEnvelope.model_validate(
             invocation.model_copy(update={"inputs": (binding, binding)}).model_dump()
+        )
+
+    dependency = invocation.input_artifact_dependencies[0]
+    with pytest.raises(ValidationError, match="dependencies must be unique"):
+        PluginInvocationEnvelope.model_validate(
+            invocation.model_copy(
+                update={
+                    "input_artifact_dependencies": (dependency, dependency),
+                }
+            ).model_dump()
         )
 
     output = PluginOutputArtifactBundle(

@@ -22,6 +22,7 @@ from grafy_core.nodes import (
     Node,
     NodeExecutionContext,
     OutPort,
+    UserFacingNodeError,
 )
 from grafy_core.artifact_contracts import INTEGER_VALUE
 from grafy_core.plugins import Plugin
@@ -207,7 +208,7 @@ class FailingNode(Node[NoConfig, FailingInput, FailingOutput]):
         _inputs: FailingInput,
         /,
     ) -> FailingOutput:
-        raise RuntimeError("controlled node failure")
+        raise UserFacingNodeError("controlled node failure")
 
 
 SYSTEM_DEPLOYMENT = build_selected_system_plugin_deployment(

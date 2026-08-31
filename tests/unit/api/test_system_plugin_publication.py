@@ -346,6 +346,73 @@ async def test_isolated_llm_system_release_promotes_without_a_host_manifest(
 
 
 @pytest.mark.asyncio
+async def test_host_image_system_release_promotes_with_staged_uploads(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'image.sqlite3'}"
+    await create_schema(database_url)
+    database = create_database(database_url)
+    releases = PluginReleaseService(
+        lambda: SqlAlchemyUnitOfWork(database.sessions),
+        LocalFileObjectStore(tmp_path / "objects"),
+        bucket="plugins",
+    )
+    image_builder = RecordingSystemImageBuilder()
+    inventory = load_system_plugin_inventory(CHECKED_IN_SYSTEM_PLUGIN_INVENTORY_PATH)
+    entry = inventory.entry_for("builtin.image")
+    candidate = _verified(
+        b"image",
+        catalog=_catalog(
+            slug=entry.slug,
+            operator_id="image.upload",
+            required_capabilities=entry.capabilities,
+        ),
+        capabilities=PluginCapabilityManifest(capabilities=entry.capabilities),
+        loader_target=entry.loader_target,
+    )
+    actor = PlatformPluginActor("ci:system-release")
+    publication = SystemPluginPublicationWorkflow(
+        image_builder,
+        releases,
+        isolated_release_admission(
+            profile=runtime_profile("python-uv"),
+            egress_policy=PluginEgressBrokerPolicy(),
+            network_policy=legacy_network_policy(),
+        ),
+        inventory,
+    )
+    release = await publication.publish_verified(candidate, platform_actor=actor)
+    binding = SystemHostPluginBinding.from_release(
+        release,
+        selection_generation=1,
+        loader_target=entry.loader_target,
+        host_build_digest="f" * 64,
+    )
+    promotion = SystemPluginPublicationWorkflow(
+        image_builder,
+        releases,
+        isolated_release_admission(
+            profile=runtime_profile("python-uv"),
+            egress_policy=PluginEgressBrokerPolicy(),
+            network_policy=legacy_network_policy(),
+            system_host_bindings=(binding,),
+        ),
+        inventory,
+    )
+
+    selection = await promotion.promote(
+        slug=release.slug,
+        revision=release.revision,
+        platform_actor=actor,
+        expected_generation=0,
+    )
+
+    assert selection.selected_release_id == release.id
+    assert selection.selected_revision == 1
+    await database.dispose()
+
+
+@pytest.mark.asyncio
 async def test_system_install_reuses_workspace_release_and_runtime_artifact(
     tmp_path: Path,
 ) -> None:

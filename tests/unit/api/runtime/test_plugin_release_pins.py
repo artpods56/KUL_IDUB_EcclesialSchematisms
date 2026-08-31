@@ -159,12 +159,9 @@ def _release(
 ) -> InstalledPluginRelease:
     dependencies = artifact_type_dependencies
     if dependencies is None:
-        text_registry = build_explicit_plugin_registry((TEXT_PLUGIN,))
-        text_artifact_keys = {spec.key for spec in TEXT_PLUGIN.artifact_types}
         dependencies = tuple(
             PluginArtifactTypeContract.from_spec(spec)
-            for spec in text_registry.artifact_types
-            if spec.key in text_artifact_keys
+            for spec in TEXT_PLUGIN.artifact_types
         )
     catalog = PluginCatalogManifest(
         slug="notes",
@@ -234,16 +231,7 @@ def _release(
 
 
 def _host_text_release(revision: int) -> InstalledPluginRelease:
-    text_registry = build_explicit_plugin_registry((TEXT_PLUGIN,))
-    plugin_catalog = PluginCatalogManifest.from_plugin(TEXT_PLUGIN)
-    catalog = plugin_catalog.model_copy(
-        update={
-            "artifact_types": tuple(
-                PluginArtifactTypeContract.from_spec(spec)
-                for spec in text_registry.artifact_types
-            )
-        }
-    )
+    catalog = PluginCatalogManifest.from_plugin(TEXT_PLUGIN)
     capabilities = PluginCapabilityManifest()
     runtime_artifact = PluginRuntimeArtifact(
         object_key=f"plugin-releases/system/builtin.text/runtime/r{revision}.oci.tar",
@@ -713,6 +701,29 @@ async def test_historical_system_release_overlapping_host_runs_isolated() -> Non
     assert isinstance(node.node, PluginReleaseNode)
     assert node.registration is None
     assert node.plugin_release == PluginReleaseIdentity.from_release(historical)
+
+
+@pytest.mark.asyncio
+async def test_exact_release_contract_comparison_uses_declared_artifact_contracts() -> (
+    None
+):
+    release = _release(
+        1,
+        artifact_type_dependencies=tuple(
+            PluginArtifactTypeContract.from_spec(spec)
+            for spec in TEXT_PLUGIN.artifact_types
+        ),
+    )
+
+    compiled = await _compiler(RecordingReleaseLookup(release)).compile(
+        _echo_run_request(pin_revision=1),
+        _UnusedModuleExecutor(),
+        workspace_id=WORKSPACE_ID,
+    )
+
+    assert compiled.nodes[0].plugin_release == PluginReleaseIdentity.from_release(
+        release
+    )
 
 
 @pytest.mark.asyncio

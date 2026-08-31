@@ -44,6 +44,7 @@ from grafy_core.operators.modules import MODULE_BOUNDARY_REGISTRATIONS
 from grafy_plugin_arithmetic import ARITHMETIC
 from grafy_core.artifact_contracts import INTEGER_VALUE, RASTER_IMAGE, TEXT_VALUE
 from grafy_core.table_contracts import TABLE_DATA
+from grafy_plugin_prompt import PROMPTS
 from grafy_plugin_text import TEXT
 from grafy_core.plugins import Plugin, PluginRegistry
 from grafy_core.ports.modules import GraphModuleExecutionResult
@@ -711,6 +712,29 @@ def test_system_release_rejects_same_key_with_different_host_artifact_contract()
             ],
             workspace_id=WORKSPACE_ID,
         )
+
+
+def test_system_release_contract_matches_host_before_derived_projections() -> None:
+    registry = PluginRegistry()
+    registry.install(PROMPTS)
+    registry.install(TEXT)
+    registry.freeze()
+
+    response = NodeRegistryResponse.from_registry(
+        registry,
+        GraphModuleCatalogListing(entries=[], unavailable=[]),
+        UnusedModuleExecutor(),
+        [
+            _system_release(PROMPTS),
+            _system_release(TEXT),
+        ],
+        workspace_id=WORKSPACE_ID,
+    )
+
+    assert {plugin.slug for plugin in response.plugins} >= {
+        "builtin.prompt",
+        "builtin.text",
+    }
 
 
 def test_module_provider_is_a_separate_entry_kind_without_plugin_scope() -> None:

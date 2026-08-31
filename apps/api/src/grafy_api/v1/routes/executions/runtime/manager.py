@@ -38,6 +38,7 @@ from .admission import (
     RunExecutionQueueFullError,
 )
 from .control import RunExecutionControl
+from .errors import render_execution_error
 from .models import GraphExecutionResult
 from .run_graph import RunGraph
 
@@ -519,7 +520,7 @@ class RunExecutionManager:
                     (
                         history_execution,
                         "Queued execution request is invalid: "
-                        f"{_render_exception_chain(exc)}",
+                        f"{render_execution_error(exc)}",
                     )
                 )
                 continue
@@ -673,7 +674,7 @@ class RunExecutionManager:
                     except Exception as exc:
                         record.error = (
                             "Execution history could not record cancellation: "
-                            f"{_render_exception_chain(exc)}"
+                            f"{render_execution_error(exc)}"
                         )
                 record.status = "cancelling"
                 record.control.publish_execution_status(
@@ -771,7 +772,7 @@ class RunExecutionManager:
                 await self._complete(
                     record,
                     status="failed",
-                    error=_render_exception_chain(exc),
+                    error=render_execution_error(exc),
                 )
         else:
             if record.control.cancel_requested:
@@ -802,7 +803,7 @@ class RunExecutionManager:
             self._complete(
                 record,
                 status="failed",
-                error=_render_exception_chain(exception),
+                error=render_execution_error(exception),
             )
         )
 
@@ -863,7 +864,7 @@ class RunExecutionManager:
                 if history_failure is not None:
                     history_error = (
                         "Execution history could not record the terminal result: "
-                        f"{_render_exception_chain(history_failure)}"
+                        f"{render_execution_error(history_failure)}"
                     )
             active_node_id = record.control.active_node_id
             if active_node_id is not None:
@@ -1103,20 +1104,6 @@ def _contains_cancellation(exception: BaseException) -> bool:
             continue
         current = None if current.__suppress_context__ else current.__context__
     return False
-
-
-def _render_exception_chain(exception: BaseException) -> str:
-    rendered: list[str] = []
-    seen: set[int] = set()
-    current: BaseException | None = exception
-    while current is not None and id(current) not in seen and len(rendered) < 12:
-        seen.add(id(current))
-        rendered.append(f"{type(current).__name__}: {current}")
-        if current.__cause__ is not None:
-            current = current.__cause__
-            continue
-        current = None if current.__suppress_context__ else current.__context__
-    return " <- caused by ".join(rendered)
 
 
 __all__ = [

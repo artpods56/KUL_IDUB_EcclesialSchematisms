@@ -55,6 +55,13 @@ contract bytes is a collision. Versioned conversions between artifact types
 are deployment-owned canonical behavior, not an asset of either endpoint's
 Plugin release.
 
+An inline artifact type also declares every field that contains persisted
+artifact references, including the JSON path, target artifact type, and whether
+the field contains one reference or many. Isolated execution follows only these
+declared references. It stages the exact referenced artifacts as read-only
+dependencies in the guest artifact store, without turning them into extra node
+ports or granting access to unrelated Workspace artifacts.
+
 ### Artifact bundle contract
 
 The provider-neutral wire and storage shape used to move one artifact value
