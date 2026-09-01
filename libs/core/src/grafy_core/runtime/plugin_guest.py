@@ -232,6 +232,13 @@ class _GuestBundleStorage(FileStoragePort):
             for group in binding.groups
             for artifact in group.artifacts
         }
+        self._bundles.update(
+            {
+                dependency.artifact.relative_path: dependency.artifact
+                for dependency in request.input_artifact_dependencies
+                if dependency.bundle.format == "binary-file"
+            }
+        )
         self._input_objects: dict[str, tuple[bytes, str]] = {}
         self._output_objects: dict[str, tuple[bytes, str]] = {}
         self._max_output_bytes = request.limits.max_output_bytes

@@ -45,6 +45,7 @@ from grafy_core.runtime.object_set_bundle import (
 from grafy_core.runtime.persistence import PersistedNodeOutput
 from grafy_core.runtime.plugin_protocol import (
     PluginInputArtifactBundle,
+    PluginInputArtifactDependency,
     PluginInputArtifactGroup,
     PluginInputBinding,
     PluginInvocationEnvelope,
@@ -228,6 +229,63 @@ async def test_guest_binary_bundle_storage_loads_only_declared_content(
     assert info is not None
     assert info.byte_size == len(content)
     assert await storage.load_range("guest-inputs", relative_path, 6, 14) == b"portable"
+
+
+@pytest.mark.asyncio
+async def test_guest_binary_dependency_bundle_storage_loads_declared_content(
+    tmp_path: Path,
+) -> None:
+    content = b"referenced prompt image"
+    relative_path = "inputs/references/r000000.bin"
+    path = tmp_path / relative_path
+    path.parent.mkdir(parents=True)
+    path.write_bytes(content)
+    workspace_id = UUID("00000000-0000-4000-8000-000000000503")
+    request = PluginInvocationEnvelope(
+        invocation_id=UUID("00000000-0000-4000-8000-000000000501"),
+        execution_scope_id=UUID("00000000-0000-4000-8000-000000000502"),
+        workspace_id=workspace_id,
+        release=PluginInvocationRelease(
+            scope=PluginReleaseScope.WORKSPACE,
+            workspace_id=workspace_id,
+            slug="binary",
+            revision=1,
+            source_digest="a" * 64,
+            contract_digest="b" * 64,
+            protocol_digest=plugin_protocol_digest(),
+            descriptor_digest="d" * 64,
+        ),
+        operator_id="binary.read",
+        operator_version=1,
+        config={},
+        inputs=(),
+        input_artifact_dependencies=(
+            PluginInputArtifactDependency(
+                artifact_type=PluginArtifactTypeKey(
+                    id="image.raster",
+                    schema_version=1,
+                ),
+                bundle=PluginArtifactBundleContract(
+                    format="binary-file",
+                    version=1,
+                ),
+                artifact=PluginInputArtifactBundle(
+                    artifact_id=UUID("00000000-0000-4000-8000-000000000504"),
+                    relative_path=relative_path,
+                    byte_count=len(content),
+                    content_sha256=sha256(content).hexdigest(),
+                    content_type="image/png",
+                ),
+            ),
+        ),
+        outputs=(),
+        limits=PluginInvocationLimits(),
+    )
+    storage = _GuestBundleStorage(tmp_path, request)
+
+    stream = await storage.load("guest-inputs", relative_path)
+
+    assert stream.read() == content
 
 
 @pytest.mark.asyncio
