@@ -1,5 +1,6 @@
-import tomllib
+from hashlib import sha256
 from pathlib import Path
+import tomllib
 from typing import cast
 
 
@@ -277,5 +278,25 @@ def test_converged_operator_implementations_are_owned_by_plugin_projects() -> No
 
         assert (project_root / "uv.lock").is_file()
         assert "grafy-core==0.1.0" in cast(list[str], project["dependencies"])
-        assert (project_root / "wheels/grafy_core-0.1.0-py3-none-any.whl").is_file()
+        core_wheel = project_root / "wheels/grafy_core-0.1.0-py3-none-any.whl"
+        assert sha256(core_wheel.read_bytes()).hexdigest() == (
+            "03d5e7615c4d093a7ab3cc4a41c00ff834c29a725738e41763f2b03175ffd64d"
+        )
         assert "workspace = true" not in (project_root / "pyproject.toml").read_text()
+
+
+def test_host_eligible_plugins_carry_their_exact_build_backend() -> None:
+    inventory = tomllib.loads((REPO_ROOT / "plugins/system-plugins.toml").read_text())
+
+    for plugin in cast(list[dict[str, object]], inventory["plugins"]):
+        if plugin["execution_policy"] != "host-eligible":
+            continue
+        project_root = REPO_ROOT.joinpath(*cast(str, plugin["project"]).split("/"))
+        document = tomllib.loads((project_root / "pyproject.toml").read_text())
+        build_system = cast(dict[str, object], document["build-system"])
+        wheel = project_root / "wheels/setuptools-84.0.0-py3-none-any.whl"
+
+        assert build_system["requires"] == ["setuptools==84.0.0"]
+        assert sha256(wheel.read_bytes()).hexdigest() == (
+            "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670"
+        )

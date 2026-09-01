@@ -36,8 +36,9 @@ release metadata.
    root; symlink and traversal escapes fail closed.
 2. The deterministic source archive and raw `uv.lock` digests exactly match the
    staged release before any host binding is considered.
-3. The wheel is built from a reconstructed copy of that verified snapshot,
-   offline and without ambient project configuration.
+3. The wheel is built from a reconstructed copy of that verified snapshot.
+   The build uses only the pinned backend wheel in the snapshot's `wheels/`
+   directory. Network access, package indexes, and ambient caches are disabled.
 4. Wheel inspection rejects traversal, duplicate paths, encrypted entries,
    symlinks, non-regular entries, excessive file counts/bytes, and distribution
    name mismatch.
@@ -86,9 +87,10 @@ promotion policy in this packet.
 1. Audit the partial canonical inclusion rules. The wheel and installed paths
    must produce identical logical names for identical package bytes.
 2. Sanitize the wheel-build subprocess environment. Preserve only the minimum
-   platform variables required to find `uv` and create temporary files; keep
-   `--offline`, `--no-config`, bounded timeout, captured bounded diagnostics, and
-   closed file descriptors [R09: Narrow IO Boundaries].
+   platform variables required to find `uv` and create temporary files. Use
+   `--offline`, `--no-cache`, `--no-index`, and the snapshot's `wheels/`
+   directory. Keep the bounded timeout, bounded diagnostics, and closed file
+   descriptors [R09: Narrow IO Boundaries].
 3. Translate `SystemPluginDeploymentError`, build timeout, and subprocess failure
    into a contextual `SystemPluginDeploymentBuildError` without losing the cause.
 4. Verify that a real current host-eligible package rebuilt from its exact source
@@ -149,7 +151,8 @@ uv run basedpyright \
 Files changed (relative to HEAD):
 
 - `apps/api/src/grafy_api/system_plugin_deployment.py` (new) — the deployment manifest builder, including this completion's additions:
-  - the offline `uv build` wheel-build subprocess now runs with a sanitized environment (`_wheel_build_environment` keeps only `PATH`, `TMPDIR`, `TMP`, `TEMP` — enough to resolve `uv` and create temporary files, so ambient project/cache/index configuration cannot leak into the rebuild; verified empirically that the minimal environment still builds offline);
+  - the offline `uv build` subprocess runs with a sanitized environment. It also uses `--no-cache`, `--no-index`, and `--find-links <snapshot>/wheels`, so the rebuild cannot read the user's uv cache or a package index;
+  - every host-eligible Plugin pins `setuptools==84.0.0` and carries the reviewed `setuptools-84.0.0-py3-none-any.whl` in its frozen source. The wheel SHA-256 is `51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670`;
   - build diagnostics are captured and bounded (tail of `stderr`/`stdout`, `_WHEEL_BUILD_DIAGNOSTIC_MAX_CHARS = 4096`) inside the `SystemPluginDeploymentBuildError` message;
   - `SystemPluginDeploymentError` from wheel inspection or installed-distribution fingerprinting is translated into a contextual `SystemPluginDeploymentBuildError` with the original exception preserved as the cause (`from exc`), alongside the existing timeout/subprocess-failure translation;
   - the pre-existing contract verified here: the host/installed digest mismatch is rejected before the output manifest is written, and the output manifest is created only after every byte-level check passes.
@@ -164,6 +167,6 @@ Focused gates (all green):
 - `uv run basedpyright apps/api/src/grafy_api/system_plugin_deployment.py apps/api/src/grafy_api/system_plugin_loader.py` → 0 errors.
 - `git diff --check` → clean.
 
-Deliberately unsupported states: wheel rebuilds are strictly offline (`--offline`, `--no-config`, sanitized environment, bounded 600 s timeout, `close_fds=True`) — no network egress and no ambient uv configuration can influence the attested build; isolated-only releases are attested for source/OCI facts but never host-bound.
+Deliberately unsupported states: wheel rebuilds are strictly offline and use only the build backend in the verified source snapshot. No network egress, package index, uv cache, or ambient uv configuration can influence the attested build. Isolated-only releases are attested for source and OCI facts but never host-bound.
 
 Remaining blockers: none.

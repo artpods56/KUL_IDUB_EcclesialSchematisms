@@ -1,3 +1,4 @@
 *
 !.gitignore
 !grafy_core-*.whl
+!setuptools-*.whl
