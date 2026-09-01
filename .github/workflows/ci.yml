@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Retained contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install locked workspaces
+        run: |
+          uv sync --locked --all-extras
+          npm --prefix apps/web ci
+      - name: Test
+        run: |
+          uv run --all-extras pytest
+          npm --prefix apps/web test
+      - name: Lint
+        run: |
+          uv run ruff check apps/api/src libs/client/src libs/core/src libs/persistence/src libs/storage/src plugins/*/src infra/db/migrations scripts tests
+          npm --prefix apps/web run lint
+      - name: Typecheck
+        run: |
+          uv run pyright libs/client
+          npm --prefix apps/web run typecheck
+      - name: Verify generated API and production build
+        run: |
+          npm --prefix apps/web run check:api
+          npm --prefix apps/web run build
+
+  live-e2e:
+    name: Live HTTP/PAT multimodal graph
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install locked Python workspace
+        run: uv sync --locked --all-extras
+      - name: Run disposable live deployment
+        run: uv run python scripts/e2e/run_live.py

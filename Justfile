@@ -34,7 +34,7 @@ test:
 
 # Run Python and web linters.
 lint:
-    uv run ruff check apps/api/src libs/core/src libs/persistence/src libs/storage/src plugins/*/src infra/db/migrations scripts tests
+    uv run ruff check apps/api/src libs/client/src libs/core/src libs/persistence/src libs/storage/src plugins/*/src infra/db/migrations scripts tests
     npm --prefix apps/web run lint
 
 # Run Python and TypeScript type checks.
@@ -56,6 +56,10 @@ check: test lint typecheck contract build
 # Exercise the workbench runtime without the browser.
 smoke:
     uv run --extra ocr python scripts/smoke_workbench.py
+
+# Run the disposable live HTTP/PAT multimodal graph contract.
+e2e-live:
+    uv run python scripts/e2e/run_live.py
 
 # Upgrade the database to the latest migration.
 db-upgrade:

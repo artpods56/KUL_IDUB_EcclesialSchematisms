@@ -364,11 +364,20 @@ The OpenAI-compatible adapter accepts PNG, JPEG, GIF, and WebP image
 artifacts on user messages. It bounds one request to eight images, 20,000,000
 bytes per image, and 50,000,000 image bytes in aggregate before base64 encoding.
 
-Node secrets currently use trusted-collaboration semantics. Any visitor who can
-access a graph can run it without retrieving the configured key. Because this
-repository does not yet have authentication or graph roles, those visitors can
-also replace or remove the key through the API. Put the Grafy API behind
-HTTPS and an access-controlled boundary before exposing it to untrusted users.
+Workspace members with execution authority may use a configured node secret
+without retrieving it. Replacing or removing that secret requires the separate
+`manage_secrets` capability; PAT automation must request that scope explicitly,
+and its effective authority remains bounded by current Workspace membership.
+Expose Grafy through HTTPS so browser sessions and bearer credentials are never
+sent over an unprotected network.
+
+### Author graphs with Python
+
+The `grafy-client` package loads the effective Workspace catalog, validates
+local Node classes against it, builds the canonical saved document with exact
+Plugin release pins, and uses the public PAT-authenticated HTTP API to upload,
+save, configure, execute, and inspect a graph. See
+[Build and run a graph with Python](docs/how-to-author-graphs-with-python.md).
 
 ## Verify
 
@@ -388,6 +397,13 @@ To exercise the runtime without the browser:
 
 ```bash
 just smoke
+```
+
+To start a disposable deployment and verify a multimodal graph through the
+public HTTP/PAT client against a deterministic HTTPS provider:
+
+```bash
+just e2e-live
 ```
 
 ## Containers
