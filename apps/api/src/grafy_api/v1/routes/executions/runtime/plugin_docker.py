@@ -7,14 +7,15 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from io import BytesIO
 import json
-import os
+import logging
 from pathlib import Path, PurePosixPath
 import shutil
-import signal
 import tarfile
 from tempfile import TemporaryDirectory
 from typing import Protocol, cast, final, override
 from uuid import UUID
+
+from pydantic import StrictStr, TypeAdapter, ValidationError
 
 from grafy_core.domain.plugin_installations import InstalledPluginRelease
 from grafy_core.domain.plugin_releases import (
@@ -43,6 +44,8 @@ from grafy_api.plugin_admission import (
     isolated_release_admission,
 )
 from grafy_api.plugin_egress import (
+    PLUGIN_EGRESS_BROKER_CONFIG_VERSION,
+    PLUGIN_EGRESS_BROKER_CONFIG_VERSION_LABEL,
     PLUGIN_HTTP_PROXY_PORT,
     PluginEgressAddressScope,
     PluginEgressBrokerPlan,
@@ -77,6 +80,12 @@ _EGRESS_RESOURCE_LABEL = "io.grafy.plugin.egress=1"
 _EGRESS_BROKER_ALIAS = "grafy-egress-broker"
 _CONTAINER_INVOCATIONS = PurePosixPath("/run/grafy/invocations")
 _RESULT_TAR_LIMIT = 2 * 1_024 * 1_024
+_DOCKER_IMAGE_LABELS_ADAPTER: TypeAdapter[dict[str, str] | None] = TypeAdapter(
+    dict[str, StrictStr] | None
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 class DockerPluginRuntimeError(RuntimeError):
@@ -188,7 +197,7 @@ async def _kill_command(process: asyncio.subprocess.Process) -> None:
     if process.returncode is not None:
         return
     try:
-        os.killpg(process.pid, signal.SIGKILL)
+        process.kill()
     except ProcessLookupError:
         pass
     await process.wait()
@@ -353,6 +362,77 @@ class DockerPluginRuntime(
             max_stdout=64 * 1_024,
             check=True,
         )
+        broker_image = self._egress_policy.broker_image
+        if broker_image is None:
+            return
+        inspected = await self._docker(
+            (
+                "image",
+                "inspect",
+                "--format",
+                "{{json .Config.Labels}}",
+                broker_image,
+            ),
+            timeout=3,
+            max_stdout=64 * 1_024,
+            check=False,
+        )
+        if inspected.returncode != 0:
+            logger.error(
+                "plugin_egress_broker_incompatible",
+                extra={
+                    "broker_image": broker_image,
+                    "reason": "image_unavailable",
+                    "expected_contract_version": (
+                        PLUGIN_EGRESS_BROKER_CONFIG_VERSION
+                    ),
+                    "actual_contract_version": "unavailable",
+                },
+            )
+            raise DockerPluginRuntimeError(
+                f"Configured Plugin egress broker image {broker_image!r} is not "
+                "available to Docker"
+            )
+        try:
+            labels = _DOCKER_IMAGE_LABELS_ADAPTER.validate_json(inspected.stdout)
+        except ValidationError as exc:
+            logger.error(
+                "plugin_egress_broker_incompatible",
+                extra={
+                    "broker_image": broker_image,
+                    "reason": "metadata_invalid",
+                    "expected_contract_version": (
+                        PLUGIN_EGRESS_BROKER_CONFIG_VERSION
+                    ),
+                    "actual_contract_version": "invalid",
+                },
+            )
+            raise DockerPluginRuntimeError(
+                "Plugin egress broker image has invalid compatibility metadata"
+            ) from exc
+        actual_version = (
+            None
+            if labels is None
+            else labels.get(PLUGIN_EGRESS_BROKER_CONFIG_VERSION_LABEL)
+        )
+        expected_version = str(PLUGIN_EGRESS_BROKER_CONFIG_VERSION)
+        if actual_version != expected_version:
+            found = "undeclared" if actual_version is None else str(actual_version)
+            logger.error(
+                "plugin_egress_broker_incompatible",
+                extra={
+                    "broker_image": broker_image,
+                    "reason": "version_mismatch",
+                    "expected_contract_version": (PLUGIN_EGRESS_BROKER_CONFIG_VERSION),
+                    "actual_contract_version": found,
+                },
+            )
+            raise DockerPluginRuntimeError(
+                "Plugin egress broker image is incompatible: expected policy "
+                f"config version {expected_version}, found {found}. Rebuild the "
+                "broker image from the same Grafy revision and update "
+                "GRAFY_PLUGIN_EGRESS_BROKER_IMAGE"
+            )
 
     async def diagnostics(self) -> PluginSandboxCapacityDiagnostics:
         async with self._lock:
@@ -482,6 +562,7 @@ class DockerPluginRuntime(
                 config=request.config,
             )
             if not egress_resolution.allowed:
+                assert egress_resolution.reason is not None
                 raise PluginGuestRunError(
                     PluginFailureCode.CONTRACT_FAILURE,
                     f"Network egress denied ({egress_resolution.reason.value}): "
@@ -1067,7 +1148,7 @@ class DockerPluginRuntime(
                     max_stdout=1 * 1_024 * 1_024,
                     check=True,
                 )
-                await self._docker(
+                broker_ready = await self._docker(
                     (
                         "exec",
                         broker_container_id,
@@ -1080,8 +1161,106 @@ class DockerPluginRuntime(
                     ),
                     timeout=10,
                     max_stdout=64 * 1_024,
-                    check=True,
+                    check=False,
                 )
+                if broker_ready.returncode != 0:
+                    broker_status = "unknown"
+                    broker_exit_code: int | None = None
+                    broker_oom_killed: bool | None = None
+                    # Preserve the primary readiness failure when diagnostics fail.
+                    broker_state_probe_succeeded = False
+                    try:
+                        state_result = await self._docker(
+                            (
+                                "inspect",
+                                "--format",
+                                "{{json .State}}",
+                                broker_container_id,
+                            ),
+                            timeout=10,
+                            max_stdout=64 * 1_024,
+                            check=False,
+                        )
+                    except Exception:
+                        state_result = None
+                    if state_result is not None and state_result.returncode == 0:
+                        broker_state_probe_succeeded = True
+                        try:
+                            loaded_state: object = json.loads(state_result.stdout)
+                        except (UnicodeDecodeError, json.JSONDecodeError):
+                            loaded_state = None
+                        if isinstance(loaded_state, dict):
+                            state = cast(dict[str, object], loaded_state)
+                            raw_status = state.get("Status")
+                            raw_exit_code = state.get("ExitCode")
+                            raw_oom_killed = state.get("OOMKilled")
+                            if isinstance(raw_status, str):
+                                broker_status = raw_status
+                            if isinstance(raw_exit_code, int) and not isinstance(
+                                raw_exit_code,
+                                bool,
+                            ):
+                                broker_exit_code = raw_exit_code
+                            if isinstance(raw_oom_killed, bool):
+                                broker_oom_killed = raw_oom_killed
+                    broker_log_probe_succeeded = False
+                    rejected_config_version = False
+                    try:
+                        broker_logs = await self._docker(
+                            ("logs", "--tail", "20", broker_container_id),
+                            timeout=10,
+                            max_stdout=64 * 1_024,
+                            max_stderr=64 * 1_024,
+                            check=False,
+                        )
+                    except Exception:
+                        broker_logs = None
+                    if broker_logs is not None and broker_logs.returncode == 0:
+                        broker_log_probe_succeeded = True
+                        rejected_config_version = (
+                            b"Broker policy config version is unsupported"
+                            in broker_logs.stdout
+                            or b"Broker policy config version is unsupported"
+                            in broker_logs.stderr
+                        )
+                    logger.error(
+                        "plugin_egress_broker_readiness_failed",
+                        extra={
+                            "workspace_id": str(key.workspace_id),
+                            "plugin_slug": key.release_slug,
+                            "plugin_revision": key.release_revision,
+                            "broker_image": egress_plan.broker_image,
+                            "broker_contract_version": (
+                                PLUGIN_EGRESS_BROKER_CONFIG_VERSION
+                            ),
+                            "ready_exit_code": broker_ready.returncode,
+                            "broker_status": broker_status,
+                            "broker_exit_code": broker_exit_code,
+                            "broker_oom_killed": broker_oom_killed,
+                            "broker_state_probe_succeeded": (
+                                broker_state_probe_succeeded
+                            ),
+                            "broker_log_probe_succeeded": (
+                                broker_log_probe_succeeded
+                            ),
+                            "broker_rejected_policy_version": (
+                                rejected_config_version
+                            ),
+                        },
+                    )
+                    if rejected_config_version:
+                        raise DockerPluginRuntimeError(
+                            "Plugin egress broker rejected policy config version "
+                            f"{PLUGIN_EGRESS_BROKER_CONFIG_VERSION}; rebuild the "
+                            "broker image from the same Grafy revision and update "
+                            "GRAFY_PLUGIN_EGRESS_BROKER_IMAGE"
+                        )
+                    raise DockerPluginRuntimeError(
+                        "Plugin egress broker did not become ready "
+                        f"(ready status {broker_ready.returncode}, container "
+                        f"status {broker_status}, exit status "
+                        f"{broker_exit_code}, OOM killed {broker_oom_killed})"
+                    )
             command = (
             "create",
             "--name",
@@ -1313,8 +1492,13 @@ class DockerPluginRuntime(
         input_bytes: bytes | None = None,
         check: bool,
     ) -> _Completed:
+        docker_executable = shutil.which(self._docker_binary)
+        if docker_executable is None:
+            raise _DockerCommandError(
+                f"Docker executable {self._docker_binary!r} is not on PATH"
+            )
         process = await asyncio.create_subprocess_exec(
-            self._docker_binary,
+            docker_executable,
             *arguments,
             stdin=(
                 asyncio.subprocess.PIPE
@@ -1323,7 +1507,7 @@ class DockerPluginRuntime(
             ),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            start_new_session=True,
+            close_fds=False,
         )
         if process.stdout is None or process.stderr is None:
             await _kill_command(process)

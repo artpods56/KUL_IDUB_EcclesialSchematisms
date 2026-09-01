@@ -143,6 +143,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     egress_policy=(resolved_settings.resolved_plugin_egress_policy),
                     network_policy=network_policy,
                 )
+                await plugin_runtime.check_ready()
                 await plugin_runtime.recover_orphans()
                 for profile in network_policy.profiles:
                     logger.info(

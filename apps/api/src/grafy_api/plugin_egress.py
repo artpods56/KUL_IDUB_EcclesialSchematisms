@@ -15,6 +15,9 @@ from urllib.parse import urlsplit
 _PINNED_IMAGE = re.compile(r"^[^\s@]+@sha256:[0-9a-f]{64}$")
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 PLUGIN_EGRESS_BROKER_CONFIG_VERSION = 2
+PLUGIN_EGRESS_BROKER_CONFIG_VERSION_LABEL = (
+    "io.grafy.plugin.egress-broker.policy-config-version"
+)
 PLUGIN_HTTP_PROXY_PORT = 3128
 PLUGIN_EGRESS_CONNECTION_LIMIT = 128
 PLUGIN_EGRESS_MAX_HEADER_BYTES = 64 * 1_024
@@ -481,6 +484,7 @@ def _is_public_or_rfc1918_address(address: IPv4Address | IPv6Address) -> bool:
 
 __all__ = [
     "PLUGIN_EGRESS_BROKER_CONFIG_VERSION",
+    "PLUGIN_EGRESS_BROKER_CONFIG_VERSION_LABEL",
     "PLUGIN_HTTP_PROXY_PORT",
     "PluginEgressAddressScope",
     "PluginEgressBrokerPolicy",
