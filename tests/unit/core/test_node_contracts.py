@@ -213,11 +213,15 @@ def test_input_contract_rejects_invalid_instance_plug_declarations(
 def test_generic_node_contract_resolves_shared_variable_without_mutation() -> None:
     node = GenericNode()
     artifact_type = ArtifactTypeKey("example.value", 2)
+    input_port = node.input_contract.ports["items"]
+    output_port = node.output_contract.ports["items"]
 
     resolved = resolve_node_contracts(node, {"T": artifact_type})
 
-    assert node.input_contract.ports["items"].accepts is GENERIC_ARTIFACT
-    assert node.output_contract.ports["items"].produces is GENERIC_ARTIFACT
+    assert node.input_contract.ports["items"] is input_port
+    assert node.output_contract.ports["items"] is output_port
+    assert input_port.accepts == GENERIC_ARTIFACT
+    assert output_port.produces == GENERIC_ARTIFACT
     assert resolved.input_contract.ports["items"].accepts == artifact_type
     assert resolved.output_contract.ports["items"].produces == artifact_type
 

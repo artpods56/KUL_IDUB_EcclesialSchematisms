@@ -5,6 +5,7 @@ requires-python = "==3.14.*"
 [manifest]
 members = [
     "grafy-api",
+    "grafy-client",
     "grafy-core",
     "grafy-persistence",
     "grafy-storage",
@@ -481,6 +482,23 @@ requires-dist = [
 ]
 
 [[package]]
+name = "grafy-client"
+version = "0.1.0"
+source = { editable = "libs/client" }
+dependencies = [
+    { name = "grafy-core" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "grafy-core", editable = "libs/core" },
+    { name = "httpx", specifier = ">=0.28.0" },
+    { name = "pydantic" },
+]
+
+[[package]]
 name = "grafy-core"
 version = "0.1.0"
 source = { editable = "libs/core" }
@@ -787,6 +805,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "fastapi", extra = ["standard"] },
     { name = "grafy-api" },
+    { name = "grafy-client" },
     { name = "grafy-core" },
     { name = "grafy-persistence" },
     { name = "grafy-plugin-arithmetic" },
@@ -828,6 +847,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.136.1" },
     { name = "grafy-api", editable = "apps/api" },
+    { name = "grafy-client", editable = "libs/client" },
     { name = "grafy-core", editable = "libs/core" },
     { name = "grafy-persistence", editable = "libs/persistence" },
     { name = "grafy-plugin-arithmetic", directory = "plugins/arithmetic" },

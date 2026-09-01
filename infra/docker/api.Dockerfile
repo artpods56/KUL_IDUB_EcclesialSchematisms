@@ -10,6 +10,7 @@ ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
 
 COPY pyproject.toml uv.lock alembic.ini ./
+COPY libs/client ./libs/client
 COPY libs/core ./libs/core
 COPY libs/persistence ./libs/persistence
 COPY libs/storage ./libs/storage
